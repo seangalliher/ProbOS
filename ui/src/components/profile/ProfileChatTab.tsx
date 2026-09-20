@@ -2391,6 +2391,7 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
             <DaySeparator key={item.id} label={item.label} />
           ) : (
           <ChatMessageRow
+            activeThreadId={activeThreadId}
             key={item.id}
             msg={item.msg}
             hostAgentId={agentId}

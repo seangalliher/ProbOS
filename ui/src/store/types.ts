@@ -36,6 +36,28 @@ export interface CapabilityApprovalView {
 export interface CapabilityDecisionOutcome {
   request: CapabilityApprovalView;
   fulfilled: boolean;
+  standingRule?: StandingRuleReceipt;
+  standingRuleIssue?: 'invalid';
+}
+
+export interface StandingRuleReceipt {
+  id: string;
+  agent_id: string;
+  tool_id: string;
+  action: string;
+  scope_key: string;
+  issued_at: number;
+  expires_at: number;
+}
+
+export type CapabilityDecisionIntent =
+  | { action: 'approve'; reason: string; standingTtlHours?: number }
+  | { action: 'deny'; reason: string }
+  | { action: 'retry' };
+
+export interface CapabilityDecisionFeedback {
+  outcome: CapabilityDecisionOutcome;
+  standingRequested: boolean;
 }
 
 export type ApprovalQueue = 'capability' | 'skill';
@@ -45,7 +67,7 @@ export interface ApprovalPayload {
 }
 
 export interface ApprovalRefreshOptions {
-  queues?: ApprovalQueue[];
+  queues?: readonly ApprovalQueue[];
   automatic?: boolean;
   signal?: AbortSignal;
 }

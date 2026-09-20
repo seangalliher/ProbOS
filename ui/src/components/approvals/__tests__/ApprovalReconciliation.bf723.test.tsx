@@ -92,6 +92,9 @@ function resetApprovalState(): void {
     approvalRequestSeq: 0,
     capabilityDecisionRevision: 0,
     capabilityApprovalEpoch: 0,
+    // Shared decision feedback and in-flight guards now outlive panel mounts.
+    capabilityDecisionFeedback: new Map(),
+    capabilityDecidingIds: new Set<string>(),
     liveRepairEpoch: 0,
     approvalAppliedSeq: { capability: 0, skill: 0 },
     approvalsCenterOpen: false,

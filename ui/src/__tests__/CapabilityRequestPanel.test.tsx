@@ -117,13 +117,20 @@ describe('AD-1206 real repair approval wire consumer', () => {
       { ...row.payload, params: { ...row.payload.params, signature: 'short' } },
       { ...row.payload, params: { ...row.payload.params, brief: 'x'.repeat(4000) } },
       { ...row.payload, params: { ...row.payload.params, brief: '\ud800' } },
-      { ...row.payload, params: { ...row.payload.params, value: Infinity } },
+      // This used to reject Infinity, which valid Python JSON integers can decode to.
+      // NaN remains outside the JSON numeric domain; display limits do not govern repair Retry.
+      { ...row.payload, params: { ...row.payload.params, value: NaN } },
     ]) {
       expect(isCapabilityRequestView({ ...row, payload })).toBe(false);
     }
     expect(isCapabilityRequestView({
       ...row, payload: { ...row.payload, thread_id: '😀'.repeat(64) },
     })).toBe(true);
+    for (const value of [JSON.parse('1e309'), JSON.parse('-1e309')]) {
+      expect(isCapabilityRequestView({
+        ...row, payload: { ...row.payload, params: { ...row.payload.params, value } },
+      })).toBe(true);
+    }
   });
 });
 
@@ -157,10 +164,10 @@ describe('CapabilityRequestPanel (AD-857)', () => {
   });
 
   it('approve_click_posts_to_decide_endpoint', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PENDING })
-      // The endpoint returns durable fulfilment evidence, not an empty request.
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => decision('fulfilled') });
+    // The shared command adds a predecision GET; route by method rather than
+    // accidentally handing that GET the decision response.
+    const fetchMock = vi.fn<typeof fetch>(async (_input, options) =>
+      response(options?.method === 'POST' ? decision('fulfilled') : PENDING));
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CapabilityRequestPanel />);
@@ -176,7 +183,9 @@ describe('CapabilityRequestPanel (AD-857)', () => {
         expect.objectContaining({ method: 'POST' }),
       );
     });
-    const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const posts = fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST');
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(String(posts[0][1]?.body));
     expect(body.approve).toBe(true);
   });
 });
@@ -215,6 +224,8 @@ function resetApprovals(): void {
     approvalRequestSeq: 0,
     capabilityDecisionRevision: 0,
     capabilityApprovalEpoch: 0,
+    capabilityDecidingIds: new Set<string>(),
+    capabilityDecisionFeedback: new Map(),
     liveRepairEpoch: 0,
     decidedApprovals: new Set<string>(),
     pendingApprovals: [],
@@ -429,13 +440,19 @@ describe('issue #1368 capability resource lifecycle', () => {
     expect(useStore.getState().approvalResources.capability.status).toBe('unavailable');
     expect(useStore.getState().approvalResources.skill.status).toBe('unavailable');
     expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
-    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    // The old enabled assertion pinned acting on failed reads. Retain the
+    // retry assertion after a fresh observation; unknown state is actionless.
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'decision reason' })).toBeNull();
     expect(useStore.getState().decidedApprovals.size).toBe(0);
     const mutations = transport.mock.calls.filter(([, options]) => options?.method === 'POST');
     expect(mutations).toHaveLength(1);
     expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ approve: true, reason: 'approved scope' });
+    down = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
+    await tick();
+    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
   });
 
   it('decides through the actual approvals center even when both subsequent queue reads fail', async () => {
@@ -482,10 +499,11 @@ describe('issue #1368 capability resource lifecycle', () => {
 
   it.each([false, true])('blocks a pre-decision pending response from downgrading an approval (hosted=%s)', async hosted => {
     const late = deferredResponse();
+    const post = deferredResponse();
     let defer = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
       // The former removal assertion encoded the unfulfilled-as-terminal defect.
-      if (options?.method === 'POST') return response(decision('approved'));
+      if (options?.method === 'POST') return post.promise;
       if (!String(input).startsWith('/api/capability-requests')) return response({ requests: [] });
       return defer ? late.promise : response(PENDING);
     });
@@ -494,15 +512,20 @@ describe('issue #1368 capability resource lifecycle', () => {
     render(<CapabilityRequestPanel hosted={hosted} />);
     await tick();
     expect(screen.getByTestId('capability-request-card')).toBeTruthy();
+    // Start the fresh predecision GET/POST first. A refresh before the click
+    // now correctly makes the resource unknown and prevents any decision.
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     defer = true;
     const before = transport.mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
     await tick();
     expect(transport.mock.calls.length).toBe(before + 1);
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await act(async () => { post.resolve(response(decision('approved'))); });
     await tick();
     expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
-    expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
+    expect(screen.getByTestId('capability-request-card')).toHaveTextContent('Approved - awaiting fulfilment');
     await act(async () => { late.resolve(response(PENDING)); });
     await tick();
     expect(screen.getByRole('button', { name: 'Retry fulfilment' })).toBeEnabled();
@@ -600,7 +623,11 @@ describe('issue #1368 capability resource lifecycle', () => {
   it.each([false, true])('removes terminal outcomes even when the next reads fail (hosted=%s)', async hosted => {
     for (const status of ['fulfilled', 'denied', 'action'] as const) {
       resetApprovals();
-      const row = status === 'action' ? { ...PENDING.requests[0], kind: 'action' } : PENDING.requests[0];
+      // Shared action resource fixtures must be inspectable; the old null
+      // payload never represented an ordinary action the Captain could review.
+      const row = status === 'action' ? {
+        ...PENDING.requests[0], kind: 'action', payload: repairWire.ordinary_pending.requests[0].payload,
+      } : PENDING.requests[0];
       let down = false;
       const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
         if (options?.method === 'POST') {
@@ -661,7 +688,8 @@ describe('issue #1368 capability resource lifecycle', () => {
       expect(useStore.getState().pendingApprovals.map(row => row.id)).toEqual(['req-1']);
       expect(useStore.getState().decidedApprovals.size).toBe(0);
     }
-    transport.mockImplementation(async () => new Response('{', { status: 200 }));
+    transport.mockImplementation(async (_input, options) => options?.method === 'POST'
+      ? new Response('{', { status: 200 }) : response(PENDING));
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await tick();
     expect(screen.getByRole('alert')).toBeTruthy();
@@ -670,9 +698,10 @@ describe('issue #1368 capability resource lifecycle', () => {
 
   it.each([false, true])('preserves an approval across a pre-decision empty read, then accepts a fresh empty read (hosted=%s)', async hosted => {
     const late = deferredResponse();
+    const post = deferredResponse();
     let defer = false;
     const transport = vi.fn<typeof fetch>().mockImplementation(async (input, options) => {
-      if (options?.method === 'POST') return response(decision('approved'));
+      if (options?.method === 'POST') return post.promise;
       if (!String(input).startsWith('/api/capability-requests')) return response({ requests: [] });
       return defer ? late.promise : response(PENDING);
     });
@@ -680,9 +709,15 @@ describe('issue #1368 capability resource lifecycle', () => {
     await useStore.getState().refreshPendingApprovals();
     render(<CapabilityRequestPanel hosted={hosted} />);
     await tick();
+    // The old GET begins before POST settlement, not before the required
+    // fresh predecision check; the reconciliation race remains the same.
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     defer = true;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await tick();
+    await act(async () => { post.resolve(response(decision('approved'))); });
     await tick();
     await act(async () => { late.resolve(response({ view: 'actionable', requests: [] })); });
     await tick();
@@ -708,6 +743,7 @@ describe('issue #1368 capability resource lifecycle', () => {
     const button = screen.getByRole('button', { name: 'Approve' });
     fireEvent.click(button);
     fireEvent.click(button);
+    await tick(); // Allow the shared predecision GET before inspecting POST count.
     expect(transport.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     completed = true;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh capability requests' }));
@@ -731,6 +767,7 @@ describe('issue #1368 capability resource lifecycle', () => {
     await tick();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(useStore.getState().capabilityDecidingIds.has('req-1')).toBe(true);
+    await tick(); // Remount during the POST, not during its abortable predecision GET.
     first.unmount();
     render(<CapabilityRequestPanel hosted={hosted} />);
     await tick();

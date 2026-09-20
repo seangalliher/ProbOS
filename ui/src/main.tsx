@@ -1,12 +1,20 @@
 /* ProbOS HXI — Entry point (AD-255, AD-473c) */
 
 import { createRoot } from 'react-dom/client';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import CompactApp from './CompactApp';
 import { InstallPrompt } from './components/InstallPrompt';
 import { registerServiceWorker } from './pwa/register';
 import { resolveEntryTarget } from './entryRoute';
 import { isPadDevice } from './hooks/usePadDevice';
+import { acquireApprovalPolling } from './store/approvalPolling';
+
+export function ApprovalPollingBoundary({ target, children }: {
+  target: 'desktop' | 'compact' | 'mobile'; children: ReactNode;
+}): React.JSX.Element {
+  useEffect(() => acquireApprovalPolling(target === 'desktop' ? ['capability', 'skill'] : ['capability']), [target]);
+  return <>{children}</>;
+}
 
 // Issue #770: lazy-load the full HXI so Compact mode does not eagerly
 // pull the three.js / VRM stack. Vite/Rollup treats this dynamic import
@@ -23,7 +31,8 @@ const MobileShell = lazy(() => import('./MobileShell'));
 const entryTarget = resolveEntryTarget(window.location.hash, isPadDevice());
 
 createRoot(document.getElementById('root')!).render(
-  entryTarget === 'compact' ? (
+  <ApprovalPollingBoundary target={entryTarget}>
+  {entryTarget === 'compact' ? (
     <CompactApp />
   ) : entryTarget === 'mobile' ? (
     <Suspense fallback={null}>
@@ -39,7 +48,8 @@ createRoot(document.getElementById('root')!).render(
       <App />
       <InstallPrompt />
     </Suspense>
-  ),
+  )}
+  </ApprovalPollingBoundary>,
 );
 
 // AD-473c: register PWA service worker after first paint. Tier-2 log-and-degrade

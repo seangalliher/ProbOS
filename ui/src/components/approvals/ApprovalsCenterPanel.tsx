@@ -10,7 +10,7 @@
  * This is a host, not a rewrite. CapabilityRequestPanel (AD-857) and
  * SkillRequestPanel (AD-908) retain their decision controls. Hosted skill detail
  * comes from the shared queue; the centre owns only its entry/manual refreshes,
- * while Bridge owns background scheduling. Empty requires both queues to have
+ * while the shared polling owner handles background scheduling. Empty requires both queues to have
  * successful empty observations, not just an absent local row.
  *
  * HXI Principle #3: inline SVG glyphs only, no emoji. Overlay geometry matches
@@ -25,6 +25,7 @@ import CapabilityRequestPanel from '../capability/CapabilityRequestPanel';
 import SkillRequestPanel, { ApprovalRefreshGlyph } from '../skill/SkillRequestPanel';
 import { resourceMessage } from '../../utils/resourceState';
 import type { ApprovalQueue } from '../../store/types';
+import { HxiApprovalFocus } from './HxiApprovalFocus';
 
 const ACTIVE_AMBER = '#f0b060';
 const DIM = '#666680';
@@ -56,7 +57,7 @@ const FOCUSABLE_SELECTOR =
   'button:not(:disabled), input:not(:disabled), textarea:not(:disabled),'
   + ' select:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
-export function ApprovalsCenterPanel() {
+export function ApprovalsCenterPanel(): React.JSX.Element | null {
   const open = useStore(s => s.approvalsCenterOpen);
   const pendingApprovals = useStore(s => s.pendingApprovals);
   const resources = useStore(s => s.approvalResources);
@@ -174,6 +175,7 @@ export function ApprovalsCenterPanel() {
         outline: 'none',
       }}
     >
+      <HxiApprovalFocus />
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.08)',
@@ -188,6 +190,7 @@ export function ApprovalsCenterPanel() {
         </div>
         <button
           data-testid="approvals-center-close"
+          data-hxi-focus=""
           onClick={close}
           aria-label="Close Approvals"
           style={{

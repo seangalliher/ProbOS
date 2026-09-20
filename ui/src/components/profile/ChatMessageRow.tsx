@@ -4,8 +4,8 @@
 // Extracted as a small presentational component because the ProfileChatTab
 // bubble JSX is heavy and the parent module pulls in audio/screen deps that
 // make a full-component render impractical under jsdom (the groupsend/bf294b
-// precedent). This row imports only useStore + AgentAvatarBadge, so it is
-// independently renderable and testable.
+// precedent). The row and its shared approval adapter remain independently
+// renderable and testable.
 //
 // Pure render: author identity comes from the message model (AD-936
 // authorId/callsign threaded by the group fan-out); the avatar color
@@ -17,6 +17,7 @@ import type { ReactNode } from 'react';
 import { useStore } from '../../store/useStore';
 import type { Agent, AgentProfileMessage } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
+import { InlineCapabilityApproval } from './InlineCapabilityApproval';
 
 // `department` is a runtime cast on the base Agent (ChatsPanel precedent),
 // not a declared field — read it defensively for the avatar color.
@@ -34,12 +35,13 @@ interface Props {
   msg: AgentProfileMessage;
   hostAgentId: string;
   hostCallsign: string;
+  activeThreadId?: string;
   // Pre-rendered message body (artifact stubs resolved by the parent). When
   // omitted the raw text is shown — keeps the row usable/testable standalone.
   body?: ReactNode;
 }
 
-export function ChatMessageRow({ msg, hostAgentId, hostCallsign, body }: Props) {
+export function ChatMessageRow({ msg, hostAgentId, hostCallsign, body, activeThreadId }: Props): React.JSX.Element {
   const agents = useStore((s) => s.agents);
   const isAgent = msg.role === 'agent';
   const isUser = msg.role === 'user';
@@ -111,6 +113,7 @@ export function ChatMessageRow({ msg, hostAgentId, hostCallsign, body }: Props) 
       }}>
         {body ?? msg.text}
       </div>
+      <InlineCapabilityApproval msg={msg} activeThreadId={activeThreadId} />
     </div>
   );
 }
