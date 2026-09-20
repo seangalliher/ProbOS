@@ -1049,7 +1049,7 @@ class TestFiledRequest:
             await store.stop()
             await approvals.stop()
 
-    def test_the_hxi_panel_renders_a_new_kind_with_no_ui_change(self):
+    def test_the_hxi_panel_renders_a_new_kind_with_no_ui_change(self) -> None:
         """AD-1154's claim, re-verified rather than assumed."""
         # Act
         source = (
@@ -1060,10 +1060,25 @@ class TestFiledRequest:
             / "capability"
             / "CapabilityRequestPanel.tsx"
         ).read_text(encoding="utf-8")
-        # Assert — an untyped kind, rendered verbatim, with a neutral fallback.
-        assert "import type { ApprovalPayload, CapabilityApprovalView } from '../../store/types';" in source
+        card_source = (
+            _REPO_ROOT
+            / "ui"
+            / "src"
+            / "components"
+            / "capability"
+            / "CapabilityRequestCard.tsx"
+        ).read_text(encoding="utf-8")
+        # AD-1212 extracted the inline card and its kind/color rendering. The
+        # old ApprovalPayload import, req parameter and req.kind/color-helper
+        # pins asserted their former panel placement, not generic-kind support.
+        # Follow the shared card; ApprovalWave also checks its actual rendering.
+        # Assert — a shared string kind, rendered literally, with a neutral fallback.
+        assert "import type { CapabilityApprovalView } from '../../store/types';" in source
         assert "export type CapabilityRequestView = CapabilityApprovalView;" in source
-        assert "req: CapabilityRequestView;" in source
+        assert "import { CapabilityRequestCard } from './CapabilityRequestCard';" in source
+        assert "ids.map(id => <CapabilityRequestCard key={id} requestId={id} request={rows.get(id)}" in source
+        assert "import type { CapabilityApprovalView, CapabilityDecisionIntent } from '../../store/types';" in card_source
+        assert "  request?: CapabilityApprovalView;" in card_source.splitlines()
         shared_types = (_REPO_ROOT / "ui" / "src" / "store" / "types.ts").read_text(
             encoding="utf-8"
         )
@@ -1073,8 +1088,11 @@ class TestFiledRequest:
         interface_end = shared_types.find("\n}", interface_start)
         assert interface_end > interface_start
         assert "  kind: string;" in shared_types[interface_start:interface_end].splitlines()
-        assert "{req.kind}" in source
-        assert "DEPARTMENT_COLORS[key] || DEFAULT_DEPARTMENT_COLOR" in source
+        assert "{approvalDisplayText(expected.kind)}" in card_source
+        assert "const DIM = '#666680';" in card_source
+        assert "const accent = ['grant', 'install', 'build'].includes(expected?.kind ?? '') ? '#e08040' : DIM;" in card_source
+        assert "borderLeft: `3px solid ${accent}`" in card_source
+        assert "style={{ color: accent," in card_source
         assert CONTINUE_REQUEST_KIND not in source
 
 

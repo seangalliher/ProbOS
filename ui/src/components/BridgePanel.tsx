@@ -13,13 +13,10 @@ import { timeAgo } from './wardroom/timeAgo';
 import { ApprovalQueueStatus } from './approvals/ApprovalsCenterPanel';
 import { ApprovalRefreshGlyph } from './skill/SkillRequestPanel';
 import type { ApprovalQueue } from '../store/types';
+import { acquireApprovalPolling } from '../store/approvalPolling';
+import { HxiApprovalFocus } from './approvals/HxiApprovalFocus';
 
-/* AD-1201: the ONE approvals poll. The Bridge APPROVALS section, the approvals
- * centre and the BRIDGE badge all read the same store slice this fills, so they
- * cannot disagree about the count. 10s matches the established panel-refresh
- * cadence (CrewRosterPanel.tsx, bridge/FullSystem.tsx, bridge/BridgeSystem.tsx).
- * BridgePanel owns it because it is mounted for the whole session (IntentSurface
- * renders it unconditionally and slides it off-screen when closed). */
+/* Bridge also holds a shared lease so standalone hosts retain both queues. */
 
 /* ── BF-724: UA-chrome neutraliser for the semantic controls ──
  *
@@ -57,15 +54,6 @@ const BARE_BUTTON: React.CSSProperties = {
   alignItems: 'stretch',
   justifyContent: 'flex-start',
 };
-
-/* HXI #3: the default UA focus ring breaks the visual language. Focus is drawn
- * with the same amber the panel already uses for an active/alerting state.
- * `:focus-visible` only, so a pointer click does not paint a ring. Both rules
- * carry equal specificity, so the ring rule must come second. */
-const FOCUS_RING_CSS = `
-[data-hxi-focus]:focus{outline:none}
-[data-hxi-focus]:focus-visible{outline:1px solid #f0b060;outline-offset:-1px}
-`;
 
 /* ── Collapsible Section ── */
 function BridgeSection({
@@ -305,7 +293,7 @@ function ApprovalRow({ approval, onOpen }: { approval: PendingApproval; onOpen: 
   );
 }
 
-export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => void }): React.JSX.Element {
   const faultReports = useFaultReports(open);
   const faultsKnown = faultReports.resource.status === 'ready' || faultReports.resource.status === 'empty';
   const faultsEmpty = faultReports.resource.status === 'empty' && faultReports.resource.data?.total === 0;
@@ -325,40 +313,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
 
   useEffect(() => { refreshDms(); }, [refreshDms]);
 
-  useEffect(() => {
-    const owner = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const arm = (): void => {
-      clearTimeout(timer);
-      const state = useStore.getState();
-      const due = (['capability', 'skill'] as ApprovalQueue[])
-        .filter(queue => !state.approvalControllers[queue])
-        .map(queue => state.approvalPoll[queue].nextAt)
-        .filter((time): time is number => time !== null);
-      if (!owner.signal.aborted && due.length) {
-        timer = setTimeout(() => {
-          void refreshApprovals({ automatic: true, signal: owner.signal });
-        }, Math.max(0, Math.min(...due) - Date.now()));
-      }
-    };
-    let capabilityEpoch = useStore.getState().capabilityApprovalEpoch;
-    let repairEpoch = useStore.getState().liveRepairEpoch;
-    const unsubscribe = useStore.subscribe(state => {
-      const invalidated = capabilityEpoch !== state.capabilityApprovalEpoch || repairEpoch !== state.liveRepairEpoch;
-      capabilityEpoch = state.capabilityApprovalEpoch;
-      repairEpoch = state.liveRepairEpoch;
-      if (invalidated) void refreshApprovals({ queues: ['capability'], signal: owner.signal });
-      arm();
-    });
-    void refreshApprovals({ signal: owner.signal });
-    arm();
-    return () => {
-      unsubscribe();
-      clearTimeout(timer);
-      owner.abort();
-      useStore.getState().cancelPendingApprovals();
-    };
-  }, [refreshApprovals]);
+  useEffect(() => acquireApprovalPolling(['capability', 'skill']), []);
 
   useEffect(() => {
     const reentered = open && !wasOpen.current;
@@ -431,7 +386,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
       {/* BF-724: one focus-ring rule for every control this panel made
           keyboard-reachable. Mounted here rather than per-section so it is
           declared once for the whole panel. */}
-      <style>{FOCUS_RING_CSS}</style>
+      <HxiApprovalFocus />
       {/* Header */}
       <div style={{
         display: 'flex',

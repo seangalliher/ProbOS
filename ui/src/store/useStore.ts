@@ -37,7 +37,9 @@ import type {
   LiveDropGate, LiveDropRecord,
   LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
   RoomSummary, SkillRequestView, CapabilityDecisionOutcome, ApprovalQueue, ApprovalPayload, ApprovalRefreshOptions,
+  CapabilityApprovalView, CapabilityDecisionIntent, CapabilityDecisionFeedback,
 } from './types';
+import { useSettingsStore } from './useSettingsStore';
 
 // AD-562: Knowledge Browser types
 import type {
@@ -49,6 +51,7 @@ import { idleResource, loadingResource, requestResource, nextResourcePoll } from
 import type { ResourceState, ResourcePoll } from '../utils/resourceState';
 import {
   approvalKey, applyCapabilityDecision, isActionableCapabilityPayload, reconcileCapabilityRead,
+  capabilityDecisionBody, isCapabilityRequestView, parseCapabilityDecision, sameCapabilityRequest,
 } from './capabilityApprovals';
 export { approvalKey, isCapabilityRequestView } from './capabilityApprovals';
 
@@ -838,11 +841,11 @@ export interface HXIState {
   selectDmChannel: (channelId: string) => void;
   refreshWardRoomDmChannels: () => void;
   // AD-1201: pending approvals across both queues (capability + skill). Filled
-  // by the single poller in BridgePanel; read by the Bridge APPROVALS section
+  // by the shared approval polling owner; read by the Bridge APPROVALS section
   // and the BRIDGE badge in IntentSurface.
   pendingApprovals: PendingApproval[];
   refreshPendingApprovals: (options?: ApprovalRefreshOptions) => Promise<void>;
-  cancelPendingApprovals: () => void;
+  cancelPendingApprovals: (queues?: readonly ApprovalQueue[]) => void;
   approvalResources: Record<ApprovalQueue, ResourceState<ApprovalPayload>>;
   approvalPoll: Record<ApprovalQueue, ResourcePoll>;
   approvalControllers: Record<ApprovalQueue, AbortController | null>;
@@ -859,7 +862,9 @@ export interface HXIState {
   approvalAppliedSeq: Record<PendingApproval['queue'], number>;
   /** BF-723: record a decision so every later refresh reconciles against it. */
   recordApprovalDecision: (queue: PendingApproval['queue'], id: string) => void;
-  recordCapabilityDecision: (outcome: CapabilityDecisionOutcome) => void;
+  recordCapabilityDecision: (outcome: CapabilityDecisionOutcome, standingRequested?: boolean) => void;
+  decideCapabilityRequest: (expected: CapabilityApprovalView, intent: CapabilityDecisionIntent) => Promise<CapabilityDecisionOutcome>;
+  capabilityDecisionFeedback: Map<string, CapabilityDecisionFeedback>;
   capabilityDecisionRevision: number;
   capabilityApprovalEpoch: number;
   capabilityDecidingIds: Set<string>;
@@ -2570,7 +2575,7 @@ export const useStore = create<HXIState>((set, get) => ({
     } catch { /* swallow */ }
   },
   /* Shared approval reads settle independently so a hung queue cannot block
-   * its peer. Bridge owns scheduling; the store owns per-queue generations,
+   * its peer. approvalPolling owns scheduling; the store owns per-queue generations,
    * cancellation and BF-723 tombstones. Failure metadata and retained detail
    * are reconciled together, including when both queues fail. */
   recordApprovalDecision: (queue, id) => {
@@ -2598,12 +2603,84 @@ export const useStore = create<HXIState>((set, get) => ({
   capabilityDecisionRevision: 0,
   capabilityApprovalEpoch: 0,
   capabilityDecidingIds: new Set<string>(),
-  recordCapabilityDecision: (outcome) => {
+  capabilityDecisionFeedback: new Map<string, CapabilityDecisionFeedback>(),
+  decideCapabilityRequest: async (displayed, intent) => {
+    const settingsConfig = (): unknown => {
+      const settings = useSettingsStore.getState();
+      return settings.loaded && !settings.loading ? settings.snapshot?.config : null;
+    };
+    capabilityDecisionBody(displayed, intent, settingsConfig());
+    const expected = structuredClone(displayed);
+    const selected = structuredClone(intent);
+    const initial = get();
+    const key = approvalKey('capability', expected.id);
+    const ready = (resource: ResourceState<ApprovalPayload>): boolean =>
+      (resource.status === 'ready' || resource.status === 'empty') && !resource.stale && !resource.refreshing;
+    if (initial.decidedApprovals.has(key)) throw new Error('Capability request is no longer actionable.');
+    if (initial.capabilityDecidingIds.has(expected.id)) throw new Error('Capability decision is already in progress; wait for its result.');
+    if (!ready(initial.approvalResources.capability)) throw new Error('Capability request state is unknown or stale; refresh before deciding.');
+    const inspected = initial.approvalResources.capability.data?.requests
+      .filter(isCapabilityRequestView).find(row => row.id === expected.id);
+    if (!inspected) throw new Error('Capability request is no longer actionable.');
+    if (!sameCapabilityRequest(expected, inspected)) throw new Error('Capability request changed; review the current request before deciding.');
+    set({ capabilityDecidingIds: new Set(initial.capabilityDecidingIds).add(expected.id) });
+    try {
+      const generation = initial.approvalIssuedSeq.capability;
+      await get().refreshPendingApprovals({ queues: ['capability'] });
+      const fresh = get();
+      if (!ready(fresh.approvalResources.capability)
+        || fresh.approvalAppliedSeq.capability <= generation
+        || fresh.approvalAppliedSeq.capability !== fresh.approvalIssuedSeq.capability) {
+        throw new Error('Capability request state was not confirmed by a fresh read; refresh before deciding.');
+      }
+      const current = fresh.approvalResources.capability.data?.requests
+        .filter(isCapabilityRequestView).find(row => row.id === expected.id);
+      if (fresh.decidedApprovals.has(key) || !current) throw new Error('Capability request is no longer actionable.');
+      if (!sameCapabilityRequest(expected, current)) throw new Error('Capability request changed; review the current request before deciding.');
+      const body = capabilityDecisionBody(expected, selected, settingsConfig());
+      let response: Response;
+      try {
+        // No lifecycle signal: switching surfaces must not cancel a submitted decision.
+        response = await fetch(`/api/capability-requests/${encodeURIComponent(expected.id)}/decide`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+      } catch {
+        await get().refreshPendingApprovals({ queues: ['capability'] });
+        throw new Error('Decision response was not received; request state has been refreshed. No automatic retry was sent.');
+      }
+      if (!response.ok) {
+        await get().refreshPendingApprovals({ queues: ['capability'] });
+        if (response.status === 400 || response.status === 404) throw new Error('Capability request is no longer actionable; its state has been refreshed.');
+        throw new Error(`decision failed (${response.status}); request state has been refreshed.`);
+      }
+      let outcome: CapabilityDecisionOutcome;
+      try {
+        outcome = parseCapabilityDecision(await response.json(), expected, body.approve, body.standing_ttl_hours);
+      } catch (error) {
+        await get().refreshPendingApprovals({ queues: ['capability'] });
+        throw error;
+      }
+      get().recordCapabilityDecision(outcome, body.grant_standing === true);
+      return outcome;
+    } finally {
+      set(state => {
+        const remaining = new Set(state.capabilityDecidingIds);
+        remaining.delete(expected.id);
+        return { capabilityDecidingIds: remaining };
+      });
+    }
+  },
+  recordCapabilityDecision: (outcome, standingRequested = false) => {
     set(state => {
       const result = applyCapabilityDecision(
         state.approvalResources.capability, state.decidedApprovals, outcome,
       );
+      const feedback = new Map(state.capabilityDecisionFeedback);
+      feedback.delete(outcome.request.id);
+      feedback.set(outcome.request.id, { outcome, standingRequested });
+      while (feedback.size > 32) feedback.delete(feedback.keys().next().value!);
       return {
+        capabilityDecisionFeedback: feedback,
         capabilityDecisionRevision: state.capabilityDecisionRevision + 1,
         decidedApprovals: result.tombstones,
         approvalResources: { ...state.approvalResources, capability: result.resource },
@@ -2614,9 +2691,8 @@ export const useStore = create<HXIState>((set, get) => ({
       };
     });
   },
-  cancelPendingApprovals: () => {
-    get().approvalControllers.capability?.abort();
-    get().approvalControllers.skill?.abort();
+  cancelPendingApprovals: (queues = ['capability', 'skill']) => {
+    for (const queue of queues) get().approvalControllers[queue]?.abort();
   },
   refreshPendingApprovals: async (options = {}) => {
     if (options.signal?.aborted) return;

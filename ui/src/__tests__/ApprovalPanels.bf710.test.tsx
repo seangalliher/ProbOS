@@ -15,6 +15,8 @@ import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
 import CapabilityRequestPanel from '../components/capability/CapabilityRequestPanel';
 import SkillRequestPanel from '../components/skill/SkillRequestPanel';
 import type { CapabilityApprovalView } from '../store/types';
+import { useStore } from '../store/useStore';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 /** Must match POLL_INTERVAL_MS in both panels. */
 const POLL_MS = 10000;
@@ -77,11 +79,26 @@ async function tick(ms: number): Promise<void> {
 describe('approval panel polling (BF-710)', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Standalone capability panels now share resources and the polling owner.
+    // Isolate that cache and keep unrelated settings loads out of queue counts.
+    useStore.getState().cancelPendingApprovals();
+    const initial = useStore.getInitialState();
+    useStore.setState({
+      approvalResources: initial.approvalResources, approvalPoll: initial.approvalPoll,
+      approvalControllers: { capability: null, skill: null },
+      approvalIssuedSeq: { capability: 0, skill: 0 }, approvalAppliedSeq: { capability: 0, skill: 0 },
+      approvalRequestSeq: 0, pendingApprovals: [], decidedApprovals: new Set(),
+      capabilityDecidingIds: new Set(), capabilityDecisionFeedback: new Map(),
+      capabilityDecisionRevision: 0, capabilityApprovalEpoch: 0, liveRepairEpoch: 0,
+    });
+    useSettingsStore.setState({ loaded: true, loading: false, snapshot: null });
   });
   afterEach(() => {
     cleanup();
+    useStore.getState().cancelPendingApprovals();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('capability panel shows a request filed after mount on the next poll', async () => {
