@@ -1248,6 +1248,8 @@ _JSON_FIELDS = frozenset({
     "required_characteristics", "resource_preference",
 })
 
+_WORK_ITEM_PUBLIC_COLUMNS = ", ".join(item.name for item in dataclasses.fields(WorkItem))
+
 _WORK_ITEM_JSON_FIELDS = tuple(
     item.name for item in dataclasses.fields(WorkItem) if item.name in _JSON_FIELDS
 )
@@ -7256,7 +7258,7 @@ class WorkItemStore(EventEmitterMixin):
         if not self._db:
             return None
         cursor = await self._db.execute(
-            "SELECT * FROM work_items WHERE id = ?", (work_item_id,),
+            f"SELECT {_WORK_ITEM_PUBLIC_COLUMNS} FROM work_items WHERE id = ?", (work_item_id,),
         )
         row = await cursor.fetchone()
         if not row:
@@ -11022,7 +11024,7 @@ class WorkItemStore(EventEmitterMixin):
             self._snapshot_cache = {"work_items": [], "bookings": []}
             return
         cursor = await self._db.execute(
-            "SELECT * FROM work_items WHERE status NOT IN ('done', 'cancelled', 'failed') ORDER BY priority ASC, created_at DESC LIMIT 100",
+            f"SELECT {_WORK_ITEM_PUBLIC_COLUMNS} FROM work_items WHERE status NOT IN ('done', 'cancelled', 'failed') ORDER BY priority ASC, created_at DESC LIMIT 100",
         )
         rows = await cursor.fetchall()
         work_items = [self._row_to_work_item(r).to_dict() for r in rows]

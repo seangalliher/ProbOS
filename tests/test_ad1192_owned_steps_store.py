@@ -11,6 +11,7 @@ import sqlite3
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Iterator
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -582,6 +583,391 @@ async def _apply(
         command=command,
     ), harness.owner.authority(snapshot.control.parent_id, actor, role))
     return await (store or harness.first).compare_and_set_owned_step(mutation), mutation
+
+
+@pytest.fixture
+def selected_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[list[tuple[str, tuple[Any, ...], tuple[str, ...]]]]:
+    reads: list[tuple[str, tuple[Any, ...], tuple[str, ...]]] = []
+    real_execute = aiosqlite.Connection.execute
+    observing: ContextVar[bool] = ContextVar("selected_columns_observer", default=False)
+
+    async def execute(
+        connection: aiosqlite.Connection, sql: str, parameters: Any = (),
+    ) -> aiosqlite.Cursor:
+        cursor = await real_execute(connection, sql, parameters)
+        if observing.get() and cursor.description is not None:
+            reads.append((sql, tuple(parameters), tuple(column[0] for column in cursor.description)))
+        return cursor
+
+    monkeypatch.setattr(aiosqlite.Connection, "execute", execute)
+    # Existing store tick tasks can overlap reads; observe only this test's context.
+    token = observing.set(True)
+    try:
+        yield reads
+    finally:
+        observing.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nullable", [False, True])
+async def test_public_work_item_projection_matches_all_wide_fields(
+    stores: _Harness,
+    selected_columns: list[tuple[str, tuple[Any, ...], tuple[str, ...]]],
+    nullable: bool,
+) -> None:
+    parent, _ = await _legacy_plan(stores, children_count=1)
+    fields = tuple(item.name for item in dataclasses.fields(WorkItem))
+    values = {
+        "id": parent.id,
+        "title": "Title \u03bb",
+        "description": "Description \u96ea\nsecond line",
+        "work_type": "work_order",
+        "status": "in_progress",
+        "priority": 1,
+        "parent_id": None if nullable else "container-\u03bb",
+        "project_id": None if nullable else "project-\u96ea",
+        "depends_on": ' [ "dependency-\\u03bb" ] ',
+        "assigned_to": None if nullable else "agent-\u03bb",
+        "created_by": "creator-\u96ea",
+        "created_at": 1234.25,
+        "updated_at": 2345.5,
+        "due_at": None if nullable else 3456.75,
+        "estimated_tokens": None if nullable else 87,
+        "actual_tokens": 43,
+        "trust_requirement": 0.625,
+        "required_capabilities": ' [ "read-\\u96ea", "write" ] ',
+        "tags": '["legacy", "\\u03bb"]',
+        "metadata": '{"duplicate":1,"duplicate":2,"text":"\\u96ea","optional":null}',
+        "steps": '[ {"label":"\\u03bb","status":"pending","note":null,"legacy":true} ]',
+        "verification": '{"accepted":true,"text":"\\u96ea","optional":null}',
+        "schedule": '{"cron":"0 0 * * *","optional":null}',
+        "ttl_seconds": None if nullable else 86400,
+        "template_id": None if nullable else "template-\u03bb",
+    }
+    assert len(fields) == len(values) == 25 and set(values) == set(fields)
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute(
+            "UPDATE work_items SET " + ", ".join(f"{key}=?" for key in values) + " WHERE id=?",
+            (*values.values(), parent.id),
+        )
+        wide = db.execute("SELECT * FROM work_items WHERE id = ?", (parent.id,)).fetchone()
+        assert set(wide.keys()) == set(fields) | {"steps_control"}
+        assert wide["steps_control"]
+        assert steps.parse_owned_control(wide["steps_control"]).parent_id == parent.id
+        expected = WorkItemStore._row_to_work_item(wide)
+        expected_snapshot = [
+            WorkItemStore._row_to_work_item(row).to_dict() for row in db.execute(
+                "SELECT * FROM work_items WHERE status NOT IN ('done', 'cancelled', 'failed') "
+                "ORDER BY priority ASC, created_at DESC LIMIT 100",
+            )
+        ]
+
+    selected_columns.clear()
+    actual = await stores.first.get_work_item(parent.id)
+
+    assert actual == expected
+    assert actual.to_dict() == expected.to_dict()
+    assert tuple(actual.to_dict()) == fields
+    assert actual.metadata["duplicate"] == 2 and actual.metadata["text"] == "\u96ea"
+    assert len(selected_columns) == 1
+    sql, parameters, columns = selected_columns[0]
+    assert sql.endswith(" FROM work_items WHERE id = ?")
+    assert parameters == (parent.id,) and columns == fields
+    assert "steps_control" not in columns
+
+    selected_columns.clear()
+    await stores.first._refresh_snapshot_cache()
+
+    assert stores.first.snapshot()["work_items"] == expected_snapshot
+    assert len(selected_columns) == 2
+    assert selected_columns[0][2] == fields
+
+
+@pytest.mark.asyncio
+async def test_public_work_item_snapshot_matches_wide_order_limit_and_bookings(
+    stores: _Harness,
+    selected_columns: list[tuple[str, tuple[Any, ...], tuple[str, ...]]],
+) -> None:
+    parent, _ = await _legacy_plan(stores, children_count=1, bookings=True)
+    items = [
+        await stores.first.create_work_item(
+            id=f"snapshot-{119-index:03d}", title=f"Item {index} \u03bb",
+            priority=(index // 4) % 4 + 1, created_at=1000.0 + index // 4,
+            project_id=f"project-{index % 3}", metadata={"index": index},
+        )
+        for index in range(120)
+    ]
+    for status in ("done", "failed", "cancelled"):
+        await stores.first.create_work_item(
+            id=f"excluded-{status}", title=status, status=status,
+            priority=1, created_at=1_000_000_000_000.0,
+        )
+    active = await stores.first.assign_work_item(items[0].id, "agent-b")
+    completed = await stores.first.assign_work_item(items[1].id, "agent-b")
+    cancelled = await stores.first.assign_work_item(items[2].id, "agent-b")
+    assert active is not None and completed is not None and cancelled is not None
+    assert await stores.first.start_booking(active.id)
+    assert await stores.first.start_booking(completed.id)
+    assert await stores.first.complete_booking(completed.id, tokens_consumed=7)
+    assert await stores.first.cancel_booking(cancelled.id)
+    work_sql = (
+        "SELECT * FROM work_items WHERE status NOT IN ('done', 'cancelled', 'failed') "
+        "ORDER BY priority ASC, created_at DESC LIMIT 100"
+    )
+    booking_sql = (
+        "SELECT * FROM bookings WHERE status NOT IN ('completed', 'cancelled') "
+        "ORDER BY start_time DESC LIMIT 100"
+    )
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        assert db.execute(
+            "SELECT COUNT(*) FROM work_items WHERE status NOT IN ('done', 'cancelled', 'failed')",
+        ).fetchone()[0] > 100
+        expected = [WorkItemStore._row_to_work_item(row).to_dict() for row in db.execute(work_sql)]
+        expected_bookings = [WorkItemStore._row_to_booking(row).to_dict() for row in db.execute(booking_sql)]
+        assert db.execute(
+            "SELECT steps_control FROM work_items WHERE id=?", (parent.id,),
+        ).fetchone()[0]
+    assert len(expected) == 100
+    assert parent.id in {item["id"] for item in expected}
+    ties = [
+        (left, right) for left, right in zip(expected, expected[1:])
+        if (left["priority"], left["created_at"]) == (right["priority"], right["created_at"])
+    ]
+    assert ties and any(left["id"] > right["id"] for left, right in ties)
+    assert {booking["status"] for booking in expected_bookings} == {"scheduled", "active"}
+    selected_columns.clear()
+
+    await stores.first._refresh_snapshot_cache()
+    snapshot = stores.first.snapshot()
+
+    assert snapshot["work_items"] == expected
+    assert [item["id"] for item in snapshot["work_items"]] == [item["id"] for item in expected]
+    assert not any(item["id"].startswith("excluded-") for item in snapshot["work_items"])
+    assert snapshot["bookings"] == expected_bookings
+    fields = tuple(item.name for item in dataclasses.fields(WorkItem))
+    assert len(selected_columns) == 2
+    sql, parameters, columns = selected_columns[0]
+    assert sql[sql.index(" FROM "):] == work_sql[work_sql.index(" FROM "):]
+    assert parameters == () and columns == fields
+    assert selected_columns[1][0] == booking_sql and selected_columns[1][1] == ()
+    assert selected_columns[1][2] == tuple(expected_bookings[0])
+
+
+@pytest.mark.asyncio
+async def test_public_work_item_projection_empty_missing_and_unstarted(
+    stores: _Harness,
+    selected_columns: list[tuple[str, tuple[Any, ...], tuple[str, ...]]],
+) -> None:
+    for store in (stores.first, WorkItemStore()):
+        selected_columns.clear()
+        for item_id in ("missing", ""):
+            assert await store.get_work_item(item_id) is None
+        await store._refresh_snapshot_cache()
+        snapshot = store.snapshot()
+        assert snapshot["work_items"] == [] and snapshot["bookings"] == []
+        if store is stores.first:
+            fields = tuple(item.name for item in dataclasses.fields(WorkItem))
+            assert len(selected_columns) == 4
+            assert all(columns == fields for _, _, columns in selected_columns[:3])
+            assert [parameters for _, parameters, _ in selected_columns[:2]] == [("missing",), ("",)]
+        else:
+            assert selected_columns == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "depends_on", "required_capabilities", "tags", "metadata",
+    "steps", "verification", "schedule",
+])
+@pytest.mark.parametrize("raw", [
+    "", "[]", "{}", "null", ' [ null, "\\u03bb" ] ',
+    '{"duplicate":1,"duplicate":2,"text":"\\u96ea"}',
+    "false", "42", '"legacy \\u03bb"', '{"legacy_nonfinite":NaN}',
+    b'{"legacy":"\\u03bb"}',
+])
+async def test_public_work_item_projection_preserves_legacy_json_decoder(
+    stores: _Harness, field: str, raw: str | bytes,
+) -> None:
+    item = await stores.first.create_work_item(id="legacy-public", title="Legacy public JSON")
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute(f"UPDATE work_items SET {field}=? WHERE id=?", (raw, item.id))
+        wide = db.execute("SELECT * FROM work_items WHERE id = ?", (item.id,)).fetchone()
+        expected = WorkItemStore._row_to_work_item(wide).to_dict()
+
+    actual = await stores.first.get_work_item(item.id)
+    await stores.first._refresh_snapshot_cache()
+
+    # JSON text equality also preserves the decoder's accepted nonfinite values.
+    assert json.dumps(actual.to_dict()) == json.dumps(expected)
+    assert json.dumps(stores.first.snapshot()["work_items"]) == json.dumps([expected])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "depends_on", "required_capabilities", "tags", "metadata",
+    "steps", "verification", "schedule",
+])
+async def test_public_work_item_projection_preserves_sql_null_constraints(
+    stores: _Harness, field: str,
+) -> None:
+    item = await stores.first.create_work_item(id="null-public", title="SQL NULL boundary")
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        with pytest.raises(sqlite3.IntegrityError, match=f"NOT NULL constraint failed: work_items[.]{field}"):
+            db.execute(f"UPDATE work_items SET {field}=? WHERE id=?", (None, item.id))
+        wide = db.execute("SELECT * FROM work_items WHERE id = ?", (item.id,)).fetchone()
+        expected = WorkItemStore._row_to_work_item(wide)
+
+    assert await stores.first.get_work_item(item.id) == expected == item
+    await stores.first._refresh_snapshot_cache()
+    assert stores.first.snapshot()["work_items"] == [expected.to_dict()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "depends_on", "required_capabilities", "tags", "metadata",
+    "steps", "verification", "schedule",
+])
+@pytest.mark.parametrize("raw", ["{broken", "[] trailing"])
+async def test_public_work_item_projection_preserves_malformed_json_errors(
+    stores: _Harness, field: str, raw: str,
+) -> None:
+    item = await stores.first.create_work_item(id="invalid-public", title="Invalid public JSON")
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute(f"UPDATE work_items SET {field}=? WHERE id=?", (raw, item.id))
+        wide = db.execute("SELECT * FROM work_items WHERE id = ?", (item.id,)).fetchone()
+        with pytest.raises(json.JSONDecodeError) as oracle:
+            WorkItemStore._row_to_work_item(wide)
+
+    with pytest.raises(json.JSONDecodeError) as point:
+        await stores.first.get_work_item(item.id)
+    with pytest.raises(json.JSONDecodeError) as snapshot:
+        await stores.first._refresh_snapshot_cache()
+
+    for error in (point.value, snapshot.value):
+        assert (error.msg, error.doc, error.pos) == (oracle.value.msg, oracle.value.doc, oracle.value.pos)
+
+
+@pytest.mark.asyncio
+async def test_public_work_item_projection_reads_second_store_commits_after_prior_reads(
+    stores: _Harness,
+) -> None:
+    item = await stores.first.create_work_item(
+        title="Before", project_id="before-project", metadata={"version": 1},
+    )
+    assert await stores.first.get_work_item(item.id) == item
+    await stores.first._refresh_snapshot_cache()
+    assert stores.first.snapshot()["work_items"] == [item.to_dict()]
+
+    changed = await stores.second.update_work_item(
+        item.id, title="After \u03bb", project_id="after-project",
+        metadata={"version": 2, "text": "\u96ea"}, verification={"accepted": True},
+    )
+    assert changed is not None and changed != item
+    fresh = await stores.first.get_work_item(item.id)
+    await stores.first._refresh_snapshot_cache()
+
+    assert fresh == changed
+    assert stores.first.snapshot()["work_items"] == [changed.to_dict()]
+    with sqlite3.connect(stores.path) as db:
+        db.row_factory = sqlite3.Row
+        wide = db.execute("SELECT * FROM work_items WHERE id = ?", (item.id,)).fetchone()
+        assert fresh == WorkItemStore._row_to_work_item(wide)
+
+
+@pytest.mark.asyncio
+async def test_public_work_item_projection_keeps_real_owned_control_and_proof_reads(
+    stores: _Harness,
+    selected_columns: list[tuple[str, tuple[Any, ...], tuple[str, ...]]],
+) -> None:
+    parent, children = await _legacy_plan(stores, children_count=2, bookings=True)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    assert snapshot.control.mode == "active" and len(snapshot.control.rows) == 2
+    permit = None
+    for phase in ("start", "submit", "review", "reopen"):
+        previous = snapshot
+        row = previous.control.rows[0]
+        expected_refs = [
+            [kind, digest] for kind, digest in (
+                ("permit", row.permit), ("submission", row.submission), ("review", row.reviewed_result),
+            ) if digest is not None
+        ]
+        selected_columns.clear()
+        if phase == "start":
+            result, _ = await _apply(
+                stores, snapshot, 0, steps.StartOwnedStepCommand(execution_nonce="public-projection"),
+                actor="agent-a", role="executor",
+            )
+            assert result.disposition == "new"
+            permit = result.permit
+            assert permit is not None
+            snapshot = result.snapshot
+        elif phase == "submit":
+            assert permit is not None
+            result, _ = await _apply(
+                stores, snapshot, 0, _submission(stores, permit),
+                actor="agent-a", role="executor", store=stores.second,
+            )
+            snapshot = result.snapshot
+        elif phase == "review":
+            assert permit is not None
+            result, _ = await _apply(
+                stores, snapshot, 0, _review(stores, permit, row.submission),
+                actor="verifier", role="verifier",
+            )
+            snapshot = result.snapshot
+        else:
+            snapshot = await stores.second.get_owned_steps(parent.id)
+            assert snapshot == previous
+        for protected_sql in (
+            "SELECT * FROM work_items WHERE id = ?",
+            "SELECT * FROM work_items WHERE parent_id=? ORDER BY id",
+        ):
+            protected = [
+                columns for sql, parameters, columns in selected_columns
+                if sql == protected_sql and parameters == (parent.id,)
+            ]
+            assert protected and all("steps_control" in columns for columns in protected)
+            assert all(set(columns) == set(parent.to_dict()) | {"steps_control"} for columns in protected)
+        assert any(
+            "FROM owned_steps_retired_children AS retired " in sql and parameters == (parent.id,)
+            and "observation_control" in columns
+            for sql, parameters, columns in selected_columns
+        )
+        assert any(
+            sql == "SELECT * FROM resource_requirements WHERE work_item_id = ? ORDER BY id"
+            and parameters == (parent.id,)
+            for sql, parameters, _ in selected_columns
+        )
+        evidence = [
+            (json.loads(parameters[0]), parameters[1:]) for sql, parameters, _ in selected_columns
+            if "FROM json_each(?) AS wanted CROSS JOIN owned_steps_journal AS journal " in sql
+        ]
+        assert evidence == (
+            [(expected_refs, (parent.id, previous.control.incarnation))] if expected_refs else []
+        )
+
+    public_parent = await stores.second.get_work_item(parent.id)
+    child = await stores.second.get_work_item(children[0].id)
+    assert public_parent.steps == json.loads(snapshot.control.authorized_steps_json)
+    assert child.status == "done" and child.actual_tokens == 7 and child.verification["accepted"] is True
+    assert snapshot.control.rows[0].permit_state == "terminal"
+    assert snapshot.control.rows[0].review_accepted is True
+    assert (await stores.second.get_booking(permit.booking_id)).total_tokens_consumed == 7
+    with sqlite3.connect(stores.path) as db:
+        raw_control = db.execute(
+            "SELECT steps_control FROM work_items WHERE id=?", (parent.id,),
+        ).fetchone()[0]
+        assert steps.parse_owned_control(raw_control) == snapshot.control
+        assert dict(db.execute("SELECT kind,COUNT(*) FROM owned_steps_journal GROUP BY kind")) == {
+            "operation": 3, "permit": 1, "submission": 1, "review": 1,
+        }
 
 
 @pytest.mark.asyncio
@@ -2484,7 +2870,10 @@ async def test_owned_materialization_counter_scopes_concurrent_reads_and_excepti
 
 
 @pytest.mark.asyncio
-async def test_1000_admitted_rows_reach_real_storage_verdicts_with_bounded_terminal_footprint(stores: _Harness) -> None:
+async def test_1000_admitted_rows_reach_real_storage_verdicts_with_bounded_terminal_footprint(
+    stores: _Harness, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=__name__)
     started_at = time.perf_counter()
     parent, children = await _legacy_plan(stores, children_count=1000)
     snapshot = await stores.first.get_owned_steps(parent.id)
@@ -2558,6 +2947,20 @@ async def test_1000_admitted_rows_reach_real_storage_verdicts_with_bounded_termi
         "largest journal record=%d bytes, rows=1000, transitions=3000, elapsed=%.3fs",
         control_size, final_size, largest, time.perf_counter() - started_at,
     )
+    messages = [record.getMessage() for record in caplog.records if record.name == __name__]
+    prefixes = (
+        "M1 capacity admission: 1000 rows committed/read",
+        "M1 first start committed",
+        "M1 first submission committed",
+        "M1 first verdict committed",
+        "M1 capacity proof: 250/1000",
+        "M1 capacity proof: 500/1000",
+        "M1 capacity proof: 750/1000",
+        "M1 capacity proof: 1000/1000",
+        "M1 capacity proof complete:",
+    )
+    assert len(messages) == len(prefixes)
+    assert all(message.startswith(prefix) for message, prefix in zip(messages, prefixes))
 
 
 @pytest.mark.asyncio
