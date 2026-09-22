@@ -291,6 +291,403 @@ async def store(tmp_path):
         await value.stop()
 
 
+@pytest.mark.asyncio
+async def test_finalizer_binds_actual_reader_idempotently_and_rejects_replacement(
+    retention_stores: Any,
+) -> None:
+    stores = retention_stores
+    service = CrewSessionService(work_item_store=stores.work, chat_thread_store=stores.chat)
+    content = _FakeContent()
+    reference = content.put(b"Exact receipt bytes without an executor.")
+
+    def construct(reader: Any) -> CrewSessionFinalizer:
+        return CrewSessionFinalizer(
+            work_item_store=stores.work, crew_session_service=service,
+            chat_thread_store=stores.chat, artifact_store=stores.artifacts,
+            attachment_store=reader, agent_registry=_Registry(),
+            verifier=_Verifier(), synthesizer=SimpleNamespace(),
+        )
+
+    first = construct(content)
+    assert await stores.work.read_owned_steps_content(reference) == b"Exact receipt bytes without an executor."
+    assert construct(content) is not first
+    with pytest.raises(steps.OwnedStepsError, match="owned_steps_content_already_bound"):
+        construct(_FakeContent())
+    with pytest.raises(steps.OwnedStepsError, match="owned_steps_content_unavailable"):
+        construct(None)
+    assert await stores.work.read_owned_steps_content(reference) == b"Exact receipt bytes without an executor."
+
+
+def _neutral_finalizer(case: Any, root: Path, *, failure: str, corrected: bool = False) -> Any:
+    from tests import test_ad1126_verified_finalization as final
+
+    registry = final._registry_for([case.child]) if failure != "missing" else final._Registry([
+        final._Agent(case.child.assigned_to),
+    ])
+    replies = [] if failure == "missing" else [
+        RuntimeError("known verifier failed") if failure == "error" else final._text("not-json"),
+    ]
+    if corrected:
+        replies.insert(0, final._verdict(False, critique="Supply corrected evidence."))
+    judge, synth = final._ScriptedLLM(replies), final._ScriptedLLM([])
+    correction = final._StaticAgenticExecutor(
+        final_text="Exact corrected but unassessed evidence.", total_tokens=5, trace_ref=None,
+    )
+    runtime = final._runtime(case.stores, root, case.service)
+    trust = TrustNetwork()
+    verifier = final._make_verifier(
+        llm=judge, stores=case.stores, registry=registry, executor=correction,
+        runtime=runtime, trust=trust,
+    )
+    finalizer = final._make_finalizer(
+        stores=case.stores, service=case.service, registry=registry, verifier=verifier,
+        synthesizer=final._make_synthesizer(llm=synth, stores=case.stores, runtime=runtime, trust=trust),
+        trust_recorder=CrewSessionTrustRecorder(outbox=case.stores.work, trust_network=trust),
+    )
+    return SimpleNamespace(finalizer=finalizer, judge=judge, synth=synth, correction=correction, trust=trust)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("producer", ["resume", "claimed"])
+@pytest.mark.parametrize("failure", ["missing", "error", "malformed"])
+async def test_neutral_checkpoint_both_producers_preserve_submission_without_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, producer: str, failure: str,
+) -> None:
+    from tests.test_ad1244_verdict_criteria import _executed_session
+
+    async with _executed_session(tmp_path) as case:
+        rig = _neutral_finalizer(case, tmp_path, failure=failure)
+        store = case.stores.work
+        original = await store.get_owned_steps(case.parent.id)
+        original_child = await store.get_work_item(case.child.id)
+        checkpoint = store.compare_and_set_work_item_verification
+        committed: list[steps.OwnedStoreBinding] = []
+        claimed_checkpoint = asyncio.CancelledError("alternate producer checkpoint committed")
+
+        async def observe(item_id: str, verification: dict[str, Any], **kwargs: Any) -> Any:
+            binding = kwargs["owned_binding"]
+            assert type(binding.unassessed_checkpoint) is steps.UnassessedStepCheckpoint
+            assert binding.reviewed_result is None
+            grant = await case.service.authorize_owned_store_write(binding)
+            assert grant.role == "owner" and grant.actor_id == original.control.facilitator_id
+            result = await checkpoint(item_id, verification, **kwargs)
+            after = await store.get_owned_steps(case.parent.id)
+            assert after.control.observation_revision == binding.snapshot.control.observation_revision + 1
+            committed.append(binding)
+            if producer == "claimed":
+                raise claimed_checkpoint
+            return result
+
+        monkeypatch.setattr(store, "compare_and_set_work_item_verification", observe)
+        if producer == "resume":
+            result = await rig.finalizer.finalize(case.parent.id, case.results)
+        else:
+            current = await case.service.get_session(case.parent.id)
+            recovery = await case.service.get_recovery(case.parent.id)
+            claimed = await case.service.transition_session(
+                case.parent.id, "verifying", expected_revision=current.revision,
+                expected_recovery=recovery,
+                recovery=recovery.model_copy(update={"phase": "verifying_children"}),
+            )
+            # Exercise the alternate producer through its actual CAS, then let
+            # the durable recovery consumer finish this recovery-bound session.
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await rig.finalizer._finalize_claimed(case.parent.id, claimed, case.results)
+            assert caught.value is claimed_checkpoint
+            result = await rig.finalizer.resume(case.parent.id)
+        assert len(committed) == 1
+        assert not result.completed
+        assert result.state == ("blocked_needs_captain" if failure == "missing" else "failed")
+        child = await store.get_work_item(case.child.id)
+        snapshot = await store.get_owned_steps(case.parent.id)
+        before, after = original.control.rows[0], snapshot.control.rows[0]
+        assert after.permit == before.permit and after.submission == before.submission
+        assert after.permit_state == before.permit_state == "submitted"
+        assert after.todo_json == before.todo_json and after.digest == before.digest
+        assert after.revision == before.revision + 1 and after.source_digest != before.source_digest
+        assert after.reviewed_result is after.review_accepted is None
+        assert snapshot.control.authorized_steps_json == original.control.authorized_steps_json
+        assert (snapshot.control.plan_digest, snapshot.control.layout_revision, after.assignment_epoch) == (
+            original.control.plan_digest, original.control.layout_revision, before.assignment_epoch,
+        )
+        assert child.actual_tokens == original_child.actual_tokens
+        assert child.metadata["crew_execution"] == original_child.metadata["crew_execution"]
+        assert "crew_convergence" not in child.metadata
+        binding = committed[0].unassessed_checkpoint
+        assert await store.read_owned_steps_content(binding.verification) == steps.owned_json_bytes(child.verification)
+        assert child.metadata["crew_verification_recovery"] == {
+            "version": 1, "convergence_ref": binding.convergence.content_hash,
+        }
+        counts = (len(rig.judge.requests), len(rig.correction.calls), len(case.stores.events.events))
+        await rig.finalizer.resume(case.parent.id)
+        await rig.finalizer.resume(case.parent.id)
+        assert len(committed) == 1 and counts == (
+            len(rig.judge.requests), len(rig.correction.calls), len(case.stores.events.events),
+        )
+        assert rig.trust.raw_scores() == {} and rig.trust.get_recent_events() == []
+        assert await store.list_pending_crew_trust_outcomes(limit=20) == ()
+        assert not rig.synth.requests and not rig.correction.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("corrected", [False, True])
+async def test_neutral_checkpoint_restart_lost_ack_preserves_exact_evidence_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, when: str, cancel: bool, corrected: bool,
+) -> None:
+    from tests import test_ad1125_room_bound_execution as execution
+    from tests.test_ad1244_verdict_criteria import _executed_session
+
+    error = asyncio.CancelledError("neutral checkpoint sentinel") if cancel else RuntimeError("neutral lost ack")
+    fired = 0
+    async with _executed_session(tmp_path) as case:
+        rig = _neutral_finalizer(case, tmp_path, failure="error", corrected=corrected)
+        store = case.stores.work
+        checkpoint = store.compare_and_set_work_item_verification
+        initial = await store.get_work_item(case.child.id)
+        original = await store.get_owned_steps(case.parent.id)
+
+        async def interrupt(item_id: str, verification: dict[str, Any], **kwargs: Any) -> Any:
+            nonlocal fired
+            assert fired == 0 and kwargs["owned_binding"].unassessed_checkpoint is not None
+            fired += 1
+            if when == "after":
+                persisted = await checkpoint(item_id, verification, **kwargs)
+                assert persisted.verification == verification
+            raise error
+
+        monkeypatch.setattr(store, "compare_and_set_work_item_verification", interrupt)
+        with pytest.raises(type(error)) as caught:
+            await rig.finalizer.finalize(case.parent.id, case.results)
+        assert caught.value is error and fired == 1
+        child = await store.get_work_item(case.child.id)
+        assert child.actual_tokens == initial.actual_tokens + (5 if corrected and when == "after" else 0)
+        assert bool(child.verification) is (when == "after")
+        if when == "before":
+            assert child == initial
+        evidence = steps.owned_json_bytes(child.to_dict())
+        refs = {}
+        if when == "after":
+            ref = child.metadata["crew_verification_recovery"]["convergence_ref"]
+            refs[ref] = await case.stores.attachments.read(ref)
+            document = json.loads(refs[ref])
+            assert document["outcome"]["result"]["output"] == (
+                "Exact corrected but unassessed evidence." if corrected else case.results[0].output
+            )
+            assert [item["verdict"]["status"] for item in document["outcome"]["history"]] == (
+                ["refuted", "error"] if corrected else ["error"]
+            )
+        parent_id, child_id = case.parent.id, case.child.id
+        assert rig.trust.raw_scores() == {} and not rig.synth.requests
+        assert len(rig.correction.calls) == int(corrected)
+
+    generator = execution.stores.__wrapped__(tmp_path)
+    stores = await generator.__anext__()
+    try:
+        service = CrewSessionService(work_item_store=stores.work, chat_thread_store=stores.chat)
+        restored = await stores.work.get_work_item(child_id)
+        restarted = SimpleNamespace(stores=stores, service=service, child=restored)
+        rig = _neutral_finalizer(restarted, tmp_path, failure="error", corrected=corrected)
+        if when == "after":
+            rig.judge.responses.clear()
+        calls = 0
+        checkpoint = stores.work.compare_and_set_work_item_verification
+
+        async def count_checkpoint(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return await checkpoint(*args, **kwargs)
+
+        monkeypatch.setattr(stores.work, "compare_and_set_work_item_verification", count_checkpoint)
+        result = await rig.finalizer.resume(parent_id)
+        assert not result.completed and result.state == "failed"
+        current = await stores.work.get_work_item(child_id)
+        assert current.actual_tokens == initial.actual_tokens + (5 if corrected else 0)
+        if when == "after":
+            assert steps.owned_json_bytes(current.to_dict()) == evidence
+            assert not rig.judge.requests and not rig.correction.calls and calls == 0
+        else:
+            # The real correction port already persisted its attempt before
+            # the neutral CAS; restart consumes it rather than rerunning it.
+            assert calls == 1 and not rig.correction.calls
+            assert len(rig.judge.requests) == (2 if corrected else 1)
+        for reference, content in refs.items():
+            assert await stores.attachments.read(reference) == content
+        snapshot = await stores.work.get_owned_steps(parent_id)
+        assert snapshot.control.rows[0].submission == original.control.rows[0].submission
+        assert snapshot.control.rows[0].reviewed_result is None
+        assert snapshot.control.rows[0].todo_json == original.control.rows[0].todo_json
+        counts = (calls, len(rig.judge.requests), len(rig.correction.calls), len(stores.events.events))
+        await rig.finalizer.resume(parent_id)
+        await rig.finalizer.resume(parent_id)
+        assert counts == (calls, len(rig.judge.requests), len(rig.correction.calls), len(stores.events.events))
+        assert fired == 1 and rig.trust.raw_scores() == {} and not rig.synth.requests
+    finally:
+        await generator.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [
+    "authority", "actor", "submission", "permit", "nonce", "verification_hash",
+    "verification_size", "convergence_scope", "execution_output", "history",
+    "wrong_delta", "extra_metadata", "stale_source", "token_cas", "both", "neither",
+    "wrong_operation", "accepted", "refuted", "assessed_empty_reviewer", "malformed_empty_reviewer",
+])
+async def test_neutral_checkpoint_rejects_forgery_and_races_without_row_event_or_token_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    from tests.test_ad1244_verdict_criteria import _executed_session
+
+    async with _executed_session(tmp_path) as case:
+        rig = _neutral_finalizer(case, tmp_path, failure="error")
+        store = case.stores.work
+        checkpoint = store.compare_and_set_work_item_verification
+        captured: list[Any] = []
+        sentinel = asyncio.CancelledError("neutral admission captured")
+
+        async def capture(*args: Any, **kwargs: Any) -> Any:
+            captured.append((args, kwargs))
+            raise sentinel
+
+        monkeypatch.setattr(store, "compare_and_set_work_item_verification", capture)
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await rig.finalizer.finalize(case.parent.id, case.results)
+        assert caught.value is sentinel and len(captured) == 1
+        (item_id, verification), kwargs = captured[0]
+        binding = kwargs["owned_binding"]
+        neutral = binding.unassessed_checkpoint
+        payload = {
+            "work_item_id": item_id, "verification": verification,
+            "metadata_patch": kwargs["metadata_patch"],
+            "actual_tokens_delta": kwargs["actual_tokens_delta"],
+        }
+        if fault in {"stale_source", "token_cas"}:
+            patch = {"competing_source": "preserve"} if fault == "stale_source" else {}
+            delta = int(fault == "token_cas")
+            race = case.service.owned_store_binding(
+                case.service, await store.get_owned_steps(case.parent.id),
+                operation="metadata", step_id=binding.step_id,
+                payload={"work_item_id": item_id, "patch": patch, "new_status": None, "actual_tokens_delta": delta},
+            )
+            await store.merge_work_item_metadata(
+                item_id, patch, actual_tokens_delta=delta, owned_binding=race,
+                expected=case.child.metadata, expected_status=case.child.status,
+            )
+            if fault == "token_cas":
+                binding = case.service.owned_store_binding(
+                    rig.finalizer, await store.get_owned_steps(case.parent.id),
+                    operation="verification", payload=payload, step_id=binding.step_id,
+                    unassessed_checkpoint=neutral,
+                )
+        elif fault == "authority":
+            binding = replace(binding, authority=steps.OwnedStepsAuthority(object()))
+        elif fault == "actor":
+            binding = case.service.owned_store_binding(
+                rig.finalizer, binding.snapshot, operation="verification", payload=payload,
+                actor_id="invented-owner", step_id=binding.step_id, unassessed_checkpoint=neutral,
+            )
+        elif fault == "submission":
+            neutral = neutral.model_copy(update={"submission_digest": "0" * 64})
+        elif fault in {"permit", "nonce"}:
+            permit = neutral.permit.model_copy(update={
+                "assignee_id" if fault == "permit" else "execution_nonce": "different-identity",
+            })
+            neutral = neutral.model_copy(update={"permit": permit})
+        elif fault in {"verification_hash", "verification_size"}:
+            reference = neutral.verification.model_copy(update=(
+                {"content_hash": "0" * 64} if fault == "verification_hash" else
+                {"size_bytes": neutral.verification.size_bytes + 1}
+            ))
+            neutral = neutral.model_copy(update={"verification": reference})
+        elif fault in {
+            "convergence_scope", "execution_output", "history", "accepted", "refuted",
+            "assessed_empty_reviewer", "malformed_empty_reviewer",
+        }:
+            convergence = json.loads(await store.read_owned_steps_content(neutral.convergence))
+            document = deepcopy(verification)
+            if fault == "convergence_scope":
+                convergence["thread_id"] = "other-room"
+            elif fault == "execution_output":
+                convergence["execution_output_ref"] = "0" * 64
+            elif fault == "history":
+                convergence["outcome"]["history"][0]["result_text"] = "forged original output"
+            else:
+                accepted = fault in {"accepted", "assessed_empty_reviewer"}
+                status = "malformed" if fault == "malformed_empty_reviewer" else ("accepted" if accepted else "refuted")
+                document.update(
+                    accepted=accepted, status="failed" if status == "malformed" else ("converged" if accepted else "unverified"),
+                    failure_code="verification_defect" if status == "malformed" else (None if accepted else "convergence_exhausted"),
+                )
+                document["rounds"][-1]["verdict"].update(
+                    status=status, accepted=accepted,
+                    failure_code="verification_defect" if status == "malformed" else None,
+                    verifier_agent_id="" if "empty_reviewer" in fault else "verifier-1",
+                )
+                for key in ("accepted", "status", "failure_code"):
+                    convergence["outcome"][key] = document[key]
+                convergence["outcome"]["history"][-1]["verdict"] = document["rounds"][-1]["verdict"]
+
+            async def write(document: dict[str, Any]) -> steps.OwnedContentReference:
+                raw = steps.owned_json_bytes(document)
+                reference = steps.OwnedContentReference(
+                    content_hash=steps.owned_digest(raw), size_bytes=len(raw), mime="application/json",
+                )
+                await case.stores.attachments.write(reference.content_hash, raw, reference.mime, origin="agent_artifact")
+                return reference
+
+            neutral = neutral.model_copy(update={
+                "verification": await write(document), "convergence": await write(convergence),
+            })
+            verification = document
+            payload["verification"] = document
+            payload["metadata_patch"] = {"crew_verification_recovery": {
+                "version": 1, "convergence_ref": neutral.convergence.content_hash,
+            }}
+            kwargs["metadata_patch"] = payload["metadata_patch"]
+        elif fault in {"wrong_delta", "extra_metadata"}:
+            if fault == "wrong_delta":
+                payload["actual_tokens_delta"] = kwargs["actual_tokens_delta"] = 1
+            else:
+                payload["metadata_patch"] = kwargs["metadata_patch"] = {**payload["metadata_patch"], "arbitrary": True}
+        elif fault == "both":
+            binding = replace(binding, reviewed_result=steps.ReviewedStepResult(
+                submission_digest=neutral.submission_digest, permit=neutral.permit,
+                reviewed_result=neutral.convergence, verification=neutral.verification,
+                reviewer_id="verifier-1", review_attempt_id="review-attempt", accepted=False,
+            ))
+        elif fault == "neither":
+            neutral = None
+        elif fault == "wrong_operation":
+            with pytest.raises(steps.OwnedStepsError, match="review_conflict"):
+                case.service.owned_store_binding(
+                    rig.finalizer, binding.snapshot, operation="metadata", payload=payload,
+                    step_id=binding.step_id, unassessed_checkpoint=neutral,
+                )
+            binding = replace(binding, operation="metadata")
+        binding = replace(binding, unassessed_checkpoint=neutral)
+        if fault in {"wrong_delta", "extra_metadata", "accepted", "refuted", "assessed_empty_reviewer",
+                     "malformed_empty_reviewer", "convergence_scope", "execution_output", "history"}:
+            binding = case.service.owned_store_binding(
+                rig.finalizer, binding.snapshot, operation="verification", payload=payload,
+                step_id=binding.step_id, unassessed_checkpoint=neutral,
+            )
+        kwargs["owned_binding"] = binding
+        before = steps.owned_json_bytes((await store.get_work_item(item_id)).to_dict())
+        raw = await store.read_owned_steps_raw_identity(case.parent.id)
+        events = deepcopy(case.stores.events.events)
+        with pytest.raises(
+            FileNotFoundError if fault == "verification_hash" else ValueError,
+            match="work_item_verification_conflict" if fault == "token_cas" else None,
+        ):
+            await checkpoint(item_id, verification, **kwargs)
+        assert steps.owned_json_bytes((await store.get_work_item(item_id)).to_dict()) == before
+        assert await store.read_owned_steps_raw_identity(case.parent.id) == raw
+        assert case.stores.events.events == events
+        assert rig.trust.raw_scores() == {} and not rig.correction.calls and not rig.synth.requests
+        assert len(captured) == 1
+
+
 async def _plan(store: WorkItemStore, *, manual: bool = False) -> tuple[Any, tuple[Any, ...]]:
     parent = await store.create_work_item(
         id="legacy-parent", title="Parent", status="in_progress", assigned_to="crew_orchestrator",

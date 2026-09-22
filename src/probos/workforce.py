@@ -2478,6 +2478,13 @@ class WorkItemStore(EventEmitterMixin):
             return None
         if type(binding) is not owned_steps.OwnedStoreBinding or binding.operation != operation:
             raise owned_steps.OwnedStepsError("owned_steps_write_reserved", parent_id=parent_id)
+        if operation == "verification":
+            if binding.step_id is None or (
+                (binding.reviewed_result is None) == (binding.unassessed_checkpoint is None)
+            ):
+                raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=parent_id)
+        elif binding.unassessed_checkpoint is not None:
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=parent_id)
         actual_digest = owned_steps.owned_digest(owned_steps.owned_json_bytes(payload))
         if binding.request_digest != actual_digest:
             raise owned_steps.OwnedStepsError("owned_steps_owner_binding_conflict", parent_id=parent_id)
@@ -2540,13 +2547,85 @@ class WorkItemStore(EventEmitterMixin):
             row = next((row for row in live.rows if row.step_id == binding.step_id), None)
             if old is None or row is None or old != row or row.child is None or row.child.child_id != work_item_id:
                 raise owned_steps.OwnedStepsError("owned_steps_row_conflict", parent_id=parent_id)
-            if operation == "verification" and (
+            if operation == "verification" and binding.unassessed_checkpoint is not None:
+                await self._validate_unassessed_store_write(binding, current, row, grant, payload)
+            elif operation == "verification" and (
                 row.permit_state != "submitted" or row.reviewed_result is not None
                 or binding.reviewed_result is None or row.submission != binding.reviewed_result.submission_digest
                 or grant.actor_id != binding.reviewed_result.reviewer_id or grant.actor_id == row.assignee_id
             ):
                 raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=parent_id)
         return _OwnedStoreWrite(binding, current, grant)
+
+    async def _validate_unassessed_store_write(
+        self, binding: owned_steps.OwnedStoreBinding, snapshot: owned_steps.OwnedStepsSnapshot,
+        row: owned_steps.OwnedStepRecord, grant: owned_steps.OwnedStepsGrant, payload: dict[str, Any],
+    ) -> None:
+        control = snapshot.control
+        checkpoint = owned_steps.UnassessedStepCheckpoint.model_validate_json(
+            binding.unassessed_checkpoint.model_dump_json()
+        )
+        if (
+            control.owner_kind != "canonical" or grant.role != "owner"
+            or grant.actor_id != control.facilitator_id
+            or row.permit_state != "submitted" or row.reviewed_result is not None
+            or row.review_accepted is not None or row.permit is None
+            or row.submission != checkpoint.submission_digest
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=control.parent_id)
+        permit = await self._read_owned_evidence(control.parent_id, control.incarnation, "permit", row.permit)
+        submission = await self._read_owned_evidence(control.parent_id, control.incarnation, "submission", row.submission)
+        if (
+            not isinstance(permit, owned_steps.OwnedStepExecutionPermit)
+            or not isinstance(submission, (owned_steps.OwnedStepSubmission, owned_steps.OwnedExecutionSubmission))
+            or checkpoint.permit != permit or submission.permit != permit
+            or permit.parent_id != control.parent_id or permit.incarnation != control.incarnation
+            or permit.plan_digest != control.plan_digest or permit.plan_revision != control.plan_revision
+            or permit.step_id != row.step_id or permit.child_id != row.child.child_id
+            or permit.assignee_id != row.assignee_id or permit.assignment_epoch != row.assignment_epoch
+            or permit.booking_id != row.booking_id or submission.output is None
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=control.parent_id)
+        verification = owned_steps.owned_json_loads(
+            (await self.read_owned_steps_content(checkpoint.verification)).decode("utf-8")
+        )
+        convergence = owned_steps.owned_json_loads(
+            (await self.read_owned_steps_content(checkpoint.convergence)).decode("utf-8")
+        )
+        output = await self.read_owned_steps_content(submission.output)
+        child = await self.get_work_item(row.child.child_id)
+        execution = owned_steps.owned_json_loads(submission.execution_json)
+        if (
+            child is None or child.verification != {}
+            or "crew_verification_recovery" in child.metadata
+            or not _json_values_exactly_equal(verification, payload["verification"])
+            or not _json_values_exactly_equal(execution, child.metadata.get("crew_execution"))
+            or not _json_values_exactly_equal(
+                submission.output.model_dump(mode="json"), child.metadata.get("crew_execution_output"),
+            )
+            or convergence["parent_id"] != control.parent_id or convergence["thread_id"] != control.thread_id
+            or convergence["work_item_id"] != child.id or convergence["producer_agent_id"] != child.assigned_to
+            or convergence["execution_output_ref"] != submission.output.content_hash
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=control.parent_id)
+        result = convergence["outcome"]["result"]
+        history = convergence["outcome"]["history"]
+        first = history[0]
+        if (
+            first["result_text"].encode("utf-8") != output
+            or first["result_sha256"] != submission.output.content_hash
+            or first["tool_trace_ref"] != execution["tool_trace_ref"]
+            or not _json_values_exactly_equal(first["artifact_refs"], execution["artifact_refs"])
+            or result["work_item_id"] != child.id or result["spec_id"] != row.child.spec_id
+            or result["agent_id"] != child.assigned_to
+            or result["status"] != execution["status"] or result["stopped_reason"] != execution["stopped_reason"]
+            or result["started_at"] != execution["started_at"] or result["finished_at"] != execution["finished_at"]
+            or not _json_values_exactly_equal(result["blocked_dependency_ids"], execution["blocked_dependency_ids"])
+            or result["actual_tokens"] != (
+                execution["tokens_used"] if len(history) == 1 else history[-1]["correction_tokens"]
+            )
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=control.parent_id)
 
     async def _finish_owned_store_write(self, context: _OwnedStoreWrite | None) -> None:
         if context is None:
@@ -2602,7 +2681,7 @@ class WorkItemStore(EventEmitterMixin):
             updates: dict[str, Any] = {"source_digest": await self._owned_child_source(
                 child, protected_metadata_keys=tuple(child.metadata) if control.owner_kind == "canonical" else row.plan_metadata_keys,
             )}
-            if binding.operation == "verification":
+            if binding.operation == "verification" and binding.reviewed_result is not None:
                 review = binding.reviewed_result
                 for reference in (review.reviewed_result, review.verification):
                     await self.read_owned_steps_content(reference)
@@ -8530,47 +8609,40 @@ class WorkItemStore(EventEmitterMixin):
 
             old_status = item.status
             now = time.time()
-            try:
-                if status_changed:
-                    if actual_tokens_delta:
-                        await self._db.execute(
-                            "UPDATE work_items SET metadata = ?, status = ?, "
-                            "actual_tokens = actual_tokens + ?, updated_at = ? "
-                            "WHERE id = ?",
-                            (
-                                serialized,
-                                new_status,
-                                actual_tokens_delta,
-                                now,
-                                work_item_id,
-                            ),
-                        )
-                    else:
-                        await self._db.execute(
-                            "UPDATE work_items SET metadata = ?, status = ?, updated_at = ? "
-                            "WHERE id = ?",
-                            (serialized, new_status, now, work_item_id),
-                        )
+            if status_changed:
+                if actual_tokens_delta:
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, status = ?, "
+                        "actual_tokens = actual_tokens + ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (
+                            serialized,
+                            new_status,
+                            actual_tokens_delta,
+                            now,
+                            work_item_id,
+                        ),
+                    )
                 else:
-                    if actual_tokens_delta:
-                        await self._db.execute(
-                            "UPDATE work_items SET metadata = ?, "
-                            "actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
-                            (serialized, actual_tokens_delta, now, work_item_id),
-                        )
-                    else:
-                        await self._db.execute(
-                            "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
-                            (serialized, now, work_item_id),
-                        )
-                await _insert_crew_session_delivery(self._db, delivery_payload)
-                await self._finish_owned_store_write(owned_write)
-            except BaseException:
-                try:
-                    await self._db.execute("ROLLBACK")
-                except Exception:
-                    pass
-                raise
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (serialized, new_status, now, work_item_id),
+                    )
+            else:
+                if actual_tokens_delta:
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, "
+                        "actual_tokens = actual_tokens + ?, updated_at = ? WHERE id = ?",
+                        (serialized, actual_tokens_delta, now, work_item_id),
+                    )
+                else:
+                    await self._db.execute(
+                        "UPDATE work_items SET metadata = ?, updated_at = ? WHERE id = ?",
+                        (serialized, now, work_item_id),
+                    )
+            await _insert_crew_session_delivery(self._db, delivery_payload)
+            await self._finish_owned_store_write(owned_write)
 
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()

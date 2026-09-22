@@ -761,11 +761,16 @@ def test_guard_runs_after_the_deliberate_re_roll_and_before_episodic_store() -> 
         "step_4m_write_claim_guard"
     )
     assert names.index("step_4m_write_claim_guard") < names.index(
+        "step_4o_owned_steps_feedback"
+    ) < names.index(
         "step_5_episodic_store"
     )
 
     escalation = [s.__name__ for s in DmReplyPipeline._escalation_steps(pipeline)]
-    assert escalation[-2:] == ["step_4j_deliberate_parse", "step_4m_write_claim_guard"]
+    # The guard used to be last; owned feedback now preserves refusal text after it.
+    assert escalation[-3:] == [
+        "step_4j_deliberate_parse", "step_4m_write_claim_guard", "step_4o_owned_steps_feedback",
+    ]
     assert escalation.count("step_4m_write_claim_guard") == 1
     assert "step_4n_tool_write_ledger" not in escalation
     assert "step_5_episodic_store" not in escalation

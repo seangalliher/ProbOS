@@ -1885,6 +1885,7 @@ class CrewTaskExecutor:
         owned_lease: owned_steps.OwnedExecutionLease | None = None,
         execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
         execution_permit: owned_steps.OwnedStepExecutionPermit | None = None,
+        validated_token_sources: set[str] | None = None,
     ) -> Any:
         """AD-1155 / DD-1: run the child, and re-invoke it while it is unfinished.
 
@@ -1990,7 +1991,10 @@ class CrewTaskExecutor:
             outcome = next_outcome
             spent += _bounded_spend(getattr(outcome, "total_tokens", 0))
             if self._event_correlation_enabled:
-                token_sources.add(merge_token_sources((outcome.token_source,)))
+                source = merge_token_sources((outcome.token_source,))
+                token_sources.add(source)
+                if validated_token_sources is not None:
+                    validated_token_sources.add(source)
 
             if iteration >= max_outer:
                 break
@@ -2189,6 +2193,8 @@ class CrewTaskExecutor:
         active = await self._store.get_work_item(child.id)
         if active is None:
             raise owned_steps.OwnedStepsError("owned_steps_source_conflict", parent_id=parent_id)
+        validated_token_sources: set[str] = set()
+        outcome_has_provenance = False
         try:
             self._require_eligible(agent.id, expected_agent=agent)
         except CrewWorkerUnavailable:
@@ -2201,7 +2207,9 @@ class CrewTaskExecutor:
                 outcome = await self._run_agentic_with_outer_loop(
                     agent=agent, task_text=task_text, thread_id=thread_id, parent_id=parent_id, child_id=child.id,
                     owned_lease=lease, execution_port=port, execution_permit=permit,
+                    validated_token_sources=validated_token_sources,
                 )
+                outcome_has_provenance = bool(validated_token_sources)
             except owned_steps.OwnedStepsError:
                 raise
             except Exception:
@@ -2247,7 +2255,8 @@ class CrewTaskExecutor:
         usage = (
             owned_steps.owned_json_bytes(build_crew_execution_token_usage(
                 execution=execution, token_source=outcome.token_source,
-            )).decode("utf-8") if self._event_correlation_enabled else None
+            )).decode("utf-8")
+            if self._event_correlation_enabled and outcome_has_provenance else None
         )
         submission = owned_steps.OwnedExecutionSubmission(
             permit=permit, execution_json=owned_steps.owned_json_bytes(execution).decode("utf-8"),
@@ -2490,6 +2499,7 @@ class CrewTaskExecutor:
         task_text = await self._augment_task_text(
             task_text, child=active_child, agent_id=agent.id,
         )
+        validated_token_sources: set[str] = set()
         try:
             outcome = await self._run_agentic_with_outer_loop(
                 agent=agent,
@@ -2497,6 +2507,7 @@ class CrewTaskExecutor:
                 thread_id=thread_id,
                 parent_id=parent_id,
                 child_id=child_id,
+                validated_token_sources=validated_token_sources,
             )
         except Exception:
             logger.warning(
@@ -2546,7 +2557,7 @@ class CrewTaskExecutor:
             artifact_refs=outcome.artifact_refs,
             **(
                 {"token_source": outcome.token_source}
-                if self._event_correlation_enabled else {}
+                if self._event_correlation_enabled and validated_token_sources else {}
             ),
             started_at=started_at,
             finished_at=max(started_at, time.time()),

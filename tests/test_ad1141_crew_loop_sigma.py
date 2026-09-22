@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from probos import work_item_steps as steps
 from probos.cognitive.agentic_dispatch import WorkItemAgenticOutcome
 from probos.cognitive.crew_executor import (
     _BUDGET_NOTE,
@@ -93,10 +94,30 @@ class _RecordingExecutor:
     ``WorkItemAgenticExecutor.run`` from surfaces this AD does not touch.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, binding_store: WorkItemStore | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.binding_store = binding_store
 
     async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+        if self.binding_store is not None:
+            port: steps.OwnedStepsExecutionPort = kwargs["owned_steps_execution_port"]
+            lease = kwargs["owned_steps_execution_lease"]
+            permit = kwargs["owned_steps_execution_permit"]
+            assert port is self.binding_store.get_owned_steps_execution_port()
+            assert port.owns_store(self.binding_store)
+            assert type(lease) is steps.OwnedExecutionLease
+            assert type(permit) is steps.OwnedStepExecutionPermit
+            assert permit.parent_id == lease.snapshot.control.parent_id
+            assert permit.incarnation == lease.snapshot.control.incarnation
+            assert permit.plan_digest == lease.snapshot.control.plan_digest
+            assert permit.plan_revision == lease.snapshot.control.plan_revision
+            assert permit.assignee_id == kwargs["agent_id"]
+            assert kwargs["thread_id"] == lease.snapshot.control.thread_id
+            assert kwargs["extra_context"] == {
+                "_crew_session_id": permit.parent_id,
+                "_crew_work_item_id": permit.child_id,
+            }
+            await port.validate(lease, permit)
         self.calls.append(dict(kwargs))
         return WorkItemAgenticOutcome(
             final_text="done",
@@ -380,22 +401,25 @@ async def test_flag_off_oracle_query_is_called_zero_times(store) -> None:
 
 
 async def test_flag_off_run_kwarg_key_set_is_the_pre_ad1141_set(store) -> None:
-    """Nothing new is threaded into ``WorkItemAgenticExecutor.run``.
+    """Sigma leaves the original dispatch arguments and owner bindings intact.
 
     ``tool_ids`` is assembled inside the dispatch from the runtime, the config
-    and the agent — surfaces this AD does not touch — so proving the crew
-    executor passes exactly the pre-AD-1141 kwargs is what proves ``tool_ids``
-    is byte-identical.
+    and the agent — surfaces this AD does not touch. Owned execution adds only
+    its three typed authority arguments, independently of the Sigma flag.
     """
     parent = await store.create_work_item(title="parent", work_type="work_order")
-    await _child(store, parent_id=parent.id)
-    agentic = _RecordingExecutor()
+    child = await _child(store, parent_id=parent.id)
+    agentic = _RecordingExecutor(binding_store=store)
+    runtime = _runtime()
     ex = _executor(
-        store, _FakeRegistry({"a1": _FakeAgent("a1")}), agentic, enabled=False,
+        store, _FakeRegistry({"a1": _FakeAgent("a1")}), agentic, runtime=runtime, enabled=False,
     )
 
     await ex.run(parent.id)
 
+    assert len(agentic.calls) == 1
+    # The old six-key pin predated owned execution; keep all six and admit
+    # exactly the three bindings validated against the real store during run.
     assert set(agentic.calls[0]) == {
         "agent_id",
         "instructions",
@@ -403,23 +427,46 @@ async def test_flag_off_run_kwarg_key_set_is_the_pre_ad1141_set(store) -> None:
         "runtime",
         "thread_id",
         "extra_context",
+        "owned_steps_execution_port",
+        "owned_steps_execution_lease",
+        "owned_steps_execution_permit",
+    }
+    assert agentic.calls[0]["runtime"] is runtime
+    assert {
+        key: agentic.calls[0][key]
+        for key in ("agent_id", "instructions", "task_text", "runtime", "thread_id", "extra_context")
+    } == {
+        "agent_id": "a1",
+        "instructions": "do the thing",
+        "task_text": child.description,
+        "runtime": runtime,
+        "thread_id": "",
+        "extra_context": {
+            "_crew_session_id": parent.id,
+            "_crew_work_item_id": child.id,
+        },
     }
 
 
 async def test_flag_on_run_kwarg_key_set_is_unchanged(store) -> None:
     parent = await store.create_work_item(title="parent", work_type="work_order")
-    await _child(store, parent_id=parent.id)
-    agentic = _RecordingExecutor()
+    child = await _child(store, parent_id=parent.id)
+    agentic = _RecordingExecutor(binding_store=store)
+    runtime = _runtime()
     ex = _executor(
         store,
         _FakeRegistry({"a1": _FakeAgent("a1")}),
         agentic,
+        runtime=runtime,
         oracle=_RecordingOracle([_result()]),
         enabled=True,
     )
 
     await ex.run(parent.id)
 
+    assert len(agentic.calls) == 1
+    # The same exact authority additions apply with Sigma on, not a looser
+    # subset check or permission to change any original dispatch argument.
     assert set(agentic.calls[0]) == {
         "agent_id",
         "instructions",
@@ -427,6 +474,29 @@ async def test_flag_on_run_kwarg_key_set_is_unchanged(store) -> None:
         "runtime",
         "thread_id",
         "extra_context",
+        "owned_steps_execution_port",
+        "owned_steps_execution_lease",
+        "owned_steps_execution_permit",
+    }
+    commons = "\n".join([
+        _COMMONS_HEADER, "", _COMMONS_DISPOSITION, "",
+        # Preserve the existing provenance/relevance marker in the exact bytes.
+        "- [ship's records] (relevance 0.90) The port coolant loop resonates at 4.2 kHz under load.",
+    ])
+    assert agentic.calls[0]["runtime"] is runtime
+    assert {
+        key: agentic.calls[0][key]
+        for key in ("agent_id", "instructions", "task_text", "runtime", "thread_id", "extra_context")
+    } == {
+        "agent_id": "a1",
+        "instructions": "do the thing",
+        "task_text": f"{child.description}\n\n{commons}",
+        "runtime": runtime,
+        "thread_id": "",
+        "extra_context": {
+            "_crew_session_id": parent.id,
+            "_crew_work_item_id": child.id,
+        },
     }
 
 

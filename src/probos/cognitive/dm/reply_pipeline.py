@@ -221,7 +221,7 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. **22 steps** (BF-796: this said
+        source of truth executed by :meth:`run`. **23 steps** (BF-796: this said
         18 while the tuple returned 20 -- a reader trusts this line when judging
         whether an insertion is in scope, so it is now guarded by a test rather
         than maintained by hand) after AD-934 inserted
@@ -233,12 +233,15 @@ class DmReplyPipeline:
         Captain will actually see, before 5 so the stored episode and the
         divergence check carry the corrected text), and AD-1295 inserted
         ``step_4n_tool_write_ledger`` immediately BEFORE that guard (it is a
-        ledger PRODUCER, so it must run before the only consumer). Ordering is
+        ledger PRODUCER, so it must run before the only consumer). AD-1192 adds
+        ``step_4o_owned_steps_feedback`` after the guard and before episodic
+        storage, so authoritative refusal feedback survives the final rewrite.
+        Ordering is
         invariant (sanity gate before challenge/move parsers, self-check before
         episodic store, deliberate re-roll before episodic store, write-claim
         guard after the re-roll, tool-ledger before the guard, divergence before
         ``mark_reply_emitted``, emotion after divergence) and MUST stay
-        byte-identical apart from those three insertions."""
+        byte-identical apart from those four insertions."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -272,7 +275,7 @@ class DmReplyPipeline:
         the write-claim guard reads the resulting ledger and abstains when no
         channel ran. Relative order is
         preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4k ->
-        4g -> 4l -> 4j -> 4m).
+        4g -> 4l -> 4j -> 4m -> 4o).
 
         Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
         AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
@@ -285,7 +288,8 @@ class DmReplyPipeline:
         ``[CREATE_TASK]``), ``step_4l_extract_todos`` (AD-1081 room Todos),
         ``step_4j_deliberate_parse`` (AD-934 ``[THINK]``/``[DELIBERATE]``
         deep-tier re-roll, flag-gated), ``step_4m_write_claim_guard`` (AD-1305
-        shared disclosure after producers and the final rewrite).
+        shared disclosure after producers and the final rewrite), and
+        ``step_4o_owned_steps_feedback`` (AD-1192 refusal feedback after the guard).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
         games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),

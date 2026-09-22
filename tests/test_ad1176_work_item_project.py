@@ -427,6 +427,7 @@ async def test_fresh_and_migrated_schemas_have_identical_columns(
     conn = sqlite3.connect(legacy_path)
     try:
         conn.execute(_PRE_AD1176_WORK_ITEMS_DDL)
+        original_columns = [row[1] for row in conn.execute("PRAGMA table_info(work_items)")] + ["project_id"]
         conn.commit()
     finally:
         conn.close()
@@ -437,7 +438,19 @@ async def test_fresh_and_migrated_schemas_have_identical_columns(
         await store.stop()
 
     assert _work_item_columns(fresh_path) == _work_item_columns(legacy_path)
-    assert _work_item_columns(fresh_path)[-1] == "project_id"
+    # The old last-column pin predated the private owned-steps control suffix.
+    assert _work_item_columns(fresh_path) == original_columns + ["steps_control"]
+    assert original_columns[-1] == "project_id"
+    for path in (fresh_path, legacy_path):
+        store = _new_store(path)
+        await store.start()
+        try:
+            assert _work_item_columns(path) == original_columns + ["steps_control"]
+            with sqlite3.connect(path) as conn:
+                suffix = conn.execute("PRAGMA table_info(work_items)").fetchall()[-1]
+            assert suffix[1:] == ("steps_control", "TEXT", 0, None, 0)
+        finally:
+            await store.stop()
 
 
 # ---------------------------------------------------------------------------

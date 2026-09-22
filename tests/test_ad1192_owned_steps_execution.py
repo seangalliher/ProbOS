@@ -13,8 +13,9 @@ from typing import Any
 import pytest
 
 from probos import work_item_steps as steps
-from probos.cognitive.agentic_dispatch import WorkItemAgenticOutcome
+from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved, WorkItemAgenticOutcome
 from probos.cognitive.crew_executor import CrewTaskExecutor
+from probos.crew_execution_usage import read_crew_execution_token_usage
 from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.workforce import CrewSessionParentCreate, WorkItemStore
 
@@ -335,6 +336,60 @@ async def test_direct_no_room_run_submits_exact_results_and_restarts_without_rep
     replay = await executor.run(parent.id)
     assert {result.work_item_id: result for result in replay} == {result.work_item_id: result for result in results}
     assert len(worker.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("arrival", ["measured_zero", "exception", "identity_loss"])
+async def test_owned_submission_distinguishes_real_zero_from_synthetic_outcomes(
+    store: WorkItemStore, enabled: bool, arrival: str,
+) -> None:
+    parent, children = await _plan(store)
+
+    class _ZeroWorker(_Worker):
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            outcome = await super().run(**kwargs)
+            if arrival == "exception":
+                raise RuntimeError("execution failed before supplying usage")
+            if arrival == "identity_loss":
+                raise AgenticIdentityUnresolved()
+            assert outcome.total_tokens == 0 and outcome.token_source == "measured"
+            return outcome
+
+    class _Eligibility:
+        def check_eligibility(self, agent_id: str) -> Any:
+            return SimpleNamespace(identity=agent_id)
+
+    worker = _ZeroWorker()
+    results = await _executor(
+        store, worker, eligibility_resolver=_Eligibility(),
+        event_correlation_enabled=enabled,
+    ).run(parent.id)
+
+    assert len(results) == len(worker.calls) == len(children) == 2
+    snapshot = await store.get_owned_steps(parent.id)
+    for child, result in zip(children, results):
+        item = await store.get_work_item(child.id)
+        assert item.actual_tokens == result.actual_tokens == 0
+        assert result.stopped_reason == {
+            "measured_zero": "complete", "exception": "execution_exception",
+            "identity_loss": "crew_worker_identity_lost",
+        }[arrival]
+        assert item.status == result.status == ("done" if arrival == "measured_zero" else "failed")
+        usage = read_crew_execution_token_usage(item.metadata)
+        row = next(row for row in snapshot.control.rows if row.child.child_id == child.id)
+        submission = await store.get_owned_step_evidence(
+            parent.id, snapshot.control.incarnation, "submission", row.submission,
+        )
+        if enabled and arrival == "measured_zero":
+            assert usage.tokens_used == 0 and usage.token_source == "measured"
+            assert json.loads(submission.token_usage_json) == {
+                "version": 1, "tokens_used": 0, "token_source": "measured",
+            }
+        else:
+            assert usage is None
+            assert "crew_execution_token_usage" not in item.metadata
+            assert submission.token_usage_json is None
 
 
 @pytest.mark.asyncio

@@ -720,6 +720,7 @@ async def test_public_stored_trace_redacts_pii_and_frames_hostile_text_as_data(
 async def test_orchestrator_real_finalizer_transports_initial_and_revised_traces(
     stores: Any,
     tmp_path: Path,
+    request: pytest.FixtureRequest,
     corrected: bool,
     target_kind: str,
     caplog: pytest.LogCaptureFixture,
@@ -729,7 +730,8 @@ async def test_orchestrator_real_finalizer_transports_initial_and_revised_traces
     initial_renders: list[str] = []
     final_requests: list[LLMRequest] = []
     trace_refs: list[str] = []
-    for index, repository in enumerate(("target/A", "unrelated/B")):
+
+    async def observe_target(index: int, repository: str, stores: Any) -> None:
         parent, thread, service, admitted = await _new_session(
             stores,
             goal="Verify repository documentation",
@@ -837,7 +839,10 @@ async def test_orchestrator_real_finalizer_transports_initial_and_revised_traces
         )
         assert probe.attempts == []
 
-        synthesis = await orchestrator.run_crew_task(parent.id)
+        try:
+            synthesis = await orchestrator.run_crew_task(parent.id)
+        finally:
+            await orchestrator.stop()
 
         assert synthesis.completed is True
         assert synthesis.final_output == "Final verified crew result"
@@ -948,6 +953,19 @@ async def test_orchestrator_real_finalizer_transports_initial_and_revised_traces
                 assert all(secret not in request.prompt for request in judge.requests)
                 assert secret not in caplog.text
         assert raw_render not in caplog.text and raw_revised_render not in caplog.text
+
+    # The old loop constructed a second owner on an already-bound live store.
+    # Both targets still execute; each has a complete, drained owner lifetime.
+    await stores.work.stop()
+    for index, repository in enumerate(("target/A", "unrelated/B")):
+        root = tmp_path / f"target-{index}"
+        root.mkdir()
+        generator = stores_fixture.__wrapped__(root, request)
+        active = await generator.__anext__()
+        try:
+            await observe_target(index, repository, active)
+        finally:
+            await generator.aclose()
 
     assert trace_refs[0] != trace_refs[1]
     assert initial_renders[0] != initial_renders[1]

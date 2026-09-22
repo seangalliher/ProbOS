@@ -1742,12 +1742,17 @@ class WorkItemAgenticOutcome:
     # untouched.
     tool_invocations: ToolInvocations | None = None
     delegation_evidence: DelegationEvidence | None = None
+
+
+@dataclass(kw_only=True)
+class OwnedWorkItemAgenticOutcome(WorkItemAgenticOutcome):
     owned_steps_view_references: tuple[owned_steps.OwnedStepsViewReference, ...] = ()
 
 
 @dataclass(kw_only=True)
 class ObservedWorkItemAgenticOutcome(WorkItemAgenticOutcome):
     fault_observation: FaultObservationResult
+    owned_steps_view_references: tuple[owned_steps.OwnedStepsViewReference, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.fault_observation) is not FaultObservationResult:
@@ -1852,8 +1857,9 @@ class WorkItemAgenticExecutor:
             "compaction_threshold": compaction_threshold, "token_budget": token_budget,
             "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
             "on_run_started": on_run_started,
-            "owned_steps_turn_id": owned_steps_turn_id,
         }
+        if owned_steps_turn_id is not None:
+            arguments["owned_steps_turn_id"] = owned_steps_turn_id
         if owned_steps_initial_view is not None:
             arguments["owned_steps_initial_view"] = owned_steps_initial_view
         if fault_observer_for(runtime) is not None:
@@ -2986,7 +2992,6 @@ class WorkItemAgenticExecutor:
             # this the DM write-claim guard cannot tell a turn that never tried
             # to save from a turn whose save failed, and abstains on both.
             tool_invocations=_project_tool_invocations(agentic_result),
-            owned_steps_view_references=tuple(owned_view_references),
             delegation_evidence=delegation_evidence.finish(
                 status=delegation_status(agentic_result.stopped_reason),
                 final_text=final_text,
@@ -2997,6 +3002,11 @@ class WorkItemAgenticExecutor:
             ),
         )
         if fault_observer is None:
+            if owned_view_references:
+                return OwnedWorkItemAgenticOutcome(
+                    **outcome_fields,
+                    owned_steps_view_references=tuple(owned_view_references),
+                )
             return WorkItemAgenticOutcome(**outcome_fields)
         assert fault_turn is not None
         observation = await observe_completed_tool_run(
@@ -3009,6 +3019,7 @@ class WorkItemAgenticExecutor:
         )
         return ObservedWorkItemAgenticOutcome(
             **outcome_fields, fault_observation=observation,
+            owned_steps_view_references=tuple(owned_view_references),
         )
 
     async def _persist_tool_trace(

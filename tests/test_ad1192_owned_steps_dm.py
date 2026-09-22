@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import copy
+import hashlib
 import inspect
 import json
 import sqlite3
@@ -19,8 +20,11 @@ from httpx import ASGITransport, AsyncClient
 from probos import work_item_steps as steps
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.cognitive.agentic_dispatch import (
+    ObservedWorkItemAgenticOutcome,
+    OwnedWorkItemAgenticOutcome,
     WorkItemAgenticExecutor,
     WorkItemAgenticOutcome,
+    handled_fault_observation,
 )
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.crew_orchestrator import CrewOrchestrator
@@ -37,7 +41,8 @@ from probos.cognitive.swe_harness.tool_call import (
     tool_registration_to_llm_definition,
 )
 from probos.consultation.dispatch import WorkItemSpec
-from probos.dm_reply import DmReply
+from probos.dm_reply import DM_REPLY_METADATA_KEY, DmReply, ToolFailures, call_signature, failure_key
+from probos.fault_detection import FaultObservationResult, ToolFaultObservationPort
 from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
 from probos.routers.thread_fanout import group_chat_fanout
@@ -49,7 +54,7 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResultPresentation
 from probos.tools.registry import ToolRegistry
 from probos.tools.work_item_steps_tool import ReadOwnedStepsTool
-from probos.types import IntentMessage, LLMRequest, LLMResponse
+from probos.types import IntentMessage, IntentResult, LLMRequest, LLMResponse
 from probos.workforce import BookableResource, CrewSessionParentCreate, WorkItemStore
 
 
@@ -1848,6 +1853,53 @@ async def test_agentic_last_iteration_read_does_not_authorize_an_unpresented_pag
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("observed", (False, True))
+@pytest.mark.parametrize("read_page", (False, True))
+async def test_owned_outcome_preserves_exact_fault_carrier_and_presented_references(
+    owned_presentation_probe: _PresentationProbe, observed: bool, read_page: bool,
+) -> None:
+    probe = owned_presentation_probe
+    rig = probe.rig
+    marker = FaultObservationResult()
+    observations: list[dict[str, Any]] = []
+
+    async def observe(**kwargs: Any) -> FaultObservationResult:
+        observations.append(kwargs)
+        return marker
+
+    if observed:
+        rig.runtime.fault_observer = ToolFaultObservationPort(observe)
+
+    async def respond(request: LLMRequest) -> LLMResponse:
+        if read_page and len(rig.llm.requests) == 1:
+            return _read_page_response(rig, await probe.view(0))
+        if read_page:
+            assert _page_frame(request) == await probe.rendered(1)
+        return LLMResponse(content="Exact presented result.", tokens_used=1)
+
+    rig.llm.respond = respond
+    outcome = await _run_owned_boundary(probe, max_iterations=2)
+
+    assert rig.llm.errors == []
+    assert outcome.final_text == "Exact presented result."
+    assert type(outcome) is (
+        ObservedWorkItemAgenticOutcome if observed else
+        OwnedWorkItemAgenticOutcome if read_page else WorkItemAgenticOutcome
+    )
+    assert len(observations) == int(observed)
+    assert handled_fault_observation(outcome) is (marker if observed else None)
+    if read_page:
+        assert outcome.owned_steps_view_references == (probe.captures[1][1],)
+        assert outcome.owned_steps_view_references[0] is probe.admitted[1]
+        assert (await probe.submit(1))[0].disposition == "applied"
+    elif observed:
+        assert outcome.owned_steps_view_references == ()
+    else:
+        assert not hasattr(outcome, "owned_steps_view_references")
+        assert not hasattr(outcome, "fault_observation")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("structured_messages", (False, True))
 @pytest.mark.parametrize("compaction", ("drop", "shorten", "view_id_prose", "retain"))
 async def test_agentic_compacted_initial_view_requires_complete_actual_request_bytes(
@@ -1907,7 +1959,9 @@ async def test_agentic_compacted_initial_view_requires_complete_actual_request_b
     assert rig.llm.errors == []
     assert len(rig.llm.requests) == len(compactor.inputs) == len(probe.captures) == 1
     assert outcome.stopped_reason == "complete"
-    assert outcome.owned_steps_view_references == ()
+    # The old pin added an owned field to the frozen ordinary outcome.
+    assert type(outcome) is WorkItemAgenticOutcome
+    assert not hasattr(outcome, "owned_steps_view_references")
     if compaction == "retain":
         assert probe.attempts == probe.admitted == [probe.captures[0][1]]
         assert (await probe.submit(0))[0].disposition == "applied"
@@ -2029,7 +2083,9 @@ async def test_agentic_compaction_authorizes_only_complete_actual_page_frames(
         ]
     else:
         assert probe.admitted == [probe.captures[0][1]]
-        assert outcome.owned_steps_view_references == ()
+        # Unpresented views do not extend the frozen ordinary outcome.
+        assert type(outcome) is WorkItemAgenticOutcome
+        assert not hasattr(outcome, "owned_steps_view_references")
         await probe.assert_unpresented(1)
         assert await rig.store.get_owned_steps(rig.parent_id) == before
 
@@ -2080,7 +2136,9 @@ async def test_agentic_failed_model_request_never_acknowledges_its_page(
     assert outcome.final_text
     assert "Saved." not in outcome.final_text
     assert "TODO_DONE" not in outcome.final_text
-    assert outcome.owned_steps_view_references == ()
+    # Failed presentation used to pin an extra field on the frozen base.
+    assert type(outcome) is WorkItemAgenticOutcome
+    assert not hasattr(outcome, "owned_steps_view_references")
     assert probe.attempts == probe.admitted == [
         reference for _, reference in probe.captures[:failed_request - 1]
     ]
@@ -2260,7 +2318,9 @@ async def test_agentic_limit_does_not_issue_or_authorize_a_followup_page(
     )
     assert outcome.final_text
     assert "no additional request was issued" in outcome.final_text
-    assert outcome.owned_steps_view_references == ()
+    # No presented view means the original twelve-field carrier.
+    assert type(outcome) is WorkItemAgenticOutcome
+    assert not hasattr(outcome, "owned_steps_view_references")
     if stop == "unissued":
         assert probe.attempts == probe.admitted == []
         await probe.assert_unpresented(0)
@@ -2512,7 +2572,9 @@ async def test_agentic_read_offer_honors_real_tool_permission_restriction(
     assert rig.llm.errors == []
     assert len(rig.llm.requests) == 1
     assert outcome.stopped_reason == "complete"
-    assert outcome.owned_steps_view_references == ()
+    # No presented view means the original twelve-field carrier.
+    assert type(outcome) is WorkItemAgenticOutcome
+    assert not hasattr(outcome, "owned_steps_view_references")
 
 
 @pytest.mark.asyncio
@@ -2680,6 +2742,110 @@ async def test_agent_chat_route_delivers_reference_only_and_persists_feedback_re
             reference,
             expired_context,
         )
+
+
+@pytest.mark.asyncio
+async def test_group_reply_metadata_survives_real_rewrite_guard_feedback_and_both_sinks(
+    owned_view_rig: _Rig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.cognitive.chat_facilitator import project_persisted_convergence_body
+    from probos.cognitive.dm_sanity_gate import DmSanityGate
+
+    rig = owned_view_rig
+    threads = ChatThreadStore(tmp_path / "composed-group.db")
+    refined = "Réwritten evidence."
+    llm = _CaptureLLM(f'<intent emotion="calm">{refined}')
+    bus = IntentBus(SignalManager(reap_interval=1.0))
+    episodes: list[Any] = []
+
+    class _Memory:
+        async def store(self, episode: Any) -> None:
+            episodes.append(episode)
+
+    runtime = SimpleNamespace(
+        crew_orchestrator=rig.owner, crew_session_service=rig.service,
+        work_item_store=rig.store, attachment_store=rig.attachments,
+        chat_thread_store=threads, intent_bus=bus, llm_client=llm,
+        dm_sanity_gate=DmSanityGate(),
+        ontology=None, callsign_registry=_Callsigns(), project_store=None,
+        episodic_memory=_Memory(),
+        config=SimpleNamespace(
+            dm_agentic=SimpleNamespace(enabled=False),
+            dm_deliberate=SimpleNamespace(enabled=True, tier="deep", max_tokens=800),
+            attachments=SimpleNamespace(enabled=False, vision_tier="standard"),
+            communications=SimpleNamespace(room_awareness_enabled=False, room_todos_enabled=True),
+            perception=SimpleNamespace(enabled=False),
+            group_chat=SimpleNamespace(agent_reactivity_enabled=False),
+            write_claim_guard=SimpleNamespace(enabled=True),
+        ),
+    )
+    agents = [_OwnedViewAgent(agent_id=f"composed-reader-{i}", llm_client=llm, runtime=runtime) for i in range(2)]
+    runtime.registry = _LiveRegistry(agents)
+    parent = await rig.store.create_work_item(
+        id="composed-parent", title="Composed reply", steps=[{"label": "Manual gate", "status": "pending"}],
+    )
+    child = await rig.store.create_work_item(
+        id="composed-child", title="Child", parent_id=parent.id,
+        assigned_to=agents[0].id, metadata={"spec_id": "composed-spec"},
+    )
+    thread = threads.create_thread(
+        title="Composed room", participants=[agent.id for agent in agents], task_id=parent.id,
+    )
+    await rig.store.get_owned_steps_execution_port().admit(parent.id, children=(child,), thread_id=thread.id)
+    before = await rig.store.get_owned_steps(parent.id)
+    raw = (
+        "Draft saved. [TODO_DONE 1] [THINK]\n"
+        "--- Current Visual Context ---\nInternal visual scaffold.\n--- End Visual Context ---"
+    )
+    failures = ToolFailures.from_mapping({
+        failure_key("aaaaaaaaaaaa", "aaaaaaaaaaaa", call_signature("web_search", None)): "web_search",
+    })
+    produced: list[IntentResult] = []
+    for agent in agents:
+        async def handler(intent: IntentMessage, current: Any = agent) -> IntentResult:
+            result = IntentResult(
+                intent_id=intent.id, agent_id=current.id, success=True, result=raw,
+                metadata={DM_REPLY_METADATA_KEY: failures.to_wire(), "raw_sentinel": "unchanged"},
+            )
+            produced.append(result)
+            return result
+        bus.subscribe(agent.id, handler, intent_names=["direct_message"])
+    renders: list[DmReply] = []
+    render = DmReply.render
+
+    def observe_render(reply: DmReply, *, max_chars: int | None = None) -> Any:
+        renders.append(reply)
+        return render(reply, max_chars=max_chars)
+
+    monkeypatch.setattr(DmReply, "render", observe_render)
+    captain = threads.append_message(thread.id, author_id="captain", role="captain", body="Review the draft.")
+    replies = await group_chat_fanout(
+        runtime, thread.id, captain_body=captain.body, captain_msg=captain,
+    )
+
+    assert len(replies) == len(produced) == len(llm.requests) == len(renders) == len(episodes) == 2
+    assert all("Internal visual scaffold" not in request.prompt for request in llm.requests)
+    assert all(result.result == raw for result in produced)
+    assert all(result.metadata == {DM_REPLY_METADATA_KEY: failures.to_wire(), "raw_sentinel": "unchanged"} for result in produced)
+    assert all(reply.tool_failures.to_wire() == failures.to_wire() for reply in renders)
+    assert all(not reply.tool_failures.merge_open for reply in renders)
+    for reply in replies:
+        saved = next(message for message in threads.list_messages(thread.id, limit=100) if message.author_id == reply["agent_id"])
+        assert reply["text"] == reply["message"]["body"] == saved.body
+        assert saved.body.startswith(refined)
+        assert "not saved" in saved.body and "Owned steps refused" in saved.body and "web_search" in saved.body
+        assert saved.body.index("not saved") < saved.body.index("Owned steps refused") < saved.body.index("web_search")
+        assert all(marker not in saved.body for marker in ("TODO_DONE", "[THINK]", "<intent", "Internal visual scaffold"))
+        evidence = saved.metadata["ad1305_convergence"]
+        assert evidence["body_sha256"] == hashlib.sha256(saved.body.encode("utf-8")).hexdigest()
+        assert evidence["substantive_chars"] == len(refined)
+        assert project_persisted_convergence_body(saved.body, saved.metadata) == refined
+        episode = next(episode for episode in episodes if episode.agent_ids == [reply["agent_id"]])
+        assert episode.outcomes[0]["session_type"] == "group"
+        assert episode.outcomes[0]["response"] == saved.body[:500]
+        assert episode.anchors.chat_thread_id == thread.id
+        assert "owned_steps" in episode.self_contradicted_channels
+    assert await rig.store.get_owned_steps(parent.id) == before
 
 
 @pytest.mark.asyncio

@@ -499,6 +499,15 @@ class ReviewedStepResult(_OwnedFormat):
     accepted: bool
 
 
+class UnassessedStepCheckpoint(_OwnedFormat):
+    version: Literal[1] = 1
+    assessment: Literal["unassessed"] = "unassessed"
+    submission_digest: OwnedDigest
+    permit: OwnedStepExecutionPermit
+    verification: OwnedContentReference
+    convergence: OwnedContentReference
+
+
 class FinalizeReceipt(_OwnedFormat):
     parent_id: OwnedId
     owner_kind: Literal["canonical", "legacy"]
@@ -1553,6 +1562,7 @@ class OwnedStoreBinding:
     step_id: str | None = None
     reviewed_result: ReviewedStepResult | None = None
     finalize_receipt: FinalizeReceipt | None = None
+    unassessed_checkpoint: UnassessedStepCheckpoint | None = None
 
 
 @dataclass(frozen=True, eq=False)

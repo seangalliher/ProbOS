@@ -3070,18 +3070,128 @@ class CrewSessionService:
         context = binding.authority.context
         if type(context) is not owned_steps.OwnedOwnerInvocation or context.request_digest != binding.request_digest:
             raise owned_steps.OwnedStepsError("owned_steps_authority_denied")
-        return await self.authorize_owned_steps(
+        grant = await self.authorize_owned_steps(
             binding.authority, parent_id=binding.snapshot.control.parent_id, operation=binding.operation,
             token=binding.snapshot,
         )
+        neutral = binding.unassessed_checkpoint
+        if binding.operation == "verification":
+            if binding.step_id is None or (binding.reviewed_result is None) == (neutral is None):
+                raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        elif neutral is not None:
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        if neutral is not None:
+            control = binding.snapshot.control
+            if (
+                control.owner_kind != "canonical" or grant.role != "owner"
+                or grant.actor_id != control.facilitator_id
+            ):
+                raise owned_steps.OwnedStepsError("owned_steps_authority_denied")
+            payload = await self._unassessed_checkpoint_payload(binding)
+            if owned_steps.owned_digest(owned_steps.owned_json_bytes(payload)) != binding.request_digest:
+                raise owned_steps.OwnedStepsError("owned_steps_owner_binding_conflict")
+        return grant
+
+    async def _unassessed_checkpoint_payload(
+        self, binding: owned_steps.OwnedStoreBinding,
+    ) -> dict[str, Any]:
+        from probos.cognitive.crew_finalizer import ChildVerificationRecord
+        from probos.cognitive.crew_verifier import SubtaskVerifier
+
+        checkpoint = owned_steps.UnassessedStepCheckpoint.model_validate_json(
+            binding.unassessed_checkpoint.model_dump_json()
+        )
+        verification_bytes = await self._work_items.read_owned_steps_content(checkpoint.verification)
+        convergence_bytes = await self._work_items.read_owned_steps_content(checkpoint.convergence)
+        record = ChildVerificationRecord.model_validate_json(verification_bytes)
+        verification = record.model_dump(mode="json")
+        convergence = owned_steps.owned_json_loads(convergence_bytes.decode("utf-8"))
+        control = binding.snapshot.control
+        row = next((row for row in control.rows if row.step_id == binding.step_id), None)
+        if (
+            checkpoint.verification.mime != "application/json"
+            or checkpoint.convergence.mime != "application/json"
+            or owned_steps.owned_json_bytes(verification) != verification_bytes
+            or owned_steps.owned_json_bytes(convergence) != convergence_bytes
+            or row is None or row.child is None
+            or record.parent_id != control.parent_id or record.thread_id != control.thread_id
+            or record.work_item_id != row.child.child_id or record.producer_agent_id != row.assignee_id
+            or not SubtaskVerifier.verdict_to_vote(record.rounds[-1].verdict.to_verdict()).abstained
+            or any(
+                not item.verdict.verifier_agent_id and item.verdict.status not in {"unavailable", "error"}
+                for item in record.rounds
+            )
+            or type(convergence) is not dict or set(convergence) != {
+                "version", "parent_id", "work_item_id", "thread_id",
+                "producer_agent_id", "execution_output_ref", "outcome",
+            }
+            or type(convergence["version"]) is not int or convergence["version"] != 1
+            or any(convergence[key] != verification[key] for key in (
+                "parent_id", "work_item_id", "thread_id", "producer_agent_id",
+            ))
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        outcome = convergence["outcome"]
+        if type(outcome) is not dict or set(outcome) != {
+            "result", "accepted", "status", "rounds_used", "failure_code", "history", "terminal_attempt",
+        }:
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        history = outcome["history"]
+        if type(history) is not list or len(history) != len(record.rounds):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        for raw, round_record in zip(history, record.rounds):
+            values = round_record.model_dump(mode="json")
+            if (
+                type(raw) is not dict or set(raw) != set(values) | {"result_text"}
+                or type(raw["result_text"]) is not str
+                or owned_steps.owned_digest(raw["result_text"]) != round_record.result_sha256
+                or raw["result_text"].strip()[:4_096] != round_record.result_summary
+                or not _json_values_exactly_equal({key: raw[key] for key in values}, values)
+            ):
+                raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        result = owned_steps.OwnedExecutionResult.model_validate_json(
+            owned_steps.owned_json_bytes(outcome["result"])
+        )
+        if (
+            any(not _json_values_exactly_equal(outcome[key], verification[key]) for key in (
+                "accepted", "status", "rounds_used", "failure_code", "terminal_attempt",
+            ))
+            or record.terminal_attempt is not None or record.rounds[0].correction_tokens != 0
+            or result.work_item_id != record.work_item_id or result.spec_id != row.child.spec_id
+            or result.agent_id != record.producer_agent_id
+            or result.status != "done" or result.stopped_reason != "complete"
+            or result.output != history[-1]["result_text"]
+            or result.tool_trace_ref != record.rounds[-1].tool_trace_ref
+            or not _json_values_exactly_equal(
+                [ref.model_dump(mode="json") for ref in result.artifact_refs],
+                verification["rounds"][-1]["artifact_refs"],
+            )
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        return {
+            "work_item_id": record.work_item_id,
+            "verification": verification,
+            "metadata_patch": {
+                "crew_verification_recovery": {
+                    "version": 1, "convergence_ref": checkpoint.convergence.content_hash,
+                },
+            },
+            "actual_tokens_delta": sum(item.correction_tokens for item in record.rounds),
+        }
 
     def owned_store_binding(
         self, component: object, snapshot: owned_steps.OwnedStepsSnapshot, *,
         operation: str, payload: dict[str, Any], actor_id: str | None = None,
         step_id: str | None = None, reviewed_result: owned_steps.ReviewedStepResult | None = None,
         finalize_receipt: owned_steps.FinalizeReceipt | None = None,
+        unassessed_checkpoint: owned_steps.UnassessedStepCheckpoint | None = None,
     ) -> owned_steps.OwnedStoreBinding:
-        role = "verifier" if operation == "verification" else "owner"
+        if operation == "verification":
+            if step_id is None or (reviewed_result is None) == (unassessed_checkpoint is None):
+                raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        elif unassessed_checkpoint is not None:
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict")
+        role = "verifier" if operation == "verification" and unassessed_checkpoint is None else "owner"
         digest = owned_steps.owned_digest(owned_steps.owned_json_bytes(payload))
         authority = self.owned_steps_authority(
             component, parent_id=snapshot.control.parent_id,
@@ -3090,6 +3200,7 @@ class CrewSessionService:
         )
         return owned_steps.OwnedStoreBinding(
             snapshot, operation, digest, authority, step_id, reviewed_result, finalize_receipt,
+            unassessed_checkpoint,
         )
 
     async def _owned_plan_seed(

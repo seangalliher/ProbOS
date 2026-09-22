@@ -46,6 +46,7 @@ from probos.cognitive.crew_verifier import (
     SessionVerificationFailureCode,
     SessionVerificationPass,
     SessionVerificationRound,
+    SubtaskVerifier,
     validate_session_denied_tools,
 )
 
@@ -55,7 +56,6 @@ if TYPE_CHECKING:
     from probos.cognitive.crew_executor import SubtaskResult
     from probos.cognitive.crew_session import CrewSessionContract, CrewSessionService
     from probos.cognitive.crew_synth import CrewSynthesizer, SessionSynthesisDraft
-    from probos.cognitive.crew_verifier import SubtaskVerifier
     from probos.substrate.registry import AgentRegistry
     from probos.threads import ChatThreadStore
     from probos.workforce import WorkItem, WorkItemStore
@@ -697,6 +697,7 @@ class CrewSessionFinalizer:
         self._threads = chat_thread_store
         self._artifacts = artifact_store
         self._attachments = attachment_store
+        self._work_items.bind_owned_steps_content(attachment_store)
         self._registry = agent_registry
         self._verifier = verifier
         self._synthesizer = synthesizer
@@ -1731,26 +1732,14 @@ class CrewSessionFinalizer:
         }
         owned_binding = None
         if owned_snapshot is not None:
-            reviewed_result = await self._prepare_owned_review(
+            owned_binding = await self._prepare_owned_verification_binding(
                 session=session,
                 snapshot=owned_snapshot,
                 child=child,
                 outcome=outcome,
                 verification=verification,
                 convergence_ref=convergence_ref,
-            )
-            owned_binding = self._sessions.owned_store_binding(
-                self,
-                owned_snapshot,
-                operation="verification",
                 payload=payload,
-                actor_id=reviewed_result.reviewer_id,
-                step_id=next(
-                    row.step_id
-                    for row in owned_snapshot.control.rows
-                    if row.child is not None and row.child.child_id == child.id
-                ),
-                reviewed_result=reviewed_result,
             )
         persisted = await self._work_items.compare_and_set_work_item_verification(
             child.id,
@@ -1791,6 +1780,56 @@ class CrewSessionFinalizer:
             if exc.code == "owned_steps_execution_scope_denied":
                 return None
             raise
+
+    async def _prepare_owned_verification_binding(
+        self,
+        *,
+        session: CrewSessionContract,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        child: WorkItem,
+        outcome: SessionConvergenceOutcome,
+        verification: dict[str, Any],
+        convergence_ref: str,
+        payload: dict[str, Any],
+    ) -> owned_steps.OwnedStoreBinding:
+        row = next(
+            (row for row in snapshot.control.rows if row.child is not None and row.child.child_id == child.id),
+            None,
+        )
+        if row is None or row.permit is None or row.submission is None:
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=session.task_id)
+        if not SubtaskVerifier.verdict_to_vote(outcome.history[-1].verdict).abstained:
+            review = await self._prepare_owned_review(
+                session=session, snapshot=snapshot, child=child, outcome=outcome,
+                verification=verification, convergence_ref=convergence_ref,
+            )
+            return self._sessions.owned_store_binding(
+                self, snapshot, operation="verification", payload=payload,
+                actor_id=review.reviewer_id, step_id=row.step_id, reviewed_result=review,
+            )
+        permit = await self._work_items.get_owned_step_evidence(
+            session.task_id, snapshot.control.incarnation, "permit", row.permit,
+        )
+        if not isinstance(permit, owned_steps.OwnedStepExecutionPermit):
+            raise owned_steps.OwnedStepsError("owned_steps_review_conflict", parent_id=session.task_id)
+        convergence_bytes = await self._attachments.read(convergence_ref)
+        if type(convergence_bytes) is not bytes:
+            raise ValueError("crew_finalization_checkpoint_readback_failed")
+        checkpoint = owned_steps.UnassessedStepCheckpoint(
+            submission_digest=row.submission,
+            permit=permit,
+            verification=await self._write_owned_content(
+                owned_steps.owned_json_bytes(verification), mime="application/json",
+            ),
+            convergence=owned_steps.OwnedContentReference(
+                content_hash=convergence_ref, mime="application/json", size_bytes=len(convergence_bytes),
+            ),
+        )
+        return self._sessions.owned_store_binding(
+            self, snapshot, operation="verification", payload=payload,
+            actor_id=session.facilitator_id, step_id=row.step_id,
+            unassessed_checkpoint=checkpoint,
+        )
 
     async def _prepare_owned_review(
         self,
@@ -2696,27 +2735,14 @@ class CrewSessionFinalizer:
                 }
                 owned_binding = None
                 if owned_snapshot is not None:
-                    reviewed_result = await self._prepare_owned_review(
+                    owned_binding = await self._prepare_owned_verification_binding(
                         session=session,
                         snapshot=owned_snapshot,
                         child=child,
                         outcome=outcome,
                         verification=verification,
                         convergence_ref=convergence_ref,
-                    )
-                    owned_binding = self._sessions.owned_store_binding(
-                        self,
-                        owned_snapshot,
-                        operation="verification",
                         payload=payload,
-                        actor_id=reviewed_result.reviewer_id,
-                        step_id=next(
-                            row.step_id
-                            for row in owned_snapshot.control.rows
-                            if row.child is not None
-                            and row.child.child_id == child.id
-                        ),
-                        reviewed_result=reviewed_result,
                     )
                 persisted = await self._work_items.compare_and_set_work_item_verification(
                     child.id,

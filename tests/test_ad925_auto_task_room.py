@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from probos import work_item_steps as steps
 from probos.cognitive.agentic_dispatch import WorkItemAgenticOutcome
 from probos.cognitive.crew_executor import CrewTaskExecutor
 from probos.config import GroupChatConfig
@@ -69,8 +70,9 @@ class _FakeRegistry:
 class _FakeAgenticExecutor:
     """Records every ``run`` and reports each child ``complete`` (AD-859 shape)."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: WorkItemStore) -> None:
         self.calls: list[str] = []
+        self.store = store
 
     async def run(
         self,
@@ -83,7 +85,30 @@ class _FakeAgenticExecutor:
         rank: str = "ensign",
         thread_id: str = "",
         extra_context: dict[str, Any] | None = None,
+        owned_steps_execution_port: steps.OwnedStepsExecutionPort | None = None,
+        owned_steps_execution_lease: steps.OwnedExecutionLease | None = None,
+        owned_steps_execution_permit: steps.OwnedStepExecutionPermit | None = None,
     ) -> WorkItemAgenticOutcome:
+        # The old signature rejected managed execution before this fake ran.
+        # Accept only its three named bindings and prove they authorize this call.
+        assert owned_steps_execution_port is self.store.get_owned_steps_execution_port()
+        assert owned_steps_execution_port.owns_store(self.store)
+        assert type(owned_steps_execution_lease) is steps.OwnedExecutionLease
+        assert type(owned_steps_execution_permit) is steps.OwnedStepExecutionPermit
+        control = owned_steps_execution_lease.snapshot.control
+        assert owned_steps_execution_permit.parent_id == control.parent_id
+        assert owned_steps_execution_permit.incarnation == control.incarnation
+        assert owned_steps_execution_permit.plan_digest == control.plan_digest
+        assert owned_steps_execution_permit.plan_revision == control.plan_revision
+        assert owned_steps_execution_permit.assignee_id == agent_id
+        assert thread_id == control.thread_id
+        assert extra_context == {
+            "_crew_session_id": owned_steps_execution_permit.parent_id,
+            "_crew_work_item_id": owned_steps_execution_permit.child_id,
+        }
+        await owned_steps_execution_port.validate(
+            owned_steps_execution_lease, owned_steps_execution_permit,
+        )
         self.calls.append(agent_id)
         return WorkItemAgenticOutcome(
             final_text=f"done: {task_text}",
@@ -135,6 +160,7 @@ def _assemble(
     *,
     agents: dict[str, _FakeAgent],
     config: GroupChatConfig,
+    agentic_executor: _FakeAgenticExecutor | None = None,
 ) -> tuple[CrewTaskExecutor, ChatThreadStore]:
     """Wire a real ChatThreadStore + AgentGroupChatService onto a runtime stub.
 
@@ -159,7 +185,7 @@ def _assemble(
     executor = CrewTaskExecutor(
         work_item_store=wi_store,
         agent_registry=registry,
-        agentic_executor=_FakeAgenticExecutor(),  # type: ignore[arg-type]
+        agentic_executor=agentic_executor if agentic_executor is not None else _FakeAgenticExecutor(wi_store),  # type: ignore[arg-type]
         runtime=runtime,
         max_parallel_subtasks=3,
     )
@@ -307,7 +333,10 @@ async def test_rate_limited_creator_degrades_no_room(tmp_path, wi_store):
     config = GroupChatConfig(
         auto_task_room_enabled=True, agent_create_max_per_window=0
     )
-    executor, chat_store = _assemble(tmp_path, wi_store, agents=agents, config=config)
+    agentic = _FakeAgenticExecutor(wi_store)
+    executor, chat_store = _assemble(
+        tmp_path, wi_store, agents=agents, config=config, agentic_executor=agentic,
+    )
     parent = await _make_parent_with_children(
         wi_store, title="Build the dashboard", assignees=["forge-1", "bones-1"]
     )
@@ -317,6 +346,7 @@ async def test_rate_limited_creator_degrades_no_room(tmp_path, wi_store):
     # No room (rate guard denied the create) ...
     assert chat_store.list_threads(task_id=parent.id, include_archived=True) == []
     # ... but the fan-out is NOT aborted: both children still produced results.
+    assert sorted(agentic.calls) == ["bones-1", "forge-1"]
     assert len(results) == 2
     assert all(r.status == "done" for r in results)
 
@@ -335,7 +365,7 @@ async def test_missing_substrate_degrades_no_crash(tmp_path, wi_store):
     executor = CrewTaskExecutor(
         work_item_store=wi_store,
         agent_registry=registry,
-        agentic_executor=_FakeAgenticExecutor(),  # type: ignore[arg-type]
+        agentic_executor=_FakeAgenticExecutor(wi_store),  # type: ignore[arg-type]
         runtime=runtime,
         max_parallel_subtasks=3,
     )

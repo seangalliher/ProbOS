@@ -806,12 +806,18 @@ async def _fan_one_round(
         # steps (episodic/working-memory/divergence/emotion/games/avatar) that
         # would mislabel a multi-agent turn. Only when a real reply came back
         # AND the agent resolved (no agent -> can't escalate). Tier-2
-        # honest-degrade: any failure ships the raw reply_text unchanged.
+        # honest-degrade: any failure preserves the original body and attachments.
         eligibility_text = reply_text
+        reply: DmReply | None = None
         reply_context: DmReplyContext | None = None
         convergence_evidence: ConvergenceEvidence | None = None
-        if result and result.result and agent is not None:
-            try:
+        convergence_body: str | None = None
+        try:
+            # Retain established attachments if later construction or escalation
+            # fails; a failed factory leaves the original raw fallback intact.
+            reply = DmReply.from_intent_result(result)
+            reply = reply.with_body(reply_text)
+            if result and result.result and agent is not None:
                 owned_view = None
                 owned_views: dict[
                     str,
@@ -835,11 +841,7 @@ async def _fan_one_round(
                     agent_id=agent_id,
                     callsign=callsign,
                     req_message=trigger_body,
-                    # AD-1248: no attachments here by design -- the
-                    # conversational agentic loop does not run on the group
-                    # fan-out path, so this reply has no tool run behind it and
-                    # renders byte-identically to before.
-                    reply=DmReply(body=reply_text),
+                    reply=reply,
                     has_image_attachment=bool(vision_messages),
                     per_attachment=[],
                     sanity_gate=sanity_gate,
@@ -873,7 +875,7 @@ async def _fan_one_round(
                 pre_body = reply_context.pre_write_disclosure_body
                 suffix = reply_context.write_disclosure_suffix
                 owned_feedback = reply_context.owned_steps_feedback or ""
-                processed_evidence: ConvergenceEvidence | None = None
+                processed_convergence_body: str | None = None
                 if (
                     processed_body
                     and type(pre_body) is str
@@ -891,25 +893,23 @@ async def _fan_one_round(
                         )
                     )
                 ):
-                    processed_evidence = capture_convergence_evidence(
-                        strip_intent_self_tag(processed_body),
-                        strip_intent_self_tag(pre_body),
-                    )
+                    processed_convergence_body = strip_intent_self_tag(pre_body)
                 eligibility_text = (
                     reply_context.pre_write_disclosure_body
                     if reply_context.pre_write_disclosure_body is not None
                     else reply_context.response_text
                 ) or reply_text
-                reply_text = reply_context.response_text or reply_text
-                convergence_evidence = processed_evidence
-            except Exception:
-                logger.warning(
-                    "AD-933: escalation subset failed for thread=%s agent=%s; "
-                    "shipping raw reply", thread_id, agent_id, exc_info=True,
-                )
-            finally:
-                if reply_context is not None:
-                    write_ledgers[agent_id] = reply_context.write_ledger
+                reply = reply_context.reply.with_body(reply_context.response_text or reply_text)
+                convergence_body = processed_convergence_body
+        except Exception:
+            logger.warning(
+                "AD-933: escalation subset failed for thread=%s agent=%s; "
+                "shipping the original reply with any established attachments",
+                thread_id, agent_id, exc_info=True,
+            )
+        finally:
+            if reply_context is not None:
+                write_ledgers[agent_id] = reply_context.write_ledger
         # AD-948: strip the AD-722a intent self-tag (<intent emotion=...>)
         # UNCONDITIONALLY before the decline check / persist / return. The 1:1
         # path strips it via apply_divergence_check (routers/agents.py); the
@@ -917,7 +917,10 @@ async def _fan_one_round(
         # transcript. Reuse the single-source-of-truth strip (BF-603 hardened);
         # placed BEFORE the NO_RESPONSE check so a decline that trails a tag is
         # still detected. The tag MUST NEVER reach the Captain.
-        reply_text = strip_intent_self_tag(reply_text)
+        if reply is not None:
+            reply = reply.with_body(strip_intent_self_tag(reply.body))
+        else:
+            reply_text = strip_intent_self_tag(reply_text)
         eligibility_text = strip_intent_self_tag(eligibility_text)
         # AD-935: an agent may decline to respond in a group turn. A
         # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
@@ -937,6 +940,12 @@ async def _fan_one_round(
         _declined = bool(_NO_RESPONSE_RE.search(eligibility_text)) or not eligibility_text.strip()
         if _declined:
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
+        if reply is not None:
+            reply_text = str(reply.render())
+            if convergence_body is not None or reply_text != reply.body:
+                convergence_evidence = capture_convergence_evidence(
+                    reply_text, convergence_body if convergence_body is not None else reply.body,
+                )
         if _semantic_replies is not None:
             semantic_texts[reply_index] = project_convergence_body(reply_text, convergence_evidence)
         persisted_message: dict[str, Any] | None = None

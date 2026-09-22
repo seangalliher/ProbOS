@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.crew_executor import CrewTaskExecutor
 from probos.cognitive.crew_session import (
+    CrewSessionService,
     _canonical_plan_json_bytes,
     _final_plan_hash,
     _row_semantic_projection,
@@ -183,7 +184,10 @@ async def _off_observation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
     from probos.artifacts import ArtifactStore
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    from probos.cognitive import crew_executor as crew_executor_module
     from probos.cognitive.builder import BuildSpec
+    from probos.routers import chat as chat_router
     from probos.startup.finalize import _wire_crew_orchestrator, _wire_native_swe_harness
     from probos.threads import ChatThreadStore
     from probos.tools import code_execution_tool
@@ -263,6 +267,27 @@ async def _off_observation(
     )
     try:
         parent, thread, service = await room._session_parent(stores)
+        # The old global stream also started numbering new owned protocol
+        # identities. Isolate those three draws, not the observed request IDs.
+        owned_id_sequence = itertools.count(1)
+        owned_ids: list[uuid.UUID] = []
+
+        def owned_uuid() -> uuid.UUID:
+            value = uuid.UUID(int=(0xF0000000 + next(owned_id_sequence)) << 96)
+            owned_ids.append(value)
+            return value
+
+        adopt = service.adopt_recovery_plan
+
+        async def adopt_with_owned_ids(*args: Any, **kwargs: Any) -> Any:
+            with pytest.MonkeyPatch.context() as identities:
+                identities.setattr(uuid, "uuid4", owned_uuid)
+                result = await adopt(*args, **kwargs)
+            assert len(owned_ids) == 2
+            return result
+
+        monkeypatch.setattr(service, "adopt_recovery_plan", adopt_with_owned_ids)
+        monkeypatch.setattr(crew_executor_module, "uuid", SimpleNamespace(uuid4=owned_uuid))
         child = await work.create_work_item(
             id="golden-child", title="Child golden-child",
             description="Read input.txt and write report.txt", work_type="task",
@@ -284,6 +309,14 @@ async def _off_observation(
             runtime=crew_runtime, crew_session_service=service,
         )
         results = await crew.run(parent.id)
+        assert len(set(owned_ids)) == len(owned_ids) == 3
+        owned = await work.get_owned_steps(parent.id)
+        assert owned.control.incarnation == owned_ids[0].hex
+        assert owned.control.rows[0].step_id == owned_ids[1].hex
+        permit = await work.get_owned_step_evidence(
+            parent.id, owned.control.incarnation, "permit", owned.control.rows[0].permit,
+        )
+        assert permit.execution_nonce == owned_ids[2].hex
         stored = await work.get_work_item(child.id)
         assert stored is not None and stored.status == "done"
         evidence = stored.metadata["crew_execution"]
@@ -322,6 +355,22 @@ async def _off_observation(
             BuildSpec(title="Golden", description="Report.", target_files=[]),
             work_dir="<work>",
         )
+        # Startup gets its own store/owner lifetime, not a second reader on
+        # the executor's live assembly. Keep the original constructor types.
+        await work.stop()
+        work = WorkItemStore(db_path=str(tmp_path / "workforce.db"), tick_interval=1_000)
+        await work.start()
+        crew_runtime.work_item_store = work
+        crew_runtime.crew_session_service = CrewSessionService(
+            work_item_store=work, chat_thread_store=stores.chat,
+        )
+        startup_content = FilesystemAttachmentStore(tmp_path / "attachments")
+
+        def startup_reader(target: Any) -> FilesystemAttachmentStore:
+            assert target is crew_runtime
+            return startup_content
+
+        monkeypatch.setattr(chat_router, "_get_attachment_store", startup_reader)
         assert _wire_crew_orchestrator(runtime=crew_runtime, config=crew_runtime.config)
         await crew_runtime.crew_orchestrator.stop()
         persisted = {
