@@ -2849,11 +2849,11 @@ async def test_actual_tokens_delta_failure_rolls_back_and_releases_lock(
                 {"crew_execution": {"version": 1}},
                 actual_tokens_delta=5,
             )
-        # The primary rollback and the defensive rollback both reach this
-        # injected connection after the execute fault; neither changes data.
+        # The old +2 pinned duplicate cleanup; the transaction owner now
+        # rolls back this execute fault exactly once, leaving data unchanged.
         assert (
             factory.connection.rollback_attempts
-            == rollback_attempts_before_fault + 2
+            == rollback_attempts_before_fault + 1
         )
         assert not store._work_item_row_write_lock.locked()
         recovered = await store.merge_work_item_metadata(

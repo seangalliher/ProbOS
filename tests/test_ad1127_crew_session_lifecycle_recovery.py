@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -302,6 +303,7 @@ class _CheckpointAttachmentStore:
         self._child_count = child_count
         self._chat_writes = 0
         self._failed = False
+        self.fault_writes: list[tuple[str, str, str]] = []
 
     async def write(
         self,
@@ -337,6 +339,7 @@ class _CheckpointAttachmentStore:
         )
         if should_fail and not self._failed:
             self._failed = True
+            self.fault_writes.append((content_hash, mime, origin))
             raise self._fault
         return path
 
@@ -2416,6 +2419,7 @@ async def _durable_finalization_harness(
     *,
     child_count: int,
     output_size: int,
+    attachment_decorator: Callable[[Any], Any] | None = None,
 ) -> Any:
     from types import SimpleNamespace
 
@@ -2443,6 +2447,8 @@ async def _durable_finalization_harness(
 
     stores_generator = stores_fixture.__wrapped__(tmp_path)
     stores = await stores_generator.__anext__()
+    if attachment_decorator is not None:
+        stores.attachments = attachment_decorator(stores.attachments)
     parent, thread, service = await _session_parent(stores)
     children = [
         await _child(
@@ -2616,27 +2622,35 @@ async def test_finalizer_durable_checkpoint_fault_resumes_exactly_once(
     output_size: int,
     fault_mode: str,
 ) -> None:
-    harness = await _durable_finalization_harness(
-        tmp_path,
-        child_count=child_count,
-        output_size=output_size,
-    )
     fault: BaseException = (
         asyncio.CancelledError(f"{stage}-sentinel")
         if fault_mode == "cancel"
         else RuntimeError(f"{stage}-crash")
+    )
+
+    def decorate_attachments(attachments: Any) -> _CheckpointAttachmentStore:
+        return _CheckpointAttachmentStore(
+            attachments,
+            stage=stage,
+            fault=fault,
+            child_count=child_count,
+        )
+
+    harness = await _durable_finalization_harness(
+        tmp_path,
+        child_count=child_count,
+        output_size=output_size,
+        attachment_decorator=(
+            decorate_attachments if stage in {"result_blob", "provenance"} else None
+        ),
     )
     attachments: Any = harness.stores.attachments
     artifacts: Any = harness.stores.artifacts
     service: Any = harness.service
     finalizer_stage: str | None = stage
     if stage in {"result_blob", "provenance"}:
-        attachments = _CheckpointAttachmentStore(
-            harness.stores.attachments,
-            stage=stage,
-            fault=fault,
-            child_count=child_count,
-        )
+        assert isinstance(attachments, _CheckpointAttachmentStore)
+        assert attachments.fault_writes == []
         finalizer_stage = None
     elif stage == "artifact":
         artifacts = _CheckpointArtifactStore(harness.stores.artifacts, fault)
@@ -2659,8 +2673,23 @@ async def test_finalizer_durable_checkpoint_fault_resumes_exactly_once(
             assert raised.value is fault
             assert raised.value.args == (f"{stage}-sentinel",)
         else:
-            with pytest.raises(RuntimeError, match=rf"^{stage}-crash$"):
+            with pytest.raises(RuntimeError, match=rf"^{stage}-crash$") as raised:
                 await failing.resume(harness.parent.id)
+            assert raised.value is fault
+
+        if stage in {"result_blob", "provenance"}:
+            assert len(attachments.fault_writes) == 1
+            content_hash, mime, origin = attachments.fault_writes[0]
+            written = await attachments.read(content_hash)
+            if stage == "result_blob":
+                assert (mime, origin) == ("text/markdown", "agent_artifact")
+                assert written == ("z" * output_size).encode("utf-8")
+            else:
+                assert (mime, origin) == ("application/json", "chat_attachment")
+                provenance = json.loads(written)
+                assert provenance["origin"] == "crew_session_finalizer"
+                assert provenance["parent_id"] == harness.parent.id
+                assert provenance["thread_id"] == harness.thread.id
 
         recovery = await harness.service.get_recovery(harness.parent.id)
         assert recovery is not None and recovery.phase == expected_phase
@@ -2682,6 +2711,9 @@ async def test_finalizer_durable_checkpoint_fault_resumes_exactly_once(
         )
         completed = await fresh.resume(harness.parent.id)
 
+        if stage in {"result_blob", "provenance"}:
+            assert harness.stores.attachments is attachments
+            assert attachments.fault_writes == [(content_hash, mime, origin)]
         assert completed.state == "done"
         if stage == "postpublication":
             assert completed.completed is False

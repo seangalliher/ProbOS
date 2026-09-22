@@ -11,6 +11,7 @@ import json
 import shutil
 import threading
 from collections.abc import Iterable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,6 +54,7 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolPermissionDenied, ToolRegistry
 from probos.types import LLMRequest, LLMResponse, Priority
+from probos.work_item_steps import OwnedStepsContentReader
 from probos.workforce import (
     CrewSessionAdmissionPort,
     CrewSessionParentCreate,
@@ -2824,6 +2826,9 @@ class _WorkStoreFailure:
         self.fail_list = fail_list
         self.list_calls = 0
 
+    def bind_owned_steps_content(self, content: OwnedStepsContentReader) -> None:
+        self.delegate.bind_owned_steps_content(content)
+
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
 
@@ -3943,8 +3948,38 @@ async def test_concurrent_finalizers_admit_one_claim_and_one_observer(
 async def test_independent_finalizer_cas_loser_performs_zero_child_scan_or_storage(
     stores: _Stores,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parent, _thread, _service, _contract, children, results = await _executing_case(stores)
+    loser_context: ContextVar[bool] = ContextVar("cas_loser", default=False)
+    attachment_io: list[str] = []
+    loser_io: list[str] = []
+    read_attachment = stores.attachments.read
+    write_attachment = stores.attachments.write
+
+    async def guarded_read(content_hash: str) -> bytes:
+        attachment_io.append("read")
+        if loser_context.get():
+            loser_io.append("read")
+            raise AssertionError("loser_attachment_read")
+        return await read_attachment(content_hash)
+
+    async def guarded_write(
+        content_hash: str,
+        blob: bytes,
+        mime: str,
+        *,
+        origin: str = "chat_attachment",
+    ) -> Path:
+        attachment_io.append("write")
+        if loser_context.get():
+            loser_io.append("write")
+            raise AssertionError("loser_attachment_write")
+        return await write_attachment(content_hash, blob, mime, origin=origin)
+
+    # Instrument the one actual reader; spawned loser work inherits its context.
+    monkeypatch.setattr(stores.attachments, "read", guarded_read)
+    monkeypatch.setattr(stores.attachments, "write", guarded_write)
     coordinator = _ClaimCoordinator()
     winner_service = CrewSessionService(
         work_item_store=_CoordinatedClaimStore(
@@ -3999,14 +4034,17 @@ async def test_independent_finalizer_cas_loser_performs_zero_child_scan_or_stora
             stores.artifacts,
             AssertionError("loser_artifact_storage"),
         ),
-        attachment_store=_AttachmentFailure(
-            stores.attachments,
-            "agent_artifact_write",
-        ),
+        attachment_store=stores.attachments,
     )
     assert winner is not None and loser is not None
+    assert attachment_io == []
+    assert hostile_work.list_calls == 0
 
-    loser_task = asyncio.create_task(loser.finalize(parent.id, [object()]))
+    token = loser_context.set(True)
+    try:
+        loser_task = asyncio.create_task(loser.finalize(parent.id, [object()]))
+    finally:
+        loser_context.reset(token)
     await coordinator.loser_entered.wait()
     winner_result, loser_result = await asyncio.gather(
         winner.finalize(parent.id, results),
@@ -4018,6 +4056,8 @@ async def test_independent_finalizer_cas_loser_performs_zero_child_scan_or_stora
     assert loser_result.completed is False
     assert loser_result.state == "verifying"
     assert hostile_work.list_calls == 0
+    assert loser_io == []
+    assert "read" in attachment_io and "write" in attachment_io
     assert len(stores.artifacts.list_thread_latest(_thread.id)) == 1
 
 

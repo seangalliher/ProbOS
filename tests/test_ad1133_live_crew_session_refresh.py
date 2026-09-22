@@ -2363,10 +2363,158 @@ class _ProjectionWebSocket(_FakeWebSocket):
     def __init__(self) -> None:
         super().__init__()
         self.frames: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.receive_timeouts = 0
+        self.pings_consumed = 0
+        self._receive_timeout_pending = False
 
     async def send_text(self, payload: str) -> None:
         await super().send_text(payload)
         self.frames.put_nowait(json.loads(payload))
+
+    def timeout_next_receive(self) -> None:
+        assert not self._receive_timeout_pending and self.receive_timeouts == 0
+        self._receive_timeout_pending = True
+        self.receive_gate.set()
+
+    async def receive_text(self) -> str:
+        await self.receive_gate.wait()
+        if self._receive_timeout_pending:
+            self._receive_timeout_pending = False
+            self.receive_gate.clear()
+            self.receive_timeouts += 1
+            raise asyncio.TimeoutError
+        return await super().receive_text()
+
+    async def receive_semantic_frame(self) -> dict[str, Any]:
+        semantic_frame: dict[str, Any] | None = None
+
+        def receive() -> bool:
+            nonlocal semantic_frame
+            try:
+                frame = self.frames.get_nowait()
+            except asyncio.QueueEmpty:
+                return False
+            if frame.get("type") != "ping":
+                semantic_frame = frame
+                return True
+            assert set(frame) == {"type", "timestamp"}, "malformed heartbeat envelope"
+            timestamp = frame["timestamp"]
+            assert (
+                type(timestamp) in (int, float)
+                and timestamp >= 0
+                and (type(timestamp) is int or math.isfinite(timestamp))
+            ), "malformed heartbeat timestamp"
+            self.pings_consumed += 1
+            return False
+
+        # One existing budget covers all heartbeats and the first semantic frame.
+        await _wait_until(receive)
+        assert semantic_frame is not None
+        return semantic_frame
+
+
+@pytest.mark.parametrize("timestamp", [0, 1, 1.25])
+async def test_receive_semantic_frame_valid_heartbeats_share_one_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    timestamp: int | float,
+) -> None:
+    websocket = _ProjectionWebSocket()
+    expected = {"type": "crew_session_projection", "data": {"parent_id": "parent"}}
+    websocket.frames.put_nowait({"type": "ping", "timestamp": timestamp})
+    websocket.frames.put_nowait({"type": "ping", "timestamp": timestamp})
+    websocket.frames.put_nowait(expected)
+    wait_until = _wait_until
+    budgets = 0
+
+    async def counted_wait(predicate: Callable[[], bool]) -> None:
+        nonlocal budgets
+        budgets += 1
+        await wait_until(predicate)
+
+    monkeypatch.setattr(f"{__name__}._wait_until", counted_wait)
+
+    assert await websocket.receive_semantic_frame() is expected
+    assert websocket.pings_consumed == 2
+    assert budgets == 1
+    assert websocket.frames.empty()
+
+
+@pytest.mark.parametrize("heartbeat", [
+    pytest.param({"type": "ping"}, id="missing-timestamp"),
+    pytest.param({"type": "ping", "timestamp": 0, "data": {}}, id="extra-data"),
+    pytest.param({"type": "ping", "timestamp": 0, "stream": {}}, id="extra-stream"),
+    pytest.param({"type": "ping", "timestamp": True}, id="true"),
+    pytest.param({"type": "ping", "timestamp": False}, id="false"),
+    pytest.param({"type": "ping", "timestamp": None}, id="null"),
+    pytest.param({"type": "ping", "timestamp": "0"}, id="string"),
+    pytest.param({"type": "ping", "timestamp": []}, id="list"),
+    pytest.param({"type": "ping", "timestamp": -1}, id="negative"),
+    pytest.param({"type": "ping", "timestamp": float("nan")}, id="nan"),
+    pytest.param({"type": "ping", "timestamp": float("inf")}, id="infinity"),
+    pytest.param({"type": "ping", "timestamp": float("-inf")}, id="negative-infinity"),
+])
+async def test_receive_semantic_frame_rejects_malformed_heartbeat(
+    heartbeat: dict[str, Any],
+) -> None:
+    websocket = _ProjectionWebSocket()
+    following = {"type": "crew_session_projection", "data": {"parent_id": "parent"}}
+    websocket.frames.put_nowait(heartbeat)
+    websocket.frames.put_nowait(following)
+
+    with pytest.raises(AssertionError, match="malformed heartbeat"):
+        await websocket.receive_semantic_frame()
+
+    assert websocket.pings_consumed == 0
+    assert websocket.frames.get_nowait() is following
+
+
+@pytest.mark.parametrize("defect", [
+    "resync", "wrong-type", "wrong-parent", "wrong-thread",
+    "malformed-data", "wrong-session", "wrong-summary",
+])
+async def test_receive_semantic_frame_preserves_incorrect_first_semantic_frame(
+    defect: str,
+) -> None:
+    websocket = _ProjectionWebSocket()
+    correct = {
+        "type": "crew_session_projection",
+        "data": {
+            "parent_id": "parent",
+            "thread_id": "thread",
+            "session": {"revision": 3},
+            "room_summary": {"steps_total": 2},
+        },
+    }
+    first: dict[str, Any] = {**correct, "data": dict(correct["data"])}
+    if defect == "resync":
+        first = {"type": "resync_required", "data": {}}
+    elif defect == "wrong-type":
+        first["type"] = "work_item_updated"
+    elif defect == "wrong-parent":
+        first["data"]["parent_id"] = "another-parent"
+    elif defect == "wrong-thread":
+        first["data"]["thread_id"] = "another-thread"
+    elif defect == "malformed-data":
+        first["data"] = None
+    elif defect == "wrong-session":
+        first["data"]["session"] = {"revision": 2}
+    else:
+        first["data"]["room_summary"] = {"steps_total": 1}
+    websocket.frames.put_nowait(first)
+    websocket.frames.put_nowait(correct)
+
+    assert await websocket.receive_semantic_frame() is first
+    assert websocket.pings_consumed == 0
+    assert websocket.frames.get_nowait() is correct
+
+
+async def test_receive_semantic_frame_empty_queue_exhausts_existing_budget() -> None:
+    websocket = _ProjectionWebSocket()
+
+    with pytest.raises(AssertionError, match="condition did not become true"):
+        await websocket.receive_semantic_frame()
+
+    assert websocket.pings_consumed == 0
 
 
 @pytest.mark.parametrize("large_history", [False, True], ids=["small", "over-1000-retired"])
@@ -2447,7 +2595,7 @@ async def test_owned_replan_current_projection_chain(
             "data": {"work_item": parent.to_dict()},
             "timestamp": 1.0,
         })
-        frame = await websocket.frames.get()
+        frame = await websocket.receive_semantic_frame()
         assert frame["type"] == "crew_session_projection"
         assert frame["data"]["parent_id"] == parent_id
         assert frame["data"]["thread_id"] == thread_id
@@ -2457,7 +2605,12 @@ async def test_owned_replan_current_projection_chain(
 
     try:
         assert (await websocket.frames.get())["type"] == "state_snapshot"
+        websocket.timeout_next_receive()
+        await _wait_until(lambda: len(websocket.sent) == 2)
+        assert websocket.receive_timeouts == 1
+        assert json.loads(websocket.sent[1])["type"] == "ping"
         await assert_consumers(2, 1)
+        assert websocket.pings_consumed == 1
         if large_history:
             state.replan_decomposer.count = 200
             for index in range(6):
