@@ -54,6 +54,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
     parse_verdict_criteria,
@@ -1300,11 +1301,30 @@ class SubtaskVerifier:
         self._executor = agentic_executor
         self._runtime = runtime
         self._max_rounds = max(1, int(max_convergence_rounds))
+        self._owned_steps_port: owned_steps.OwnedStepsExecutionPort | None = None
         # AD-866 (optional, Dependency Inversion): when wired, verifier selection
         # prefers a department peer or the producer's chief over a random
         # independent agent. Default ``None`` preserves the AD-860 any-independent
         # behavior verbatim for every existing call site.
         self._ontology = ontology
+
+    def bind_owned_steps_correction_port(
+        self,
+        port: owned_steps.OwnedStepsExecutionPort,
+    ) -> None:
+        if self._owned_steps_port is not None and self._owned_steps_port is not port:
+            current_owns = getattr(self._owned_steps_port, "owns_store", None)
+            replacement_owns = getattr(port, "owns_store", None)
+            if (
+                not callable(current_owns)
+                or not callable(replacement_owns)
+                or not current_owns(self._store)
+                or not replacement_owns(self._store)
+            ):
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_owner_already_bound"
+                )
+        self._owned_steps_port = port
 
     async def _build_trace_section(self, trace_ref: str | None) -> str:
         if not trace_ref:
@@ -1423,8 +1443,9 @@ class SubtaskVerifier:
         self,
         result: "SubtaskResult",
         *,
-        instructions: str,
-        task_text: str,
+        instructions: str | None = None,
+        task_text: str | None = None,
+        owned_steps_snapshot: owned_steps.OwnedStepsSnapshot | None = None,
     ) -> ConvergenceOutcome:
         """Verify ``result`` and, on refusal, re-run + re-verify to convergence.
 
@@ -1443,6 +1464,37 @@ class SubtaskVerifier:
 
         BF-778: this writes no trust in either direction, on any path.
         """
+        execution_context: dict[str, Any] = {}
+        if owned_steps_snapshot is not None:
+            control = owned_steps_snapshot.control
+            child = await self._store.get_work_item(result.work_item_id)
+            producer = self._registry.get(result.agent_id)
+            if (
+                child is None
+                or child.parent_id != control.parent_id
+                or child.assigned_to != result.agent_id
+                or producer is None
+                or producer.id != result.agent_id
+            ):
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_execution_binding_invalid",
+                    parent_id=control.parent_id,
+                )
+            if instructions is None:
+                instructions = str(getattr(producer, "instructions", "") or "")
+            if task_text is None:
+                task_text = child.description or child.title
+            execution_context = {
+                "department": str(getattr(producer, "department", "") or ""),
+                "rank": str(getattr(producer, "rank", "ensign") or "ensign"),
+                "thread_id": control.thread_id,
+                "extra_context": {
+                    "_crew_session_id": control.parent_id,
+                    "_crew_work_item_id": child.id,
+                },
+            }
+        if instructions is None or task_text is None:
+            raise ValueError("legacy_convergence_context_required")
         verdict = await self.verify(result)
         if verdict.accepted:
             return ConvergenceOutcome(
@@ -1459,18 +1511,182 @@ class SubtaskVerifier:
         while rounds < self._max_rounds:
             rounds += 1
             critiqued_task = f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
-            try:
-                outcome = await self._executor.run(
-                    agent_id=result.agent_id,
-                    instructions=instructions,
-                    task_text=critiqued_task,
-                    runtime=self._runtime,
-                    **fault_kwargs,
+            correction_permit = None
+            correction_lease = None
+            replayed_correction = None
+            if owned_steps_snapshot is not None:
+                if self._owned_steps_port is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_owner_unavailable",
+                        parent_id=owned_steps_snapshot.control.parent_id,
+                    )
+                row = next(
+                    (
+                        row
+                        for row in owned_steps_snapshot.control.rows
+                        if row.child is not None
+                        and row.child.child_id == result.work_item_id
+                    ),
+                    None,
                 )
-                final_text = outcome.final_text
+                if row is None or row.submission is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_conflict",
+                        parent_id=owned_steps_snapshot.control.parent_id,
+                    )
+                review_attempt_id = owned_steps.owned_digest(
+                    owned_steps.owned_json_bytes(
+                        [
+                            "legacy_correction",
+                            owned_steps_snapshot.control.parent_id,
+                            owned_steps_snapshot.control.incarnation,
+                            row.step_id,
+                            row.submission,
+                            rounds,
+                        ]
+                    )
+                )
+                execution_nonce = owned_steps.owned_digest(
+                    owned_steps.owned_json_bytes(
+                        ["correction_execution", review_attempt_id]
+                    )
+                )
+                admitted = await self._owned_steps_port.admit_correction(
+                    self,
+                    owned_steps_snapshot,
+                    result.work_item_id,
+                    reviewer_id=verdict.verifier_agent_id,
+                    review_attempt_id=review_attempt_id,
+                    execution_nonce=execution_nonce,
+                )
+                correction_permit = admitted.permit
+                if correction_permit is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_conflict",
+                        parent_id=owned_steps_snapshot.control.parent_id,
+                    )
+                correction_lease = getattr(
+                    self._owned_steps_port,
+                    "correction_execution_lease",
+                )(owned_steps_snapshot)
+                if admitted.disposition != "new":
+                    replayed_correction = (
+                        await self._owned_steps_port.read_correction(
+                            owned_steps_snapshot,
+                            correction_permit,
+                        )
+                    )
+                    if replayed_correction is None:
+                        raise owned_steps.OwnedStepsError(
+                            "owned_steps_correction_conflict",
+                            parent_id=owned_steps_snapshot.control.parent_id,
+                        )
+            try:
+                if replayed_correction is None:
+                    owned_kwargs = (
+                        {
+                            "owned_steps_execution_port": self._owned_steps_port,
+                            "owned_steps_execution_lease": correction_lease,
+                            "owned_steps_execution_permit": correction_permit,
+                        }
+                        if correction_permit is not None
+                        else {}
+                    )
+                    outcome = await self._executor.run(
+                        agent_id=result.agent_id,
+                        instructions=instructions,
+                        task_text=critiqued_task,
+                        runtime=self._runtime,
+                        **execution_context,
+                        **owned_kwargs,
+                        **fault_kwargs,
+                    )
+                    final_text = outcome.final_text
+                else:
+                    outcome = None
+                    final_text = (
+                        replayed_correction.result.output
+                        if isinstance(
+                            replayed_correction.result.output,
+                            str,
+                        )
+                        else ""
+                    )
                 if final_text:
-                    tool_trace_ref = getattr(outcome, "tool_trace_ref", None) or None
+                    tool_trace_ref = (
+                        (
+                            getattr(outcome, "tool_trace_ref", None)
+                            if outcome is not None
+                            else replayed_correction.result.tool_trace_ref
+                        )
+                        or None
+                    )
                     result.output, result.tool_trace_ref = final_text, tool_trace_ref
+                    if outcome is not None:
+                        result.actual_tokens = int(
+                            getattr(outcome, "total_tokens", 0)
+                        )
+                        result.stopped_reason = str(
+                            getattr(outcome, "stopped_reason", "")
+                        )
+                        result.artifact_refs = [
+                            dict(reference)
+                            for reference in getattr(
+                                outcome,
+                                "artifact_refs",
+                                [],
+                            )
+                        ]
+                    else:
+                        result.actual_tokens = (
+                            replayed_correction.result.actual_tokens
+                        )
+                        result.stopped_reason = (
+                            replayed_correction.result.stopped_reason
+                        )
+                        result.artifact_refs = [
+                            reference.model_dump(mode="json")
+                            for reference in (
+                                replayed_correction.result.artifact_refs
+                            )
+                        ]
+                    if (
+                        correction_permit is not None
+                        and replayed_correction is None
+                        and self._owned_steps_port is not None
+                    ):
+                        correction = owned_steps.OwnedCorrectionResult(
+                            permit=correction_permit,
+                            reviewer_id=verdict.verifier_agent_id,
+                            result=owned_steps.OwnedExecutionResult(
+                                work_item_id=result.work_item_id,
+                                spec_id=result.spec_id,
+                                agent_id=result.agent_id,
+                                output=result.output,
+                                status=result.status,
+                                tool_trace_ref=result.tool_trace_ref,
+                                started_at=result.started_at,
+                                finished_at=result.finished_at,
+                                stopped_reason=result.stopped_reason,
+                                actual_tokens=result.actual_tokens,
+                                artifact_refs=tuple(
+                                    owned_steps.OwnedArtifactReference.model_validate(
+                                        reference
+                                    )
+                                    for reference in result.artifact_refs
+                                ),
+                                blocked_dependency_ids=tuple(
+                                    result.blocked_dependency_ids
+                                ),
+                            ),
+                        )
+                        await self._owned_steps_port.record_correction(
+                            self,
+                            owned_steps_snapshot,
+                            correction,
+                        )
+            except owned_steps.OwnedStepsError:
+                raise
             except Exception:
                 logger.warning(
                     "AD-860: convergence re-run failed for sub-task %s "
@@ -1493,9 +1709,9 @@ class SubtaskVerifier:
                 # Judging correctness needs real adjudication. AD-1282 (BF-782,
                 # #1246) resolved where that lives: the SESSION path, which keeps
                 # the round history and attributes through the crew trust outbox.
-                # This legacy path is single-shot by design and has no production
-                # caller, so it stays neutral -- crediting here would be a second
-                # write for a judgement the session path already pays.
+                # Legacy convergence stays neutral: it does not retain the
+                # session's adjudication history, so it cannot attribute a
+                # verifier's correctness from acceptance alone.
                 return ConvergenceOutcome(
                     result=result,
                     verdict=verdict,
@@ -1664,6 +1880,7 @@ class SubtaskVerifier:
         thread_id: str,
         department: str,
         rank: str,
+        owned_steps_snapshot: owned_steps.OwnedStepsSnapshot | None = None,
     ) -> SessionConvergenceOutcome:
         """Converge one child with bounded revisions and no learning writes."""
         current = replace(
@@ -1746,26 +1963,119 @@ class SubtaskVerifier:
                     history=history,
                     terminal_attempt=terminal_attempt,
                 )
+            correction_permit = None
+            correction_lease = None
+            replayed_correction = None
+            if owned_steps_snapshot is not None:
+                if self._owned_steps_port is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_owner_unavailable",
+                        parent_id=parent_id,
+                    )
+                row = next(
+                    (
+                        row
+                        for row in owned_steps_snapshot.control.rows
+                        if row.child is not None
+                        and row.child.child_id == current.work_item_id
+                    ),
+                    None,
+                )
+                if row is None or row.submission is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_conflict",
+                        parent_id=parent_id,
+                    )
+                review_attempt_id = owned_steps.owned_digest(
+                    owned_steps.owned_json_bytes(
+                        [
+                            "canonical_correction",
+                            parent_id,
+                            owned_steps_snapshot.control.incarnation,
+                            row.step_id,
+                            row.submission,
+                            attempt_index,
+                        ]
+                    )
+                )
+                execution_nonce = owned_steps.owned_digest(
+                    owned_steps.owned_json_bytes(
+                        ["correction_execution", review_attempt_id]
+                    )
+                )
+                admitted = await self._owned_steps_port.admit_correction(
+                    self,
+                    owned_steps_snapshot,
+                    current.work_item_id,
+                    reviewer_id=verdict.verifier_agent_id,
+                    review_attempt_id=review_attempt_id,
+                    execution_nonce=execution_nonce,
+                )
+                correction_permit = admitted.permit
+                if correction_permit is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_correction_conflict",
+                        parent_id=parent_id,
+                    )
+                correction_lease = getattr(
+                    self._owned_steps_port,
+                    "correction_execution_lease",
+                )(owned_steps_snapshot)
+                if admitted.disposition != "new":
+                    replayed_correction = await self._owned_steps_port.read_correction(
+                        owned_steps_snapshot,
+                        correction_permit,
+                    )
+                    if replayed_correction is None:
+                        terminal_attempt = self._session_terminal_attempt(
+                            attempt_index=attempt_index,
+                            attempted_revision=len(history) + 1,
+                            stopped_reason="execution_exception",
+                            result_text="",
+                            correction_tokens=0,
+                            tool_trace_ref=None,
+                            artifact_refs=(),
+                            denied_tools=(),
+                            failure_code="correction_execution_defect",
+                        )
+                        return self._session_terminal_outcome(
+                            current,
+                            status="failed",
+                            rounds_used=attempt_index,
+                            failure_code="correction_execution_defect",
+                            history=history,
+                            terminal_attempt=terminal_attempt,
+                        )
             try:
-                outcome = await self._executor.run(
-                    agent_id=current.agent_id,
-                    instructions=normalized_instructions,
-                    task_text=critiqued_task,
-                    runtime=_session_correction_runtime(
-                        self._runtime,
+                if replayed_correction is None:
+                    outcome = await self._executor.run(
                         agent_id=current.agent_id,
+                        instructions=normalized_instructions,
+                        task_text=critiqued_task,
+                        runtime=_session_correction_runtime(
+                            self._runtime,
+                            agent_id=current.agent_id,
+                            department=department,
+                            rank=rank,
+                        ),
                         department=department,
                         rank=rank,
-                    ),
-                    department=department,
-                    rank=rank,
-                    thread_id=thread_id,
-                    extra_context={
-                        "_crew_session_id": parent_id,
-                        "_crew_work_item_id": current.work_item_id,
-                    },
-                    **fault_kwargs,
-                )
+                        thread_id=thread_id,
+                        extra_context={
+                            "_crew_session_id": parent_id,
+                            "_crew_work_item_id": current.work_item_id,
+                        },
+                        owned_steps_execution_port=(
+                            self._owned_steps_port
+                            if correction_permit is not None
+                            else None
+                        ),
+                        owned_steps_execution_lease=correction_lease,
+                        owned_steps_execution_permit=correction_permit,
+                        **fault_kwargs,
+                    )
+                else:
+                    outcome = None
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1796,10 +2106,29 @@ class SubtaskVerifier:
                     terminal_attempt=terminal_attempt,
                 )
 
-            normalized_outcome = self._normalize_correction_outcome(
-                outcome,
-                thread_id=thread_id,
-            )
+            if replayed_correction is None:
+                normalized_outcome = self._normalize_correction_outcome(
+                    outcome,
+                    thread_id=thread_id,
+                )
+            else:
+                stored = replayed_correction.result
+                normalized_outcome = _NormalizedSessionCorrectionOutcome(
+                    valid=True,
+                    stopped_reason=stored.stopped_reason,
+                    result_text=(
+                        stored.output
+                        if isinstance(stored.output, str)
+                        else ""
+                    ),
+                    correction_tokens=stored.actual_tokens,
+                    tool_trace_ref=stored.tool_trace_ref,
+                    artifact_refs=tuple(
+                        ref.model_dump(mode="json")
+                        for ref in stored.artifact_refs
+                    ),
+                    denied_tools=(),
+                )
             terminal_attempt = self._classify_correction_terminal(
                 normalized_outcome,
                 attempt_index=attempt_index,
@@ -1834,6 +2163,39 @@ class SubtaskVerifier:
                 actual_tokens=correction_tokens,
                 artifact_refs=[dict(ref) for ref in correction_artifacts],
             )
+            if (
+                correction_permit is not None
+                and replayed_correction is None
+                and self._owned_steps_port is not None
+            ):
+                correction = owned_steps.OwnedCorrectionResult(
+                    permit=correction_permit,
+                    reviewer_id=verdict.verifier_agent_id,
+                    result=owned_steps.OwnedExecutionResult(
+                        work_item_id=current.work_item_id,
+                        spec_id=current.spec_id,
+                        agent_id=current.agent_id,
+                        output=current.output,
+                        status=current.status,
+                        tool_trace_ref=current.tool_trace_ref,
+                        started_at=current.started_at,
+                        finished_at=current.finished_at,
+                        stopped_reason=current.stopped_reason,
+                        actual_tokens=current.actual_tokens,
+                        artifact_refs=tuple(
+                            owned_steps.OwnedArtifactReference.model_validate(ref)
+                            for ref in current.artifact_refs
+                        ),
+                        blocked_dependency_ids=tuple(
+                            current.blocked_dependency_ids
+                        ),
+                    ),
+                )
+                await self._owned_steps_port.record_correction(
+                    self,
+                    owned_steps_snapshot,
+                    correction,
+                )
             verdict = await self.verify_for_session(
                 current,
                 expected_output=expected_output,

@@ -4,6 +4,13 @@ import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, WorkItemTemplateView } from '../../store/types';
 import { ChevronDown, ChevronRight, ChevronUp, Warning, Close } from '../icons/Glyphs';
+import { OwnedStepsPanel, OwnedStepsRecoveryPanel } from '../workspace/TodosList';
+import {
+  OwnedStepsApiError,
+  fetchOwnedSteps,
+  type ManagedOwnedStepsView,
+} from '../workspace/ownedStepsApi';
+import { countCompletedWorkItemSteps, isWorkItemStepComplete } from '../../utils/workItemSteps';
 
 // ── Column config ──────────────────────────────────────────────────
 type ColKey = 'backlog' | 'ready' | 'in_progress' | 'review' | 'done';
@@ -59,7 +66,7 @@ function WorkCard({ item, assigneeLabel, onDragStart, onOpen }: {
   onDragStart: (e: DragEvent, id: string) => void;
   onOpen: (item: WorkItemView) => void;
 }) {
-  const stepsComplete = item.steps.filter(s => s.status === 'completed').length;
+  const stepsComplete = countCompletedWorkItemSteps(item.steps);
   const overdue = item.due_at && item.due_at < Date.now() / 1000;
 
   return (
@@ -206,6 +213,41 @@ export default function WorkBoard() {
 
   // BF-332: clicked work item for the detail modal.
   const [detailItem, setDetailItem] = useState<WorkItemView | null>(null);
+  const [detailOwnedView, setDetailOwnedView] = useState<ManagedOwnedStepsView | null>(null);
+  const [ownershipError, setOwnershipError] = useState('');
+  const [ownershipActions, setOwnershipActions] = useState<string[]>([]);
+
+  const refreshOwnedDetail = useCallback(async (
+    item: WorkItemView,
+    cursor: string | null = null,
+  ): Promise<void> => {
+    const ownership = await fetchOwnedSteps(item.id, cursor === null ? {} : { cursor });
+    if (ownership.mode === 'unmanaged') {
+      throw new OwnedStepsApiError(
+        409,
+        'owned_steps_classification_changed',
+        'This work item is no longer managed. Close and reopen its details.',
+      );
+    }
+    setDetailOwnedView(ownership);
+  }, []);
+
+  const openDetail = useCallback(async (item: WorkItemView): Promise<void> => {
+    setOwnershipError('');
+    setOwnershipActions([]);
+    setDetailOwnedView(null);
+    try {
+      const ownership = await fetchOwnedSteps(item.id);
+      if (ownership.mode !== 'unmanaged') setDetailOwnedView(ownership);
+      setDetailItem(item);
+    } catch (error) {
+      setDetailItem(item);
+      setOwnershipError(error instanceof OwnedStepsApiError
+        ? error.feedback
+        : 'Step ownership could not be determined. Generic actions are blocked.');
+      setOwnershipActions(error instanceof OwnedStepsApiError ? error.actions : []);
+    }
+  }, []);
   const filtered = useMemo(() => {
     return allItems.filter(item => {
       if (filterPriorities.size > 0 && !filterPriorities.has(item.priority)) return false;
@@ -291,8 +333,27 @@ export default function WorkBoard() {
       setTimeout(() => setWipWarning(null), 3000);
     }
 
-    await moveWorkItem(itemId, col.targetStatus);
-  }, [moveWorkItem, colItems]);
+    const item = allItems.find(candidate => candidate.id === itemId);
+    if (!item) return;
+    try {
+      const ownership = await fetchOwnedSteps(itemId);
+      if (ownership.mode !== 'unmanaged') {
+        setDetailItem(item);
+        setDetailOwnedView(ownership);
+        setOwnershipError('Managed work uses owned controls; the generic board transition was not sent.');
+        setOwnershipActions([]);
+        return;
+      }
+      await moveWorkItem(itemId, col.targetStatus);
+    } catch (error) {
+      setDetailItem(item);
+      setDetailOwnedView(null);
+      setOwnershipError(error instanceof OwnedStepsApiError
+        ? error.feedback
+        : 'Step ownership could not be determined. The board transition was blocked.');
+      setOwnershipActions(error instanceof OwnedStepsApiError ? error.actions : []);
+    }
+  }, [moveWorkItem, colItems, allItems]);
 
   const handleDragEnd = useCallback(() => {
     setDragId(null);
@@ -390,7 +451,7 @@ export default function WorkBoard() {
               item={item}
               assigneeLabel={resolveAssignee(item.assigned_to)?.label ?? null}
               onDragStart={handleDragStart}
-              onOpen={setDetailItem}
+              onOpen={item => { void openDetail(item); }}
             />
           ))}
         </div>
@@ -613,7 +674,7 @@ export default function WorkBoard() {
       {/* BF-332: Work item detail modal */}
       {detailItem && (
         <div
-          onClick={() => setDetailItem(null)}
+          onClick={() => { setDetailItem(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
           style={{
             position: 'fixed', inset: 0, zIndex: 1000,
             background: 'rgba(0,0,0,0.55)',
@@ -636,7 +697,7 @@ export default function WorkBoard() {
               }} />
               <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.3, flex: 1 }}>{detailItem.title}</div>
               <button
-                onClick={() => setDetailItem(null)}
+                onClick={() => { setDetailItem(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
                 aria-label="Close"
                 style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', padding: 2, display: 'flex' }}
               >
@@ -660,6 +721,23 @@ export default function WorkBoard() {
             <DetailRow label="Assigned to" value={resolveAssignee(detailItem.assigned_to)?.label ?? 'Unassigned'} />
             <DetailRow label="Created by" value={detailItem.created_by || '\u2014'} />
             {detailItem.due_at ? <DetailRow label="Due" value={new Date(detailItem.due_at * 1000).toLocaleString()} /> : null}
+            {ownershipError && (
+              <div role="alert" data-testid="work-board-ownership-error"
+                style={{ marginTop: 8, color: '#f08b8b' }}>
+                {ownershipError}
+              </div>
+            )}
+            {ownershipError && ownershipActions.some(action => (
+              action === 'replace_manual_prefix'
+              || action === 'replan_unstarted'
+              || action === 'inspect_source'
+            )) && (
+              <OwnedStepsRecoveryPanel
+                taskId={detailItem.id}
+                actions={ownershipActions}
+                onRefresh={() => openDetail(detailItem)}
+              />
+            )}
 
             {detailItem.description ? (
               <div style={{ marginTop: 12 }}>
@@ -670,18 +748,27 @@ export default function WorkBoard() {
               <div style={{ marginTop: 12, color: '#666', fontStyle: 'italic' }}>No description provided.</div>
             )}
 
-            {detailItem.steps.length > 0 && (
+            {detailOwnedView ? (
+              <div style={{ marginTop: 14 }} data-testid="work-board-owned-controls">
+                <OwnedStepsPanel
+                  taskId={detailItem.id}
+                  view={detailOwnedView}
+                  onRefresh={() => refreshOwnedDetail(detailItem)}
+                  onNavigate={cursor => refreshOwnedDetail(detailItem, cursor)}
+                />
+              </div>
+            ) : detailItem.steps.length > 0 && !ownershipError && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 10, color: '#777', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
-                  Steps ({detailItem.steps.filter(s => s.status === 'completed').length}/{detailItem.steps.length})
+                  Steps ({countCompletedWorkItemSteps(detailItem.steps)}/{detailItem.steps.length})
                 </div>
                 {detailItem.steps.map((s, i) => (
                   <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
                     <span style={{
                       width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-                      background: s.status === 'completed' ? '#50b0a0' : '#555',
+                      background: isWorkItemStepComplete(s) ? '#50b0a0' : '#555',
                     }} />
-                    <span style={{ color: s.status === 'completed' ? '#8a9' : '#aab' }}>{s.label}</span>
+                    <span style={{ color: isWorkItemStepComplete(s) ? '#8a9' : '#aab' }}>{s.label}</span>
                   </div>
                 ))}
               </div>

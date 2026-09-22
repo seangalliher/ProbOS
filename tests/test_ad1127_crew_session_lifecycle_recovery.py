@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import weakref
 from pathlib import Path
 from types import SimpleNamespace
@@ -318,13 +319,21 @@ class _CheckpointAttachmentStore:
         )
         if origin == "chat_attachment":
             self._chat_writes += 1
+        try:
+            document = json.loads(blob.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            document = None
+        # Durable owned evidence now shares this retention class. Target the
+        # final Markdown result, not earlier JSON review/receipt writes.
         should_fail = (
             self._stage == "result_blob"
             and origin == "agent_artifact"
+            and mime == "text/markdown"
         ) or (
             self._stage == "provenance"
             and origin == "chat_attachment"
-            and self._chat_writes == self._child_count + 3
+            and type(document) is dict
+            and document.get("origin") == "crew_session_finalizer"
         )
         if should_fail and not self._failed:
             self._failed = True
@@ -872,6 +881,7 @@ async def test_identity_assignment_status_and_exact_runtime_evidence_are_volatil
     work_store: WorkItemStore,
     tmp_path: Path,
 ) -> None:
+    from probos import work_item_steps as owned_steps
     from probos.cognitive.crew_session import (
         CrewRecoveryPlan,
         _validate_contextual_recovery_plan,
@@ -911,12 +921,19 @@ async def test_identity_assignment_status_and_exact_runtime_evidence_are_volatil
         "mime": "text/plain",
         "size_bytes": 4,
     }
-    await work_store.update_work_item(
-        child.id,
-        assigned_to="agent-1",
-        status="done",
-        metadata=metadata,
-    )
+    # This formerly pinned an unmanaged overwrite of execution evidence. A
+    # managed child now rejects that bypass before any source can become the
+    # new recovery baseline.
+    with pytest.raises(
+        owned_steps.OwnedStepsError,
+        match="owned_steps_write_reserved",
+    ):
+        await work_store.update_work_item(
+            child.id,
+            assigned_to="agent-1",
+            status="done",
+            metadata=metadata,
+        )
     live = await work_store.get_work_item(child.id)
     assert live is not None
     assert _validate_contextual_recovery_plan(
@@ -925,15 +942,13 @@ async def test_identity_assignment_status_and_exact_runtime_evidence_are_volatil
         (live,),
     ) == "derived_v1"
 
-    await work_store.update_work_item(live.id, title="tampered")
-    tampered = await work_store.get_work_item(live.id)
-    assert tampered is not None
-    with pytest.raises(ValueError, match="^crew_recovery_plan_integrity_invalid$"):
-        _validate_contextual_recovery_plan(
-            parent.id,
-            plan,
-            (tampered,),
-        )
+    with pytest.raises(
+        owned_steps.OwnedStepsError,
+        match="owned_steps_write_reserved",
+    ):
+        await work_store.update_work_item(live.id, title="tampered")
+    unchanged = await work_store.get_work_item(live.id)
+    assert unchanged is not None and unchanged.title == live.title
 
 
 @pytest.mark.asyncio
@@ -1088,11 +1103,8 @@ async def test_state_recovery_invariant_rejects_verifying_planned_before_work(
     work_store: WorkItemStore,
     tmp_path: Path,
 ) -> None:
-    from types import SimpleNamespace
-
-    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos import work_item_steps as owned_steps
     from probos.cognitive.crew_session import CrewRecoveryContract, CrewRecoveryPlan
-    from probos.config import SystemConfig
 
     parent, service, discussing = await _new_session(work_store, tmp_path)
     planned, _ = await service.install_recovery_plan(
@@ -1128,65 +1140,29 @@ async def test_state_recovery_invariant_rejects_verifying_planned_before_work(
     assert authoritative is not None
     corrupted_metadata = dict(authoritative.metadata)
     corrupted_metadata["crew_recovery"] = planned.model_dump(mode="json")
-    corrupted = await work_store.merge_work_item_metadata(
-        parent.id,
-        {"crew_recovery": planned.model_dump(mode="json")},
-        expected={
-            "crew_session": authoritative.metadata["crew_session"],
-            "crew_recovery": authoritative.metadata["crew_recovery"],
-        },
-        expected_work_type="crew_session",
-        expected_status=authoritative.status,
-        expected_assigned_to=authoritative.assigned_to,
-    )
-    assert corrupted is not None
-    child_before = await work_store.get_work_item(_VECTOR_CHILD_ID)
-    assert child_before is not None
-
-    class _NoWork:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        async def resume(self, parent_id: str) -> Any:
-            self.calls.append(parent_id)
-            raise AssertionError("illegal authority reached downstream work")
-
-    executor = _NoWork()
-    finalizer = _NoWork()
-    config = SystemConfig()
-    config.agentic_dispatch.orchestrator_enabled = True
-    owner = CrewOrchestrator(
-        assignment_resolver=object(),
-        delegator=object(),
-        crew_executor=executor,
-        verifier=object(),
-        synthesizer=object(),
-        work_item_store=work_store,
-        runtime=SimpleNamespace(),
-        config=config,
-        crew_session_service=service,
-        crew_session_finalizer=finalizer,
-    )
-
+    # This used to inject an impossible state through the generic metadata
+    # writer. The owned source fence now rejects that old bypass atomically.
     with pytest.raises(
-        ValueError,
-        match="^crew_session_recovery_state_conflict$",
+        owned_steps.OwnedStepsError,
+        match="owned_steps_write_reserved",
     ):
-        await service.get_session(parent.id)
-    with pytest.raises(
-        ValueError,
-        match="^crew_session_recovery_state_conflict$",
-    ):
-        await owner._run_recovery_attempt(parent.id)
-
+        await work_store.merge_work_item_metadata(
+            parent.id,
+            {"crew_recovery": planned.model_dump(mode="json")},
+            expected={
+                "crew_session": authoritative.metadata["crew_session"],
+                "crew_recovery": authoritative.metadata["crew_recovery"],
+            },
+            expected_work_type="crew_session",
+            expected_status=authoritative.status,
+            expected_assigned_to=authoritative.assigned_to,
+        )
     child_after = await work_store.get_work_item(_VECTOR_CHILD_ID)
     parent_after = await work_store.get_work_item(parent.id)
     assert child_after is not None and parent_after is not None
-    assert child_after.actual_tokens == child_before.actual_tokens
-    assert child_after.metadata == child_before.metadata
-    assert parent_after.metadata == corrupted_metadata
-    assert executor.calls == []
-    assert finalizer.calls == []
+    assert parent_after.metadata == authoritative.metadata
+    assert parent_after.metadata != corrupted_metadata
+    assert (await service.get_session(parent.id)) == verifying
     assert verifying.state == "verifying"
 
 
@@ -2943,6 +2919,12 @@ async def test_finalizer_missing_checkpointed_provenance_fails_without_recreatio
         def __init__(self, delegate: CrewSessionService) -> None:
             self.delegate = delegate
 
+        def __getattr__(self, name: str) -> Any:
+            # The wrapper used to pin only the publication call. Forward
+            # the durable owner API so managed verification still crosses
+            # the real typed binding before that injected failure.
+            return getattr(self.delegate, name)
+
         async def get_session(self, parent_id: str) -> Any:
             return await self.delegate.get_session(parent_id)
 
@@ -3889,9 +3871,11 @@ async def test_lifecycle_cancellation_records_exact_safe_boundary_code(
 @pytest.mark.asyncio
 async def test_lifecycle_owner_recovers_session_to_published_once(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
 
+    from probos import work_item_steps as steps
     from probos.cognitive.crew_assignment import AssignmentDecision
     from probos.cognitive.crew_delegation import DelegationDecision
     from probos.cognitive.crew_orchestrator import CrewOrchestrator
@@ -3922,7 +3906,10 @@ async def test_lifecycle_owner_recovers_session_to_published_once(
     stores_generator = stores_fixture.__wrapped__(tmp_path)
     stores = await stores_generator.__anext__()
     try:
-        parent, thread, service = await _session_parent(stores)
+        parent, thread, service = await _session_parent(
+            stores,
+            manual_gate=True,
+        )
         child = await _child(
             stores,
             parent_id=parent.id,
@@ -3938,6 +3925,56 @@ async def test_lifecycle_owner_recovers_session_to_published_once(
             expected_recovery=None,
             plan=plan,
             expected_children=(child,),
+        )
+        owned = await stores.work.get_owned_steps(parent.id)
+        assert owned is not None and owned.control.mode == "awaiting_adoption"
+        captain = service.captain_principal()
+        system_owner = service.owned_steps_authority(
+            service,
+            parent_id=parent.id,
+            actor_id="facilitator-1",
+            thread_id=thread.id,
+            role="owner",
+            operation="preview_adoption",
+            token=None,
+        )
+        with pytest.raises(steps.OwnedStepsError, match="authority_denied"):
+            await stores.work.preview_owned_steps_adoption(
+                parent.id,
+                authority=system_owner,
+                view_id="forged-system-owner",
+                turn_id="facilitator-adoption",
+            )
+        preview_authority = await service.owned_human_steps_authority(
+            captain,
+            parent_id=parent.id,
+            operation="preview_adoption",
+            token=None,
+        )
+        preview = await stores.work.preview_owned_steps_adoption(
+            parent.id,
+            authority=preview_authority,
+            view_id="canonical-adoption",
+            turn_id="facilitator-adoption",
+        )
+        await stores.work.compare_and_set_owned_step(
+            steps.OwnedStepMutation(
+                steps.OwnedStepChange(
+                    operation_id=steps.owned_digest(
+                        steps.owned_json_bytes(
+                            ["canonical-adoption", owned.control.incarnation]
+                        )
+                    ),
+                    token=preview.token,
+                    command=steps.AdoptOwnedStepsCommand(preview=preview),
+                ),
+                await service.owned_human_steps_authority(
+                    captain,
+                    parent_id=parent.id,
+                    operation="adopt",
+                    token=preview.token,
+                ),
+            )
         )
 
         class _Resolver:
@@ -3977,11 +4014,15 @@ async def test_lifecycle_owner_recovers_session_to_published_once(
         )
         registry = _registry_for([replace(child, assigned_to="agent-1")])
         judge = _ScriptedLLM([
-            _verdict(True, critique="Child evidence is complete."),
+            _verdict(False, critique="Child evidence needs correction."),
+            _verdict(True, critique="Corrected child evidence is complete."),
             _verdict(True, confidence=0.98, critique="Final result is complete."),
         ])
         synth = _ScriptedLLM([_text("Owner final result", tokens=11)])
         final_runtime = finalizer_runtime(stores, tmp_path, service)
+        correction_executor = _StaticAgenticExecutor(
+            final_text="corrected owner durable evidence",
+        )
         finalizer = _make_finalizer(
             stores=stores,
             service=service,
@@ -3990,7 +4031,7 @@ async def test_lifecycle_owner_recovers_session_to_published_once(
                 llm=judge,
                 stores=stores,
                 registry=registry,
-                executor=_StaticAgenticExecutor(),
+                executor=correction_executor,
                 runtime=final_runtime,
             ),
             synthesizer=_make_synthesizer(
@@ -4013,25 +4054,363 @@ async def test_lifecycle_owner_recovers_session_to_published_once(
             crew_session_service=service,
             crew_session_finalizer=finalizer,
         )
+        service.bind_scheduler(owner.schedule)
 
         await owner.start()
         task = owner._tasks_by_parent[parent.id]
         result = await task
         await asyncio.sleep(0)
 
-        assert result.completed is True
-        assert result.final_output == "Owner final result"
+        assert result.completed is False
+        assert result.final_output == ""
         assert len(executor_outcome.calls) == 1
-        assert len(judge.requests) == 2
+        assert len(correction_executor.calls) == 1
+        assert (
+            correction_executor.calls[0]["owned_steps_execution_permit"]
+            .review_attempt_id
+            is not None
+        )
+        assert len(judge.requests) == 3
         assert len(synth.requests) == 1
         assert len(stores.artifacts.list_versions(
             thread_id=thread.id,
             name="crew-result.md",
         )) == 1
         recovery = await service.get_recovery(parent.id)
-        assert recovery is not None and recovery.phase == "published"
+        assert recovery is not None and recovery.phase == "provenance_bound"
         assert recovery.attempt_count == 1
+        owned = await stores.work.get_owned_steps(parent.id)
+        assert owned is not None
+        assert owned.control.finalization_disposition == "pending"
+        assert owned.control.finalization is not None
+        owned_row = next(row for row in owned.control.rows if row.child is not None)
+        reviewed = await stores.work.get_owned_step_evidence(
+            parent.id,
+            owned.control.incarnation,
+            "review",
+            owned_row.reviewed_result,
+        )
+        corrected_bytes = await stores.work.read_owned_steps_content(
+            reviewed.reviewed_result
+        )
+        corrected = steps.OwnedExecutionResult.model_validate_json(
+            corrected_bytes
+        )
+        assert corrected.output == "corrected owner durable evidence"
+        assert corrected.output != "owner durable evidence"
+        assert reviewed.submission_digest == owned_row.submission
+
+        async def _forbidden(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("finalize-only re-entered cognitive execution")
+
+        monkeypatch.setattr(
+            finalizer._verifier,
+            "converge_for_session",
+            _forbidden,
+        )
+        monkeypatch.setattr(
+            finalizer._synthesizer,
+            "synthesize_for_session",
+            _forbidden,
+        )
+        monkeypatch.setattr(executor_outcome, "run", _forbidden)
+        monkeypatch.setattr(owner, "_get_decomposer", _forbidden)
+
+        for kind in ("manual_submit", "manual_confirm"):
+            owned = await stores.work.get_owned_steps(parent.id)
+            manual = next(
+                row for row in owned.control.rows if row.kind == "manual"
+            )
+            token = steps.execution_step_token(
+                steps.OwnedExecutionLease(
+                    owned,
+                    steps.OwnedStepsAuthority(captain),
+                ),
+                manual,
+            ).model_copy(update={"actor_id": "captain"})
+            manual_authority = await service.owned_human_steps_authority(
+                captain,
+                parent_id=parent.id,
+                operation=kind,
+                token=token,
+            )
+            await stores.work.compare_and_set_owned_step(
+                steps.OwnedStepMutation(
+                    steps.OwnedStepChange(
+                        operation_id=steps.owned_digest(
+                            steps.owned_json_bytes(
+                                [kind, owned.control.incarnation]
+                            )
+                        ),
+                        token=token,
+                        command=steps.ManualStepCommand(kind=kind),
+                    ),
+                    manual_authority,
+                )
+            )
+
+        resumed_task = owner._tasks_by_parent[parent.id]
+        resumed = await resumed_task
+        assert resumed.completed is True
+        assert resumed.final_output == "Owner final result"
+        recovery = await service.get_recovery(parent.id)
+        assert recovery is not None and recovery.phase == "published"
+        owned = await stores.work.get_owned_steps(parent.id)
+        assert owned.control.finalization_disposition == "completed"
+
+        replay = await finalizer.finalize_from_receipt(
+            owned.control.finalization
+        )
+        assert replay.completed is True
+        assert replay.final_output == "Owner final result"
+        assert len(correction_executor.calls) == 1
+        assert len(judge.requests) == 3
+        assert len(synth.requests) == 1
+        assert len(stores.artifacts.list_versions(
+            thread_id=thread.id,
+            name="crew-result.md",
+        )) == 1
         await owner.stop()
+    finally:
+        await stores_generator.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_window",
+    ["cancelled_model", "lost_model_ack"],
+)
+async def test_canonical_interrupted_synthesis_restart_replays_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_window: str,
+) -> None:
+    from probos import work_item_steps as steps
+    from probos.cognitive.crew_assignment import AssignmentDecision
+    from probos.cognitive.crew_delegation import DelegationDecision
+    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos.cognitive.crew_session import _build_adopted_recovery_plan
+    from probos.config import SystemConfig
+    from tests.test_ad1125_room_bound_execution import (
+        _Agent,
+        _Registry,
+        _StaticOutcomeExecutor,
+        _child,
+        _crew_executor,
+        _runtime as executor_runtime,
+        _session_parent,
+        stores as stores_fixture,
+    )
+    from tests.test_ad1126_verified_finalization import (
+        _ScriptedLLM,
+        _StaticAgenticExecutor,
+        _make_finalizer,
+        _make_synthesizer,
+        _make_verifier,
+        _registry_for,
+        _runtime as finalizer_runtime,
+        _verdict,
+    )
+
+    stores_generator = stores_fixture.__wrapped__(tmp_path)
+    stores = await stores_generator.__anext__()
+    try:
+        parent, thread, service = await _session_parent(stores)
+        child = await _child(
+            stores,
+            parent_id=parent.id,
+            child_id=f"synthesis-{failure_window}",
+            assigned_to="agent-1",
+        )
+        session = await service.get_session(parent.id)
+        assert session is not None
+        await service.adopt_recovery_plan(
+            parent.id,
+            expected_session=session,
+            expected_recovery=None,
+            plan=_build_adopted_recovery_plan(parent.id, (child,)),
+            expected_children=(child,),
+        )
+
+        class _Resolver:
+            def resolve(self, spec: Any) -> AssignmentDecision:
+                return AssignmentDecision(
+                    spec_id=spec.spec_id,
+                    agent_id="agent-1",
+                    department="engineering",
+                    capability="analysis",
+                    score=1.0,
+                    reason="capability_match",
+                )
+
+        class _Delegator:
+            def delegate(
+                self,
+                decision: AssignmentDecision,
+            ) -> DelegationDecision:
+                return DelegationDecision(
+                    spec_id=decision.spec_id,
+                    chief_agent_id=None,
+                    worker_agent_id="agent-1",
+                    order_id=None,
+                    delegated=False,
+                    reason="direct_no_chief",
+                )
+
+        execution_runtime = executor_runtime(stores, tmp_path)
+        execution_runtime.crew_session_service = service
+        execution = _StaticOutcomeExecutor(
+            output="durable synthesis input",
+            total_tokens=7,
+        )
+        executor = _crew_executor(
+            stores=stores,
+            registry=_Registry({"agent-1": _Agent("agent-1")}),
+            executor=execution,
+            runtime=execution_runtime,
+            service=service,
+        )
+        registry = _registry_for([child])
+        judge = _ScriptedLLM([
+            _verdict(
+                True,
+                confidence=0.98,
+                critique="Child evidence is complete.",
+            ),
+        ])
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class _InterruptedSynthesisLLM:
+            def __init__(self) -> None:
+                self.requests: list[Any] = []
+
+            async def complete(self, request: Any) -> Any:
+                self.requests.append(request)
+                claim = await stores.work.get_owned_synthesis_claim(parent.id)
+                assert claim is not None
+                assert claim.disposition == "synthesis_started"
+                entered.set()
+                if failure_window == "lost_model_ack":
+                    raise asyncio.CancelledError()
+                await release.wait()
+                raise AssertionError("cancelled synthesis resumed unexpectedly")
+
+        synthesis_llm = _InterruptedSynthesisLLM()
+        final_runtime = finalizer_runtime(stores, tmp_path, service)
+        verifier = _make_verifier(
+            llm=judge,
+            stores=stores,
+            registry=registry,
+            executor=_StaticAgenticExecutor(),
+            runtime=final_runtime,
+        )
+        synthesizer = _make_synthesizer(
+            llm=synthesis_llm,
+            stores=stores,
+            runtime=final_runtime,
+        )
+        finalizer = _make_finalizer(
+            stores=stores,
+            service=service,
+            registry=registry,
+            verifier=verifier,
+            synthesizer=synthesizer,
+        )
+        config = SystemConfig()
+        config.agentic_dispatch.orchestrator_enabled = True
+        first_owner = CrewOrchestrator(
+            assignment_resolver=_Resolver(),
+            delegator=_Delegator(),
+            crew_executor=executor,
+            verifier=verifier,
+            synthesizer=synthesizer,
+            work_item_store=stores.work,
+            runtime=execution_runtime,
+            config=config,
+            crew_session_service=service,
+            crew_session_finalizer=finalizer,
+        )
+
+        await first_owner.start()
+        first_task = first_owner._tasks_by_parent[parent.id]
+        await entered.wait()
+        if failure_window == "cancelled_model":
+            first_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_task
+        await first_owner.stop()
+
+        claim = await stores.work.get_owned_synthesis_claim(parent.id)
+        recovery = await service.get_recovery(parent.id)
+        assert claim is not None
+        assert recovery is not None
+        assert recovery.synthesis_ref is None
+        assert len(execution.calls) == 1
+        assert len(judge.requests) == 1
+        assert len(synthesis_llm.requests) == 1
+        stored_child = await stores.work.get_work_item(child.id)
+        assert stored_child is not None
+        tokens_before = stored_child.actual_tokens
+        events_before = list(stores.events.events)
+        artifact_versions_before = stores.artifacts.list_versions(
+            thread_id=thread.id,
+            name="crew-result.md",
+        )
+
+        async def _forbidden(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("restart re-entered cognitive work")
+
+        class _ForbiddenExecutor:
+            async def run(self, parent_id: str) -> Any:
+                return await _forbidden(parent_id)
+
+            async def resume(self, parent_id: str) -> Any:
+                return await _forbidden(parent_id)
+
+        monkeypatch.setattr(verifier, "converge_for_session", _forbidden)
+        monkeypatch.setattr(
+            synthesizer,
+            "synthesize_for_session",
+            _forbidden,
+        )
+        second_owner = CrewOrchestrator(
+            assignment_resolver=_Resolver(),
+            delegator=_Delegator(),
+            crew_executor=_ForbiddenExecutor(),
+            verifier=verifier,
+            synthesizer=synthesizer,
+            work_item_store=stores.work,
+            runtime=execution_runtime,
+            config=config,
+            crew_session_service=service,
+            crew_session_finalizer=finalizer,
+        )
+        monkeypatch.setattr(
+            second_owner,
+            "_get_decomposer",
+            _forbidden,
+        )
+
+        await second_owner.start()
+        resumed = await second_owner._tasks_by_parent[parent.id]
+
+        assert resumed.completed is False
+        assert resumed.disposition == "pending"
+        assert len(execution.calls) == 1
+        assert len(judge.requests) == 1
+        assert len(synthesis_llm.requests) == 1
+        assert (await stores.work.get_work_item(child.id)).actual_tokens == tokens_before
+        assert stores.events.events == events_before
+        assert stores.artifacts.list_versions(
+            thread_id=thread.id,
+            name="crew-result.md",
+        ) == artifact_versions_before
+        assert (await service.get_recovery(parent.id)).synthesis_ref is None
+        assert (await stores.work.get_owned_steps(
+            parent.id
+        )).control.finalization is None
+        await second_owner.stop()
     finally:
         await stores_generator.aclose()
 

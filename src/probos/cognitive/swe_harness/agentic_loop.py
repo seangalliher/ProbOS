@@ -7,13 +7,14 @@ LLM -> tool_use -> execute -> result -> LLM until task complete or limits hit.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from types import CoroutineType
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
@@ -829,6 +830,13 @@ class AgenticResult:
     token_source: str = TOKEN_SOURCE_MEASURED
 
 
+@dataclass(frozen=True)
+class PresentedToolResult:
+    tool_call_id: str
+    tool_name: str
+    output: str
+
+
 class AgenticLoop:
     """Multi-turn agentic tool-calling loop."""
 
@@ -852,6 +860,9 @@ class AgenticLoop:
         priority: Any | None = None,
         refresh_tools: Callable[[], list[dict] | None] | None = None,
         event_correlation_enabled: bool = False,
+        on_model_request_presented: Callable[
+            [LLMRequest, tuple[PresentedToolResult, ...]], Awaitable[None]
+        ] | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -899,6 +910,7 @@ class AgenticLoop:
         # which is the AD-545 behaviour verbatim.
         self._refresh_tools = refresh_tools
         self._event_correlation_enabled = event_correlation_enabled
+        self._on_model_request_presented = on_model_request_presented
         self._tasks: set[asyncio.Task] = set()
 
     async def run(
@@ -997,6 +1009,9 @@ class AgenticLoop:
         # ``self._max_iter`` may be 0, in which case the exit is reached without
         # a single pass.
         last_assistant_text = ""
+        presentation_frames: list[
+            tuple[dict[str, Any], tuple[PresentedToolResult, ...]]
+        ] = []
 
         for iteration in range(1, self._max_iter + 1):
             result.iterations = iteration
@@ -1083,6 +1098,16 @@ class AgenticLoop:
                     max_tokens=4096,
                 )
             try:
+                request_snapshot = None
+                presented_results: tuple[PresentedToolResult, ...] = ()
+                if self._on_model_request_presented is not None:
+                    request_snapshot = copy.deepcopy(req)
+                    presented_results = tuple(
+                        presented
+                        for frame, presentations in presentation_frames
+                        if frame in messages[1:]
+                        for presented in presentations
+                    )
                 if self._priority is None:
                     response = await self._llm.complete(req)
                 else:
@@ -1132,6 +1157,43 @@ class AgenticLoop:
                 token_sources.add(TOKEN_SOURCE_MEASURED)
             result.total_tokens += charged
             result.token_source = _token_source_label(token_sources)
+
+            if self._on_model_request_presented is not None:
+                if getattr(response, "error", None) is not None:
+                    logger.warning(
+                        "Model request failed at iteration=%d agent=%s; "
+                        "presentation remains unacknowledged and response processing stops",
+                        iteration, agent_id[:12],
+                    )
+                    result.stopped_reason = "error"
+                    result.error = "model_request_failed"
+                    result.final_text = (
+                        "The model request failed; this response was not applied."
+                    )
+                    return result
+                try:
+                    assert request_snapshot is not None
+                    acknowledged = await self._on_model_request_presented(
+                        request_snapshot, presented_results,
+                    )
+                    if acknowledged is not None:
+                        if type(acknowledged) is CoroutineType:
+                            acknowledged.close()
+                        raise TypeError("model-request presentation callback must return None")
+                except Exception as exc:
+                    logger.error(
+                        "Model-request presentation acknowledgement failed (%s) "
+                        "at iteration=%d agent=%s; stopping before applying this response",
+                        type(exc).__name__, iteration, agent_id[:12],
+                        exc_info=True,
+                    )
+                    result.stopped_reason = "error"
+                    result.error = "model_request_presentation_failed"
+                    result.final_text = (
+                        "Model context presentation failed; stopping before "
+                        "this response is applied."
+                    )
+                    return result
 
             if self._budget is not None and result.total_tokens >= self._budget:
                 result.stopped_reason = "token_budget"
@@ -1212,14 +1274,29 @@ class AgenticLoop:
             # the cap at the point of entry so every tool is covered uniformly,
             # and DD-4 makes no exception for ``is_error`` results.
             if self._structured_tool_messages:
-                messages.extend(
-                    build_tool_result_messages(
-                        tool_result_blocks,
-                        max_chars=self._tool_result_max_chars,
-                        head_chars=self._tool_result_head_chars,
-                        tail_chars=self._tool_result_tail_chars,
-                    )
+                result_messages = build_tool_result_messages(
+                    tool_result_blocks,
+                    max_chars=self._tool_result_max_chars,
+                    head_chars=self._tool_result_head_chars,
+                    tail_chars=self._tool_result_tail_chars,
                 )
+                messages.extend(result_messages)
+                if self._on_model_request_presented is not None:
+                    for use, tool_result, frame in zip(
+                        tool_uses, tool_results, result_messages, strict=True,
+                    ):
+                        if (
+                            not tool_result.is_error
+                            and frame.get("content") == tool_result.output
+                        ):
+                            presentation_frames.append((
+                                dict(frame),
+                                (PresentedToolResult(
+                                    tool_result.id,
+                                    use.tool_call.name,
+                                    tool_result.output,
+                                ),),
+                            ))
             else:
                 tool_result_text = "\n\n".join(
                     f"[tool_result:{trb.result.id} error={trb.result.is_error}]\n"
@@ -1235,7 +1312,24 @@ class AgenticLoop:
                     )
                     for trb in tool_result_blocks
                 )
-                messages.append({"role": "user", "content": tool_result_text})
+                result_message = {"role": "user", "content": tool_result_text}
+                messages.append(result_message)
+                if self._on_model_request_presented is not None:
+                    presentations = tuple(
+                        PresentedToolResult(
+                            tool_result.id,
+                            use.tool_call.name,
+                            tool_result.output,
+                        )
+                        for use, tool_result in zip(tool_uses, tool_results, strict=True)
+                        if (
+                            not tool_result.is_error
+                            and not isinstance(tool_result, DelegatedToolCallResult)
+                            and self._bound_tool_output(tool_result.output)
+                            == tool_result.output
+                        )
+                    )
+                    presentation_frames.append((dict(result_message), presentations))
 
             # BF-755: a tool discovered THIS iteration is registered, warm and
             # authorized -- and absent from the definitions the model can call,

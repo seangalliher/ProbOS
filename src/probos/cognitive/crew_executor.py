@@ -27,11 +27,13 @@ import logging
 import math
 import re
 import time
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable
 
-from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved
+from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved, WorkItemAgenticOutcome
+from probos import work_item_steps as owned_steps
 from probos.crew_execution_usage import (
     CREW_EXECUTION_TOKEN_USAGE_KEY,
     build_crew_execution_token_usage,
@@ -1148,8 +1150,12 @@ class CrewTaskExecutor:
         crew_loop_until_done_predicate: str = _LOOP_PREDICATE_STOP_REASON,
         crew_loop_until_done_completion_marker: str = _DEFAULT_COMPLETION_MARKER,
         event_correlation_enabled: bool = False,
+        owned_steps_execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
     ) -> None:
         self._store = work_item_store
+        if owned_steps_execution_port is not None and not owned_steps_execution_port.owns_store(work_item_store):
+            raise owned_steps.OwnedStepsError("owned_steps_execution_owner_conflict")
+        self._owned_execution_port = owned_steps_execution_port
         self._registry = agent_registry
         self._executor = agentic_executor
         self._runtime = runtime
@@ -1169,6 +1175,14 @@ class CrewTaskExecutor:
             if attachment_store is not None
             else getattr(runtime, "attachment_store", None)
         )
+        if self._attachment_store is not None:
+            bind_content = getattr(
+                self._store,
+                "bind_owned_steps_content",
+                None,
+            )
+            if callable(bind_content):
+                bind_content(self._attachment_store)
         # AD-1141: constructor-injected (DIP) rather than reached for through
         # ``runtime`` in the hot path. Defaults match ``AgenticToolsConfig`` so
         # every existing construction site keeps its pre-AD-1141 behaviour.
@@ -1210,6 +1224,17 @@ class CrewTaskExecutor:
             ),
         )
 
+    def owned_steps_execution_port(self) -> owned_steps.OwnedStepsExecutionPort:
+        """Return the stable legacy admission port used by this executor."""
+        return (
+            self._owned_execution_port
+            or self._store.get_owned_steps_execution_port()
+        )
+
+    def owned_steps_authority_service(self) -> "CrewSessionService | None":
+        """Return the shared canonical owner when this executor has one."""
+        return self._crew_session_service
+
     async def run(self, parent_id: str) -> list[SubtaskResult]:
         """Run all child sub-tasks of ``parent_id`` and return their results.
 
@@ -1225,18 +1250,29 @@ class CrewTaskExecutor:
                 parent_id,
             )
             return []
-        children = await self._store.list_work_items(
-            parent_id=parent_id, limit=1000
-        )
-        self._emit(
-            EventType.CREW_TASK_STARTED,
-            {"parent_id": parent_id, "child_count": len(children)},
-        )
+        snapshot = await self._store.get_owned_steps(parent_id)
+        if snapshot is not None:
+            membership = await self._store.get_owned_crew_children(
+                parent_id,
+                snapshot.control.plan_digest,
+            )
+            children = list(membership.active)
+        else:
+            children = await self._store.list_work_items(
+                parent_id=parent_id,
+                limit=1001,
+            )
+            if len(children) > 1000:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_rows_invalid",
+                    parent_id=parent_id,
+                )
         if not children and parent.work_type != "crew_session":
+            self._emit(EventType.CREW_TASK_STARTED, {"parent_id": parent_id, "child_count": 0})
             return []
 
         parent_key = _bounded_id(parent.id)
-        resolved_thread = await self._resolve_task_room(parent, children)
+        resolved_thread = await self.resolve_task_room(parent, children)
         thread_id = (
             _bounded_id(resolved_thread.id)
             if resolved_thread is not None
@@ -1246,12 +1282,42 @@ class CrewTaskExecutor:
         if not children:
             return []
 
+        lease = None
+        port = None
+        seed_results: dict[str, SubtaskResult] = {}
+        done_ids: set[str] = set()
+        if children:
+            port = (
+                self._crew_session_service.get_owned_steps_execution_port()
+                if parent.work_type == "crew_session"
+                else self._owned_execution_port or self._store.get_owned_steps_execution_port()
+            )
+            lease = await port.admit(parent_key, children=tuple(children), thread_id=thread_id)
+            if lease.snapshot.control.mode != "active":
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_adoption_required" if lease.snapshot.control.mode == "awaiting_adoption"
+                    else "owned_steps_interrupted_work",
+                    parent_id=parent_key, actions=("preview_adoption", "inspect_source", "interrupted_work"),
+                )
+            for child in children:
+                row = next(row for row in lease.snapshot.control.rows if row.child and row.child.child_id == child.id)
+                if row.submission is not None:
+                    result = await self._owned_result(lease, row)
+                    seed_results[child.id] = result
+                    if result.status == "done":
+                        done_ids.add(child.id)
+                elif row.permit_state != "unstarted":
+                    raise owned_steps.OwnedStepsError("owned_steps_interrupted_work", parent_id=parent_key)
+        if len(seed_results) != len(children):
+            self._emit(EventType.CREW_TASK_STARTED, {"parent_id": parent_id, "child_count": len(children)})
         return await self._run_children(
             parent_key,
             children,
             thread_id,
-            seed_results={},
-            seed_done_ids=set(),
+            seed_results=seed_results,
+            seed_done_ids=done_ids,
+            owned_lease=lease,
+            execution_port=port,
         )
 
     async def resume(self, parent_id: str) -> list[SubtaskResult]:
@@ -1273,10 +1339,16 @@ class CrewTaskExecutor:
             or recovery.plan is None
         ):
             raise ValueError("crew_session_recovery_not_executable")
-        children = await self._store.list_work_items(
-            parent_id=parent_key,
-            limit=1001,
-        )
+        try:
+            membership = await self._store.get_owned_crew_children(parent_key, recovery.plan.plan_hash)
+            children = list(membership.active)
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code != "owned_steps_not_managed":
+                raise
+            children = await self._store.list_work_items(
+                parent_id=parent_key,
+                limit=1001,
+            )
         if len(children) != len(recovery.plan.children) or len(children) > 1000:
             raise ValueError("crew_session_recovery_plan_conflict")
         by_id = {child.id: child for child in children}
@@ -1286,18 +1358,31 @@ class CrewTaskExecutor:
             ordered = [by_id[item.child_id] for item in recovery.plan.children]
         except KeyError as exc:
             raise ValueError("crew_session_recovery_plan_conflict") from exc
-        room = await self._resolve_task_room(parent, ordered)
+        room = await self.resolve_task_room(parent, ordered)
         if room is None or room.id != session.thread_id:
             raise ValueError("crew_session_thread_mismatch")
+        port = service.get_owned_steps_execution_port()
+        lease = await port.admit(parent_key, children=tuple(ordered), thread_id=session.thread_id)
+        if lease.snapshot.control.mode == "awaiting_adoption":
+            raise owned_steps.OwnedStepsError("owned_steps_adoption_required", parent_id=parent_key)
 
         reconstructed: dict[str, SubtaskResult] = {}
         done_ids: set[str] = set()
         for child in ordered:
-            result = await self._resume_child(
-                parent_key,
-                child,
-                session.thread_id,
-            )
+            row = next(row for row in lease.snapshot.control.rows if row.child and row.child.child_id == child.id)
+            if row.submission is not None:
+                result = await self._owned_result(lease, row)
+            elif row.permit_state == "unstarted":
+                result = None
+            else:
+                result = self._interrupted_result(
+                    child,
+                    (
+                        "child_execution_integrity"
+                        if child.status in {"done", "failed", "blocked"}
+                        else "child_execution_interrupted"
+                    ),
+                )
             if result is None:
                 continue
             reconstructed[child.id] = result
@@ -1309,6 +1394,8 @@ class CrewTaskExecutor:
             session.thread_id,
             seed_results=reconstructed,
             seed_done_ids=done_ids,
+            owned_lease=lease,
+            execution_port=port,
         )
 
     async def _run_children(
@@ -1319,6 +1406,8 @@ class CrewTaskExecutor:
         *,
         seed_results: dict[str, SubtaskResult],
         seed_done_ids: set[str],
+        owned_lease: owned_steps.OwnedExecutionLease | None = None,
+        execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
     ) -> list[SubtaskResult]:
         """Run one parent's remaining children with an invocation-local task set."""
 
@@ -1336,6 +1425,8 @@ class CrewTaskExecutor:
                 self._require_eligible(child.assigned_to)
 
         for child in children:
+            if child.id in seed_results:
+                continue
             try:
                 _exact_dependency_ids(child.depends_on)
             except ValueError:
@@ -1362,6 +1453,7 @@ class CrewTaskExecutor:
                     blocked_dependency_ids=[],
                     expected_status=child.status,
                     dependency_input_invalid=True,
+                    owned_lease=owned_lease, execution_port=execution_port,
                 )
                 results[child.id] = result
                 pending.discard(child.id)
@@ -1373,6 +1465,8 @@ class CrewTaskExecutor:
                 if admission_closed:
                     raise CrewWorkerUnavailable("crew_worker_unavailable")
                 try:
+                    if owned_lease is not None:
+                        return await self._run_owned_child(parent_id, child, thread_id, owned_lease, execution_port)
                     return await self._run_child(parent_id, child, thread_id)
                 except CrewWorkerUnavailable:
                     admission_closed = True
@@ -1413,6 +1507,7 @@ class CrewTaskExecutor:
                             finished_at=max(started_at, time.time()),
                             blocked_dependency_ids=unresolved,
                             expected_status=child.status,
+                            owned_lease=owned_lease, execution_port=execution_port,
                         )
                         results[child.id] = result
                         pending.discard(child.id)
@@ -1750,6 +1845,31 @@ class CrewTaskExecutor:
             return None
         if parent is None:
             return None
+        get_owned = getattr(self._store, "get_owned_steps", None)
+        if callable(get_owned):
+            try:
+                snapshot = await get_owned(parent_id)
+                if snapshot is not None:
+                    if snapshot.control.mode != "active":
+                        return None
+                    actionable = [
+                        owned_steps.owned_json_loads(row.todo_json)
+                        for row in snapshot.control.rows
+                        if row.child is not None
+                        and row.child.child_id == child_id
+                        and row.permit_state == "started"
+                    ]
+                    return _actionable_step_labels(actionable, child_id=child_id)
+            except Exception:
+                logger.warning(
+                    "AD-1192: managed checklist classification failed for "
+                    "parent %s; the outer loop stops rather than treating "
+                    "owner-managed rows as child-actionable work for %s",
+                    parent_id,
+                    child_id,
+                    exc_info=True,
+                )
+                return None
         return _actionable_step_labels(
             getattr(parent, "steps", None), child_id=child_id
         )
@@ -1762,6 +1882,9 @@ class CrewTaskExecutor:
         thread_id: str,
         parent_id: str,
         child_id: str,
+        owned_lease: owned_steps.OwnedExecutionLease | None = None,
+        execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
+        execution_permit: owned_steps.OwnedStepExecutionPermit | None = None,
     ) -> Any:
         """AD-1155 / DD-1: run the child, and re-invoke it while it is unfinished.
 
@@ -1799,6 +1922,11 @@ class CrewTaskExecutor:
         }
         if fault_observer_for(self._runtime) is not None:
             base_kwargs["fault_turn"] = ToolFaultTurn()
+        if owned_lease is not None:
+            base_kwargs.update(
+                owned_steps_execution_port=execution_port, owned_steps_execution_lease=owned_lease,
+                owned_steps_execution_permit=execution_permit,
+            )
         gate = self._loop_until_done
         max_outer = gate.max_iterations if gate.enabled else 1
         # DD-3: the budget is SHARED across iterations and carried forward as a
@@ -1833,6 +1961,8 @@ class CrewTaskExecutor:
             kwargs = dict(base_kwargs)
             kwargs["task_text"] = current_task_text
             try:
+                if owned_lease is not None:
+                    await execution_port.validate(owned_lease, execution_permit)
                 self._require_eligible(agent.id, expected_agent=agent)
                 next_outcome = await self._executor.run(**kwargs, **settings)
             except (CrewWorkerUnavailable, AgenticIdentityUnresolved):
@@ -1997,6 +2127,178 @@ class CrewTaskExecutor:
             )
         ):
             raise CrewWorkerUnavailable("crew_worker_unavailable")
+
+    async def _owned_result(
+        self, lease: owned_steps.OwnedExecutionLease, row: owned_steps.OwnedStepRecord,
+    ) -> SubtaskResult:
+        control = lease.snapshot.control
+        submission = await self._store.get_owned_step_evidence(
+            control.parent_id, control.incarnation, "submission", row.submission,
+        )
+        if isinstance(submission, (owned_steps.OwnedExecutionSubmission, owned_steps.OwnedUnstartedSubmission)):
+            result = submission.result
+            if isinstance(result, owned_steps.OwnedContentReference):
+                result = owned_steps.OwnedExecutionResult.model_validate_json(
+                    await self._store.read_owned_steps_content(result),
+                )
+            values = result.model_dump(mode="json")
+            if isinstance(result.output, owned_steps.OwnedContentReference):
+                values["output"] = (await self._store.read_owned_steps_content(result.output)).decode("utf-8")
+            restored = SubtaskResult(**values)
+            if control.owner_kind == "canonical" and restored.status == "done" and submission.output is not None:
+                child = await self._store.get_work_item(row.child.child_id)
+                self._append_crew_session_child_result(
+                    parent_id=control.parent_id, child=child, thread_id=control.thread_id,
+                    output=restored.output, content_hash=submission.output.content_hash,
+                    finished_at=restored.finished_at,
+                )
+            return restored
+        if not isinstance(submission, owned_steps.OwnedStepSubmission) or submission.output is None:
+            raise owned_steps.OwnedStepsError("owned_steps_exact_result_unavailable", parent_id=control.parent_id)
+        execution = owned_steps.owned_json_loads(submission.execution_json)
+        output = (await self._store.read_owned_steps_content(submission.output)).decode("utf-8")
+        return SubtaskResult(
+            work_item_id=row.child.child_id, spec_id=row.child.spec_id, agent_id=submission.permit.assignee_id,
+            output=output, status=execution["status"], tool_trace_ref=execution["tool_trace_ref"],
+            started_at=execution["started_at"], finished_at=execution["finished_at"],
+            stopped_reason=execution["stopped_reason"], actual_tokens=execution["tokens_used"],
+            artifact_refs=execution["artifact_refs"], blocked_dependency_ids=execution["blocked_dependency_ids"],
+        )
+
+    async def _run_owned_child(
+        self, parent_id: str, child: WorkItem, thread_id: str,
+        lease: owned_steps.OwnedExecutionLease, port: owned_steps.OwnedStepsExecutionPort,
+    ) -> SubtaskResult:
+        self._require_eligible(child.assigned_to)
+        agent = self._registry.get(child.assigned_to)
+        if agent is None:
+            return await self._persist_owned_unstarted(
+                parent_id=parent_id, child=child, thread_id=thread_id, lease=lease, port=port,
+                reason="unassigned" if child.assigned_to is None else "agent_unresolvable",
+                blocked_dependency_ids=[],
+            )
+        started_at = time.time()
+        admission = await port.start(lease, child.id, execution_nonce=uuid.uuid4().hex)
+        if admission.disposition != "new" or admission.permit is None:
+            snapshot = await self._store.get_owned_steps(parent_id)
+            row = next(row for row in snapshot.control.rows if row.child and row.child.child_id == child.id)
+            if row.submission is not None:
+                return await self._owned_result(lease, row)
+            raise owned_steps.OwnedStepsError("owned_steps_interrupted_work", parent_id=parent_id)
+        permit = admission.permit
+        active = await self._store.get_work_item(child.id)
+        if active is None:
+            raise owned_steps.OwnedStepsError("owned_steps_source_conflict", parent_id=parent_id)
+        try:
+            self._require_eligible(agent.id, expected_agent=agent)
+        except CrewWorkerUnavailable:
+            outcome = WorkItemAgenticOutcome(final_text="", stopped_reason="crew_worker_identity_lost")
+        else:
+            task_text = await self._augment_task_text(
+                active.description or active.title or "", child=active, agent_id=agent.id,
+            )
+            try:
+                outcome = await self._run_agentic_with_outer_loop(
+                    agent=agent, task_text=task_text, thread_id=thread_id, parent_id=parent_id, child_id=child.id,
+                    owned_lease=lease, execution_port=port, execution_permit=permit,
+                )
+            except owned_steps.OwnedStepsError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Owned crew child execution failed; exact failed evidence will be checkpointed "
+                    "without unblocking dependencies or replaying the worker", exc_info=True,
+                )
+                outcome = WorkItemAgenticOutcome(final_text="", stopped_reason="execution_exception")
+        reason = outcome.stopped_reason if outcome.stopped_reason in {
+            "complete", "error", "max_iterations", "token_budget", "crew_worker_identity_lost", "execution_exception",
+        } else "error"
+        status = "done" if reason == "complete" else "failed"
+        await port.validate(lease, permit)
+        tokens = _normalize_tokens(outcome.total_tokens)
+        refs = _normalize_artifact_refs(outcome.artifact_refs, thread_id=thread_id, child_id=child.id)
+        trace = _normalize_trace_ref(outcome.tool_trace_ref, child.id)
+        execution = _build_execution_evidence(
+            parent_id=parent_id, child=active, thread_id=thread_id, status=status, stopped_reason=reason,
+            output=outcome.final_text, tool_trace_ref=trace, artifact_refs=refs, actual_tokens=tokens,
+            started_at=started_at, finished_at=max(started_at, time.time()), blocked_dependency_ids=[],
+        )
+        result = SubtaskResult(
+            work_item_id=child.id, spec_id=child.metadata.get("spec_id", child.id), agent_id=agent.id,
+            output=outcome.final_text, status=status, tool_trace_ref=execution["tool_trace_ref"],
+            started_at=execution["started_at"], finished_at=execution["finished_at"],
+            stopped_reason=execution["stopped_reason"], actual_tokens=execution["tokens_used"],
+            artifact_refs=execution["artifact_refs"], blocked_dependency_ids=execution["blocked_dependency_ids"],
+        )
+        values = asdict(result)
+        output_ref = None
+        if self._attachment_store is not None and result.output:
+            content = result.output.encode("utf-8")
+            if len(content) > _MAX_OUTPUT_BYTES:
+                raise owned_steps.OwnedStepsError("owned_steps_output_too_large", parent_id=parent_id)
+            output_ref = owned_steps.OwnedContentReference(
+                content_hash=owned_steps.owned_digest(content), mime="text/plain", size_bytes=len(content),
+            )
+            await self._attachment_store.write(output_ref.content_hash, content, output_ref.mime, origin="agent_artifact")
+            if await self._store.read_owned_steps_content(output_ref) != content:
+                raise owned_steps.OwnedStepsError("owned_steps_content_conflict", parent_id=parent_id)
+            values["output"] = output_ref.model_dump(mode="json")
+        exact = owned_steps.OwnedExecutionResult.model_validate_json(owned_steps.owned_json_bytes(values))
+        usage = (
+            owned_steps.owned_json_bytes(build_crew_execution_token_usage(
+                execution=execution, token_source=outcome.token_source,
+            )).decode("utf-8") if self._event_correlation_enabled else None
+        )
+        submission = owned_steps.OwnedExecutionSubmission(
+            permit=permit, execution_json=owned_steps.owned_json_bytes(execution).decode("utf-8"),
+            output=output_ref if status == "done" else None, token_usage_json=usage, result=exact,
+        )
+        checkpoint = asyncio.create_task(port.submit(lease, submission))
+        try:
+            committed = await asyncio.shield(checkpoint)
+        except asyncio.CancelledError:
+            while not checkpoint.done():
+                try:
+                    await asyncio.shield(checkpoint)
+                except asyncio.CancelledError:
+                    continue
+            checkpoint.result()
+            raise
+        if (
+            lease.snapshot.control.owner_kind == "canonical" and result.status == "done"
+            and output_ref is not None and committed.disposition == "applied"
+        ):
+            self._append_crew_session_child_result(
+                parent_id=parent_id, child=active, thread_id=thread_id,
+                output=result.output, content_hash=output_ref.content_hash, finished_at=result.finished_at,
+            )
+        return result
+
+    async def _persist_owned_unstarted(
+        self, *, parent_id: str, child: WorkItem, thread_id: str,
+        lease: owned_steps.OwnedExecutionLease, port: owned_steps.OwnedStepsExecutionPort,
+        reason: str, blocked_dependency_ids: list[str],
+    ) -> SubtaskResult:
+        row = next(row for row in lease.snapshot.control.rows if row.child and row.child.child_id == child.id)
+        now = time.time()
+        execution = _build_execution_evidence(
+            parent_id=parent_id, child=child, thread_id=thread_id, status="blocked",
+            stopped_reason=reason, output="", tool_trace_ref=None, artifact_refs=[], actual_tokens=0,
+            started_at=now, finished_at=now, blocked_dependency_ids=blocked_dependency_ids,
+        )
+        result = SubtaskResult(
+            work_item_id=child.id, spec_id=row.child.spec_id, agent_id=child.assigned_to or "",
+            output="", status="blocked", started_at=now, finished_at=now, stopped_reason=reason,
+            blocked_dependency_ids=execution["blocked_dependency_ids"],
+        )
+        await port.record_unstarted(lease, owned_steps.OwnedUnstartedSubmission(
+            parent_id=parent_id, incarnation=lease.snapshot.control.incarnation,
+            plan_digest=lease.snapshot.control.plan_digest, step_id=row.step_id, child_id=child.id,
+            assignment_epoch=row.assignment_epoch, assignee_id=row.assignee_id, thread_id=thread_id,
+            source_digest=row.source_digest, execution_json=owned_steps.owned_json_bytes(execution).decode("utf-8"),
+            result=owned_steps.OwnedExecutionResult.model_validate_json(owned_steps.owned_json_bytes(asdict(result))),
+        ))
+        return result
 
     async def _run_child(
         self,
@@ -2272,7 +2574,7 @@ class CrewTaskExecutor:
         agent = self._registry.get(agent_id)
         return bool(agent) and is_crew_agent(agent, None)
 
-    async def _resolve_task_room(
+    async def resolve_task_room(
         self,
         parent: WorkItem,
         children: list[WorkItem],
@@ -2405,7 +2707,16 @@ class CrewTaskExecutor:
         expected_status: str,
         dependency_input_invalid: bool = False,
         token_source: str | None = None,
+        owned_lease: owned_steps.OwnedExecutionLease | None = None,
+        execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
     ) -> SubtaskResult:
+        if owned_lease is not None:
+            if execution_port is None or status != "blocked":
+                raise owned_steps.OwnedStepsError("owned_steps_execution_binding_invalid", parent_id=parent_id)
+            return await self._persist_owned_unstarted(
+                parent_id=parent_id, child=child, thread_id=thread_id, lease=owned_lease, port=execution_port,
+                reason=stopped_reason, blocked_dependency_ids=blocked_dependency_ids,
+            )
         spec_id = str(child.metadata.get("spec_id", child.id))
         normalized_reason = (
             stopped_reason if stopped_reason in _STOPPED_REASONS else "error"

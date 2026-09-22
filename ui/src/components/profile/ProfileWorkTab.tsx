@@ -5,6 +5,13 @@ import { useStore } from '../../store/useStore';
 import type { WorkItemView, BookingView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
 import { ChevronDown, ChevronRight } from '../icons/Glyphs';
 import { WorkspaceFolder } from './WorkspaceFolder';
+import { OwnedStepsPanel } from '../workspace/TodosList';
+import {
+  OwnedStepsApiError,
+  fetchOwnedSteps,
+  type ManagedOwnedStepsView,
+} from '../workspace/ownedStepsApi';
+import { countCompletedWorkItemSteps } from '../../utils/workItemSteps';
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: '#d05050', 2: '#e08040', 3: '#d0b050', 4: '#5090d0', 5: '#888',
@@ -56,6 +63,9 @@ export function ProfileWorkTab({ agentId }: Props) {
     active: true, blocked: true, completed: false, duty: true,
   });
   const [reassignItem, setReassignItem] = useState<string | null>(null);
+  const [managedItem, setManagedItem] = useState<WorkItemView | null>(null);
+  const [managedView, setManagedView] = useState<ManagedOwnedStepsView | null>(null);
+  const [ownershipError, setOwnershipError] = useState('');
 
   // Find UUID for this agent (bookable resources use UUID as resource_id)
   const agentResource = (bookableResources ?? []).find(r =>
@@ -119,6 +129,44 @@ export function ProfileWorkTab({ agentId }: Props) {
 
   const availableAgents = (bookableResources ?? []).filter(r => r.active && r.display_on_board);
 
+  const refreshManaged = useCallback(async (
+    item: WorkItemView,
+    cursor: string | null = null,
+  ): Promise<void> => {
+    const ownership = await fetchOwnedSteps(item.id, cursor === null ? {} : { cursor });
+    if (ownership.mode === 'unmanaged') {
+      throw new OwnedStepsApiError(
+        409,
+        'owned_steps_classification_changed',
+        'This work item is no longer managed. Close its managed controls.',
+      );
+    }
+    setManagedView(ownership);
+  }, []);
+
+  const routeMutation = useCallback(async (
+    item: WorkItemView,
+    unmanagedMutation: () => Promise<void>,
+  ): Promise<void> => {
+    setOwnershipError('');
+    try {
+      const ownership = await fetchOwnedSteps(item.id);
+      if (ownership.mode === 'unmanaged') {
+        await unmanagedMutation();
+        return;
+      }
+      setManagedItem(item);
+      setManagedView(ownership);
+      setReassignItem(null);
+    } catch (error) {
+      setManagedItem(null);
+      setManagedView(null);
+      setOwnershipError(error instanceof OwnedStepsApiError
+        ? error.feedback
+        : 'Step ownership could not be determined. Generic work actions are blocked.');
+    }
+  }, []);
+
   const cardStyle = {
     marginBottom: 6, padding: '7px 9px',
     background: 'rgba(255,255,255,0.03)',
@@ -142,7 +190,7 @@ export function ProfileWorkTab({ agentId }: Props) {
 
   const renderCard = (item: WorkItemView, showActions = false) => {
     const booking = getBooking(item.id);
-    const stepsComplete = item.steps.filter(s => s.status === 'completed').length;
+    const stepsComplete = countCompletedWorkItemSteps(item.steps);
     return (
       <div key={item.id} style={cardStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
@@ -176,19 +224,42 @@ export function ProfileWorkTab({ agentId }: Props) {
         )}
         {showActions && (
           <div style={{ marginTop: 5, display: 'flex', gap: 4 }}>
-            <button onClick={() => setReassignItem(reassignItem === item.id ? null : item.id)} style={actionBtnStyle}>Reassign</button>
-            <button onClick={() => moveWorkItem(item.id, 'cancelled')} style={actionBtnStyle}>Cancel</button>
-            {item.status === 'failed' && <button onClick={() => moveWorkItem(item.id, 'open')} style={actionBtnStyle}>Retry</button>}
+            <button onClick={() => {
+              void routeMutation(item, async () => {
+                setReassignItem(reassignItem === item.id ? null : item.id);
+              });
+            }} style={actionBtnStyle}>Reassign</button>
+            <button onClick={() => {
+              void routeMutation(item, () => moveWorkItem(item.id, 'cancelled'));
+            }} style={actionBtnStyle}>Cancel</button>
+            {item.status === 'failed' && <button onClick={() => {
+              void routeMutation(item, () => moveWorkItem(item.id, 'open'));
+            }} style={actionBtnStyle}>Retry</button>}
           </div>
         )}
         {reassignItem === item.id && (
           <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
             {availableAgents.filter(a => a.resource_id !== agentUuid).map(a => (
-              <button key={a.resource_id} onClick={() => { assignWorkItem(item.id, a.resource_id); setReassignItem(null); }}
+              <button key={a.resource_id} onClick={() => {
+                void routeMutation(item, async () => {
+                  await assignWorkItem(item.id, a.resource_id);
+                  setReassignItem(null);
+                });
+              }}
                 style={{ ...actionBtnStyle, fontSize: 9 }}>
                 {a.callsign || a.agent_type}
               </button>
             ))}
+          </div>
+        )}
+        {managedItem?.id === item.id && managedView && (
+          <div data-testid={`profile-owned-controls-${item.id}`} style={{ marginTop: 6 }}>
+            <OwnedStepsPanel
+              taskId={item.id}
+              view={managedView}
+              onRefresh={() => refreshManaged(item)}
+              onNavigate={cursor => refreshManaged(item, cursor)}
+            />
           </div>
         )}
       </div>
@@ -203,6 +274,12 @@ export function ProfileWorkTab({ agentId }: Props) {
 
   return (
     <div style={{ padding: '8px 12px', overflowY: 'auto', height: '100%' }}>
+      {ownershipError && (
+        <div role="alert" data-testid="profile-work-ownership-error"
+          style={{ color: '#f08b8b', marginBottom: 6 }}>
+          {ownershipError}
+        </div>
+      )}
       {/* Create button */}
       <div style={{ marginBottom: 6, display: 'flex', gap: 4 }}>
         {!showCreate ? (

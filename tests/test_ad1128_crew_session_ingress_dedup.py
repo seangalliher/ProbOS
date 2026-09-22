@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive import crew_session as crew_session_module
 from probos.cognitive.crew_session import (
     CrewRecoveryContract,
@@ -263,9 +264,15 @@ class _StartupService:
 
 
 class _RecoveryCandidatesStore:
-    def __init__(self, parent_ids: tuple[str, ...]) -> None:
+    def __init__(self, parent_ids: tuple[str, ...], delegate: WorkItemStore) -> None:
         self.parent_ids = parent_ids
+        self._delegate = delegate
         self.limits: list[int] = []
+        self.read_ids: list[str] = []
+
+    async def get_work_item(self, work_item_id: str) -> WorkItem | None:
+        self.read_ids.append(work_item_id)
+        return await self._delegate.get_work_item(work_item_id)
 
     async def list_crew_session_recovery_candidates(
         self,
@@ -275,9 +282,14 @@ class _RecoveryCandidatesStore:
         self.limits.append(limit)
         return [SimpleNamespace(id=parent_id) for parent_id in self.parent_ids]
 
+    async def list_owned_legacy_recovery_candidates(self, *, limit: int) -> list[WorkItem]:
+        raise AssertionError("legacy recovery scan requires a bound execution port")
+
 
 class _StartupScheduleOwner:
-    def __init__(self, *, service: Any, store: Any, config: Any) -> None:
+    def __init__(
+        self, *, service: Any, store: Any, config: Any, executor: Any | None = None,
+    ) -> None:
         from probos.cognitive.crew_orchestrator import CrewOrchestrator
 
         class _Owner(CrewOrchestrator):
@@ -285,7 +297,7 @@ class _StartupScheduleOwner:
                 super().__init__(
                     assignment_resolver=object(),
                     delegator=object(),
-                    crew_executor=object(),
+                    crew_executor=executor if executor is not None else object(),
                     verifier=object(),
                     synthesizer=object(),
                     work_item_store=store,
@@ -380,6 +392,38 @@ class _Harness:
     decomposer: _SpecDecomposer
     admission_port: CrewSessionAdmissionPort
     events: _EventRecorder
+
+
+async def _owned_metadata_binding(
+    work: WorkItemStore,
+    service: CrewSessionService,
+    work_item_id: str,
+    patch: dict[str, Any],
+    *,
+    new_status: str | None = None,
+) -> owned_steps.OwnedStoreBinding:
+    assert service.owns_store(work) and work.owned_steps_owner_matches(service)
+    snapshot = await work.get_owned_steps(work_item_id)
+    assert snapshot is not None
+    step_id = None
+    if work_item_id != snapshot.control.parent_id:
+        step_id = next(
+            row.step_id
+            for row in snapshot.control.rows
+            if row.child is not None and row.child.child_id == work_item_id
+        )
+    return service.owned_store_binding(
+        service,
+        snapshot,
+        operation="metadata",
+        payload={
+            "work_item_id": work_item_id,
+            "patch": patch,
+            "new_status": new_status,
+            "actual_tokens_delta": 0,
+        },
+        step_id=step_id,
+    )
 
 
 class _ThreadIds:
@@ -1783,9 +1827,10 @@ async def test_requested_room_pending_marker_blocks_resume_and_schedule(
         ),
         "last_error_code": None,
     })
+    patch = {"crew_provisioning": marker.model_dump(mode="json")}
     updated = await harness.work.merge_work_item_metadata(
         parent.id,
-        {"crew_provisioning": marker.model_dump(mode="json")},
+        patch,
         expected={
             "crew_session": session.model_dump(mode="json"),
             "crew_recovery": recovery.model_dump(mode="json"),
@@ -1794,6 +1839,9 @@ async def test_requested_room_pending_marker_blocks_resume_and_schedule(
         expected_status="open",
         expected_assigned_to=session.facilitator_id,
         source="test_pending_provisioning",
+        owned_binding=await _owned_metadata_binding(
+            harness.work, harness.service, parent.id, patch,
+        ),
     )
     assert updated is not None
     scheduled_before = list(harness.schedule.parent_ids)
@@ -2010,7 +2058,6 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
         spec_id="analysis", title="Analysis", capability="analysis",
     )).agent_id is None
     agentic = _FakeAgenticExecutor(trace_ref=None)
-    runtime = SimpleNamespace(chat_thread_store=harness.threads)
 
     class _FinalizationBoundary:
         def __init__(self) -> None:
@@ -2027,6 +2074,7 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
     config.agentic_dispatch.orchestrator_enabled = True
 
     def owner() -> CrewOrchestrator:
+        runtime = SimpleNamespace(chat_thread_store=harness.threads)
         executor = CrewTaskExecutor(
             work_item_store=harness.work, agent_registry=native_workers.registry,
             agentic_executor=agentic, runtime=runtime,
@@ -2046,8 +2094,41 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
             crew_session_service=harness.service, crew_session_finalizer=boundary,
         )
 
+    async def reopen_owner(previous: CrewOrchestrator) -> CrewOrchestrator:
+        previous_work, previous_service = harness.work, harness.service
+        await previous.stop()
+        persisted_parent = await previous_work.get_work_item(parent.id)
+        persisted_children = await previous_work.list_work_items(parent_id=parent.id)
+        persisted_steps = await previous_work.get_owned_steps(parent.id)
+        persisted_thread = harness.threads.get_thread(room.id)
+        assert persisted_parent is not None and persisted_steps is not None
+        await previous_work.stop()
+        assert await previous_work.get_owned_steps(parent.id) is None
+        harness.work = WorkItemStore(
+            db_path=previous_work.db_path,
+            emit_event=harness.events,
+            tick_interval=1_000,
+            connection_factory=SQLiteConnectionFactory(),
+        )
+        await harness.work.start()
+        harness.admission_port = harness.work.claim_crew_session_admission_port()
+        harness.threads = ChatThreadStore(
+            tmp_path / "threads-real.db", clock=_Clock(2_000.0), id_factory=_ThreadIds(),
+        )
+        harness.service = _native_service(harness, native_workers)
+        restarted = owner()
+        assert restarted is not previous
+        assert harness.work is not previous_work and harness.service is not previous_service
+        assert harness.work.owned_steps_owner_matches(harness.service)
+        assert not harness.work.owned_steps_owner_matches(previous_service)
+        assert await harness.work.get_work_item(parent.id) == persisted_parent
+        assert await harness.work.list_work_items(parent_id=parent.id) == persisted_children
+        assert await harness.work.get_owned_steps(parent.id) == persisted_steps
+        assert harness.threads.get_thread(room.id) == persisted_thread
+        return restarted
+
     first = owner()
-    second = owner()
+    second: CrewOrchestrator | None = None
     try:
         await first.start()
         await first.schedule(parent.id)
@@ -2065,7 +2146,7 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
         )
         assert untouched.metadata == child.metadata
         assert agentic.calls == [] and boundary.calls == []
-        await first.stop()
+        second = await reopen_owner(first)
         await second.start()
         await second.schedule(parent.id)
         assert agentic.calls == []
@@ -2117,7 +2198,10 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
                 finally:
                     if not retry_task.done():
                         retry_task.cancel()
-                    await asyncio.gather(retry_task, return_exceptions=True)
+                        with pytest.raises(asyncio.CancelledError):
+                            await retry_task
+                    elif not retry_task.cancelled():
+                        retry_task.result()
             retained_parent = await harness.work.get_work_item(parent.id)
             assert retained_parent == (committed[0] if committed else before_retry)
             assert await harness.work.list_work_items(parent_id=parent.id) == before_children
@@ -2126,9 +2210,7 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
             assert agentic.calls == [] and boundary.calls == []
             candidates = await harness.work.list_crew_session_recovery_candidates(limit=10)
             assert (parent.id in {candidate.id for candidate in candidates}) == bool(committed)
-            await second.stop()
-            harness.service = _native_service(harness, native_workers)
-            second = owner()
+            second = await reopen_owner(second)
             harness.service.bind_scheduler(second.schedule)
             request["principal"] = harness.service.captain_principal()
             await second.start()
@@ -2155,7 +2237,8 @@ async def test_native_unavailable_restart_explicit_retry_executes_once(
             )
     finally:
         await first.stop()
-        await second.stop()
+        if second is not None:
+            await second.stop()
 
 
 @pytest.mark.parametrize("loss", ["removed", "inactive", "replaced"])
@@ -2371,31 +2454,59 @@ async def test_native_postprovision_failure_preserves_concurrent_authority(
                 else:
                     values = session.model_dump(mode="json")
                     values["revision"] += 1
+                    competing_patch = {"crew_session": values}
                     await merge(
-                        parent.id, {"crew_session": values},
+                        parent.id, competing_patch,
                         expected={"crew_session": session.model_dump(mode="json")},
                         expected_status="open", source="competing_parent_revision",
+                        owned_binding=await _owned_metadata_binding(
+                            harness.work, service, parent.id, competing_patch,
+                        ),
                     )
                 competing = await harness.work.get_work_item(parent.id)
                 assert competing is not None and competing != parent
                 competing_parents.append(competing)
             else:
                 if interleave == "child_admitted":
-                    assigned = await harness.work.compare_and_set_work_item_assignment(
-                        child.id, new_assigned_to=selected.id, expected_status=child.status,
-                        expected_parent_id=parent.id, metadata=child.metadata,
-                        expected_assigned_to=child.assigned_to,
-                        expected_metadata=child.metadata, expected_depends_on=child.depends_on,
+                    snapshot = await harness.work.get_owned_steps(parent.id)
+                    assert snapshot is not None
+                    assignment = await service.reassign_unstarted(
+                        snapshot, child.id, selected.id, {},
                     )
+                    assert assignment.disposition == "applied"
+                    assigned = await harness.work.get_work_item(child.id)
                     assert assigned is not None and assigned.assigned_to == selected.id
+                    # Unlike the old generic CAS, owned assignment projects
+                    # into the parent. Pin only that exact committed delta.
+                    assignment_parent = await harness.work.get_work_item(parent.id)
+                    assert assignment_parent is not None
+                    projected_steps = [dict(step) for step in parent.steps]
+                    row_index = next(
+                        index for index, row in enumerate(snapshot.control.rows)
+                        if row.child is not None and row.child.child_id == child.id
+                    )
+                    projected_steps[row_index]["assigned_to"] = selected.id
+                    assert assignment_parent == replace(
+                        parent, steps=projected_steps,
+                        updated_at=assignment_parent.updated_at,
+                    )
+                    competing_parents.append(assignment_parent)
                     admitted = await merge(
                         child.id, {}, expected_status=child.status,
                         expected_assigned_to_exact=selected.id,
                         new_status="in_progress", source="crew_executor_admission",
+                        owned_binding=await _owned_metadata_binding(
+                            harness.work, service, child.id, {}, new_status="in_progress",
+                        ),
                     )
                     assert admitted is not None and admitted.status == "in_progress"
                 else:
-                    assert await merge(child.id, {"crew_execution": None})
+                    assert await merge(
+                        child.id, {"crew_execution": None},
+                        owned_binding=await _owned_metadata_binding(
+                            harness.work, service, child.id, {"crew_execution": None},
+                        ),
+                    )
                 changed = await harness.work.get_work_item(child.id)
                 assert changed is not None and changed != child
                 changed_children.append(changed)
@@ -2488,7 +2599,12 @@ async def test_native_retry_rejects_zero_token_attempted_or_ambiguous_children(
         attachment_store=FilesystemAttachmentStore(tmp_path / "historical-attachments"),
     )
     if history == "in_progress":
-        assert await harness.work.transition_work_item(child.id, "in_progress")
+        assert await harness.work.merge_work_item_metadata(
+            child.id, {}, new_status="in_progress",
+            owned_binding=await _owned_metadata_binding(
+                harness.work, harness.service, child.id, {}, new_status="in_progress",
+            ),
+        )
     else:
         initial = await executor.resume(parent.id)
         assert len(initial) == 1 and agentic.calls == 1
@@ -2564,6 +2680,12 @@ async def test_native_retry_child_change_before_parent_commit_is_rejected(
         connection_factory=SQLiteConnectionFactory(),
     )
     await independent.start()
+    independent_service = CrewSessionService(
+        work_item_store=independent, chat_thread_store=harness.threads,
+    )
+    assert independent_service.get_owned_steps_execution_port().owns_store(independent)
+    assert independent.owned_steps_owner_matches(independent_service)
+    assert not independent.owned_steps_owner_matches(harness.service)
     merge = harness.work.merge_work_item_metadata
     attempted_resumes: list[str] = []
     committed_resumes: list[str] = []
@@ -2587,7 +2709,12 @@ async def test_native_retry_child_change_before_parent_commit_is_rejected(
         before = await independent.get_work_item(parent.id)
         assert before is not None
         assert before.metadata["crew_session"] == blocked.model_dump(mode="json")
-        assert await independent.transition_work_item(child.id, "in_progress")
+        assert await independent.merge_work_item_metadata(
+            child.id, {}, new_status="in_progress",
+            owned_binding=await _owned_metadata_binding(
+                independent, independent_service, child.id, {}, new_status="in_progress",
+            ),
+        )
         admitted = await harness.work.get_work_item(child.id)
         assert admitted is not None and admitted.status == "in_progress"
         assert admitted.metadata == child.metadata
@@ -2650,6 +2777,12 @@ async def test_native_retry_child_change_during_transition_is_not_retryable(
         connection_factory=SQLiteConnectionFactory(),
     )
     await independent.start()
+    independent_service = CrewSessionService(
+        work_item_store=independent, chat_thread_store=harness.threads,
+    )
+    assert independent_service.get_owned_steps_execution_port().owns_store(independent)
+    assert independent.owned_steps_owner_matches(independent_service)
+    assert not independent.owned_steps_owner_matches(harness.service)
     merge = harness.work.merge_work_item_metadata
     observed_transitions: list[str] = []
     committed_mutations: list[str] = []
@@ -2679,9 +2812,19 @@ async def test_native_retry_child_change_during_transition_is_not_retryable(
             assert durable.metadata["crew_session"] == patch["crew_session"]
             observed_transitions.append(work_item_id)
             if child_change == "admitted":
-                assert await independent.transition_work_item(child.id, "in_progress")
+                assert await independent.merge_work_item_metadata(
+                    child.id, {}, new_status="in_progress",
+                    owned_binding=await _owned_metadata_binding(
+                        independent, independent_service, child.id, {}, new_status="in_progress",
+                    ),
+                )
             else:
-                updated = await independent.merge_work_item_metadata(child.id, {"crew_execution": None})
+                updated = await independent.merge_work_item_metadata(
+                    child.id, {"crew_execution": None},
+                    owned_binding=await _owned_metadata_binding(
+                        independent, independent_service, child.id, {"crew_execution": None},
+                    ),
+                )
                 assert updated is not None and "crew_execution" in updated.metadata
             mutated = await harness.work.get_work_item(child.id)
             assert mutated is not None
@@ -2760,12 +2903,18 @@ async def test_native_retry_failure_does_not_overwrite_competing_parent(
                     "completed_at": values["transitioned_at"],
                 })
             contract = CrewSessionContract.model_validate(values)
+            competing_patch = {"crew_session": contract.model_dump(mode="json")}
+            competing_status = "failed" if competing_state == "failed" else "in_progress"
             updated = await merge(
-                parent.id, {"crew_session": contract.model_dump(mode="json")},
+                parent.id, competing_patch,
                 expected={"crew_session": current.metadata["crew_session"]},
                 expected_status="in_progress",
-                new_status="failed" if competing_state == "failed" else "in_progress",
+                new_status=competing_status,
                 source="competing_parent_revision",
+                owned_binding=await _owned_metadata_binding(
+                    harness.work, harness.service, parent.id, competing_patch,
+                    new_status=competing_status,
+                ),
             )
             assert updated is not None
             competing.append(updated)
@@ -2773,7 +2922,12 @@ async def test_native_retry_failure_does_not_overwrite_competing_parent(
         if source == "crew_session_ingress_resume":
             assert result is not None and result.status == "in_progress"
             resumed.append(work_item_id)
-            changed = await merge(child.id, {"crew_execution": None})
+            changed = await merge(
+                child.id, {"crew_execution": None},
+                owned_binding=await _owned_metadata_binding(
+                    harness.work, harness.service, child.id, {"crew_execution": None},
+                ),
+            )
             assert changed is not None and changed.metadata == {**child.metadata, "crew_execution": None}
             mutated.append(child.id)
         return result
@@ -2810,19 +2964,52 @@ async def test_native_reassignment_cas_miss_parks_without_execution(
 
     parent, _room, _session, recovery, child = await _native_executing_session(harness, native_workers)
     await native_workers.registry.get("builder-1").stop()
-    comparisons = []
+    comparisons: list[tuple[str, dict[str, Any]]] = []
+    observed = await harness.work.get_owned_steps(parent.id)
+    assert observed is not None
+    old_row = next(
+        row for row in observed.control.rows
+        if row.child is not None and row.child.child_id == child.id
+    )
+    assert old_row.child is not None
 
-    async def miss_assignment(work_item_id: str, **kwargs: Any) -> WorkItem | None:
-        comparisons.append((work_item_id, kwargs))
+    async def miss_assignment(
+        mutation: owned_steps.OwnedStepMutation,
+    ) -> owned_steps.OwnedStepMutationResult:
+        token, command = mutation.change.token, mutation.change.command
+        assert isinstance(token, owned_steps.StepViewToken)
+        assert isinstance(command, owned_steps.ReassignOwnedStepCommand)
+        assert token.step_id == old_row.step_id
+        assert token.source_digest == old_row.source_digest
+        assert token.row_revision == old_row.revision
+        assert token.row_digest == old_row.digest
+        assert token.assignment_epoch == old_row.assignment_epoch
+        captured = await harness.work.get_work_item(old_row.child.child_id)
+        assert captured == child
+        # Retain the old CAS field assertions, now from its typed token and
+        # exact source observation rather than the unused generic writer.
+        comparisons.append((old_row.child.child_id, {
+            "expected_parent_id": token.parent_id,
+            "expected_assigned_to": old_row.assignee_id,
+            "expected_status": captured.status,
+            "expected_depends_on": captured.depends_on,
+            "expected_metadata": captured.metadata,
+            "new_assigned_to": command.assignee_id,
+        }))
         if miss == "conflict":
-            raise ValueError("work_item_assignment_conflict")
-        return None
+            raise owned_steps.OwnedStepsError("owned_steps_row_conflict", parent_id=parent.id)
+        return owned_steps.OwnedStepMutationResult(None, "applied")
 
     class _NoExecution:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
         async def resume(self, parent_id: str) -> Any:
+            self.calls.append(parent_id)
             raise AssertionError("CAS miss must precede child executor entry")
 
-    monkeypatch.setattr(harness.work, "compare_and_set_work_item_assignment", miss_assignment)
+    executor = _NoExecution()
+    monkeypatch.setattr(harness.work, "compare_and_set_owned_step", miss_assignment)
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
     owner = CrewOrchestrator(
@@ -2831,7 +3018,7 @@ async def test_native_reassignment_cas_miss_parks_without_execution(
             ontology=native_workers.ontology, order_manager=None,
             agent_registry=native_workers.registry,
         ),
-        crew_executor=_NoExecution(), verifier=object(), synthesizer=object(),
+        crew_executor=executor, verifier=object(), synthesizer=object(),
         work_item_store=harness.work, runtime=SimpleNamespace(), config=config,
         crew_session_service=harness.service,
     )
@@ -2849,9 +3036,123 @@ async def test_native_reassignment_cas_miss_parks_without_execution(
         assert expected["new_assigned_to"] == "builder-2"
         assert (await harness.service.get_session(parent.id)).blocked_reason == "crew_worker_unavailable"
         assert (await harness.work.get_work_item(child.id)).metadata == child.metadata
+        assert await harness.work.get_work_item(child.id) == child
         assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+        assert executor.calls == []
     finally:
         await owner.stop()
+
+
+async def test_native_reassignment_cross_store_stale_source_parks_without_execution(
+    harness: _Harness, native_workers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.cognitive.crew_delegation import CrewDelegator
+    from probos.cognitive.crew_orchestrator import CrewOrchestrator
+    from probos.config import SystemConfig
+
+    parent, _room, _session, recovery, child = await _native_executing_session(harness, native_workers)
+    await native_workers.registry.get("builder-1").stop()
+    observed = await harness.work.get_owned_steps(parent.id)
+    assert observed is not None
+    old_row = next(
+        row for row in observed.control.rows
+        if row.child is not None and row.child.child_id == child.id
+    )
+    independent = WorkItemStore(
+        db_path=str(tmp_path / "workforce-real.db"),
+        tick_interval=1_000,
+        connection_factory=SQLiteConnectionFactory(),
+    )
+    await independent.start()
+    independent_service = CrewSessionService(
+        work_item_store=independent, chat_thread_store=harness.threads,
+    )
+    assert independent_service.get_owned_steps_execution_port().owns_store(independent)
+    assert independent.owned_steps_owner_matches(independent_service)
+    assert not independent.owned_steps_owner_matches(harness.service)
+    compare = harness.work.compare_and_set_owned_step
+    comparisons: list[owned_steps.OwnedStepMutation] = []
+    committed_mutations: list[WorkItem] = []
+    rejected_codes: list[str] = []
+
+    async def compete_before_comparison(
+        mutation: owned_steps.OwnedStepMutation,
+    ) -> owned_steps.OwnedStepMutationResult:
+        comparisons.append(mutation)
+        assert len(comparisons) == 1
+        token, command = mutation.change.token, mutation.change.command
+        assert isinstance(token, owned_steps.StepViewToken)
+        assert isinstance(command, owned_steps.ReassignOwnedStepCommand)
+        assert token.parent_id == parent.id and token.step_id == old_row.step_id
+        assert token.source_digest == old_row.source_digest
+        assert token.assignment_epoch == old_row.assignment_epoch
+        assert command.assignee_id == "builder-2"
+        before = await independent.get_work_item(child.id)
+        assert before == child and before.assigned_to == "builder-1"
+        patch = dict(command.metadata_patch)
+        assert patch and "delegation_reason" not in child.metadata
+        changed = await independent.merge_work_item_metadata(
+            child.id, patch, expected=child.metadata,
+            expected_status=child.status, expected_assigned_to_exact=child.assigned_to,
+            expected_depends_on=child.depends_on,
+            owned_binding=await _owned_metadata_binding(
+                independent, independent_service, child.id, patch,
+            ),
+        )
+        assert changed is not None
+        assert changed == replace(
+            child, metadata={**child.metadata, **patch}, updated_at=changed.updated_at,
+        )
+        assert await harness.work.get_work_item(child.id) == changed
+        fresh = await harness.work.get_owned_steps(parent.id)
+        assert fresh is not None
+        row = next(row for row in fresh.control.rows if row.step_id == token.step_id)
+        assert row.source_digest != token.source_digest
+        assert row.revision > token.row_revision
+        assert row.assignment_epoch == token.assignment_epoch
+        assert row.assignee_id == old_row.assignee_id == "builder-1"
+        assert (await independent_service.get_recovery(parent.id)).plan == recovery.plan
+        committed_mutations.append(changed)
+        with pytest.raises(owned_steps.OwnedStepsError, match="^owned_steps_row_conflict$") as rejected:
+            await compare(mutation)
+        rejected_codes.append(rejected.value.code)
+        assert await independent.get_work_item(child.id) == changed
+        raise rejected.value
+
+    class _NoExecution:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def resume(self, parent_id: str) -> Any:
+            self.calls.append(parent_id)
+            raise AssertionError("stale owned-step CAS must precede child executor entry")
+
+    executor = _NoExecution()
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    owner = CrewOrchestrator(
+        assignment_resolver=native_workers.resolver,
+        delegator=CrewDelegator(
+            ontology=native_workers.ontology, order_manager=None,
+            agent_registry=native_workers.registry,
+        ),
+        crew_executor=executor, verifier=object(), synthesizer=object(),
+        work_item_store=harness.work, runtime=SimpleNamespace(), config=config,
+        crew_session_service=harness.service,
+    )
+    try:
+        monkeypatch.setattr(harness.work, "compare_and_set_owned_step", compete_before_comparison)
+        await owner.start()
+        await owner.schedule(parent.id)
+        assert len(comparisons) == 1 and len(committed_mutations) == 1
+        assert rejected_codes == ["owned_steps_row_conflict"]
+        assert await independent.get_work_item(child.id) == committed_mutations[0]
+        assert (await harness.service.get_session(parent.id)).blocked_reason == "crew_worker_unavailable"
+        assert (await harness.service.get_recovery(parent.id)).plan == recovery.plan
+        assert executor.calls == []
+    finally:
+        await owner.stop()
+        await independent.stop()
 
 
 async def test_blocked_explicit_captain_retry_restores_executing(
@@ -3772,6 +4073,9 @@ async def test_orchestrator_start_repairs_before_recovery_scan() -> None:
             events.append(f"recovery:{limit}")
             return []
 
+        async def list_owned_legacy_recovery_candidates(self, *, limit: int) -> list[WorkItem]:
+            raise AssertionError("canonical-only startup must not scan legacy recovery")
+
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
     config.agentic_dispatch.crew_provisioning_repair_limit = 7
@@ -3806,7 +4110,7 @@ async def test_start_schedules_repaired_id_absent_from_recovery_candidates(
         parent_id="repaired-only",
     )
     service = _StartupService(harness.service, (parent.id,))
-    store = _RecoveryCandidatesStore(())
+    store = _RecoveryCandidatesStore((), harness.work)
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
     config.agentic_dispatch.crew_resume_scan_limit = 4
@@ -3820,6 +4124,7 @@ async def test_start_schedules_repaired_id_absent_from_recovery_candidates(
             ("session", parent.id),
             ("recovery", parent.id),
         ]
+        assert store.read_ids == [parent.id]
     finally:
         await owner.owner.stop()
 
@@ -3837,6 +4142,7 @@ async def test_start_unions_repaired_first_once_under_one_global_cap(
     )
     store = _RecoveryCandidatesStore(
         ("startup-a", "startup-c", "startup-d"),
+        harness.work,
     )
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
@@ -3860,6 +4166,7 @@ async def test_start_unions_repaired_first_once_under_one_global_cap(
             ("recovery", "startup-c"),
         ]
         assert store.limits == [3]
+        assert store.read_ids == ["startup-b", "startup-a", "startup-c"]
     finally:
         await owner.owner.stop()
 
@@ -3898,7 +4205,7 @@ async def test_start_malformed_provenance_schedules_nothing(
         harness.service,
         (valid_parent.id, malformed_parent.id),
     )
-    store = _RecoveryCandidatesStore(())
+    store = _RecoveryCandidatesStore((), harness.work)
     config = SystemConfig()
     config.agentic_dispatch.orchestrator_enabled = True
     owner = _StartupScheduleOwner(service=service, store=store, config=config)
@@ -3911,7 +4218,123 @@ async def test_start_malformed_provenance_schedules_nothing(
         ("recovery", valid_parent.id),
         ("session", malformed_parent.id),
     ]
+    assert store.read_ids == [valid_parent.id, malformed_parent.id]
     await owner.owner.stop()
+
+
+@pytest.mark.parametrize("scan_limit", [1, 2])
+async def test_start_bound_legacy_port_preserves_shared_cap(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, scan_limit: int,
+) -> None:
+    from probos.cognitive.crew_executor import CrewTaskExecutor
+    from probos.config import SystemConfig
+
+    canonical, _room, _session = await _create_bound_session(
+        harness, parent_id="startup-canonical",
+    )
+    legacy = await harness.work.create_work_item(id="startup-legacy", title="Legacy parent")
+    child = await harness.work.create_work_item(
+        id="startup-legacy-child", title="Legacy child", parent_id=legacy.id,
+        assigned_to="owner-2", metadata={"spec_id": "legacy-step"},
+    )
+    port = harness.work.get_owned_steps_execution_port()
+    lease = await port.admit(legacy.id, children=(child,), thread_id="")
+    assert lease.snapshot.control.owner_kind == "legacy"
+    repair = harness.service.repair_provisioning
+    canonical_scan = harness.work.list_crew_session_recovery_candidates
+    legacy_scan = harness.work.list_owned_legacy_recovery_candidates
+    calls: list[tuple[str, int]] = []
+
+    async def repaired(*, limit: int) -> tuple[str, ...]:
+        calls.append(("repair", limit))
+        assert await repair(limit=limit) == ()
+        return (canonical.id,)
+
+    async def scan_canonical(*, limit: int) -> list[WorkItem]:
+        calls.append(("canonical", limit))
+        candidates = await canonical_scan(limit=limit)
+        assert [item.id for item in candidates] == [canonical.id]
+        return candidates
+
+    async def scan_legacy(*, limit: int) -> list[WorkItem]:
+        calls.append(("legacy", limit))
+        candidates = await legacy_scan(limit=limit)
+        assert [item.id for item in candidates] == [legacy.id]
+        return candidates
+
+    monkeypatch.setattr(harness.service, "repair_provisioning", repaired)
+    monkeypatch.setattr(harness.work, "list_crew_session_recovery_candidates", scan_canonical)
+    monkeypatch.setattr(harness.work, "list_owned_legacy_recovery_candidates", scan_legacy)
+    executor = CrewTaskExecutor(
+        work_item_store=harness.work, agent_registry=harness.registry,
+        agentic_executor=object(), crew_session_service=harness.service,
+        runtime=SimpleNamespace(chat_thread_store=harness.threads),
+    )
+    assert executor.owned_steps_execution_port() is port
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    config.agentic_dispatch.crew_provisioning_repair_limit = 7
+    config.agentic_dispatch.crew_resume_scan_limit = scan_limit
+    owner = _StartupScheduleOwner(
+        service=harness.service, store=harness.work, config=config, executor=executor,
+    )
+    try:
+        await owner.owner.start()
+        await owner.drain()
+        await owner.owner.start()
+        assert calls == [("repair", 7), ("canonical", scan_limit), ("legacy", scan_limit)]
+        assert owner.scheduled_ids == [canonical.id, legacy.id][:scan_limit]
+    finally:
+        await owner.owner.stop()
+        await owner.drain()
+
+
+async def test_start_bound_legacy_scan_failure_propagates(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.cognitive.crew_executor import CrewTaskExecutor
+    from probos.config import SystemConfig
+
+    limits: list[int] = []
+
+    async def fail_scan(*, limit: int) -> list[WorkItem]:
+        limits.append(limit)
+        raise RuntimeError("legacy_recovery_scan_failed")
+
+    monkeypatch.setattr(harness.work, "list_owned_legacy_recovery_candidates", fail_scan)
+    executor = CrewTaskExecutor(
+        work_item_store=harness.work, agent_registry=harness.registry,
+        agentic_executor=object(),
+        runtime=SimpleNamespace(chat_thread_store=harness.threads),
+    )
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    config.agentic_dispatch.crew_resume_scan_limit = 4
+    owner = _StartupScheduleOwner(
+        service=None, store=harness.work, config=config, executor=executor,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="^legacy_recovery_scan_failed$"):
+            await owner.owner.start()
+        assert limits == [4] and owner.scheduled_ids == []
+    finally:
+        await owner.owner.stop()
+        await owner.drain()
+
+
+async def test_start_without_owner_capabilities_scans_nothing() -> None:
+    from probos.config import SystemConfig
+
+    config = SystemConfig()
+    config.agentic_dispatch.orchestrator_enabled = True
+    owner = _StartupScheduleOwner(service=None, store=object(), config=config)
+    try:
+        await owner.owner.start()
+        await owner.owner.start()
+        assert owner.scheduled_ids == []
+    finally:
+        await owner.owner.stop()
+        await owner.drain()
 
 
 def _thread_api_app(

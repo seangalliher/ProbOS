@@ -374,6 +374,9 @@ class _StaticAgenticExecutor:
         max_iterations: int | None = None,
         tier: str | None = None,
         extra_context: dict | None = None,
+        owned_steps_execution_port: Any = None,
+        owned_steps_execution_lease: Any = None,
+        owned_steps_execution_permit: Any = None,
     ) -> WorkItemAgenticOutcome:
         self.calls.append({
             "agent_id": agent_id,
@@ -386,7 +389,15 @@ class _StaticAgenticExecutor:
             "max_iterations": max_iterations,
             "tier": tier,
             "extra_context": extra_context,
+            "owned_steps_execution_port": owned_steps_execution_port,
+            "owned_steps_execution_lease": owned_steps_execution_lease,
+            "owned_steps_execution_permit": owned_steps_execution_permit,
         })
+        if owned_steps_execution_permit is not None:
+            await owned_steps_execution_port.validate(
+                owned_steps_execution_lease,
+                owned_steps_execution_permit,
+            )
         if self.error is not None:
             raise self.error
         return WorkItemAgenticOutcome(
@@ -2815,6 +2826,19 @@ class _WorkStoreFailure:
 
     async def get_work_item(self, work_item_id: str) -> WorkItem | None:
         return await self.delegate.get_work_item(work_item_id)
+
+    async def get_owned_steps(self, parent_id: str):
+        return await self.delegate.get_owned_steps(parent_id)
+
+    async def get_owned_crew_children(
+        self,
+        parent_id: str,
+        expected_plan=None,
+    ):
+        return await self.delegate.get_owned_crew_children(
+            parent_id,
+            expected_plan,
+        )
 
     async def list_work_items(
         self,
@@ -5271,6 +5295,9 @@ async def test_work_item_verification_cas_is_exact_detached_and_token_atomic(
             expected_actual_tokens=14,
             actual_tokens_delta=9_223_372_036_854_775_807,
         )
+    rollback_attempts_before_commit_fault = (
+        stores.connection.rollback_attempts
+    )
     stores.connection.inject_commit_error(
         asyncio.CancelledError("injected_verification_commit_cancel"),
     )
@@ -5290,7 +5317,13 @@ async def test_work_item_verification_cas_is_exact_detached_and_token_atomic(
             expected_actual_tokens=14,
             actual_tokens_delta=1,
         )
-    assert stores.connection.rollback_attempts == 1
+    # This used to pin an absolute rollback count of one. Owned boundary
+    # validation now uses transactions for earlier rejected attempts too; the
+    # invariant is that this injected commit fault adds exactly one rollback.
+    assert (
+        stores.connection.rollback_attempts
+        == rollback_attempts_before_commit_fault + 1
+    )
     after_cancel = await stores.work.get_work_item(child.id)
     assert after_cancel is not None
     assert after_cancel.verification == {"version": 1, "accepted": True}
@@ -5974,23 +6007,51 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         for name, value in inspect.getmembers(CrewSessionService, inspect.isfunction)
         if not name.startswith("_")
     }
+    # This exact-surface assertion previously omitted authenticated manual-gate
+    # authority and release scheduling, which left those two owner seams dead.
     assert service_public == {
         "adopt_recovery_plan",
+        "admit",
+        "admit_correction",
         "agent_principal",
+        "authorize_owned_steps",
+        "authorize_owned_store_write",
+        "bind_owned_legacy_authorizer",
+        # M3 adds the explicit view-authorizer/read-only dispatch boundary;
+        # the prior exact API set predated those real consumers.
+        "bind_owned_steps_view_authorizer",
         "bind_scheduler",
         "bind_worker_resolver",
         "captain_principal",
         "compare_and_set_recovery",
+        "correction_execution_lease",
+        "expire_owned_steps",
         "fail_verified_outcome",
+        "get_owned_steps_execution_port",
+        "get_owned_steps_snapshot",
         "get_recovery",
         "get_session",
         "initialize_session",
         "install_recovery_plan",
         "metrics",
         "open_or_resume",
+        "owned_steps_authority",
+        "owned_human_steps_authority",
+        "owned_read_steps_authority",
+        "owned_manual_gate_released",
+        "owned_store_binding",
+        "owns_store",
         "publish_verified_result",
+        "read_correction",
+        "reassign_unstarted",
+        "record_correction",
+        "record_unstarted",
+        "register_owned_steps_component",
         "repair_provisioning",
+        "start",
+        "submit",
         "transition_session",
+        "validate",
         "validate_worker_admission",
     }
     for owner, method_name in (
@@ -5998,11 +6059,15 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         (CrewSessionService, "validate_worker_admission"),
         (CrewSessionService, "metrics"),
         (CrewSessionService, "publish_verified_result"),
+        (CrewSessionService, "admit_correction"),
+        (CrewSessionService, "record_correction"),
+        (CrewSessionService, "expire_owned_steps"),
         (SubtaskVerifier, "verify_for_session"),
         (SubtaskVerifier, "converge_for_session"),
         (CrewSynthesizer, "synthesize_for_session"),
         (CrewSessionFinalizer, "finalize"),
         (CrewSessionFinalizer, "resume"),
+        (CrewSessionFinalizer, "finalize_from_receipt"),
         (WorkItemStore, "compare_and_set_work_item_verification"),
     ):
         signature = inspect.signature(getattr(owner, method_name))
@@ -6030,9 +6095,10 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "provenance_ref",
                 "result_artifact_id",
                 "crew_trust_effects",
+                "steps_finalize",
             ),
-            {"expected_revision", "expected_recovery", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id", "crew_trust_effects"},
-            {"crew_trust_effects": ()},
+            {"expected_revision", "expected_recovery", "expected_direct_children", "crew_synth", "last_result_summary", "provenance_ref", "result_artifact_id", "crew_trust_effects", "steps_finalize"},
+            {"crew_trust_effects": (), "steps_finalize": None},
         ),
         WorkItemStore.publish_work_item_metadata_with_child_barrier: (
             (
@@ -6050,9 +6116,10 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
                 "crew_trust_effects",
                 "crew_session_delivery",
                 "source",
+                "owned_binding",
             ),
-            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "crew_trust_effects", "crew_session_delivery", "source"},
-            {"crew_trust_effects": (), "crew_session_delivery": None, "source": "crew_session_verified_result"},
+            {"expected", "expected_absent_keys", "expected_present_keys", "expected_work_type", "expected_status", "expected_assigned_to", "expected_direct_children", "new_status", "crew_trust_effects", "crew_session_delivery", "source", "owned_binding"},
+            {"crew_trust_effects": (), "crew_session_delivery": None, "source": "crew_session_verified_result", "owned_binding": None},
         ),
     }
     for method, (names, keyword_only, defaults) in expected_signatures.items():
@@ -6622,9 +6689,14 @@ async def test_final_publication_child_barrier_is_atomic_with_parent_done(
 
         assert published.state == "done"
         assert changed_child is not None and changed_child.priority == 5
+        # This formerly pinned one BEGIN for publication itself. The owned
+        # boundary now performs one capture transaction before the unchanged
+        # atomic publication transaction; the competing writer is still
+        # blocked until the parent+child publication commit releases.
         assert (
-            connection_factory.connection.begin_immediate_count - begin_immediate_before
-        ) == 1
+            connection_factory.connection.begin_immediate_count
+            - begin_immediate_before
+        ) == 2
     finally:
         await work.stop()
 

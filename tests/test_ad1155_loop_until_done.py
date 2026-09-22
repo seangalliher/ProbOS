@@ -26,6 +26,7 @@ import dataclasses
 import hashlib
 import inspect
 import logging
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,6 +34,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.agentic_dispatch import (
     WorkItemAgenticExecutor,
     WorkItemAgenticOutcome,
@@ -82,6 +84,36 @@ from probos.cognitive.swe_harness import session_compactor as session_compactor_
 from probos.config import AgenticDispatchConfig, SystemConfig
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.workforce import STEP_STATUSES, WorkItemStore, _all_steps_done
+
+
+class _AdoptionOwner:
+    async def authorize_owned_steps(
+        self,
+        authority: owned_steps.OwnedStepsAuthority,
+        *,
+        parent_id: str,
+        operation: str,
+        token: Any,
+    ) -> owned_steps.OwnedStepsGrant:
+        return owned_steps.OwnedStepsGrant(
+            parent_id,
+            "captain",
+            "",
+            "captain",
+        )
+
+    async def expire_owned_steps(
+        self,
+        work_item_id: str,
+        observed_at: float,
+    ) -> bool:
+        return False
+
+
+_ADOPTION_OWNERS: weakref.WeakKeyDictionary[
+    WorkItemStore,
+    _AdoptionOwner,
+] = weakref.WeakKeyDictionary()
 
 pytestmark = pytest.mark.asyncio
 
@@ -241,6 +273,44 @@ async def _run_one(
     ex = _executor(
         store, _FakeRegistry({"a1": _FakeAgent("a1")}), agentic, **executor_kwargs
     )
+    if steps:
+        with pytest.raises(
+            owned_steps.OwnedStepsError,
+            match="owned_steps_adoption_required",
+        ):
+            await ex.run(parent.id)
+
+        owner = _ADOPTION_OWNERS.get(store)
+        if owner is None:
+            owner = _AdoptionOwner()
+            _ADOPTION_OWNERS[store] = owner
+            store.bind_owned_steps_owner(owner, owner)
+        authority = owned_steps.OwnedStepsAuthority(owner)
+        preview = await store.preview_owned_steps_adoption(
+            parent.id,
+            authority=authority,
+            view_id="loop-adoption",
+            turn_id="captain-adoption",
+        )
+        await store.compare_and_set_owned_step(
+            owned_steps.OwnedStepMutation(
+                owned_steps.OwnedStepChange(
+                    operation_id=owned_steps.owned_digest(
+                        owned_steps.owned_json_bytes(
+                            [
+                                "loop-adoption",
+                                preview.token.incarnation,
+                            ]
+                        )
+                    ),
+                    token=preview.token,
+                    command=owned_steps.AdoptOwnedStepsCommand(
+                        preview=preview
+                    ),
+                ),
+                authority,
+            )
+        )
     await ex.run(parent.id)
     return await store.get_work_item(child.id)
 
@@ -354,6 +424,9 @@ async def test_gate_off_child_run_kwargs_match_the_ad1142_set_key_for_key(
 
     assert len(agentic.calls) == 1
     call = agentic.calls[0]
+    # This assertion used to pin the pre-ownership call shape. Managed crew
+    # execution now must pass its exact port/lease/permit into the real agentic
+    # seam; the AD-1155 gate-off invariant still covers every original value.
     expected = {
         "agent_id": "a1",
         "instructions": "do the thing",
@@ -365,8 +438,17 @@ async def test_gate_off_child_run_kwargs_match_the_ad1142_set_key_for_key(
             "_crew_work_item_id": child.id,
         },
     }
-    assert call == expected
-    assert list(call) == list(expected)
+    assert {
+        key: value
+        for key, value in call.items()
+        if not key.startswith("owned_steps_execution_")
+    } == expected
+    assert list(call)[: len(expected)] == list(expected)
+    assert set(call) - set(expected) == {
+        "owned_steps_execution_port",
+        "owned_steps_execution_lease",
+        "owned_steps_execution_permit",
+    }
 
 
 async def test_gate_off_instantiates_zero_session_compactors(
@@ -415,7 +497,11 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     from probos.fault_detection import ToolFaultTurn
 
     params = inspect.signature(WorkItemAgenticExecutor.run).parameters
-    assert list(params) == [
+    # This used to pin the signature before owned execution crossed the real
+    # agentic seam. The three M2 execution bindings carry authority, not
+    # AD-1155 continuation policy; M3 deliberately appends two presentation
+    # bindings after them, preserving the original ordered prefix.
+    assert list(params)[:21] == [
         "self",
         "agent_id",
         "instructions",
@@ -438,6 +524,13 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "fault_turn",
         "fault_attempted",
     ]
+    assert list(params)[21:] == [
+        "owned_steps_execution_port",
+        "owned_steps_execution_lease",
+        "owned_steps_execution_permit",
+        "owned_steps_turn_id",
+        "owned_steps_initial_view",
+    ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params
     )
@@ -454,6 +547,16 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     assert params["fault_attempted"].default == ""
     assert annotations["fault_turn"] == ToolFaultTurn | None
     assert annotations["fault_attempted"] == str
+    for name, expected_annotation in (
+        ("owned_steps_execution_port", owned_steps.OwnedStepsExecutionPort | None),
+        ("owned_steps_execution_lease", owned_steps.OwnedExecutionLease | None),
+        ("owned_steps_execution_permit", owned_steps.OwnedStepExecutionPermit | None),
+        ("owned_steps_turn_id", str | None),
+        ("owned_steps_initial_view", owned_steps.OwnedStepsViewReference | None),
+    ):
+        assert params[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params[name].default is None
+        assert annotations[name] == expected_annotation
 
 
 async def test_converge_for_session_still_passes_no_token_budget() -> None:
@@ -599,7 +702,10 @@ async def test_open_todos_with_an_empty_step_list_stops(store) -> None:
         crew_loop_until_done_predicate=_LOOP_PREDICATE_OPEN_TODOS,
     )
 
-    assert len(agentic.calls) == 1
+    # The pure empty-list defence above still stops. AD-1192 admission now adds
+    # a real child-bound row before execution, so this run is no longer empty:
+    # the partial child may continue once and then its complete outcome stops.
+    assert len(agentic.calls) == 2
 
 
 async def test_open_todos_stops_when_only_done_and_submitted_remain(store) -> None:
@@ -607,6 +713,10 @@ async def test_open_todos_stops_when_only_done_and_submitted_remain(store) -> No
     trust >= 0.7) and built-ins seed at Beta(2,2) = 0.50 => lieutenant. The
     modal crew agent cannot close its own submitted step, so re-invoking it is
     guaranteed-futile work."""
+    assert _actionable_step_labels([
+        {"label": "survey", "status": "done"},
+        {"label": "rebalance", "status": "submitted"},
+    ]) == []
     agentic = _ScriptedExecutor(
         [_outcome(stopped_reason="max_iterations"), _outcome()]
     )
@@ -622,7 +732,9 @@ async def test_open_todos_stops_when_only_done_and_submitted_remain(store) -> No
         crew_loop_until_done_predicate=_LOOP_PREDICATE_OPEN_TODOS,
     )
 
-    assert len(agentic.calls) == 1
+    # Those manual-prefix rows cannot drive the child. Its separately admitted,
+    # in-progress owned row can, until the real execution returns complete.
+    assert len(agentic.calls) == 2
 
 
 @pytest.mark.parametrize("open_status", ["pending", "in_progress", "rejected"])
@@ -644,6 +756,9 @@ async def test_open_todos_continues_when_an_actionable_step_remains(
         crew_loop_until_done_predicate=_LOOP_PREDICATE_OPEN_TODOS,
     )
 
+    # Keep the historical continuation regression: there is now a real active
+    # child-bound suffix row. Manual/sibling rows must not replace that signal
+    # with a blanket "managed => inapplicable" short circuit.
     assert len(agentic.calls) == 2
 
 
@@ -747,9 +862,6 @@ async def test_only_open_todos_pays_a_parent_round_trip(
         parent = await store.create_work_item(
             title="parent", work_type="work_order"
         )
-        await store.set_steps(
-            parent.id, [{"label": "open one", "status": "pending"}]
-        )
         await _child(store, parent_id=parent.id)
         reads.clear()
         agentic = _ScriptedExecutor(
@@ -763,6 +875,8 @@ async def test_only_open_todos_pays_a_parent_round_trip(
             crew_loop_until_done_predicate=predicate,
         )
         await ex.run(parent.id)
+        # Managed admission supplies the child's actionable row; it must not
+        # disable open_todos merely to avoid the additional scoped read.
         assert len(agentic.calls) == 2, predicate
         parent_reads[predicate] = reads.count(parent.id)
 
@@ -1110,14 +1224,14 @@ async def test_todo_labels_appear_only_under_the_open_todos_predicate(
         {"label": "survey", "status": "done"},
         {"label": "rebalance the manifold", "status": "pending"},
     ]
-    for predicate, expect_labels in (
-        (_LOOP_PREDICATE_OPEN_TODOS, True),
-        (_LOOP_PREDICATE_STOP_REASON, False),
+    for predicate in (
+        _LOOP_PREDICATE_OPEN_TODOS,
+        _LOOP_PREDICATE_STOP_REASON,
     ):
         agentic = _ScriptedExecutor(
             [_outcome(stopped_reason="max_iterations", final_text="x"), _outcome()]
         )
-        await _run_one(
+        child = await _run_one(
             store,
             agentic,
             steps=steps,
@@ -1125,8 +1239,15 @@ async def test_todo_labels_appear_only_under_the_open_todos_predicate(
             crew_loop_until_done_predicate=predicate,
         )
         second = agentic.calls[1]["task_text"]
-        assert (_CONTINUATION_TODO_HEADER in second) is expect_labels, predicate
-        assert ("rebalance the manifold" in second) is expect_labels, predicate
+        if predicate == _LOOP_PREDICATE_OPEN_TODOS:
+            # Keep the actual continuation path active while rendering only
+            # the current child's row, never the unrelated manual prefix.
+            assert _CONTINUATION_TODO_HEADER in second
+            assert f"\n- {child.title}" in second
+            assert "rebalance the manifold" not in second
+        else:
+            assert _CONTINUATION_TODO_HEADER not in second
+            assert "rebalance the manifold" not in second
 
 
 async def test_the_marker_instruction_appears_only_under_that_predicate(

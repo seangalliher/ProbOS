@@ -22,6 +22,7 @@ from probos.cognitive.crew_executor import CrewTaskExecutor
 from probos.cognitive.crew_session import CrewSessionContract
 from probos.config import AuthConfig, SystemConfig, format_trust
 from probos.crew_profile import Rank
+from probos.crew_session_live import load_crew_session_projection
 from probos.earned_agency import agency_from_rank
 from probos.events import EventType
 from probos.mesh.nats_bus import MockNATSBus, NATSBus
@@ -31,6 +32,7 @@ from probos.runtime import ProbOSRuntime
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.substrate.pool_group import PoolGroup, PoolGroupRegistry
 from probos.threads import ChatThreadStore
+from probos.work_item_steps import OwnedCrewChildren, OwnedStepsSeedPlan
 from probos.workforce import (
     BookableResource,
     CrewSessionParentCreate,
@@ -45,6 +47,11 @@ from probos.ws_event_stream import (
     WSEventStreamHub,
     build_ws_state_snapshot,
     detach_json_value,
+)
+from tests.test_ad1132_crew_session_api import (
+    _OwnedProjectionCase,
+    _ProjectionReadBarrier,
+    owned_projection_case,
 )
 
 
@@ -2350,3 +2357,285 @@ async def test_snapshot_source_overflow_closes_1013_without_partial_frame(tmp_pa
         assert websocket.sent == []
     finally:
         await hub.stop()
+
+
+class _ProjectionWebSocket(_FakeWebSocket):
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def send_text(self, payload: str) -> None:
+        await super().send_text(payload)
+        self.frames.put_nowait(json.loads(payload))
+
+
+@pytest.mark.parametrize("large_history", [False, True], ids=["small", "over-1000-retired"])
+async def test_owned_replan_current_projection_chain(
+    owned_projection_case: _OwnedProjectionCase,
+    large_history: bool,
+) -> None:
+    case = owned_projection_case
+    state = case.state
+    setup = await state.create_canonical()
+    parent_id, thread_id = setup["parent_id"], setup["thread_id"]
+    original = await state.store.get_owned_crew_children(parent_id)
+    assert len(original.active) == 1 and original.retired == ()
+    initial = await state.store.get_owned_steps(parent_id)
+    assert initial is not None and initial.control.manual_prefix_length == 1
+    prefix = initial.control.current_manual_prefix_json()
+    baseline = await case.client.get(f"/api/crew-tasks/{parent_id}")
+    assert baseline.status_code == 200, baseline.text
+    assert baseline.json()["session"]["progress"]["total"] == 1
+    await case.apply(parent_id, "adopt_existing", "current-chain-adopt")
+    await case.apply(parent_id, "replan_unstarted", "current-chain-replan")
+    membership = await state.store.get_owned_crew_children(parent_id)
+    assert len(membership.active) == 2 and len(membership.retired) == 1
+    assert membership.retired[0].child.to_dict() == original.active[0].to_dict()
+
+    runtime = _Runtime(
+        state.storage_root,
+        work_items=state.store,
+        threads=state.threads,
+        artifacts=state.artifacts,
+        service=state.service,
+    )
+    hub = WSEventStreamHub(runtime)
+    await hub.start()
+    websocket = _ProjectionWebSocket()
+    serve_task = asyncio.create_task(hub.serve(websocket))
+
+    async def assert_consumers(active: int, retired: int) -> None:
+        membership = await state.store.get_owned_crew_children(parent_id)
+        assert len(membership.active) == active
+        assert len(membership.retired) == retired
+        active_ids = {child.id for child in membership.active}
+        retired_ids = {entry.child.id for entry in membership.retired}
+        assert active_ids.isdisjoint(retired_ids)
+        assert {child.status for child in membership.active} == {"open"}
+        assert {entry.child.status for entry in membership.retired} == {"open"}
+        snapshot = await state.store.get_owned_steps(parent_id)
+        assert snapshot is not None
+        assert snapshot.control.current_manual_prefix_json() == prefix
+        assert snapshot.control.original_steps_json == initial.control.original_steps_json
+        parent = await state.store.get_work_item(parent_id)
+        assert parent is not None
+        # The retained manual row is a step, not another current child.
+        assert len(parent.steps) == active + 1
+        before = case.sources(parent_id)
+        response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+        assert response.status_code == 200, response.text
+        assert set(response.json()) == {"session"}
+        detail = response.json()["session"]
+        progress = detail["progress"]
+        assert {key: progress[key] for key in ("total", "done", "failed", "active")} == {
+            "total": active, "done": 0, "failed": 0, "active": active,
+        }
+        assert progress["active_child"]["id"] in active_ids
+        assert progress["active_child"]["id"] not in retired_ids
+        assert detail["revision"] == baseline.json()["session"]["revision"]
+
+        summaries = await case.client.get("/api/threads/summaries")
+        assert summaries.status_code == 200, summaries.text
+        summary = summaries.json()["summaries"][thread_id]
+        assert summary["steps_total"] == active + 1
+        assert summary["steps_done"] == 0
+        assert summary["session"]["progress"] == {
+            "total": active, "done": 0, "failed": 0, "active": active,
+        }
+        hub.ingress({
+            "type": "work_item_updated",
+            "data": {"work_item": parent.to_dict()},
+            "timestamp": 1.0,
+        })
+        frame = await websocket.frames.get()
+        assert frame["type"] == "crew_session_projection"
+        assert frame["data"]["parent_id"] == parent_id
+        assert frame["data"]["thread_id"] == thread_id
+        assert frame["data"]["session"] == detail
+        assert frame["data"]["room_summary"] == summary
+        assert case.sources(parent_id) == before
+
+    try:
+        assert (await websocket.frames.get())["type"] == "state_snapshot"
+        await assert_consumers(2, 1)
+        if large_history:
+            state.replan_decomposer.count = 200
+            for index in range(6):
+                before_replan = await state.store.get_owned_crew_children(parent_id)
+                await case.apply(parent_id, "replan_unstarted", f"history-replan-{index}")
+                after_replan = await state.store.get_owned_crew_children(parent_id)
+                retired_rows = {
+                    entry.child.id: entry.child.to_dict()
+                    for entry in after_replan.retired
+                }
+                assert all(
+                    retired_rows[child.id] == child.to_dict()
+                    for child in before_replan.active
+                )
+                assert all(
+                    retired_rows[entry.child.id] == entry.child.to_dict()
+                    for entry in before_replan.retired
+                )
+            assert len(after_replan.retired) == 1003
+            assert len(after_replan.retired) > 1000
+            await assert_consumers(200, 1003)
+        assert all(
+            json.loads(payload)["type"] != "resync_required"
+            for payload in websocket.sent
+        )
+        assert not state.worker.calls and not state.running_executions
+    finally:
+        await hub.stop()
+        await asyncio.gather(serve_task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("conflict", [
+    "malformed_control", "extra_child", "tampered_receipt", "retired_source", "replan",
+])
+async def test_live_membership_conflict_resyncs_without_publish(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    conflict: str,
+) -> None:
+    case = owned_projection_case
+    state = case.state
+    parent_id = await case.managed_parent(canonical=True)
+    await case.apply(parent_id, "replan_unstarted", "live-conflict-setup")
+    membership = await state.store.get_owned_crew_children(parent_id)
+    assert len(membership.active) == 2 and len(membership.retired) == 1
+    parent = await state.store.get_work_item(parent_id)
+    assert parent is not None
+    barrier = _ProjectionReadBarrier()
+    reader = state.secondary_store
+    if conflict == "replan":
+        get_membership = reader.get_owned_crew_children
+        list_children = reader.list_work_items
+
+        async def paused_membership(
+            key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+        ) -> OwnedCrewChildren:
+            if expected_plan is not None:
+                await barrier.pause()
+            return await get_membership(key, expected_plan=expected_plan)
+
+        async def paused_listing(**kwargs: Any) -> list[WorkItem]:
+            children = await list_children(**kwargs)
+            await barrier.pause()
+            return children
+
+        monkeypatch.setattr(reader, "get_owned_crew_children", paused_membership)
+        monkeypatch.setattr(reader, "list_work_items", paused_listing)
+    else:
+        await case.corrupt(parent_id, membership, conflict)
+    runtime = _Runtime(
+        state.storage_root,
+        work_items=reader,
+        threads=state.threads,
+        artifacts=state.artifacts,
+        service=state.service,
+    )
+    hub = WSEventStreamHub(runtime)
+    await hub.start()
+    websocket = _ProjectionWebSocket()
+    serve_task = asyncio.create_task(hub.serve(websocket))
+    try:
+        assert (await websocket.frames.get())["type"] == "state_snapshot"
+        hub.ingress({
+            "type": "work_item_updated",
+            "data": {"work_item": parent.to_dict()},
+            "timestamp": 1.0,
+        })
+        if conflict == "replan":
+            await barrier.entered.wait()
+            session_before = await state.service.get_session(parent_id)
+            await case.apply(parent_id, "replan_unstarted", "live-overlapping-replan")
+            current = await state.store.get_owned_crew_children(parent_id)
+            assert current.incarnation != membership.incarnation
+            assert current.plan_digest != membership.plan_digest
+            assert len(current.active) == 2 and len(current.retired) == 3
+            session_after = await state.service.get_session(parent_id)
+            assert session_before is not None and session_after is not None
+            assert session_after.revision == session_before.revision
+            barrier.release.set()
+        frame = await websocket.frames.get()
+        assert frame["type"] == "resync_required"
+        assert frame["data"] == {}
+        assert not any(
+            json.loads(payload)["type"] == "crew_session_projection"
+            for payload in websocket.sent
+        )
+        if conflict == "replan":
+            hub.ingress({
+                "type": "work_item_updated",
+                "data": {"work_item": parent.to_dict()},
+                "timestamp": 2.0,
+            })
+            fresh = await websocket.frames.get()
+            assert fresh["type"] == "crew_session_projection"
+            assert fresh["data"]["session"]["progress"]["total"] == 2
+            assert fresh["data"]["session"]["progress"]["active_child"]["id"] in {
+                child.id for child in current.active
+            }
+    finally:
+        barrier.release.set()
+        await hub.stop()
+        await asyncio.gather(serve_task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("checkpoint", [
+    "managed-a", "managed-b", "unmanaged-a", "unmanaged-b", "unmanaged-list",
+])
+async def test_projection_cancellation_after_membership_await(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint: str,
+) -> None:
+    case = owned_projection_case
+    if checkpoint.startswith("managed-"):
+        parent_id = await case.managed_parent(canonical=True)
+    else:
+        parent_id = await case.unmanaged_parent(canonical=True)
+    reader = case.state.secondary_store
+    read = reader.get_owned_crew_children
+    list_children = reader.list_work_items
+    current = True
+    observations = 0
+    listings = 0
+
+    async def observed_membership(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        nonlocal current, observations
+        observations += 1
+        try:
+            return await read(key, expected_plan=expected_plan)
+        finally:
+            if checkpoint.endswith("-a") or (
+                checkpoint.endswith("-b") and observations == 2
+            ):
+                current = False
+
+    async def observed_listing(**kwargs: Any) -> list[WorkItem]:
+        nonlocal current, listings
+        listings += 1
+        result = await list_children(**kwargs)
+        if checkpoint == "unmanaged-list":
+            current = False
+        return result
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", observed_membership)
+    monkeypatch.setattr(reader, "list_work_items", observed_listing)
+    before = case.sources(parent_id)
+
+    with pytest.raises(asyncio.CancelledError):
+        await load_crew_session_projection(
+            parent_id,
+            crew_session_service=case.state.service,
+            work_item_store=reader,
+            still_current=lambda: current,
+        )
+
+    assert current is False
+    assert observations == (2 if checkpoint.endswith("-b") else 1)
+    assert listings == (1 if checkpoint in {"unmanaged-b", "unmanaged-list"} else 0)
+    assert case.sources(parent_id) == before

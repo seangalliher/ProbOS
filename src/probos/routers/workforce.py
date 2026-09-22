@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from pydantic import TypeAdapter, ValidationError
 
+from probos import work_item_steps as owned_steps
+from probos.routers.auth import require_crew_scope
 from probos.routers.deps import (
     WebSocketBroadcast,
     broadcast_ws_event,
@@ -22,6 +25,68 @@ router = APIRouter(prefix="/api", tags=["workforce"])
 def _raise_if_crew_session_write_reserved(exc: ValueError) -> None:
     if str(exc) == "crew_session_write_reserved":
         raise HTTPException(409, "crew_session_write_reserved") from exc
+
+
+def _owned_steps_http_error(exc: owned_steps.OwnedStepsError) -> HTTPException:
+    if exc.code in {
+        "owned_steps_parent_missing",
+        "owned_steps_row_missing",
+        "owned_steps_not_managed",
+    }:
+        status_code = 404
+    elif exc.code in {
+        "owned_steps_authority_denied",
+        "owned_steps_actual_context_invalid",
+        "owned_steps_scope_conflict",
+        "owned_steps_view_scope_conflict",
+    }:
+        status_code = 403
+    elif exc.code in {
+        "owned_steps_unavailable",
+        "owned_steps_view_unavailable",
+        "owned_steps_finalization_unavailable",
+    }:
+        status_code = 503
+    else:
+        status_code = 409
+    return HTTPException(
+        status_code,
+        {
+            "code": exc.code,
+            "message": exc.message,
+            "parent_id": exc.parent_id,
+            "view_id": exc.view_id,
+            "actions": list(exc.actions),
+            "feedback": owned_steps.render_owned_steps_feedback(exc),
+        },
+    )
+
+
+def _owned_steps_owner(runtime: Any) -> tuple[Any, Any]:
+    owner = getattr(runtime, "crew_orchestrator", None)
+    service = getattr(runtime, "crew_session_service", None)
+    if owner is None or service is None:
+        raise HTTPException(503, "owned_steps_owner_unavailable")
+    return owner, service
+
+
+async def _owned_steps_request_json(
+    request: Request,
+    model: type[Any],
+) -> Any:
+    try:
+        body = await request.body()
+        if len(body) > owned_steps.MAX_OWNED_PUBLIC_RESPONSE_BYTES:
+            raise ValueError("owned_steps_request_too_large")
+        return TypeAdapter(model).validate_json(body)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            422,
+            {
+                "code": "owned_steps_request_invalid",
+                "message": "Owned steps request is invalid.",
+            },
+        ) from exc
 
 
 async def build_ws_workforce_snapshot(
@@ -296,6 +361,342 @@ async def get_work_item_steps(
         "steps": steps,
         "gate_completion": bool((item.metadata or {}).get("steps_gate_completion")),
     }
+
+
+@router.get(
+    "/work-items/{work_item_id}/owned-steps",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def get_owned_work_item_steps(
+    work_item_id: str,
+    cursor: str | None = None,
+    detail: str | None = None,
+    presentation_budget: int = owned_steps.MAX_OWNED_VIEW_BYTES,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Return one authenticated managed page or a known-unmanaged projection."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    try:
+        parent_id = await runtime.work_item_store.resolve_owned_steps_parent_id(
+            work_item_id
+        )
+        if parent_id is None:
+            identity = (
+                await runtime.work_item_store.read_owned_steps_raw_identity(
+                    work_item_id
+                )
+            )
+            if identity is None:
+                raise HTTPException(404, "Work item not found")
+            try:
+                raw_steps = identity.raw_steps
+                if raw_steps is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_rows_invalid"
+                    )
+                spans = owned_steps.owned_row_spans(raw_steps)
+                decoded = owned_steps.owned_json_loads(raw_steps)
+            except owned_steps.OwnedStepsError as exc:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_repair_required",
+                    parent_id=identity.parent_id,
+                    actions=("inspect_source", "replace_manual_prefix"),
+                ) from exc
+            start = 0
+            if cursor is not None:
+                try:
+                    start = int(cursor)
+                except ValueError as exc:
+                    raise HTTPException(422, "owned_steps_cursor_invalid") from exc
+            if start < 0 or detail is not None:
+                raise HTTPException(422, "owned_steps_cursor_invalid")
+            rows = decoded[start:start + owned_steps.MAX_OWNED_VIEW_ROWS]
+            response = {
+                "version": 1,
+                "mode": "unmanaged",
+                "parent_id": identity.parent_id,
+                "requested_item_id": work_item_id,
+                "reference": None,
+                "rows": [
+                    {"ordinal": start + index + 1, "todo": row}
+                    for index, row in enumerate(rows)
+                ],
+                "previous_cursor": (
+                    str(max(0, start - owned_steps.MAX_OWNED_VIEW_ROWS))
+                    if start
+                    else None
+                ),
+                "next_cursor": (
+                    str(start + len(rows))
+                    if start + len(rows) < len(spans)
+                    else None
+                ),
+                "recovery": [],
+                "finalization": "none",
+            }
+            if (
+                len(owned_steps.owned_json_bytes(response))
+                > owned_steps.MAX_OWNED_PUBLIC_RESPONSE_BYTES
+            ):
+                raise HTTPException(413, "owned_steps_public_response_too_large")
+            return response
+        owner, service = _owned_steps_owner(runtime)
+        turn_id = "http-owner"
+        actual_context = await owner.owned_steps_actual_context(
+            service.captain_principal(),
+            work_item_id=work_item_id,
+            turn_id=turn_id,
+        )
+        if detail is not None:
+            return await owner.read_owned_steps_detail(
+                actual_context,
+                step_id=detail,
+            )
+        reference = await owner.capture_owned_steps_view(
+            actual_context,
+            requested_item_id=work_item_id,
+            cursor=cursor,
+            presentation_budget=presentation_budget,
+        )
+        view = await owner.admit_owned_steps_presentation(
+            reference,
+            actual_context,
+        )
+        response = view.model_dump(mode="json")
+        response["reference"] = reference.model_dump(mode="json")
+        if (
+            len(owned_steps.owned_json_bytes(response))
+            > owned_steps.MAX_OWNED_PUBLIC_RESPONSE_BYTES
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_public_response_too_large",
+                parent_id=parent_id,
+                view_id=reference.view_id,
+            )
+        return response
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
+
+
+@router.post(
+    "/work-items/{work_item_id}/owned-steps/preview",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def preview_owned_work_item_steps(
+    work_item_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    owner, service = _owned_steps_owner(runtime)
+    body = await _owned_steps_request_json(
+        request,
+        owned_steps.OwnedStepsProposalRequest,
+    )
+    try:
+        if isinstance(body, owned_steps.InspectProposalRequest):
+            turn_id = "http-owner"
+            actual_context = await owner.owned_steps_repair_context(
+                service.captain_principal(),
+                work_item_id=work_item_id,
+                turn_id=turn_id,
+            )
+        else:
+            turn_id = body.reference.turn_id
+            context_factory = (
+                owner.owned_steps_repair_context
+                if isinstance(body.reference, owned_steps.RepairReference)
+                else owner.owned_steps_actual_context
+            )
+            actual_context = await context_factory(
+                service.captain_principal(),
+                work_item_id=work_item_id,
+                turn_id=turn_id,
+            )
+        preview = await owner.prepare_owned_steps_proposal(
+            body,
+            actual_context,
+        )
+        return {"proposal": preview.model_dump(mode="json")}
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
+
+
+@router.post(
+    "/work-items/{work_item_id}/owned-steps/adopt",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def adopt_owned_work_item_steps(
+    work_item_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    owner, service = _owned_steps_owner(runtime)
+    body = await _owned_steps_request_json(
+        request,
+        owned_steps.OwnedStepsProposalApplyRequest,
+    )
+    try:
+        actual_context = await owner.owned_steps_repair_context(
+            service.captain_principal(),
+            work_item_id=work_item_id,
+            turn_id=body.reference.turn_id,
+        )
+        result = await owner.apply_owned_steps_proposal(
+            body, actual_context, allowed_kinds=frozenset({"adopt_existing"}),
+        )
+        return {"disposition": result.disposition}
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
+
+
+@router.get(
+    "/work-items/{work_item_id}/owned-steps/repair",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def repair_owned_work_item_steps(
+    work_item_id: str,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """Capture raw projection/control evidence without parsing either value."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    owner, service = _owned_steps_owner(runtime)
+    try:
+        actual_context = await owner.owned_steps_repair_context(
+            service.captain_principal(),
+            work_item_id=work_item_id,
+            turn_id="http-owner",
+        )
+        observation, reference = (
+            await owner.capture_owned_steps_repair_observation(actual_context)
+        )
+        raw_steps = observation.raw_steps
+        raw_control = observation.raw_control
+        omissions: list[str] = []
+        if (
+            raw_steps is not None
+            and len(raw_steps.encode("utf-8"))
+            > owned_steps.MAX_OWNED_VIEW_BYTES
+        ):
+            raw_steps = None
+            omissions.append("raw_steps")
+        if (
+            raw_control is not None
+            and len(raw_control.encode("utf-8"))
+            > owned_steps.MAX_OWNED_VIEW_BYTES
+        ):
+            raw_control = None
+            omissions.append("raw_control")
+        response = {
+            "version": 1,
+            "parent_id": observation.parent_id,
+            "reference": reference.model_dump(mode="json"),
+            "steps_digest": observation.steps_digest,
+            "control_digest": observation.control_digest,
+            "raw_steps": raw_steps,
+            "raw_control": raw_control,
+            "omissions": omissions,
+            "actions": [
+                "replace_manual_prefix",
+                "replan_unstarted",
+                "inspect_source",
+            ],
+        }
+        if (
+            len(owned_steps.owned_json_bytes(response))
+            > owned_steps.MAX_OWNED_PUBLIC_RESPONSE_BYTES
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_public_response_too_large",
+                parent_id=work_item_id,
+            )
+        return response
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
+
+
+@router.post(
+    "/work-items/{work_item_id}/owned-steps/commands",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def command_owned_work_item_steps(
+    work_item_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    owner, service = _owned_steps_owner(runtime)
+    body = await _owned_steps_request_json(
+        request,
+        owned_steps.OwnedStepsCommandsRequest,
+    )
+    body = body.root
+    try:
+        if isinstance(body, owned_steps.OwnedStepsProposalApplyRequest):
+            actual_context = await owner.owned_steps_repair_context(
+                service.captain_principal(), work_item_id=work_item_id,
+                turn_id=body.reference.turn_id,
+            )
+            result = await owner.apply_owned_steps_proposal(
+                body, actual_context,
+                allowed_kinds=frozenset({"replace_manual_prefix", "replan_unstarted"}),
+            )
+            return {"disposition": result.disposition}
+        actual_context = await owner.owned_steps_actual_context(
+            service.captain_principal(),
+            work_item_id=work_item_id,
+            turn_id=body.reference.turn_id,
+        )
+        results = await owner.apply_owned_steps_commands(
+            body,
+            actual_context,
+        )
+        return {
+            "results": [
+                {
+                    "operation_id": command.operation_id,
+                    "disposition": result.disposition,
+                }
+                for command, result in zip(body.commands, results, strict=True)
+            ]
+        }
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
+
+
+@router.post(
+    "/work-items/{work_item_id}/owned-steps/finalize",
+    dependencies=[Depends(require_crew_scope)],
+)
+async def finalize_owned_work_item_steps(
+    work_item_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    owner, service = _owned_steps_owner(runtime)
+    body = await _owned_steps_request_json(
+        request,
+        owned_steps.OwnedStepsFinalizeRequest,
+    )
+    try:
+        actual_context = await owner.owned_steps_actual_context(
+            service.captain_principal(),
+            work_item_id=work_item_id,
+            turn_id=body.reference.turn_id,
+        )
+        result = await owner.finalize_owned_steps(
+            body.reference,
+            actual_context,
+        )
+        return {
+            "disposition": getattr(
+                result,
+                "disposition",
+                "completed" if bool(getattr(result, "completed", False)) else "pending",
+            )
+        }
+    except owned_steps.OwnedStepsError as exc:
+        raise _owned_steps_http_error(exc) from exc
 
 
 @router.put("/work-items/{work_item_id}/steps")

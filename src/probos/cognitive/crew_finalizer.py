@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.crew_session import CrewSynthesisMetadata
 from probos.crew_execution_usage import read_crew_execution_token_usage
 from probos.crew_utils import CREW_EXECUTION_KEYS
@@ -703,6 +704,22 @@ class CrewSessionFinalizer:
         self._approval_threshold = float(approval_threshold)
         self._use_confidence_weights = use_confidence_weights
         self._active_claims: dict[str, _ClaimAttempt] = {}
+        register_owned = getattr(
+            self._sessions,
+            "register_owned_steps_component",
+            None,
+        )
+        bind_corrections = getattr(
+            verifier,
+            "bind_owned_steps_correction_port",
+            None,
+        )
+        if callable(register_owned):
+            register_owned(self, frozenset({"owner", "verifier"}))
+        if callable(bind_corrections):
+            if callable(register_owned):
+                register_owned(verifier, frozenset({"verifier"}))
+            bind_corrections(self._sessions)
 
     async def drain_pending_trust(
         self,
@@ -726,6 +743,260 @@ class CrewSessionFinalizer:
                 exc_info=True,
             )
             return 0
+
+    async def finalize_from_receipt(
+        self,
+        receipt: owned_steps.FinalizeReceipt,
+    ) -> CrewSessionFinalizationResult:
+        frozen = owned_steps.FinalizeReceipt.model_validate(receipt)
+        snapshot = await self._sessions.get_owned_steps_snapshot(
+            frozen.parent_id
+        )
+        control = snapshot.control
+        if (
+            control.owner_kind != "canonical"
+            or control.thread_id != frozen.thread_id
+            or control.incarnation != frozen.incarnation
+            or control.plan_digest != frozen.plan_digest
+            or owned_steps.owned_source_review_digest(control)
+            != frozen.source_review_digest
+            or (
+                control.finalization is not None
+                and control.finalization != frozen
+            )
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            )
+        manifest_bytes = await self._work_items.read_owned_steps_content(
+            frozen.manifest
+        )
+        output_bytes = await self._work_items.read_owned_steps_content(
+            frozen.output
+        )
+        try:
+            manifest = owned_steps.owned_json_loads(
+                manifest_bytes.decode("utf-8", errors="strict")
+            )
+            final_output = output_bytes.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            ) from exc
+        expected_keys = {
+            "version",
+            "parent_id",
+            "thread_id",
+            "incarnation",
+            "plan_digest",
+            "source_review_digest",
+            "expected_revision",
+            "expected_recovery",
+            "expected_direct_children",
+            "crew_synth",
+            "last_result_summary",
+            "provenance_ref",
+            "result_artifact_id",
+            "final_output_hash",
+            "accepted_count",
+            "total_count",
+            "trust_effects",
+        }
+        if (
+            type(manifest) is not dict
+            or set(manifest) != expected_keys
+            or manifest["version"] != 1
+            or manifest["parent_id"] != frozen.parent_id
+            or manifest["thread_id"] != frozen.thread_id
+            or manifest["incarnation"] != frozen.incarnation
+            or manifest["plan_digest"] != frozen.plan_digest
+            or manifest["source_review_digest"]
+            != frozen.source_review_digest
+            or manifest["final_output_hash"] != frozen.output.content_hash
+            or type(manifest["expected_revision"]) is not int
+            or type(manifest["expected_direct_children"]) is not list
+            or type(manifest["crew_synth"]) is not dict
+            or type(manifest["trust_effects"]) is not list
+            or type(manifest["accepted_count"]) is not int
+            or type(manifest["total_count"]) is not int
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            )
+        session = await self._sessions.get_session(frozen.parent_id)
+        if session is None:
+            raise ValueError("crew_session_not_initialized")
+        if frozen.publication_owner_id != session.facilitator_id:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            )
+        if session.state == "done":
+            if control.finalization_disposition != "completed":
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_finalization_conflict",
+                    parent_id=frozen.parent_id,
+                )
+            return CrewSessionFinalizationResult(
+                parent_id=frozen.parent_id,
+                claimed=True,
+                state="done",
+                completed=True,
+                final_output=final_output,
+                accepted_count=manifest["accepted_count"],
+                total_count=manifest["total_count"],
+                result_artifact_id=manifest["result_artifact_id"],
+                provenance_ref=manifest["provenance_ref"],
+                reason="completed",
+            )
+        if session.state != "verifying":
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_state",
+                parent_id=frozen.parent_id,
+            )
+        recovery = await self._sessions.get_recovery(frozen.parent_id)
+        expected_recovery = manifest["expected_recovery"]
+        if (
+            (expected_recovery is None) != (recovery is None)
+            or (
+                recovery is not None
+                and recovery.model_dump(mode="json") != expected_recovery
+            )
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            )
+        trust_effects = tuple(
+            CrewTrustEffect(**effect)
+            for effect in manifest["trust_effects"]
+        )
+        completed = await self._sessions.publish_verified_result(
+            frozen.parent_id,
+            expected_revision=manifest["expected_revision"],
+            expected_recovery=recovery,
+            expected_direct_children=tuple(
+                manifest["expected_direct_children"]
+            ),
+            crew_synth=CrewSynthesisMetadata.model_validate(
+                manifest["crew_synth"]
+            ),
+            last_result_summary=manifest["last_result_summary"],
+            provenance_ref=manifest["provenance_ref"],
+            result_artifact_id=manifest["result_artifact_id"],
+            crew_trust_effects=trust_effects,
+            steps_finalize=frozen,
+        )
+        authoritative = await self._sessions.get_owned_steps_snapshot(
+            frozen.parent_id
+        )
+        disposition = authoritative.control.finalization_disposition
+        if completed.state == "verifying":
+            if disposition != "pending":
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_finalization_conflict",
+                    parent_id=frozen.parent_id,
+                )
+            return CrewSessionFinalizationResult(
+                parent_id=frozen.parent_id,
+                claimed=True,
+                state="verifying",
+                completed=False,
+                final_output=final_output,
+                accepted_count=manifest["accepted_count"],
+                total_count=manifest["total_count"],
+                result_artifact_id=manifest["result_artifact_id"],
+                provenance_ref=manifest["provenance_ref"],
+                reason="waiting_manual_gate",
+            )
+        if completed.state != "done" or disposition != "completed":
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=frozen.parent_id,
+            )
+        await self.drain_pending_trust()
+        return CrewSessionFinalizationResult(
+            parent_id=frozen.parent_id,
+            claimed=True,
+            state="done",
+            completed=True,
+            final_output=final_output,
+            accepted_count=manifest["accepted_count"],
+            total_count=manifest["total_count"],
+            result_artifact_id=manifest["result_artifact_id"],
+            provenance_ref=manifest["provenance_ref"],
+            reason="completed",
+        )
+
+    async def _prepare_finalize_receipt(
+        self,
+        *,
+        session: CrewSessionContract,
+        recovery: Any | None,
+        publications: list[_ChildPublication],
+        synthesis: CrewSynthesisMetadata,
+        final_output: str,
+        provenance_ref: str,
+        result_artifact_id: str,
+        trust_effects: tuple[CrewTrustEffect, ...],
+    ) -> owned_steps.FinalizeReceipt:
+        snapshot = await self._sessions.get_owned_steps_snapshot(
+            session.task_id
+        )
+        output_ref = await self._write_owned_content(
+            final_output.encode("utf-8"),
+            mime="text/plain",
+        )
+        source_review_digest = owned_steps.owned_source_review_digest(
+            snapshot.control
+        )
+        manifest = {
+            "version": 1,
+            "parent_id": session.task_id,
+            "thread_id": session.thread_id,
+            "incarnation": snapshot.control.incarnation,
+            "plan_digest": snapshot.control.plan_digest,
+            "source_review_digest": source_review_digest,
+            "expected_revision": session.revision,
+            "expected_recovery": (
+                recovery.model_dump(mode="json")
+                if recovery is not None
+                else None
+            ),
+            "expected_direct_children": [
+                item.child_snapshot
+                for item in sorted(
+                    publications,
+                    key=lambda value: value.child.id,
+                )
+            ],
+            "crew_synth": synthesis.model_dump(mode="json"),
+            "last_result_summary": final_output[:4_096],
+            "provenance_ref": provenance_ref,
+            "result_artifact_id": result_artifact_id,
+            "final_output_hash": output_ref.content_hash,
+            "accepted_count": self._accepted_count(publications),
+            "total_count": len(publications),
+            "trust_effects": [asdict(effect) for effect in trust_effects],
+        }
+        manifest_ref = await self._write_owned_content(
+            owned_steps.owned_json_bytes(manifest),
+            mime="application/json",
+        )
+        return owned_steps.FinalizeReceipt(
+            parent_id=session.task_id,
+            owner_kind="canonical",
+            thread_id=session.thread_id,
+            incarnation=snapshot.control.incarnation,
+            plan_digest=snapshot.control.plan_digest,
+            source_review_digest=source_review_digest,
+            manifest=manifest_ref,
+            output=output_ref,
+            publication_owner_id=session.facilitator_id,
+        )
 
     def _completed_trust_effects(
         self,
@@ -1135,24 +1406,34 @@ class CrewSessionFinalizer:
             final_verdict=final_verdict,
             final_evidence_sha256=provenance_ref,
         )
-        trust_kwargs = (
-            {"crew_trust_effects": trust_effects}
-            if trust_effects
-            else {}
-        )
+        if callable(getattr(self._sessions, "get_owned_steps_snapshot", None)):
+            receipt = await self._prepare_finalize_receipt(
+                session=session,
+                recovery=recovery,
+                publications=publications,
+                synthesis=synthesis,
+                final_output=draft.final_text,
+                provenance_ref=provenance_ref,
+                result_artifact_id=artifact.id,
+                trust_effects=trust_effects,
+            )
+            return await self.finalize_from_receipt(receipt)
         completed = await self._sessions.publish_verified_result(
             session.task_id,
             expected_revision=session.revision,
             expected_recovery=recovery,
             expected_direct_children=tuple(
                 item.child_snapshot
-                for item in sorted(publications, key=lambda value: value.child.id)
+                for item in sorted(
+                    publications,
+                    key=lambda value: value.child.id,
+                )
             ),
             crew_synth=synthesis,
             last_result_summary=draft.final_text[:4_096],
             provenance_ref=provenance_ref,
             result_artifact_id=artifact.id,
-            **trust_kwargs,
+            crew_trust_effects=trust_effects,
         )
         await self.drain_pending_trust()
         return CrewSessionFinalizationResult(
@@ -1174,10 +1455,18 @@ class CrewSessionFinalizer:
         session: CrewSessionContract,
         results: list[SubtaskResult],
     ) -> tuple[list[WorkItem], dict[str, SubtaskResult]]:
-        children = await self._work_items.list_work_items(
-            parent_id=parent_id,
-            limit=_MAX_CHILDREN + 1,
-        )
+        snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is not None:
+            membership = await self._work_items.get_owned_crew_children(
+                parent_id,
+                snapshot.control.plan_digest,
+            )
+            children = list(membership.active)
+        else:
+            children = await self._work_items.list_work_items(
+                parent_id=parent_id,
+                limit=_MAX_CHILDREN + 1,
+            )
         if not 1 <= len(children) <= _MAX_CHILDREN:
             raise ValueError("child_result_invalid")
         children.sort(key=lambda child: child.id)
@@ -1241,10 +1530,18 @@ class CrewSessionFinalizer:
     ) -> list[SubtaskResult]:
         from probos.cognitive.crew_executor import SubtaskResult
 
-        children = await self._work_items.list_work_items(
-            parent_id=parent_id,
-            limit=_MAX_CHILDREN + 1,
-        )
+        snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is not None:
+            membership = await self._work_items.get_owned_crew_children(
+                parent_id,
+                snapshot.control.plan_digest,
+            )
+            children = list(membership.active)
+        else:
+            children = await self._work_items.list_work_items(
+                parent_id=parent_id,
+                limit=_MAX_CHILDREN + 1,
+            )
         by_id = {child.id: child for child in children}
         if len(by_id) != len(children) or len(children) != len(commitments):
             raise ValueError("child_result_invalid")
@@ -1353,6 +1650,7 @@ class CrewSessionFinalizer:
             maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
         )
         snapshot = self._snapshot_child(child)
+        owned_snapshot = await self._owned_steps_snapshot(session.task_id)
         initial_binding = self._initial_result_binding(
             result,
             thread_id=session.thread_id,
@@ -1366,12 +1664,18 @@ class CrewSessionFinalizer:
             thread_id=session.thread_id,
             department=str(getattr(producer, "department", "") or ""),
             rank=str(getattr(producer, "rank", "ensign") or "ensign"),
+            **(
+                {"owned_steps_snapshot": owned_snapshot}
+                if owned_snapshot is not None
+                else {}
+            ),
         )
         return await self._defer_checkpoint(self._checkpoint_child_convergence(
             session=session,
             child=child,
             result=result,
             snapshot=snapshot,
+            owned_snapshot=owned_snapshot,
             initial_binding=initial_binding,
             outcome=outcome,
         ))
@@ -1383,6 +1687,7 @@ class CrewSessionFinalizer:
         child: WorkItem,
         result: SubtaskResult,
         snapshot: dict[str, Any],
+        owned_snapshot: owned_steps.OwnedStepsSnapshot | None,
         initial_binding: _InitialResultBinding,
         outcome: SessionConvergenceOutcome,
     ) -> tuple[_ChildPublication, str]:
@@ -1412,6 +1717,41 @@ class CrewSessionFinalizer:
             maximum=1_048_576,
         )
         correction_tokens = self._correction_tokens(outcome)
+        metadata_patch = {
+            "crew_verification_recovery": {
+                "version": 1,
+                "convergence_ref": convergence_ref,
+            }
+        }
+        payload = {
+            "work_item_id": child.id,
+            "verification": verification,
+            "metadata_patch": metadata_patch,
+            "actual_tokens_delta": correction_tokens,
+        }
+        owned_binding = None
+        if owned_snapshot is not None:
+            reviewed_result = await self._prepare_owned_review(
+                session=session,
+                snapshot=owned_snapshot,
+                child=child,
+                outcome=outcome,
+                verification=verification,
+                convergence_ref=convergence_ref,
+            )
+            owned_binding = self._sessions.owned_store_binding(
+                self,
+                owned_snapshot,
+                operation="verification",
+                payload=payload,
+                actor_id=reviewed_result.reviewer_id,
+                step_id=next(
+                    row.step_id
+                    for row in owned_snapshot.control.rows
+                    if row.child is not None and row.child.child_id == child.id
+                ),
+                reviewed_result=reviewed_result,
+            )
         persisted = await self._work_items.compare_and_set_work_item_verification(
             child.id,
             verification,
@@ -1425,13 +1765,9 @@ class CrewSessionFinalizer:
             expected_depends_on=snapshot["depends_on"],
             expected_metadata=snapshot["metadata"],
             expected_actual_tokens=snapshot["actual_tokens"],
-            metadata_patch={
-                "crew_verification_recovery": {
-                    "version": 1,
-                    "convergence_ref": convergence_ref,
-                }
-            },
+            metadata_patch=metadata_patch,
             actual_tokens_delta=correction_tokens,
+            owned_binding=owned_binding,
         )
         if persisted is None:
             raise ValueError("work_item_verification_conflict")
@@ -1441,6 +1777,132 @@ class CrewSessionFinalizer:
             verification=_detached(persisted.verification),
             child_snapshot=self._publication_child_snapshot(persisted),
         ), convergence_ref
+
+    async def _owned_steps_snapshot(
+        self,
+        parent_id: str,
+    ) -> owned_steps.OwnedStepsSnapshot | None:
+        getter = getattr(self._sessions, "get_owned_steps_snapshot", None)
+        if not callable(getter):
+            return None
+        try:
+            return await getter(parent_id)
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code == "owned_steps_execution_scope_denied":
+                return None
+            raise
+
+    async def _prepare_owned_review(
+        self,
+        *,
+        session: CrewSessionContract,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        child: WorkItem,
+        outcome: SessionConvergenceOutcome,
+        verification: dict[str, Any],
+        convergence_ref: str,
+    ) -> owned_steps.ReviewedStepResult:
+        row = next(
+            (
+                row
+                for row in snapshot.control.rows
+                if row.child is not None and row.child.child_id == child.id
+            ),
+            None,
+        )
+        if row is None or row.permit is None or row.submission is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_review_conflict",
+                parent_id=session.task_id,
+            )
+        permit = await self._work_items.get_owned_step_evidence(
+            session.task_id,
+            snapshot.control.incarnation,
+            "permit",
+            row.permit,
+        )
+        if not isinstance(permit, owned_steps.OwnedStepExecutionPermit):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_review_conflict",
+                parent_id=session.task_id,
+            )
+        reviewed = owned_steps.OwnedExecutionResult(
+            work_item_id=outcome.result.work_item_id,
+            spec_id=outcome.result.spec_id,
+            agent_id=outcome.result.agent_id,
+            output=outcome.result.output,
+            status=outcome.result.status,
+            tool_trace_ref=outcome.result.tool_trace_ref,
+            started_at=outcome.result.started_at,
+            finished_at=outcome.result.finished_at,
+            stopped_reason=outcome.result.stopped_reason,
+            actual_tokens=outcome.result.actual_tokens,
+            artifact_refs=tuple(
+                owned_steps.OwnedArtifactReference.model_validate(reference)
+                for reference in outcome.result.artifact_refs
+            ),
+            blocked_dependency_ids=tuple(
+                outcome.result.blocked_dependency_ids
+            ),
+        )
+        reviewed_bytes = owned_steps.owned_json_bytes(
+            reviewed.model_dump(mode="json")
+        )
+        verification_bytes = owned_steps.owned_json_bytes(verification)
+        reviewed_ref = await self._write_owned_content(
+            reviewed_bytes,
+            mime="application/json",
+        )
+        verification_ref = await self._write_owned_content(
+            verification_bytes,
+            mime="application/json",
+        )
+        review_attempt_id = owned_steps.owned_digest(
+            owned_steps.owned_json_bytes(
+                [
+                    "canonical_review",
+                    session.task_id,
+                    snapshot.control.incarnation,
+                    row.step_id,
+                    row.submission,
+                    convergence_ref,
+                ]
+            )
+        )
+        return owned_steps.ReviewedStepResult(
+            submission_digest=row.submission,
+            permit=permit,
+            reviewed_result=reviewed_ref,
+            verification=verification_ref,
+            reviewer_id=outcome.history[-1].verdict.verifier_agent_id,
+            review_attempt_id=review_attempt_id,
+            accepted=outcome.accepted,
+        )
+
+    async def _write_owned_content(
+        self,
+        payload: bytes,
+        *,
+        mime: str,
+    ) -> owned_steps.OwnedContentReference:
+        content_hash = hashlib.sha256(payload).hexdigest()
+        await self._attachments.write(
+            content_hash,
+            payload,
+            mime,
+            origin="agent_artifact",
+        )
+        readback = await self._attachments.read(content_hash)
+        if (
+            readback != payload
+            or hashlib.sha256(readback).hexdigest() != content_hash
+        ):
+            raise ValueError("crew_finalization_checkpoint_readback_failed")
+        return owned_steps.OwnedContentReference(
+            content_hash=content_hash,
+            mime=mime,
+            size_bytes=len(payload),
+        )
 
     async def _resume_synthesis(
         self,
@@ -1494,6 +1956,7 @@ class CrewSessionFinalizer:
             maximum_codepoints=32_768,
             maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
         )
+        await self._claim_owned_synthesis(session)
         draft = await self._synthesizer.synthesize_for_session(
             parent_id=session.task_id,
             producer_agent_id=session.facilitator_id,
@@ -1510,6 +1973,30 @@ class CrewSessionFinalizer:
             convergence_refs=convergence_refs,
         ))
         return draft, recovery
+
+    async def _claim_owned_synthesis(self, session: CrewSessionContract) -> None:
+        snapshot = await self._owned_steps_snapshot(session.task_id)
+        if snapshot is None:
+            return
+        control = snapshot.control
+        token = owned_steps.OwnedStepsPlanToken(
+            parent_id=control.parent_id, incarnation=control.incarnation,
+            layout_revision=control.layout_revision, plan_revision=control.plan_revision,
+            plan_digest=control.plan_digest, steps_digest=control.steps_digest,
+            source_digest=snapshot.source_digest, actor_id=session.facilitator_id,
+            thread_id=control.thread_id, view_id="synthesis", turn_id=control.incarnation,
+        )
+        admission = await self._work_items.claim_owned_synthesis(
+            token, self._sessions.owned_steps_authority(
+                self, parent_id=session.task_id, actor_id=session.facilitator_id,
+                thread_id=session.thread_id, role="owner", operation="begin_synthesis", token=token,
+            ),
+        )
+        if admission.disposition != "new":
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_synthesis_interrupted", parent_id=session.task_id,
+                actions=("inspect_source", "interrupted_work"),
+            )
 
     async def _checkpoint_synthesis(
         self,
@@ -2112,6 +2599,7 @@ class CrewSessionFinalizer:
 
             try:
                 snapshot = self._snapshot_child(child)
+                owned_snapshot = await self._owned_steps_snapshot(session.task_id)
                 initial_binding = self._initial_result_binding(
                     result,
                     thread_id=session.thread_id,
@@ -2127,6 +2615,12 @@ class CrewSessionFinalizer:
                     ),
                 )
             except Exception:
+                logger.warning(
+                    "Crew child %s could not be bound to its owned execution "
+                    "evidence; finalization fails closed before verification",
+                    child.id,
+                    exc_info=True,
+                )
                 return await self._fail(
                     session,
                     reason="child_result_invalid",
@@ -2143,6 +2637,11 @@ class CrewSessionFinalizer:
                     thread_id=session.thread_id,
                     department=str(getattr(producer, "department", "") or ""),
                     rank=str(getattr(producer, "rank", "ensign") or "ensign"),
+                    **(
+                        {"owned_steps_snapshot": owned_snapshot}
+                        if owned_snapshot is not None
+                        else {}
+                    ),
                 )
                 self._validate_convergence_binding(
                     child=child,
@@ -2171,6 +2670,54 @@ class CrewSessionFinalizer:
                     total_count=len(children),
                 )
             try:
+                convergence_ref = ""
+                metadata_patch: dict[str, Any] = {}
+                if owned_snapshot is not None:
+                    convergence_document = self._convergence_checkpoint(
+                        session=session,
+                        child=child,
+                        outcome=outcome,
+                    )
+                    convergence_ref = await self._write_json_checkpoint(
+                        convergence_document,
+                        maximum=1_048_576,
+                    )
+                    metadata_patch = {
+                        "crew_verification_recovery": {
+                            "version": 1,
+                            "convergence_ref": convergence_ref,
+                        }
+                    }
+                payload = {
+                    "work_item_id": child.id,
+                    "verification": verification,
+                    "metadata_patch": metadata_patch,
+                    "actual_tokens_delta": correction_tokens,
+                }
+                owned_binding = None
+                if owned_snapshot is not None:
+                    reviewed_result = await self._prepare_owned_review(
+                        session=session,
+                        snapshot=owned_snapshot,
+                        child=child,
+                        outcome=outcome,
+                        verification=verification,
+                        convergence_ref=convergence_ref,
+                    )
+                    owned_binding = self._sessions.owned_store_binding(
+                        self,
+                        owned_snapshot,
+                        operation="verification",
+                        payload=payload,
+                        actor_id=reviewed_result.reviewer_id,
+                        step_id=next(
+                            row.step_id
+                            for row in owned_snapshot.control.rows
+                            if row.child is not None
+                            and row.child.child_id == child.id
+                        ),
+                        reviewed_result=reviewed_result,
+                    )
                 persisted = await self._work_items.compare_and_set_work_item_verification(
                     child.id,
                     verification,
@@ -2184,7 +2731,9 @@ class CrewSessionFinalizer:
                     expected_depends_on=snapshot["depends_on"],
                     expected_metadata=snapshot["metadata"],
                     expected_actual_tokens=snapshot["actual_tokens"],
+                    metadata_patch=metadata_patch,
                     actual_tokens_delta=correction_tokens,
+                    owned_binding=owned_binding,
                 )
                 if persisted is None:
                     raise ValueError("work_item_verification_conflict")
@@ -2412,10 +2961,18 @@ class CrewSessionFinalizer:
     ) -> tuple[list[WorkItem], dict[str, SubtaskResult]]:
         if type(results) is not list or len(results) > _MAX_CHILDREN:
             raise ValueError("child_result_invalid")
-        children = await self._work_items.list_work_items(
-            parent_id=parent_id,
-            limit=_MAX_CHILDREN + 1,
-        )
+        snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is not None:
+            membership = await self._work_items.get_owned_crew_children(
+                parent_id,
+                snapshot.control.plan_digest,
+            )
+            children = list(membership.active)
+        else:
+            children = await self._work_items.list_work_items(
+                parent_id=parent_id,
+                limit=_MAX_CHILDREN + 1,
+            )
         if not 1 <= len(children) <= _MAX_CHILDREN:
             raise ValueError("child_result_invalid")
         children.sort(key=lambda child: child.id)
@@ -3119,28 +3676,50 @@ class CrewSessionFinalizer:
                 final_verdict=final_verdict,
                 final_evidence_sha256=provenance_ref,
             )
-            trust_kwargs = (
-                {"crew_trust_effects": trust_effects}
-                if trust_effects
-                else {}
-            )
-            completed = await self._sessions.publish_verified_result(
-                session.task_id,
-                expected_revision=session.revision,
-                expected_recovery=None,
-                expected_direct_children=tuple(
-                    publication.child_snapshot
-                    for publication in sorted(
-                        publications,
-                        key=lambda item: item.child.id,
-                    )
-                ),
-                crew_synth=synthesis,
-                last_result_summary=draft.final_text[:4_096],
-                provenance_ref=provenance_ref,
-                result_artifact_id=artifact.id,
-                **trust_kwargs,
-            )
+            owned_snapshot = await self._owned_steps_snapshot(session.task_id)
+            if owned_snapshot is not None:
+                receipt = await self._prepare_finalize_receipt(
+                    session=session,
+                    recovery=None,
+                    publications=publications,
+                    synthesis=synthesis,
+                    final_output=draft.final_text,
+                    provenance_ref=provenance_ref,
+                    result_artifact_id=artifact.id,
+                    trust_effects=trust_effects,
+                )
+                completed_result = await self.finalize_from_receipt(receipt)
+            else:
+                completed = await self._sessions.publish_verified_result(
+                    session.task_id,
+                    expected_revision=session.revision,
+                    expected_recovery=None,
+                    expected_direct_children=tuple(
+                        publication.child_snapshot
+                        for publication in sorted(
+                            publications,
+                            key=lambda item: item.child.id,
+                        )
+                    ),
+                    crew_synth=synthesis,
+                    last_result_summary=draft.final_text[:4_096],
+                    provenance_ref=provenance_ref,
+                    result_artifact_id=artifact.id,
+                    crew_trust_effects=trust_effects,
+                )
+                await self.drain_pending_trust()
+                completed_result = CrewSessionFinalizationResult(
+                    parent_id=session.task_id,
+                    claimed=True,
+                    state=completed.state,
+                    completed=True,
+                    final_output=draft.final_text,
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(publications),
+                    result_artifact_id=artifact.id,
+                    provenance_ref=provenance_ref,
+                    reason="completed",
+                )
         except asyncio.CancelledError:
             logger.warning(
                 "Crew result publication was cancelled parent=%s "
@@ -3171,19 +3750,7 @@ class CrewSessionFinalizer:
                 accepted_count=self._accepted_count(publications),
                 total_count=len(publications),
             )
-        await self.drain_pending_trust()
-        return CrewSessionFinalizationResult(
-            parent_id=session.task_id,
-            claimed=True,
-            state=completed.state,
-            completed=True,
-            final_output=draft.final_text,
-            accepted_count=self._accepted_count(publications),
-            total_count=len(publications),
-            result_artifact_id=artifact.id,
-            provenance_ref=provenance_ref,
-            reason="completed",
-        )
+        return completed_result
 
     async def _fail_verified(
         self,

@@ -155,8 +155,11 @@ class _RetryGateConnection(_RecordingConnection):
         self.parent_waiting = asyncio.Event()
         self.release_parent = asyncio.Event()
         self.child_attempted = asyncio.Event()
+        self.transaction_attempted = asyncio.Event()
 
     async def execute(self, sql: str, parameters: Sequence[Any] = ()) -> Any:
+        if sql == "BEGIN IMMEDIATE":
+            self.transaction_attempted.set()
         if sql.startswith("UPDATE work_items SET") and parameters:
             if parameters[-1] == "retry-parent" and self.pause_parent:
                 self.parent_waiting.set()
@@ -478,16 +481,22 @@ class TestNativeRetryBarrier:
             assert any(sql == "BEGIN IMMEDIATE" for sql, _parameters in owner_connection.queries)
             assert any("WHERE parent_id = ?" in sql for sql, _parameters in owner_connection.queries)
             assert (await independent.get_work_item(parent.id)).status == "blocked"
+            writer_connection.transaction_attempted.clear()
             writer = asyncio.create_task(independent.merge_work_item_metadata(
                 child.id, {"crew_execution": None},
             ))
             tasks.append(writer)
-            await asyncio.wait_for(writer_connection.child_attempted.wait(), timeout=2)
+            # AD-1192 moves generic metadata writers' proof under BEGIN IMMEDIATE.
+            # Waiting for UPDATE used to pin the old read-before-transaction
+            # boundary; now the writer must block before reading or updating.
+            await asyncio.wait_for(writer_connection.transaction_attempted.wait(), timeout=2)
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(writer), timeout=0.05)
             assert not resume.done() and not writer.done()
+            assert not writer_connection.child_attempted.is_set()
             owner_connection.release_parent.set()
             resumed, mutated = await asyncio.wait_for(asyncio.gather(resume, writer), timeout=5)
+            assert writer_connection.child_attempted.is_set()
             assert resumed is not None and resumed.status == ("open" if phase == "planned" else "in_progress")
             assert mutated is not None and mutated.metadata == {"crew_execution": None}
             assert (await owner.get_work_item(child.id)).metadata == mutated.metadata
@@ -2018,4 +2027,3 @@ class TestWorkTypeAPI:
             assert reg.transition_requires_assignment("task", "open", "review") is False
         finally:
             await store.stop()
-

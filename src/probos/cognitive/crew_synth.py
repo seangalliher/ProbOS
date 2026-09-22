@@ -44,16 +44,17 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from probos.cognitive.crew_verdict import criteria_to_json
 from probos.cognitive.crew_verifier import SubtaskVerifier
 from probos.consensus.shapley import compute_shapley_values
 from probos.events import EventType
 from probos.types import Episode, LLMRequest, QuorumPolicy, Vote
+from probos import work_item_steps as owned_steps
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from probos.attachments.store import AttachmentStore
     from probos.cognitive.crew_verifier import (
@@ -62,7 +63,7 @@ if TYPE_CHECKING:
     )
     from probos.cognitive.episodic import EpisodicMemory
     from probos.consensus.trust import TrustNetwork
-    from probos.workforce import WorkItemStore
+    from probos.workforce import WorkItem, WorkItemStore
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,16 @@ _MAX_SESSION_SYNTHESIS_INPUT_BYTES = 1_048_576
 _MAX_SESSION_SYNTHESIS_OUTPUT_BYTES = 262_144
 _MAX_SESSION_RESULT_BYTES = 65_536
 _MAX_SESSION_TOKENS = 9_223_372_036_854_775_807
+
+# Lifecycle/plan conflicts that make a finalize-only close impossible are reported
+# as a typed ``conflict`` outcome rather than raised; integrity/authority/content
+# failures still propagate so they are never laundered into a silent conflict.
+_FINALIZE_CONFLICT_CODES = frozenset({
+    "owned_steps_finalization_conflict", "owned_steps_finalization_state",
+    "owned_steps_plan_conflict", "owned_steps_layout_conflict",
+    "owned_steps_source_conflict", "owned_steps_projection_conflict",
+    "owned_steps_membership_conflict",
+})
 
 
 @dataclass
@@ -94,6 +105,7 @@ class SynthesisResult:
     provenance_ref: str | None = None
     accepted_count: int = 0
     total_count: int = 0
+    disposition: Literal["completed", "pending", "conflict"] | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,605 @@ class SessionSynthesisDraft:
     producer_agent_id: str
     final_text: str
     tokens_used: int
+
+
+def _session_id(value: Any) -> str:
+    if type(value) is not str or _SESSION_ID_RE.fullmatch(value) is None:
+        raise ValueError("session_synthesis_id_invalid")
+    return value
+
+
+def _session_text(value: Any, *, maximum_bytes: int, error: str) -> str:
+    if type(value) is not str or "\x00" in value:
+        raise ValueError(error)
+    normalized = value.strip()
+    if not normalized or len(normalized.encode("utf-8")) > maximum_bytes:
+        raise ValueError(error)
+    return normalized
+
+
+def _build_synthesis_prompt(accepted: list["ConvergenceOutcome"]) -> str:
+    parts = ["Fold these verified sub-task outputs into one final answer:\n"]
+    for i, oc in enumerate(accepted, start=1):
+        parts.append(
+            f"--- Sub-task {i} (agent {oc.result.agent_id}) ---\n{oc.result.output}\n"
+        )
+    return "\n".join(parts)
+
+
+def _concat_fallback(accepted: list["ConvergenceOutcome"]) -> str:
+    return "\n\n".join(oc.result.output for oc in accepted)
+
+
+def _legacy_effect_id(
+    parent_id: str,
+    incarnation: str,
+    kind: str,
+    subject: str,
+) -> str:
+    return owned_steps.owned_digest(
+        owned_steps.owned_json_bytes(
+            [parent_id, incarnation, kind, subject]
+        )
+    )
+
+
+def _legacy_episode_payload(
+    parent_id: str,
+    final_output: str,
+    accepted: list["ConvergenceOutcome"],
+    outcomes: list["ConvergenceOutcome"],
+    shapley: dict[str, float],
+    created_at: float,
+    episode_id: str,
+) -> dict[str, Any]:
+    return {
+        "id": episode_id,
+        "timestamp": created_at,
+        "user_input": f"crew collaboration on parent work item {parent_id}",
+        "dag_summary": {
+            "parent_id": parent_id,
+            "accepted_count": len(accepted),
+            "total_count": len(outcomes),
+        },
+        "outcomes": [
+            {
+                "work_item_id": outcome.result.work_item_id,
+                "producer_agent_id": outcome.result.agent_id,
+                "verifier_agent_id": outcome.verdict.verifier_agent_id,
+                "accepted": outcome.verdict.accepted,
+                "verification_defect": outcome.verdict.verification_defect,
+                "status": outcome.status,
+                **(
+                    {"criteria": criteria_to_json(outcome.verdict.criteria)}
+                    if outcome.verdict.criteria is not None
+                    else {}
+                ),
+            }
+            for outcome in outcomes
+        ],
+        "reflection": final_output,
+        "agent_ids": sorted(shapley),
+        "shapley_values": dict(shapley),
+        "source": "crew_collaboration",
+    }
+
+
+class _OwnedLegacyStore(Protocol):
+    async def get_owned_steps(
+        self, parent_id: str,
+    ) -> owned_steps.OwnedStepsSnapshot | None: ...
+
+    async def get_work_item(
+        self, work_item_id: str,
+    ) -> WorkItem | None: ...
+
+    async def claim_owned_synthesis(
+        self,
+        token: owned_steps.OwnedStepsPlanToken,
+        authority: owned_steps.OwnedStepsAuthority,
+    ) -> owned_steps.OwnedStepMutationResult: ...
+
+    async def compare_and_set_owned_finalization(
+        self, finalization: owned_steps.OwnedFinalization,
+    ) -> owned_steps.OwnedFinalizationResult: ...
+
+    async def claim_owned_effect_attempt(
+        self, claim: owned_steps.OwnedEffectClaim,
+    ) -> owned_steps.OwnedEffectClaimResult: ...
+
+    async def read_owned_steps_content(
+        self, reference: owned_steps.OwnedContentReference,
+    ) -> bytes: ...
+
+
+class _ProducerTrustSink(Protocol):
+    def record_outcome(
+        self,
+        agent_id: str,
+        *,
+        success: bool,
+        intent_type: str,
+        source: str,
+    ) -> object: ...
+
+
+class _EpisodeSink(Protocol):
+    async def store(self, episode: Episode) -> object: ...
+
+
+class _OwnedLegacyCompletion:
+    """Prepare frozen owned receipts and attempt their durably claimed effects."""
+
+    def __init__(
+        self,
+        *,
+        store: _OwnedLegacyStore,
+        attachments: AttachmentStore | None,
+        trust: _ProducerTrustSink,
+        episodic: _EpisodeSink | None,
+    ) -> None:
+        self._store = store
+        self._attachments = attachments
+        self._trust = trust
+        self._episodic = episodic
+
+    async def finalize_from_receipt(
+        self,
+        receipt: owned_steps.FinalizeReceipt,
+        *,
+        token: owned_steps.OwnedStepsPlanToken,
+        authority: owned_steps.OwnedStepsAuthority,
+        source_review_digest: str,
+        release: bool = True,
+    ) -> SynthesisResult:
+        """AD-1192: close a legacy managed session from an EXACT frozen receipt.
+
+        Finalize-only recovery / manual-gate close. It re-validates the receipt,
+        incarnation, current source/review vector and lifecycle through the
+        existing owned-steps owner (``compare_and_set_owned_finalization``), which
+        is itself the authoritative state owner for the fenced managed parent, and
+        returns ``completed``/``pending``/``conflict``. It NEVER runs a worker,
+        verifier, judge, decomposition or synthesis, and re-emits no trust,
+        collaboration episode or completion event: the initial managed synthesis
+        owns those one-shot effects. ``release=False`` binds the receipt while the
+        manual gate is still held (``waiting_manual_gate``) and reports ``pending``.
+
+        An already-closed receipt is an idempotent no-op that changes no counter,
+        timestamp, artifact, message or event; a crash between the durable owned
+        close and the visible status close is repaired here without regenerating
+        any result or re-emitting any learning effect.
+        """
+        frozen = owned_steps.FinalizeReceipt.model_validate(receipt)
+        manifest, final_output = await self._read_legacy_receipt(frozen)
+        try:
+            result = await self._store.compare_and_set_owned_finalization(
+                owned_steps.OwnedFinalization(
+                    token=token, receipt=frozen, source_review_digest=source_review_digest,
+                    phase="complete" if release else "bind", authority=authority,
+                    manual_gate=not release,
+                ),
+            )
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code in _FINALIZE_CONFLICT_CODES:
+                return SynthesisResult(
+                    parent_id=frozen.parent_id,
+                    final_output=final_output,
+                    completed=False,
+                    shapley_values=dict(manifest["shapley_values"]),
+                    provenance_ref=frozen.manifest.content_hash,
+                    accepted_count=manifest["accepted_count"],
+                    total_count=manifest["total_count"],
+                    disposition="conflict",
+                )
+            raise
+        disposition: Literal["completed", "pending"] = (
+            "pending" if result.disposition == "pending" else "completed"
+        )
+        return SynthesisResult(
+            parent_id=frozen.parent_id,
+            final_output=final_output,
+            completed=disposition == "completed",
+            shapley_values=dict(manifest["shapley_values"]),
+            provenance_ref=frozen.manifest.content_hash,
+            accepted_count=manifest["accepted_count"],
+            total_count=manifest["total_count"],
+            disposition=disposition,
+        )
+
+    def owned_steps_content_reader(self) -> "AttachmentStore | None":
+        """Expose the injected content boundary for one-time store wiring."""
+        return self._attachments
+
+    async def write_owned_steps_content(
+        self,
+        blob: bytes,
+        *,
+        mime: str,
+        origin: str,
+    ) -> owned_steps.OwnedContentReference:
+        """Write and read back one immutable managed-pipeline blob.
+
+        Caller origin labels remain accepted, but authoritative owned evidence
+        uses the durable attachment classification rather than diagnostic labels.
+        """
+        if self._attachments is None:
+            raise owned_steps.OwnedStepsError("owned_steps_content_unavailable")
+        digest = owned_steps.owned_digest(blob)
+        await self._attachments.write(
+            content_hash=digest,
+            blob=blob,
+            mime=mime,
+            origin="agent_artifact",
+        )
+        read = getattr(self._attachments, "read", None)
+        if not callable(read):
+            raise owned_steps.OwnedStepsError("owned_steps_content_unavailable")
+        stored = await read(digest)
+        if type(stored) is not bytes or stored != blob:
+            raise owned_steps.OwnedStepsError("owned_steps_content_conflict")
+        return owned_steps.OwnedContentReference(
+            content_hash=digest,
+            mime=mime,
+            size_bytes=len(blob),
+        )
+
+    async def synthesize_owned_legacy(
+        self,
+        parent_id: str,
+        outcomes: list["ConvergenceOutcome"],
+        *,
+        token: owned_steps.OwnedStepsPlanToken,
+        authority_factory: Callable[
+            [str, object], owned_steps.OwnedStepsAuthority
+        ],
+        synthesize_output: Callable[
+            [str, list[ConvergenceOutcome]], Awaitable[str]
+        ],
+        build_votes: Callable[[list[ConvergenceOutcome]], list[Vote]],
+        attribute: Callable[[list[Vote]], dict[str, float]],
+        emit_event: Callable[[EventType, dict[str, Any]], None],
+    ) -> SynthesisResult:
+        """Synthesize one managed legacy result and freeze it before effects."""
+        snapshot = await self._store.get_owned_steps(parent_id)
+        if (
+            snapshot is None
+            or snapshot.control.owner_kind != "legacy"
+            or snapshot.control.finalization is not None
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_state",
+                parent_id=parent_id,
+            )
+        admission = await self._store.claim_owned_synthesis(
+            token, authority_factory("begin_synthesis", token),
+        )
+        if admission.disposition != "new":
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_synthesis_interrupted", parent_id=parent_id,
+                actions=("inspect_source", "interrupted_work"),
+            )
+        accepted = [outcome for outcome in outcomes if outcome.verdict.accepted]
+        final_output = await synthesize_output(parent_id, accepted)
+        votes = build_votes(accepted)
+        shapley = attribute(votes)
+        producer_ids = tuple(sorted({
+            outcome.result.agent_id
+            for outcome in accepted
+            if outcome.result.agent_id
+        }))
+        created_at = time.time()
+        caveat = (
+            ""
+            if len(accepted) == len(outcomes)
+            else "partial: synthesised from accepted sub-tasks only"
+        )
+        output_ref = await self.write_owned_steps_content(
+            final_output.encode("utf-8"),
+            mime="text/plain",
+            origin="crew_synth_owned_output",
+        )
+        effect_entries: list[dict[str, Any]] = []
+        for producer_id in producer_ids:
+            effect_entries.append(
+                await self._legacy_effect_entry(
+                    parent_id,
+                    snapshot.control.incarnation,
+                    "producer_trust",
+                    producer_id,
+                    {
+                        "agent_id": producer_id,
+                        "intent_type": "crew_collaboration",
+                        "source": "crew_synth",
+                    },
+                )
+            )
+        episode_payload = _legacy_episode_payload(
+            parent_id,
+            final_output,
+            accepted,
+            outcomes,
+            shapley,
+            created_at,
+            _legacy_effect_id(
+                parent_id,
+                snapshot.control.incarnation,
+                "collaboration_episode",
+                "episode",
+            ),
+        )
+        effect_entries.append(
+            await self._legacy_effect_entry(
+                parent_id,
+                snapshot.control.incarnation,
+                "collaboration_episode",
+                "episode",
+                episode_payload,
+            )
+        )
+        parent = await self._store.get_work_item(parent_id)
+        manual_pending = bool(
+            parent is not None
+            and parent.metadata.get("steps_gate_completion")
+            and any(
+                row.kind == "manual"
+                and owned_steps.owned_json_loads(row.todo_json)["status"] != "done"
+                for row in snapshot.control.rows
+            )
+        )
+        completion_payload = {
+            "parent_id": parent_id,
+            "completed": not manual_pending,
+            "accepted_count": len(accepted),
+            "total_count": len(outcomes),
+            "shapley_values": dict(shapley),
+        }
+        effect_entries.append(
+            await self._legacy_effect_entry(
+                parent_id,
+                snapshot.control.incarnation,
+                "crew_task_completed",
+                "event",
+                completion_payload,
+            )
+        )
+        source_review_digest = owned_steps.owned_source_review_digest(
+            snapshot.control
+        )
+        manifest = {
+            "version": 1,
+            "parent_id": parent_id,
+            "thread_id": snapshot.control.thread_id,
+            "incarnation": snapshot.control.incarnation,
+            "plan_digest": snapshot.control.plan_digest,
+            "source_review_digest": source_review_digest,
+            "final_output_hash": output_ref.content_hash,
+            "accepted_count": len(accepted),
+            "total_count": len(outcomes),
+            "caveat": caveat,
+            "shapley_values": dict(shapley),
+            "producer_ids": list(producer_ids),
+            "created_at": created_at,
+            "reviewed_results": [
+                {
+                    "work_item_id": outcome.result.work_item_id,
+                    "producer_agent_id": outcome.result.agent_id,
+                    "reviewer_agent_id": outcome.verdict.verifier_agent_id,
+                    "accepted": outcome.verdict.accepted,
+                    "result_sha256": owned_steps.owned_digest(
+                        outcome.result.output.encode("utf-8")
+                    ),
+                }
+                for outcome in outcomes
+            ],
+            "effect_intents": effect_entries,
+        }
+        manifest_ref = await self.write_owned_steps_content(
+            owned_steps.owned_json_bytes(manifest),
+            mime="application/json",
+            origin="crew_synth_owned_manifest",
+        )
+        receipt = owned_steps.FinalizeReceipt(
+            parent_id=parent_id,
+            owner_kind="legacy",
+            thread_id=snapshot.control.thread_id,
+            incarnation=snapshot.control.incarnation,
+            plan_digest=snapshot.control.plan_digest,
+            source_review_digest=source_review_digest,
+            manifest=manifest_ref,
+            output=output_ref,
+            publication_owner_id="crew_orchestrator",
+        )
+        bound = await self._store.compare_and_set_owned_finalization(
+            owned_steps.OwnedFinalization(
+                token=token,
+                receipt=receipt,
+                source_review_digest=source_review_digest,
+                phase="bind",
+                authority=authority_factory("finalize", token),
+                manual_gate=manual_pending,
+            )
+        )
+        if not bound.committed:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=parent_id,
+            )
+        claimed: list[tuple[dict[str, Any], bool]] = []
+        for entry in effect_entries:
+            intent = owned_steps.OwnedContentReference.model_validate(
+                entry["intent"]
+            )
+            attempt = owned_steps.OwnedEffectAttempt(
+                effect_id=entry["effect_id"],
+                kind=entry["kind"],
+                intent=intent,
+                claimed_at=created_at,
+            )
+            claim = await self._store.claim_owned_effect_attempt(
+                owned_steps.OwnedEffectClaim(
+                    token,
+                    attempt,
+                    authority_factory("claim_effect", token),
+                )
+            )
+            claimed.append((entry, claim.created))
+        closed = await self._store.compare_and_set_owned_finalization(
+            owned_steps.OwnedFinalization(
+                token=token,
+                receipt=receipt,
+                source_review_digest=source_review_digest,
+                phase="complete",
+                authority=authority_factory("finalize", token),
+                manual_gate=manual_pending,
+            )
+        )
+        completed = closed.disposition == "completed"
+        for entry, created in claimed:
+            if created:
+                await self._attempt_legacy_effect(
+                    entry,
+                    parent_id=parent_id,
+                    emit_event=emit_event,
+                )
+        return SynthesisResult(
+            parent_id=parent_id,
+            final_output=final_output,
+            completed=completed,
+            shapley_values=shapley,
+            provenance_ref=manifest_ref.content_hash,
+            accepted_count=len(accepted),
+            total_count=len(outcomes),
+            disposition="completed" if completed else "pending",
+        )
+
+    async def _legacy_effect_entry(
+        self,
+        parent_id: str,
+        incarnation: str,
+        kind: str,
+        subject: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        intent = await self.write_owned_steps_content(
+            owned_steps.owned_json_bytes(payload),
+            mime="application/json",
+            origin="crew_synth_owned_effect",
+        )
+        effect_id = _legacy_effect_id(
+            parent_id,
+            incarnation,
+            kind,
+            subject,
+        )
+        return {
+            "effect_id": effect_id,
+            "kind": kind,
+            "subject": subject,
+            "intent": intent.model_dump(mode="json"),
+        }
+
+    async def _attempt_legacy_effect(
+        self,
+        entry: dict[str, Any],
+        *,
+        parent_id: str,
+        emit_event: Callable[[EventType, dict[str, Any]], None],
+    ) -> None:
+        try:
+            intent = owned_steps.OwnedContentReference.model_validate(
+                entry["intent"]
+            )
+            payload = owned_steps.owned_json_loads(
+                (
+                    await self._store.read_owned_steps_content(intent)
+                ).decode("utf-8")
+            )
+            if type(payload) is not dict:
+                raise ValueError("owned_steps_effect_intent_invalid")
+            if entry["kind"] == "producer_trust":
+                self._trust.record_outcome(
+                    payload["agent_id"],
+                    success=True,
+                    intent_type=payload["intent_type"],
+                    source=payload["source"],
+                )
+            elif entry["kind"] == "collaboration_episode":
+                if payload.get("id") != entry["effect_id"]:
+                    raise ValueError("owned_steps_episode_identity_invalid")
+                if self._episodic is not None:
+                    await self._episodic.store(Episode(**payload))
+            elif entry["kind"] == "crew_task_completed":
+                emit_event(
+                    EventType.CREW_TASK_COMPLETED,
+                    payload,
+                )
+        except Exception:
+            logger.warning(
+                "Managed legacy effect %s for parent %s failed after its durable "
+                "attempt claim; the attempt remains uncertain and will not be retried",
+                entry["kind"],
+                parent_id,
+                exc_info=True,
+            )
+
+    async def _read_legacy_receipt(
+        self,
+        receipt: owned_steps.FinalizeReceipt,
+    ) -> tuple[dict[str, Any], str]:
+        manifest_bytes = await self._store.read_owned_steps_content(
+            receipt.manifest
+        )
+        output_bytes = await self._store.read_owned_steps_content(receipt.output)
+        try:
+            manifest = owned_steps.owned_json_loads(
+                manifest_bytes.decode("utf-8", errors="strict")
+            )
+            final_output = output_bytes.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=receipt.parent_id,
+            ) from exc
+        required = {
+            "version",
+            "parent_id",
+            "thread_id",
+            "incarnation",
+            "plan_digest",
+            "source_review_digest",
+            "final_output_hash",
+            "accepted_count",
+            "total_count",
+            "caveat",
+            "shapley_values",
+            "producer_ids",
+            "created_at",
+            "reviewed_results",
+            "effect_intents",
+        }
+        if (
+            type(manifest) is not dict
+            or set(manifest) != required
+            or manifest["version"] != 1
+            or manifest["parent_id"] != receipt.parent_id
+            or manifest["thread_id"] != receipt.thread_id
+            or manifest["incarnation"] != receipt.incarnation
+            or manifest["plan_digest"] != receipt.plan_digest
+            or manifest["source_review_digest"] != receipt.source_review_digest
+            or manifest["final_output_hash"] != receipt.output.content_hash
+            or type(manifest["accepted_count"]) is not int
+            or type(manifest["total_count"]) is not int
+            or type(manifest["shapley_values"]) is not dict
+            or type(manifest["producer_ids"]) is not list
+            or type(manifest["reviewed_results"]) is not list
+            or type(manifest["effect_intents"]) is not list
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_finalization_conflict",
+                parent_id=receipt.parent_id,
+            )
+        return manifest, final_output
 
 
 class CrewSynthesizer:
@@ -145,6 +756,12 @@ class CrewSynthesizer:
         self._runtime = runtime
         self._emit_fn = emit_fn
         self._policy = quorum_policy or QuorumPolicy()
+        self._owned_legacy = _OwnedLegacyCompletion(
+            store=work_item_store,
+            attachments=attachment_store,
+            trust=trust_network,
+            episodic=episodic_memory,
+        )
 
     # ------------------------------------------------------------------ public
 
@@ -191,6 +808,80 @@ class CrewSynthesizer:
             total_count=len(outcomes),
         )
 
+    async def finalize_from_receipt(
+        self,
+        receipt: owned_steps.FinalizeReceipt,
+        *,
+        token: owned_steps.OwnedStepsPlanToken,
+        authority: owned_steps.OwnedStepsAuthority,
+        source_review_digest: str,
+        release: bool = True,
+    ) -> SynthesisResult:
+        """AD-1192: close a legacy managed session from an EXACT frozen receipt.
+
+        Finalize-only recovery / manual-gate close. It re-validates the receipt,
+        incarnation, current source/review vector and lifecycle through the
+        existing owned-steps owner (``compare_and_set_owned_finalization``), which
+        is itself the authoritative state owner for the fenced managed parent, and
+        returns ``completed``/``pending``/``conflict``. It NEVER runs a worker,
+        verifier, judge, decomposition or synthesis, and re-emits no trust,
+        collaboration episode or completion event: the initial managed synthesis
+        owns those one-shot effects. ``release=False`` binds the receipt while the
+        manual gate is still held (``waiting_manual_gate``) and reports ``pending``.
+
+        An already-closed receipt is an idempotent no-op that changes no counter,
+        timestamp, artifact, message or event; a crash between the durable owned
+        close and the visible status close is repaired here without regenerating
+        any result or re-emitting any learning effect.
+        """
+        return await self._owned_legacy.finalize_from_receipt(
+            receipt,
+            token=token,
+            authority=authority,
+            source_review_digest=source_review_digest,
+            release=release,
+        )
+
+    def owned_steps_content_reader(self) -> "AttachmentStore | None":
+        """Expose the injected content boundary for one-time store wiring."""
+        return self._owned_legacy.owned_steps_content_reader()
+
+    async def write_owned_steps_content(
+        self,
+        blob: bytes,
+        *,
+        mime: str,
+        origin: str,
+    ) -> owned_steps.OwnedContentReference:
+        """Write and read back one immutable managed-pipeline blob.
+
+        Caller origin labels remain accepted, but authoritative owned evidence
+        uses the durable attachment classification rather than diagnostic labels.
+        """
+        return await self._owned_legacy.write_owned_steps_content(
+            blob, mime=mime, origin=origin,
+        )
+
+    async def synthesize_owned_legacy(
+        self,
+        parent_id: str,
+        outcomes: list["ConvergenceOutcome"],
+        *,
+        token: owned_steps.OwnedStepsPlanToken,
+        authority_factory: "Callable[[str, object], owned_steps.OwnedStepsAuthority]",
+    ) -> SynthesisResult:
+        """Synthesize one managed legacy result and freeze it before effects."""
+        return await self._owned_legacy.synthesize_owned_legacy(
+            parent_id,
+            outcomes,
+            token=token,
+            authority_factory=authority_factory,
+            synthesize_output=self._synthesize_output,
+            build_votes=self._build_votes,
+            attribute=self._attribute,
+            emit_event=self._emit,
+        )
+
     async def synthesize_for_session(
         self,
         *,
@@ -203,19 +894,19 @@ class CrewSynthesizer:
         outcomes: tuple["SessionConvergenceOutcome", ...],
     ) -> SessionSynthesisDraft:
         """Produce one bounded session draft without completion or learning writes."""
-        parent_key = self._session_id(parent_id)
-        producer_key = self._session_id(producer_agent_id)
-        instructions = self._session_text(
+        parent_key = _session_id(parent_id)
+        producer_key = _session_id(producer_agent_id)
+        instructions = _session_text(
             producer_instructions,
             maximum_bytes=32_768,
             error="session_synthesis_producer_invalid",
         )
-        normalized_goal = self._session_text(
+        normalized_goal = _session_text(
             goal,
             maximum_bytes=16_384,
             error="session_synthesis_input_invalid",
         )
-        deliverable = self._session_text(
+        deliverable = _session_text(
             expected_deliverable,
             maximum_bytes=8_192,
             error="session_synthesis_input_invalid",
@@ -228,7 +919,7 @@ class CrewSynthesizer:
         ):
             raise ValueError("session_synthesis_input_invalid")
         criteria = tuple(
-            self._session_text(
+            _session_text(
                 criterion,
                 maximum_bytes=2_048,
                 error="session_synthesis_input_invalid",
@@ -265,9 +956,9 @@ class CrewSynthesizer:
             ):
                 raise ValueError("session_synthesis_outcome_invalid")
             result = getattr(outcome, "result", None)
-            child_id = self._session_id(getattr(result, "work_item_id", None))
-            child_producer = self._session_id(getattr(result, "agent_id", None))
-            output = self._session_text(
+            child_id = _session_id(getattr(result, "work_item_id", None))
+            child_producer = _session_id(getattr(result, "agent_id", None))
+            output = _session_text(
                 getattr(result, "output", None),
                 maximum_bytes=_MAX_SESSION_RESULT_BYTES,
                 error="session_synthesis_outcome_invalid",
@@ -294,7 +985,7 @@ class CrewSynthesizer:
             raise
         except Exception as exc:
             raise ValueError("session_synthesis_failed") from exc
-        final_text = self._session_text(
+        final_text = _session_text(
             getattr(response, "content", None),
             maximum_bytes=_MAX_SESSION_SYNTHESIS_OUTPUT_BYTES,
             error="session_synthesis_failed",
@@ -310,27 +1001,12 @@ class CrewSynthesizer:
 
     # ------------------------------------------------------------------ internals
 
-    @staticmethod
-    def _session_id(value: Any) -> str:
-        if type(value) is not str or _SESSION_ID_RE.fullmatch(value) is None:
-            raise ValueError("session_synthesis_id_invalid")
-        return value
-
-    @staticmethod
-    def _session_text(value: Any, *, maximum_bytes: int, error: str) -> str:
-        if type(value) is not str or "\x00" in value:
-            raise ValueError(error)
-        normalized = value.strip()
-        if not normalized or len(normalized.encode("utf-8")) > maximum_bytes:
-            raise ValueError(error)
-        return normalized
-
     async def _synthesize_output(
         self, parent_id: str, accepted: list["ConvergenceOutcome"],
     ) -> str:
         """LLM-synthesise the parent output from accepted outputs; degrade to a
         deterministic concatenation on any failure or empty response."""
-        fallback = self._concat_fallback(accepted)
+        fallback = _concat_fallback(accepted)
         if not accepted:
             logger.warning(
                 "AD-861: no accepted sub-task outcomes for parent %s; "
@@ -340,7 +1016,7 @@ class CrewSynthesizer:
             return fallback
         try:
             request = LLMRequest(
-                prompt=self._build_synthesis_prompt(accepted),
+                prompt=_build_synthesis_prompt(accepted),
                 system_prompt=self._SYSTEM_PROMPT,
                 tier="standard",
             )
@@ -361,18 +1037,6 @@ class CrewSynthesizer:
                 parent_id, exc_info=True,
             )
             return fallback
-
-    def _build_synthesis_prompt(self, accepted: list["ConvergenceOutcome"]) -> str:
-        parts = ["Fold these verified sub-task outputs into one final answer:\n"]
-        for i, oc in enumerate(accepted, start=1):
-            parts.append(
-                f"--- Sub-task {i} (agent {oc.result.agent_id}) ---\n{oc.result.output}\n"
-            )
-        return "\n".join(parts)
-
-    @staticmethod
-    def _concat_fallback(accepted: list["ConvergenceOutcome"]) -> str:
-        return "\n\n".join(oc.result.output for oc in accepted)
 
     async def _store_provenance(
         self,

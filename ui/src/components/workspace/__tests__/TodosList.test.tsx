@@ -21,10 +21,15 @@ vi.mock('../todosApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../todosApi')>();
   return { ...actual, fetchTaskSteps: vi.fn(), updateTaskStep: vi.fn() };
 });
+vi.mock('../ownedStepsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ownedStepsApi')>();
+  return { ...actual, fetchOwnedSteps: vi.fn() };
+});
 
 import { fetchThreadInputs } from '../../inputs/inputsApi';
 import { fetchThreadArtifacts } from '../../artifacts/artifactApi';
 import { fetchTaskSteps, updateTaskStep } from '../todosApi';
+import { fetchOwnedSteps } from '../ownedStepsApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
 import { TodosList } from '../TodosList';
 
@@ -40,6 +45,11 @@ beforeEach(() => {
   vi.mocked(fetchThreadInputs).mockResolvedValue([] as TaskInput[]);
   vi.mocked(fetchThreadArtifacts).mockResolvedValue([] as ArtifactView[]);
   vi.mocked(fetchTaskSteps).mockResolvedValue(STEPS);
+  vi.mocked(fetchOwnedSteps).mockResolvedValue({
+    version: 1, mode: 'unmanaged', parent_id: 'wi-1', requested_item_id: 'wi-1',
+    reference: null, rows: [], previous_cursor: null, next_cursor: null,
+    recovery: [], finalization: 'none',
+  });
   vi.mocked(updateTaskStep).mockResolvedValue();
 });
 afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });

@@ -34,17 +34,28 @@ vi.mock('../todosApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../todosApi')>();
   return { ...actual, fetchTaskSteps: vi.fn(), updateTaskStep: vi.fn() };
 });
+vi.mock('../ownedStepsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ownedStepsApi')>();
+  return { ...actual, fetchOwnedSteps: vi.fn() };
+});
 
 import { fetchThreadInputs } from '../../inputs/inputsApi';
 import { fetchArtifactMetadata, fetchThreadArtifacts } from '../../artifacts/artifactApi';
 import * as todosApi from '../todosApi';
 import { fetchTaskSteps, updateTaskStep } from '../todosApi';
+import { fetchOwnedSteps } from '../ownedStepsApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
 import railSource from '../WorkspaceFilesRail.tsx?raw';
 
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F600}-\u{1F64F}]/u;
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
+
+const UNMANAGED = {
+  version: 1 as const, mode: 'unmanaged' as const, parent_id: 'wi-1',
+  requested_item_id: 'wi-1', reference: null, rows: [], previous_cursor: null,
+  next_cursor: null, recovery: [] as string[], finalization: 'none' as const,
+};
 
 const INPUTS: TaskInput[] = [
   {
@@ -138,6 +149,7 @@ beforeEach(() => {
   vi.mocked(fetchArtifactMetadata).mockResolvedValue(null);
   vi.mocked(fetchTaskSteps).mockResolvedValue([]);
   vi.mocked(updateTaskStep).mockResolvedValue();
+  vi.mocked(fetchOwnedSteps).mockResolvedValue(UNMANAGED);
   vi.stubGlobal('fetch', vi.fn());
   useStore.setState({
     crewSessionsByParent: new Map(),

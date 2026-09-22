@@ -11,12 +11,15 @@ import re
 import secrets
 import time
 import unicodedata
+import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.crew_assignment import CrewWorkerEligibilityResolver
 from probos.crew_execution_usage import (
     CREW_EXECUTION_TOKEN_USAGE_KEY,
@@ -219,6 +222,31 @@ class CrewSessionPrincipal:
     originator_id: str
     created_by: str
     _authority: object = field(repr=False, compare=False)
+
+
+_OWNED_HUMAN_OPERATIONS = frozenset({
+    "read_owned_steps",
+    "preview_adoption",
+    "adopt",
+    "manual_submit",
+    "manual_confirm",
+    "manual_reject",
+    "edit_note",
+    "repair_projection",
+    "reassign_unstarted",
+    "cancel_execution",
+    "pause_accounting",
+    "resume_accounting",
+    "replace_manual_prefix",
+    "replan_unstarted",
+    "abandon",
+    "finalize",
+    "capture_repair_observation",
+    "claim_proposal",
+    "publish_proposal",
+    "inspect_proposal",
+    "apply_proposal",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -2113,6 +2141,7 @@ class _WorkItemStoreProtocol(Protocol):
         expected_marker: dict[str, Any],
         expected_session: dict[str, Any],
         expected_recovery: dict[str, Any],
+        owned_binding: owned_steps.OwnedStoreBinding | None = None,
     ) -> WorkItem | None: ...
 
     async def delete_untouched_crew_session_provisioning(
@@ -2308,6 +2337,790 @@ class CrewSessionService:
         self._principal_authority = object()
         self._admission_lock = asyncio.Lock()
         self._schedule: Callable[[str], asyncio.Task[SynthesisResult]] | None = None
+        self._owned_components: weakref.WeakKeyDictionary[object, frozenset[str]] = weakref.WeakKeyDictionary()
+        self._owned_components[self] = frozenset({"owner", "executor", "verifier", "ttl"})
+        self._owned_legacy_authorizer: owned_steps.OwnedStepsAuthorizer | None = None
+        self._owned_view_authorizer: owned_steps.OwnedStepsAuthorizer | None = None
+
+    def register_owned_steps_component(self, component: object, roles: frozenset[str]) -> None:
+        if not roles or not roles <= {"owner", "executor", "verifier", "ttl"}:
+            raise owned_steps.OwnedStepsError("owned_steps_owner_invalid")
+        previous = self._owned_components.get(component)
+        if previous is not None and previous != roles:
+            raise owned_steps.OwnedStepsError("owned_steps_owner_already_bound")
+        self._owned_components[component] = roles
+        matches = getattr(self._work_items, "owned_steps_owner_matches", None)
+        bind = getattr(self._work_items, "bind_owned_steps_owner", None)
+        if callable(matches) and callable(bind) and not matches(self):
+            bind(self, self)
+
+    def bind_owned_legacy_authorizer(self, owner: owned_steps.OwnedStepsAuthorizer) -> None:
+        if self._owned_legacy_authorizer is not None and self._owned_legacy_authorizer is not owner:
+            raise owned_steps.OwnedStepsError("owned_steps_owner_already_bound")
+        self._owned_legacy_authorizer = owner
+        self.register_owned_steps_component(self, self._owned_components[self])
+
+    def bind_owned_steps_view_authorizer(
+        self,
+        owner: owned_steps.OwnedStepsAuthorizer,
+    ) -> None:
+        if (
+            self._owned_view_authorizer is not None
+            and self._owned_view_authorizer is not owner
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_owner_already_bound")
+        self._owned_view_authorizer = owner
+
+    def owned_steps_authority(
+        self, component: object, *, parent_id: str, actor_id: str, thread_id: str,
+        role: Literal["owner", "executor", "verifier", "ttl"], operation: str,
+        token: object, request_digest: str = "",
+    ) -> owned_steps.OwnedStepsAuthority:
+        if role not in self._owned_components.get(component, frozenset()):
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied", parent_id=parent_id)
+        return owned_steps.OwnedStepsAuthority(owned_steps.OwnedOwnerInvocation(
+            owner=self._principal_authority, component=component, parent_id=parent_id,
+            actor_id=actor_id, thread_id=thread_id, role=role, operation=operation,
+            token=token, request_digest=request_digest,
+        ))
+
+    async def authorize_owned_steps(
+        self, authority: owned_steps.OwnedStepsAuthority, *, parent_id: str, operation: str,
+        token: owned_steps.StepViewToken | owned_steps.OwnedStepsPlanToken | owned_steps.OwnedStepExecutionPermit | None,
+    ) -> owned_steps.OwnedStepsGrant:
+        context = authority.context
+        if type(context) is not owned_steps.OwnedOwnerInvocation or context.owner is not self._principal_authority:
+            if self._owned_view_authorizer is not None:
+                return await self._owned_view_authorizer.authorize_owned_steps(
+                    authority,
+                    parent_id=parent_id,
+                    operation=operation,
+                    token=token,
+                )
+            parent = await self._work_items.get_work_item(parent_id)
+            if parent is not None and parent.work_type != "crew_session" and self._owned_legacy_authorizer is not None:
+                return await self._owned_legacy_authorizer.authorize_owned_steps(
+                    authority, parent_id=parent_id, operation=operation, token=token,
+                )
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied", parent_id=parent_id)
+        human_role = context.role in ("captain", "facilitator")
+        reader_role = context.role == "reader"
+        if (
+            (
+                human_role
+                and (
+                    context.component is not self
+                    or operation not in _OWNED_HUMAN_OPERATIONS
+                )
+            )
+            or (
+                not human_role
+                and not reader_role
+                and context.role
+                not in self._owned_components.get(
+                    context.component,
+                    frozenset(),
+                )
+            )
+            or (
+                reader_role
+                and (
+                    context.component is not self
+                    or operation != "read_owned_steps"
+                )
+            )
+            or context.parent_id != parent_id or context.operation != operation or context.token != token
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied", parent_id=parent_id)
+        if context.role == "reader":
+            if operation != "read_owned_steps" or context.operation != operation:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=parent_id,
+                )
+            snapshot = (
+                token
+                if isinstance(token, owned_steps.OwnedStepsSnapshot)
+                else await self._work_items.get_owned_steps(parent_id)
+            )
+            if snapshot is None or context.thread_id != snapshot.control.thread_id:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=parent_id,
+                )
+            return owned_steps.OwnedStepsGrant(
+                parent_id,
+                context.actor_id,
+                context.thread_id,
+                "reader",
+            )
+        raw_operations = {
+            "capture_repair_observation",
+            "claim_proposal",
+            "publish_proposal",
+            "inspect_proposal",
+            "apply_proposal",
+        }
+        if human_role and operation in raw_operations:
+            identity = await self._work_items.read_owned_steps_raw_identity(
+                parent_id
+            )
+            if identity is None:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=parent_id,
+                )
+            if context.role == "facilitator":
+                if identity.work_type != "crew_session":
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_authority_denied",
+                        parent_id=parent_id,
+                    )
+                try:
+                    metadata = json.loads(identity.raw_metadata or "{}")
+                    session = self._parse_contract(metadata.get("crew_session"))
+                except (TypeError, ValueError, ValidationError) as exc:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_authority_denied",
+                        parent_id=parent_id,
+                    ) from exc
+                if (
+                    session.facilitator_id != context.actor_id
+                    or session.thread_id != context.thread_id
+                ):
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_authority_denied",
+                        parent_id=parent_id,
+                    )
+            elif context.actor_id != "captain":
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=parent_id,
+                )
+            return owned_steps.OwnedStepsGrant(
+                parent_id,
+                context.actor_id,
+                context.thread_id,
+                context.role,
+            )
+        parent = await self._work_items.get_work_item(parent_id)
+        if (
+            operation == "seed"
+            and context.role == "owner"
+            and context.component is self
+            and parent is not None
+            and parent.work_type == "crew_session"
+        ):
+            session = self._parse_contract(
+                (parent.metadata or {}).get("crew_session")
+            )
+            if (
+                session.facilitator_id == context.actor_id
+                and session.thread_id == context.thread_id
+            ):
+                return owned_steps.OwnedStepsGrant(
+                    parent_id,
+                    context.actor_id,
+                    context.thread_id,
+                    "owner",
+                )
+        if parent is None or parent.work_type != "crew_session":
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied", parent_id=parent_id)
+        session = self._parse_contract(parent.metadata.get("crew_session"))
+        thread_id = session.thread_id
+        facilitator_id = session.facilitator_id
+        if context.thread_id != thread_id or (
+            context.role == "captain"
+            and context.actor_id != "captain"
+        ) or (
+            context.role == "facilitator"
+            and context.actor_id != facilitator_id
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied", parent_id=parent_id)
+        if context.role == "executor" and operation == "admit_execution":
+            identity = self.worker_eligibility
+            if identity is not None and identity.check_eligibility(context.actor_id).identity is None:
+                raise owned_steps.OwnedStepsError("owned_steps_worker_unavailable", parent_id=parent_id)
+        return owned_steps.OwnedStepsGrant(parent_id, context.actor_id, context.thread_id, context.role)
+
+    async def owned_human_steps_authority(
+        self,
+        principal: CrewSessionPrincipal,
+        *,
+        parent_id: str,
+        operation: str,
+        token: object,
+    ) -> owned_steps.OwnedStepsAuthority:
+        if (
+            type(principal) is not CrewSessionPrincipal
+            or principal._authority is not self._principal_authority
+            or operation not in _OWNED_HUMAN_OPERATIONS
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=parent_id,
+            )
+        self._validate_principal(principal)
+        resolved = await self._work_items.resolve_owned_steps_parent_id(parent_id)
+        managed_parent_id = resolved or parent_id
+        raw_identity = await self._work_items.read_owned_steps_raw_identity(
+            managed_parent_id
+        )
+        if raw_identity is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=managed_parent_id,
+            )
+        raw_operations = {
+            "capture_repair_observation",
+            "claim_proposal",
+            "publish_proposal",
+            "inspect_proposal",
+            "apply_proposal",
+        }
+        snapshot = None
+        if raw_identity.raw_control is not None:
+            try:
+                snapshot = await self._work_items.get_owned_steps(
+                    managed_parent_id
+                )
+            except owned_steps.OwnedStepsError:
+                if operation not in raw_operations:
+                    raise
+        if snapshot is not None and snapshot.control.owner_kind == "canonical":
+            if raw_identity.work_type != "crew_session":
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=managed_parent_id,
+                )
+            try:
+                metadata = json.loads(raw_identity.raw_metadata or "{}")
+            except (TypeError, ValueError) as exc:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=managed_parent_id,
+                ) from exc
+            session = self._parse_contract(metadata.get("crew_session"))
+            thread_id = session.thread_id
+            facilitator_id = session.facilitator_id
+        elif snapshot is not None:
+            thread_id = snapshot.control.thread_id
+            facilitator_id = snapshot.control.facilitator_id
+        elif raw_identity.work_type == "crew_session":
+            try:
+                metadata = json.loads(raw_identity.raw_metadata or "{}")
+                session = self._parse_contract(metadata.get("crew_session"))
+                thread_id = session.thread_id
+                facilitator_id = session.facilitator_id
+            except (TypeError, ValueError, ValidationError) as exc:
+                if principal.origin != "captain":
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_authority_denied",
+                        parent_id=managed_parent_id,
+                    ) from exc
+                thread_id = ""
+                facilitator_id = None
+        else:
+            thread_id = ""
+            facilitator_id = None
+        if (
+            principal.origin == "agent"
+            and principal.originator_id != facilitator_id
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=managed_parent_id,
+            )
+        role = "captain" if principal.origin == "captain" else "facilitator"
+        actor_id = (
+            "captain"
+            if principal.origin == "captain"
+            else principal.originator_id
+        )
+        return owned_steps.OwnedStepsAuthority(
+            owned_steps.OwnedOwnerInvocation(
+                owner=self._principal_authority,
+                component=self,
+                parent_id=managed_parent_id,
+                actor_id=actor_id,
+                thread_id=thread_id,
+                role=role,
+                operation=operation,
+                token=token,
+            )
+        )
+
+    async def owned_read_steps_authority(
+        self,
+        principal: CrewSessionPrincipal,
+        *,
+        parent_id: str,
+    ) -> owned_steps.OwnedStepsAuthority:
+        """Issue read-only scope to an actual registered dispatch principal."""
+        if (
+            type(principal) is not CrewSessionPrincipal
+            or principal._authority is not self._principal_authority
+            or principal.origin != "agent"
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=parent_id,
+            )
+        expected_agent = self._validate_principal(principal)
+        resolved = await self._work_items.resolve_owned_steps_parent_id(parent_id)
+        if resolved is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_not_managed",
+                parent_id=parent_id,
+            )
+        snapshot = await self._work_items.get_owned_steps(resolved)
+        if snapshot is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_not_managed",
+                parent_id=parent_id,
+            )
+        self._revalidate_principal(principal, expected_agent)
+        if snapshot.control.owner_kind == "canonical":
+            session = await self.get_session(resolved)
+            if session is None:
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_authority_denied",
+                    parent_id=resolved,
+                )
+            thread_id = session.thread_id
+        else:
+            thread_id = snapshot.control.thread_id
+        return owned_steps.OwnedStepsAuthority(
+            owned_steps.OwnedOwnerInvocation(
+                owner=self._principal_authority,
+                component=self,
+                parent_id=resolved,
+                actor_id=principal.originator_id,
+                thread_id=thread_id,
+                role="reader",
+                operation="read_owned_steps",
+                token=None,
+            )
+        )
+
+    def get_owned_steps_execution_port(self) -> owned_steps.OwnedStepsExecutionPort:
+        self.register_owned_steps_component(self, self._owned_components[self])
+        return self
+
+    async def get_owned_steps_snapshot(
+        self, parent_id: str,
+    ) -> owned_steps.OwnedStepsSnapshot:
+        getter = getattr(self._work_items, "get_owned_steps", None)
+        if not callable(getter):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_execution_scope_denied",
+                parent_id=parent_id,
+            )
+        snapshot = await getter(parent_id)
+        if snapshot is None or snapshot.control.owner_kind != "canonical":
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_execution_scope_denied",
+                parent_id=parent_id,
+            )
+        return snapshot
+
+    async def reassign_unstarted(
+        self,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        child_id: str,
+        assignee_id: str,
+        metadata_patch: dict[str, Any],
+    ) -> owned_steps.OwnedStepMutationResult:
+        row = next(
+            (
+                row
+                for row in snapshot.control.rows
+                if row.child is not None and row.child.child_id == child_id
+            ),
+            None,
+        )
+        if row is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_row_missing",
+                parent_id=snapshot.control.parent_id,
+            )
+        token = owned_steps.execution_step_token(
+            owned_steps.OwnedExecutionLease(
+                snapshot,
+                self.owned_steps_authority(
+                    self,
+                    parent_id=snapshot.control.parent_id,
+                    actor_id=snapshot.control.facilitator_id,
+                    thread_id=snapshot.control.thread_id,
+                    role="owner",
+                    operation="reassign_unstarted",
+                    token=snapshot,
+                ),
+            ),
+            row,
+        ).model_copy(
+            update={"actor_id": snapshot.control.facilitator_id}
+        )
+        authority = self.owned_steps_authority(
+            self,
+            parent_id=snapshot.control.parent_id,
+            actor_id=snapshot.control.facilitator_id,
+            thread_id=snapshot.control.thread_id,
+            role="owner",
+            operation="reassign_unstarted",
+            token=token,
+        )
+        return await self._work_items.compare_and_set_owned_step(
+            owned_steps.OwnedStepMutation(
+                owned_steps.OwnedStepChange(
+                    operation_id=owned_steps.owned_digest(
+                        owned_steps.owned_json_bytes(
+                            [
+                                "canonical_assignment",
+                                snapshot.control.incarnation,
+                                row.step_id,
+                                row.assignment_epoch,
+                                assignee_id,
+                            ]
+                        )
+                    ),
+                    token=token,
+                    command=owned_steps.ReassignOwnedStepCommand(
+                        assignee_id=assignee_id,
+                        metadata_patch=metadata_patch,
+                    ),
+                ),
+                authority,
+            )
+        )
+
+    def owns_store(self, store: object) -> bool:
+        return self._work_items is store
+
+    async def admit(
+        self, parent_id: str, *, children: tuple[WorkItem, ...], thread_id: str,
+    ) -> owned_steps.OwnedExecutionLease:
+        session = await self.get_session(parent_id)
+        if session is None or session.thread_id != thread_id:
+            raise owned_steps.OwnedStepsError("owned_steps_execution_scope_denied", parent_id=parent_id)
+        snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is None:
+            recovery = await self.get_recovery(parent_id)
+            if recovery is not None:
+                raise owned_steps.OwnedStepsError("owned_steps_canonical_seed_missing", parent_id=parent_id)
+            ordered = tuple(sorted(children, key=lambda child: child.id))
+            await self.adopt_recovery_plan(
+                parent_id, expected_session=session, expected_recovery=None,
+                plan=_build_adopted_recovery_plan(parent_id, ordered), expected_children=ordered,
+            )
+            snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is None or snapshot.control.owner_kind != "canonical":
+            raise owned_steps.OwnedStepsError("owned_steps_execution_scope_denied", parent_id=parent_id)
+        authority = self.owned_steps_authority(
+            self, parent_id=parent_id, actor_id=session.facilitator_id, thread_id=thread_id,
+            role="executor", operation="execution_session", token=snapshot,
+        )
+        return owned_steps.OwnedExecutionLease(snapshot, authority)
+
+    def _execution_authority(
+        self, lease: owned_steps.OwnedExecutionLease, actor_id: str, operation: str, token: object,
+    ) -> owned_steps.OwnedStepsAuthority:
+        context = lease.authority.context
+        if (
+            type(context) is not owned_steps.OwnedOwnerInvocation or context.owner is not self._principal_authority
+            or context.component is not self or context.operation != "execution_session"
+            or context.token != lease.snapshot
+        ):
+            raise owned_steps.OwnedStepsError("owned_steps_execution_scope_denied")
+        return self.owned_steps_authority(
+            self, parent_id=lease.snapshot.control.parent_id, actor_id=actor_id,
+            thread_id=lease.snapshot.control.thread_id, role="executor", operation=operation, token=token,
+        )
+
+    async def start(
+        self, lease: owned_steps.OwnedExecutionLease, child_id: str, *, execution_nonce: str,
+    ) -> owned_steps.OwnedStepMutationResult:
+        row = next((row for row in lease.snapshot.control.rows if row.child and row.child.child_id == child_id), None)
+        if row is None:
+            raise owned_steps.OwnedStepsError("owned_steps_execution_scope_denied")
+        token = owned_steps.execution_step_token(lease, row)
+        return await self._work_items.compare_and_set_owned_step(owned_steps.OwnedStepMutation(
+            owned_steps.OwnedStepChange(
+                operation_id=owned_steps.owned_digest(owned_steps.owned_json_bytes(["start", token.incarnation, child_id, execution_nonce])),
+                token=token, command=owned_steps.StartOwnedStepCommand(execution_nonce=execution_nonce),
+            ),
+            self._execution_authority(lease, token.actor_id, "admit_execution", token),
+        ))
+
+    async def submit(
+        self, lease: owned_steps.OwnedExecutionLease, submission: owned_steps.OwnedExecutionSubmission,
+    ) -> owned_steps.OwnedStepMutationResult:
+        permit = submission.permit
+        return await self._work_items.compare_and_set_owned_step(owned_steps.OwnedStepMutation(
+            owned_steps.OwnedStepChange(
+                operation_id=owned_steps.owned_digest(owned_steps.owned_json_bytes(["submit", permit.incarnation, permit.child_id, permit.execution_nonce])),
+                token=permit, command=owned_steps.SubmitOwnedStepCommand(submission=submission),
+            ),
+            self._execution_authority(lease, permit.assignee_id, "submit_execution", permit),
+        ))
+
+    async def validate(
+        self, lease: owned_steps.OwnedExecutionLease, permit: owned_steps.OwnedStepExecutionPermit,
+    ) -> None:
+        await self._work_items.validate_owned_execution_permit(
+            permit, self._execution_authority(lease, permit.assignee_id, "execution_active", permit),
+        )
+
+    async def record_unstarted(
+        self, lease: owned_steps.OwnedExecutionLease, submission: owned_steps.OwnedUnstartedSubmission,
+    ) -> owned_steps.OwnedStepMutationResult:
+        row = next(row for row in lease.snapshot.control.rows if row.step_id == submission.step_id)
+        token = owned_steps.execution_step_token(lease, row)
+        return await self._work_items.compare_and_set_owned_step(owned_steps.OwnedStepMutation(
+            owned_steps.OwnedStepChange(
+                operation_id=owned_steps.owned_digest(owned_steps.owned_json_bytes(["unstarted", token.incarnation, row.step_id])),
+                token=token, command=owned_steps.UnstartedOwnedStepCommand(submission=submission),
+            ),
+            self._execution_authority(lease, token.actor_id, "record_unstarted_execution", token),
+        ))
+
+    async def admit_correction(
+        self,
+        component: object,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        child_id: str,
+        *,
+        reviewer_id: str,
+        review_attempt_id: str,
+        execution_nonce: str,
+    ) -> owned_steps.OwnedStepMutationResult:
+        if "verifier" not in self._owned_components.get(component, frozenset()):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=snapshot.control.parent_id,
+            )
+        row = next(
+            (
+                row
+                for row in snapshot.control.rows
+                if row.child is not None and row.child.child_id == child_id
+            ),
+            None,
+        )
+        if row is None or row.permit is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_correction_conflict",
+                parent_id=snapshot.control.parent_id,
+            )
+        original = await self._work_items.get_owned_step_evidence(
+            snapshot.control.parent_id,
+            snapshot.control.incarnation,
+            "permit",
+            row.permit,
+        )
+        authority = self.owned_steps_authority(
+            component,
+            parent_id=snapshot.control.parent_id,
+            actor_id=reviewer_id,
+            thread_id=snapshot.control.thread_id,
+            role="verifier",
+            operation="admit_correction",
+            token=original,
+        )
+        return await self._work_items.admit_owned_correction(
+            snapshot,
+            child_id,
+            reviewer_id=reviewer_id,
+            review_attempt_id=review_attempt_id,
+            execution_nonce=execution_nonce,
+            authority=authority,
+        )
+
+    async def record_correction(
+        self,
+        component: object,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        correction: owned_steps.OwnedCorrectionResult,
+    ) -> owned_steps.OwnedStepMutationResult:
+        if "verifier" not in self._owned_components.get(component, frozenset()):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_authority_denied",
+                parent_id=snapshot.control.parent_id,
+            )
+        authority = self.owned_steps_authority(
+            component,
+            parent_id=snapshot.control.parent_id,
+            actor_id=correction.reviewer_id,
+            thread_id=snapshot.control.thread_id,
+            role="verifier",
+            operation="record_correction",
+            token=correction.permit,
+        )
+        return await self._work_items.record_owned_correction(
+            snapshot,
+            correction,
+            authority,
+        )
+
+    async def read_correction(
+        self,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+        permit: owned_steps.OwnedStepExecutionPermit,
+    ) -> owned_steps.OwnedCorrectionResult | None:
+        return await self._work_items.read_owned_correction(snapshot, permit)
+
+    def correction_execution_lease(
+        self,
+        snapshot: owned_steps.OwnedStepsSnapshot,
+    ) -> owned_steps.OwnedExecutionLease:
+        authority = self.owned_steps_authority(
+            self,
+            parent_id=snapshot.control.parent_id,
+            actor_id=snapshot.control.facilitator_id,
+            thread_id=snapshot.control.thread_id,
+            role="executor",
+            operation="execution_session",
+            token=snapshot,
+        )
+        return owned_steps.OwnedExecutionLease(snapshot, authority)
+
+    async def expire_owned_steps(
+        self,
+        work_item_id: str,
+        observed_at: float,
+    ) -> bool:
+        snapshot = await self._work_items.get_owned_steps(work_item_id)
+        if snapshot is None:
+            return False
+        if snapshot.control.owner_kind == "legacy":
+            expire = getattr(
+                self._owned_legacy_authorizer,
+                "expire_owned_steps",
+                None,
+            )
+            if not callable(expire):
+                return False
+            return bool(await expire(work_item_id, observed_at))
+        rows = tuple(
+            row
+            for row in snapshot.control.rows
+            if row.child is not None
+            and (
+                work_item_id == snapshot.control.parent_id
+                or row.child.child_id == work_item_id
+            )
+        )
+        changed = False
+        for row in rows:
+            token = owned_steps.execution_step_token(
+                owned_steps.OwnedExecutionLease(
+                    snapshot,
+                    self.owned_steps_authority(
+                        self,
+                        parent_id=snapshot.control.parent_id,
+                        actor_id=snapshot.control.facilitator_id,
+                        thread_id=snapshot.control.thread_id,
+                        role="ttl",
+                        operation="cancel_execution",
+                        token=snapshot,
+                    ),
+                ),
+                row,
+            ).model_copy(
+                update={"actor_id": snapshot.control.facilitator_id}
+            )
+            authority = self.owned_steps_authority(
+                self,
+                parent_id=snapshot.control.parent_id,
+                actor_id=snapshot.control.facilitator_id,
+                thread_id=snapshot.control.thread_id,
+                role="ttl",
+                operation="cancel_execution",
+                token=token,
+            )
+            result = await self._work_items.compare_and_set_owned_step(
+                owned_steps.OwnedStepMutation(
+                    owned_steps.OwnedStepChange(
+                        operation_id=owned_steps.owned_digest(
+                            owned_steps.owned_json_bytes(
+                                [
+                                    "ttl",
+                                    snapshot.control.incarnation,
+                                    row.step_id,
+                                    work_item_id,
+                                    observed_at,
+                                ]
+                            )
+                        ),
+                        token=token,
+                        command=owned_steps.CancelOwnedStepCommand(
+                            expired_item_id=work_item_id,
+                            observed_at=observed_at,
+                        ),
+                    ),
+                    authority,
+                )
+            )
+            changed = changed or result.disposition == "applied"
+        return changed
+
+    async def authorize_owned_store_write(
+        self, binding: owned_steps.OwnedStoreBinding,
+    ) -> owned_steps.OwnedStepsGrant:
+        context = binding.authority.context
+        if type(context) is not owned_steps.OwnedOwnerInvocation or context.request_digest != binding.request_digest:
+            raise owned_steps.OwnedStepsError("owned_steps_authority_denied")
+        return await self.authorize_owned_steps(
+            binding.authority, parent_id=binding.snapshot.control.parent_id, operation=binding.operation,
+            token=binding.snapshot,
+        )
+
+    def owned_store_binding(
+        self, component: object, snapshot: owned_steps.OwnedStepsSnapshot, *,
+        operation: str, payload: dict[str, Any], actor_id: str | None = None,
+        step_id: str | None = None, reviewed_result: owned_steps.ReviewedStepResult | None = None,
+        finalize_receipt: owned_steps.FinalizeReceipt | None = None,
+    ) -> owned_steps.OwnedStoreBinding:
+        role = "verifier" if operation == "verification" else "owner"
+        digest = owned_steps.owned_digest(owned_steps.owned_json_bytes(payload))
+        authority = self.owned_steps_authority(
+            component, parent_id=snapshot.control.parent_id,
+            actor_id=actor_id or snapshot.control.facilitator_id, thread_id=snapshot.control.thread_id,
+            role=role, operation=operation, token=snapshot, request_digest=digest,
+        )
+        return owned_steps.OwnedStoreBinding(
+            snapshot, operation, digest, authority, step_id, reviewed_result, finalize_receipt,
+        )
+
+    async def _owned_plan_seed(
+        self, parent: WorkItem, session: CrewSessionContract, plan: CrewRecoveryPlan,
+    ) -> owned_steps.OwnedStepsSeed:
+        self.register_owned_steps_component(self, self._owned_components[self])
+        _, digest = await self._work_items.read_steps_projection(parent.id)
+        seed = owned_steps.OwnedStepsSeedPlan(
+            parent_id=parent.id, owner_kind="canonical", thread_id=session.thread_id,
+            facilitator_id=session.facilitator_id, incarnation=uuid.uuid4().hex,
+            plan_digest=plan.plan_hash, expected_steps_digest=digest,
+            children=tuple(owned_steps.OwnedStepChild(
+                child_id=child.child_id, spec_id=child.spec_id, commitment_digest=child.row_hash,
+            ) for child in plan.children),
+        )
+        authority = self.owned_steps_authority(
+            self, parent_id=parent.id, actor_id=session.facilitator_id, thread_id=session.thread_id,
+            role="owner", operation="seed", token=None,
+        )
+        return owned_steps.OwnedStepsSeed(seed, authority)
+
+    async def _merge_owned_metadata(self, parent_id: str, patch: dict[str, Any], **kwargs: Any) -> WorkItem | None:
+        getter = getattr(self._work_items, "get_owned_steps", None)
+        snapshot = await getter(parent_id) if callable(getter) else None
+        if snapshot is not None:
+            kwargs["owned_binding"] = self.owned_store_binding(
+                self, snapshot, operation="metadata",
+                payload={"work_item_id": parent_id, "patch": patch, "new_status": kwargs.get("new_status"),
+                         "actual_tokens_delta": kwargs.get("actual_tokens_delta", 0)},
+            )
+        return await self._work_items.merge_work_item_metadata(parent_id, patch, **kwargs)
 
     def captain_principal(self) -> CrewSessionPrincipal:
         return CrewSessionPrincipal(
@@ -2328,7 +3141,7 @@ class CrewSessionService:
 
     def bind_scheduler(
         self,
-        schedule: Callable[[str], asyncio.Task[SynthesisResult]],
+        schedule: Callable[..., asyncio.Task[SynthesisResult]],
     ) -> None:
         if not callable(schedule) or self._schedule is not None:
             raise ValueError("crew_session_scheduler_binding_invalid")
@@ -2980,10 +3793,19 @@ class CrewSessionService:
             specs,
             created_by=current_marker.facilitator_id,
         )
-        children = await self._work_items.list_work_items(
-            parent_id=parent.id,
-            limit=_MAX_RECOVERY_CHILDREN + 1,
-        )
+        try:
+            membership = await self._work_items.get_owned_crew_children(
+                parent.id,
+                recovery.plan.plan_hash if recovery is not None and recovery.plan is not None else None,
+            )
+            children = list(membership.active)
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code != "owned_steps_not_managed":
+                raise
+            children = await self._work_items.list_work_items(
+                parent_id=parent.id,
+                limit=_MAX_RECOVERY_CHILDREN + 1,
+            )
         if len(children) > _MAX_RECOVERY_CHILDREN:
             raise ValueError("crew_recovery_plan_children_invalid")
         if recovery is None:
@@ -3044,11 +3866,29 @@ class CrewSessionService:
         authoritative_recovery = await self.get_recovery(parent.id)
         if authoritative_session is None or authoritative_recovery is None:
             raise ValueError("crew_provisioning_authority_missing")
+        owned_snapshot = await self._work_items.get_owned_steps(parent.id)
+        clear_payload = {
+            "work_item_id": parent.id,
+            "operation": "clear_crew_session_provisioning",
+            "expected_marker": current_marker.model_dump(mode="json"),
+            "expected_session": authoritative_session.model_dump(mode="json"),
+            "expected_recovery": authoritative_recovery.model_dump(mode="json"),
+        }
         cleared = await self._work_items.clear_crew_session_provisioning(
             parent.id,
-            expected_marker=current_marker.model_dump(mode="json"),
-            expected_session=authoritative_session.model_dump(mode="json"),
-            expected_recovery=authoritative_recovery.model_dump(mode="json"),
+            expected_marker=clear_payload["expected_marker"],
+            expected_session=clear_payload["expected_session"],
+            expected_recovery=clear_payload["expected_recovery"],
+            owned_binding=(
+                self.owned_store_binding(
+                    self,
+                    owned_snapshot,
+                    operation="metadata",
+                    payload=clear_payload,
+                )
+                if owned_snapshot is not None
+                else None
+            ),
         )
         if cleared is None or "crew_provisioning" in (cleared.metadata or {}):
             raise ValueError("crew_provisioning_clear_failed")
@@ -3187,7 +4027,7 @@ class CrewSessionService:
         values = marker.model_dump(mode="json")
         values["phase"] = phase
         candidate = CrewSessionProvisioningContract.model_validate(values)
-        updated = await self._work_items.merge_work_item_metadata(
+        updated = await self._merge_owned_metadata(
             parent_id,
             {"crew_provisioning": candidate.model_dump(mode="json")},
             expected={"crew_provisioning": marker.model_dump(mode="json")},
@@ -3349,10 +4189,18 @@ class CrewSessionService:
         )
         if recovery.plan.plan_seed_hash != expected_plan.plan_seed_hash:
             return
-        children = await self._work_items.list_work_items(
-            parent_id=parent_id,
-            limit=_MAX_RECOVERY_CHILDREN + 1,
-        )
+        snapshot = await self._work_items.get_owned_steps(parent_id)
+        if snapshot is not None:
+            membership = await self._work_items.get_owned_crew_children(
+                parent_id,
+                recovery.plan.plan_hash,
+            )
+            children = list(membership.active)
+        else:
+            children = await self._work_items.list_work_items(
+                parent_id=parent_id,
+                limit=_MAX_RECOVERY_CHILDREN + 1,
+            )
         if not children or len(children) > _MAX_RECOVERY_CHILDREN:
             return
         _validate_contextual_recovery_plan(
@@ -3441,7 +4289,7 @@ class CrewSessionService:
             expected_absent = frozenset({"crew_recovery"})
         else:
             expected["crew_recovery"] = recovery_raw
-        updated = await self._work_items.merge_work_item_metadata(
+        updated = await self._merge_owned_metadata(
             parent_id,
             {"crew_provisioning": failed_marker.model_dump(mode="json")},
             expected=expected,
@@ -3481,6 +4329,42 @@ class CrewSessionService:
         if not isinstance(task, asyncio.Task):
             raise ValueError("crew_session_scheduler_contract_invalid")
         return task
+
+    async def owned_manual_gate_released(self, parent_id: str) -> None:
+        getter = getattr(self._work_items, "get_owned_steps", None)
+        snapshot = await getter(parent_id) if callable(getter) else None
+        if (
+            snapshot is None
+            or snapshot.control.finalization is None
+            or snapshot.control.finalization_disposition != "pending"
+            or any(
+                owned_steps.owned_json_loads(row.todo_json)["status"] != "done"
+                for row in snapshot.control.rows[
+                    :snapshot.control.manual_prefix_length
+                ]
+            )
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_continuation_invalid",
+                parent_id=parent_id,
+            )
+        if self._schedule is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_continuation_owner_unavailable",
+                parent_id=parent_id,
+            )
+        try:
+            task = self._schedule(parent_id, continuation=True)
+        except RuntimeError as exc:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_continuation_owner_unavailable",
+                parent_id=parent_id,
+            ) from exc
+        if not isinstance(task, asyncio.Task):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_continuation_owner_invalid",
+                parent_id=parent_id,
+            )
 
     @staticmethod
     def _parse_provisioning(value: Any) -> CrewSessionProvisioningContract:
@@ -3786,7 +4670,7 @@ class CrewSessionService:
         if retry_barrier is not None:
             merge_kwargs["retry_barrier"] = retry_barrier
         try:
-            updated = await self._work_items.merge_work_item_metadata(
+            updated = await self._merge_owned_metadata(
                 parent.id,
                 patch,
                 expected=expected,
@@ -3875,12 +4759,16 @@ class CrewSessionService:
             and current.blocked_reason != "crew_worker_unavailable"
         ):
             raise ValueError("crew_session_retry_not_authorized")
-        children = tuple(sorted(
-            await self._work_items.list_work_items(
+        try:
+            membership = await self._work_items.get_owned_crew_children(parent.id, recovery.plan.plan_hash)
+            live_children = membership.active
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code != "owned_steps_not_managed":
+                raise
+            live_children = await self._work_items.list_work_items(
                 parent_id=parent.id, limit=_MAX_RECOVERY_CHILDREN + 1,
-            ),
-            key=lambda child: child.id,
-        ))
+            )
+        children = tuple(sorted(live_children, key=lambda child: child.id))
         if len(children) > _MAX_RECOVERY_CHILDREN:
             raise ValueError("crew_recovery_plan_integrity_invalid")
         reason = "crew_worker_identity_lost"
@@ -3942,7 +4830,7 @@ class CrewSessionService:
         recovery_values["last_error_code"] = reason
         checkpoint = self._validate_recovery(recovery_values)
         _validate_session_recovery_invariant(contract, checkpoint)
-        updated = await self._work_items.merge_work_item_metadata(
+        updated = await self._merge_owned_metadata(
             parent.id,
             {"crew_session": contract.model_dump(mode="json"), "crew_recovery": checkpoint.model_dump(mode="json")},
             expected_work_type="crew_session",
@@ -4099,7 +4987,7 @@ class CrewSessionService:
             expected_deliverable=expected_deliverable,
             transitioned_at=now,
         )
-        updated = await self._work_items.merge_work_item_metadata(
+        updated = await self._merge_owned_metadata(
             parent.id,
             {"crew_session": contract.model_dump(mode="json")},
             expected={"crew_session": None},
@@ -4361,7 +5249,7 @@ class CrewSessionService:
                 "crew_recovery": current_recovery_raw,
             }
             absent = frozenset()
-        updated = await self._work_items.merge_work_item_metadata(
+        updated = await self._merge_owned_metadata(
             parent.id,
             {"crew_recovery": candidate.model_dump(mode="json")},
             expected=expected,
@@ -4455,6 +5343,7 @@ class CrewSessionService:
         })
         planned = self._validate_recovery(values)
         _validate_session_recovery_invariant(current_session, planned)
+        steps_seed = await self._owned_plan_seed(parent, current_session, candidate_plan)
         commit_error: BaseException | None = None
         try:
             updated, created = (
@@ -4467,6 +5356,7 @@ class CrewSessionService:
                         "crew_recovery": planned.model_dump(mode="json"),
                     },
                     children=detached_children,
+                    steps_seed=steps_seed,
                 )
             )
         except asyncio.CancelledError as exc:
@@ -4569,6 +5459,7 @@ class CrewSessionService:
         })
         recovery = self._validate_recovery(values)
         _validate_session_recovery_invariant(current_session, recovery)
+        steps_seed = await self._owned_plan_seed(parent, current_session, candidate_plan)
         commit_error: BaseException | None = None
         try:
             updated = await self._work_items.adopt_child_plan_with_parent_metadata(
@@ -4578,6 +5469,7 @@ class CrewSessionService:
                 expected_assigned_to=current_session.facilitator_id,
                 parent_patch={"crew_recovery": recovery.model_dump(mode="json")},
                 expected_children=expected_children,
+                steps_seed=steps_seed,
             )
         except asyncio.CancelledError as exc:
             commit_error = exc
@@ -4809,7 +5701,7 @@ class CrewSessionService:
         if delivery_record is not None:
             merge_kwargs["crew_session_delivery"] = delivery_record
         try:
-            updated = await self._work_items.merge_work_item_metadata(
+            updated = await self._merge_owned_metadata(
                 parent.id,
                 patch,
                 **merge_kwargs,
@@ -4892,6 +5784,7 @@ class CrewSessionService:
         provenance_ref: str,
         result_artifact_id: str,
         crew_trust_effects: tuple[Any, ...] = (),
+        steps_finalize: owned_steps.FinalizeReceipt | None = None,
     ) -> CrewSessionContract:
         """Atomically publish both verified refs and transition to ``done``."""
         parent_key = _normalize_id(parent_id)
@@ -5035,6 +5928,38 @@ class CrewSessionService:
                 if crew_trust_effects
                 else {}
             )
+            owned_binding = None
+            owned_snapshot = (
+                await self._work_items.get_owned_steps(parent.id)
+                if "crew_recovery" in (parent.metadata or {})
+                else None
+            )
+            if owned_snapshot is not None:
+                if steps_finalize is None:
+                    raise owned_steps.OwnedStepsError(
+                        "owned_steps_finalization_required",
+                        parent_id=parent.id,
+                    )
+                payload = {
+                    "work_item_id": parent.id,
+                    "patch": publication_patch,
+                    "new_status": "done",
+                    "expected_direct_children": list(
+                        expected_direct_children
+                    ),
+                }
+                owned_binding = self.owned_store_binding(
+                    self,
+                    owned_snapshot,
+                    operation="steps_finalize",
+                    payload=payload,
+                    finalize_receipt=steps_finalize,
+                )
+            owned_kwargs = (
+                {"owned_binding": owned_binding}
+                if owned_binding is not None
+                else {}
+            )
             published = await self._work_items.publish_work_item_metadata_with_child_barrier(
                 parent.id,
                 publication_patch,
@@ -5049,11 +5974,20 @@ class CrewSessionService:
                 crew_session_delivery=delivery_record,
                 source="crew_session_verified_result",
                 **trust_kwargs,
+                **owned_kwargs,
             )
         except asyncio.CancelledError as exc:
             publish_error = exc
         except BaseException as exc:
             publish_error = exc
+        if publish_error is None and published is not None and owned_binding is not None:
+            finalized_snapshot = await self._work_items.get_owned_steps(parent.id)
+            if (
+                finalized_snapshot is not None
+                and finalized_snapshot.control.finalization == steps_finalize
+                and finalized_snapshot.control.finalization_disposition == "pending"
+            ):
+                return current
         try:
             authoritative_contract = await self._authoritative_publication(
                 parent_id=parent.id,
@@ -5482,10 +6416,16 @@ class CrewSessionService:
     ) -> tuple[WorkItem, ...]:
         if recovery.plan is None:
             return ()
-        children = await self._work_items.list_work_items(
-            parent_id=parent_id,
-            limit=_MAX_RECOVERY_CHILDREN + 1,
-        )
+        try:
+            membership = await self._work_items.get_owned_crew_children(parent_id, recovery.plan.plan_hash)
+            children = membership.active
+        except owned_steps.OwnedStepsError as exc:
+            if exc.code != "owned_steps_not_managed":
+                raise
+            children = await self._work_items.list_work_items(
+                parent_id=parent_id,
+                limit=_MAX_RECOVERY_CHILDREN + 1,
+            )
         if len(children) > _MAX_RECOVERY_CHILDREN:
             raise ValueError("crew_recovery_plan_integrity_invalid")
         child_tuple = tuple(children)
@@ -5579,10 +6519,18 @@ class CrewSessionService:
             return None
         try:
             await self._validate_loaded(authoritative_parent, expected_session)
-            live_children = await self._work_items.list_work_items(
-                parent_id=parent_id,
-                limit=_MAX_RECOVERY_CHILDREN + 1,
-            )
+            snapshot = await self._work_items.get_owned_steps(parent_id)
+            if snapshot is not None:
+                membership = await self._work_items.get_owned_crew_children(
+                    parent_id,
+                    expected_recovery.plan.plan_hash,
+                )
+                live_children = list(membership.active)
+            else:
+                live_children = await self._work_items.list_work_items(
+                    parent_id=parent_id,
+                    limit=_MAX_RECOVERY_CHILDREN + 1,
+                )
             if len(live_children) > _MAX_RECOVERY_CHILDREN:
                 return None
             live_by_id = {child.id: child for child in live_children}
