@@ -249,12 +249,80 @@ def test_final_collection_and_effective_settings_fail_closed(
 def test_original_imports_verified_without_executing_original_test(
     diagnostic: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    module = importlib.import_module("tests.test_ad1192_owned_steps_store")
-    item = SimpleNamespace(module=module, obj=getattr(module, diagnostic._SELECTOR.split("::")[1]))
-    diagnostic._origins(item)
-    monkeypatch.setattr(module, "__file__", str(tmp_path / "wrong.py"))
+    # Full-suite synthetic modules must not contaminate this strict origin probe.
+    parent_modules = ("probos._owned_capacity_parent_probe", "tests._owned_capacity_parent_probe")
+    for name in parent_modules:
+        assert name not in sys.modules
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    probe = f"""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+root = Path({str(ROOT)!r})
+sys.path[:0] = [str(root / "src"), str(root)]
+assert Path.cwd() == root
+assert all(name not in sys.modules for name in {parent_modules!r})
+checks = ["parent_isolated"]
+spec = importlib.util.spec_from_file_location("capacity_origin_probe", {diagnostic.__file__!r})
+assert spec is not None and spec.loader is not None
+diagnostic = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = diagnostic
+spec.loader.exec_module(diagnostic)
+assert diagnostic._ROOT == root
+module = importlib.import_module("tests.test_ad1192_owned_steps_store")
+item = SimpleNamespace(module=module, obj=getattr(module, diagnostic._SELECTOR.split("::")[1]))
+diagnostic._origins(item)
+checks.append("original")
+
+def rejected(label: str) -> None:
     with pytest.raises(diagnostic._Fault, match="imports"):
         diagnostic._origins(item)
+    checks.append(label)
+
+wrong_file = {str(tmp_path / "wrong.py")!r}
+with pytest.MonkeyPatch.context() as patch:
+    patch.setattr(module, "__file__", wrong_file)
+    rejected("wrong_module_file")
+
+for namespace in ("probos", "tests"):
+    name = namespace + "._owned_capacity_child_probe"
+    assert name not in sys.modules
+    for origin in ("foreign", "missing"):
+        loaded = ModuleType(name)
+        if origin == "foreign":
+            loaded.__file__ = wrong_file
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setitem(sys.modules, name, loaded)
+            rejected(namespace + "_" + origin)
+
+for target, name in (
+    (item, "obj"), (module, "_legacy_plan"), (module, "_apply"), (module, "stores"),
+):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(target, name, lambda: None)
+        rejected(name)
+
+diagnostic._origins(item)
+checks.append("restored")
+print(json.dumps(checks))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True, timeout=30,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(ROOT / "src"), str(ROOT)))},
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert not result.stderr
+    assert json.loads(result.stdout) == [
+        "parent_isolated", "original", "wrong_module_file",
+        "probos_foreign", "probos_missing", "tests_foreign", "tests_missing",
+        "obj", "_legacy_plan", "_apply", "stores", "restored",
+    ]
+    assert all(name in sys.modules for name in parent_modules)
 
 
 @pytest.mark.parametrize("field,value", [
