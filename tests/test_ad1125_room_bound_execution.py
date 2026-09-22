@@ -3217,17 +3217,80 @@ async def test_complete_booking_rejects_invalid_token_delta_without_mutation(
 async def test_max_parallel_subtasks_remains_hard_bound(
     stores: _Stores,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parent = await stores.work.create_work_item(title="legacy", work_type="task")
     agents = {f"agent-{index}": _Agent(f"agent-{index}") for index in range(6)}
-    for index, agent_id in enumerate(agents):
+    expected_calls = [
+        (f"parallel-{index}", agent_id) for index, agent_id in enumerate(agents)
+    ]
+    for child_id, agent_id in expected_calls:
         await _child(
             stores,
             parent_id=parent.id,
-            child_id=f"parallel-{index}",
+            child_id=child_id,
             assigned_to=agent_id,
         )
-    outcome_executor = _StaticOutcomeExecutor(delay=0.03)
+    all_attempted = asyncio.Event()
+    pair_entered = asyncio.Event()
+    release = asyncio.Event()
+    attempted_tasks: list[asyncio.Task[Any]] = []
+    grants = 0
+    max_grants = 0
+
+    class _RecordingSemaphore(asyncio.Semaphore):
+        async def acquire(self) -> bool:
+            nonlocal grants, max_grants
+            task = asyncio.current_task()
+            assert task is not None
+            attempted_tasks.append(task)
+            if len(attempted_tasks) == 6:
+                all_attempted.set()
+            acquired = await super().acquire()
+            grants += 1
+            max_grants = max(max_grants, grants)
+            return acquired
+
+        def release(self) -> None:
+            nonlocal grants
+            super().release()
+            grants -= 1
+
+    class _RendezvousExecutor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.completed_calls: list[tuple[str, str]] = []
+            self.active = 0
+            self.max_active = 0
+
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            identity = (
+                kwargs["extra_context"]["_crew_work_item_id"],
+                kwargs["agent_id"],
+            )
+            self.calls.append(identity)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                if self.active == 2:
+                    pair_entered.set()
+                await release.wait()
+                outcome = WorkItemAgenticOutcome(
+                    final_text=f"done {identity[0]}",
+                    stopped_reason="complete",
+                    tool_trace_ref=_SHA_B,
+                    total_tokens=3,
+                )
+                self.completed_calls.append(identity)
+                return outcome
+            finally:
+                self.active -= 1
+
+    async def _rendezvous() -> None:
+        await all_attempted.wait()
+        await pair_entered.wait()
+
+    outcome_executor = _RendezvousExecutor()
     crew = _crew_executor(
         stores=stores,
         registry=_Registry(agents),
@@ -3235,11 +3298,63 @@ async def test_max_parallel_subtasks_remains_hard_bound(
         runtime=_runtime(stores, tmp_path),
         max_parallel=2,
     )
+    monkeypatch.setattr(
+        "probos.cognitive.crew_executor.asyncio.Semaphore",
+        _RecordingSemaphore,
+    )
 
-    results = await crew.run(parent.id)
+    task = asyncio.create_task(crew.run(parent.id))
+    rendezvous = asyncio.create_task(_rendezvous())
+    try:
+        ready, _ = await asyncio.wait(
+            (task, rendezvous), return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert rendezvous in ready, "Crew finished before the concurrency rendezvous"
+        await rendezvous
+        assert not task.done()
+        assert len(attempted_tasks) == len(set(attempted_tasks)) == 6
+        # The old 30ms sleep did not guarantee overlapping durable admissions.
+        # Count real grants too: a slow third admission must not hide a wider limit.
+        assert grants == max_grants == 2
+        assert outcome_executor.active == 2
+        assert len(outcome_executor.calls) == 2
+        assert outcome_executor.completed_calls == []
 
-    assert len(results) == 6
-    assert outcome_executor.max_active == 2
+        release.set()
+        results = await task
+
+        assert len(results) == 6
+        assert outcome_executor.max_active == 2
+        assert len(outcome_executor.calls) == len(outcome_executor.completed_calls) == 6
+        assert sorted(outcome_executor.calls) == expected_calls
+        assert sorted(outcome_executor.completed_calls) == expected_calls
+        assert sorted(
+            (
+                result.work_item_id,
+                result.agent_id,
+                result.output,
+                result.status,
+                result.stopped_reason,
+            )
+            for result in results
+        ) == [
+            (child_id, agent_id, f"done {child_id}", "done", "complete")
+            for child_id, agent_id in expected_calls
+        ]
+        assert outcome_executor.active == 0
+        assert grants == 0
+        assert max_grants == 2
+        assert all(child_task.done() for child_task in attempted_tasks)
+    finally:
+        release.set()
+        for held_task in (task, rendezvous):
+            if not held_task.done():
+                held_task.cancel()
+        await asyncio.gather(task, rendezvous, return_exceptions=True)
+        for child_task in attempted_tasks:
+            if not child_task.done():
+                child_task.cancel()
+        await asyncio.gather(*attempted_tasks, return_exceptions=True)
 
 
 async def test_cancellation_propagates_and_reaps_held_child_tasks(
