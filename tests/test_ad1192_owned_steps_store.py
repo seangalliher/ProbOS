@@ -10,6 +10,8 @@ import logging
 import sqlite3
 import time
 import uuid
+from collections import OrderedDict
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -386,6 +388,45 @@ class _Harness:
     content: _FakeContent
     path: Path
     events: list[Any]
+
+
+@pytest.fixture
+def membership_conversion_counts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    counts: list[int] = []
+    scope: ContextVar[int | None] = ContextVar("membership_conversion_scope", default=None)
+    real_converter = WorkItemStore._row_to_work_item
+    real_membership = WorkItemStore._get_owned_crew_children_locked
+
+    def convert(row: aiosqlite.Row) -> WorkItem:
+        index = scope.get()
+        if index is not None:
+            counts[index] += 1
+        return real_converter(row)
+
+    async def membership(
+        store: WorkItemStore, parent_id: str, control: steps.OwnedStepsControl,
+        *, needed_ids: frozenset[str] | None = None,
+    ) -> steps.OwnedCrewChildren:
+        index = len(counts)
+        counts.append(0)
+        token = scope.set(index)
+        try:
+            return await real_membership(store, parent_id, control, needed_ids=needed_ids)
+        finally:
+            scope.reset(token)
+
+    # Caller edges used to stand in for physical conversions; async profiler
+    # under-observation must not change the membership correctness oracle.
+    monkeypatch.setattr(WorkItemStore, "_row_to_work_item", staticmethod(convert))
+    monkeypatch.setattr(WorkItemStore, "_get_owned_crew_children_locked", membership)
+    return counts
+
+
+@pytest.fixture
+def snapshot_digest_facts(monkeypatch: pytest.MonkeyPatch) -> OrderedDict[str, str]:
+    facts: OrderedDict[str, str] = OrderedDict()
+    monkeypatch.setattr(steps, "_SNAPSHOT_SOURCE_DIGESTS", facts)
+    return facts
 
 
 @pytest.fixture
@@ -2014,6 +2055,203 @@ async def test_owned_selective_mutation_retains_second_store_valid_sibling_verdi
     assert (await stores.first.get_owned_steps(parent.id)).control == independent.snapshot.control
 
 
+async def _source_reader_plan(
+    harness: _Harness, *, owner_kind: str, bookings: bool,
+) -> tuple[WorkItem, tuple[WorkItem, ...]]:
+    store = harness.first
+    if owner_kind == "canonical":
+        async with store.claim_crew_session_admission_port().reserve() as reservation:
+            parent = await reservation.create_parent(CrewSessionParentCreate(
+                id="source-parent", title="Source plan", description="Source equivalence",
+                assigned_to="facilitator-1", created_by="captain",
+                metadata={"crew_session": {"thread_id": "thread-1", "facilitator_id": "facilitator-1"}},
+            ))
+    else:
+        parent = await store.create_work_item(id="source-parent", title="Source plan")
+    children = []
+    for index in range(2):
+        child = await store.create_work_item(
+            id=f"source-child-{index}", title=f"Child {index}", parent_id=parent.id,
+            assigned_to=None if bookings else "agent-a",
+            metadata={"spec_id": f"spec-{index}", "plan_only": {"exact": index}},
+        )
+        if bookings:
+            assert await store.assign_work_item(child.id, "agent-a")
+            child = await store.get_work_item(child.id)
+        children.append(child)
+    commitments = tuple(steps.OwnedStepChild(
+        child_id=child.id, spec_id=child.metadata["spec_id"],
+        commitment_digest=steps.owned_child_commitment(child.to_dict()),
+    ) for child in children)
+    plan_digest = steps.owned_digest(steps.owned_json_bytes([
+        child.model_dump(mode="json") for child in commitments
+    ]))
+    patch = {"crew_recovery": {"plan": {
+        "plan_hash": plan_digest,
+        "children": [
+            {"child_id": child.child_id, "spec_id": child.spec_id, "row_hash": child.commitment_digest}
+            for child in commitments
+        ],
+    }}} if owner_kind == "canonical" else {}
+    parent = await store.adopt_child_plan_with_parent_metadata(
+        parent.id, expected_parent_metadata=parent.metadata, expected_status=parent.status,
+        expected_assigned_to=parent.assigned_to, parent_patch=patch,
+        expected_children=tuple(children),
+        steps_seed=steps.OwnedStepsSeed(steps.OwnedStepsSeedPlan(
+            parent_id=parent.id, owner_kind=owner_kind, thread_id="thread-1",
+            facilitator_id="facilitator-1", incarnation=uuid.uuid4().hex,
+            plan_digest=plan_digest, expected_steps_digest=steps.owned_digest("[]"),
+            children=commitments,
+        ), harness.owner.authority(parent.id)),
+    )
+    return parent, tuple(children)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_kind", ["legacy", "canonical"])
+@pytest.mark.parametrize("bookings", [False, True])
+async def test_row_scoped_source_reader_matches_bulk_digest(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch, owner_kind: str, bookings: bool,
+) -> None:
+    parent, children = await _source_reader_plan(stores, owner_kind=owner_kind, bookings=bookings)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    calls: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    real_source = WorkItemStore._owned_child_source
+
+    async def observe_source(
+        store: WorkItemStore, child: WorkItem, *, exclude_steps: bool = False,
+        protected_metadata_keys: tuple[str, ...] = (),
+    ) -> str:
+        if child.parent_id == parent.id:
+            calls.append((child.id, protected_metadata_keys, tuple(child.metadata)))
+        return await real_source(
+            store, child, exclude_steps=exclude_steps, protected_metadata_keys=protected_metadata_keys,
+        )
+
+    monkeypatch.setattr(WorkItemStore, "_owned_child_source", observe_source)
+    permit = None
+    for state in ("unstarted", "started", "submitted", "terminal"):
+        assert snapshot.control.rows[0].permit_state == state
+        current = {child.id: await stores.second.get_work_item(child.id) for child in children}
+        keys = {
+            row.child.child_id: (
+                tuple(current[row.child.child_id].metadata)
+                if owner_kind == "canonical" else row.plan_metadata_keys
+            )
+            for row in snapshot.control.rows
+        }
+        bulk = await stores.second._owned_children_sources(parent.id, current, keys)
+        for row in snapshot.control.rows:
+            child = current[row.child.child_id]
+            point = await stores.second._owned_child_source(child, protected_metadata_keys=keys[child.id])
+            assert point == bulk[child.id] == row.source_digest
+            changed = dataclasses.replace(child, metadata={**child.metadata, "plan_only": {"exact": "changed"}})
+            assert await stores.second._owned_child_source(
+                changed, protected_metadata_keys=keys[child.id],
+            ) != point
+            incidental = dataclasses.replace(child, metadata={**child.metadata, "later_detail": "incidental"})
+            incidental_keys = tuple(incidental.metadata) if owner_kind == "canonical" else row.plan_metadata_keys
+            incidental_digest = await stores.second._owned_child_source(
+                incidental, protected_metadata_keys=incidental_keys,
+            )
+            assert (incidental_digest == point) is (owner_kind == "legacy")
+        if state == "terminal":
+            break
+        if state == "unstarted":
+            command = steps.StartOwnedStepCommand(execution_nonce="source-equivalence")
+        elif state == "started":
+            command = _submission(stores, permit)
+        else:
+            command = _review(stores, permit, snapshot.control.rows[0].submission)
+        calls.clear()
+        result, _ = await _apply(
+            stores, snapshot, 0, command,
+            actor="verifier" if state == "submitted" else "agent-a",
+            role="verifier" if state == "submitted" else "executor",
+        )
+        assert len(calls) == 2  # Fresh selected source, then the changed source.
+        for child_id, protected, all_keys in calls:
+            assert child_id == children[0].id
+            assert protected == (all_keys if owner_kind == "canonical" else snapshot.control.rows[0].plan_metadata_keys)
+        if state == "unstarted":
+            permit = result.permit
+            assert permit is not None
+        snapshot = result.snapshot
+    reopened = await stores.second.get_owned_steps(parent.id)
+    assert reopened == snapshot
+    assert reopened.control.rows[0].review_accepted is True
+    with sqlite3.connect(stores.path) as db:
+        assert dict(db.execute("SELECT kind,COUNT(*) FROM owned_steps_journal GROUP BY kind")) == {
+            "operation": 3, "permit": 1, "submission": 1, "review": 1,
+        }
+        for table in ("bookings", "booking_timestamps", "booking_journals"):
+            count = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            assert (count > 0) is bookings
+
+
+@pytest.mark.asyncio
+async def test_row_scoped_source_reads_only_relevant_requirements(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch,
+    membership_conversion_counts: list[int],
+) -> None:
+    parent, children = await _legacy_plan(stores, children_count=1000)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    with sqlite3.connect(stores.path) as db:
+        assert db.execute("SELECT COUNT(*) FROM resource_requirements").fetchone()[0] == 1001
+    loading: ContextVar[bool] = ContextVar("source_row_load", default=False)
+    membership_rows: list[tuple[str, ...]] = []
+    requirement_rows: list[tuple[str, ...]] = []
+    real_load = WorkItemStore._load_owned_steps
+    real_fetchall = aiosqlite.Cursor.fetchall
+
+    async def observe_load(store: WorkItemStore, *args: Any, **kwargs: Any) -> Any:
+        token = loading.set(True)
+        try:
+            return await real_load(store, *args, **kwargs)
+        finally:
+            loading.reset(token)
+
+    async def observe_fetchall(cursor: aiosqlite.Cursor) -> Any:
+        rows = await real_fetchall(cursor)
+        if loading.get():
+            columns = {column[0] for column in cursor.description or ()}
+            if "steps_control" in columns and "parent_id" in columns:
+                membership_rows.append(tuple(row["id"] for row in rows))
+            elif "duration_estimate_seconds" in columns:
+                requirement_rows.append(tuple(row["work_item_id"] for row in rows))
+        return rows
+
+    monkeypatch.setattr(WorkItemStore, "_load_owned_steps", observe_load)
+    monkeypatch.setattr(aiosqlite.Cursor, "fetchall", observe_fetchall)
+    membership_conversion_counts.clear()
+    for index in (0, 500, 999):
+        started, _ = await _apply(
+            stores, snapshot, index, steps.StartOwnedStepCommand(execution_nonce=f"source-{index}"),
+            actor="agent-a", role="executor",
+        )
+        submitted, _ = await _apply(
+            stores, started.snapshot, index, _submission(stores, started.permit, tokens=1),
+            actor="agent-a", role="executor",
+        )
+        reviewed, _ = await _apply(
+            stores, submitted.snapshot, index,
+            _review(stores, started.permit, submitted.snapshot.control.rows[index].submission),
+            actor="verifier", role="verifier",
+        )
+        snapshot = reviewed.snapshot
+    expected_ids = tuple(sorted(child.id for child in children))
+    assert membership_rows == [expected_ids] * 9
+    assert membership_conversion_counts == [1] * 9
+    assert requirement_rows == [
+        ids
+        for index in (0, 500, 999)
+        for _ in range(3)
+        for ids in ((parent.id,), (children[index].id,))
+    ]
+    assert sum(len(ids) for ids in requirement_rows if ids != (parent.id,)) == 9
+    assert (await stores.second.get_owned_steps(parent.id)) == snapshot
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["manual", "child"])
 @pytest.mark.parametrize("corruption", [
@@ -2021,6 +2259,7 @@ async def test_owned_selective_mutation_retains_second_store_valid_sibling_verdi
 ])
 async def test_owned_selective_mutation_rechecks_real_retirement_proof(
     owned_view_rig: Any, target: str, corruption: str,
+    membership_conversion_counts: list[int], snapshot_digest_facts: OrderedDict[str, str],
 ) -> None:
     from tests.test_ad1192_owned_steps_dm import (
         _adopt as adopt_rig, _capture_presented,
@@ -2069,31 +2308,24 @@ async def test_owned_selective_mutation_rechecks_real_retirement_proof(
             steps.ManualStepCommand(kind="edit_note", note="Retirement proof crossing")
             if target == "manual" else steps.StartOwnedStepCommand(execution_nonce="retired-crossing")
         )
-        profile = cProfile.Profile()
-        profile.enable()
-        try:
-            applied = await reader.compare_and_set_owned_step(steps.OwnedStepMutation(
-                steps.OwnedStepChange(
-                    operation_id=uuid.uuid4().hex, token=_row_token(snapshot, index, actor=actor),
-                    command=command,
-                ),
-                authority,
-            ))
-        finally:
-            profile.disable()
-        membership_conversions = sum(
-            call.callcount
-            for entry in profile.getstats()
-            if getattr(entry.code, "co_name", None) == "_get_owned_crew_children_locked"
-            for call in entry.calls or ()
-            if getattr(call.code, "co_name", None) == "_row_to_work_item"
-        )
+        membership_conversion_counts.clear()
+        applied = await reader.compare_and_set_owned_step(steps.OwnedStepMutation(
+            steps.OwnedStepChange(
+                operation_id=uuid.uuid4().hex, token=_row_token(snapshot, index, actor=actor),
+                command=command,
+            ),
+            authority,
+        ))
         assert applied.disposition == ("applied" if target == "manual" else "new")
-        assert membership_conversions == (2 if target == "manual" else 3)
+        assert membership_conversion_counts == [2 if target == "manual" else 3]
         membership = await reader.get_owned_crew_children(rig.parent_id)
         assert len(membership.active) == len(membership.retired) == 2
         retired_id = rig.child_ids[0]
         with sqlite3.connect(rig.path) as db:
+            raw_control = db.execute(
+                "SELECT steps_control FROM work_items WHERE id=?", (rig.parent_id,),
+            ).fetchone()[0]
+            assert snapshot_digest_facts[raw_control] == applied.snapshot.source_digest
             if corruption == "retired_source":
                 db.execute("UPDATE work_items SET actual_tokens=1 WHERE id=?", (retired_id,))
             elif corruption == "retired_json":
@@ -2135,10 +2367,11 @@ async def test_owned_selective_mutation_rechecks_real_retirement_proof(
 
 @pytest.mark.asyncio
 async def test_owned_row_scoped_mutations_materialize_only_needed_children(
-    stores: _Harness,
+    stores: _Harness, membership_conversion_counts: list[int],
 ) -> None:
     parent, children = await _legacy_plan(stores, children_count=1000)
     snapshot = await stores.first.get_owned_steps(parent.id)
+    membership_conversion_counts.clear()
     profile = cProfile.Profile()
     started_at = time.perf_counter()
     profile.enable()
@@ -2166,13 +2399,8 @@ async def test_owned_row_scoped_mutations_materialize_only_needed_children(
         profile.disable()
     elapsed = time.perf_counter() - started_at
     entries = profile.getstats()
-    membership_conversions = sum(
-        call.callcount
-        for entry in entries
-        if getattr(entry.code, "co_name", None) == "_get_owned_crew_children_locked"
-        for call in entry.calls or ()
-        if getattr(call.code, "co_name", None) == "_row_to_work_item"
-    )
+    assert membership_conversion_counts == [1] * 9
+    membership_conversions = sum(membership_conversion_counts)
     total_conversions = sum(
         entry.callcount for entry in entries
         if getattr(entry.code, "co_name", None) == "_row_to_work_item"
@@ -2183,27 +2411,76 @@ async def test_owned_row_scoped_mutations_materialize_only_needed_children(
         "membership_WorkItems=%d all_WorkItems=%d json_decodes=%d elapsed=%.6fs",
         membership_conversions, total_conversions, json_decodes, elapsed,
     )
-    full_profile = cProfile.Profile()
-    full_profile.enable()
-    try:
-        membership = await stores.second.get_owned_crew_children(parent.id)
-        reopened = await stores.second.get_owned_steps(parent.id)
-    finally:
-        full_profile.disable()
+    membership = await stores.second.get_owned_crew_children(parent.id)
+    reopened = await stores.second.get_owned_steps(parent.id)
     assert tuple(child.id for child in membership.active) == tuple(child.id for child in children)
     assert reopened.control == snapshot.control
-    full_conversions = sum(
-        call.callcount
-        for entry in full_profile.getstats()
-        if getattr(entry.code, "co_name", None) == "_get_owned_crew_children_locked"
-        for call in entry.calls or ()
-        if getattr(call.code, "co_name", None) == "_row_to_work_item"
-    )
+    assert membership_conversion_counts[9:] == [1000, 1000]
+    full_conversions = sum(membership_conversion_counts[9:])
     assert full_conversions == 2000
     with sqlite3.connect(stores.path) as db:
         counts = dict(db.execute("SELECT kind,COUNT(*) FROM owned_steps_journal GROUP BY kind"))
     assert counts == {"operation": 9, "permit": 3, "submission": 3, "review": 3}
     assert membership_conversions == 9
+
+
+@pytest.mark.asyncio
+async def test_owned_materialization_counter_ignores_profiler_undercoverage(
+    stores: _Harness, membership_conversion_counts: list[int],
+) -> None:
+    parent, children = await _legacy_plan(stores, children_count=1000)
+    expected = await stores.first.get_owned_steps(parent.id)
+    membership_conversion_counts.clear()
+    profile = cProfile.Profile()
+    profile.enable()
+    try:
+        membership = await stores.second.get_owned_crew_children(parent.id)
+    finally:
+        profile.disable()
+    assert membership_conversion_counts == [1000]
+
+    # Deliberate undercoverage, not a reproduction of native Linux attribution.
+    outside = await stores.second.get_work_item(parent.id)
+    assert outside is not None and outside.id == parent.id
+    assert membership_conversion_counts == [1000]
+    reopened = await stores.second.get_owned_steps(parent.id)
+    assert membership_conversion_counts == [1000, 1000]
+    assert sum(membership_conversion_counts) == 2000
+    assert tuple(child.id for child in membership.active) == tuple(child.id for child in children)
+    assert reopened == expected
+    profiled = sum(
+        entry.callcount for entry in profile.getstats()
+        if getattr(entry.code, "co_name", None) == "_row_to_work_item"
+    )
+    assert 0 < profiled < sum(membership_conversion_counts)
+
+
+@pytest.mark.asyncio
+async def test_owned_materialization_counter_scopes_concurrent_reads_and_exceptions(
+    stores: _Harness, membership_conversion_counts: list[int],
+) -> None:
+    parent, children = await _legacy_plan(stores)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    membership_conversion_counts.clear()
+    partial, complete = await asyncio.gather(
+        stores.first._get_owned_crew_children_locked(
+            parent.id, snapshot.control, needed_ids=frozenset({children[0].id}),
+        ),
+        stores.second.get_owned_crew_children(parent.id),
+    )
+    assert tuple(child.id for child in partial.active) == (children[0].id,)
+    assert tuple(child.id for child in complete.active) == tuple(child.id for child in children)
+    assert sorted(membership_conversion_counts) == [1, 2]
+
+    with sqlite3.connect(stores.path) as db:
+        db.execute("UPDATE work_items SET metadata=? WHERE id=?", ("{broken", children[1].id))
+    membership_conversion_counts.clear()
+    with pytest.raises(json.JSONDecodeError):
+        await stores.second.get_owned_crew_children(parent.id)
+    assert membership_conversion_counts == [1]
+    outside = await stores.second.get_work_item(children[0].id)
+    assert outside is not None and outside.id == children[0].id
+    assert membership_conversion_counts == [1]
 
 
 @pytest.mark.asyncio
@@ -2548,6 +2825,323 @@ async def test_actual_reference_query_uses_full_journal_key_not_history_scan(sto
         assert not any("SCAN journal" in detail for detail in details)
     finally:
         await observer.stop()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_digest_fact_cache_uses_exact_bytes_and_is_bounded(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch,
+    snapshot_digest_facts: OrderedDict[str, str],
+) -> None:
+    parent, _ = await _legacy_plan(stores)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    raw = snapshot.control.model_dump_json()
+    formats = tuple("\n" * index + raw for index in range(5))
+    snapshot_digest_facts.clear()
+    envelopes: list[Any] = []
+    real_encode = steps.owned_json_bytes
+
+    def observe_encode(value: Any) -> bytes:
+        if type(value) is dict and set(value) == {"parent", "rows", "gate"}:
+            envelopes.append(value)
+        return real_encode(value)
+
+    monkeypatch.setattr(steps, "owned_json_bytes", observe_encode)
+    assert steps.owned_snapshot_source_digest(formats[0]) == snapshot.source_digest
+    assert len(envelopes) == 1
+    assert steps.owned_snapshot_source_digest(formats[0]) == snapshot.source_digest
+    assert len(envelopes) == 1
+    for index in range(1, 4):
+        assert steps.owned_snapshot_source_digest(formats[index]) == snapshot.source_digest
+        assert len(envelopes) == index + 1
+    assert tuple(snapshot_digest_facts) == formats[:4]
+    assert steps.owned_snapshot_source_digest(formats[0]) == snapshot.source_digest
+    assert len(envelopes) == 4
+    assert steps.owned_snapshot_source_digest(formats[4]) == snapshot.source_digest
+    assert tuple(snapshot_digest_facts) == (formats[2], formats[3], formats[0], formats[4])
+    assert len(envelopes) == 5
+    assert steps.owned_snapshot_source_digest(formats[1]) == snapshot.source_digest
+    assert len(envelopes) == 6
+    assert tuple(snapshot_digest_facts) == (formats[3], formats[0], formats[4], formats[1])
+    assert all(type(value) is str and value == snapshot.source_digest for value in snapshot_digest_facts.values())
+    before = tuple(snapshot_digest_facts.items())
+    assert steps.owned_snapshot_source_digest(snapshot.control) == snapshot.source_digest
+    assert len(envelopes) == 7
+    assert tuple(snapshot_digest_facts.items()) == before
+
+
+@pytest.mark.asyncio
+async def test_snapshot_digest_fact_cache_carries_fresh_control_and_projection(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch,
+    snapshot_digest_facts: OrderedDict[str, str],
+) -> None:
+    parent, _ = await _legacy_plan(stores)
+    original = await stores.first.get_owned_steps(parent.id)
+    with sqlite3.connect(stores.path) as db:
+        encoded = db.execute("SELECT steps_control FROM work_items WHERE id=?", (parent.id,)).fetchone()[0]
+        raw = " \n" + encoded + "\t"
+        db.execute("UPDATE work_items SET steps_control=? WHERE id=?", (raw, parent.id))
+    snapshot_digest_facts.clear()
+    inputs: list[steps.OwnedStepsControl | str] = []
+    real_digest = steps.owned_snapshot_source_digest
+
+    def observe_digest(control: steps.OwnedStepsControl | str) -> str:
+        inputs.append(control)
+        return real_digest(control)
+
+    def unexpected_dump(*args: Any, **kwargs: Any) -> str:
+        pytest.fail("A fresh control read must not be reserialized for its digest cache key")
+
+    monkeypatch.setattr(steps, "owned_snapshot_source_digest", observe_digest)
+    monkeypatch.setattr(steps.OwnedStepsControl, "model_dump_json", unexpected_dump)
+    cold = await stores.first.get_owned_steps(parent.id)
+    warm = await stores.second.get_owned_steps(parent.id)
+    assert cold == warm == original and cold is not warm
+    assert inputs == [raw, raw]
+    assert tuple(snapshot_digest_facts.items()) == ((raw, original.source_digest),)
+    with sqlite3.connect(stores.path) as db:
+        db.execute("UPDATE work_items SET steps=? WHERE id=?", ("[]", parent.id))
+    mismatched = await stores.second.get_owned_steps(parent.id)
+    assert mismatched is not warm and mismatched.projection_matches is False
+    assert warm.projection_matches is True
+    assert mismatched.control == warm.control
+    assert mismatched.source_digest == warm.source_digest
+    assert inputs == [raw, raw, raw]
+    assert tuple(snapshot_digest_facts.items()) == ((raw, original.source_digest),)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        mismatched.projection_matches = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [
+    "duplicate", "nonfinite", "malformed", "none", "wrong_type", "oversized", "repair",
+])
+async def test_snapshot_digest_fact_cache_invalid_input_never_populates(
+    stores: _Harness, snapshot_digest_facts: OrderedDict[str, str], invalid: str,
+) -> None:
+    parent, _ = await _legacy_plan(stores)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    control = snapshot.control
+    raw = control.model_dump_json()
+    assert steps.owned_snapshot_source_digest(raw) == snapshot.source_digest
+    repair = steps.OwnedStepsRepairControl(
+        parent_id=control.parent_id, incarnation=control.incarnation,
+        owner_kind=control.owner_kind, thread_id=control.thread_id,
+        facilitator_id=control.facilitator_id, plan_digest=control.plan_digest,
+        child_ids=tuple(row.child.child_id for row in control.rows if row.child),
+        archived_control=steps.owned_digest(raw),
+        original_steps_digest=steps.owned_digest(control.original_steps_json),
+        steps_digest=control.steps_digest,
+    )
+    inputs = {
+        "duplicate": ['{"version":2,' + raw[1:]],
+        "nonfinite": [
+            raw.replace('"observation_revision":1', f'"observation_revision":{value}')
+            for value in ("NaN", "Infinity", "1e999")
+        ],
+        "malformed": ["", "{broken", "[]", "null", '"wrong shape"', raw + " trailing"],
+        "none": [None],
+        "wrong_type": [1, True, [], {}, raw.encode("utf-8")],
+        "oversized": [" " * steps.MAX_OWNED_MANIFEST_BYTES + raw],
+        "repair": [repair.model_dump_json(), repair],
+    }[invalid]
+    before = tuple(snapshot_digest_facts.items())
+    for value in inputs:
+        assert value != raw
+        for _ in range(2):
+            with pytest.raises(steps.OwnedStepsError):
+                steps.owned_snapshot_source_digest(value)
+            assert tuple(snapshot_digest_facts.items()) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", [
+    "membership", "parent", "child", "requirements", "booking",
+    "timestamps", "journals", "evidence", "projection", "authority",
+])
+async def test_cached_format_facts_do_not_authorize_stale_database_state(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch,
+    snapshot_digest_facts: OrderedDict[str, str], drift: str,
+) -> None:
+    parent, children = await _legacy_plan(stores, bookings=True)
+    started, _ = await _apply(
+        stores, await stores.first.get_owned_steps(parent.id), 0,
+        steps.StartOwnedStepCommand(execution_nonce="fact-cache-freshness"),
+        actor="agent-a", role="executor",
+    )
+    submitted, _ = await _apply(
+        stores, started.snapshot, 0, _submission(stores, started.permit),
+        actor="agent-a", role="executor",
+    )
+    warm = await stores.second.get_owned_steps(parent.id)
+    assert warm == submitted.snapshot and warm is not submitted.snapshot
+    with sqlite3.connect(stores.path) as db:
+        raw = db.execute("SELECT steps_control FROM work_items WHERE id=?", (parent.id,)).fetchone()[0]
+    assert steps.parse_owned_control(raw) == warm.control
+    assert snapshot_digest_facts[raw] == warm.source_digest
+    command = _review(stores, started.permit, warm.control.rows[0].submission)
+    authority = stores.owner.authority(parent.id, "verifier", "verifier")
+    mutation = steps.OwnedStepMutation(steps.OwnedStepChange(
+        operation_id=uuid.uuid4().hex, token=started.permit, command=command,
+    ), authority)
+    statements = {
+        "membership": ("UPDATE work_items SET parent_id=NULL WHERE id=?", (children[1].id,)),
+        "parent": ("UPDATE work_items SET actual_tokens=actual_tokens+1 WHERE id=?", (parent.id,)),
+        "child": ("UPDATE work_items SET actual_tokens=actual_tokens+1 WHERE id=?", (children[0].id,)),
+        "requirements": ("UPDATE resource_requirements SET priority=priority+1 WHERE work_item_id=?", (children[0].id,)),
+        "booking": ("UPDATE bookings SET total_tokens_consumed=total_tokens_consumed+1 WHERE id=?", (started.permit.booking_id,)),
+        "timestamps": ("UPDATE booking_timestamps SET timestamp=timestamp+1 WHERE booking_id=?", (started.permit.booking_id,)),
+        "journals": ("UPDATE booking_journals SET tokens_consumed=tokens_consumed+1 WHERE booking_id=?", (started.permit.booking_id,)),
+        "evidence": (
+            "UPDATE owned_steps_journal SET payload_digest=? WHERE parent_id=? AND kind='permit'",
+            ("0" * 64, parent.id),
+        ),
+        "projection": ("UPDATE work_items SET steps=? WHERE id=?", ("[]", parent.id)),
+    }
+    if drift == "authority":
+        del stores.owner.grants[authority.context]
+    else:
+        with sqlite3.connect(stores.path) as db:
+            statement, parameters = statements[drift]
+            assert db.execute(statement, parameters).rowcount > 0
+    facts_used: list[steps.OwnedStepsControl | str] = []
+    real_digest = steps.owned_snapshot_source_digest
+
+    def observe_digest(control: steps.OwnedStepsControl | str) -> str:
+        facts_used.append(control)
+        return real_digest(control)
+
+    monkeypatch.setattr(steps, "owned_snapshot_source_digest", observe_digest)
+    expected = {
+        "membership": "membership_conflict", "projection": "projection_conflict",
+        "evidence": "evidence_conflict", "authority": "authority_denied",
+    }.get(drift, "source_conflict")
+    before, events, blobs = _database(stores), list(stores.events), dict(stores.content.blobs)
+    with pytest.raises(steps.OwnedStepsError, match=expected):
+        await stores.second.compare_and_set_owned_step(mutation)
+    assert _database(stores) == before and stores.events == events and stores.content.blobs == blobs
+    # The existing authorization boundary follows the freshly proved load.
+    # Even a valid cached digest never substitutes for that authority check.
+    assert facts_used == ([raw] if drift == "authority" else [])
+    assert snapshot_digest_facts[raw] == warm.source_digest
+
+
+@pytest.mark.asyncio
+async def test_prepared_projection_encoding_is_exact_and_single_pass(
+    stores: _Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefix = '[ { "label" : "\\u03bb ", "status":"done", "note":null },\n' \
+        '{"status":"pending", "label":"manual sibling", "submitted_by":""} ] \t'
+    parent, _ = await _legacy_plan(stores, prefix=prefix)
+    await _adopt(stores, parent.id)
+    snapshot = await stores.first.get_owned_steps(parent.id)
+    control = snapshot.control
+    original_encoding = control.model_dump_json()
+    index = control.manual_prefix_length
+    rows = list(control.rows)
+    todo = steps.owned_json_loads(rows[index].todo_json)
+    todo["note"] = "Exact \u03bb encoding"
+    todo_json = steps.owned_json_bytes(todo).decode("utf-8")
+    rows[index] = rows[index].model_copy(update={
+        "todo_json": todo_json, "digest": steps.owned_digest(todo_json),
+        "revision": rows[index].revision + 1,
+    })
+    projection = steps.replace_owned_row(control.authorized_steps_json, index, todo_json)
+    expected = control.model_copy(update={
+        "rows": tuple(rows), "authorized_steps_json": projection,
+        "steps_digest": steps.owned_digest(projection),
+        "observation_revision": control.observation_revision + 1,
+    }).model_dump_json()
+    encodings: list[str] = []
+    real_dump = steps.OwnedStepsControl.model_dump_json
+
+    def observe_dump(candidate: steps.OwnedStepsControl, *args: Any, **kwargs: Any) -> str:
+        encoded = real_dump(candidate, *args, **kwargs)
+        encodings.append(encoded)
+        return encoded
+
+    monkeypatch.setattr(steps.OwnedStepsControl, "model_dump_json", observe_dump)
+    arguments = dict(
+        rows=tuple(rows), projection=projection, mode=control.mode,
+        layout_revision=control.layout_revision,
+    )
+    candidate, encoded = control.prepare_projection(**arguments)
+    assert type(candidate) is steps.OwnedStepsControl
+    assert encoded == expected and encodings == [expected]
+    assert steps.parse_owned_control(encoded) is candidate
+    assert candidate.steps_digest == steps.owned_digest(projection)
+    assert candidate.current_manual_prefix_json() == prefix
+    assert candidate.original_steps_json == prefix
+    for ordinal, row in enumerate(control.rows):
+        if ordinal != index:
+            assert candidate.rows[ordinal].model_dump_json() == row.model_dump_json()
+    assert real_dump(control) == original_encoding
+    encodings.clear()
+    compatible = control.with_projection(**arguments)
+    assert type(compatible) is steps.OwnedStepsControl
+    assert compatible == candidate and encodings == [expected]
+
+    encodings.clear()
+    applied, _ = await _apply(
+        stores, snapshot, index, steps.StartOwnedStepCommand(execution_nonce="prepared-encoding"),
+        actor="agent-a", role="executor",
+    )
+    assert len(encodings) == 1
+    with sqlite3.connect(stores.path) as db:
+        persisted = db.execute("SELECT steps_control FROM work_items WHERE id=?", (parent.id,)).fetchone()[0]
+    assert persisted == encodings[0] == real_dump(applied.snapshot.control)
+    assert applied.snapshot.control.current_manual_prefix_json() == prefix
+    assert applied.snapshot.control.rows[index + 1] == control.rows[index + 1]
+    assert applied.snapshot.source_digest == steps.owned_digest(steps.owned_json_bytes({
+        "parent": applied.snapshot.control.parent_source_digest,
+        "rows": [
+            [row.step_id, row.revision, row.digest, row.source_digest]
+            for row in applied.snapshot.control.rows
+        ],
+        "gate": applied.snapshot.control.gate_json,
+    }))
+    reopened = await stores.second.get_owned_steps(parent.id)
+    assert reopened == applied.snapshot
+    assert encodings == [persisted]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [
+    "rows_none", "rows_empty", "rows_list", "row_type", "row_revision",
+    "projection_none", "projection_empty", "projection_mismatch",
+    "mode_none", "mode_invalid", "layout_zero",
+])
+async def test_prepared_projection_invalid_input_preserves_compatibility_errors(
+    stores: _Harness, invalid: str,
+) -> None:
+    parent, _ = await _legacy_plan(stores)
+    control = (await stores.first.get_owned_steps(parent.id)).control
+    arguments: dict[str, Any] = dict(
+        rows=control.rows, projection=control.authorized_steps_json,
+        mode=control.mode, layout_revision=control.layout_revision,
+    )
+    changes = {
+        "rows_none": ("rows", None),
+        "rows_empty": ("rows", ()),
+        "rows_list": ("rows", list(control.rows)),
+        "row_type": ("rows", (object(), control.rows[1])),
+        "row_revision": ("rows", (control.rows[0].model_copy(update={"revision": 0}), control.rows[1])),
+        "projection_none": ("projection", None),
+        "projection_empty": ("projection", ""),
+        "projection_mismatch": ("projection", "[]"),
+        "mode_none": ("mode", None),
+        "mode_invalid": ("mode", "unknown"),
+        "layout_zero": ("layout_revision", 0),
+    }
+    key, value = changes[invalid]
+    arguments[key] = value
+    errors = []
+    before, events = _database(stores), list(stores.events)
+    for method in (control.prepare_projection, control.with_projection):
+        with pytest.raises(TypeError if invalid == "projection_none" else ValueError) as caught:
+            method(**arguments)
+        errors.append((type(caught.value), str(caught.value)))
+    assert errors[0] == errors[1]
+    assert _database(stores) == before and stores.events == events
 
 
 @pytest.mark.asyncio

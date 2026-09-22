@@ -839,6 +839,15 @@ class OwnedStepsControl(_ControlFields):
         mode: OwnedStepsMode, layout_revision: int,
     ) -> OwnedStepsControl:
         """Validate a projection delta over immutable, already validated rows."""
+        return self.prepare_projection(
+            rows=rows, projection=projection, mode=mode, layout_revision=layout_revision,
+        )[0]
+
+    def prepare_projection(
+        self, *, rows: tuple[OwnedStepRecord, ...], projection: str,
+        mode: OwnedStepsMode, layout_revision: int,
+    ) -> tuple[OwnedStepsControl, str]:
+        """Validate a projection delta and retain its exact persistence encoding."""
         if type(rows) is not tuple or len(rows) != len(self.rows):
             raise OwnedStepsError("owned_steps_rows_invalid", parent_id=self.parent_id)
         revisions = _ProjectionRevisions(
@@ -863,7 +872,7 @@ class OwnedStepsControl(_ControlFields):
         if len(encoded.encode("utf-8")) > MAX_OWNED_MANIFEST_BYTES:
             raise OwnedStepsError("owned_steps_manifest_too_large", parent_id=self.parent_id)
         _remember_validated_control(encoded, candidate)
-        return candidate
+        return candidate, encoded
 
     def with_finalization(
         self, *, receipt: FinalizeReceipt,
@@ -982,6 +991,38 @@ def parse_owned_control(raw: str) -> OwnedStepsControl | OwnedStepsRepairControl
     control = _validated_control(raw)
     _remember_validated_control(raw, control)
     return control
+
+
+_SNAPSHOT_SOURCE_DIGESTS: OrderedDict[str, str] = OrderedDict()
+_SNAPSHOT_SOURCE_LOCK = Lock()
+
+
+def owned_snapshot_source_digest(control: OwnedStepsControl | str) -> str:
+    """Digest a source projection; memoize only exact, strictly validated bytes."""
+    raw = control if type(control) is str else None
+    if raw is not None:
+        control = parse_owned_control(raw)
+    if isinstance(control, OwnedStepsRepairControl):
+        raise OwnedStepsError("owned_steps_repair_required", parent_id=control.parent_id)
+    if not isinstance(control, OwnedStepsControl):
+        raise OwnedStepsError("owned_steps_control_invalid")
+    if raw is not None:
+        with _SNAPSHOT_SOURCE_LOCK:
+            cached = _SNAPSHOT_SOURCE_DIGESTS.get(raw)
+            if cached is not None:
+                _SNAPSHOT_SOURCE_DIGESTS.move_to_end(raw)
+                return cached
+    sources = [[row.step_id, row.revision, row.digest, row.source_digest] for row in control.rows]
+    digest = owned_digest(owned_json_bytes({
+        "parent": control.parent_source_digest, "rows": sources, "gate": control.gate_json,
+    }))
+    if raw is not None:
+        with _SNAPSHOT_SOURCE_LOCK:
+            _SNAPSHOT_SOURCE_DIGESTS[raw] = digest
+            _SNAPSHOT_SOURCE_DIGESTS.move_to_end(raw)
+            while len(_SNAPSHOT_SOURCE_DIGESTS) > 4:
+                _SNAPSHOT_SOURCE_DIGESTS.popitem(last=False)
+    return digest
 
 
 class OwnedStepsPlanToken(_OwnedFormat):

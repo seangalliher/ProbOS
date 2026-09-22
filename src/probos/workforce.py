@@ -5722,17 +5722,25 @@ class WorkItemStore(EventEmitterMixin):
             )
             for child in children.values()
         }
-        sources = await self._owned_children_sources(
-            parent_id,
-            children,
-            protected_metadata_keys,
-        )
+        if step_id is not None and len(children) == 1:
+            child = next(iter(children.values()))
+            sources = {child.id: await self._owned_child_source(
+                child, protected_metadata_keys=protected_metadata_keys[child.id],
+            )}
+        else:
+            sources = await self._owned_children_sources(
+                parent_id,
+                children,
+                protected_metadata_keys,
+            )
         for row in relevant_rows:
             if row.child is not None:
                 if sources[row.child.child_id] != row.source_digest:
                     raise owned_steps.OwnedStepsError("owned_steps_source_conflict", parent_id=parent_id)
         await self._check_owned_evidence_references(control, relevant_rows)
-        return self._owned_snapshot(control, matches), parent, children
+        return self._owned_snapshot(
+            control, matches, raw_control=raw_parent["steps_control"],
+        ), parent, children
 
     async def _get_owned_crew_children_locked(
         self,
@@ -6022,12 +6030,11 @@ class WorkItemStore(EventEmitterMixin):
     @staticmethod
     def _owned_snapshot(
         control: owned_steps.OwnedStepsControl, projection_matches: bool = True,
+        *, raw_control: str | None = None,
     ) -> owned_steps.OwnedStepsSnapshot:
-        sources = [[row.step_id, row.revision, row.digest, row.source_digest] for row in control.rows]
-        source_digest = owned_steps.owned_digest(owned_steps.owned_json_bytes({
-            "parent": control.parent_source_digest, "rows": sources,
-            "gate": control.gate_json,
-        }))
+        source_digest = owned_steps.owned_snapshot_source_digest(
+            raw_control if raw_control is not None else control,
+        )
         return owned_steps.OwnedStepsSnapshot(control, source_digest, projection_matches)
 
     async def get_owned_steps(self, parent_id: str) -> owned_steps.OwnedStepsSnapshot | None:
@@ -6636,7 +6643,7 @@ class WorkItemStore(EventEmitterMixin):
                     rows[index] = row
                     if control.mode != "awaiting_adoption" or index < control.manual_prefix_length:
                         projection = owned_steps.replace_owned_row(projection, index, row.todo_json)
-                candidate = control.with_projection(
+                candidate, encoded_control = control.prepare_projection(
                     rows=tuple(rows), projection=projection,
                     mode=control_updates.get("mode", control.mode),
                     layout_revision=control_updates.get("layout_revision", control.layout_revision),
@@ -6661,9 +6668,9 @@ class WorkItemStore(EventEmitterMixin):
                 )
                 await self._db.execute(
                     "UPDATE work_items SET steps = ?, steps_control = ?, updated_at = ? WHERE id = ?",
-                    (projection, candidate.model_dump_json(), time.time(), parent.id),
+                    (projection, encoded_control, time.time(), parent.id),
                 )
-                result_snapshot = self._owned_snapshot(candidate)
+                result_snapshot = self._owned_snapshot(candidate, raw_control=encoded_control)
                 updated_parent = await self.get_work_item(parent.id)
                 updated_children = [await self.get_work_item(child_id) for child_id in sorted(changed_child_ids)]
             finally:
