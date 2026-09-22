@@ -2869,6 +2869,9 @@ async def test_owned_materialization_counter_scopes_concurrent_reads_and_excepti
     assert membership_conversion_counts == [1]
 
 
+# AD-1192: 300s hang budget for the unchanged 1,000-row/3,000-transition
+# CI stress workload; not a production latency SLA.
+@pytest.mark.timeout(300, func_only=False)
 @pytest.mark.asyncio
 async def test_1000_admitted_rows_reach_real_storage_verdicts_with_bounded_terminal_footprint(
     stores: _Harness, caplog: pytest.LogCaptureFixture,

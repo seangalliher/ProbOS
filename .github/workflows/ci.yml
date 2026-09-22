@@ -43,7 +43,6 @@ jobs:
         run: uv sync --group dev --extra discovery --extra browser
 
       - name: Run tests
-        id: required_python_tests
         # BF-322: dropped -x (fail-fast). Per user-memory rule, -x with xdist
         # kills the whole gate on any single artifact/flake. Use --maxfail=10
         # to still bail on real regressions while tolerating documented
@@ -54,15 +53,6 @@ jobs:
         # ("Event loop is closed") + timing-test flakes (bf304 single-flight,
         # ad1032 arousal decay). -n auto matches workers to cores.
         run: uv run pytest tests/ -n auto --maxfail=10 -q --tb=short
-
-      - name: Diagnose owned capacity (temporary PR 1410)
-        if: >-
-          ${{ failure() && !cancelled()
-              && github.event_name == 'pull_request'
-              && github.event.pull_request.number == 1410
-              && steps.required_python_tests.outcome == 'failure' }}
-        timeout-minutes: 4
-        run: .venv/bin/python -u scripts/diagnose_owned_capacity.py
 
   ui-tests:
     runs-on: ubuntu-latest
