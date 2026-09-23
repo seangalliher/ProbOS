@@ -10,12 +10,13 @@ import itertools
 import json
 import weakref
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from probos import work_item_steps as steps
 from probos.artifacts import ArtifactStore
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.cognitive.agentic_dispatch import (
@@ -26,6 +27,7 @@ from probos.cognitive.crew_executor import CrewTaskExecutor, SubtaskResult
 from probos.cognitive.crew_orchestrator import CrewOrchestrator
 from probos.cognitive.crew_session import CrewSessionService
 from probos.cognitive.crew_synth import SynthesisResult
+from probos.cognitive.crew_verifier import ConvergenceOutcome, VerificationVerdict
 from probos.config import GroupChatConfig, SystemConfig
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.events import EventType
@@ -145,6 +147,10 @@ class _Decision:
     capability: str = "build"
     department: str = "engineering"
 
+    @property
+    def agent_id(self) -> str:
+        return self.worker_agent_id
+
 
 @dataclass
 class _Delegation:
@@ -171,6 +177,11 @@ class _Delegator:
 @dataclass
 class _Verdict:
     accepted: bool = True
+    confidence: float = 0.9
+    critique: str = "accepted"
+    verifier_agent_id: str = "verifier-1"
+    verification_defect: bool = False
+    criteria: Any = None
 
 
 class _VerifierRecorder:
@@ -181,10 +192,19 @@ class _VerifierRecorder:
         self.calls.append(result)
         return _Verdict()
 
+    async def converge(
+        self, result: SubtaskResult, *, owned_steps_snapshot: steps.OwnedStepsSnapshot,
+    ) -> ConvergenceOutcome:
+        verdict = VerificationVerdict(**asdict(await self.verify(result)))
+        return ConvergenceOutcome(
+            result=result, verdict=verdict, status="converged", rounds=0,
+        )
+
 
 class _SynthRecorder:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[Any]]] = []
+        self.content: Any = None
 
     async def synthesize(
         self,
@@ -199,6 +219,35 @@ class _SynthRecorder:
             accepted_count=len(outcomes),
             total_count=len(outcomes),
         )
+
+    async def write_owned_steps_content(
+        self,
+        blob: bytes,
+        *,
+        mime: str,
+        origin: str,
+    ) -> Any:
+        digest = steps.owned_digest(blob)
+        assert self.content is not None
+        await self.content.write(
+            digest,
+            bytes(blob),
+            mime,
+            origin=origin,
+        )
+        return steps.OwnedContentReference(
+            content_hash=digest,
+            mime=mime,
+            size_bytes=len(blob),
+        )
+
+    async def synthesize_owned_legacy(
+        self,
+        parent_id: str,
+        outcomes: list[Any],
+        **kwargs: Any,
+    ) -> SynthesisResult:
+        return await self.synthesize(parent_id, outcomes)
 
 
 class _LLMResponse:
@@ -325,6 +374,7 @@ async def _session_parent(
     stores: _Stores,
     *,
     assignee: str = "agent-1",
+    manual_gate: bool = False,
 ) -> tuple[WorkItem, ChatThread, CrewSessionService]:
     assert stores.admission_port is not None
     async with stores.admission_port.reserve() as reservation:
@@ -334,8 +384,24 @@ async def _session_parent(
             description="Room-bound session",
             assigned_to="facilitator-1",
             created_by="captain",
-            metadata={},
+            metadata=(
+                {"steps_gate_completion": True}
+                if manual_gate
+                else {}
+            ),
             created_at=100.0,
+            steps=(
+                [{
+                    "label": "Captain gate",
+                    "status": "pending",
+                    "assigned_to": None,
+                    "submitted_by": None,
+                    "confirmed_by": None,
+                    "note": None,
+                }]
+                if manual_gate
+                else []
+            ),
         ))
     thread = stores.chat.create_thread(
         title="Room-bound session",
@@ -395,6 +461,7 @@ def _crew_executor(
     service: CrewSessionService | None = None,
     max_parallel: int = 3,
     emit_fn: Any = None,
+    owned_steps_execution_port: Any = None,
 ) -> CrewTaskExecutor:
     kwargs: dict[str, Any] = {
         "work_item_store": stores.work,
@@ -403,6 +470,7 @@ def _crew_executor(
         "runtime": runtime,
         "max_parallel_subtasks": max_parallel,
         "emit_fn": emit_fn,
+        "owned_steps_execution_port": owned_steps_execution_port,
     }
     if "crew_session_service" in inspect.signature(CrewTaskExecutor).parameters:
         kwargs["crew_session_service"] = service
@@ -491,6 +559,7 @@ async def test_real_room_bound_run_python_persists_child_evidence_and_parent_exe
     )
     verifier = _VerifierRecorder()
     synthesizer = _SynthRecorder()
+    synthesizer.content = stores.attachments
     orchestrator = CrewOrchestrator(
         assignment_resolver=_AssignmentResolver(agent.id),
         delegator=_Delegator(),
@@ -696,6 +765,59 @@ class _FallbackRaceStore:
             patch,
             **kwargs,
         )
+
+
+class _OwnedPortBarrier:
+    def __init__(
+        self,
+        delegate: Any,
+        store: WorkItemStore,
+        target_id: str,
+        operation: str,
+    ) -> None:
+        self._delegate = delegate
+        self._store = store
+        self._target_id = target_id
+        self._operation = operation
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def owns_store(self, store: object) -> bool:
+        return store is self._store
+
+    async def admit(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._delegate.admit(*args, **kwargs)
+
+    async def start(self, lease: Any, child_id: str, **kwargs: Any) -> Any:
+        if self._operation == "start" and child_id == self._target_id:
+            self.entered.set()
+            await self.release.wait()
+        return await self._delegate.start(lease, child_id, **kwargs)
+
+    async def submit(self, lease: Any, submission: Any) -> Any:
+        if (
+            self._operation == "submit"
+            and submission.permit.child_id == self._target_id
+        ):
+            self.entered.set()
+            await self.release.wait()
+        return await self._delegate.submit(lease, submission)
+
+    async def validate(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._delegate.validate(*args, **kwargs)
+
+    async def record_unstarted(
+        self,
+        lease: Any,
+        submission: Any,
+    ) -> Any:
+        if (
+            self._operation == "unstarted"
+            and submission.child_id == self._target_id
+        ):
+            self.entered.set()
+            await self.release.wait()
+        return await self._delegate.record_unstarted(lease, submission)
 
 
 class _ChildSnapshotBarrierStore(WorkItemStore):
@@ -970,6 +1092,7 @@ async def test_session_orchestrator_propagates_room_and_service_integrity_errors
     )
     verifier = _VerifierRecorder()
     synthesizer = _SynthRecorder()
+    synthesizer.content = stores.attachments
     orchestrator = CrewOrchestrator(
         assignment_resolver=_AssignmentResolver("agent-1"),
         delegator=_Delegator(),
@@ -1280,56 +1403,55 @@ async def test_child_evidence_contract_and_persistence_failure_fallback(
         child_id="evidence-failure-child",
     )
 
-    class _EvidenceFailStore:
-        def __init__(self, delegate: WorkItemStore, child_id: str) -> None:
+    class _EvidenceFailPort:
+        def __init__(self, delegate: Any) -> None:
             self._delegate = delegate
-            self._child_id = child_id
 
-        async def get_work_item(self, work_item_id: str) -> WorkItem | None:
-            return await self._delegate.get_work_item(work_item_id)
+        def owns_store(self, store: object) -> bool:
+            return store is stores.work
 
-        async def list_work_items(self, **kwargs: Any) -> list[WorkItem]:
-            return await self._delegate.list_work_items(**kwargs)
+        async def admit(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.admit(*args, **kwargs)
 
-        async def transition_work_item(
-            self,
-            work_item_id: str,
-            new_status: str,
-            source: str = "system",
-        ) -> WorkItem | None:
-            return await self._delegate.transition_work_item(
-                work_item_id,
-                new_status,
-                source,
-            )
+        async def start(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.start(*args, **kwargs)
 
-        async def merge_work_item_metadata(
-            self,
-            work_item_id: str,
-            patch: dict[str, Any],
-            **kwargs: Any,
-        ) -> WorkItem | None:
-            if work_item_id == self._child_id and "crew_execution" in patch:
-                raise RuntimeError("injected evidence persistence failure")
-            return await self._delegate.merge_work_item_metadata(
-                work_item_id,
-                patch,
-                **kwargs,
-            )
+        async def submit(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("injected evidence persistence failure")
+
+        async def validate(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.validate(*args, **kwargs)
+
+        async def record_unstarted(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.record_unstarted(*args, **kwargs)
+
+    # This assertion formerly injected at generic metadata persistence. Owned
+    # execution now persists through the typed submission port, so the failure
+    # is injected at that real boundary rather than bypassing ownership.
+    failure_port = _EvidenceFailPort(
+        stores.work.get_owned_steps_execution_port()
+    )
 
     failure_runtime = _runtime(stores, tmp_path)
     failure_crew = CrewTaskExecutor(
-        work_item_store=_EvidenceFailStore(stores.work, failed_child.id),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({"agent-1": _Agent("agent-1")}),
         agentic_executor=_StaticOutcomeExecutor(total_tokens=23),  # type: ignore[arg-type]
         runtime=failure_runtime,
+        owned_steps_execution_port=failure_port,  # type: ignore[arg-type]
     )
 
-    failure_result = (await failure_crew.run(failed_parent.id))[0]
+    with pytest.raises(
+        RuntimeError,
+        match="injected evidence persistence failure",
+    ):
+        await failure_crew.run(failed_parent.id)
     failed_stored = await stores.work.get_work_item(failed_child.id)
 
-    assert failure_result.status == "failed"
-    assert failed_stored is not None and failed_stored.status == "failed"
+    # The old assertion expected an invented failed result after persistence
+    # failed. Owned submission is a data-integrity boundary: the error
+    # propagates and the started row remains recoverably interrupted instead.
+    assert failed_stored is not None and failed_stored.status == "in_progress"
     assert failed_stored.actual_tokens == 0
     assert "crew_execution" not in failed_stored.metadata
 
@@ -1532,29 +1654,25 @@ async def test_over_int64_outcome_fails_durably_without_evidence_and_releases_lo
         runtime=_runtime(stores, tmp_path),
     )
 
-    result = (await crew.run(parent.id))[0]
+    with pytest.raises(ValueError, match="crew_execution_tokens_invalid"):
+        await crew.run(parent.id)
     stored = await stores.work.get_work_item(child.id)
 
-    assert result.status == "failed"
-    assert result.stopped_reason == "error"
-    assert result.actual_tokens == 0
-    assert result.tool_trace_ref is None
-    assert result.artifact_refs == []
-    assert stored is not None and stored.status == "failed"
+    # This previously expected a fabricated failed result and then used a
+    # private lock as its recovery oracle. The owned execution boundary now
+    # propagates invalid accounting and leaves the started row interrupted.
+    assert stored is not None and stored.status == "in_progress"
     assert stored.actual_tokens == 0
     assert "crew_execution" not in stored.metadata
-    assert not stores.work._work_item_row_write_lock.locked()
-
-    recovered = await stores.work.merge_work_item_metadata(
-        child.id,
-        {"post_failure_write": "ok"},
-        expected_work_type=child.work_type,
-        expected_status="failed",
+    snapshot = await stores.work.get_owned_steps(parent.id)
+    assert snapshot is not None
+    owned_row = next(
+        row for row in snapshot.control.rows if row.child is not None
     )
-
-    assert recovered is not None
-    assert recovered.metadata["post_failure_write"] == "ok"
-    assert "crew_execution" not in recovered.metadata
+    assert owned_row.permit_state == "started"
+    with pytest.raises(steps.OwnedStepsError, match="interrupted_work"):
+        await crew.run(parent.id)
+    assert len(outcome_executor.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -1662,7 +1780,14 @@ async def test_child_admission_rejects_snapshot_state_changes(
         assert changed is not None
         work.release_snapshot.set()
 
-        results = await run_task
+        # This used to expect a synthetic failed child result. Admission now
+        # protects the captured whole-plan identity, so a concurrent assignment,
+        # parent, or dependency change is a typed conflict before any worker.
+        with pytest.raises(
+            steps.OwnedStepsError,
+            match="owned_steps_execution_plan_conflict",
+        ):
+            await run_task
         stored = await work.get_work_item(child.id)
 
         assert stored is not None
@@ -1670,8 +1795,6 @@ async def test_child_admission_rejects_snapshot_state_changes(
         assert stored.actual_tokens == 0
         assert "crew_execution" not in stored.metadata
         assert outcome_executor.calls == []
-        result = next(item for item in results if item.work_item_id == child.id)
-        assert result.status == "failed"
         if mutation == "reassign":
             assert stored.assigned_to == "agent-new"
         elif mutation == "reparent":
@@ -1690,7 +1813,7 @@ async def test_terminal_merge_rejects_dependency_done_to_failed_race(
     tmp_path: Path,
 ) -> None:
     events = _EventRecorder()
-    work = _TerminalMergeBarrierStore(
+    work = WorkItemStore(
         db_path=str(tmp_path / "terminal-dependency.db"),
         emit_event=events,
         tick_interval=1_000,
@@ -1722,6 +1845,37 @@ async def test_terminal_merge_rejects_dependency_done_to_failed_race(
             depends_on=[dependency.id],
         )
         outcome_executor = _StaticOutcomeExecutor(total_tokens=13)
+        terminal_entered = asyncio.Event()
+        release_terminal = asyncio.Event()
+
+        class _TerminalSubmissionPort:
+            def __init__(self, delegate: Any) -> None:
+                self._delegate = delegate
+
+            def owns_store(self, store: object) -> bool:
+                return store is work
+
+            async def admit(self, *args: Any, **kwargs: Any) -> Any:
+                return await self._delegate.admit(*args, **kwargs)
+
+            async def start(self, *args: Any, **kwargs: Any) -> Any:
+                return await self._delegate.start(*args, **kwargs)
+
+            async def submit(self, lease: Any, submission: Any) -> Any:
+                if submission.permit.child_id == child.id:
+                    terminal_entered.set()
+                    await release_terminal.wait()
+                return await self._delegate.submit(lease, submission)
+
+            async def validate(self, *args: Any, **kwargs: Any) -> Any:
+                return await self._delegate.validate(*args, **kwargs)
+
+            async def record_unstarted(self, *args: Any, **kwargs: Any) -> Any:
+                return await self._delegate.record_unstarted(*args, **kwargs)
+
+        terminal_port = _TerminalSubmissionPort(
+            work.get_owned_steps_execution_port()
+        )
         crew = _crew_executor(
             stores=local_stores,
             registry=_Registry(
@@ -1732,31 +1886,34 @@ async def test_terminal_merge_rejects_dependency_done_to_failed_race(
             ),
             executor=outcome_executor,
             runtime=_runtime(local_stores, tmp_path),
+            owned_steps_execution_port=terminal_port,
         )
-        work.terminal_target_id = child.id
 
         run_task = asyncio.create_task(crew.run(parent.id))
-        await work.terminal_entered.wait()
-        changed = await work.update_work_item(dependency.id, status="failed")
-        assert changed is not None and changed.status == "failed"
-        work.release_terminal.set()
+        await terminal_entered.wait()
+        # This formerly raced a raw dependency status write against generic
+        # metadata merge. Both rows are now owned: the stale mutation is fenced
+        # before the typed child submission can commit.
+        with pytest.raises(steps.OwnedStepsError, match="owned_steps_write_reserved"):
+            await work.update_work_item(dependency.id, status="failed")
+        release_terminal.set()
 
         results = await run_task
         stored = await work.get_work_item(child.id)
 
         assert stored is not None
-        assert stored.status == "in_progress"
-        assert stored.actual_tokens == 0
-        assert "crew_execution" not in stored.metadata
+        assert stored.status == "done"
+        assert stored.actual_tokens == 13
+        assert stored.metadata["crew_execution"]["status"] == "done"
         result = next(item for item in results if item.work_item_id == child.id)
-        assert result.status == "failed"
+        assert result.status == "done"
         assert result.stopped_reason == "complete"
         assert [call["agent_id"] for call in outcome_executor.calls] == [
             "agent-dependency",
             "agent-dependent",
         ]
     finally:
-        work.release_terminal.set()
+        release_terminal.set()
         if run_task is not None and not run_task.done():
             run_task.cancel()
             await asyncio.gather(run_task, return_exceptions=True)
@@ -1781,41 +1938,45 @@ async def test_terminal_evidence_rejects_stale_ownership_or_parent(
         assigned_to=None,
     )
 
-    async def mutate() -> None:
-        updates = (
-            {"assigned_to": "late-agent"}
-            if mutation == "reassign"
-            else {"parent_id": replacement_parent.id}
-        )
-        updated = await stores.work.update_work_item(child.id, **updates)
-        assert updated is not None
-
     outcome_executor = _StaticOutcomeExecutor()
+    barrier = _OwnedPortBarrier(
+        stores.work.get_owned_steps_execution_port(),
+        stores.work,
+        child.id,
+        "unstarted",
+    )
     crew = CrewTaskExecutor(
-        work_item_store=_EvidenceBarrierStore(
-            stores.work,
-            child.id,
-            mutate,
-        ),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({}),
         agentic_executor=outcome_executor,  # type: ignore[arg-type]
         runtime=_runtime(stores, tmp_path),
+        owned_steps_execution_port=barrier,
     )
 
-    result = (await crew.run(parent.id))[0]
+    run_task = asyncio.create_task(crew.run(parent.id))
+    await barrier.entered.wait()
+    updates = (
+        {"assigned_to": "late-agent"}
+        if mutation == "reassign"
+        else {"parent_id": replacement_parent.id}
+    )
+    with pytest.raises(steps.OwnedStepsError, match="owned_steps_write_reserved"):
+        await stores.work.update_work_item(child.id, **updates)
+    barrier.release.set()
+    result = (await run_task)[0]
     stored = await stores.work.get_work_item(child.id)
 
     assert stored is not None
-    assert stored.status == "open"
-    assert "crew_execution" not in stored.metadata
-    assert result.status == "failed"
+    assert stored.status == "blocked"
+    assert stored.metadata["crew_execution"]["status"] == "blocked"
+    assert result.status == "blocked"
     assert result.stopped_reason == "unassigned"
     if mutation == "reassign":
-        assert stored.assigned_to == "late-agent"
+        assert stored.assigned_to is None
         assert stored.parent_id == parent.id
     else:
         assert stored.assigned_to is None
-        assert stored.parent_id == replacement_parent.id
+        assert stored.parent_id == parent.id
     assert outcome_executor.calls == []
 
 
@@ -1837,40 +1998,43 @@ async def test_running_child_state_conflict_skips_stale_failure_fallback(
         assigned_to="agent-1",
     )
 
-    async def mutate() -> None:
-        updates = (
-            {"assigned_to": "late-agent"}
-            if mutation == "reassign"
-            else {"parent_id": replacement_parent.id}
-        )
-        updated = await stores.work.update_work_item(child.id, **updates)
-        assert updated is not None
-        assert updated.status == "in_progress"
-
+    barrier = _OwnedPortBarrier(
+        stores.work.get_owned_steps_execution_port(),
+        stores.work,
+        child.id,
+        "submit",
+    )
     crew = CrewTaskExecutor(
-        work_item_store=_EvidenceBarrierStore(
-            stores.work,
-            child.id,
-            mutate,
-        ),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({"agent-1": _Agent("agent-1")}),
         agentic_executor=_StaticOutcomeExecutor(),  # type: ignore[arg-type]
         runtime=_runtime(stores, tmp_path),
+        owned_steps_execution_port=barrier,
     )
 
-    result = (await crew.run(parent.id))[0]
+    run_task = asyncio.create_task(crew.run(parent.id))
+    await barrier.entered.wait()
+    updates = (
+        {"assigned_to": "late-agent"}
+        if mutation == "reassign"
+        else {"parent_id": replacement_parent.id}
+    )
+    with pytest.raises(steps.OwnedStepsError, match="owned_steps_write_reserved"):
+        await stores.work.update_work_item(child.id, **updates)
+    barrier.release.set()
+    result = (await run_task)[0]
     stored = await stores.work.get_work_item(child.id)
 
     assert stored is not None
-    assert stored.status == "in_progress"
-    assert "crew_execution" not in stored.metadata
-    assert result.status == "failed"
+    assert stored.status == "done"
+    assert stored.metadata["crew_execution"]["status"] == "done"
+    assert result.status == "done"
     if mutation == "reassign":
-        assert stored.assigned_to == "late-agent"
+        assert stored.assigned_to == "agent-1"
         assert stored.parent_id == parent.id
     else:
         assert stored.assigned_to == "agent-1"
-        assert stored.parent_id == replacement_parent.id
+        assert stored.parent_id == parent.id
 
 
 @pytest.mark.parametrize("mutation", ["reassign", "reparent", "dependency_list"])
@@ -1894,52 +2058,78 @@ async def test_non_conflict_persistence_fallback_rechecks_exact_child_snapshot(
         child_id=f"fallback-stale-{mutation}",
         assigned_to="agent-1",
     )
-    race_store = _FallbackRaceStore(stores.work, child.id)
+    barrier = _OwnedPortBarrier(
+        stores.work.get_owned_steps_execution_port(),
+        stores.work,
+        child.id,
+        "submit",
+    )
+
+    class _FailingSubmissionPort:
+        def owns_store(self, store: object) -> bool:
+            return barrier.owns_store(store)
+
+        async def admit(self, *args: Any, **kwargs: Any) -> Any:
+            return await barrier.admit(*args, **kwargs)
+
+        async def start(self, *args: Any, **kwargs: Any) -> Any:
+            return await barrier.start(*args, **kwargs)
+
+        async def submit(self, *args: Any, **kwargs: Any) -> Any:
+            barrier.entered.set()
+            await barrier.release.wait()
+            raise RuntimeError("injected primary terminal persistence failure")
+
+        async def validate(self, *args: Any, **kwargs: Any) -> Any:
+            return await barrier.validate(*args, **kwargs)
+
+        async def record_unstarted(self, *args: Any, **kwargs: Any) -> Any:
+            return await barrier.record_unstarted(*args, **kwargs)
+
     crew = CrewTaskExecutor(
-        work_item_store=race_store,  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({"agent-1": _Agent("agent-1")}),
         agentic_executor=_StaticOutcomeExecutor(total_tokens=19),  # type: ignore[arg-type]
         runtime=_runtime(stores, tmp_path),
+        owned_steps_execution_port=_FailingSubmissionPort(),  # type: ignore[arg-type]
     )
     run_task = asyncio.create_task(crew.run(parent.id))
     try:
-        await race_store.primary_merge_entered.wait()
+        await barrier.entered.wait()
         if mutation == "reassign":
             updates: dict[str, Any] = {"assigned_to": "agent-2"}
         elif mutation == "reparent":
             updates = {"parent_id": replacement_parent.id}
         else:
             updates = {"depends_on": [dependency.id]}
-        mutation_task = asyncio.create_task(
-            stores.work.update_work_item(child.id, **updates)
-        )
-        changed = await mutation_task
-        assert changed is not None and changed.status == "in_progress"
-        race_store.release_primary_merge.set()
-
-        results = await run_task
+        with pytest.raises(steps.OwnedStepsError, match="owned_steps_write_reserved"):
+            await stores.work.update_work_item(child.id, **updates)
+        barrier.release.set()
+        with pytest.raises(
+            RuntimeError,
+            match="injected primary terminal persistence failure",
+        ):
+            await run_task
         stored = await stores.work.get_work_item(child.id)
 
         assert stored is not None
         assert stored.status == "in_progress"
         assert stored.actual_tokens == 0
         assert "crew_execution" not in stored.metadata
-        result = next(item for item in results if item.work_item_id == child.id)
-        assert result.status == "failed"
         if mutation == "reassign":
-            assert stored.assigned_to == "agent-2"
+            assert stored.assigned_to == "agent-1"
             assert stored.parent_id == parent.id
             assert stored.depends_on == []
         elif mutation == "reparent":
             assert stored.assigned_to == "agent-1"
-            assert stored.parent_id == replacement_parent.id
+            assert stored.parent_id == parent.id
             assert stored.depends_on == []
         else:
             assert stored.assigned_to == "agent-1"
             assert stored.parent_id == parent.id
-            assert stored.depends_on == [dependency.id]
+            assert stored.depends_on == []
     finally:
-        race_store.release_primary_merge.set()
+        barrier.release.set()
         if not run_task.done():
             run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
@@ -1953,70 +2143,49 @@ async def test_child_start_transition_failure_persists_blocked(
     child = await _child(stores, parent_id=parent.id)
     outcome_executor = _StaticOutcomeExecutor()
 
-    class _StartTransitionFailStore:
-        def __init__(self, delegate: WorkItemStore, child_id: str) -> None:
+    class _StartFailPort:
+        def __init__(self, delegate: Any, *, after_commit: bool) -> None:
             self._delegate = delegate
-            self._child_id = child_id
-            self._failed = False
+            self._after_commit = after_commit
 
-        async def get_work_item(self, work_item_id: str) -> WorkItem | None:
-            return await self._delegate.get_work_item(work_item_id)
+        def owns_store(self, store: object) -> bool:
+            return store is stores.work
 
-        async def list_work_items(self, **kwargs: Any) -> list[WorkItem]:
-            return await self._delegate.list_work_items(**kwargs)
+        async def admit(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.admit(*args, **kwargs)
 
-        async def transition_work_item(
-            self,
-            work_item_id: str,
-            new_status: str,
-            source: str = "system",
-        ) -> WorkItem | None:
-            if (
-                work_item_id == self._child_id
-                and new_status == "in_progress"
-                and not self._failed
-            ):
-                self._failed = True
-                return None
-            return await self._delegate.transition_work_item(
-                work_item_id,
-                new_status,
-                source,
-            )
+        async def start(self, *args: Any, **kwargs: Any) -> Any:
+            if self._after_commit:
+                await self._delegate.start(*args, **kwargs)
+            raise RuntimeError("injected owned start failure")
 
-        async def merge_work_item_metadata(
-            self,
-            work_item_id: str,
-            patch: dict[str, Any],
-            **kwargs: Any,
-        ) -> WorkItem | None:
-            if (
-                work_item_id == self._child_id
-                and not patch
-                and kwargs.get("new_status") == "in_progress"
-                and not self._failed
-            ):
-                self._failed = True
-                return None
-            return await self._delegate.merge_work_item_metadata(
-                work_item_id,
-                patch,
-                **kwargs,
-            )
+        async def submit(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.submit(*args, **kwargs)
+
+        async def validate(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.validate(*args, **kwargs)
+
+        async def record_unstarted(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._delegate.record_unstarted(*args, **kwargs)
 
     runtime = _runtime(stores, tmp_path)
+    execution_port = stores.work.get_owned_steps_execution_port()
     crew = CrewTaskExecutor(
-        work_item_store=_StartTransitionFailStore(stores.work, child.id),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({"agent-1": _Agent("agent-1")}),
         agentic_executor=outcome_executor,  # type: ignore[arg-type]
         runtime=runtime,
+        owned_steps_execution_port=_StartFailPort(
+            execution_port,
+            after_commit=False,
+        ),  # type: ignore[arg-type]
     )
 
-    result = (await crew.run(parent.id))[0]
+    with pytest.raises(RuntimeError, match="injected owned start failure"):
+        await crew.run(parent.id)
     stored = await stores.work.get_work_item(child.id)
 
-    assert stored is not None and stored.status == "blocked"
-    assert result.stopped_reason == "start_transition_failed"
+    assert stored is not None and stored.status == "open"
     assert outcome_executor.calls == []
 
     committed_parent = await stores.work.create_work_item(
@@ -2029,53 +2198,25 @@ async def test_child_start_transition_failure_persists_blocked(
         child_id="post-commit-transition-child",
     )
 
-    class _PostCommitTransitionFailStore(_StartTransitionFailStore):
-        async def merge_work_item_metadata(
-            self,
-            work_item_id: str,
-            patch: dict[str, Any],
-            **kwargs: Any,
-        ) -> WorkItem | None:
-            if (
-                work_item_id == self._child_id
-                and not patch
-                and kwargs.get("new_status") == "in_progress"
-                and not self._failed
-            ):
-                self._failed = True
-                transitioned = await self._delegate.merge_work_item_metadata(
-                    work_item_id,
-                    patch,
-                    **kwargs,
-                )
-                assert transitioned is not None
-                raise RuntimeError("injected post-commit transition failure")
-            return await self._delegate.merge_work_item_metadata(
-                work_item_id,
-                patch,
-                **kwargs,
-            )
-
     committed_executor = _StaticOutcomeExecutor()
     committed_crew = CrewTaskExecutor(
-        work_item_store=_PostCommitTransitionFailStore(
-            stores.work,
-            committed_child.id,
-        ),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry({"agent-1": _Agent("agent-1")}),
         agentic_executor=committed_executor,  # type: ignore[arg-type]
         runtime=_runtime(stores, tmp_path),
+        owned_steps_execution_port=_StartFailPort(
+            execution_port,
+            after_commit=True,
+        ),  # type: ignore[arg-type]
     )
 
-    committed_result = (await committed_crew.run(committed_parent.id))[0]
+    with pytest.raises(RuntimeError, match="injected owned start failure"):
+        await committed_crew.run(committed_parent.id)
     committed_stored = await stores.work.get_work_item(committed_child.id)
 
-    assert committed_stored is not None and committed_stored.status == "blocked"
-    assert committed_result.status == "blocked"
-    assert committed_result.stopped_reason == "start_transition_failed"
-    assert committed_stored.metadata["crew_execution"]["stopped_reason"] == (
-        "start_transition_failed"
-    )
+    assert committed_stored is not None
+    assert committed_stored.status == "in_progress"
+    assert "crew_execution" not in committed_stored.metadata
     assert committed_executor.calls == []
 
 
@@ -2267,36 +2408,33 @@ async def test_dependency_blocked_evidence_revalidates_live_dependencies(
         depends_on=[failed.id],
     )
 
-    async def mutate() -> None:
-        if mutation == "dependency_list":
-            updated = await stores.work.update_work_item(
-                blocked.id,
-                depends_on=[],
-            )
-        else:
-            updated = await stores.work.update_work_item(
-                failed.id,
-                status="done",
-            )
-        assert updated is not None
-
     outcome_executor = _StaticOutcomeExecutor(stopped_reason="error")
     agents = {
         "agent-failed": _Agent("agent-failed"),
         "agent-blocked": _Agent("agent-blocked"),
     }
+    barrier = _OwnedPortBarrier(
+        stores.work.get_owned_steps_execution_port(),
+        stores.work,
+        blocked.id,
+        "unstarted",
+    )
     crew = CrewTaskExecutor(
-        work_item_store=_EvidenceBarrierStore(
-            stores.work,
-            blocked.id,
-            mutate,
-        ),  # type: ignore[arg-type]
+        work_item_store=stores.work,
         agent_registry=_Registry(agents),
         agentic_executor=outcome_executor,  # type: ignore[arg-type]
         runtime=_runtime(stores, tmp_path),
+        owned_steps_execution_port=barrier,
     )
 
-    results = await crew.run(parent.id)
+    run_task = asyncio.create_task(crew.run(parent.id))
+    await barrier.entered.wait()
+    target = blocked.id if mutation == "dependency_list" else failed.id
+    updates = {"depends_on": []} if mutation == "dependency_list" else {"status": "done"}
+    with pytest.raises(steps.OwnedStepsError, match="owned_steps_write_reserved"):
+        await stores.work.update_work_item(target, **updates)
+    barrier.release.set()
+    results = await run_task
     blocked_result = next(
         result for result in results if result.work_item_id == blocked.id
     )
@@ -2305,16 +2443,16 @@ async def test_dependency_blocked_evidence_revalidates_live_dependencies(
 
     assert stored_blocked is not None
     assert stored_dependency is not None
-    assert stored_blocked.status == "open"
-    assert "crew_execution" not in stored_blocked.metadata
-    assert blocked_result.status == "failed"
+    assert stored_blocked.status == "blocked"
+    assert stored_blocked.metadata["crew_execution"]["status"] == "blocked"
+    assert blocked_result.status == "blocked"
     assert blocked_result.stopped_reason == "dependency_blocked"
     if mutation == "dependency_list":
-        assert stored_blocked.depends_on == []
+        assert stored_blocked.depends_on == [failed.id]
         assert stored_dependency.status == "failed"
     else:
         assert stored_blocked.depends_on == [failed.id]
-        assert stored_dependency.status == "done"
+        assert stored_dependency.status == "failed"
 
 
 @pytest.mark.parametrize("delta", [True, -1, 1.5, 9_223_372_036_854_775_808])
@@ -2623,6 +2761,7 @@ async def _run_partial_transaction_failure(
     *,
     failure_kind: str,
     sql_fragment: str,
+    runtime_rollback_attempts: int = 2,
 ) -> None:
     rollback_attempts = connection.rollback_attempts
     if failure_kind == "runtime":
@@ -2648,7 +2787,13 @@ async def _run_partial_transaction_failure(
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-    assert connection.rollback_attempts == rollback_attempts + 1
+    expected_rollbacks = (
+        runtime_rollback_attempts if failure_kind == "runtime" else 1
+    )
+    assert (
+        connection.rollback_attempts
+        == rollback_attempts + expected_rollbacks
+    )
 
 
 class _ObservedRowWriteLock:
@@ -2694,6 +2839,9 @@ async def test_actual_tokens_delta_failure_rolls_back_and_releases_lock(
     try:
         item = await store.create_work_item(title="tokens")
         assert factory.connection is not None
+        rollback_attempts_before_fault = (
+            factory.connection.rollback_attempts
+        )
         factory.connection.failure = failure
         with pytest.raises(type(failure), match="token update"):
             await store.merge_work_item_metadata(
@@ -2701,7 +2849,12 @@ async def test_actual_tokens_delta_failure_rolls_back_and_releases_lock(
                 {"crew_execution": {"version": 1}},
                 actual_tokens_delta=5,
             )
-        assert factory.connection.rollback_attempts == 1
+        # The old +2 pinned duplicate cleanup; the transaction owner now
+        # rolls back this execute fault exactly once, leaving data unchanged.
+        assert (
+            factory.connection.rollback_attempts
+            == rollback_attempts_before_fault + 1
+        )
         assert not store._work_item_row_write_lock.locked()
         recovered = await store.merge_work_item_metadata(
             item.id,
@@ -2846,6 +2999,7 @@ async def test_complete_booking_baseexception_rolls_back_partial_transaction(
             complete_booking,
             failure_kind=failure_kind,
             sql_fragment="UPDATE work_items SET actual_tokens = actual_tokens + ?",
+            runtime_rollback_attempts=1,
         )
 
         assert await _workforce_transaction_snapshot(factory.connection) == before
@@ -3063,17 +3217,80 @@ async def test_complete_booking_rejects_invalid_token_delta_without_mutation(
 async def test_max_parallel_subtasks_remains_hard_bound(
     stores: _Stores,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parent = await stores.work.create_work_item(title="legacy", work_type="task")
     agents = {f"agent-{index}": _Agent(f"agent-{index}") for index in range(6)}
-    for index, agent_id in enumerate(agents):
+    expected_calls = [
+        (f"parallel-{index}", agent_id) for index, agent_id in enumerate(agents)
+    ]
+    for child_id, agent_id in expected_calls:
         await _child(
             stores,
             parent_id=parent.id,
-            child_id=f"parallel-{index}",
+            child_id=child_id,
             assigned_to=agent_id,
         )
-    outcome_executor = _StaticOutcomeExecutor(delay=0.03)
+    all_attempted = asyncio.Event()
+    pair_entered = asyncio.Event()
+    release = asyncio.Event()
+    attempted_tasks: list[asyncio.Task[Any]] = []
+    grants = 0
+    max_grants = 0
+
+    class _RecordingSemaphore(asyncio.Semaphore):
+        async def acquire(self) -> bool:
+            nonlocal grants, max_grants
+            task = asyncio.current_task()
+            assert task is not None
+            attempted_tasks.append(task)
+            if len(attempted_tasks) == 6:
+                all_attempted.set()
+            acquired = await super().acquire()
+            grants += 1
+            max_grants = max(max_grants, grants)
+            return acquired
+
+        def release(self) -> None:
+            nonlocal grants
+            super().release()
+            grants -= 1
+
+    class _RendezvousExecutor:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.completed_calls: list[tuple[str, str]] = []
+            self.active = 0
+            self.max_active = 0
+
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            identity = (
+                kwargs["extra_context"]["_crew_work_item_id"],
+                kwargs["agent_id"],
+            )
+            self.calls.append(identity)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                if self.active == 2:
+                    pair_entered.set()
+                await release.wait()
+                outcome = WorkItemAgenticOutcome(
+                    final_text=f"done {identity[0]}",
+                    stopped_reason="complete",
+                    tool_trace_ref=_SHA_B,
+                    total_tokens=3,
+                )
+                self.completed_calls.append(identity)
+                return outcome
+            finally:
+                self.active -= 1
+
+    async def _rendezvous() -> None:
+        await all_attempted.wait()
+        await pair_entered.wait()
+
+    outcome_executor = _RendezvousExecutor()
     crew = _crew_executor(
         stores=stores,
         registry=_Registry(agents),
@@ -3081,11 +3298,63 @@ async def test_max_parallel_subtasks_remains_hard_bound(
         runtime=_runtime(stores, tmp_path),
         max_parallel=2,
     )
+    monkeypatch.setattr(
+        "probos.cognitive.crew_executor.asyncio.Semaphore",
+        _RecordingSemaphore,
+    )
 
-    results = await crew.run(parent.id)
+    task = asyncio.create_task(crew.run(parent.id))
+    rendezvous = asyncio.create_task(_rendezvous())
+    try:
+        ready, _ = await asyncio.wait(
+            (task, rendezvous), return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert rendezvous in ready, "Crew finished before the concurrency rendezvous"
+        await rendezvous
+        assert not task.done()
+        assert len(attempted_tasks) == len(set(attempted_tasks)) == 6
+        # The old 30ms sleep did not guarantee overlapping durable admissions.
+        # Count real grants too: a slow third admission must not hide a wider limit.
+        assert grants == max_grants == 2
+        assert outcome_executor.active == 2
+        assert len(outcome_executor.calls) == 2
+        assert outcome_executor.completed_calls == []
 
-    assert len(results) == 6
-    assert outcome_executor.max_active == 2
+        release.set()
+        results = await task
+
+        assert len(results) == 6
+        assert outcome_executor.max_active == 2
+        assert len(outcome_executor.calls) == len(outcome_executor.completed_calls) == 6
+        assert sorted(outcome_executor.calls) == expected_calls
+        assert sorted(outcome_executor.completed_calls) == expected_calls
+        assert sorted(
+            (
+                result.work_item_id,
+                result.agent_id,
+                result.output,
+                result.status,
+                result.stopped_reason,
+            )
+            for result in results
+        ) == [
+            (child_id, agent_id, f"done {child_id}", "done", "complete")
+            for child_id, agent_id in expected_calls
+        ]
+        assert outcome_executor.active == 0
+        assert grants == 0
+        assert max_grants == 2
+        assert all(child_task.done() for child_task in attempted_tasks)
+    finally:
+        release.set()
+        for held_task in (task, rendezvous):
+            if not held_task.done():
+                held_task.cancel()
+        await asyncio.gather(task, rendezvous, return_exceptions=True)
+        for child_task in attempted_tasks:
+            if not child_task.done():
+                child_task.cancel()
+        await asyncio.gather(*attempted_tasks, return_exceptions=True)
 
 
 async def test_cancellation_propagates_and_reaps_held_child_tasks(
@@ -3139,6 +3408,7 @@ async def test_legacy_orchestrator_still_verifies_and_synthesizes(
     )
     verifier = _VerifierRecorder()
     synthesizer = _SynthRecorder()
+    synthesizer.content = stores.attachments
     orchestrator = CrewOrchestrator(
         assignment_resolver=_AssignmentResolver("agent-1"),
         delegator=_Delegator(),
@@ -3156,6 +3426,296 @@ async def test_legacy_orchestrator_still_verifies_and_synthesizes(
     assert result.final_output == "legacy synthesis"
     assert len(verifier.calls) == 1
     assert len(synthesizer.calls) == 1
+
+
+@pytest.mark.parametrize("auto_create", [False, True])
+async def test_owned_legacy_orchestrator_admits_real_room_before_unassigned_children(
+    stores: _Stores,
+    tmp_path: Path,
+    auto_create: bool,
+) -> None:
+    parent = await stores.work.create_work_item(
+        title="owned legacy room",
+        work_type="task",
+    )
+    original_children = (
+        await _child(
+            stores,
+            parent_id=parent.id,
+            child_id="room-child-a",
+            assigned_to=None,
+        ),
+        await _child(
+            stores,
+            parent_id=parent.id,
+            child_id="room-child-b",
+            assigned_to=None,
+        ),
+    )
+    existing_room = (
+        None
+        if auto_create
+        else stores.chat.create_thread(
+            title="Existing owned room",
+            participants=["agent-a", "agent-b"],
+            task_id=parent.id,
+        )
+    )
+    agents = {
+        "agent-a": _Agent("agent-a", agent_type="builder"),
+        "agent-b": _Agent("agent-b", agent_type="diagnostician"),
+    }
+    runtime = _runtime(stores, tmp_path, auto_room=auto_create)
+    if auto_create:
+        runtime.agent_group_chat = AgentGroupChatService(
+            store=stores.chat,
+            registry=_Registry(agents),
+            callsign_registry=_NoCallsigns(),
+            config=runtime.config.group_chat,
+            clock=_Clock(),
+        )
+
+    class _PerChildResolver:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def resolve(self, spec: Any) -> _Decision:
+            self.calls.append(spec.spec_id)
+            return _Decision(
+                "agent-a" if spec.spec_id.endswith("-a") else "agent-b"
+            )
+
+    class _RecordingDelegator(_Delegator):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def delegate(self, decision: _Decision) -> _Delegation:
+            self.calls.append(decision.worker_agent_id)
+            return super().delegate(decision)
+
+    resolver = _PerChildResolver()
+    delegator = _RecordingDelegator()
+    outcome_executor = _StaticOutcomeExecutor()
+    crew = _crew_executor(
+        stores=stores,
+        registry=_Registry(agents),
+        executor=outcome_executor,
+        runtime=runtime,
+    )
+    verifier = _VerifierRecorder()
+    synthesizer = _SynthRecorder()
+    synthesizer.content = stores.attachments
+    orchestrator = CrewOrchestrator(
+        assignment_resolver=resolver,
+        delegator=delegator,
+        crew_executor=crew,
+        verifier=verifier,
+        synthesizer=synthesizer,
+        work_item_store=stores.work,
+        runtime=runtime,
+        config=runtime.config,
+    )
+
+    result = await orchestrator.run_crew_task(parent.id)
+
+    rooms = stores.chat.list_threads(
+        task_id=parent.id,
+        include_archived=True,
+    )
+    assert result.completed is True
+    assert len(rooms) == 1
+    if existing_room is not None:
+        assert rooms[0].id == existing_room.id
+    assert runtime.config.group_chat.auto_task_room_enabled is auto_create
+    snapshot = await stores.work.get_owned_steps(parent.id)
+    assert snapshot is not None
+    assert snapshot.control.owner_kind == "legacy"
+    assert snapshot.control.thread_id == rooms[0].id
+    assert snapshot.control.facilitator_id is None
+    assert {
+        call["thread_id"] for call in outcome_executor.calls
+    } == {rooms[0].id}
+    assert {
+        call["extra_context"]["_crew_session_id"]
+        for call in outcome_executor.calls
+    } == {parent.id}
+    assert {
+        call["extra_context"]["_crew_work_item_id"]
+        for call in outcome_executor.calls
+    } == {child.id for child in original_children}
+    assert len(verifier.calls) == 2
+    assert len(synthesizer.calls) == 1
+    assert sorted(resolver.calls) == ["room-child-a", "room-child-b"]
+    assert sorted(delegator.calls) == ["agent-a", "agent-b"]
+    for child, assignee in zip(original_children, ("agent-a", "agent-b")):
+        stored = await stores.work.get_work_item(child.id)
+        assert stored is not None
+        assert stored.assigned_to == assignee
+        assert set(stored.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
+        assert stored.metadata["crew_execution"]["thread_id"] == rooms[0].id
+    final_snapshot = await stores.work.get_owned_steps(parent.id)
+    assert final_snapshot is not None
+    assert final_snapshot.control.thread_id == snapshot.control.thread_id
+    assert len(stores.chat.list_threads(
+        task_id=parent.id,
+        include_archived=True,
+    )) == 1
+
+
+async def test_owned_legacy_room_preserves_nonempty_prefix_before_human_adoption(
+    stores: _Stores,
+    tmp_path: Path,
+) -> None:
+    parent = await stores.work.create_work_item(
+        title="owned legacy adoption room",
+        work_type="task",
+        steps=[{"label": "Captain gate", "status": "pending"}],
+    )
+    children = (
+        await _child(
+            stores,
+            parent_id=parent.id,
+            child_id="adoption-room-a",
+            assigned_to=None,
+        ),
+        await _child(
+            stores,
+            parent_id=parent.id,
+            child_id="adoption-room-b",
+            assigned_to=None,
+        ),
+    )
+    room = stores.chat.create_thread(
+        title="Adoption room",
+        participants=["agent-a", "agent-b"],
+        task_id=parent.id,
+    )
+    runtime = _runtime(stores, tmp_path, auto_room=False)
+
+    class _PerChildResolver:
+        def resolve(self, spec: Any) -> _Decision:
+            return _Decision(
+                "agent-a" if spec.spec_id.endswith("-a") else "agent-b"
+            )
+
+    class _ForbiddenDelegator:
+        def delegate(self, decision: Any) -> Any:
+            raise AssertionError("delegation ran before human adoption")
+
+    class _ForbiddenWorker:
+        async def run(self, **kwargs: Any) -> Any:
+            raise AssertionError("worker ran before human adoption")
+
+    crew = _crew_executor(
+        stores=stores,
+        registry=_Registry({
+            "agent-a": _Agent("agent-a"),
+            "agent-b": _Agent("agent-b"),
+        }),
+        executor=_ForbiddenWorker(),
+        runtime=runtime,
+    )
+    orchestrator = CrewOrchestrator(
+        assignment_resolver=_PerChildResolver(),
+        delegator=_ForbiddenDelegator(),
+        crew_executor=crew,
+        verifier=_VerifierRecorder(),
+        synthesizer=_SynthRecorder(),
+        work_item_store=stores.work,
+        runtime=runtime,
+        config=runtime.config,
+    )
+
+    result = await orchestrator.run_crew_task(parent.id)
+
+    assert result.disposition == "pending"
+    snapshot = await stores.work.get_owned_steps(parent.id)
+    assert snapshot is not None
+    assert snapshot.control.mode == "awaiting_adoption"
+    assert snapshot.control.thread_id == room.id
+    assert snapshot.control.facilitator_id is None
+    assert (await stores.work.get_work_item(parent.id)).steps == parent.steps
+    for child in children:
+        stored = await stores.work.get_work_item(child.id)
+        assert stored is not None
+        assert stored.assigned_to is None
+        assert "crew_execution" not in stored.metadata
+
+
+async def test_owned_legacy_room_admission_rejects_changed_original_child_snapshot(
+    stores: _Stores,
+    tmp_path: Path,
+) -> None:
+    parent = await stores.work.create_work_item(
+        title="owned stale room",
+        work_type="task",
+    )
+    child = await _child(
+        stores,
+        parent_id=parent.id,
+        child_id="stale-room-a",
+        assigned_to=None,
+    )
+    room = stores.chat.create_thread(
+        title="Stale room",
+        participants=["agent-a"],
+        task_id=parent.id,
+    )
+    runtime = _runtime(stores, tmp_path, auto_room=False)
+
+    class _MutatingRoomExecutor(CrewTaskExecutor):
+        async def resolve_task_room(
+            self,
+            prospective_parent: WorkItem,
+            prospective_children: list[WorkItem],
+        ) -> ChatThread | None:
+            resolved = await super().resolve_task_room(
+                prospective_parent,
+                prospective_children,
+            )
+            await stores.work.update_work_item(
+                child.id,
+                description="changed after prospective selection",
+            )
+            return resolved
+
+    class _ForbiddenWorker:
+        async def run(self, **kwargs: Any) -> Any:
+            raise AssertionError("worker ran after stale child decision")
+
+    crew = _MutatingRoomExecutor(
+        work_item_store=stores.work,
+        agent_registry=_Registry({"agent-a": _Agent("agent-a")}),
+        agentic_executor=_ForbiddenWorker(),
+        runtime=runtime,
+        attachment_store=stores.attachments,
+    )
+    orchestrator = CrewOrchestrator(
+        assignment_resolver=_AssignmentResolver("agent-a"),
+        delegator=_Delegator(),
+        crew_executor=crew,
+        verifier=_VerifierRecorder(),
+        synthesizer=_SynthRecorder(),
+        work_item_store=stores.work,
+        runtime=runtime,
+        config=runtime.config,
+    )
+
+    with pytest.raises(
+        steps.OwnedStepsError,
+        match="membership_conflict|plan_conflict",
+    ):
+        await orchestrator.run_crew_task(parent.id)
+
+    assert await stores.work.get_owned_steps(parent.id) is None
+    stored = await stores.work.get_work_item(child.id)
+    assert stored is not None
+    assert stored.assigned_to is None
+    assert stored.description == "changed after prospective selection"
+    assert stores.chat.list_threads(
+        task_id=parent.id,
+        include_archived=True,
+    )[0].id == room.id
 
 
 class _NoAccessRuntime:

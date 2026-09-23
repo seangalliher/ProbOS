@@ -20,8 +20,10 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from typing import Any, Literal
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.chat_facilitator import (
     ChatFacilitator,
     ConvergenceEvidence,
@@ -74,6 +76,55 @@ _CONVERGENCE_WINDOW = 12
 # is still a decline, and the whole reply is suppressed (never persisted, never
 # shown, never propagated to the cascade).
 _NO_RESPONSE_RE = re.compile(r"\[NO_RESPONSE\]", re.IGNORECASE)
+_STEPS_COMMAND_RE = re.compile(r"^\s*/steps(?:\s+(\S+))?\s*$", re.IGNORECASE)
+
+
+async def _capture_owned_steps_turn(
+    runtime: Any,
+    *,
+    agent_id: str,
+    thread_id: str,
+    task_id: str | None,
+    message: str,
+) -> tuple[
+    Any,
+    owned_steps.OwnedStepsActualContext,
+    owned_steps.OwnedStepsViewReference,
+] | None:
+    if type(task_id) is not str or not task_id:
+        return None
+    owner = getattr(runtime, "crew_orchestrator", None)
+    service = getattr(runtime, "crew_session_service", None)
+    if owner is None or service is None:
+        return None
+    match = _STEPS_COMMAND_RE.fullmatch(message or "")
+    cursor = match.group(1) if match is not None else None
+    try:
+        actual_context = await owner.owned_steps_actual_context(
+            service.agent_principal(agent_id),
+            work_item_id=task_id,
+            turn_id=uuid.uuid4().hex,
+        )
+    except owned_steps.OwnedStepsError:
+        if match is not None:
+            raise
+        return None
+    if actual_context.thread_id != thread_id:
+        raise owned_steps.OwnedStepsError(
+            "owned_steps_view_scope_conflict",
+            parent_id=actual_context.parent_id,
+        )
+    try:
+        reference = await owner.capture_owned_steps_view(
+            actual_context,
+            requested_item_id=task_id,
+            cursor=cursor,
+        )
+    except owned_steps.OwnedStepsError:
+        if match is not None:
+            raise
+        return None
+    return owner, actual_context, reference
 
 
 # AD-963a: broadcast-cue detector for turn-mode classification. A BROADCAST is a
@@ -547,6 +598,12 @@ async def _fan_one_round(
     room_input_hashes: list[str] = []
     room_input_task_id: str | None = None
     room_inputs_omitted = False
+    fanout_thread = store.get_thread(thread_id)
+    fanout_task_id = (
+        getattr(fanout_thread, "task_id", None)
+        if fanout_thread is not None
+        else None
+    )
     attachment_config = getattr(getattr(runtime, "config", None), "attachments", None)
     if attachment_config is not None and attachment_config.enabled:
         try:
@@ -575,7 +632,17 @@ async def _fan_one_round(
                 type(exc).__name__,
             )
 
-    async def _send_one(reply_index: int, agent_id: str) -> dict[str, Any]:
+    async def _send_one_impl(
+        reply_index: int,
+        agent_id: str,
+        owned_turns: list[
+            tuple[
+                Any,
+                owned_steps.OwnedStepsActualContext,
+                owned_steps.OwnedStepsViewReference,
+            ]
+        ],
+    ) -> dict[str, Any]:
         callsign = ""
         agent: Any = None
         try:
@@ -655,6 +722,21 @@ async def _fan_one_round(
                     params["vision_messages"] = vision_messages
             except Exception:
                 logger.debug("AD-916: vision_capable gate failed for %s", agent_id, exc_info=True)
+        owned_capture_feedback: str | None = None
+        try:
+            owned_turn = await _capture_owned_steps_turn(
+                runtime,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                task_id=fanout_task_id,
+                message=trigger_body,
+            )
+        except owned_steps.OwnedStepsError as exc:
+            owned_turn = None
+            owned_capture_feedback = owned_steps.render_owned_steps_feedback(exc)
+        if owned_turn is not None:
+            owned_turns.append(owned_turn)
+            params["owned_steps_view"] = owned_turn[2].model_dump(mode="json")
         intent = IntentMessage(
             intent="direct_message",
             params=params,
@@ -724,23 +806,42 @@ async def _fan_one_round(
         # steps (episodic/working-memory/divergence/emotion/games/avatar) that
         # would mislabel a multi-agent turn. Only when a real reply came back
         # AND the agent resolved (no agent -> can't escalate). Tier-2
-        # honest-degrade: any failure ships the raw reply_text unchanged.
+        # honest-degrade: any failure preserves the original body and attachments.
         eligibility_text = reply_text
+        reply: DmReply | None = None
         reply_context: DmReplyContext | None = None
         convergence_evidence: ConvergenceEvidence | None = None
-        if result and result.result and agent is not None:
-            try:
+        convergence_body: str | None = None
+        try:
+            # Retain established attachments if later construction or escalation
+            # fails; a failed factory leaves the original raw fallback intact.
+            reply = DmReply.from_intent_result(result)
+            reply = reply.with_body(reply_text)
+            if result and result.result and agent is not None:
+                owned_view = None
+                owned_views: dict[
+                    str,
+                    tuple[
+                        owned_steps.OwnedStepsView,
+                        owned_steps.OwnedStepsViewReference,
+                    ],
+                ] = {}
+                if owned_turn is not None:
+                    owned_view = await owned_turn[0].resolve_owned_steps_view(
+                        owned_turn[2],
+                        owned_turn[1],
+                    )
+                    owned_views[owned_view.view_id] = (
+                        owned_view,
+                        owned_turn[2],
+                    )
                 reply_context = DmReplyContext(
                     runtime=runtime,
                     agent=agent,
                     agent_id=agent_id,
                     callsign=callsign,
                     req_message=trigger_body,
-                    # AD-1248: no attachments here by design -- the
-                    # conversational agentic loop does not run on the group
-                    # fan-out path, so this reply has no tool run behind it and
-                    # renders byte-identically to before.
-                    reply=DmReply(body=reply_text),
+                    reply=reply,
                     has_image_attachment=bool(vision_messages),
                     per_attachment=[],
                     sanity_gate=sanity_gate,
@@ -749,6 +850,18 @@ async def _fan_one_round(
                     sampling_state=None,
                     avatar_event_bus=None,
                     chat_thread_id=thread_id,
+                    owned_steps_view=owned_view,
+                    owned_steps_reference=(
+                        owned_turn[2] if owned_turn is not None else None
+                    ),
+                    owned_steps_actual_context=(
+                        owned_turn[1] if owned_turn is not None else None
+                    ),
+                    owned_steps_owner=(
+                        owned_turn[0] if owned_turn is not None else None
+                    ),
+                    owned_steps_views=owned_views,
+                    owned_steps_feedback=owned_capture_feedback,
                 )
                 pipeline = DmReplyPipeline(reply_context)
                 await pipeline.run_escalation_only()
@@ -761,32 +874,42 @@ async def _fan_one_round(
                 processed_body = reply_context.response_text
                 pre_body = reply_context.pre_write_disclosure_body
                 suffix = reply_context.write_disclosure_suffix
-                processed_evidence: ConvergenceEvidence | None = None
+                owned_feedback = reply_context.owned_steps_feedback or ""
+                processed_convergence_body: str | None = None
                 if (
                     processed_body
                     and type(pre_body) is str
-                    and type(suffix) is str
-                    and processed_body == pre_body + suffix
-                ):
-                    processed_evidence = capture_convergence_evidence(
-                        strip_intent_self_tag(processed_body),
-                        strip_intent_self_tag(pre_body),
+                    and (
+                        (
+                            type(suffix) is str
+                            and processed_body
+                            == f"{pre_body}{suffix}\n\n{owned_feedback}".rstrip()
+                        )
+                        or (
+                            suffix is None
+                            and owned_feedback
+                            and processed_body
+                            == f"{pre_body}\n\n{owned_feedback}".rstrip()
+                        )
                     )
+                ):
+                    processed_convergence_body = strip_intent_self_tag(pre_body)
                 eligibility_text = (
                     reply_context.pre_write_disclosure_body
                     if reply_context.pre_write_disclosure_body is not None
                     else reply_context.response_text
                 ) or reply_text
-                reply_text = reply_context.response_text or reply_text
-                convergence_evidence = processed_evidence
-            except Exception:
-                logger.warning(
-                    "AD-933: escalation subset failed for thread=%s agent=%s; "
-                    "shipping raw reply", thread_id, agent_id, exc_info=True,
-                )
-            finally:
-                if reply_context is not None:
-                    write_ledgers[agent_id] = reply_context.write_ledger
+                reply = reply_context.reply.with_body(reply_context.response_text or reply_text)
+                convergence_body = processed_convergence_body
+        except Exception:
+            logger.warning(
+                "AD-933: escalation subset failed for thread=%s agent=%s; "
+                "shipping the original reply with any established attachments",
+                thread_id, agent_id, exc_info=True,
+            )
+        finally:
+            if reply_context is not None:
+                write_ledgers[agent_id] = reply_context.write_ledger
         # AD-948: strip the AD-722a intent self-tag (<intent emotion=...>)
         # UNCONDITIONALLY before the decline check / persist / return. The 1:1
         # path strips it via apply_divergence_check (routers/agents.py); the
@@ -794,7 +917,10 @@ async def _fan_one_round(
         # transcript. Reuse the single-source-of-truth strip (BF-603 hardened);
         # placed BEFORE the NO_RESPONSE check so a decline that trails a tag is
         # still detected. The tag MUST NEVER reach the Captain.
-        reply_text = strip_intent_self_tag(reply_text)
+        if reply is not None:
+            reply = reply.with_body(strip_intent_self_tag(reply.body))
+        else:
+            reply_text = strip_intent_self_tag(reply_text)
         eligibility_text = strip_intent_self_tag(eligibility_text)
         # AD-935: an agent may decline to respond in a group turn. A
         # [NO_RESPONSE] (case-insensitive, after strip + bracket removal) or an
@@ -814,6 +940,12 @@ async def _fan_one_round(
         _declined = bool(_NO_RESPONSE_RE.search(eligibility_text)) or not eligibility_text.strip()
         if _declined:
             return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
+        if reply is not None:
+            reply_text = str(reply.render())
+            if convergence_body is not None or reply_text != reply.body:
+                convergence_evidence = capture_convergence_evidence(
+                    reply_text, convergence_body if convergence_body is not None else reply.body,
+                )
         if _semantic_replies is not None:
             semantic_texts[reply_index] = project_convergence_body(reply_text, convergence_evidence)
         persisted_message: dict[str, Any] | None = None
@@ -847,6 +979,31 @@ async def _fan_one_round(
             "agent_id": agent_id, "callsign": callsign, "text": reply_text,
             "message": persisted_message,
         }
+
+    async def _send_one(reply_index: int, agent_id: str) -> dict[str, Any]:
+        owned_turns: list[
+            tuple[
+                Any,
+                owned_steps.OwnedStepsActualContext,
+                owned_steps.OwnedStepsViewReference,
+            ]
+        ] = []
+        try:
+            return await _send_one_impl(reply_index, agent_id, owned_turns)
+        finally:
+            for owner, actual_context, reference in owned_turns:
+                try:
+                    await owner.expire_owned_steps_views(
+                        actual_context,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Owned-steps group-view cleanup failed for parent=%s "
+                        "view=%s; bounded eviction remains active",
+                        reference.parent_id,
+                        reference.view_id,
+                        exc_info=True,
+                    )
 
     # AD-978: freshen every observer agent's visual working memory ONCE before
     # the parallel dispatch (shared camera frame -> one describe, not one per

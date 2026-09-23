@@ -6,7 +6,7 @@
  *  - Work cards could not be opened; a click now opens a detail modal.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('../store/useStore', () => {
   const state: any = {
@@ -24,6 +24,17 @@ vi.mock('../store/useStore', () => {
   (useStore as any).getState = () => state;
   (useStore as any).__state = state;
   return { useStore };
+});
+vi.mock('../components/workspace/ownedStepsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/workspace/ownedStepsApi')>();
+  return {
+    ...actual,
+    fetchOwnedSteps: vi.fn().mockResolvedValue({
+      version: 1, mode: 'unmanaged', parent_id: 'wi-1', requested_item_id: 'wi-1',
+      reference: null, rows: [], previous_cursor: null, next_cursor: null,
+      recovery: [], finalization: 'none',
+    }),
+  };
 });
 
 import WorkBoard from '../components/work/WorkBoard';
@@ -98,23 +109,23 @@ describe('BF-332 WorkBoard assignee fallback', () => {
 });
 
 describe('BF-332 WorkBoard detail modal', () => {
-  it('opens a detail modal when a card is clicked', () => {
+  it('opens a detail modal when a card is clicked', async () => {
     state.workItems = [makeItem()];
     state.agents = new Map([['counselor-uuid-1', makeAgent()]]);
     render(<WorkBoard />);
     // Click the card title.
     fireEvent.click(screen.getByText('Summarize crew morale'));
     // Modal surfaces the description and a Close affordance.
-    expect(screen.getByText('Review recent logs and summarize morale.')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('Review recent logs and summarize morale.')).toBeTruthy());
     expect(screen.getByLabelText('Close')).toBeTruthy();
   });
 
-  it('closes the modal when Close is clicked', () => {
+  it('closes the modal when Close is clicked', async () => {
     state.workItems = [makeItem()];
     state.agents = new Map([['counselor-uuid-1', makeAgent()]]);
     render(<WorkBoard />);
     fireEvent.click(screen.getByText('Summarize crew morale'));
-    expect(screen.getByLabelText('Close')).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText('Close')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Close'));
     expect(screen.queryByLabelText('Close')).toBeNull();
   });

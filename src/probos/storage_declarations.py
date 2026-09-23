@@ -24,7 +24,17 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         canonical_path="workforce.db",
         criticality=StoreCriticality.FEATURE_GATED,
         lifecycle_owner="probos.startup.communication.init_communication_services",
-        retention=StoreRetention.BOUNDED,
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "AD-1192 owned-step operation receipts, immutable evidence, "
+            "proposal/observation records, retired-child lineage and "
+            "effect-attempt claims in workforce.db are retained indefinitely. "
+            "Deleting or compacting these identities could replay execution, "
+            "forget retired membership or lose an uncertain effect. Control, "
+            "proposal manifests/acknowledgements and individual journal records "
+            "are bounded to 2 MiB; raw repair evidence is retained separately "
+            "without a lifetime operation-count quota."
+        ),
         backup="included",
         restore="point-in-time",
         notes=(

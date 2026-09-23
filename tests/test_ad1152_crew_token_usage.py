@@ -7,7 +7,7 @@ import gc
 import hashlib
 import json
 import sqlite3
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from dataclasses import FrozenInstanceError, asdict, fields, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor, WorkItemAgenticOutcome
 from probos.cognitive.crew_executor import (
     CrewTaskExecutor,
@@ -255,6 +256,61 @@ async def _planned_child(stores: room._Stores, child_id: str) -> tuple[Any, Any,
     return parent, thread, service, child
 
 
+async def _owned_metadata_binding(
+    work: WorkItemStore, service: CrewSessionService, work_item_id: str,
+    patch: dict[str, Any], **kwargs: Any,
+) -> owned_steps.OwnedStoreBinding:
+    assert service.owns_store(work) and work.owned_steps_owner_matches(service)
+    snapshot = await work.get_owned_steps(work_item_id)
+    assert snapshot is not None
+    step_id = None if work_item_id == snapshot.control.parent_id else next(
+        row.step_id for row in snapshot.control.rows
+        if row.child is not None and row.child.child_id == work_item_id
+    )
+    return service.owned_store_binding(
+        service, snapshot, operation="metadata", step_id=step_id,
+        payload={
+            "work_item_id": work_item_id, "patch": patch,
+            "new_status": kwargs.get("new_status"),
+            "actual_tokens_delta": kwargs.get("actual_tokens_delta", 0),
+        },
+    )
+
+
+async def _owned_merge(
+    work: WorkItemStore, service: CrewSessionService, work_item_id: str,
+    patch: dict[str, Any], **kwargs: Any,
+) -> WorkItem | None:
+    return await work.merge_work_item_metadata(
+        work_item_id, patch, **kwargs,
+        owned_binding=await _owned_metadata_binding(work, service, work_item_id, patch, **kwargs),
+    )
+
+
+def _bind_native_metadata_harness(
+    work: WorkItemStore, service: CrewSessionService, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only native primitive probes receive this real-owner-bound writer."""
+    merge = work.merge_work_item_metadata
+
+    async def bound_merge(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> WorkItem | None:
+        assert "owned_binding" not in kwargs
+        binding = await _owned_metadata_binding(work, service, work_item_id, patch, **kwargs)
+        return await merge(work_item_id, patch, **kwargs, owned_binding=binding)
+
+    monkeypatch.setattr(work, "merge_work_item_metadata", bound_merge)
+
+
+@asynccontextmanager
+async def _store_lifetime(root: Path):
+    generator = room.stores.__wrapped__(root)
+    value = await generator.__anext__()
+    try:
+        yield value
+    finally:
+        await generator.aclose()
+
+
 def _crew(
     stores: room._Stores, runtime: Any, service: CrewSessionService,
     client: _ScriptedClient, *, enabled: bool = True,
@@ -279,78 +335,103 @@ async def test_real_crew_equal_counts_atomic_reopen_get_and_off_resume(
     emitter.add_event_listener(events.append, LOOP_EVENTS)
     snapshots: list[dict[str, Any]] = []
     patches: list[dict[str, Any]] = []
-    original_merge = stores.work.merge_work_item_metadata
-
-    async def observe_merge(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
-        if kwargs.get("source") == "crew_executor":
-            before = await stores.work.get_work_item(work_item_id)
-            assert before is not None and "crew_execution" not in before.metadata and USAGE not in before.metadata
-            assert {"crew_execution", USAGE}.issubset(patch)
-            patches.append(json.loads(json.dumps(patch)))
-        updated = await original_merge(work_item_id, patch, **kwargs)
-        if kwargs.get("source") == "crew_executor":
-            assert updated is not None
-            assert read_crew_execution_token_usage(updated.metadata) is not None
-            assert updated.actual_tokens == patch[USAGE]["tokens_used"]
-        return updated
-
-    monkeypatch.setattr(stores.work, "merge_work_item_metadata", observe_merge)
+    submissions: list[owned_steps.OwnedExecutionSubmission] = []
+    await stores.work.stop()
     count = 0
     for source in ("estimated", "measured"):
-        parent, thread, service, child = await _planned_child(stores, f"child-{source}")
-        recovery = await service.get_recovery(parent.id)
-        assert recovery is not None
-        before_plan = recovery.plan.model_dump(mode="json")
-        runtime = room._runtime(stores, tmp_path)
-        runtime.crew_session_service = service
-        runtime.config.agentic_loop.event_correlation_enabled = True
-        runtime.emit_event = emitter.emit_event
+        async with _store_lifetime(tmp_path) as active:
+            parent, thread, service, child = await _planned_child(active, f"child-{source}")
+            recovery = await service.get_recovery(parent.id)
+            assert recovery is not None
+            before_plan = recovery.plan.model_dump(mode="json")
+            runtime = room._runtime(active, tmp_path)
+            runtime.crew_session_service = service
+            runtime.config.agentic_loop.event_correlation_enabled = True
+            runtime.emit_event = emitter.emit_event
+            submit = service.submit
+            compare = active.work.compare_and_set_owned_step
 
-        class _LocalTool(room._ResultTool):
-            calls = 0
+            async def observe_submit(lease: Any, submission: owned_steps.OwnedExecutionSubmission) -> Any:
+                submissions.append(submission)
+                return await submit(lease, submission)
 
-            async def invoke(
-                self, params: dict[str, Any], context: dict[str, Any] | None = None,
-            ) -> ToolResult:
-                self.calls += 1
-                return await super().invoke(params, context)
+            async def observe_compare(mutation: owned_steps.OwnedStepMutation) -> Any:
+                command = mutation.change.command
+                if isinstance(command, owned_steps.SubmitOwnedStepCommand):
+                    submission = command.submission
+                    assert submission.model_dump_json() == submissions[-1].model_dump_json()
+                    before = await active.work.get_work_item(submission.permit.child_id)
+                    assert before is not None and "crew_execution" not in before.metadata and USAGE not in before.metadata
+                    assert before.status == "in_progress" and before.actual_tokens == 0
+                result = await compare(mutation)
+                if isinstance(command, owned_steps.SubmitOwnedStepCommand):
+                    updated = await active.work.get_work_item(submission.permit.child_id)
+                    patch = {
+                        "crew_execution": json.loads(submission.execution_json),
+                        USAGE: json.loads(submission.token_usage_json),
+                    }
+                    assert {"crew_execution", USAGE}.issubset(patch)
+                    assert updated is not None and updated.status == "done"
+                    assert read_crew_execution_token_usage(updated.metadata) is not None
+                    assert updated.actual_tokens == patch[USAGE]["tokens_used"]
+                    assert all(updated.metadata[key] == value for key, value in patch.items())
+                    snapshot = await active.work.get_owned_steps(parent.id)
+                    assert snapshot.control.rows[0].permit_state == "submitted"
+                    assert snapshot.control.rows[0].submission == owned_steps.owned_digest(
+                        owned_steps.owned_json_bytes(submission.model_dump(mode="json")),
+                    )
+                    patches.append(patch)
+                return result
 
-        tool = _LocalTool({"result": "local evidence"})
-        runtime.tool_registry.register(tool)
-        await runtime.tool_permission_store.issue_grant("agent-1", "run_python", ToolPermission.READ)
-        client = _ScriptedClient([
-            LLMResponse(
-                content="", tokens_used=0 if source == "estimated" else count - 1,
-                content_blocks=[ToolUseBlock(tool_call=ToolCallRequest(
-                    name="run_python", arguments={}, id="same-provider-id",
-                ))],
-            ),
-            LLMResponse(content="Durable evidence.", tokens_used=0 if source == "estimated" else 1),
-        ])
-        results = await _crew(stores, runtime, service, client).resume(parent.id)
-        assert results[0].status == "done" and len(client.requests) == 2 and tool.calls == 1
-        row = await stores.work.get_work_item(child.id)
-        assert row is not None and row.status == "done"
-        usage = read_crew_execution_token_usage(row.metadata)
-        assert usage is not None and usage.token_source == source
-        assert usage.tokens_used == row.actual_tokens > 0
-        if source == "estimated":
-            count = row.actual_tokens
-        assert row.actual_tokens == count
-        assert set(row.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
-        trace_ref = row.metadata["crew_execution"]["tool_trace_ref"]
-        trace = await stores.attachments.read(trace_ref)
-        assert hashlib.sha256(trace).hexdigest() == trace_ref
-        assert b"local evidence" in trace and b"same-provider-id" in trace
-        after_recovery = await service.get_recovery(parent.id)
-        assert after_recovery.plan.model_dump(mode="json") == before_plan
-        with closing(sqlite3.connect(tmp_path / "workforce.db")) as db:
-            raw = db.execute("SELECT metadata FROM work_items WHERE id=?", (child.id,)).fetchone()[0]
-        snapshots.append({
-            "parent_id": parent.id, "child_id": child.id, "thread_id": thread.id,
-            "metadata": raw, "result": asdict(results[0]), "plan": before_plan,
-        })
-    assert len(patches) == 2
+            monkeypatch.setattr(service, "submit", observe_submit)
+            monkeypatch.setattr(active.work, "compare_and_set_owned_step", observe_compare)
+
+            class _LocalTool(room._ResultTool):
+                calls = 0
+
+                async def invoke(
+                    self, params: dict[str, Any], context: dict[str, Any] | None = None,
+                ) -> ToolResult:
+                    self.calls += 1
+                    return await super().invoke(params, context)
+
+            tool = _LocalTool({"result": "local evidence"})
+            runtime.tool_registry.register(tool)
+            await runtime.tool_permission_store.issue_grant("agent-1", "run_python", ToolPermission.READ)
+            client = _ScriptedClient([
+                LLMResponse(
+                    content="", tokens_used=0 if source == "estimated" else count - 1,
+                    content_blocks=[ToolUseBlock(tool_call=ToolCallRequest(
+                        name="run_python", arguments={}, id="same-provider-id",
+                    ))],
+                ),
+                LLMResponse(content="Durable evidence.", tokens_used=0 if source == "estimated" else 1),
+            ])
+            results = await _crew(active, runtime, service, client).resume(parent.id)
+            assert results[0].status == "done" and len(client.requests) == 2 and tool.calls == 1
+            row = await active.work.get_work_item(child.id)
+            assert row is not None and row.status == "done"
+            usage = read_crew_execution_token_usage(row.metadata)
+            assert usage is not None and usage.token_source == source
+            assert usage.tokens_used == row.actual_tokens > 0
+            if source == "estimated":
+                count = row.actual_tokens
+            assert row.actual_tokens == count
+            assert set(row.metadata["crew_execution"]) == CREW_EXECUTION_KEYS
+            trace_ref = row.metadata["crew_execution"]["tool_trace_ref"]
+            trace = await active.attachments.read(trace_ref)
+            assert hashlib.sha256(trace).hexdigest() == trace_ref
+            assert b"local evidence" in trace and b"same-provider-id" in trace
+            after_recovery = await service.get_recovery(parent.id)
+            assert after_recovery.plan.model_dump(mode="json") == before_plan
+            with closing(sqlite3.connect(tmp_path / "workforce.db")) as db:
+                raw = db.execute("SELECT metadata FROM work_items WHERE id=?", (child.id,)).fetchone()[0]
+            snapshots.append({
+                "parent_id": parent.id, "child_id": child.id, "thread_id": thread.id,
+                "metadata": raw, "result": asdict(results[0]), "plan": before_plan,
+            })
+    # The former generic merge observer missed the managed submit/CAS entirely.
+    assert len(patches) == len(submissions) == 2
     assert patches[0][USAGE]["tokens_used"] == patches[1][USAGE]["tokens_used"]
     usage_logs = [
         record.getMessage()
@@ -367,22 +448,24 @@ async def test_real_crew_equal_counts_atomic_reopen_get_and_off_resume(
 
     bindings: list[dict[str, Any]] = []
     _record_constructor(monkeypatch, CrewTaskExecutor, bindings)
-    runtime.work_item_store = stores.work
-    runtime.registry = room._Registry({"agent-1": room._Agent("agent-1")})
-    runtime.capability_registry = SimpleNamespace()
-    runtime.ontology = _LocalOntology()
-    runtime.trust_network = _LocalTrust()
-    runtime.llm_client = _ScriptedClient([])
-    assert _wire_crew_orchestrator(runtime=runtime, config=runtime.config)
-    assert bindings[0]["kwargs"]["event_correlation_enabled"] is True
-    await runtime.crew_orchestrator.stop()
+    async with _store_lifetime(tmp_path) as startup:
+        runtime = room._runtime(startup, tmp_path)
+        runtime.crew_session_service = CrewSessionService(work_item_store=startup.work, chat_thread_store=startup.chat)
+        runtime.config.agentic_loop.event_correlation_enabled = True
+        runtime.config.attachments.attachments_dir = str(tmp_path / "attachments")
+        runtime.work_item_store = startup.work
+        runtime.registry = room._Registry({"agent-1": room._Agent("agent-1")})
+        runtime.capability_registry = SimpleNamespace()
+        runtime.ontology = _LocalOntology()
+        runtime.trust_network = _LocalTrust()
+        runtime.llm_client = _ScriptedClient([])
+        assert _wire_crew_orchestrator(runtime=runtime, config=runtime.config)
+        assert bindings[0]["kwargs"]["event_correlation_enabled"] is True
+        await runtime.crew_orchestrator.stop()
 
-    await stores.work.stop()
-    reopened = WorkItemStore(db_path=str(tmp_path / "workforce.db"), tick_interval=1_000)
-    await reopened.start()
-    try:
-        restored_stores = replace(stores, work=reopened, chat=ChatThreadStore(tmp_path / "threads.db"))
-        for snapshot in snapshots:
+    for snapshot in snapshots:
+        async with _store_lifetime(tmp_path) as restored_stores:
+            reopened = restored_stores.work
             endpoint = await _get_existing_endpoint(reopened, snapshot["child_id"])
             assert endpoint["work_item"]["metadata"] == json.loads(snapshot["metadata"])
             service = CrewSessionService(work_item_store=reopened, chat_thread_store=restored_stores.chat)
@@ -397,9 +480,7 @@ async def test_real_crew_equal_counts_atomic_reopen_get_and_off_resume(
             again = await reopened.get_work_item(snapshot["child_id"])
             assert again.actual_tokens == count
             assert _json_bytes(again.metadata) == _json_bytes(json.loads(snapshot["metadata"]))
-    finally:
-        await reopened.stop()
-        gc.collect()
+    gc.collect()
 
 
 @pytest.mark.asyncio
@@ -501,7 +582,7 @@ async def test_untouched_runtime_and_transactional_retry_guards_reject_any_sibli
     recovery = await service.get_recovery(parent.id)
     assert session is not None and recovery is not None and recovery.phase == "executing"
     if usage is not _ABSENT:
-        child = await stores.work.merge_work_item_metadata(child.id, {USAGE: usage})
+        child = await _owned_merge(stores.work, service, child.id, {USAGE: usage})
     initial = stores.work.work_type_registry.get_initial_status(child.work_type)
     assert is_untouched_crew_child(child, initial_status=initial) is (usage is _ABSENT)
     parent = await stores.work.get_work_item(parent.id)
@@ -520,11 +601,11 @@ async def test_untouched_runtime_and_transactional_retry_guards_reject_any_sibli
     }
     patch = {"crew_session": target, "crew_recovery": checkpoint}
     if usage is _ABSENT:
-        updated = await stores.work.merge_work_item_metadata(parent.id, patch, **kwargs)
+        updated = await _owned_merge(stores.work, service, parent.id, patch, **kwargs)
         assert updated is not None and updated.status == "blocked"
     else:
         with pytest.raises(WorkItemRetryConflict, match="^work_item_retry_barrier_conflict$"):
-            await stores.work.merge_work_item_metadata(parent.id, patch, **kwargs)
+            await _owned_merge(stores.work, service, parent.id, patch, **kwargs)
         unchanged = await stores.work.get_work_item(parent.id)
         assert unchanged.metadata == parent.metadata and unchanged.status == parent.status
 
@@ -546,7 +627,7 @@ async def test_stale_child_admission_preserves_live_qualifier(
 
     live = await stores.work.get_work_item(child.id)
     if usage is not _ABSENT:
-        live = await stores.work.merge_work_item_metadata(child.id, {USAGE: usage})
+        live = await _owned_merge(stores.work, service, child.id, {USAGE: usage})
     assert live is not None and live is not child
     assert live.status == initial and live.actual_tokens == 0
     assert asdict(child) == original_snapshot
@@ -569,6 +650,7 @@ async def test_stale_child_admission_preserves_live_qualifier(
     assert json.loads(before_row["metadata"]) == live.metadata
     before_live = asdict(live)
     before_events = list(stores.events.events)
+    _bind_native_metadata_harness(stores.work, service, monkeypatch)
     runtime = room._runtime(stores, tmp_path)
     runtime.config.agentic_loop.event_correlation_enabled = enabled
     runtime.crew_session_service = service
@@ -660,6 +742,7 @@ async def _native_admission_probe(
     stores: room._Stores, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     service: CrewSessionService, *, enabled: bool,
 ) -> tuple[CrewTaskExecutor, _ScriptedClient, list[dict[str, Any]], list[dict[str, Any]]]:
+    _bind_native_metadata_harness(stores.work, service, monkeypatch)
     runtime = room._runtime(stores, tmp_path)
     runtime.config.agentic_loop.event_correlation_enabled = enabled
     runtime.crew_session_service = service
@@ -723,7 +806,7 @@ async def test_native_metadata_conflict_without_usage_preserves_legacy_fallback(
 ) -> None:
     parent, thread, service, child = await _planned_child(stores, "metadata-conflict-child")
     original_snapshot = asdict(child)
-    live = await stores.work.merge_work_item_metadata(child.id, {"spec_id": "new-live-spec"})
+    live = await _owned_merge(stores.work, service, child.id, {"spec_id": "new-live-spec"})
     assert live is not None and live is not child
     assert live.metadata == {**child.metadata, "spec_id": "new-live-spec"}
     assert live.metadata["spec_id"] != child.metadata["spec_id"]
@@ -779,7 +862,7 @@ async def test_native_admission_fallback_preserves_late_qualifier(
     parent, thread, service, child = await _planned_child(stores, "late-qualifier-child")
     original_snapshot = asdict(child)
     if arrival == "terminal":
-        live = await stores.work.merge_work_item_metadata(child.id, {"spec_id": "new-live-spec"})
+        live = await _owned_merge(stores.work, service, child.id, {"spec_id": "new-live-spec"})
         assert live is not None and live.metadata["spec_id"] != child.metadata["spec_id"]
         assert live.metadata == {**child.metadata, "spec_id": "new-live-spec"}
     executor, client, executor_calls, tool_calls = await _native_admission_probe(
@@ -1126,7 +1209,7 @@ async def test_all_terminal_and_finalizer_readers_reject_corrupt_sibling(
     registry = final._registry_for([row])
     judge, synth = final._ScriptedLLM([]), final._ScriptedLLM([])
     finalizer = _finalizer(stores, service, registry, judge, synth)
-    row = await stores.work.merge_work_item_metadata(child.id, {USAGE: usage})
+    row = await _owned_merge(stores.work, service, child.id, {USAGE: usage})
     with pytest.raises(ValueError, match="^crew_execution_token_usage_invalid$"):
         await crew._reconstruct_terminal_result(parent.id, row, thread.id)
     with pytest.raises(ValueError, match="^crew_execution_token_usage_invalid$"):

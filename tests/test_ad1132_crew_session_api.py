@@ -2,27 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+import sqlite3
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
+from probos.api import create_app
 from probos.cognitive.crew_session import (
     CrewSessionContract,
     CrewSynthesisMetadata,
+    _build_derived_recovery_plan,
 )
 from probos.config import SystemConfig
 from probos.crew_session_delivery import (
     CrewSessionDeliveryOutboxEntry,
     build_crew_session_delivery_record,
 )
-from probos.crew_session_live import load_crew_session_projection
+from probos.crew_session_live import (
+    load_crew_session_projection,
+    load_fenced_crew_children,
+    observe_crew_children,
+)
 from probos.crew_session_projection import (
     CREW_SESSION_PROJECTION_ERROR,
+    CrewSessionProjectionError,
     build_crew_session_detail,
     build_crew_session_summary,
 )
@@ -32,7 +43,15 @@ from probos.routers import threads as threads_router
 from probos.routers.deps import get_runtime
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.threads import ChatThreadStore
+from probos.work_item_steps import (
+    OwnedCrewChildren,
+    OwnedStepsError,
+    OwnedStepsSeedPlan,
+)
 from probos.workforce import CrewSessionParentCreate, WorkItem, WorkItemStore
+
+if TYPE_CHECKING:
+    from ui.e2e.fixtures.ad1192_backend import FixtureState
 
 
 _SHA_A = "a" * 64
@@ -707,6 +726,15 @@ async def test_get_crew_task_child_overflow_returns_stable_409(
     parent, contract = await _crew_parent(api_harness, parent_id="parent-overflow")
 
     class _OverflowStore:
+        async def get_owned_crew_children(
+            self,
+            parent_id: str,
+            expected_plan: OwnedStepsSeedPlan | str | None = None,
+        ) -> OwnedCrewChildren:
+            assert parent_id == parent.id
+            assert expected_plan is None
+            raise OwnedStepsError("owned_steps_not_managed", parent_id=parent_id)
+
         async def get_work_item(self, work_item_id: str) -> WorkItem | None:
             return parent if work_item_id == parent.id else None
 
@@ -1001,3 +1029,732 @@ def test_projection_recursive_forbidden_field_scan() -> None:
         assert not forbidden.intersection(
             item for item in _walk(wire) if isinstance(item, str)
         )
+
+
+@dataclass
+class _OwnedProjectionCase:
+    state: FixtureState
+    client: httpx.AsyncClient
+
+    async def apply(
+        self, parent_id: str, kind: str, identity: str,
+    ) -> dict[str, Any]:
+        base = f"/api/work-items/{parent_id}/owned-steps"
+        observed = await self.client.get(base)
+        assert observed.status_code == 200, observed.text
+        preview = await self.client.post(
+            f"{base}/preview",
+            json={
+                "version": 1,
+                "kind": kind,
+                "preparation_id": f"{identity}-prepare",
+                "reference": observed.json()["reference"],
+            },
+        )
+        assert preview.status_code == 200, preview.text
+        proposal = preview.json()["proposal"]
+        response = await self.client.post(
+            f"{base}/{'adopt' if kind == 'adopt_existing' else 'commands'}",
+            json={
+                "version": 1,
+                "operation_id": f"{identity}-apply",
+                "reference": proposal["reference"],
+            },
+        )
+        assert response.status_code == 200, response.text
+        return proposal
+
+    async def managed_parent(self, *, canonical: bool) -> str:
+        if canonical:
+            setup = await self.state.create_canonical()
+            await self.apply(setup["parent_id"], "adopt_existing", "projection-adopt")
+        else:
+            setup = await self.state.create_replan()
+        return setup["parent_id"]
+
+    async def unmanaged_parent(
+        self, *, canonical: bool, child_count: int = 0,
+    ) -> str:
+        parent_id = self.state.identity("preinstall")
+        if canonical:
+            async with self.state.admission_port.reserve() as reservation:
+                parent = await reservation.create_parent(CrewSessionParentCreate(
+                    id=parent_id,
+                    title="Pre-install session projection",
+                    description="Current children before owner-plan installation",
+                    assigned_to="facilitator-a",
+                    created_by="captain",
+                    metadata={},
+                ))
+            thread = self.state.threads.create_thread(
+                title="Pre-install room",
+                participants=["facilitator-a", "worker-a"],
+                task_id=parent.id,
+            )
+            await self.state.service.initialize_session(
+                parent.id,
+                thread.id,
+                goal="Pre-install current work",
+                origin="captain",
+                originator_id="captain",
+                facilitator_id="facilitator-a",
+                owner_ids=["facilitator-a", "worker-a"],
+                success_criteria=["Current children are displayed"],
+                expected_deliverable="A current projection",
+            )
+        else:
+            parent = await self.state.store.create_work_item(
+                id=parent_id,
+                title="Unmanaged legacy projection",
+                assigned_to="worker-a",
+            )
+        for index in range(child_count):
+            await self.state.store.create_work_item(
+                id=f"{parent.id}-child-{index}",
+                title=f"Pre-install child {index}",
+                parent_id=parent.id,
+                assigned_to="worker-a",
+                priority=3 - index,
+            )
+        with pytest.raises(OwnedStepsError) as error:
+            await self.state.store.get_owned_crew_children(parent.id)
+        assert error.value.code == "owned_steps_not_managed"
+        return parent.id
+
+    async def install(self, parent_id: str, *, canonical: bool) -> None:
+        if canonical:
+            session = await self.state.service.get_session(parent_id)
+            assert session is not None
+            specs = self.state.replan_decomposer.decompose(session.goal)
+            plan, inserts = _build_derived_recovery_plan(
+                parent_id, specs, created_by=session.facilitator_id,
+            )
+            await self.state.service.install_recovery_plan(
+                parent_id,
+                expected_session=session,
+                expected_recovery=None,
+                plan=plan,
+                children=inserts,
+            )
+        else:
+            children = tuple(await self.state.store.list_work_items(
+                parent_id=parent_id, limit=1000,
+            ))
+            await self.state.store.get_owned_steps_execution_port().admit(
+                parent_id, children=children, thread_id="",
+            )
+        membership = await self.state.store.get_owned_crew_children(parent_id)
+        assert len(membership.active) == 2
+        assert membership.retired == ()
+
+    def sources(self, parent_id: str) -> list[tuple[Any, ...]]:
+        with sqlite3.connect(self.state.storage_root / "workforce.db") as db:
+            return db.execute(
+                "SELECT * FROM work_items WHERE id=? OR parent_id=? ORDER BY id",
+                (parent_id, parent_id),
+            ).fetchall()
+
+    async def corrupt(
+        self, parent_id: str, membership: OwnedCrewChildren, corruption: str,
+    ) -> None:
+        extra = None
+        if corruption == "extra_child":
+            extra = await self.state.store.create_work_item(
+                title="Unproven direct child", assigned_to="worker-a",
+            )
+        with sqlite3.connect(self.state.storage_root / "workforce.db") as db:
+            if corruption == "malformed_control":
+                db.execute(
+                    "UPDATE work_items SET steps_control=? WHERE id=?",
+                    ('{"version":1}', parent_id),
+                )
+            elif corruption == "extra_child":
+                assert extra is not None
+                db.execute(
+                    "UPDATE work_items SET parent_id=? WHERE id=?",
+                    (parent_id, extra.id),
+                )
+            elif corruption == "tampered_receipt":
+                db.execute(
+                    "UPDATE owned_steps_proposals SET acknowledgement="
+                    "json_set(acknowledgement,'$.operation_id','tampered-operation') "
+                    "WHERE proposal_id=?",
+                    (membership.retired[0].proposal_id,),
+                )
+            else:
+                assert corruption == "retired_source"
+                db.execute(
+                    "UPDATE work_items SET actual_tokens=actual_tokens+1 WHERE id=?",
+                    (membership.retired[0].child.id,),
+                )
+        with pytest.raises((OwnedStepsError, ValueError)) as error:
+            await self.state.store.get_owned_crew_children(parent_id)
+        if isinstance(error.value, OwnedStepsError):
+            assert error.value.code != "owned_steps_not_managed"
+
+
+@pytest.fixture
+async def owned_projection_case(tmp_path: Path) -> Any:
+    from ui.e2e.fixtures.ad1192_backend import _build_state
+
+    root = Path(__file__).resolve().parents[1]
+    assert Path(inspect.getfile(WorkItemStore)).resolve() == root / "src/probos/workforce.py"
+    assert Path(inspect.getfile(_build_state)).resolve() == root / "ui/e2e/fixtures/ad1192_backend.py"
+    state = await _build_state(tmp_path)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(state.runtime)),
+            base_url="http://test",
+        ) as client:
+            yield _OwnedProjectionCase(state=state, client=client)
+    finally:
+        tasks = tuple(state.running_executions.values()) + tuple(state.scheduled.values())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await state.orchestrator.stop()
+        await state.route_agent.stop()
+        await state.trust.stop()
+        await state.secondary_store.stop()
+        await state.store.stop()
+
+
+async def test_owned_legacy_replan_current_children(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.managed_parent(canonical=False)
+    original = await case.state.store.get_owned_crew_children(parent_id)
+    assert len(original.active) == 2 and original.retired == ()
+    assert original.active[0].priority == original.active[1].priority
+    assert original.active[0].created_at < original.active[1].created_at
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+    assert response.status_code == 200, response.text
+    assert [child["id"] for child in response.json()["children"]] == [
+        child.id for child in reversed(original.active)
+    ]
+
+    decompose = case.state.replan_decomposer.decompose
+
+    def priority_plan(goal: str) -> list[Any]:
+        return [
+            replace(spec, priority=4 if index == 0 else 1)
+            for index, spec in enumerate(decompose(goal))
+        ]
+
+    monkeypatch.setattr(case.state.replan_decomposer, "decompose", priority_plan)
+    await case.apply(parent_id, "replan_unstarted", "legacy-projection-replan")
+    membership = await case.state.store.get_owned_crew_children(parent_id)
+    assert len(membership.active) == len(membership.retired) == 2
+    assert [child.priority for child in membership.active] == [4, 1]
+    assert {entry.child.id for entry in membership.retired} == {
+        child.id for child in original.active
+    }
+    assert [entry.child.to_dict() for entry in membership.retired] == [
+        child.to_dict()
+        for child in sorted(original.active, key=lambda child: child.id)
+    ]
+    before = case.sources(parent_id)
+    parent = await case.state.store.get_work_item(parent_id)
+    assert parent is not None
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"parent", "children", "count"}
+    assert body["parent"] == parent.to_dict()
+    assert body["count"] == 2
+    assert body["children"] == [
+        {**child.to_dict(), "verdict": None, "rounds": None}
+        for child in sorted(
+            membership.active, key=lambda child: (child.priority, -child.created_at),
+        )
+    ]
+    assert case.sources(parent_id) == before
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+@pytest.mark.parametrize("child_count", [0, 2], ids=["empty", "nonempty"])
+async def test_unmanaged_preinstall_projection_compatibility(
+    owned_projection_case: _OwnedProjectionCase,
+    canonical: bool,
+    child_count: int,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.unmanaged_parent(canonical=canonical, child_count=child_count)
+    parent = await case.state.store.get_work_item(parent_id)
+    children = await case.state.store.list_work_items(parent_id=parent_id, limit=1000)
+    assert parent is not None and len(children) == child_count
+    before = case.sources(parent_id)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 200, response.text
+    if canonical:
+        session = await case.state.service.get_session(parent_id)
+        assert session is not None
+        assert response.json() == {"session": build_crew_session_detail(
+            session=session, synthesis=None, children=children,
+        ).to_wire()}
+    else:
+        assert response.json() == {
+            "parent": parent.to_dict(),
+            "children": [
+                {**child.to_dict(), "verdict": None, "rounds": None}
+                for child in children
+            ],
+            "count": child_count,
+        }
+    assert case.sources(parent_id) == before
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+@pytest.mark.parametrize("corruption", [
+    "malformed_control", "extra_child", "tampered_receipt", "retired_source",
+])
+async def test_owned_projection_membership_conflicts_fail_closed(
+    owned_projection_case: _OwnedProjectionCase,
+    canonical: bool,
+    corruption: str,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.managed_parent(canonical=canonical)
+    await case.apply(parent_id, "replan_unstarted", "corruption-replan")
+    membership = await case.state.store.get_owned_crew_children(parent_id)
+    assert len(membership.active) == 2
+    assert len(membership.retired) == (1 if canonical else 2)
+    await case.corrupt(parent_id, membership, corruption)
+    before = case.sources(parent_id)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": CREW_SESSION_PROJECTION_ERROR}
+    if canonical:
+        summaries = await case.client.get("/api/threads/summaries")
+        assert summaries.status_code == 200
+        thread_id = case.state.threads_by_scenario["canonical"]
+        summary = summaries.json()["summaries"][thread_id]
+        assert set(summary) == {"outputs", "steps_total", "steps_done", "topic"}
+        assert summary["steps_total"] == 3
+        assert summary["steps_done"] == 0
+    assert case.sources(parent_id) == before
+
+
+class _ProjectionReadBarrier:
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.used = False
+
+    async def pause(self) -> None:
+        if self.used:
+            return
+        self.used = True
+        self.entered.set()
+        await self.release.wait()
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+@pytest.mark.parametrize("transition", ["replan", "install"])
+async def test_replan_read_interleaving_fails_closed(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
+    transition: str,
+) -> None:
+    case = owned_projection_case
+    if transition == "replan":
+        parent_id = await case.managed_parent(canonical=canonical)
+        before_membership = await case.state.store.get_owned_crew_children(parent_id)
+    else:
+        parent_id = await case.unmanaged_parent(
+            canonical=canonical, child_count=0 if canonical else 2,
+        )
+        before_membership = None
+    session_before = await case.state.service.get_session(parent_id) if canonical else None
+    parent_before = await case.state.store.get_work_item(parent_id)
+    assert parent_before is not None
+    barrier = _ProjectionReadBarrier()
+    reader = case.state.secondary_store
+    case.state.runtime.work_item_store = reader
+    get_membership = reader.get_owned_crew_children
+    list_children = reader.list_work_items
+    observations: list[OwnedStepsSeedPlan | str | None] = []
+
+    async def fenced_membership(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        if asyncio.current_task() is request:
+            observations.append(expected_plan)
+            if expected_plan is not None:
+                await barrier.pause()
+        return await get_membership(key, expected_plan=expected_plan)
+
+    async def paused_listing(**kwargs: Any) -> list[WorkItem]:
+        children = await list_children(**kwargs)
+        if asyncio.current_task() is request:
+            await barrier.pause()
+        return children
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", fenced_membership)
+    monkeypatch.setattr(reader, "list_work_items", paused_listing)
+    request = asyncio.create_task(case.client.get(f"/api/crew-tasks/{parent_id}"))
+    try:
+        await barrier.entered.wait()
+        assert not request.done()
+        if transition == "replan":
+            await case.apply(parent_id, "replan_unstarted", "overlapping-replan")
+        else:
+            await case.install(parent_id, canonical=canonical)
+        after_membership = await case.state.store.get_owned_crew_children(parent_id)
+        assert len(after_membership.active) == 2
+        if before_membership is not None:
+            assert after_membership.incarnation != before_membership.incarnation
+            assert after_membership.plan_digest != before_membership.plan_digest
+            assert len(after_membership.retired) == len(before_membership.active)
+        if canonical:
+            session_after = await case.state.service.get_session(parent_id)
+            parent_after = await case.state.store.get_work_item(parent_id)
+            assert session_before is not None and session_after is not None
+            assert session_after.revision == session_before.revision
+            assert parent_after is not None
+            assert parent_after.metadata["crew_session"] == parent_before.metadata["crew_session"]
+            assert parent_after.metadata["crew_recovery"] != parent_before.metadata.get("crew_recovery")
+        committed_sources = case.sources(parent_id)
+        barrier.release.set()
+        response = await request
+
+        assert response.status_code == 409
+        assert response.json() == {"detail": CREW_SESSION_PROJECTION_ERROR}
+        assert observations == [
+            None, before_membership.plan_digest if before_membership is not None else None,
+        ]
+        fresh = await case.client.get(f"/api/crew-tasks/{parent_id}")
+        assert fresh.status_code == 200, fresh.text
+        if canonical:
+            progress = fresh.json()["session"]["progress"]
+            assert progress["total"] == 2
+            assert progress["active_child"]["id"] in {
+                child.id for child in after_membership.active
+            }
+        else:
+            assert fresh.json()["count"] == 2
+            assert {child["id"] for child in fresh.json()["children"]} == {
+                child.id for child in after_membership.active
+            }
+        assert case.sources(parent_id) == committed_sources
+    finally:
+        barrier.release.set()
+        if not request.done():
+            request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("canonical", "limit"), [(True, 1001), (False, 1000)],
+    ids=["canonical", "legacy"],
+)
+async def test_unmanaged_listing_oserror_returns_stable_409(
+    api_harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
+    limit: int,
+) -> None:
+    if canonical:
+        parent, _ = await _crew_parent(
+            api_harness, parent_id="parent-unmanaged-listing",
+        )
+    else:
+        parent = await api_harness.work.create_work_item(
+            id="parent-unmanaged-listing", title="Legacy crew", work_type="crew_task",
+        )
+    read = api_harness.work.get_owned_crew_children
+    calls: list[str] = []
+
+    async def observed_not_managed(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        assert key == parent.id
+        assert expected_plan is None
+        with pytest.raises(OwnedStepsError) as raised:
+            await read(key, expected_plan=expected_plan)
+        assert raised.value.code == "owned_steps_not_managed"
+        calls.append("not_managed")
+        raise raised.value
+
+    async def failing_listing(**kwargs: Any) -> list[WorkItem]:
+        assert calls == ["not_managed"]
+        assert kwargs == {"parent_id": parent.id, "limit": limit}
+        calls.append("listing")
+        raise OSError("unmanaged listing unavailable")
+
+    monkeypatch.setattr(api_harness.work, "get_owned_crew_children", observed_not_managed)
+    monkeypatch.setattr(api_harness.work, "list_work_items", failing_listing)
+    transport = httpx.ASGITransport(app=api_harness.app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/api/crew-tasks/{parent.id}")
+
+    assert calls == ["not_managed", "listing"]
+    assert response.status_code == 409
+    assert response.json() == {"detail": CREW_SESSION_PROJECTION_ERROR}
+
+
+@pytest.mark.parametrize("error_type", [
+    ValueError, OSError, RuntimeError, TypeError, asyncio.CancelledError,
+])
+@pytest.mark.parametrize("current_after", [True, False], ids=["current", "cancelled"])
+async def test_unmanaged_listing_failure_boundary_preserves_cause_and_cancellation(
+    api_harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[BaseException],
+    current_after: bool,
+) -> None:
+    error = error_type("unmanaged listing failed")
+    current = True
+    checks: list[bool] = []
+    listings: list[dict[str, Any]] = []
+
+    def still_current() -> bool:
+        checks.append(current)
+        return current
+
+    async def failing_listing(**kwargs: Any) -> list[WorkItem]:
+        nonlocal current
+        listings.append(kwargs)
+        await asyncio.sleep(0)
+        current = current_after
+        raise error
+
+    monkeypatch.setattr(api_harness.work, "list_work_items", failing_listing)
+    expected_type = (
+        asyncio.CancelledError if not current_after
+        else CrewSessionProjectionError if error_type in (ValueError, OSError)
+        else error_type
+    )
+
+    with pytest.raises(expected_type) as raised:
+        await load_fenced_crew_children(
+            "parent-failing-listing",
+            observation=None,
+            work_item_store=api_harness.work,
+            unmanaged_limit=1001,
+            still_current=still_current,
+        )
+
+    assert listings == [{"parent_id": "parent-failing-listing", "limit": 1001}]
+    assert checks == [True, current_after]
+    if current_after:
+        if error_type in (ValueError, OSError):
+            assert raised.value.__cause__ is error
+            assert str(raised.value) == CREW_SESSION_PROJECTION_ERROR
+        else:
+            assert raised.value is error
+            assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, TypeError, asyncio.CancelledError])
+async def test_observe_crew_children_unexpected_errors_propagate_unconverted(
+    api_harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[BaseException],
+) -> None:
+    error = error_type("membership reader failed")
+
+    async def failing_read(
+        parent_id: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        assert parent_id == "parent-failing-observation"
+        assert expected_plan == _SHA_A
+        raise error
+
+    monkeypatch.setattr(api_harness.work, "get_owned_crew_children", failing_read)
+
+    with pytest.raises(error_type) as raised:
+        await observe_crew_children(
+            "parent-failing-observation",
+            work_item_store=api_harness.work,
+            expected_plan=_SHA_A,
+        )
+
+    assert raised.value is error
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+@pytest.mark.parametrize("failure", [
+    "repair_required", "unavailable", "plan_conflict", "not_managed_suffix",
+    "untyped_not_managed", "io_error", "missing_result",
+])
+async def test_projection_membership_failure_never_uses_unmanaged_fallback(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
+    failure: str,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.managed_parent(canonical=canonical)
+    membership = await case.state.store.get_owned_crew_children(parent_id)
+    reader = case.state.secondary_store
+    case.state.runtime.work_item_store = reader
+    read = reader.get_owned_crew_children
+    list_children = reader.list_work_items
+    observations: list[OwnedStepsSeedPlan | str | None] = []
+    listings: list[dict[str, Any]] = []
+
+    async def failing_close(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren | None:
+        observations.append(expected_plan)
+        if len(observations) == 1:
+            return await read(key, expected_plan=expected_plan)
+        if failure == "missing_result":
+            return None
+        if failure == "untyped_not_managed":
+            raise ValueError("owned_steps_not_managed")
+        if failure == "io_error":
+            raise OSError("membership source unavailable")
+        raise OwnedStepsError(f"owned_steps_{failure}", parent_id=key)
+
+    async def recorded_listing(**kwargs: Any) -> list[WorkItem]:
+        listings.append(kwargs)
+        return await list_children(**kwargs)
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", failing_close)
+    monkeypatch.setattr(reader, "list_work_items", recorded_listing)
+    before = case.sources(parent_id)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": CREW_SESSION_PROJECTION_ERROR}
+    assert observations == [None, membership.plan_digest]
+    assert listings == []
+    assert case.sources(parent_id) == before
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+@pytest.mark.parametrize("identity", [
+    "parent_id", "incarnation", "plan_digest", "ordered_ids", "unmanaged",
+])
+async def test_projection_membership_identity_fence_rejects_changed_observation(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
+    identity: str,
+) -> None:
+    case = owned_projection_case
+    case.state.ingress_decomposer.count = 2
+    parent_id = await case.managed_parent(canonical=canonical)
+    membership = await case.state.store.get_owned_crew_children(parent_id)
+    assert len(membership.active) == 2
+    reader = case.state.secondary_store
+    case.state.runtime.work_item_store = reader
+    read = reader.get_owned_crew_children
+    observations: list[OwnedStepsSeedPlan | str | None] = []
+
+    async def changed_identity(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        observations.append(expected_plan)
+        proven = await read(key, expected_plan=expected_plan)
+        if len(observations) == 1:
+            return proven
+        # Fault only the closing public result, after the real store proves it.
+        if identity == "unmanaged":
+            raise OwnedStepsError("owned_steps_not_managed", parent_id=key)
+        if identity == "ordered_ids":
+            return replace(proven, active=tuple(reversed(proven.active)))
+        return replace(proven, **{identity: f"changed-{identity}"})
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", changed_identity)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": CREW_SESSION_PROJECTION_ERROR}
+    assert observations == [None, membership.plan_digest]
+
+
+@pytest.mark.parametrize("canonical", [True, False], ids=["canonical", "legacy"])
+async def test_projection_closing_observation_supplies_current_child_content(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+    canonical: bool,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.managed_parent(canonical=canonical)
+    membership = await case.state.store.get_owned_crew_children(parent_id)
+    reader = case.state.secondary_store
+    case.state.runtime.work_item_store = reader
+    read = reader.get_owned_crew_children
+    observations: list[OwnedStepsSeedPlan | str | None] = []
+
+    async def stale_first_content(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        observations.append(expected_plan)
+        proven = await read(key, expected_plan=expected_plan)
+        if len(observations) == 1:
+            # Identity is stable, but the first observation's row content is stale.
+            return replace(proven, active=tuple(
+                replace(child, title="Earlier observation")
+                for child in proven.active
+            ))
+        return proven
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", stale_first_content)
+    before = case.sources(parent_id)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    assert response.status_code == 200, response.text
+    if canonical:
+        selected = response.json()["session"]["progress"]["active_child"]
+        current = {child.id: child for child in membership.active}[selected["id"]]
+        assert selected["title"] == current.title
+    else:
+        assert response.json()["children"] == [
+            {**child.to_dict(), "verdict": None, "rounds": None}
+            for child in sorted(
+                membership.active, key=lambda child: (child.priority, -child.created_at),
+            )
+        ]
+    assert observations == [None, membership.plan_digest]
+    assert case.sources(parent_id) == before
+
+
+async def test_legacy_parent_is_reloaded_inside_membership_fence(
+    owned_projection_case: _OwnedProjectionCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = owned_projection_case
+    parent_id = await case.managed_parent(canonical=False)
+    old_parent = await case.state.store.get_work_item(parent_id)
+    assert old_parent is not None
+    reader = case.state.secondary_store
+    case.state.runtime.work_item_store = reader
+    read = reader.get_owned_crew_children
+    replanned = False
+
+    async def replan_before_observation(
+        key: str, expected_plan: OwnedStepsSeedPlan | str | None = None,
+    ) -> OwnedCrewChildren:
+        nonlocal replanned
+        if not replanned:
+            replanned = True
+            await case.apply(parent_id, "replan_unstarted", "before-first-observation")
+        return await read(key, expected_plan=expected_plan)
+
+    monkeypatch.setattr(reader, "get_owned_crew_children", replan_before_observation)
+
+    response = await case.client.get(f"/api/crew-tasks/{parent_id}")
+
+    current_parent = await case.state.store.get_work_item(parent_id)
+    assert replanned and current_parent is not None
+    assert old_parent.steps != current_parent.steps
+    assert response.status_code == 200, response.text
+    assert response.json()["parent"] == current_parent.to_dict()
+    assert response.json()["count"] == 2

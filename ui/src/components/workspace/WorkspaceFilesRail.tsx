@@ -33,8 +33,14 @@ import { fetchThreadInputs, attachTaskInputs, type TaskInput } from '../inputs/i
 import { ArtifactList } from '../artifacts/ArtifactList';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
 import { fetchArtifactMetadata, fetchThreadArtifacts } from '../artifacts/artifactApi';
-import { TodosList } from './TodosList';
+import { OwnedStepsPanel, OwnedStepsRecoveryPanel, TodosList } from './TodosList';
+import {
+  OwnedStepsApiError,
+  fetchOwnedSteps,
+  type ManagedOwnedStepsView,
+} from './ownedStepsApi';
 import { fetchTaskSteps, startRoomWork, updateTaskStep, type TodoStep } from './todosApi';
+import { countCompletedWorkItemSteps } from '../../utils/workItemSteps';
 import type { ArtifactView } from '../../store/useStore';
 import { useStore } from '../../store/useStore';
 import type {
@@ -185,6 +191,13 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [artifactsLoaded, setArtifactsLoaded] = useState(false);
   const [steps, setSteps] = useState<TodoStep[]>([]);
+  const [ownedStepsState, setOwnedStepsState] = useState<{
+    taskId: string;
+    status: 'loading' | 'managed' | 'unmanaged' | 'error';
+    view: ManagedOwnedStepsView | null;
+    error: string;
+    actions: string[];
+  } | null>(null);
   const [startedSessionBinding, setStartedSessionBinding] = useState<{
     threadId: string;
     parentId: string;
@@ -218,6 +231,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
   const stepsRefreshRequestRef = useRef(0);
   const stepsRefreshInFlightRef = useRef<string | null>(null);
   const pendingStepsRefreshRef = useRef(new Set<string>());
+  const pendingStepsCursorRef = useRef(new Map<string, string | null>());
   const roomTokenRef = useRef({ threadId, generation: 0 });
   if (roomTokenRef.current.threadId !== threadId) {
     roomTokenRef.current = {
@@ -362,10 +376,11 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
     }
   }, [collapsed, ownsRoom, threadId]);
 
-  const refreshSteps = useCallback(async () => {
+  const refreshSteps = useCallback(async (cursor: string | null = null) => {
     if (collapsed || !effectiveTaskId) return;
     if (stepsRefreshInFlightRef.current === effectiveTaskId) {
       pendingStepsRefreshRef.current.add(effectiveTaskId);
+      pendingStepsCursorRef.current.set(effectiveTaskId, cursor);
       return;
     }
     stepsRefreshInFlightRef.current = effectiveTaskId;
@@ -379,8 +394,19 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
      * ``stepsRefreshRequestRef``, ``stepsRefreshInFlightRef`` and
      * ``effectiveTaskIdRef`` already cover ordering and ownership. */
     const generation = authority.liveGeneration;
+    setOwnedStepsState(current => (
+      current?.taskId === targetTaskId
+        ? { ...current, status: 'loading', error: '', actions: [] }
+        : { taskId: targetTaskId, status: 'loading', view: null, error: '', actions: [] }
+    ));
     try {
-      const nextSteps = await fetchTaskSteps(targetTaskId);
+      const ownership = await fetchOwnedSteps(
+        targetTaskId,
+        cursor === null ? {} : { cursor },
+      );
+      const nextSteps = ownership.mode === 'unmanaged'
+        ? await fetchTaskSteps(targetTaskId)
+        : ownership.rows.map(row => row.todo);
       const current = useStore.getState();
       if (
         requestId !== stepsRefreshRequestRef.current
@@ -389,15 +415,40 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
         || current.liveGeneration !== generation
       ) return;
       setSteps(nextSteps);
-    } catch {
-      // Retain the last authoritative Todo list on transport/shape failure.
+      setOwnedStepsState({
+        taskId: targetTaskId,
+        status: ownership.mode === 'unmanaged' ? 'unmanaged' : 'managed',
+        view: ownership.mode === 'unmanaged' ? null : ownership,
+        error: '',
+        actions: [],
+      });
+    } catch (error) {
+      if (
+        requestId === stepsRefreshRequestRef.current
+        && ownsRoom(token)
+        && effectiveTaskIdRef.current === targetTaskId
+        && useStore.getState().liveGeneration === generation
+      ) {
+        setSteps([]);
+        setOwnedStepsState({
+          taskId: targetTaskId,
+          status: 'error',
+          view: null,
+          error: error instanceof OwnedStepsApiError
+            ? error.feedback
+            : 'Owned-step ownership could not be determined. Mutations are blocked.',
+          actions: error instanceof OwnedStepsApiError ? error.actions : [],
+        });
+      }
     } finally {
       if (stepsRefreshInFlightRef.current === targetTaskId) {
         stepsRefreshInFlightRef.current = null;
       }
       const requested = pendingStepsRefreshRef.current.delete(targetTaskId);
+      const pendingCursor = pendingStepsCursorRef.current.get(targetTaskId) ?? null;
+      pendingStepsCursorRef.current.delete(targetTaskId);
       if (requested && ownsRoom(token)) {
-        queueMicrotask(() => { void refreshSteps(); });
+        queueMicrotask(() => { void refreshSteps(pendingCursor); });
       }
     }
   }, [collapsed, effectiveTaskId, ownsRoom]);
@@ -802,7 +853,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
     if (!ownsRoom(roomToken) || effectiveTaskIdRef.current !== targetTaskId) return;
     void refreshSteps();
   }, [effectiveTaskId, ownsRoom, refreshSteps]);
-  const doneCount = steps.filter((s) => s.status === 'done').length;
+  const doneCount = countCompletedWorkItemSteps(steps);
 
   const handleManualRefresh = useCallback(async () => {
     if (manualRefreshRef.current || collapsed) return;
@@ -1099,7 +1150,36 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
           >
             TODOS{steps.length > 0 ? ` (${doneCount}/${steps.length})` : ''}
           </div>
-          <TodosList steps={steps} onConfirm={handleConfirm} onReject={handleReject} />
+          {ownedStepsState?.taskId === effectiveTaskId && ownedStepsState.status === 'managed' && ownedStepsState.view ? (
+            <OwnedStepsPanel
+              taskId={effectiveTaskId}
+              view={ownedStepsState.view}
+              onRefresh={() => refreshSteps()}
+              onNavigate={cursor => refreshSteps(cursor)}
+            />
+          ) : ownedStepsState?.taskId === effectiveTaskId && ownedStepsState.status === 'error' ? (
+            <>
+              <div role="alert" data-testid="owned-steps-classification-error"
+                style={{ color: '#f08b8b', padding: '6px 10px' }}>
+                {ownedStepsState.error}
+              </div>
+              {(ownedStepsState.actions.includes('replace_manual_prefix')
+                || ownedStepsState.actions.includes('replan_unstarted')
+                || ownedStepsState.actions.includes('inspect_source')) && (
+                <OwnedStepsRecoveryPanel
+                  taskId={effectiveTaskId}
+                  actions={ownedStepsState.actions}
+                  onRefresh={() => refreshSteps()}
+                />
+              )}
+            </>
+          ) : ownedStepsState?.taskId === effectiveTaskId && ownedStepsState.status === 'loading' ? (
+            <div data-testid="owned-steps-loading" style={{ color: DIM, padding: '6px 10px' }}>
+              Checking step ownership…
+            </div>
+          ) : (
+            <TodosList steps={steps} onConfirm={handleConfirm} onReject={handleReject} />
+          )}
         </div>
       )}
 

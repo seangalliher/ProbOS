@@ -26,7 +26,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from probos.crew_session_live import load_crew_session_projection
+from probos.crew_session_live import (
+    load_crew_session_projection,
+    load_fenced_crew_children,
+    observe_crew_children,
+)
 from probos.crew_session_projection import (
     CREW_SESSION_PROJECTION_ERROR,
     CrewSessionProjectionError,
@@ -163,8 +167,40 @@ async def get_crew_task(
             ) from exc
         return {"session": detail.to_wire()}
 
-    children = await store.list_work_items(parent_id=parent_id, limit=1000)
-    prov_index = await _provenance_by_work_item(runtime, parent)
+    try:
+        observation = await observe_crew_children(
+            parent_id, work_item_store=store,
+        )
+        current_parent = await store.get_work_item(parent_id)
+        if (
+            current_parent is None
+            or current_parent.id != parent_id
+            or current_parent.work_type != parent.work_type
+        ):
+            raise CrewSessionProjectionError()
+        parent = current_parent
+        prov_index = await _provenance_by_work_item(runtime, parent)
+        children = await load_fenced_crew_children(
+            parent_id,
+            observation=observation,
+            work_item_store=store,
+            unmanaged_limit=1000,
+        )
+        if observation is not None:
+            children = sorted(
+                children, key=lambda child: (child.priority, -child.created_at),
+            )
+    except ValueError as exc:
+        logger.warning(
+            "Crew task parent %s current-child projection failed (%s); "
+            "returning stable 409",
+            parent_id,
+            CREW_SESSION_PROJECTION_ERROR,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=CREW_SESSION_PROJECTION_ERROR,
+        ) from exc
 
     serialized_children: list[dict[str, Any]] = []
     for child in children:

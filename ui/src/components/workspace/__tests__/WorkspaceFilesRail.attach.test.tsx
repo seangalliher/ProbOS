@@ -24,9 +24,14 @@ vi.mock('../../artifacts/artifactApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../artifacts/artifactApi')>();
   return { ...actual, fetchThreadArtifacts: vi.fn() };
 });
+vi.mock('../ownedStepsApi', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ownedStepsApi')>();
+  return { ...actual, fetchOwnedSteps: vi.fn() };
+});
 
 import { fetchThreadInputs, attachTaskInputs } from '../../inputs/inputsApi';
 import { fetchThreadArtifacts } from '../../artifacts/artifactApi';
+import { fetchOwnedSteps } from '../ownedStepsApi';
 import { WorkspaceFilesRail } from '../WorkspaceFilesRail';
 
 const INITIAL: TaskInput[] = [
@@ -43,6 +48,11 @@ beforeEach(() => {
   vi.mocked(fetchThreadInputs).mockResolvedValue(INITIAL);
   vi.mocked(fetchThreadArtifacts).mockResolvedValue([] as ArtifactView[]);
   vi.mocked(attachTaskInputs).mockResolvedValue(REFRESHED);
+  vi.mocked(fetchOwnedSteps).mockResolvedValue({
+    version: 1, mode: 'unmanaged', parent_id: 'wi-1', requested_item_id: 'wi-1',
+    reference: null, rows: [], previous_cursor: null, next_cursor: null,
+    recovery: [], finalization: 'none',
+  });
 });
 
 afterEach(() => {

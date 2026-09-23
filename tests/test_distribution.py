@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from probos import work_item_steps as owned_steps
 from probos.api import create_app
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import SystemConfig
@@ -27,6 +28,12 @@ from tests.test_ad1131_crew_session_delivery_metrics import (
     _Harness as _NotificationHarness,
     _make_outcome,
     harness as notification_delivery_harness,
+)
+from tests.test_ad1192_owned_steps_execution import (
+    _owned_http_apply,
+    _owned_http_proposal,
+    _owned_http_view,
+    owned_closeout_case,
 )
 from tests.test_ad1207_fault_visibility import fault_visibility_api
 
@@ -196,6 +203,487 @@ async def runtime_no_utility(tmp_path):
     await rt.start()
     yield rt
     await rt.stop()
+
+
+@pytest.fixture
+async def owned_steps_create_app(runtime):
+    from httpx import ASGITransport, AsyncClient
+
+    store = runtime.work_item_store
+    assert runtime.crew_session_service is not None
+    assert runtime.crew_orchestrator is not None
+    parent = await store.create_work_item(
+        id="owned-http-parent",
+        title="Owned HTTP parent",
+        steps=[
+            {
+                "label": "Manual HTTP row",
+                "status": "pending",
+                "assigned_to": None,
+                "submitted_by": None,
+                "confirmed_by": None,
+                "note": None,
+            }
+        ],
+    )
+    child = await store.create_work_item(
+        id="owned-http-child",
+        title="Owned HTTP child",
+        parent_id=parent.id,
+        assigned_to="agent-a",
+        metadata={"spec_id": "owned-http-spec"},
+    )
+    await store.get_owned_steps_execution_port().admit(
+        parent.id,
+        children=(child,),
+        thread_id="",
+    )
+    app = create_app(runtime)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        yield runtime, client, parent.id, child.id
+
+
+async def test_owned_steps_create_app_happy_read_preview_adopt_and_commands(
+    owned_steps_create_app,
+) -> None:
+    runtime, client, parent_id, child_id = owned_steps_create_app
+    legacy = await client.get(f"/api/work-items/{parent_id}/steps")
+    assert legacy.content == (
+        b'{"steps":[{"label":"Manual HTTP row","status":"pending",'
+        b'"assigned_to":null,"submitted_by":null,"confirmed_by":null,'
+        b'"note":null}],"gate_completion":false}'
+    )
+    observed = await client.get(f"/api/work-items/{child_id}/owned-steps")
+    assert observed.status_code == 200
+    view = observed.json()
+    assert view["parent_id"] == parent_id
+    assert view["requested_item_id"] == child_id
+    assert view["mode"] == "awaiting_adoption"
+    reference = view["reference"]
+    previewed = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/preview",
+        json={
+            "version": 1,
+            "kind": "adopt_existing",
+            "preparation_id": "http-adopt-preparation",
+            "reference": reference,
+        },
+    )
+    assert previewed.status_code == 200, previewed.text
+    proposal = previewed.json()["proposal"]
+    assert proposal["kind"] == "adopt_existing"
+    assert proposal["state"] == "ready"
+    adopted = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/adopt",
+        json={
+            "version": 1,
+            "operation_id": "http-adopt",
+            "reference": proposal["reference"],
+        },
+    )
+    assert adopted.status_code == 200, adopted.text
+    replayed = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/adopt",
+        json={
+            "version": 1,
+            "operation_id": "http-adopt",
+            "reference": proposal["reference"],
+        },
+    )
+    assert replayed.status_code == 200
+    assert replayed.json() == {"disposition": "duplicate"}
+    active = (
+        await client.get(f"/api/work-items/{parent_id}/owned-steps")
+    ).json()
+    assert "replan_unstarted" in active["recovery"]
+    assert "replace_manual_prefix" in active["recovery"]
+    commanded = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/commands",
+        json={
+            "version": 1,
+            "reference": active["reference"],
+            "commands": [
+                {
+                    "operation_id": "http-submit",
+                    "step_id": active["rows"][0]["step_id"],
+                    "kind": "manual_submit",
+                }
+            ],
+        },
+    )
+    assert commanded.status_code == 200
+    assert commanded.json() == {
+        "results": [
+            {"operation_id": "http-submit", "disposition": "applied"}
+        ]
+    }
+    assert (
+        await runtime.work_item_store.get_work_item(parent_id)
+    ).steps[0]["status"] == "submitted"
+
+
+@pytest.mark.parametrize("active", [False, True], ids=["adopt", "replan"])
+async def test_owned_steps_current_edited_prefix_survives_proposal_application(
+    owned_closeout_case: Any, active: bool,
+) -> None:
+    case = owned_closeout_case
+    state = case.state
+    setup = await state.create_legacy()
+    parent_id = setup["parent_id"]
+    if active:
+        await _owned_http_apply(
+            case, parent_id,
+            await _owned_http_proposal(case, parent_id, "adopt_existing", "prefix-adopt"),
+            "prefix-adopt",
+        )
+    before = await state.store.get_owned_steps(parent_id)
+    view = await _owned_http_view(case, parent_id)
+    response = await case.client.post(
+        f"/api/work-items/{parent_id}/owned-steps/commands",
+        json={
+            "version": 1, "reference": view["reference"],
+            "commands": [{
+                "operation_id": "edit-current-prefix", "step_id": view["rows"][0]["step_id"],
+                "kind": "edit_note", "note": "Current authorized manual bytes",
+            }],
+        },
+    )
+    assert response.status_code == 200, response.text
+    edited = await state.store.get_owned_steps(parent_id)
+    assert edited.control.original_steps_json == before.control.original_steps_json
+    kind = "replan_unstarted" if active else "adopt_existing"
+    proposal = await _owned_http_proposal(case, parent_id, kind, "edited-prefix-preview")
+    await _owned_http_apply(case, parent_id, proposal, "edited-prefix-apply")
+    after = await state.store.get_owned_steps(parent_id)
+    assert after.control.original_steps_json == before.control.original_steps_json
+    assert after.control.rows[0] == edited.control.rows[0]
+    assert (await state.store.get_work_item(parent_id)).steps[0]["note"] == "Current authorized manual bytes"
+
+
+async def test_owned_steps_child_owner_urls_cover_adoption_replan_and_repair(owned_closeout_case: Any) -> None:
+    case = owned_closeout_case
+    setup = await case.state.create_legacy()
+    child_id = setup["child_id"]
+    parent_id = setup["parent_id"]
+    for index, (kind, fields) in enumerate((
+        ("adopt_existing", {}),
+        ("replan_unstarted", {}),
+        ("replace_manual_prefix", {"prefix_json": '[ { "label" : "Repaired current prefix", "status" : "pending" } ]'}),
+    )):
+        view = await _owned_http_view(case, child_id)
+        assert view["parent_id"] == parent_id
+        assert view["requested_item_id"] == child_id
+        proposal = await _owned_http_proposal(case, child_id, kind, f"child-preview-{index}", **fields)
+        await _owned_http_apply(case, child_id, proposal, f"child-apply-{index}")
+    repaired = await case.client.get(f"/api/work-items/{child_id}/owned-steps/repair")
+    assert repaired.status_code == 200, repaired.text
+    assert repaired.json()["parent_id"] == repaired.json()["reference"]["parent_id"] == parent_id
+    assert (await case.state.store.get_work_item(parent_id)).steps[0]["label"] == "Repaired current prefix"
+    other = await case.state.create_legacy()
+    foreign = await _owned_http_proposal(case, other["child_id"], "adopt_existing", "foreign-preview")
+    refused = await case.client.post(
+        f"/api/work-items/{child_id}/owned-steps/adopt",
+        json={"version": 1, "operation_id": "foreign-apply", "reference": foreign["reference"]},
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"]["parent_id"] == parent_id
+    assert (await case.state.store.get_owned_steps(other["parent_id"])).control.mode == "awaiting_adoption"
+
+    ordinary = await case.state.store.create_work_item(id="ordinary-parent", title="Ordinary parent")
+    ordinary_child = await case.state.store.create_work_item(
+        id="ordinary-child", title="Ordinary child", parent_id=ordinary.id,
+        steps=[{"label": "Child's own steps", "status": "pending"}],
+    )
+    unmanaged = await _owned_http_view(case, ordinary_child.id)
+    assert unmanaged["mode"] == "unmanaged"
+    assert unmanaged["parent_id"] == unmanaged["requested_item_id"] == ordinary_child.id
+    assert unmanaged["rows"][0]["todo"]["label"] == "Child's own steps"
+    refused = await case.client.get(f"/api/work-items/{ordinary_child.id}/owned-steps/repair")
+    assert refused.status_code == 404
+    assert refused.json()["detail"]["parent_id"] == ordinary_child.id
+
+
+@pytest.mark.parametrize("kind,fields", [
+    ("reassign_unstarted", {"assignee_id": None}),
+    ("pause_accounting", {"booking_id": None, "resource_id": "worker-a"}),
+    ("pause_accounting", {"booking_id": "booking", "resource_id": None}),
+    ("pause_accounting", {"booking_id": None, "resource_id": None}),
+    ("resume_accounting", {"booking_id": None, "resource_id": "worker-a"}),
+    ("resume_accounting", {"booking_id": "booking", "resource_id": None}),
+    ("resume_accounting", {"booking_id": None, "resource_id": None}),
+])
+async def test_owned_steps_null_required_binding_rejected_before_effects(
+    owned_closeout_case: Any, kind: str, fields: dict[str, str | None],
+) -> None:
+    import sqlite3
+
+    case = owned_closeout_case
+    setup = await case.state.create_replan()
+    parent_id = setup["parent_id"]
+    view = await _owned_http_view(case, parent_id)
+    with sqlite3.connect(case.state.storage_root / "workforce.db") as db:
+        before = list(db.iterdump())
+    events = list(case.state.events)
+    response = await case.client.post(
+        f"/api/work-items/{parent_id}/owned-steps/commands",
+        json={
+            "version": 1, "reference": view["reference"],
+            "commands": [{"operation_id": "null-binding", "step_id": view["rows"][0]["step_id"], "kind": kind, **fields}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    with sqlite3.connect(case.state.storage_root / "workforce.db") as db:
+        assert list(db.iterdump()) == before
+    assert case.state.events == events
+
+
+async def test_owned_steps_nullable_note_still_clears_manual_note(owned_closeout_case: Any) -> None:
+    case = owned_closeout_case
+    setup = await case.state.create_legacy()
+    parent_id = setup["parent_id"]
+    for index, note in enumerate(("Before clear", None)):
+        view = await _owned_http_view(case, parent_id)
+        response = await case.client.post(
+            f"/api/work-items/{parent_id}/owned-steps/commands",
+            json={
+                "version": 1, "reference": view["reference"],
+                "commands": [{"operation_id": f"note-{index}", "step_id": view["rows"][0]["step_id"], "kind": "edit_note", "note": note}],
+            },
+        )
+        assert response.status_code == 200, response.text
+    assert (await case.state.store.get_work_item(parent_id)).steps[0]["note"] is None
+
+
+async def test_owned_steps_repair_replaces_malformed_then_requires_explicit_adopt(
+    runtime,
+) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    store = runtime.work_item_store
+    parent = await store.create_work_item(
+        id="owned-repair-parent",
+        title="Owned repair parent",
+        steps=[{"label": "Historical", "status": "completed"}],
+    )
+    child = await store.create_work_item(
+        id="owned-repair-child",
+        title="Owned repair child",
+        parent_id=parent.id,
+        assigned_to="agent-a",
+        metadata={"spec_id": "owned-repair-spec"},
+    )
+    with pytest.raises(owned_steps.OwnedStepsError, match="repair_required"):
+        await store.get_owned_steps_execution_port().admit(
+            parent.id,
+            children=(child,),
+            thread_id="",
+        )
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app(runtime)),
+        base_url="http://test",
+    ) as client:
+        malformed = await client.get(
+            f"/api/work-items/{parent.id}/owned-steps"
+        )
+        assert malformed.status_code == 409
+        assert malformed.json()["detail"]["code"] == "owned_steps_repair_required"
+        repair = await client.get(
+            f"/api/work-items/{parent.id}/owned-steps/repair"
+        )
+        assert repair.status_code == 200, repair.text
+        evidence = repair.json()
+        assert evidence["raw_steps"] == (
+            '[{"label": "Historical", "status": "completed"}]'
+        )
+        preview = await client.post(
+            f"/api/work-items/{parent.id}/owned-steps/preview",
+            json={
+                "version": 1,
+                "kind": "replace_manual_prefix",
+                "preparation_id": "repair-prefix-preparation",
+                "reference": evidence["reference"],
+                "prefix_json": '[{"label":"Replacement","status":"pending"}]',
+            },
+        )
+        assert preview.status_code == 200, preview.text
+        proposal = preview.json()["proposal"]
+        # The former assertion routed replacement through /adopt. The ratified
+        # proposal protocol reserves /adopt for adopt_existing only.
+        refused_route = await client.post(
+            f"/api/work-items/{parent.id}/owned-steps/adopt",
+            json={
+                "version": 1,
+                "operation_id": "repair-prefix-apply",
+                "reference": proposal["reference"],
+            },
+        )
+        assert refused_route.status_code == 409, refused_route.text
+        assert refused_route.json()["detail"]["code"] == "owned_steps_proposal_route_conflict"
+        replaced = await client.post(
+            f"/api/work-items/{parent.id}/owned-steps/commands",
+            json={
+                "version": 1,
+                "operation_id": "repair-prefix-apply",
+                "reference": proposal["reference"],
+            },
+        )
+        assert replaced.status_code == 200, replaced.text
+        awaiting = (
+            await client.get(f"/api/work-items/{parent.id}/owned-steps")
+        ).json()
+        assert awaiting["mode"] == "awaiting_adoption"
+        assert len(awaiting["rows"]) == 1
+        adoption = await client.post(
+            f"/api/work-items/{parent.id}/owned-steps/preview",
+            json={
+                "version": 1,
+                "kind": "adopt_existing",
+                "preparation_id": "repair-adopt-preparation",
+                "reference": awaiting["reference"],
+            },
+        )
+        adopted = await client.post(
+            f"/api/work-items/{parent.id}/owned-steps/adopt",
+            json={
+                "version": 1,
+                "operation_id": "repair-adopt-apply",
+                "reference": adoption.json()["proposal"]["reference"],
+            },
+        )
+        assert adopted.status_code == 200, adopted.text
+        active = (
+            await client.get(f"/api/work-items/{parent.id}/owned-steps")
+        ).json()
+        assert active["mode"] == "active"
+        assert [row["todo"]["status"] for row in active["rows"]] == [
+            "pending",
+            "pending",
+        ]
+
+
+async def test_owned_steps_repair_auth_error_and_validation(
+    owned_steps_create_app,
+) -> None:
+    runtime, client, parent_id, _ = owned_steps_create_app
+    missing = await client.get(
+        "/api/work-items/missing-owned-parent/owned-steps/repair"
+    )
+    assert missing.status_code == 404
+    runtime.config.auth.crew_scope_token = "owned-repair-secret"
+    denied = await client.get(
+        f"/api/work-items/{parent_id}/owned-steps/repair"
+    )
+    assert denied.status_code == 401
+    invalid = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/preview",
+        json={
+            "version": 1,
+            "kind": "replace_manual_prefix",
+            "preparation_id": "bad-prefix",
+            "reference": {
+                "version": 1,
+                "parent_id": parent_id,
+                "actor_id": "captain",
+                "thread_id": "",
+                "turn_id": "http-owner",
+                "view_id": "spoof",
+                "content_hash": "0" * 64,
+                "observation_id": "spoof",
+            },
+            "prefix_json": '[{"label":"bad","status":"completed"}]',
+        },
+        headers={"Authorization": "Bearer owned-repair-secret"},
+    )
+    assert invalid.status_code == 422
+
+
+async def test_owned_steps_unmanaged_read_does_not_require_owner_service(
+    runtime,
+) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    item = await runtime.work_item_store.create_work_item(
+        id="owned-unmanaged-default",
+        title="Unmanaged default",
+        steps=[{"label": "Manual", "status": "pending"}],
+    )
+    owner = runtime.crew_orchestrator
+    service = runtime.crew_session_service
+    runtime.crew_orchestrator = None
+    runtime.crew_session_service = None
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=create_app(runtime)),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/work-items/{item.id}/owned-steps"
+            )
+    finally:
+        runtime.crew_orchestrator = owner
+        runtime.crew_session_service = service
+    assert response.status_code == 200
+    assert response.json()["mode"] == "unmanaged"
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["preview", "adopt", "commands", "finalize"],
+)
+async def test_owned_steps_create_app_auth_precedes_malformed_body(
+    owned_steps_create_app,
+    suffix: str,
+) -> None:
+    runtime, client, parent_id, _ = owned_steps_create_app
+    runtime.config.auth.crew_scope_token = "owned-http-secret"
+    response = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/{suffix}",
+        content=b"{malformed",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 401
+    assert b"owned-http-secret" not in response.content
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["preview", "adopt", "commands", "finalize"],
+)
+async def test_owned_steps_create_app_strict_input_rejects_spoof_fields(
+    owned_steps_create_app,
+    suffix: str,
+) -> None:
+    runtime, client, parent_id, _ = owned_steps_create_app
+    runtime.config.auth.crew_scope_token = "owned-http-secret"
+    response = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/{suffix}",
+        json={"actor": "captain", "accepted": True, "control": {}},
+        headers={
+            "Authorization": f"Bearer {runtime.config.auth.crew_scope_token}"
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_owned_steps_create_app_finalize_has_typed_recovery_error(
+    owned_steps_create_app,
+) -> None:
+    _runtime, client, parent_id, _ = owned_steps_create_app
+    observed = (
+        await client.get(f"/api/work-items/{parent_id}/owned-steps")
+    ).json()
+    response = await client.post(
+        f"/api/work-items/{parent_id}/owned-steps/finalize",
+        json={"version": 1, "reference": observed["reference"]},
+    )
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "owned_steps_finalization_unavailable"
+    assert detail["actions"] == ["inspect_source"]
+    assert "token" not in json.dumps(detail)
 
 
 @pytest.fixture

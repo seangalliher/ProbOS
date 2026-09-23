@@ -1034,7 +1034,9 @@ async def test_group_write_disclosure_does_not_decide_eligibility(
 @pytest.mark.parametrize("failure_stage", ["reply", "context", "pipeline", "before-producer"])
 async def test_group_failure_before_write_facts_does_not_invent_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from probos.dm_reply import ToolFailures
     from probos.routers import thread_fanout
     from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
 
@@ -1061,11 +1063,24 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
         semantic_replies.extend(replies)
         record_trust(runtime, thread, replies, participants)
 
-    def construct_reply(*, body: str) -> DmReply:
-        if body == marked_reply and failure_stage == "reply":
-            failures.append(failure_stage)
-            raise RuntimeError("Injected reply construction failure")
-        return original_reply(body=body)
+    # The constructor-only fake masked the intended failures when the consumer
+    # began reconstructing attachments through the real reply factory.
+    class _ReplyFactory:
+        def __new__(
+            cls, body: str, tool_failures: ToolFailures | None = None,
+        ) -> DmReply:
+            if body == marked_reply and failure_stage == "reply":
+                failures.append(failure_stage)
+                raise RuntimeError("Injected reply construction failure")
+            return original_reply(
+                body=body,
+                tool_failures=tool_failures if tool_failures is not None else ToolFailures(),
+            )
+
+        @classmethod
+        def from_intent_result(cls, result: IntentResult | None) -> DmReply:
+            reply = original_reply.from_intent_result(result)
+            return cls(body=reply.body, tool_failures=reply.tool_failures)
 
     def construct_context(**kwargs: Any) -> DmReplyContext:
         if kwargs["agent_id"] == "scout1" and failure_stage == "context":
@@ -1088,7 +1103,7 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
             raise RuntimeError("Injected orchestration failure before producers")
         await escalate(pipeline)
 
-    monkeypatch.setattr(thread_fanout, "DmReply", construct_reply)
+    monkeypatch.setattr(thread_fanout, "DmReply", _ReplyFactory)
     monkeypatch.setattr(thread_fanout, "DmReplyContext", construct_context)
     monkeypatch.setattr(thread_fanout, "DmReplyPipeline", construct_pipeline)
     monkeypatch.setattr(thread_fanout, "_record_conversation_trust", capture_trust)
@@ -1137,6 +1152,129 @@ async def test_group_failure_before_write_facts_does_not_invent_ledger(
         assert episodes[0].outcomes[0]["response"] == expected
         assert episodes[0].self_contradicted_channels == []
         assert episodes[0].outcomes[0]["success"] is True
+
+    degradation = [
+        record for record in caplog.records
+        if record.name == thread_fanout.__name__
+        and record.getMessage().startswith("AD-933: escalation subset failed")
+    ]
+    assert len(degradation) == 1
+    assert degradation[0].args == (thread.id, "scout1")
+    assert degradation[0].exc_info is not None
+    assert degradation[0].exc_info[0] is RuntimeError
+
+
+@pytest.mark.parametrize("failure_stage", ["context", "pipeline", "before-producer"])
+async def test_group_escalation_failure_preserves_established_reply_attachments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_stage: str,
+) -> None:
+    import hashlib
+
+    from probos.cognitive.chat_facilitator import project_persisted_convergence_body
+    from probos.dm_reply import DM_REPLY_METADATA_KEY, ToolFailures, call_signature, failure_key
+    from probos.routers import thread_fanout
+    from tests.test_ad1285_write_claim_guard import _FakeProactiveLoop
+
+    raw_fallback = "Saved the finding. [NOTEBOOK finding]Review-probe finding.[/NOTEBOOK]"
+    marked_reply = '<intent emotion="focused"/>' + raw_fallback
+    peer_text = "The crew morale is steady."
+    failures = ToolFailures.from_mapping({
+        failure_key("aaaaaaaaaaaa", "aaaaaaaaaaaa", call_signature("web_search", None)): "web_search",
+    })
+    expected = str(DmReply(body=raw_fallback, tool_failures=failures).render())
+    producer = _FakeProactiveLoop(actions=[])
+    recorder = _RecordingEpisodic()
+    store, runtime = _build_env(
+        tmp_path, agents={"scout1": "scout", "counselor1": "counselor"},
+        replies={"scout1": marked_reply, "counselor1": peer_text}, episodic=recorder,
+    )
+    runtime.proactive_loop = producer
+    send = runtime.intent_bus.send
+    original_context = thread_fanout.DmReplyContext
+    original_pipeline = thread_fanout.DmReplyPipeline
+    escalate = DmReplyPipeline.run_escalation_only
+    render = DmReply.render
+    produced: list[IntentResult] = []
+    contexts: list[DmReplyContext] = []
+    renders: list[DmReply] = []
+    injected: list[str] = []
+
+    async def dispatch(intent: IntentMessage, *, raise_on_denial: bool = False) -> IntentResult:
+        result = await send(intent, raise_on_denial=raise_on_denial)
+        assert result is not None
+        if result.agent_id == "scout1":
+            result.metadata[DM_REPLY_METADATA_KEY] = failures.to_wire()
+            produced.append(result)
+        return result
+
+    def construct_context(**kwargs: Any) -> DmReplyContext:
+        if kwargs["agent_id"] == "scout1" and failure_stage == "context":
+            injected.append(failure_stage)
+            raise RuntimeError("Injected context failure after reply reconstruction")
+        context = original_context(**kwargs)
+        contexts.append(context)
+        return context
+
+    def construct_pipeline(context: DmReplyContext) -> DmReplyPipeline:
+        if context.agent_id == "scout1" and failure_stage == "pipeline":
+            injected.append(failure_stage)
+            raise RuntimeError("Injected pipeline failure after reply reconstruction")
+        return original_pipeline(context)
+
+    async def fail_before_producer(pipeline: DmReplyPipeline) -> None:
+        if pipeline.ctx.agent_id == "scout1":
+            assert pipeline.ctx.write_ledger.evaluated is False
+            injected.append(failure_stage)
+            raise RuntimeError("Injected orchestration failure before producers")
+        await escalate(pipeline)
+
+    def observe_render(reply: DmReply, *, max_chars: int | None = None) -> str:
+        renders.append(reply)
+        return render(reply, max_chars=max_chars)
+
+    monkeypatch.setattr(runtime.intent_bus, "send", dispatch)
+    monkeypatch.setattr(thread_fanout, "DmReplyContext", construct_context)
+    monkeypatch.setattr(thread_fanout, "DmReplyPipeline", construct_pipeline)
+    monkeypatch.setattr(DmReply, "render", observe_render)
+    if failure_stage == "before-producer":
+        monkeypatch.setattr(DmReplyPipeline, "run_escalation_only", fail_before_producer)
+    thread = store.create_thread(title="known reply attachments", participants=["scout1", "counselor1"])
+    captain = store.append_message(thread.id, author_id="captain", role="captain", body="Report.")
+
+    replies = await group_chat_fanout(runtime, thread.id, captain_body=captain.body, captain_msg=captain)
+
+    assert injected == [failure_stage]
+    assert len(produced) == 1
+    assert produced[0].result == marked_reply
+    assert produced[0].metadata == {DM_REPLY_METADATA_KEY: failures.to_wire()}
+    assert producer.calls == []
+    assert all(context.write_ledger.evaluated is False for context in contexts)
+    writer_contexts = [context for context in contexts if context.agent_id == "scout1"]
+    assert len(writer_contexts) == int(failure_stage in {"pipeline", "before-producer"})
+    assert all(context.pre_write_disclosure_body is None for context in writer_contexts)
+    # The failed writer never reaches the guard; the unaffected peer does.
+    # Requiring None for both incorrectly pinned an unexecuted peer pipeline.
+    peer_contexts = [context for context in contexts if context.agent_id == "counselor1"]
+    assert len(peer_contexts) == 1
+    assert peer_contexts[0].pre_write_disclosure_body == peer_text
+    messages = [message for message in store.list_messages(thread.id, limit=1000) if message.role == "agent"]
+    assert len(replies) == len(messages) == len(recorder.stored) == len(renders) == 2
+    writer_renders = [reply for reply in renders if reply.body == raw_fallback]
+    assert len(writer_renders) == 1
+    assert writer_renders[0].tool_failures.to_wire() == failures.to_wire()
+    for agent_id, body in (("scout1", expected), ("counselor1", peer_text)):
+        reply = next(reply for reply in replies if reply["agent_id"] == agent_id)
+        message = next(message for message in messages if message.author_id == agent_id)
+        episode = next(episode for episode in recorder.stored if episode.agent_ids == [agent_id])
+        assert reply["text"] == reply["message"]["body"] == message.body == body
+        assert reply["message"] == message.to_dict()
+        assert episode.outcomes[0]["response"] == body
+        assert episode.outcomes[0]["session_type"] == "group"
+        assert episode.self_contradicted_channels == []
+        if agent_id == "scout1":
+            evidence = message.metadata["ad1305_convergence"]
+            assert evidence["body_sha256"] == hashlib.sha256(body.encode("utf-8")).hexdigest()
+            assert project_persisted_convergence_body(body, message.metadata) == raw_fallback
 
 
 @pytest.mark.parametrize("case", [

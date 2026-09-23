@@ -6,7 +6,7 @@ import asyncio
 import logging
 import re
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,11 +18,13 @@ from probos.crew_session_projection import (
     build_crew_session_summary,
     validate_synthesis_metadata,
 )
+from probos.work_item_steps import OwnedCrewChildren, OwnedStepsError
 
 if TYPE_CHECKING:
     from probos.artifacts import ArtifactStore
     from probos.cognitive.crew_session import CrewSessionService
     from probos.threads import ChatThreadStore
+    from probos.work_item_steps import OwnedStepsStore
     from probos.workforce import WorkItem, WorkItemStore
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,75 @@ def _require_current(still_current: Callable[[], bool] | None) -> None:
         raise asyncio.CancelledError()
 
 
+async def observe_crew_children(
+    parent_id: str,
+    *,
+    work_item_store: OwnedStepsStore,
+    expected_plan: str | None = None,
+    still_current: Callable[[], bool] | None = None,
+) -> OwnedCrewChildren | None:
+    """Read proven membership; only the public not-managed error permits fallback."""
+    _require_current(still_current)
+    try:
+        membership = await work_item_store.get_owned_crew_children(
+            parent_id, expected_plan=expected_plan,
+        )
+    except OwnedStepsError as exc:
+        if exc.code == "owned_steps_not_managed":
+            return None
+        raise CrewSessionProjectionError() from exc
+    except (ValueError, OSError) as exc:
+        raise CrewSessionProjectionError() from exc
+    finally:
+        _require_current(still_current)
+    if not isinstance(membership, OwnedCrewChildren) or membership.parent_id != parent_id:
+        raise CrewSessionProjectionError()
+    return membership
+
+
+async def load_fenced_crew_children(
+    parent_id: str,
+    *,
+    observation: OwnedCrewChildren | None,
+    work_item_store: WorkItemStore,
+    unmanaged_limit: int,
+    still_current: Callable[[], bool] | None = None,
+) -> Sequence[WorkItem]:
+    """Close the membership fence around a reader's parent/session load."""
+    _require_current(still_current)
+    children: Sequence[WorkItem] = ()
+    if observation is None:
+        try:
+            children = await work_item_store.list_work_items(
+                parent_id=parent_id, limit=unmanaged_limit,
+            )
+        except (ValueError, OSError) as exc:
+            raise CrewSessionProjectionError() from exc
+        finally:
+            _require_current(still_current)
+    current = await observe_crew_children(
+        parent_id,
+        work_item_store=work_item_store,
+        expected_plan=observation.plan_digest if observation is not None else None,
+        still_current=still_current,
+    )
+    _require_current(still_current)
+    if observation is None:
+        if current is not None:
+            raise CrewSessionProjectionError()
+        return children
+    if (
+        current is None
+        or current.parent_id != observation.parent_id
+        or current.incarnation != observation.incarnation
+        or current.plan_digest != observation.plan_digest
+        or tuple(child.id for child in current.active)
+        != tuple(child.id for child in observation.active)
+    ):
+        raise CrewSessionProjectionError()
+    return current.active
+
+
 async def load_crew_session_projection(
     parent_id: str,
     *,
@@ -58,6 +129,11 @@ async def load_crew_session_projection(
 ) -> LoadedCrewSessionProjection:
     """Load and validate one exact AD-1132 detail and summary projection."""
     parent_key = _bounded_id(parent_id)
+    observation = await observe_crew_children(
+        parent_key,
+        work_item_store=work_item_store,
+        still_current=still_current,
+    )
     _require_current(still_current)
     parent = await work_item_store.get_work_item(parent_key)
     _require_current(still_current)
@@ -91,9 +167,12 @@ async def load_crew_session_projection(
         if "crew_synth" in parent.metadata
         else None
     )
-    children = await work_item_store.list_work_items(
-        parent_id=parent_key,
-        limit=1001,
+    children = await load_fenced_crew_children(
+        parent_key,
+        observation=observation,
+        work_item_store=work_item_store,
+        unmanaged_limit=1001,
+        still_current=still_current,
     )
     _require_current(still_current)
     detail = build_crew_session_detail(

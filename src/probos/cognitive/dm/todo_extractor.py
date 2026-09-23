@@ -34,12 +34,24 @@ def _clean_label(s: str) -> str:
 
 _TODOS_RE = re.compile(r"\[TODOS\](.*?)\[/TODOS\]", re.DOTALL | re.IGNORECASE)
 _PLAN_RE = re.compile(r"\[PLAN\](.*?)\[/PLAN\]", re.DOTALL | re.IGNORECASE)
-_DONE_RE = re.compile(r"\[TODO_DONE\s+(\d+)\]", re.IGNORECASE)
-_CONFIRM_RE = re.compile(r"\[TODO_CONFIRM\s+(\d+)\]", re.IGNORECASE)
-_REJECT_RE = re.compile(r"\[TODO_REJECT\s+(\d+)\s*:?\s*([^\]]*)\]", re.IGNORECASE)
+_VIEW_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+_DONE_RE = re.compile(
+    rf"\[TODO_DONE\s+(\d+)(?:\s+@({_VIEW_ID}))?\]",
+    re.IGNORECASE,
+)
+_CONFIRM_RE = re.compile(
+    rf"\[TODO_CONFIRM\s+(\d+)(?:\s+@({_VIEW_ID}))?\]",
+    re.IGNORECASE,
+)
+_REJECT_RE = re.compile(
+    rf"\[TODO_REJECT\s+(\d+)(?:\s+@({_VIEW_ID}))?\s*:?\s*([^\]]*)\]",
+    re.IGNORECASE,
+)
+_VIEW_RE = re.compile(r"\[TODO_VIEW\s+([^\]\s]+)\]", re.IGNORECASE)
 # Any room-todo marker (cheap early-out before the per-tag work).
 _ANY_RE = re.compile(
-    r"\[/?(?:TODOS|PLAN|TODO_DONE|TODO_CONFIRM|TODO_REJECT)\b", re.IGNORECASE
+    r"\[/?(?:TODOS|PLAN|TODO_DONE|TODO_CONFIRM|TODO_REJECT|TODO_VIEW)\b",
+    re.IGNORECASE,
 )
 
 
@@ -51,6 +63,10 @@ class ParsedTodos:
     submit: list[int] = field(default_factory=list)
     confirm: list[int] = field(default_factory=list)
     reject: list[tuple[int, str]] = field(default_factory=list)
+    submit_views: list[tuple[int, str | None]] = field(default_factory=list)
+    confirm_views: list[tuple[int, str | None]] = field(default_factory=list)
+    reject_views: list[tuple[int, str | None, str]] = field(default_factory=list)
+    view: list[str] = field(default_factory=list)
 
 
 def has_todo_tag(text: str) -> bool:
@@ -85,14 +101,19 @@ def parse_todo_tags(text: str) -> ParsedTodos:
         n = int(mm.group(1))
         if n >= 1:
             out.submit.append(n - 1)
+            out.submit_views.append((n - 1, mm.group(2)))
     for mm in _CONFIRM_RE.finditer(text):
         n = int(mm.group(1))
         if n >= 1:
             out.confirm.append(n - 1)
+            out.confirm_views.append((n - 1, mm.group(2)))
     for mm in _REJECT_RE.finditer(text):
         n = int(mm.group(1))
         if n >= 1:
-            out.reject.append((n - 1, (mm.group(2) or "").strip()))
+            reason = (mm.group(3) or "").strip()
+            out.reject.append((n - 1, reason))
+            out.reject_views.append((n - 1, mm.group(2), reason))
+    out.view.extend(mm.group(1) for mm in _VIEW_RE.finditer(text))
     return out
 
 
@@ -100,7 +121,14 @@ def strip_todo_tags(text: str) -> str:
     """Remove every room-todo tag from ``text`` (so they never reach the
     transcript). Returns the trimmed remainder."""
     text = text or ""
-    for rx in (_TODOS_RE, _PLAN_RE, _DONE_RE, _CONFIRM_RE, _REJECT_RE):
+    for rx in (
+        _TODOS_RE,
+        _PLAN_RE,
+        _DONE_RE,
+        _CONFIRM_RE,
+        _REJECT_RE,
+        _VIEW_RE,
+    ):
         text = rx.sub("", text)
     return text.strip()
 
@@ -130,4 +158,3 @@ def derive_prose_plan(text: str, *, max_items: int = _MAX_TODOS) -> list[str]:
         runs.append(cur)
     best = max(runs, key=len) if runs else []
     return best[:max_items] if len(best) >= 2 else []
-

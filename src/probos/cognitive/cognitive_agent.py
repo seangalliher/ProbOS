@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import ast
 import inspect
 import json
 import logging
@@ -19,6 +20,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+from probos import work_item_steps as owned_steps
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -58,6 +60,7 @@ logger = logging.getLogger(__name__)
 #: write-claim guard judge one run against another run's record.
 _PER_RUN_PROVENANCE_KEYS = (
     "_dm_tool_failures", "_dm_tool_invocations", "_tool_trace_ref",
+    "_owned_steps_view_references",
 )
 
 
@@ -286,7 +289,39 @@ def _build_result_metadata(
 
         metadata[TOOL_INVOCATIONS_METADATA_KEY] = invocations.to_wire()
         break
+    for source in sources:
+        references = source.get("_owned_steps_view_references")
+        if type(references) is list and references:
+            metadata["owned_steps_view_references"] = references[:8]
+            break
     return metadata
+
+
+def _collect_owned_steps_tool_views(
+    observation: dict[str, Any],
+    outcome: Any,
+) -> None:
+    retained = observation.setdefault("_owned_steps_view_references", [])
+    if type(retained) is not list:
+        return
+    known = {
+        entry.get("view_id")
+        for entry in retained
+        if type(entry) is dict
+    }
+    for descriptor in getattr(outcome, "owned_steps_view_references", ()) or ():
+        try:
+            reference = owned_steps.OwnedStepsViewReference.model_validate(
+                descriptor
+            )
+        except (TypeError, ValueError):
+            continue
+        if reference.view_id in known:
+            continue
+        retained.append(reference.model_dump(mode="json"))
+        known.add(reference.view_id)
+        if len(retained) >= 8:
+            break
 
 
 # Module-level decision cache keyed by agent_type (AD-272)
@@ -3782,6 +3817,16 @@ class CognitiveAgent(BaseAgent):
                     s["id"] for s in strategies if s.get("id")
                 ]
 
+        owned_presentation = await self._resolve_owned_steps_model_context(
+            observation
+        )
+        if owned_presentation is not None:
+            owned_raw, _, _, _ = owned_presentation
+            user_message = (
+                f"{user_message}\n\n<owned_steps_view>\n"
+                f"{owned_raw}\n</owned_steps_view>"
+            )
+
         from probos.cognitive.standing_orders import compose_instructions
 
         # BF-010: conversational system prompt for 1:1 sessions
@@ -4153,7 +4198,10 @@ class CognitiveAgent(BaseAgent):
         # Honest-degrades to the single-pass path below on any miss/failure
         # (the helper returns None), so the flag never drops the Captain's turn.
         _agentic_output = await self._maybe_run_conversational_agentic(
-            observation, system_prompt=composed, user_message=user_message,
+            observation,
+            system_prompt=composed,
+            user_message=user_message,
+            owned_steps_presentation=owned_presentation,
         )
         if _agentic_output is not None:
             decision = {
@@ -4308,6 +4356,9 @@ class CognitiveAgent(BaseAgent):
                     }},
                 )
         response = await self._llm_client.complete(request, priority=_priority)
+        if owned_presentation is not None and getattr(response, "error", None) is None:
+            _, owner, reference, actual_context = owned_presentation
+            await owner.admit_owned_steps_presentation(reference, actual_context)
         _latency_ms = (time.monotonic() - _t0) * 1000
 
         decision = {
@@ -4352,6 +4403,51 @@ class CognitiveAgent(BaseAgent):
 
         return decision
 
+    async def _resolve_owned_steps_model_context(
+        self,
+        observation: dict,
+    ) -> tuple[
+        str,
+        Any,
+        owned_steps.OwnedStepsViewReference,
+        owned_steps.OwnedStepsActualContext,
+    ] | None:
+        params = observation.get("params")
+        descriptor = params.get("owned_steps_view") if isinstance(params, dict) else None
+        if descriptor is None:
+            return None
+        reference = owned_steps.OwnedStepsViewReference.model_validate(descriptor)
+        runtime = self._runtime
+        owner = getattr(runtime, "crew_orchestrator", None)
+        service = getattr(runtime, "crew_session_service", None)
+        if owner is None or service is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_view_unavailable",
+                parent_id=reference.parent_id,
+                view_id=reference.view_id,
+                actions=("refresh",),
+            )
+        thread_id = observation.get("thread_id")
+        if (
+            reference.actor_id != self.id
+            or reference.thread_id != (thread_id or "")
+        ):
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_view_scope_conflict",
+                parent_id=reference.parent_id,
+                view_id=reference.view_id,
+            )
+        actual_context = await owner.owned_steps_actual_context(
+            service.agent_principal(self.id),
+            work_item_id=reference.parent_id,
+            turn_id=reference.turn_id,
+        )
+        view = await owner.resolve_owned_steps_view(reference, actual_context)
+        raw = owned_steps.owned_json_bytes(
+            view.model_dump(mode="json")
+        ).decode("utf-8")
+        return raw, owner, reference, actual_context
+
     def _conversational_agentic_will_run(self, observation: dict) -> bool:
         """AD-1065 / AD-1070a: True iff the conversational agentic (tool-calling)
         loop will handle this turn. Gates: a wired runtime,
@@ -4378,7 +4474,17 @@ class CognitiveAgent(BaseAgent):
         return True
 
     async def _maybe_run_conversational_agentic(
-        self, observation: dict, *, system_prompt: str, user_message: str,
+        self,
+        observation: dict,
+        *,
+        system_prompt: str,
+        user_message: str,
+        owned_steps_presentation: tuple[
+            str,
+            Any,
+            owned_steps.OwnedStepsViewReference,
+            owned_steps.OwnedStepsActualContext,
+        ] | None = None,
     ) -> str | None:
         """AD-1065: run the conversational agentic (tool-calling) loop for a 1:1
         ``direct_message`` when ``config.dm_agentic.enabled``.
@@ -4544,6 +4650,12 @@ class CognitiveAgent(BaseAgent):
 
             async def _run_pass(task_text: str) -> Any:
                 _last_trace_ref["ref"] = None
+                owned_turn_id: str | None = None
+                owned_presentation_kwargs: dict[str, Any] = {}
+                if owned_steps_presentation is not None:
+                    _, _, reference, _ = owned_steps_presentation
+                    owned_turn_id = reference.turn_id
+                    owned_presentation_kwargs["owned_steps_initial_view"] = reference
                 outcome = await executor.run(
                     agent_id=self.id,
                     instructions=system_prompt,
@@ -4568,6 +4680,8 @@ class CognitiveAgent(BaseAgent):
                     # continuation supersedes its own earlier calls while a
                     # sibling's failures stay untouched.
                     failure_scope=str(observation.get("correlation_id", "") or ""),
+                    owned_steps_turn_id=owned_turn_id,
+                    **owned_presentation_kwargs,
                     **_diagnostic_kwargs,
                     **_fault_kwargs,
                 )
@@ -4578,6 +4692,7 @@ class CognitiveAgent(BaseAgent):
                 # prior pass. Keep it off the foreground acknowledgement.
                 _last_trace_ref["ref"] = getattr(outcome, "tool_trace_ref", None)
                 _accumulate_pass_failures(observation, outcome)
+                _collect_owned_steps_tool_views(observation, outcome)
                 # AD-1295 (#1087): the same fold point, for the record that says
                 # which tools ran. Here rather than after the turn because a
                 # promoted run (AD-1165) keeps adding passes after the

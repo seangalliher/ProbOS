@@ -98,7 +98,12 @@ class _FakeAgenticExecutor:
         rank: str = "ensign",
         thread_id: str = "",
         extra_context: dict[str, Any] | None = None,
+        owned_steps_execution_port: Any = None,
+        owned_steps_execution_lease: Any = None,
+        owned_steps_execution_permit: Any = None,
     ) -> WorkItemAgenticOutcome:
+        if owned_steps_execution_port is not None:
+            await owned_steps_execution_port.validate(owned_steps_execution_lease, owned_steps_execution_permit)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         started = time.time()
@@ -308,14 +313,14 @@ async def test_native_worker_loss_after_admission_is_terminal_before_augmentatio
     child = await _make_child(
         store, parent_id=parent.id, title="analysis", assigned_to="builder-1", spec_id="spec-a",
     )
-    merge = store.merge_work_item_metadata
+    compare = store.compare_and_set_owned_step
     admission_calls = []
 
-    async def lose_worker(work_item_id: str, patch: dict[str, Any], **kwargs: Any) -> Any:
-        result = await merge(work_item_id, patch, **kwargs)
-        if kwargs.get("source") == "crew_executor_admission":
-            assert result is not None and result.status == "in_progress"
-            admission_calls.append(work_item_id)
+    async def lose_worker(mutation: Any) -> Any:
+        result = await compare(mutation)
+        if mutation.change.command.kind == "admit_execution":
+            assert result.disposition == "new" and result.permit is not None
+            admission_calls.append(result.permit.child_id)
             await native_workers.registry.unregister("builder-1")
             if loss == "replaced":
                 replacement = _CrewAgent(agent_id="builder-1")
@@ -326,7 +331,9 @@ async def test_native_worker_loss_after_admission_is_terminal_before_augmentatio
                 assert native_workers.resolver.check_eligibility("builder-1").identity is not None
         return result
 
-    monkeypatch.setattr(store, "merge_work_item_metadata", lose_worker)
+    # Admission moved from an untyped source-labelled merge to the owner CAS.
+    # Keep the original post-admission identity-loss crossing at that real seam.
+    monkeypatch.setattr(store, "compare_and_set_owned_step", lose_worker)
     agentic = _FakeAgenticExecutor()
     executor = CrewTaskExecutor(
         work_item_store=store, agent_registry=native_workers.registry,
@@ -413,21 +420,40 @@ async def test_pre_admission_loss_drains_admitted_sibling_without_erasing_output
             )
 
     agentic = _HeldExecutor()
+    delegate = store.get_owned_steps_execution_port()
+
+    class _LosingAdmissionPort:
+        def owns_store(self, value: object) -> bool:
+            return delegate.owns_store(value)
+
+        async def admit(self, *args: Any, **kwargs: Any) -> Any:
+            return await delegate.admit(*args, **kwargs)
+
+        async def start(self, lease: Any, child_id: str, **kwargs: Any) -> Any:
+            if child_id == untouched.id:
+                await entered.wait()
+                await native_workers.registry.get("builder-2").stop()
+                assert native_workers.resolver.check_eligibility("builder-2").identity is None
+                rejected.set()
+                raise CrewWorkerUnavailable("crew_worker_unavailable")
+            return await delegate.start(lease, child_id, **kwargs)
+
+        async def submit(self, *args: Any) -> Any:
+            return await delegate.submit(*args)
+
+        async def validate(self, *args: Any) -> None:
+            await delegate.validate(*args)
+
+        async def record_unstarted(self, *args: Any) -> Any:
+            return await delegate.record_unstarted(*args)
+
+    # The old private _run_child hook no longer represented managed admission.
+    # Inject the public port and retain the same drain/untouched-sibling proof.
     executor = CrewTaskExecutor(
         work_item_store=store, agent_registry=native_workers.registry,
         eligibility_resolver=native_workers.resolver, agentic_executor=agentic,
-        runtime=object(), max_parallel_subtasks=2,
+        runtime=object(), max_parallel_subtasks=2, owned_steps_execution_port=_LosingAdmissionPort(),
     )
-    run_child = executor._run_child
-
-    async def lose_second(parent_id: str, child: Any, thread_id: str) -> SubtaskResult:
-        if child.id == untouched.id:
-            await entered.wait()
-            await native_workers.registry.get("builder-2").stop()
-            rejected.set()
-        return await run_child(parent_id, child, thread_id)
-
-    monkeypatch.setattr(executor, "_run_child", lose_second)
     task = asyncio.create_task(executor.run(parent.id))
     try:
         await asyncio.wait_for(rejected.wait(), timeout=5)

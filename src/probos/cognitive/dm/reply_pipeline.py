@@ -21,10 +21,12 @@ import json
 import logging
 import re
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos import work_item_steps as owned_steps
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     WRITE_CHANNEL_ARTIFACT,
     WRITE_CHANNEL_FINDING,
@@ -174,6 +176,18 @@ class DmReplyContext:
     # default is ``None`` because every construction site that does not set it
     # is, by definition, one where the loop's record is unknown.
     tool_invocations: ToolInvocations | None = None
+    owned_steps_view: owned_steps.OwnedStepsView | None = None
+    owned_steps_reference: owned_steps.OwnedStepsViewReference | None = None
+    owned_steps_actual_context: owned_steps.OwnedStepsActualContext | None = None
+    owned_steps_owner: Any | None = None
+    owned_steps_views: dict[
+        str,
+        tuple[
+            owned_steps.OwnedStepsView,
+            owned_steps.OwnedStepsViewReference,
+        ],
+    ] = field(default_factory=dict)
+    owned_steps_feedback: str | None = None
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
@@ -207,7 +221,7 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. **22 steps** (BF-796: this said
+        source of truth executed by :meth:`run`. **23 steps** (BF-796: this said
         18 while the tuple returned 20 -- a reader trusts this line when judging
         whether an insertion is in scope, so it is now guarded by a test rather
         than maintained by hand) after AD-934 inserted
@@ -219,12 +233,15 @@ class DmReplyPipeline:
         Captain will actually see, before 5 so the stored episode and the
         divergence check carry the corrected text), and AD-1295 inserted
         ``step_4n_tool_write_ledger`` immediately BEFORE that guard (it is a
-        ledger PRODUCER, so it must run before the only consumer). Ordering is
+        ledger PRODUCER, so it must run before the only consumer). AD-1192 adds
+        ``step_4o_owned_steps_feedback`` after the guard and before episodic
+        storage, so authoritative refusal feedback survives the final rewrite.
+        Ordering is
         invariant (sanity gate before challenge/move parsers, self-check before
         episodic store, deliberate re-roll before episodic store, write-claim
         guard after the re-roll, tool-ledger before the guard, divergence before
         ``mark_reply_emitted``, emotion after divergence) and MUST stay
-        byte-identical apart from those three insertions."""
+        byte-identical apart from those four insertions."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -243,6 +260,7 @@ class DmReplyPipeline:
             self.step_4j_deliberate_parse,  # AD-934
             self.step_4n_tool_write_ledger,  # AD-1295 (#1087)
             self.step_4m_write_claim_guard,  # AD-1285 (#1087)
+            self.step_4o_owned_steps_feedback,
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -257,7 +275,7 @@ class DmReplyPipeline:
         the write-claim guard reads the resulting ledger and abstains when no
         channel ran. Relative order is
         preserved from :meth:`_full_steps` (4c -> 4e -> 4i -> 4h -> 4f -> 4k ->
-        4g -> 4l -> 4j -> 4m).
+        4g -> 4l -> 4j -> 4m -> 4o).
 
         Included: ``step_4c_image_gen_parse`` (AD-730-3 ``[GEN_IMAGE]``, added
         AD-933b), ``step_4e_action_dispatch`` (AD-745 ``[ACTION]``),
@@ -270,7 +288,8 @@ class DmReplyPipeline:
         ``[CREATE_TASK]``), ``step_4l_extract_todos`` (AD-1081 room Todos),
         ``step_4j_deliberate_parse`` (AD-934 ``[THINK]``/``[DELIBERATE]``
         deep-tier re-roll, flag-gated), ``step_4m_write_claim_guard`` (AD-1305
-        shared disclosure after producers and the final rewrite).
+        shared disclosure after producers and the final rewrite), and
+        ``step_4o_owned_steps_feedback`` (AD-1192 refusal feedback after the guard).
 
         Excluded (1:1 semantics / mislabel risk): sanity-gate retry (1),
         games (2/3), self-check (4), follow-up (4d), outbound-DM (4b),
@@ -294,6 +313,7 @@ class DmReplyPipeline:
             self.step_4l_extract_todos,  # AD-1081 room-Todo validation loop
             self.step_4j_deliberate_parse,  # AD-934
             self.step_4m_write_claim_guard,
+            self.step_4o_owned_steps_feedback,
         )
 
     async def _run_steps(self, steps: tuple[Callable, ...]) -> None:
@@ -1602,6 +1622,9 @@ class DmReplyPipeline:
         (the seeder is recorded as facilitator); confirm/reject are allowed for a
         senior OR the facilitator who created the plan (whoever kicked off the
         task validates it). A worker may self-report its own step (submit)."""
+        if self.ctx.owned_steps_view is not None:
+            await self._apply_owned_room_todos(task_id, parsed)
+            return
         actor = self.ctx.agent_id or "agent"
         item = await store.get_work_item(task_id)
         facilitator = (getattr(item, "metadata", {}) or {}).get("facilitator") if item else None
@@ -1619,6 +1642,218 @@ class DmReplyPipeline:
                 await store.update_step(
                     task_id, idx, status="rejected", actor=actor, note=reason,
                 )
+
+    async def _apply_owned_room_todos(self, task_id: str, parsed: Any) -> None:
+        initial_view = self.ctx.owned_steps_view
+        initial_reference = self.ctx.owned_steps_reference
+        actual_context = self.ctx.owned_steps_actual_context
+        owner = self.ctx.owned_steps_owner
+        if (
+            initial_view is None
+            or initial_reference is None
+            or actual_context is None
+            or owner is None
+            or task_id not in (
+                initial_view.parent_id,
+                initial_view.requested_item_id,
+            )
+        ):
+            error = owned_steps.OwnedStepsError(
+                "owned_steps_actual_context_invalid",
+                parent_id=task_id,
+                actions=("refresh", "owned_controls"),
+            )
+            self._record_owned_steps_refusal(error)
+            return
+        qualified_ids = {
+            qualified_view or initial_view.view_id
+            for _, qualified_view in (
+                *parsed.submit_views,
+                *parsed.confirm_views,
+            )
+        }
+        qualified_ids.update(
+            qualified_view or initial_view.view_id
+            for _, qualified_view, _ in parsed.reject_views
+        )
+        if len(qualified_ids) > 1:
+            self._record_owned_steps_refusal(
+                owned_steps.OwnedStepsError(
+                    "owned_steps_command_contradiction",
+                    parent_id=initial_view.parent_id,
+                    view_id=initial_view.view_id,
+                    actions=("refresh", "owned_controls"),
+                )
+            )
+            return
+        selected_view_id = (
+            next(iter(qualified_ids))
+            if qualified_ids
+            else initial_view.view_id
+        )
+        if selected_view_id == initial_view.view_id:
+            view = initial_view
+            reference = initial_reference
+        else:
+            selected = self.ctx.owned_steps_views.get(selected_view_id)
+            if selected is None:
+                self._record_owned_steps_refusal(
+                    owned_steps.OwnedStepsError(
+                        "owned_steps_view_scope_conflict",
+                        parent_id=initial_view.parent_id,
+                        view_id=selected_view_id,
+                        actions=("refresh", "page"),
+                    )
+                )
+                return
+            view, reference = selected
+        if parsed.plan is not None:
+            error = owned_steps.OwnedStepsError(
+                "owned_steps_managed_write_required",
+                parent_id=view.parent_id,
+                view_id=view.view_id,
+                actions=("owned_controls", "preview_adoption"),
+            )
+            self._record_owned_steps_refusal(error)
+            return
+
+        rows = {row.ordinal: row for row in view.rows}
+        commands: list[owned_steps.OwnedStepsHttpRowCommand] = []
+        try:
+            for index, qualified_view in parsed.submit_views:
+                row = self._owned_tag_row(
+                    rows,
+                    ordinal=index + 1,
+                    qualified_view=qualified_view,
+                    view=view,
+                )
+                commands.append(
+                    owned_steps.OwnedStepsHttpRowCommand(
+                        operation_id=uuid.uuid4().hex,
+                        step_id=row.step_id,
+                        kind="manual_submit",
+                    )
+                )
+            for index, qualified_view in parsed.confirm_views:
+                row = self._owned_tag_row(
+                    rows,
+                    ordinal=index + 1,
+                    qualified_view=qualified_view,
+                    view=view,
+                )
+                commands.append(
+                    owned_steps.OwnedStepsHttpRowCommand(
+                        operation_id=uuid.uuid4().hex,
+                        step_id=row.step_id,
+                        kind="manual_confirm",
+                    )
+                )
+            for index, qualified_view, reason in parsed.reject_views:
+                row = self._owned_tag_row(
+                    rows,
+                    ordinal=index + 1,
+                    qualified_view=qualified_view,
+                    view=view,
+                )
+                commands.append(
+                    owned_steps.OwnedStepsHttpRowCommand(
+                        operation_id=uuid.uuid4().hex,
+                        step_id=row.step_id,
+                        kind="manual_reject",
+                        note=reason,
+                    )
+                )
+            if commands:
+                await owner.apply_owned_steps_commands(
+                    owned_steps.OwnedStepsCommandBatch(
+                        reference=reference,
+                        commands=tuple(commands),
+                    ),
+                    actual_context,
+                )
+                self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+                    "owned_steps",
+                    wrote=True,
+                )
+        except owned_steps.OwnedStepsError as error:
+            self._record_owned_steps_refusal(error)
+            return
+        except ValueError as exc:
+            self._record_owned_steps_refusal(
+                owned_steps.OwnedStepsError(
+                    str(exc) or "owned_steps_command_invalid",
+                    parent_id=view.parent_id,
+                    view_id=view.view_id,
+                    actions=("refresh", "owned_controls"),
+                )
+            )
+            return
+
+        for target in parsed.view:
+            try:
+                navigation_reference = await owner.capture_owned_steps_view(
+                    actual_context,
+                    requested_item_id=view.requested_item_id,
+                    cursor=target,
+                )
+                navigation = await owner.resolve_owned_steps_view(
+                    navigation_reference,
+                    actual_context,
+                )
+                rendered = owned_steps.owned_json_bytes(
+                    navigation.model_dump(mode="json")
+                ).decode("utf-8")
+                note = (
+                    "Owned steps navigation (read-only; this view did not "
+                    f"authorize commands in the current reply): {rendered}"
+                )
+                self.ctx.owned_steps_feedback = (
+                    f"{self.ctx.owned_steps_feedback}\n{note}"
+                    if self.ctx.owned_steps_feedback
+                    else note
+                )
+            except owned_steps.OwnedStepsError as error:
+                self._record_owned_steps_refusal(error)
+
+    @staticmethod
+    def _owned_tag_row(
+        rows: dict[int, owned_steps.OwnedStepViewRow],
+        *,
+        ordinal: int,
+        qualified_view: str | None,
+        view: owned_steps.OwnedStepsView,
+    ) -> owned_steps.OwnedStepViewRow:
+        if qualified_view is not None and qualified_view != view.view_id:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_view_scope_conflict",
+                parent_id=view.parent_id,
+                view_id=qualified_view,
+                actions=("refresh", "page"),
+            )
+        row = rows.get(ordinal)
+        if row is None:
+            raise owned_steps.OwnedStepsError(
+                "owned_steps_hidden_or_unpresented",
+                parent_id=view.parent_id,
+                view_id=view.view_id,
+                actions=("page", "detail", "refresh"),
+            )
+        return row
+
+    def _record_owned_steps_refusal(
+        self,
+        error: owned_steps.OwnedStepsError,
+    ) -> None:
+        feedback = owned_steps.render_owned_steps_feedback(error)
+        self.ctx.owned_steps_feedback = (
+            f"{self.ctx.owned_steps_feedback}\n{feedback}"
+            if self.ctx.owned_steps_feedback
+            else feedback
+        )
+        self.ctx.write_ledger = self.ctx.write_ledger.consulted_with(
+            "owned_steps",
+            wrote=False,
+        )
 
     # --- step 4g: AD-845 [CREATE_TASK ...] parse + dispatchable work item ---
     async def step_4g_create_task_parse(self) -> None:
@@ -1903,6 +2138,15 @@ class DmReplyPipeline:
                 "AD-1285: write-claim guard raised for agent=%s; shipping "
                 "the reply unmarked",
                 self.ctx.agent_id, exc_info=True,
+            )
+
+    async def step_4o_owned_steps_feedback(self) -> None:
+        feedback = self.ctx.owned_steps_feedback
+        if type(feedback) is not str or not feedback:
+            return
+        if feedback not in self.ctx.response_text:
+            self.ctx.response_text = (
+                f"{self.ctx.response_text}\n\n{feedback}".strip()
             )
 
     # --- step 5: AD-430b HXI 1:1 episodic store ---

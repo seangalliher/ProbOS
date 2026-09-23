@@ -46,6 +46,21 @@ def test_reject_without_reason():
     assert parse_todo_tags("[TODO_REJECT 2]").reject == [(1, "")]
 
 
+def test_parse_qualified_owned_tags_and_navigation():
+    parsed = parse_todo_tags(
+        "[TODO_DONE 3 @view-a] [TODO_CONFIRM 4 @view-a] "
+        "[TODO_REJECT 5 @view-a: revise] [TODO_VIEW cursor-2]"
+    )
+
+    assert parsed.submit_views == [(2, "view-a")]
+    assert parsed.confirm_views == [(3, "view-a")]
+    assert parsed.reject_views == [(4, "view-a", "revise")]
+    assert parsed.view == ["cursor-2"]
+    assert strip_todo_tags(
+        "ok [TODO_DONE 3 @view-a] [TODO_VIEW cursor-2]"
+    ) == "ok"
+
+
 def test_has_todo_tag():
     assert has_todo_tag("[TODO_DONE 1]")
     assert has_todo_tag("[TODOS]x[/TODOS]")

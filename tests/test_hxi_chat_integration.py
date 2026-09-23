@@ -363,6 +363,73 @@ async def chat_client(tmp_path):
     await rt.stop()
 
 
+@pytest.mark.asyncio
+async def test_owned_steps_real_create_app_auth_and_legacy_wire(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    rt = ProbOSRuntime(
+        data_dir=tmp_path / "owned-steps-data",
+        llm_client=MockLLMClient(),
+    )
+    await rt.start()
+    item = await rt.work_item_store.create_work_item(
+        id="hxi-owned-unmanaged",
+        title="HXI unmanaged",
+        steps=[
+            {
+                "label": "Wire row",
+                "status": "pending",
+                "assigned_to": None,
+                "submitted_by": None,
+                "confirmed_by": None,
+                "note": None,
+            }
+        ],
+    )
+    app = create_app(rt)
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            legacy = await client.get(f"/api/work-items/{item.id}/steps")
+            assert legacy.content == (
+                b'{"steps":[{"label":"Wire row","status":"pending",'
+                b'"assigned_to":null,"submitted_by":null,'
+                b'"confirmed_by":null,"note":null}],'
+                b'"gate_completion":false}'
+            )
+            unmanaged = await client.get(
+                f"/api/work-items/{item.id}/owned-steps"
+            )
+            assert unmanaged.status_code == 200
+            assert unmanaged.json()["mode"] == "unmanaged"
+            assert unmanaged.json()["rows"][0]["todo"] == item.steps[0]
+            reads = 0
+            original = rt.work_item_store.resolve_owned_steps_parent_id
+
+            async def counted(work_item_id: str):
+                nonlocal reads
+                reads += 1
+                return await original(work_item_id)
+
+            monkeypatch.setattr(
+                rt.work_item_store,
+                "resolve_owned_steps_parent_id",
+                counted,
+            )
+            rt.config.auth.crew_scope_token = "hxi-owned-secret"
+            denied = await client.get(
+                f"/api/work-items/{item.id}/owned-steps"
+            )
+            assert denied.status_code == 401
+            assert reads == 0
+    finally:
+        await rt.stop()
+
+
 class TestChatEndpoint:
     """Test common chat queries don't crash or hang."""
 

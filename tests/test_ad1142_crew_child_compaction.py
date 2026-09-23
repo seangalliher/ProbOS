@@ -70,6 +70,7 @@ from probos.config import AgenticDispatchConfig, SystemConfig
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from probos.work_item_steps import OwnedExecutionLease, OwnedStepExecutionPermit
 from probos.workforce import WorkItemStore
 
 pytestmark = pytest.mark.asyncio
@@ -439,20 +440,31 @@ async def test_gate_off_crew_run_instantiates_zero_session_compactors(
 
 
 async def test_gate_off_child_run_kwargs_are_unchanged_from_ad1141(store) -> None:
+    class _ValidatingRecordingExecutor(_RecordingExecutor):
+        async def run(self, **kwargs: Any) -> WorkItemAgenticOutcome:
+            await kwargs["owned_steps_execution_port"].validate(
+                kwargs["owned_steps_execution_lease"],
+                kwargs["owned_steps_execution_permit"],
+            )
+            return await super().run(**kwargs)
+
     parent = await store.create_work_item(title="parent", work_type="work_order")
     child = await _child(store, parent_id=parent.id)
-    agentic = _RecordingExecutor()
+    agentic = _ValidatingRecordingExecutor()
 
     await _executor(store, _FakeRegistry({"a1": _FakeAgent("a1")}), agentic).run(
         parent.id
     )
 
+    assert len(agentic.calls) == 1
     call = agentic.calls[0]
     assert call["task_text"] == child.description
     assert call["extra_context"] == {
         "_crew_session_id": parent.id,
         "_crew_work_item_id": child.id,
     }
+    # AD-1141's closed set predated AD-1192 ownership: gate-off excludes
+    # compaction settings, not the required execution bindings.
     assert set(call) == {
         "agent_id",
         "instructions",
@@ -460,7 +472,34 @@ async def test_gate_off_child_run_kwargs_are_unchanged_from_ad1141(store) -> Non
         "runtime",
         "thread_id",
         "extra_context",
+        "owned_steps_execution_port",
+        "owned_steps_execution_lease",
+        "owned_steps_execution_permit",
     }
+    assert "compactor" not in call
+    assert "compaction_threshold" not in call
+    assert "token_budget" not in call
+
+    port = call["owned_steps_execution_port"]
+    assert port is store.get_owned_steps_execution_port()
+    assert port.owns_store(store)
+    lease = call["owned_steps_execution_lease"]
+    permit = call["owned_steps_execution_permit"]
+    assert isinstance(lease, OwnedExecutionLease)
+    assert isinstance(permit, OwnedStepExecutionPermit)
+    control = lease.snapshot.control
+    assert control.parent_id == permit.parent_id == parent.id
+    assert control.thread_id == call["thread_id"] == ""
+    assert control.incarnation == permit.incarnation
+    assert control.plan_digest == permit.plan_digest
+    assert control.plan_revision == permit.plan_revision
+    (row,) = control.rows
+    assert row.child is not None
+    assert row.child.child_id == permit.child_id == child.id
+    assert row.step_id == permit.step_id
+    assert row.assignee_id == permit.assignee_id == call["agent_id"] == child.assigned_to
+    assert row.assignment_epoch == permit.assignment_epoch
+    assert row.booking_id == permit.booking_id is None
 
 
 async def test_run_signature_keeps_the_three_kwargs_optional_and_none() -> None:

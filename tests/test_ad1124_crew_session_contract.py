@@ -1760,11 +1760,18 @@ async def test_legacy_reopen_keeps_columns_and_values_then_session_reopens(tmp_p
     await second.start()
     try:
         cursor = await second._db.execute("PRAGMA table_info(work_items)")
-        after_columns = [row["name"] for row in await cursor.fetchall()]
-        assert before_columns == after_columns == _WORK_ITEM_COLUMNS
+        schema = await cursor.fetchall()
+        after_columns = [row["name"] for row in schema]
+        # The old whole-list pin rejected the admitted private nullable suffix.
+        assert before_columns == after_columns == _WORK_ITEM_COLUMNS + ["steps_control"]
+        assert tuple(schema[-1][key] for key in ("name", "type", "notnull", "dflt_value", "pk")) == (
+            "steps_control", "TEXT", 0, None, 0,
+        )
         reloaded = await second.get_work_item(ordinary.id)
         assert reloaded is not None
         assert reloaded.metadata == {"legacy": [1, "two"]}
+        assert reloaded.to_dict() == ordinary.to_dict()
+        assert "steps_control" not in reloaded.to_dict()
 
         chat = ChatThreadStore(thread_path)
         admission_port = second.claim_crew_session_admission_port()
@@ -1799,7 +1806,8 @@ async def test_legacy_reopen_keeps_columns_and_values_then_session_reopens(tmp_p
         reopened = await service.get_session(parent.id)
         assert reopened is not None and reopened.revision == 1
         cursor = await third._db.execute("PRAGMA table_info(work_items)")
-        assert [row["name"] for row in await cursor.fetchall()] == _WORK_ITEM_COLUMNS
+        # Reopen preserves the entire original sequence and exactly one suffix.
+        assert [row["name"] for row in await cursor.fetchall()] == _WORK_ITEM_COLUMNS + ["steps_control"]
     finally:
         await third.stop()
 
@@ -1867,7 +1875,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         name for name, value in inspect.getmembers(CrewSessionService, inspect.isfunction)
         if not name.startswith("_")
     }
-    assert public == {
+    original_public = {
         "adopt_recovery_plan",
         "agent_principal",
         "bind_scheduler",
@@ -1886,6 +1894,19 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "transition_session",
         "validate_worker_admission",
     }
+    admitted_public = {
+        "admit", "admit_correction", "authorize_owned_steps", "authorize_owned_store_write",
+        "bind_owned_legacy_authorizer", "bind_owned_steps_view_authorizer", "correction_execution_lease",
+        "expire_owned_steps", "get_owned_steps_execution_port", "get_owned_steps_snapshot",
+        "owned_human_steps_authority", "owned_manual_gate_released", "owned_read_steps_authority",
+        "owned_steps_authority", "owned_store_binding", "owns_store", "read_correction",
+        "reassign_unstarted", "record_correction", "record_unstarted",
+        "register_owned_steps_component", "start", "submit", "validate",
+    }
+    # The former 17-method-only pin masked the admitted owned execution ports.
+    assert len(original_public) == 17 and len(admitted_public) == 24
+    assert original_public.isdisjoint(admitted_public)
+    assert public == original_public | admitted_public
     expected_parameters = {
         "adopt_recovery_plan": {
             "self", "parent_id", "expected_session", "expected_recovery",
@@ -1936,13 +1957,34 @@ def test_public_service_api_and_annotations_are_exact() -> None:
     }
     for method_name, parameter_names in expected_parameters.items():
         signature = inspect.signature(getattr(CrewSessionService, method_name))
-        assert set(signature.parameters) == parameter_names
+        # Only this existing method gained an optional owned finalization receipt.
+        additions = {"steps_finalize"} if method_name == "publish_verified_result" else set()
+        assert set(signature.parameters) == parameter_names | additions
+        if additions:
+            assert signature.parameters["steps_finalize"].default is None
+            assert tuple(signature.parameters)[-1] == "steps_finalize"
         assert signature.return_annotation is not inspect.Signature.empty
         assert all(
             parameter.annotation is not inspect.Signature.empty
             for name, parameter in signature.parameters.items()
             if name != "self"
         )
+    for method_name in admitted_public:
+        signature = inspect.signature(getattr(CrewSessionService, method_name))
+        assert signature.return_annotation is not inspect.Signature.empty
+        assert all(
+            parameter.annotation is not inspect.Signature.empty
+            for name, parameter in signature.parameters.items() if name != "self"
+        )
+    binding_signature = inspect.signature(CrewSessionService.owned_store_binding)
+    assert tuple(binding_signature.parameters) == (
+        "self", "component", "snapshot", "operation", "payload", "actor_id",
+        "step_id", "reviewed_result", "finalize_receipt", "unassessed_checkpoint",
+    )
+    assert all(
+        binding_signature.parameters[name].default is None
+        for name in ("actor_id", "step_id", "reviewed_result", "finalize_receipt", "unassessed_checkpoint")
+    )
     constructor = inspect.signature(CrewSessionService.__init__)
     assert set(constructor.parameters) == {
         "self",
@@ -1960,7 +2002,8 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "clock",
     }
     request_fields = tuple(CrewSessionParentCreate.__dataclass_fields__)
-    assert request_fields == (
+    # Preserve the admission request prefix; only the owned manual-step seed is new.
+    assert request_fields[:-1] == (
         "id",
         "title",
         "description",
@@ -1969,6 +2012,8 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "metadata",
         "created_at",
     )
+    assert request_fields[-1:] == ("steps",)
+    assert CrewSessionParentCreate.__dataclass_fields__["steps"].default_factory is list
     admission_signatures = {
         CrewSessionParentReservation.create_parent: {
             "self",
@@ -1999,13 +2044,27 @@ def test_source_has_to_thread_and_no_raw_sqlite_schema_or_lifecycle_path() -> No
         "ALTER TABLE",
         "CREATE INDEX",
         "ensure_future",
-        "async def start",
         "async def stop",
     ):
         assert forbidden not in service_source
         assert forbidden not in merge_source
 
     service_tree = ast.parse(service_source)
+    # Lexical "start" also matched the execution port, not a lifecycle owner.
+    starts = [
+        node for node in ast.walk(service_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "start"
+    ]
+    assert len(starts) == 1 and isinstance(starts[0], ast.AsyncFunctionDef)
+    assert [arg.arg for arg in starts[0].args.args] == ["self", "lease", "child_id"]
+    assert [arg.arg for arg in starts[0].args.kwonlyargs] == ["execution_nonce"]
+    assert starts[0].args.defaults == [] and starts[0].args.kw_defaults == [None]
+    assert starts[0].args.vararg is starts[0].args.kwarg is None
+    assert tuple(inspect.signature(CrewSessionService.start).parameters) == (
+        "self", "lease", "child_id", "execution_nonce",
+    )
+    assert inspect.signature(CrewSessionService.start).parameters["execution_nonce"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert "async def start" not in merge_source
     create_task_calls = [
         node
         for node in ast.walk(service_tree)

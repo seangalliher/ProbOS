@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
+from probos import work_item_steps as owned_steps
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
@@ -57,9 +58,14 @@ from probos.tools.delegation_evidence import (
     delegation_status,
 )
 from probos.tools.executor import ToolExecutor, classify_tool_error, wire_durable_tool_records
-from probos.tools.protocol import ToolPermission, ToolResult, ToolType
+from probos.tools.protocol import (
+    ToolPermission,
+    ToolResult,
+    ToolResultPresentation,
+    ToolType,
+)
 from probos.tools.registry import ToolPermissionDenied
-from probos.types import IntentMessage
+from probos.types import IntentMessage, LLMRequest
 
 if TYPE_CHECKING:
     from probos.mesh.intent import IntentBus
@@ -1739,8 +1745,14 @@ class WorkItemAgenticOutcome:
 
 
 @dataclass(kw_only=True)
+class OwnedWorkItemAgenticOutcome(WorkItemAgenticOutcome):
+    owned_steps_view_references: tuple[owned_steps.OwnedStepsViewReference, ...] = ()
+
+
+@dataclass(kw_only=True)
 class ObservedWorkItemAgenticOutcome(WorkItemAgenticOutcome):
     fault_observation: FaultObservationResult
+    owned_steps_view_references: tuple[owned_steps.OwnedStepsViewReference, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.fault_observation) is not FaultObservationResult:
@@ -1816,8 +1828,26 @@ class WorkItemAgenticExecutor:
         on_run_started: Callable[[str], None] | None = None,
         fault_turn: ToolFaultTurn | None = None,
         fault_attempted: str = "",
+        owned_steps_execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
+        owned_steps_execution_lease: owned_steps.OwnedExecutionLease | None = None,
+        owned_steps_execution_permit: owned_steps.OwnedStepExecutionPermit | None = None,
+        owned_steps_turn_id: str | None = None,
+        owned_steps_initial_view: owned_steps.OwnedStepsViewReference | None = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
+        if any(value is not None for value in (
+            owned_steps_execution_port, owned_steps_execution_lease, owned_steps_execution_permit,
+        )):
+            if (
+                owned_steps_execution_port is None or owned_steps_execution_lease is None
+                or owned_steps_execution_permit is None
+                or owned_steps_execution_permit.assignee_id != agent_id
+                or owned_steps_execution_lease.snapshot.control.thread_id != thread_id
+                or (extra_context or {}).get("_crew_work_item_id") != owned_steps_execution_permit.child_id
+                or (extra_context or {}).get("_crew_session_id") != owned_steps_execution_permit.parent_id
+            ):
+                raise owned_steps.OwnedStepsError("owned_steps_execution_binding_invalid")
+            await owned_steps_execution_port.validate(owned_steps_execution_lease, owned_steps_execution_permit)
         arguments = {
             "agent_id": agent_id, "instructions": instructions, "task_text": task_text,
             "runtime": runtime, "department": department, "rank": rank,
@@ -1828,6 +1858,10 @@ class WorkItemAgenticExecutor:
             "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
             "on_run_started": on_run_started,
         }
+        if owned_steps_turn_id is not None:
+            arguments["owned_steps_turn_id"] = owned_steps_turn_id
+        if owned_steps_initial_view is not None:
+            arguments["owned_steps_initial_view"] = owned_steps_initial_view
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -1887,6 +1921,8 @@ class WorkItemAgenticExecutor:
         failure_scope: str | None = None,
         work_item_id_provider: Callable[[], str | None] | None = None,
         on_run_started: Callable[[str], None] | None = None,
+        owned_steps_turn_id: str | None = None,
+        owned_steps_initial_view: owned_steps.OwnedStepsViewReference | None = None,
         browser_use: BrowserUse | None = None,
         fault_turn: ToolFaultTurn | None = None,
         fault_attempted: str = "",
@@ -1906,9 +1942,12 @@ class WorkItemAgenticExecutor:
         from probos.cognitive.swe_harness.agentic_loop import (
             TOKEN_SOURCE_MEASURED,
             AgenticLoop,
+            PresentedToolResult,
             resolve_parallel_tool_settings,
             resolve_event_correlation_settings,
             resolve_tool_result_bounds,
+            render_tool_output,
+            truncate_tool_output,
         )
         from probos.cognitive.swe_harness.tool_call import (
             dedupe_llm_definitions,
@@ -1946,6 +1985,10 @@ class WorkItemAgenticExecutor:
 
         executor = DispatchToolExecutor(registry=registry)
         observed_tool_results: list[tuple[Any, Any]] = []
+        owned_view_references: list[owned_steps.OwnedStepsViewReference] = []
+        pending_owned_views: dict[
+            str, tuple[owned_steps.OwnedStepsViewReference, str]
+        ] = {}
         from probos.tools.publish_finding_tool import FindingToolResult
 
         delegation_evidence = DelegationEvidenceCollector(
@@ -1956,6 +1999,33 @@ class WorkItemAgenticExecutor:
             tool_id = context.get("tool_id") if type(context) is dict else None
             if tool_id == "run_python":
                 observed_tool_results.append((tool_id, result))
+            elif tool_id == "read_owned_steps" and result.error is None:
+                try:
+                    reference = owned_steps.OwnedStepsViewReference.model_validate(
+                        result.metadata.get("owned_steps_view_reference")
+                    )
+                    if (
+                        reference.actor_id != agent_id
+                        or reference.thread_id != thread_id
+                        or reference.turn_id != owned_steps_turn_id
+                    ):
+                        raise ValueError("owned_steps_view_scope_conflict")
+                    if type(result.output) is not str or not result.output:
+                        raise ValueError("owned_steps_presentation_render_failed")
+                    if (
+                        reference.view_id not in pending_owned_views
+                        and len(pending_owned_views) >= 8
+                    ):
+                        raise ValueError("owned_steps_view_budget")
+                    pending_owned_views[reference.view_id] = (
+                        reference, result.output,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    logger.warning(
+                        "Owned-steps tool returned an invalid view reference for agent=%s; "
+                        "the reply cannot authorize that page and must request a new read",
+                        agent_id,
+                    )
             elif (
                 tool_id == "publish_finding"
                 and isinstance(result, FindingToolResult)
@@ -2144,6 +2214,21 @@ class WorkItemAgenticExecutor:
                     agent_id, exc_info=True,
                 )
                 status_ids = []
+
+        owned_steps_ids: list[str] = []
+        if (
+            owned_steps_turn_id is not None
+            and registry is not None
+            and registry.get("read_owned_steps") is not None
+            and registry.check_permission(
+                agent_id,
+                "read_owned_steps",
+                ToolPermission.READ,
+                agent_department=department,
+                agent_rank=rank,
+            )
+        ):
+            owned_steps_ids = ["read_owned_steps"]
 
         # AD-1226 (#1197): let the agent READ BACK something it produced. The
         # episode carries a content-addressable ref, not a copy, so "what was in
@@ -2434,7 +2519,7 @@ class WorkItemAgenticExecutor:
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
-                *status_ids, *recall_ids,
+                *status_ids, *owned_steps_ids, *recall_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
                 *publish_ids, *work_pull_ids, *browser_ids, *self_query_ids,
             ])
@@ -2594,24 +2679,6 @@ class WorkItemAgenticExecutor:
         _agentic_loop_cfg = getattr(
             getattr(runtime, "config", None), "agentic_loop", None
         )
-        loop = AgenticLoop(
-            llm_client=self._llm,
-            tool_executor=executor,
-            event_emit_fn=getattr(runtime, "emit_event", None),
-            structured_tool_messages=bool(
-                getattr(_agentic_loop_cfg, "structured_tool_messages", False)
-            ),
-            # AD-1148: bound each tool result before it enters the loop's
-            # message history. 0 = unbounded (default-OFF), so message content
-            # is byte-identical until an operator opts in.
-            **resolve_tool_result_bounds(_agentic_loop_cfg),
-            # AD-1147: fan the read-only allowlisted tool calls of one response
-            # out concurrently, bounded. Default-OFF — the sequential AD-545
-            # path runs verbatim until an operator opts in.
-            **resolve_parallel_tool_settings(_agentic_loop_cfg),
-            **resolve_event_correlation_settings(_agentic_loop_cfg),
-            **_loop_kwargs,
-        )
         # AD-1129: accepted compatibility extras are copied first; the run's
         # authoritative identity and explicit thread provenance always win.
         _context.update(
@@ -2621,6 +2688,132 @@ class WorkItemAgenticExecutor:
                 "rank": rank,
                 "thread_id": thread_id,
             }
+        )
+        if owned_steps_turn_id is not None:
+            if (
+                type(owned_steps_turn_id) is not str
+                or not owned_steps_turn_id
+            ):
+                raise owned_steps.OwnedStepsError(
+                    "owned_steps_actual_context_invalid"
+                )
+            _context["owned_steps_turn_id"] = owned_steps_turn_id
+            result_bounds = resolve_tool_result_bounds(_agentic_loop_cfg)
+
+            def _render_owned_steps_complete(value: Any) -> str | None:
+                plain = render_tool_output(value, max_chars=0)
+                if not plain and type(value) is not str:
+                    raise ValueError("owned_steps_presentation_render_failed")
+                bounded = truncate_tool_output(
+                    plain,
+                    max_chars=result_bounds["tool_result_max_chars"],
+                    head_chars=result_bounds["tool_result_head_chars"],
+                    tail_chars=result_bounds["tool_result_tail_chars"],
+                )
+                return plain if bounded == plain else None
+
+            _context["_tool_result_presentation"] = ToolResultPresentation(
+                render_complete=_render_owned_steps_complete,
+            )
+            initial_presented = False
+
+            async def _acknowledge_owned_presentation(
+                request: LLMRequest,
+                presentations: tuple[PresentedToolResult, ...],
+            ) -> None:
+                nonlocal initial_presented
+                owner = getattr(runtime, "crew_orchestrator", None)
+                service = getattr(runtime, "crew_session_service", None)
+
+                async def resolve(
+                    reference: owned_steps.OwnedStepsViewReference,
+                ) -> tuple[
+                    owned_steps.OwnedStepsActualContext,
+                    owned_steps.OwnedStepsView,
+                ]:
+                    if (
+                        owner is None
+                        or service is None
+                        or reference.actor_id != agent_id
+                        or reference.thread_id != thread_id
+                        or reference.turn_id != owned_steps_turn_id
+                    ):
+                        raise owned_steps.OwnedStepsError(
+                            "owned_steps_view_scope_conflict",
+                            parent_id=reference.parent_id,
+                        )
+                    actual_context = await owner.owned_steps_actual_context(
+                        service.agent_principal(agent_id),
+                        work_item_id=reference.parent_id,
+                        turn_id=reference.turn_id,
+                    )
+                    view = await owner.resolve_owned_steps_view(
+                        reference, actual_context,
+                    )
+                    return actual_context, view
+
+                if owned_steps_initial_view is not None and not initial_presented:
+                    reference = owned_steps.OwnedStepsViewReference.model_validate(
+                        owned_steps_initial_view
+                    )
+                    actual_context, view = await resolve(reference)
+                    block = (
+                        "<owned_steps_view>\n"
+                        + owned_steps.owned_json_bytes(
+                            view.model_dump(mode="json")
+                        ).decode("utf-8")
+                        + "\n</owned_steps_view>"
+                    )
+                    texts = [request.prompt]
+                    texts.extend(
+                        message["content"]
+                        for message in request.messages or ()
+                        if type(message.get("content")) is str
+                    )
+                    if any(block in text for text in texts):
+                        await owner.admit_owned_steps_presentation(
+                            reference, actual_context,
+                        )
+                        initial_presented = True
+                for presentation in presentations:
+                    if presentation.tool_name != "read_owned_steps":
+                        continue
+                    for reference, rendered in tuple(pending_owned_views.values()):
+                        if (
+                            presentation.output != rendered
+                            or reference in owned_view_references
+                        ):
+                            continue
+                        actual_context, view = await resolve(reference)
+                        expected = render_tool_output({
+                            "reference": reference.model_dump(mode="json"),
+                            "view": view.model_dump(mode="json"),
+                        }, max_chars=0)
+                        if rendered != expected:
+                            raise owned_steps.OwnedStepsError(
+                                "owned_steps_view_content_conflict",
+                                parent_id=reference.parent_id,
+                                view_id=reference.view_id,
+                            )
+                        await owner.admit_owned_steps_presentation(
+                            reference, actual_context,
+                        )
+                        owned_view_references.append(reference)
+
+            _loop_kwargs["on_model_request_presented"] = _acknowledge_owned_presentation
+        elif owned_steps_initial_view is not None:
+            raise owned_steps.OwnedStepsError("owned_steps_actual_context_invalid")
+        loop = AgenticLoop(
+            llm_client=self._llm,
+            tool_executor=executor,
+            event_emit_fn=getattr(runtime, "emit_event", None),
+            structured_tool_messages=bool(
+                getattr(_agentic_loop_cfg, "structured_tool_messages", False)
+            ),
+            **resolve_tool_result_bounds(_agentic_loop_cfg),
+            **resolve_parallel_tool_settings(_agentic_loop_cfg),
+            **resolve_event_correlation_settings(_agentic_loop_cfg),
+            **_loop_kwargs,
         )
         if mcp_offer_armed and mcp_offer is not None:
             _context[MCP_DISPATCH_OFFER_CONTEXT_KEY] = mcp_offer
@@ -2755,8 +2948,18 @@ class WorkItemAgenticExecutor:
                 token_source,
             )
 
+        final_text = agentic_result.final_text or ""
+        if (
+            owned_steps_turn_id is not None
+            and not final_text
+            and agentic_result.stopped_reason in ("error", "max_iterations", "token_budget")
+        ):
+            final_text = (
+                "The owned-steps agentic turn stopped without a response "
+                f"({agentic_result.stopped_reason}); no additional request was issued."
+            )
         outcome_fields: dict[str, Any] = dict(
-            final_text=agentic_result.final_text or "",
+            final_text=final_text,
             stopped_reason=agentic_result.stopped_reason,
             denied_tools=list(executor.denied_tools),
             tool_trace_ref=tool_trace_ref,
@@ -2791,7 +2994,7 @@ class WorkItemAgenticExecutor:
             tool_invocations=_project_tool_invocations(agentic_result),
             delegation_evidence=delegation_evidence.finish(
                 status=delegation_status(agentic_result.stopped_reason),
-                final_text=agentic_result.final_text or "",
+                final_text=final_text,
                 trace_ref=tool_trace_ref,
                 trace_expected=bool(getattr(agentic_result, "tool_calls", None)),
                 artifact_refs=artifact_refs,
@@ -2799,6 +3002,11 @@ class WorkItemAgenticExecutor:
             ),
         )
         if fault_observer is None:
+            if owned_view_references:
+                return OwnedWorkItemAgenticOutcome(
+                    **outcome_fields,
+                    owned_steps_view_references=tuple(owned_view_references),
+                )
             return WorkItemAgenticOutcome(**outcome_fields)
         assert fault_turn is not None
         observation = await observe_completed_tool_run(
@@ -2811,6 +3019,7 @@ class WorkItemAgenticExecutor:
         )
         return ObservedWorkItemAgenticOutcome(
             **outcome_fields, fault_observation=observation,
+            owned_steps_view_references=tuple(owned_view_references),
         )
 
     async def _persist_tool_trace(

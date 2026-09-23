@@ -2231,6 +2231,24 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         crew_session_service=crew_session_service,
     )
     crew_session_service.bind_scheduler(runtime.crew_orchestrator.schedule)
+    tool_registry = getattr(runtime, "tool_registry", None)
+    if tool_registry is not None:
+        from probos.tools.work_item_steps_tool import ReadOwnedStepsTool
+
+        tool_registry.register(
+            ReadOwnedStepsTool(runtime=runtime),
+            domain="*",
+            tags=["owned_steps", "read_only"],
+            provider="ship_computer",
+            enabled=True,
+            default_permissions={
+                "ensign": "read",
+                "lieutenant": "read",
+                "commander": "read",
+                "senior_officer": "read",
+            },
+            concurrency="concurrent",
+        )
     logger.info(
         "AD-867: CrewOrchestrator initialized (max_parallel=%d, max_rounds=%d)",
         max_parallel, max_rounds,

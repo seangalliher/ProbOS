@@ -7,6 +7,7 @@ import logging
 import math
 import re
 import time
+import uuid
 from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
@@ -32,6 +33,7 @@ from probos.api_models import (
     WorkspaceSuggestionCreate,
 )
 from probos.config import format_trust
+from probos import work_item_steps as owned_steps
 from probos.cognitive.introspective_telemetry import (
     IntrospectiveTelemetryService,
     MEMORY_POPULATION,
@@ -51,6 +53,71 @@ from probos.routers.auth import require_crew_scope, verify_ws_token
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["agents"])
+
+_STEPS_COMMAND_RE = re.compile(r"^\s*/steps(?:\s+(\S+))?\s*$", re.IGNORECASE)
+
+
+async def _capture_owned_steps_turn(
+    runtime: Any,
+    *,
+    agent_id: str,
+    thread: Any,
+    message: str,
+) -> tuple[
+    Any,
+    owned_steps.OwnedStepsActualContext,
+    owned_steps.OwnedStepsViewReference,
+] | None:
+    task_id = getattr(thread, "task_id", None)
+    if type(task_id) is not str or not task_id:
+        return None
+    owner = getattr(runtime, "crew_orchestrator", None)
+    service = getattr(runtime, "crew_session_service", None)
+    if owner is None or service is None:
+        return None
+    match = _STEPS_COMMAND_RE.fullmatch(message or "")
+    cursor = match.group(1) if match is not None else None
+    turn_id = uuid.uuid4().hex
+    try:
+        actual_context = await owner.owned_steps_actual_context(
+            service.agent_principal(agent_id),
+            work_item_id=task_id,
+            turn_id=turn_id,
+        )
+        reference = await owner.capture_owned_steps_view(
+            actual_context,
+            requested_item_id=task_id,
+            cursor=cursor,
+        )
+    except owned_steps.OwnedStepsError:
+        if match is not None:
+            raise
+        return None
+    return owner, actual_context, reference
+
+
+async def _expire_owned_steps_turns(
+    turns: list[
+        tuple[
+            Any,
+            owned_steps.OwnedStepsActualContext,
+            owned_steps.OwnedStepsViewReference,
+        ]
+    ],
+) -> None:
+    for owner, actual_context, reference in turns:
+        try:
+            await owner.expire_owned_steps_views(
+                actual_context,
+            )
+        except Exception:
+            logger.warning(
+                "Owned-steps view cleanup failed for parent=%s view=%s; "
+                "the bounded registry will evict it and restart removes authority",
+                reference.parent_id,
+                reference.view_id,
+                exc_info=True,
+            )
 
 
 class _ProfileTelemetry(Protocol):
@@ -2817,9 +2884,23 @@ async def agent_chat(agent_id: str, req: AgentChatRequest, runtime: Any = Depend
     gate, AD-732 honest-degrade) cannot decrement a concurrent request.
     """
     _dm_guard = _DmSamplingGuard(runtime, agent_id)
+    _owned_steps_turns: list[
+        tuple[
+            Any,
+            owned_steps.OwnedStepsActualContext,
+            owned_steps.OwnedStepsViewReference,
+        ]
+    ] = []
     try:
-        return await _agent_chat_impl(agent_id, req, runtime, _dm_guard)
+        return await _agent_chat_impl(
+            agent_id,
+            req,
+            runtime,
+            _dm_guard,
+            _owned_steps_turns,
+        )
     finally:
+        await _expire_owned_steps_turns(_owned_steps_turns)
         _dm_guard.release()
 
 
@@ -2828,6 +2909,13 @@ async def _agent_chat_impl(
     req: AgentChatRequest,
     runtime: Any,
     _dm_guard: _DmSamplingGuard,
+    _owned_steps_turns: list[
+        tuple[
+            Any,
+            owned_steps.OwnedStepsActualContext,
+            owned_steps.OwnedStepsViewReference,
+        ]
+    ],
 ) -> dict[str, Any]:
     """The agent-chat handler proper. See `agent_chat` for why it is split."""
     agent = runtime.registry.get(agent_id)
@@ -3448,6 +3536,24 @@ async def _agent_chat_impl(
         _params["_visual_scene"] = _visual_scene_for_bid
         _params["_visual_novelty"] = _visual_novelty_for_bid
         _params["_visual_summary"] = _visual_summary_for_bid
+    _owned_steps_capture_feedback: str | None = None
+    try:
+        _owned_steps_turn = await _capture_owned_steps_turn(
+            runtime,
+            agent_id=agent_id,
+            thread=thread,
+            message=req.message,
+        )
+    except owned_steps.OwnedStepsError as exc:
+        _owned_steps_turn = None
+        _owned_steps_capture_feedback = owned_steps.render_owned_steps_feedback(
+            exc
+        )
+    if _owned_steps_turn is not None:
+        _owned_steps_turns.append(_owned_steps_turn)
+        _params["owned_steps_view"] = _owned_steps_turn[2].model_dump(
+            mode="json"
+        )
     intent = IntentMessage(
         intent="direct_message",
         params=_params,
@@ -3557,6 +3663,39 @@ async def _agent_chat_impl(
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
     from probos.dm_reply import DmReply, ToolInvocations, require_rendered  # AD-1248
+    _owned_steps_view = None
+    _owned_steps_views: dict[
+        str,
+        tuple[
+            owned_steps.OwnedStepsView,
+            owned_steps.OwnedStepsViewReference,
+        ],
+    ] = {}
+    if _owned_steps_turn is not None:
+        _owned_steps_view = await _owned_steps_turn[0].resolve_owned_steps_view(
+            _owned_steps_turn[2],
+            _owned_steps_turn[1],
+        )
+        _owned_steps_views[_owned_steps_view.view_id] = (
+            _owned_steps_view,
+            _owned_steps_turn[2],
+        )
+        metadata = getattr(result, "metadata", None)
+        descriptors = (
+            metadata.get("owned_steps_view_references", ())
+            if type(metadata) is dict
+            else ()
+        )
+        if type(descriptors) is list:
+            for descriptor in descriptors[:8]:
+                reference = owned_steps.OwnedStepsViewReference.model_validate(
+                    descriptor
+                )
+                view = await _owned_steps_turn[0].resolve_owned_steps_view(
+                    reference,
+                    _owned_steps_turn[1],
+                )
+                _owned_steps_views[view.view_id] = (view, reference)
     pipeline = DmReplyPipeline(DmReplyContext(
         runtime=runtime,
         agent=agent,
@@ -3582,6 +3721,18 @@ async def _agent_chat_impl(
         # turn, or a turn that returned no result, all of which are "the loop
         # did not run" and must not be confused with "it ran and wrote nothing".
         tool_invocations=ToolInvocations.from_intent_result(result),
+        owned_steps_view=_owned_steps_view,
+        owned_steps_reference=(
+            _owned_steps_turn[2] if _owned_steps_turn is not None else None
+        ),
+        owned_steps_actual_context=(
+            _owned_steps_turn[1] if _owned_steps_turn is not None else None
+        ),
+        owned_steps_owner=(
+            _owned_steps_turn[0] if _owned_steps_turn is not None else None
+        ),
+        owned_steps_views=_owned_steps_views,
+        owned_steps_feedback=_owned_steps_capture_feedback,
     ))
     await pipeline.run()
     response = pipeline.build_response()
