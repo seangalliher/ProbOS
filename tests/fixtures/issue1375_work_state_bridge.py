@@ -2,8 +2,9 @@
 
 Invocation (from the repository root, PYTHONPATH=<root>/src;<root>):
     python -u tests/fixtures/issue1375_work_state_bridge.py <root> <scenario> <url-templates-json>
+    python -u tests/fixtures/issue1375_work_state_bridge.py --write ui/e2e/fixtures/issue1375_work_state.json
 
-Writes one JSON object to stdout:
+The first form writes one live capture to stdout:
     {python, origins, ids, checkpoints: [{name, frames: [text], rest: {url: {status, body}}}]}
 Frames are the exact texts the hub sent to a fake socket. REST bodies are the
 exact texts the production app served over ``httpx.ASGITransport``. URL
@@ -12,6 +13,12 @@ for ``native_failed``, ``{P}`` (its crew-session parent) and ``{T}`` (its room).
 ``restart`` closes the hub between its checkpoints, fails X while no client is
 connected, and serves the second checkpoint from a new hub generation.
 Exits 3 when a wait or the whole run exceeds its wall-clock budget.
+
+The second form captures every scenario with the URL set the Vitest crossings
+replay (``FIXTURE_TEMPLATES``) and writes the committed fixture: each text
+re-serialized after a one-to-one map of generated tokens to placeholders and of
+wall-clock reads to ranked times. It has no whole-run budget; each frame wait
+keeps its ``WAIT_SECONDS`` bound.
 """
 
 from __future__ import annotations
@@ -24,10 +31,45 @@ import asyncio  # noqa: E402
 import dataclasses  # noqa: E402
 import inspect  # noqa: E402
 import json  # noqa: E402
+import math  # noqa: E402
+import re  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
+import threading  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any, Awaitable, Callable  # noqa: E402
+
+
+class _DistinctWallClock:
+    """``time.time``, strictly increasing, remembering every value it returned.
+
+    Windows' wall clock ticks every 0.5-15.6 ms, so two backend writes a few
+    milliseconds apart read one value on one run and two on the next; a time map
+    keyed on values would then differ between runs.
+    """
+
+    def __init__(self, read: Callable[[], float]) -> None:
+        self._read = read
+        self._lock = threading.Lock()
+        self._last = -math.inf
+        self.issued: set[float] = set()
+
+    def __call__(self) -> float:
+        with self._lock:
+            now = self._read()
+            if now <= self._last:
+                now = math.nextafter(self._last, math.inf)
+            self._last = now
+            self.issued.add(now)
+            return now
+
+
+# Installed before the backend imports, so ``clock=time.time`` defaults bind it too.
+_WALL_CLOCK = (
+    _DistinctWallClock(time.time) if __name__ == "__main__" and sys.argv[1:2] == ["--write"] else None
+)
+if _WALL_CLOCK is not None:
+    time.time = _WALL_CLOCK
 
 import httpx  # noqa: E402
 from starlette.websockets import WebSocketDisconnect  # noqa: E402
@@ -54,6 +96,38 @@ AGENT_ID = "worker-a"
 THREAD_ID = "issue1375-thread"
 REQUEST_TEXT = "Survey the aft sensor array"
 _URL_PREFIXES = ("/api/work-items", "/api/crew-tasks")
+
+FIXTURE_PATH = "ui/e2e/fixtures/issue1375_work_state.json"
+REGENERATE = (
+    "python -u tests/fixtures/issue1375_work_state_bridge.py --write " + FIXTURE_PATH
+    + "  (from the repository root, PYTHONPATH=<root>/src and <root>)"
+)
+_BUCKET_TEMPLATES = (
+    *(f"/api/work-items?status={status}&limit=101"
+      for status in ("draft", "open", "scheduled", "in_progress", "review", "blocked", "failed")),
+    *(f"/api/work-items?status={status}&limit=21" for status in ("done", "cancelled")),
+)
+# The URL sets WorkStateReconciliation.issue1375.test.tsx replays; its loader refuses any other set.
+FIXTURE_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "promoted_failed": ("/api/work-items/{X}", "/api/work-items/{X}/owned-steps", *_BUCKET_TEMPLATES),
+    "native_failed": (
+        "/api/work-items/{X}",
+        "/api/work-items/{P}",
+        "/api/work-items?parent_id={P}&limit=1001",
+        "/api/crew-tasks/{P}",
+        "/api/work-items/{X}/owned-steps",
+        *_BUCKET_TEMPLATES,
+    ),
+    "restart": ("/api/work-items/{X}", "/api/work-items/{X}/owned-steps", *_BUCKET_TEMPLATES),
+}
+# 2026-07-23T00:00:00Z, the snapshot base's current_time_utc; rank r maps to TIME_BASE + r.
+TIME_BASE = 1784764800.0
+# Numbers in this band (2001-2286) are wall-clock reads; each must be one the clock issued.
+EPOCH_BAND = (1e9, 1e10)
+# A uuid, or any lowercase hex run of 12+: ids, generations, incarnations and digests.
+TOKEN_PATTERN = re.compile(
+    r"(?<![0-9a-f])(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{12,})(?![0-9a-f])"
+)
 
 
 class BridgeBudgetExceeded(Exception):
@@ -418,9 +492,148 @@ async def _run_bounded(scenario: str, templates: list[str], remaining: float) ->
         return await asyncio.wait_for(run_scenario(scenario, templates, Path(storage)), timeout=remaining)
 
 
+def _wire(value: Any) -> str:
+    # The serializer of ws_event_stream._json_text and of Starlette's JSONResponse.
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _parse_wire(text: str, where: str) -> Any:
+    value = json.loads(text)
+    if _wire(value) != text:
+        raise AssertionError(f"issue1375 fixture: {where} is not a wire serializer text")
+    return value
+
+
+class _Normalizer:
+    """One scenario's one-to-one maps: generated tokens to placeholders, clock reads to ranks."""
+
+    def __init__(self, scenario_number: int, issued: set[float]) -> None:
+        self._prefix = f"1375{scenario_number}"
+        self._issued = issued
+        self._tokens: dict[str, str] = {}
+        self._reads: set[float] = set()
+        self._times: dict[float, float] = {}
+
+    def learn(self, value: Any, where: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                self._learn_text(key)
+                self.learn(item, f"{where}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                self.learn(item, f"{where}[{index}]")
+        elif isinstance(value, str):
+            self._learn_text(value)
+        elif type(value) in (int, float) and EPOCH_BAND[0] <= value < EPOCH_BAND[1]:
+            if value not in self._issued:
+                raise AssertionError(f"issue1375 fixture: {where} = {value!r} is no wall-clock read")
+            self._reads.add(value)
+
+    def _learn_text(self, text: str) -> None:
+        for token in TOKEN_PATTERN.findall(text):
+            if token not in self._tokens:
+                self._tokens[token] = self._placeholder(token, len(self._tokens) + 1)
+
+    def _placeholder(self, token: str, index: int) -> str:
+        width = sum(ch != "-" for ch in token) - len(self._prefix)
+        digits = iter(f"{self._prefix}{index:0{width}d}")
+        return "".join(ch if ch == "-" else next(digits) for ch in token)
+
+    def freeze(self) -> None:
+        self._times = {read: TIME_BASE + rank for rank, read in enumerate(sorted(self._reads))}
+
+    def apply(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {self._text(key): self.apply(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.apply(item) for item in value]
+        if isinstance(value, str):
+            return self._text(value)
+        if type(value) in (int, float) and value in self._times:
+            return self._times[value]
+        return value
+
+    def _text(self, text: str) -> str:
+        return TOKEN_PATTERN.sub(lambda match: self._tokens[match.group(0)], text)
+
+
+def normalize_capture(
+    scenario: str,
+    templates: tuple[str, ...],
+    capture: dict[str, Any],
+    issued: set[float],
+) -> dict[str, Any]:
+    """``capture`` through one scenario's maps, each text re-serialized by the wire serializer."""
+    normalizer = _Normalizer(SCENARIOS.index(scenario) + 1, issued)
+    parsed: list[tuple[str, list[Any], list[tuple[str, int, Any]]]] = []
+    for checkpoint in capture["checkpoints"]:
+        where = f"{scenario}.{checkpoint['name']}"
+        frames = [_parse_wire(text, f"{where}.frames[{i}]") for i, text in enumerate(checkpoint["frames"])]
+        reads = [
+            (url, read["status"], _parse_wire(read["body"], f"{where}.rest[{url}]"))
+            for url, read in checkpoint["rest"].items()
+        ]
+        for index, frame in enumerate(frames):
+            normalizer.learn(frame, f"{where}.frames[{index}]")
+        for url, _status, body in reads:
+            normalizer.learn(url, f"{where}.rest")
+            normalizer.learn(body, f"{where}.rest[{url}]")
+        parsed.append((checkpoint["name"], frames, reads))
+    normalizer.learn(capture["ids"], f"{scenario}.ids")
+    normalizer.freeze()
+    return {
+        "url_templates": list(templates),
+        "ids": normalizer.apply(capture["ids"]),
+        "checkpoints": [
+            {
+                "name": name,
+                "frames": [_wire(normalizer.apply(frame)) for frame in frames],
+                "rest": {
+                    normalizer.apply(url): {"status": status, "body": _wire(normalizer.apply(body))}
+                    for url, status, body in reads
+                },
+            }
+            for name, frames, reads in parsed
+        ],
+    }
+
+
+def build_fixture(issued: set[float]) -> dict[str, Any]:
+    """Capture every scenario with its ``FIXTURE_TEMPLATES`` set and normalize each capture."""
+    scenarios: dict[str, Any] = {}
+    for scenario in SCENARIOS:
+        templates = FIXTURE_TEMPLATES[scenario]
+        with tempfile.TemporaryDirectory(prefix="probos-issue1375-", ignore_cleanup_errors=True) as storage:
+            capture = asyncio.run(run_scenario(scenario, list(templates), Path(storage)))
+        scenarios[scenario] = normalize_capture(scenario, templates, capture, issued)
+    return {"regenerate": REGENERATE, "scenarios": scenarios}
+
+
+def fixture_text(document: dict[str, Any]) -> str:
+    return json.dumps(document, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True) + "\n"
+
+
+def _write_fixture(argv: list[str]) -> int:
+    if len(argv) != 3:
+        sys.stderr.write("usage: issue1375_work_state_bridge.py --write <fixture-path>\n")
+        return 2
+    if _WALL_CLOCK is None:
+        sys.stderr.write("issue1375 --write runs only as the script, whose clock precedes the backend imports\n")
+        return 2
+    assert_candidate_origins(Path(__file__).resolve().parents[2])
+    text = fixture_text(build_fixture(_WALL_CLOCK.issued))
+    Path(argv[2]).write_bytes(text.encode("utf-8"))
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv[1:2] == ["--write"]:
+        return _write_fixture(argv)
     if len(argv) != 4:
-        sys.stderr.write("usage: issue1375_work_state_bridge.py <root> <scenario> <url-templates-json>\n")
+        sys.stderr.write(
+            "usage: issue1375_work_state_bridge.py <root> <scenario> <url-templates-json>\n"
+            "       issue1375_work_state_bridge.py --write <fixture-path>\n"
+        )
         return 2
     root = Path(argv[1]).resolve()
     if root != Path(__file__).resolve().parents[2]:

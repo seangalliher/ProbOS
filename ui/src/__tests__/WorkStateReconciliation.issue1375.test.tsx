@@ -1,9 +1,10 @@
 /** Issue #1375: work-item state reconciliation, crossed on real wire texts.
  *
- * Frames are the exact texts a real WSEventStreamHub sent and REST bodies are the
- * exact texts the production app served, both captured by
- * tests/fixtures/issue1375_work_state_bridge.py. Crossings seed nothing into the
- * store: every record on screen arrives through handleEvent and fetch.
+ * Frames are the texts a real WSEventStreamHub sent and REST bodies are the texts
+ * the production app served, captured by tests/fixtures/issue1375_work_state_bridge.py
+ * --write into ui/e2e/fixtures/issue1375_work_state.json through a one-to-one ID and
+ * time map. Crossings seed nothing into the store: every record on screen arrives
+ * through handleEvent and fetch.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -29,8 +30,7 @@ import type {
   WorkItemView,
 } from '../store/types';
 import {
-  ISSUE1375_BRIDGE_BUDGET_MS, runIssue1375Bridge,
-  type Issue1375Checkpoint, type Issue1375Run,
+  loadIssue1375Capture, type Issue1375Capture, type Issue1375Checkpoint,
 } from './helpers/issue1375Bridge';
 
 // M3: the Board's refresh reads the nine status buckets; the private done fetch is gone.
@@ -122,14 +122,10 @@ function projectionsFor(checkpoint: Issue1375Checkpoint, parentId: string): Crew
     .filter(data => data.parent_id === parentId);
 }
 
-let bridge: Issue1375Run;
+let bridge: Issue1375Capture;
 
-beforeAll(async () => {
-  bridge = await runIssue1375Bridge('promoted_failed', URL_TEMPLATES);
-  console.info(
-    `issue1375 bridge wall ${Math.round(bridge.wallMs)} ms`
-    + ` (python elapsed ${bridge.capture.elapsed_seconds} s)`,
-  );
+beforeAll(() => {
+  bridge = loadIssue1375Capture('promoted_failed', URL_TEMPLATES);
 });
 
 beforeEach(() => {
@@ -150,8 +146,7 @@ afterEach(async () => {
 
 describe('issue #1375 work-state reconciliation', () => {
   it('M1 promoted turn reaches failed on board and detail from the same REST record', async () => {
-    const { capture, wallMs } = bridge;
-    expect(wallMs).toBeLessThanOrEqual(ISSUE1375_BRIDGE_BUDGET_MS);
+    const capture = bridge;
     expect(capture.checkpoints.map(checkpoint => checkpoint.name)).toEqual(['promoted', 'failed']);
     const [promoted, failed] = capture.checkpoints;
     const id = capture.ids.X;
@@ -233,7 +228,7 @@ describe('issue #1375 work-state reconciliation', () => {
     useStore.setState({ workItems: [item] });
     const rest = replayRest();
     // M3: the mount refresh reads the buckets, so serve a checkpoint whose failed bucket is empty.
-    rest.use(bridge.capture.checkpoints[0]);
+    rest.use(bridge.checkpoints[0]);
     const user = userEvent.setup();
     render(<WorkBoard />);
 
@@ -245,19 +240,14 @@ describe('issue #1375 work-state reconciliation', () => {
 });
 
 describe('issue #1375 native crew child (M2)', () => {
-  let native: Issue1375Run;
+  let native: Issue1375Capture;
 
-  beforeAll(async () => {
-    native = await runIssue1375Bridge('native_failed', NATIVE_TEMPLATES);
-    console.info(
-      `issue1375 native bridge wall ${Math.round(native.wallMs)} ms`
-      + ` (python elapsed ${native.capture.elapsed_seconds} s)`,
-    );
+  beforeAll(() => {
+    native = loadIssue1375Capture('native_failed', NATIVE_TEMPLATES);
   });
 
   it('M2 native child failure agrees across board, detail, room and counts', async () => {
-    const { capture, wallMs } = native;
-    expect(wallMs).toBeLessThanOrEqual(ISSUE1375_BRIDGE_BUDGET_MS);
+    const capture = native;
     expect(capture.checkpoints.map(checkpoint => checkpoint.name)).toEqual(['adopted', 'failed']);
     const [adopted, failed] = capture.checkpoints;
     const { P: parentId, X: childId, T: threadId } = capture.ids;
@@ -464,19 +454,14 @@ describe('issue #1375 legacy crew room (M2)', () => {
 });
 
 describe('issue #1375 restart (M3)', () => {
-  let restart: Issue1375Run;
+  let restart: Issue1375Capture;
 
-  beforeAll(async () => {
-    restart = await runIssue1375Bridge('restart', URL_TEMPLATES);
-    console.info(
-      `issue1375 restart bridge wall ${Math.round(restart.wallMs)} ms`
-      + ` (python elapsed ${restart.capture.elapsed_seconds} s)`,
-    );
+  beforeAll(() => {
+    restart = loadIssue1375Capture('restart', URL_TEMPLATES);
   });
 
   it('M3 a stale read issued before a restart cannot resurrect the older status', async () => {
-    const { capture, wallMs } = restart;
-    expect(wallMs).toBeLessThanOrEqual(ISSUE1375_BRIDGE_BUDGET_MS);
+    const capture = restart;
     expect(capture.checkpoints.map(checkpoint => checkpoint.name)).toEqual(['in_progress', 'restarted']);
     const [before, after] = capture.checkpoints;
     const id = capture.ids.X;
@@ -758,7 +743,7 @@ describe('issue #1375 work surfaces (M3)', () => {
       throw new TypeError('no backend');
     }));
     render(<BridgePanel open onClose={() => {}} />);
-    for (const checkpoint of bridge.capture.checkpoints) deliver(checkpoint);
+    for (const checkpoint of bridge.checkpoints) deliver(checkpoint);
     await act(() => workItemReconciler.whenIdle());
 
     // Premise: the frames reached the store; the Bridge still read no work item (I7).
