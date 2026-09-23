@@ -16,9 +16,35 @@ result is folded into the calling agent's turn episode.
 
 Bounded by design: a depth guard (``delegation_max_depth``, default 1) prevents
 A→B→A recursion / fan-out blow-up (the IntentBus fan-out lesson), and the nested
-run uses its own iteration cap (``delegation_max_iterations``). ``to`` is a
-required explicit callsign in v1 — auto-routing to a best-match agent is a
-forward item. The tool never raises out of ``invoke`` — every miss / failure
+run uses its own iteration cap (``delegation_max_iterations``). AD-1190 adds an
+optional aggregate budget for the whole delegation tree (``delegation_tree_max_*``,
+all ``None`` by default, which leaves this tool unchanged): after every other
+check a child is admitted against the tree's children, concurrency, iteration
+and token ceilings, runs with its grant as ``max_iterations`` / ``token_budget``,
+and is settled exactly once, including when it raises or is cancelled. A refused
+delegation returns a typed ``delegation_tree_limit_reached`` result and starts no
+nested run; a context value under the budget key that is not exactly a
+``DelegationTreeBudget`` is refused as ``delegation_tree_budget_invalid`` rather
+than run unbudgeted. The iteration ceiling is exact. The token ceiling can be
+exceeded by up to one LLM call per delegated run in flight, because the loop
+checks a grant only after a call returns (measured: under a 2048-token ceiling
+one 3000-token child call completed and the next delegation was refused with
+``used=3000``). A child whose usage total is 0 is charged its whole token grant,
+because that zero went unmeasured, and a child that stops uncleanly -- it raised
+or was cancelled, or its loop stopped other than ``complete``,
+``max_iterations`` or ``token_budget`` -- is charged the larger of its counted
+total and its whole token grant, because a failed call may have been billed
+without being counted. A child that reported usage and then ended on an
+unmeasured empty completion is charged nothing for that final call, and a failed
+call can cost more than an unclean charge covers, so charged spend can also
+trail real spend by up to one call per delegated run. Tokens are those each
+delegated run's own loop counts; model calls made inside a tool's implementation
+are outside the tree budget.
+The concurrency ceiling counts in-flight delegated runs, including those awaiting
+their own delegate, and is inert at or above ``delegation_max_depth`` because
+calls within one loop run one at a time. ``to`` is a required explicit callsign
+in v1 — auto-routing to a best-match agent is a forward item. The tool never
+raises out of ``invoke`` (cancellation still propagates) — every miss / failure
 becomes an honest-degrade ``ToolResult`` the loop can reason over (AD-592).
 """
 
@@ -28,6 +54,13 @@ import logging
 import time
 from typing import Any
 
+from probos.tools.delegation_budget import (
+    DELEGATION_TREE_BUDGET_KEY,
+    DelegationTreeBudget,
+    TreeGrant,
+    TreeLimit,
+    TreeRefusal,
+)
 from probos.tools.delegation_evidence import (
     DelegatedToolResult,
     DelegationEvidence,
@@ -194,44 +227,123 @@ class DelegateTaskTool:
                     evidence=unobserved_delegation_evidence(status="not_started"),
                 )
 
-            # 4. Supply only non-authoritative run inputs. The executor resolves
-            #    department and rank from the registered target at the boundary.
-            instructions = getattr(target, "instructions", "") or ""
-            agent_id = target.id
-            thread_id = str(ctx.get("thread_id", "") or "")
+            # AD-1190: admit against the tree budget the root run opened, after
+            # every cheaper refusal so a refused call consumes no slot.
+            budget = ctx.get(DELEGATION_TREE_BUDGET_KEY)
+            grant: TreeGrant | None = None
+            if budget is not None and type(budget) is not DelegationTreeBudget:
+                logger.warning(
+                    "AD-1190: delegation from agent=%s to=%r (target %s) carried a "
+                    "%s where its tree budget belongs; refused as "
+                    "delegation_tree_budget_invalid with no nested run started, "
+                    "because running it unbudgeted would bypass the tree's ceilings",
+                    ctx.get("agent_id", "?"), to, target.id, type(budget).__name__,
+                )
+                return DelegatedToolResult(
+                    output={"delegated": False, "reason": "delegation_tree_budget_invalid"},
+                    duration_ms=(time.monotonic() - t0) * 1000.0,
+                    evidence=unobserved_delegation_evidence(status="not_started"),
+                )
+            if budget is not None:
+                admission = budget.admit(
+                    child_depth=depth + 1,
+                    max_depth=self._max_depth,
+                    per_child_iterations=self._max_iterations,
+                )
+                if isinstance(admission, TreeRefusal):
+                    logger.info(
+                        "AD-1190: delegation from agent=%s to=%r (target %s) "
+                        "refused by the tree budget: limit=%s ceiling=%d used=%d "
+                        "required=%d; no nested run started",
+                        ctx.get("agent_id", "?"), to, target.id, admission.limit,
+                        admission.ceiling, admission.used, admission.required,
+                    )
+                    return DelegatedToolResult(
+                        output=admission.to_output(),
+                        duration_ms=(time.monotonic() - t0) * 1000.0,
+                        evidence=unobserved_delegation_evidence(status="not_started"),
+                    )
+                grant = admission
 
-            # 5. Run a nested governed executor with the parent's LLM client. The
-            #    extra_context threads the incremented depth so the delegate is
-            #    itself depth-guarded.
-            from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+            # A reserved grant is settled exactly once, whatever happens below.
+            outcome: Any = None
+            try:
+                # 4. Supply only non-authoritative run inputs. The executor
+                #    resolves department and rank from the registered target at
+                #    the boundary.
+                instructions = getattr(target, "instructions", "") or ""
+                agent_id = target.id
+                thread_id = str(ctx.get("thread_id", "") or "")
 
-            executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
-            outcome = await executor.run(
-                agent_id=agent_id,
-                instructions=instructions,
-                task_text=task,
-                runtime=self._runtime,
-                thread_id=thread_id,
-                max_iterations=self._max_iterations,
-                tier=self._tier,
-                extra_context={"_delegation_depth": depth + 1},
-            )
+                # 5. Run a nested governed executor with the parent's LLM
+                #    client. The extra_context threads the incremented depth so
+                #    the delegate is itself depth-guarded, and, when budgeted,
+                #    the same tree budget object.
+                from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+
+                executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
+                nested_context: dict[str, Any] = {"_delegation_depth": depth + 1}
+                max_iterations = self._max_iterations
+                # Only a token grant adds a kwarg, so an unbudgeted call is unchanged.
+                grant_kwargs: dict[str, Any] = {}
+                if grant is not None:
+                    nested_context[DELEGATION_TREE_BUDGET_KEY] = budget
+                    max_iterations = grant.max_iterations
+                    if grant.token_budget is not None:
+                        grant_kwargs["token_budget"] = grant.token_budget
+                outcome = await executor.run(
+                    agent_id=agent_id,
+                    instructions=instructions,
+                    task_text=task,
+                    runtime=self._runtime,
+                    thread_id=thread_id,
+                    max_iterations=max_iterations,
+                    tier=self._tier,
+                    extra_context=nested_context,
+                    **grant_kwargs,
+                )
+            finally:
+                if grant is not None:
+                    budget.settle(
+                        grant,
+                        tokens_used=getattr(outcome, "total_tokens", None),
+                        iterations_used=getattr(outcome, "iterations", None),
+                        stopped_reason=getattr(outcome, "stopped_reason", None),
+                    )
 
             # 6. Fold the delegate's result back to the caller.
             evidence = getattr(outcome, "delegation_evidence", None)
+            stopped_reason = getattr(outcome, "stopped_reason", None)
             if not isinstance(evidence, DelegationEvidence):
                 evidence = unobserved_delegation_evidence(
-                    status=delegation_status(getattr(outcome, "stopped_reason", None)),
+                    status=delegation_status(stopped_reason),
                     agent_id=agent_id, thread_id=thread_id,
                     final_text=getattr(outcome, "final_text", "") or "",
                 )
+            output: dict[str, Any] = {
+                "delegated": True,
+                "to": resolved.get("callsign", to),
+                "result": getattr(outcome, "final_text", "") or "",
+                "stopped_reason": stopped_reason,
+            }
+            # AD-1190: name the tree only when its grant, not the per-child cap, stopped the run.
+            tree_limit: TreeLimit | None = None
+            if grant is not None:
+                if stopped_reason == "token_budget" and grant.token_budget is not None:
+                    tree_limit = "tokens"
+                elif stopped_reason == "max_iterations" and grant.iterations_limited:
+                    tree_limit = "iterations"
+            if tree_limit is not None:
+                output["tree_limit"] = tree_limit
+                logger.info(
+                    "AD-1190: delegated run from agent=%s to=%r (target %s) stopped "
+                    "at its tree %s grant (max_iterations=%d, token_budget=%s); "
+                    "returning its partial result to the delegating agent",
+                    ctx.get("agent_id", "?"), to, target.id, tree_limit,
+                    max_iterations, grant_kwargs.get("token_budget"),
+                )
             return DelegatedToolResult(
-                output={
-                    "delegated": True,
-                    "to": resolved.get("callsign", to),
-                    "result": getattr(outcome, "final_text", "") or "",
-                    "stopped_reason": getattr(outcome, "stopped_reason", None),
-                },
+                output=output,
                 duration_ms=(time.monotonic() - t0) * 1000.0,
                 evidence=evidence,
             )

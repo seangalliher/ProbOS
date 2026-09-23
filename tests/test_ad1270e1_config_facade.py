@@ -1523,7 +1523,8 @@ def test_committed_baseline_records_the_measured_surface(
     assert counts["incidental"] == 13
     assert counts["own_models"] == 224
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
-    assert counts["field_definitions"] == 1787  # AD-1206 intentionally adds github_repository.
+    # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
+    assert counts["field_definitions"] == 1791  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

@@ -1125,12 +1125,29 @@ class AgenticLoop:
                 return result
 
             # BF-680: a provider-reported usage figure is TRUSTED verbatim; an
-            # ABSENT one is substituted with a client-side estimate. See
+            # ABSENT one is substituted with a client-side estimate. AD-1190:
+            # while a token_budget is active a negative figure, which would
+            # subtract spend from it, is treated as absent. See
             # ``_completion_is_non_empty`` for why "absent" reaches this line
             # indistinguishable from "zero", and why the rule is written out
-            # rather than inferred. When the provider does report usage this
-            # branch is byte-identical to the AD-545 accumulation it replaced.
+            # rather than inferred. Otherwise, when the provider does report
+            # usage this branch is byte-identical to the AD-545 accumulation it
+            # replaced.
             reported = int(response.tokens_used or 0)
+            if reported < 0 and self._budget is not None:
+                logger.warning(
+                    "AD-1190: provider model=%r on tier=%s reported negative token "
+                    "usage (%d) at iteration=%d agent=%s; treating it as absent, so "
+                    "a non-empty completion is charged the BF-680 estimate (an "
+                    "empty one 0) and token_budget stays enforceable instead of "
+                    "being refunded.",
+                    getattr(response, "model", ""),
+                    self._tier,
+                    reported,
+                    iteration,
+                    agent_id[:12],
+                )
+                reported = 0
             if reported == 0 and _completion_is_non_empty(response):
                 charged = _estimate_call_tokens(messages, response)
                 token_sources.add(TOKEN_SOURCE_ESTIMATED)
