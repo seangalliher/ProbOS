@@ -3,9 +3,11 @@
  * launch ACTIONS and inline CONFIG. The 3 existing Bridge sections are migrated
  * here; personnel/science/command are modelled placeholders the AD-944/945/946
  * wave fills. NOT an agent surface (AD-398). Deep visual pass = AD-943a. */
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useStore } from '../../store/useStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useWorkItemScopes } from '../../store/workItemReconciliation';
+import { formatWorkItemCount, summarizeWorkItems } from '../../store/workItemSummary';
 import { BridgeSystem, BridgeThreads } from './BridgeSystem';
 import { BridgeKanban } from './BridgeKanban';
 import { BridgeCommunications } from './BridgeCommunications';
@@ -38,7 +40,7 @@ export interface CommandStation {
   title: string;
   accent: string;            // reuses an existing per-section color token
   defaultOpen: boolean;
-  count?: number;            // live header count (e.g. dmChannels.length)
+  count?: number | string;   // live header count (e.g. dmChannels.length, or a formatted work-item count)
   onExpand?: () => void;     // primary launch (the section Expand affordance)
   onExpandLabel?: string;    // AD-946: palette label for the onExpand launch (e.g. "Work Board")
   body?: () => ReactNode;    // inline body (migrated System/Comms/Work bodies)
@@ -62,13 +64,23 @@ export const STATION_ORDER: StationId[] = [
   'communications', 'personnel', 'science', 'operations', 'engineering', 'command',
 ];
 
+/** Issue #1375: the Operations header count, work items not done, from the cache alone (I7: no fetch). */
+export function useOperationsWorkItemCount(): string {
+  const workItems = useStore(s => s.workItems);
+  const scopes = useWorkItemScopes();
+  return useMemo(
+    () => formatWorkItemCount(summarizeWorkItems(workItems ?? [], scopes), 'notDone'),
+    [workItems, scopes],
+  );
+}
+
 /** Build the typed station list. The 3 existing Bridge sections are migrated
  *  here (Communications, Work Board→operations, System→engineering);
  *  personnel/science/command are MODELLED placeholders (empty actions/config,
  *  no body) that AD-944/945/946 fill. */
 export function buildBridgeStations(ctx: {
   dmChannelCount: number;
-  kanbanCount: number;
+  workItemCount: number | string;
   totalUnread: number;
 }): CommandStation[] {
   const m = STATION_META;
@@ -130,7 +142,7 @@ export function buildBridgeStations(ctx: {
       title: m.operations.title,
       accent: m.operations.accent,
       defaultOpen: false,
-      count: ctx.kanbanCount,
+      count: ctx.workItemCount,
       onExpand: () => useStore.setState({ mainViewer: 'work' }),
       onExpandLabel: 'Work Board',
       body: () => <BridgeKanban />,

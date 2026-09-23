@@ -883,6 +883,12 @@ export interface LiveTodoRefreshCommand {
   readonly requestId: number;
 }
 
+// Issue #1375: a child of `parentId` changed; `stamp` is the live-read fence stamp of `crew:<parentId>`.
+export interface CrewParentRefreshCommand {
+  readonly parentId: string;
+  readonly stamp: number;
+}
+
 export interface LiveRailOwner {
   readonly threadId: string;
   readonly parentId: string;

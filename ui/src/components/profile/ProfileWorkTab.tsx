@@ -3,6 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, BookingView, BookableResourceView, WorkItemTemplateView } from '../../store/types';
+import {
+  ASSIGNEE_DONE_LIMIT, assigneeScopeKey, isScaffoldWorkItem, useWorkItemInterest, useWorkItemScopes,
+  workItemCacheState,
+} from '../../store/workItemReconciliation';
 import { ChevronDown, ChevronRight } from '../icons/Glyphs';
 import { WorkspaceFolder } from './WorkspaceFolder';
 import { OwnedStepsPanel } from '../workspace/TodosList';
@@ -58,7 +62,6 @@ export function ProfileWorkTab({ agentId }: Props) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
-  const [completedItems, setCompletedItems] = useState<WorkItemView[]>([]);
   const [sectionsOpen, setSectionsOpen] = useState<Record<string, boolean>>({
     active: true, blocked: true, completed: false, duty: true,
   });
@@ -73,18 +76,22 @@ export function ProfileWorkTab({ agentId }: Props) {
   );
   const agentUuid = agentResource?.resource_id ?? agentId;
 
-  const myItems = (workItems ?? []).filter(w => w.assigned_to === agentUuid);
+  // Issue #1375: the agent's work comes from the reconciled cache, with its own two scoped reads.
+  useWorkItemInterest(agentUuid);
+  const scopes = useWorkItemScopes();
+
+  const myItems = (workItems ?? []).filter(w => w.assigned_to === agentUuid && !isScaffoldWorkItem(w));
   const activeItems = myItems.filter(w => ['open', 'scheduled', 'in_progress', 'review'].includes(w.status));
   const blockedItems = myItems.filter(w => ['failed', 'blocked'].includes(w.status));
+  const doneItems = myItems.filter(w => w.status === 'done').sort((a, b) => b.updated_at - a.updated_at);
+  const completedItems = doneItems.slice(0, ASSIGNEE_DONE_LIMIT);
+  const completedCount = scopes.get(assigneeScopeKey(agentUuid, true))?.truncated === true
+    || doneItems.length > ASSIGNEE_DONE_LIMIT
+    ? `${ASSIGNEE_DONE_LIMIT}+` : completedItems.length;
   const myBookings = (workBookings ?? []).filter(b => b.resource_id === agentUuid);
-
-  // Fetch completed items on mount
-  useEffect(() => {
-    fetch(`/api/work-items?assigned_to=${agentUuid}&status=done&limit=10`)
-      .then(r => r.ok ? r.json() : { work_items: [] })
-      .then(d => setCompletedItems(d.work_items || []))
-      .catch(() => {});
-  }, [agentUuid]);
+  const lastKnown = workItemCacheState(
+    scopes, [assigneeScopeKey(agentUuid, false), assigneeScopeKey(agentUuid, true)],
+  ) === 'stale' ? ' (last known)' : '';
 
   const toggle = (section: string) => setSectionsOpen(s => ({ ...s, [section]: !s[section] }));
 
@@ -174,7 +181,7 @@ export function ProfileWorkTab({ agentId }: Props) {
     borderRadius: 6, fontSize: 11,
   };
 
-  const sectionHeader = (label: string, count: number, key: string) => (
+  const sectionHeader = (label: string, count: number | string, key: string) => (
     <div
       onClick={() => toggle(key)}
       style={{
@@ -365,22 +372,22 @@ export function ProfileWorkTab({ agentId }: Props) {
       )}
 
       {/* Active Work */}
-      {sectionHeader('Active Work', activeItems.length, 'active')}
+      {sectionHeader('Active Work', `${activeItems.length}${lastKnown}`, 'active')}
       {sectionsOpen.active && (activeItems.length > 0
         ? activeItems.map(item => renderCard(item))
         : <div style={{ color: '#444', fontSize: 10, padding: '4px 0' }}>No active work</div>
       )}
 
-      {/* Blocked */}
+      {/* Blocked / Failed */}
       {blockedItems.length > 0 && (
         <>
-          {sectionHeader('Blocked', blockedItems.length, 'blocked')}
+          {sectionHeader('Blocked / Failed', `${blockedItems.length}${lastKnown}`, 'blocked')}
           {sectionsOpen.blocked && blockedItems.map(item => renderCard(item, true))}
         </>
       )}
 
       {/* Completed */}
-      {sectionHeader('Completed', completedItems.length, 'completed')}
+      {sectionHeader('Completed', `${completedCount}${lastKnown}`, 'completed')}
       {sectionsOpen.completed && (completedItems.length > 0
         ? completedItems.map(item => (
             <div key={item.id} style={cardStyle}>

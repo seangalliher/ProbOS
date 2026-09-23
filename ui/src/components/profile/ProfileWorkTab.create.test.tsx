@@ -27,10 +27,10 @@ function resetStore() {
 beforeEach(() => {
   createWorkItem.mockClear();
   resetStore();
-  // The component fetches completed items on mount; stub it.
+  // The component reads its agent's work on mount; stub every list page as empty.
   global.fetch = vi.fn(async () => ({
     ok: true,
-    json: async () => ({ work_items: [] }),
+    json: async () => ({ work_items: [], count: 0 }),
   })) as unknown as typeof fetch;
 });
 

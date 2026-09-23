@@ -19,6 +19,7 @@
  * chats the Captain has not yet joined float to the top (alert-driven ordering).
  */
 import { useEffect, useState, useRef, useCallback, type ReactElement } from 'react';
+import { liveReadFence } from '../../store/liveReadFence';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import type { Agent } from '../../store/types';
 import { AgentAvatarBadge } from '../AgentAvatarBadge';
@@ -196,6 +197,8 @@ export default function ChatsPanel(): ReactElement | null {
      * ``summaryInFlightRef``, which coalesce rather than race. */
     const generation = authority.liveGeneration;
     try {
+      // Issue #1375: a room the stream writes after this stamp keeps its live summary.
+      const issuedAt = useStore.getState().beginLiveRead();
       const outcome = await repairRoomSummaries();
       const current = useStore.getState();
       if (
@@ -204,7 +207,12 @@ export default function ChatsPanel(): ReactElement | null {
         || current.liveGeneration !== generation
       ) return;
       if (outcome.kind === 'success') {
-        hydrateRoomSummaries(outcome.summaries);
+        const refused = Object.keys(outcome.summaries)
+          .filter(threadId => !liveReadFence.accepts(`room:${threadId}`, issuedAt));
+        hydrateRoomSummaries(outcome.summaries, issuedAt);
+        // Issue #1375: a refused room the bounded live map no longer holds is read again rather than left blank.
+        const held = useStore.getState().roomSummariesByThread;
+        if (refused.some(threadId => !held.has(threadId))) summaryPendingRef.current = true;
       }
     } finally {
       summaryInFlightRef.current = false;
@@ -330,7 +338,7 @@ export default function ChatsPanel(): ReactElement | null {
     return (
       <div data-testid={`room-session-${id}`} style={{ minWidth: 0, marginBottom: 8, color: '#9a94a8', fontSize: 10, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
         <div>
-          {session.state} · {session.progress.done}/{session.progress.total} done · {session.progress.active} active · {session.progress.failed} failed
+          {session.state} · {session.progress.done}/{session.progress.total} done · {session.progress.active} remaining · {session.progress.failed} failed/cancelled
         </div>
         <div style={{ marginTop: 3 }}>
           Facilitator {session.facilitator_id} · Owners {session.owner_ids.join(', ')}

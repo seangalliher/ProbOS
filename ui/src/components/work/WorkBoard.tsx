@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
 import type { WorkItemView, WorkItemTemplateView } from '../../store/types';
+import {
+  WORK_ITEM_BUCKETS, WORK_ITEM_BUCKET_CAPS, bucketKey, isScaffoldWorkItem, useWorkItemInterest,
+  useWorkItemScopes, workItemCacheState, type WorkItemBucket, type WorkItemCacheState,
+} from '../../store/workItemReconciliation';
+import { summarizeWorkItems, workItemOrigin } from '../../store/workItemSummary';
 import { ChevronDown, ChevronRight, ChevronUp, Warning, Close } from '../icons/Glyphs';
 import { OwnedStepsPanel, OwnedStepsRecoveryPanel } from '../workspace/TodosList';
 import {
@@ -31,6 +36,42 @@ const COLUMNS: ColConfig[] = [
   { key: 'done',        label: 'DONE',        statuses: ['done'],          targetStatus: 'done',        wipLimit: null },
 ];
 
+// Issue #1375: every other status, known or not, renders in the Blocked/Failed row.
+const COLUMN_STATUSES = new Set(COLUMNS.flatMap(col => col.statuses));
+
+// The order list reads serve: priority, then newest created, then id.
+function byBoardOrder(a: WorkItemView, b: WorkItemView): number {
+  return a.priority - b.priority || b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+// Done shows the items updated last, not the ones the done bucket happened to serve first.
+function latestDone(items: readonly WorkItemView[]): WorkItemView[] {
+  return [...items]
+    .sort((a, b) => b.updated_at - a.updated_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, WORK_ITEM_BUCKET_CAPS.done);
+}
+
+function columnsOf(items: readonly WorkItemView[]): { columns: Record<ColKey, WorkItemView[]>; doneTotal: number } {
+  const columns: Record<ColKey, WorkItemView[]> = { backlog: [], ready: [], in_progress: [], review: [], done: [] };
+  for (const item of items) {
+    const col = COLUMNS.find(candidate => candidate.statuses.includes(item.status));
+    if (col) columns[col.key].push(item);
+  }
+  const doneTotal = columns.done.length;
+  for (const col of COLUMNS) {
+    columns[col.key] = col.key === 'done' ? latestDone(columns.done) : columns[col.key].sort(byBoardOrder);
+  }
+  return { columns, doneTotal };
+}
+
+const BOARD_STATE_TEXT: Partial<Record<WorkItemCacheState | 'empty', string>> = {
+  loading: 'Loading work items\u2026',
+  empty: 'No work items.',
+  unavailable: 'Work items are unavailable.',
+  unauthorized: 'Access to work items was denied.',
+  stale: 'Showing last known work items; they may be out of date.',
+};
+
 // Top padding so the board header clears the fixed ViewSwitcher tab bar (top:12 + button height).
 const TAB_BAR_CLEARANCE = 40;
 // Minimum draggable column width.
@@ -57,6 +98,27 @@ function relTime(ts: number): string {
   if (abs < 3600) return `${Math.round(abs / 60)}m`;
   if (abs < 86400) return `${Math.round(abs / 3600)}h`;
   return `${Math.round(abs / 86400)}d`;
+}
+
+function isBoundedId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128;
+}
+
+// Issue #1375: a promoted DM turn's conversation, opened in its agent's profile.
+function originConversation(item: WorkItemView): { hostId: string; threadId: string } | null {
+  const { thread_id: threadId, agent_id: agentId } = item.metadata;
+  const hostId = isBoundedId(agentId) ? agentId : item.assigned_to;
+  return isBoundedId(threadId) && isBoundedId(hostId) ? { hostId, threadId } : null;
+}
+
+// Issue #1375: presentation only; a continuation is never filtered, hidden or given authority by it.
+function ContinuationBadge() {
+  return (
+    <span style={{
+      display: 'inline-block', fontSize: 9, padding: '0 4px', borderRadius: 2,
+      background: '#b080d020', color: '#b080d0',
+    }}>continuation</span>
+  );
 }
 
 // ── Work Card ──────────────────────────────────────────────────────
@@ -102,6 +164,7 @@ function WorkCard({ item, assigneeLabel, onDragStart, onOpen }: {
           background: `${(WORK_TYPE_COLORS[item.work_type] || '#888')}20`,
           color: WORK_TYPE_COLORS[item.work_type] || '#888',
         }}>{item.work_type}</span>
+        {workItemOrigin(item) === 'continuation' && <ContinuationBadge />}
         {assigneeLabel ? (
           <span style={{ fontSize: 9, color: '#8888a0', display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#50b0a0', display: 'inline-block' }} />
@@ -154,6 +217,7 @@ export default function WorkBoard() {
   const assignWorkItem = useStore(s => s.assignWorkItem);
   const createFromTemplate = useStore(s => s.createFromTemplate);
   const fetchWorkTemplates = useStore(s => s.fetchWorkTemplates);
+  const openGroupChatThread = useStore(s => s.openGroupChatThread);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<ColKey | null>(null);
@@ -177,23 +241,26 @@ export default function WorkBoard() {
     backlog: null, ready: null, in_progress: null, review: null, done: null,
   });
 
-  // Fetch done items on mount
-  const [doneItems, setDoneItems] = useState<WorkItemView[]>([]);
+  // Issue #1375: the Board's population is the reconciled cache, loaded while the Board is mounted.
+  useWorkItemInterest();
+  const scopes = useWorkItemScopes();
+  const cacheState = workItemCacheState(scopes);
   useEffect(() => {
-    fetch('/api/work-items?status=done&limit=20')
-      .then(r => r.ok ? r.json() : { work_items: [] })
-      .then(d => setDoneItems(d.work_items || []))
-      .catch(() => {});
     if (!workTemplates) fetchWorkTemplates();
   }, []);
 
-  const allItems = useMemo(() => {
-    const active = workItems ?? [];
-    // Merge done items that aren't already in the live list
-    const activeIds = new Set(active.map(i => i.id));
-    const merged = [...active, ...doneItems.filter(d => !activeIds.has(d.id))];
-    return merged;
-  }, [workItems, doneItems]);
+  // 401/403 drops the content (I5); scaffold rows are UI bindings, not work (I6).
+  const allItems = useMemo(
+    () => (cacheState === 'unauthorized' ? [] : (workItems ?? []).filter(item => !isScaffoldWorkItem(item))),
+    [workItems, cacheState],
+  );
+  const boardState: WorkItemCacheState | 'empty' = cacheState === 'ready' && allItems.length === 0
+    ? 'empty' : cacheState;
+  const truncatedColumns = useMemo(() => new Set(COLUMNS
+    .filter(col => WORK_ITEM_BUCKETS.some(bucket => (
+      col.statuses.includes(bucket) && scopes.get(bucketKey(bucket))?.truncated === true
+    )))
+    .map(col => col.key)), [scopes]);
 
   const resources = bookableResources ?? [];
 
@@ -211,8 +278,13 @@ export default function WorkBoard() {
     return null;
   }, [resources, agents]);
 
-  // BF-332: clicked work item for the detail modal.
-  const [detailItem, setDetailItem] = useState<WorkItemView | null>(null);
+  // BF-332: work item shown in the detail modal; #1375: by ID, so it shows the cached record.
+  const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const detailItem = useMemo(
+    () => (detailItemId === null ? null : allItems.find(item => item.id === detailItemId) ?? null),
+    [allItems, detailItemId],
+  );
+  const detailConversation = detailItem === null ? null : originConversation(detailItem);
   const [detailOwnedView, setDetailOwnedView] = useState<ManagedOwnedStepsView | null>(null);
   const [ownershipError, setOwnershipError] = useState('');
   const [ownershipActions, setOwnershipActions] = useState<string[]>([]);
@@ -239,9 +311,9 @@ export default function WorkBoard() {
     try {
       const ownership = await fetchOwnedSteps(item.id);
       if (ownership.mode !== 'unmanaged') setDetailOwnedView(ownership);
-      setDetailItem(item);
+      setDetailItemId(item.id);
     } catch (error) {
-      setDetailItem(item);
+      setDetailItemId(item.id);
       setOwnershipError(error instanceof OwnedStepsApiError
         ? error.feedback
         : 'Step ownership could not be determined. Generic actions are blocked.');
@@ -261,25 +333,13 @@ export default function WorkBoard() {
     });
   }, [allItems, filterPriorities, filterTypes, filterAgents, filterDepts, resolveAssignee]);
 
-  const blockedItems = filtered.filter(i => ['failed', 'cancelled', 'blocked'].includes(i.status));
+  const blockedItems = filtered.filter(i => !COLUMN_STATUSES.has(i.status)).sort(byBoardOrder);
+  // Issue #1375 M5: the one counter selector, over the items the Board shows.
+  const summary = useMemo(() => summarizeWorkItems(filtered, scopes), [filtered, scopes]);
+  const lowerBound = (status: WorkItemBucket): string => (summary.truncatedStatuses.has(status) ? '+' : '');
 
   // Items per column
-  const colItems = useMemo(() => {
-    const map: Record<ColKey, WorkItemView[]> = { backlog: [], ready: [], in_progress: [], review: [], done: [] };
-    for (const item of filtered) {
-      for (const col of COLUMNS) {
-        if (col.statuses.includes(item.status)) {
-          if (col.key === 'done') {
-            if (map.done.length < 20) map.done.push(item);
-          } else {
-            map[col.key].push(item);
-          }
-          break;
-        }
-      }
-    }
-    return map;
-  }, [filtered]);
+  const { columns: colItems, doneTotal } = useMemo(() => columnsOf(filtered), [filtered]);
 
   // Swim lane grouping
   const lanes = useMemo(() => {
@@ -338,7 +398,7 @@ export default function WorkBoard() {
     try {
       const ownership = await fetchOwnedSteps(itemId);
       if (ownership.mode !== 'unmanaged') {
-        setDetailItem(item);
+        setDetailItemId(item.id);
         setDetailOwnedView(ownership);
         setOwnershipError('Managed work uses owned controls; the generic board transition was not sent.');
         setOwnershipActions([]);
@@ -346,7 +406,7 @@ export default function WorkBoard() {
       }
       await moveWorkItem(itemId, col.targetStatus);
     } catch (error) {
-      setDetailItem(item);
+      setDetailItemId(item.id);
       setDetailOwnedView(null);
       setOwnershipError(error instanceof OwnedStepsApiError
         ? error.feedback
@@ -406,18 +466,15 @@ export default function WorkBoard() {
     });
   };
 
-  if (!workItems && !doneItems.length) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#555568', fontSize: 13 }}>
-        Workforce not enabled or no work items yet.
-      </div>
-    );
-  }
-
-  const renderColumn = (col: ColConfig, items: WorkItemView[]) => {
+  const renderColumn = (col: ColConfig, items: WorkItemView[], doneCount = items.length) => {
     const count = items.length;
     const atLimit = col.wipLimit !== null && count >= col.wipLimit;
     const width = colWidths[col.key];
+    const truncated = truncatedColumns.has(col.key);
+    // Done is a window of the latest 20 by update; its header says so whenever more exist.
+    const countText = col.key === 'done' && (truncated || doneCount > count)
+      ? `latest ${count} of ${doneCount}${truncated ? '+' : ''}`
+      : `${count}${truncated ? '+' : ''}${col.wipLimit ? `/${col.wipLimit}` : ''}`;
     return (
       <div
         key={col.key}
@@ -440,7 +497,7 @@ export default function WorkBoard() {
         }}>
           <span>{col.label}</span>
           <span style={{ fontWeight: 400, color: atLimit ? '#d0b050' : '#666' }}>
-            {count}{col.wipLimit ? `/${col.wipLimit}` : ''}
+            {countText}
           </span>
         </div>
         {/* Cards */}
@@ -502,6 +559,18 @@ export default function WorkBoard() {
       {wipWarning && (
         <div style={{ padding: '4px 16px', fontSize: 10, color: '#d0b050', background: 'rgba(208,176,80,0.08)' }}>
           <Warning size={10} /> {wipWarning}
+        </div>
+      )}
+
+      {/* Issue #1375: loading, empty, unavailable, unauthorized and last-known are distinct. */}
+      {BOARD_STATE_TEXT[boardState] && (
+        <div role="status" data-testid="work-board-state" data-state={boardState}
+          style={{
+            padding: '4px 16px', fontSize: 10, borderBottom: '1px solid rgba(255,255,255,0.04)',
+            color: boardState === 'loading' || boardState === 'empty' ? '#8888a0'
+              : boardState === 'stale' ? '#d0b050' : '#d07050',
+          }}>
+          {BOARD_STATE_TEXT[boardState]}
         </div>
       )}
 
@@ -616,28 +685,19 @@ export default function WorkBoard() {
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
         {swimLane === 'none' ? (
           <div style={{ display: 'flex', height: '100%', minHeight: 200 }}>
-            {COLUMNS.map(col => renderColumn(col, colItems[col.key]))}
+            {COLUMNS.map(col => renderColumn(col, colItems[col.key], doneTotal))}
           </div>
         ) : (
           lanes.map(lane => {
             // Per-lane column breakdown
-            const laneColItems: Record<ColKey, WorkItemView[]> = { backlog: [], ready: [], in_progress: [], review: [], done: [] };
-            for (const item of lane.items) {
-              for (const col of COLUMNS) {
-                if (col.statuses.includes(item.status)) {
-                  if (col.key === 'done' && laneColItems.done.length >= 20) break;
-                  laneColItems[col.key].push(item);
-                  break;
-                }
-              }
-            }
+            const laneColumns = columnsOf(lane.items);
             return (
               <div key={lane.key}>
                 <div style={{ padding: '4px 16px', fontSize: 10, fontWeight: 700, color: '#8888a0', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.04)', letterSpacing: 0.5 }}>
                   {lane.label}
                 </div>
                 <div style={{ display: 'flex', minHeight: 80 }}>
-                  {COLUMNS.map(col => renderColumn(col, laneColItems[col.key]))}
+                  {COLUMNS.map(col => renderColumn(col, laneColumns.columns[col.key], laneColumns.doneTotal))}
                 </div>
               </div>
             );
@@ -648,24 +708,38 @@ export default function WorkBoard() {
       {/* Blocked/Failed row */}
       {blockedItems.length > 0 && (
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-          <div onClick={() => setShowBlocked(!showBlocked)}
-            style={{ padding: '5px 16px', fontSize: 10, fontWeight: 600, color: '#d07050', cursor: 'pointer', userSelect: 'none' }}>
+          <button type="button" onClick={() => setShowBlocked(!showBlocked)} aria-expanded={showBlocked}
+            style={blockedToggle}>
             <span>{showBlocked ? <ChevronDown size={8} /> : <ChevronRight size={8} />}</span> Blocked/Failed ({blockedItems.length})
-          </div>
+            {' '}<span style={{ fontWeight: 400, color: '#a08070' }}>
+              {[
+                `${summary.failed}${lowerBound('failed')} failed`,
+                `${summary.blocked}${lowerBound('blocked')} blocked`,
+                `${summary.cancelled}${lowerBound('cancelled')} cancelled`,
+                ...(summary.byStatus.unknown > 0 ? [`${summary.byStatus.unknown} other`] : []),
+              ].join(' \u00b7 ')}
+            </span>
+          </button>
           {showBlocked && (
             <div style={{ padding: '4px 16px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {blockedItems.map(item => (
-                <div key={item.id} style={{
-                  padding: '5px 8px', borderRadius: 4, fontSize: 10,
-                  background: 'rgba(208,80,80,0.06)', border: '1px solid rgba(208,80,80,0.15)',
-                  maxWidth: 200,
-                }}>
-                  <div style={{ fontWeight: 600, color: '#c8d0e0' }}>
-                    {item.title.length > 30 ? item.title.slice(0, 30) + '\u2026' : item.title}
-                  </div>
-                  <div style={{ color: '#d07050', fontSize: 9 }}>{item.status}</div>
-                </div>
-              ))}
+              {blockedItems.map(item => {
+                const continuation = workItemOrigin(item) === 'continuation';
+                return (
+                  <button key={item.id} type="button" onClick={() => { void openDetail(item); }}
+                    aria-label={`${item.title}, ${item.status}${continuation ? ', conversation continuation' : ''}`}
+                    style={{
+                      padding: '5px 8px', borderRadius: 4, fontSize: 10,
+                      background: 'rgba(208,80,80,0.06)', border: '1px solid rgba(208,80,80,0.15)',
+                      maxWidth: 200, cursor: 'pointer', textAlign: 'left', color: 'inherit', fontFamily: 'inherit',
+                    }}>
+                    <span style={{ display: 'block', fontWeight: 600, color: '#c8d0e0' }}>
+                      {item.title.length > 30 ? item.title.slice(0, 30) + '\u2026' : item.title}
+                    </span>
+                    <span style={{ display: 'block', color: '#d07050', fontSize: 9 }}>{item.status}</span>
+                    {continuation && <ContinuationBadge />}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -674,7 +748,7 @@ export default function WorkBoard() {
       {/* BF-332: Work item detail modal */}
       {detailItem && (
         <div
-          onClick={() => { setDetailItem(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
+          onClick={() => { setDetailItemId(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
           style={{
             position: 'fixed', inset: 0, zIndex: 1000,
             background: 'rgba(0,0,0,0.55)',
@@ -697,7 +771,7 @@ export default function WorkBoard() {
               }} />
               <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.3, flex: 1 }}>{detailItem.title}</div>
               <button
-                onClick={() => { setDetailItem(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
+                onClick={() => { setDetailItemId(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]); }}
                 aria-label="Close"
                 style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', padding: 2, display: 'flex' }}
               >
@@ -720,6 +794,18 @@ export default function WorkBoard() {
 
             <DetailRow label="Assigned to" value={resolveAssignee(detailItem.assigned_to)?.label ?? 'Unassigned'} />
             <DetailRow label="Created by" value={detailItem.created_by || '\u2014'} />
+            <DetailRow label="Origin" testId="work-board-origin" value={<>
+              {workItemOrigin(detailItem) === 'continuation' ? 'Conversation continuation (DM promotion)' : 'Delegated'}
+              {detailConversation && (
+                <button type="button" style={originLink}
+                  onClick={() => {
+                    setDetailItemId(null); setDetailOwnedView(null); setOwnershipError(''); setOwnershipActions([]);
+                    openGroupChatThread(detailConversation.hostId, detailConversation.threadId);
+                  }}>
+                  Open conversation
+                </button>
+              )}
+            </>} />
             {detailItem.due_at ? <DetailRow label="Due" value={new Date(detailItem.due_at * 1000).toLocaleString()} /> : null}
             {ownershipError && (
               <div role="alert" data-testid="work-board-ownership-error"
@@ -788,18 +874,29 @@ export default function WorkBoard() {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, value, testId }: { label: string; value: React.ReactNode; testId?: string }) {
   return (
-    <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+    <div data-testid={testId} style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
       <span style={{ fontSize: 11, color: '#777', width: 90, flexShrink: 0 }}>{label}</span>
       <span style={{ fontSize: 11, color: '#c0c8d8' }}>{value}</span>
     </div>
   );
 }
 
+const originLink: React.CSSProperties = {
+  marginLeft: 8, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer',
+  color: '#b080d0', textDecoration: 'underline', fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+};
+
 const toolbarBtn: React.CSSProperties = {
   padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
   background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa',
+  fontFamily: "'JetBrains Mono', monospace",
+};
+
+const blockedToggle: React.CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none',
+  padding: '5px 16px', fontSize: 10, fontWeight: 600, color: '#d07050', cursor: 'pointer', userSelect: 'none',
   fontFamily: "'JetBrains Mono', monospace",
 };
 

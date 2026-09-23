@@ -74,9 +74,9 @@ beforeEach(() => {
   state.workItems = [];
   state.bookableResources = [];
   state.agents = new Map();
-  // The board fetches done items on mount; stub fetch to an empty list.
+  // Any work-item list read the board makes gets an empty page.
   (global as any).fetch = vi.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve({ work_items: [] }) }),
+    Promise.resolve({ ok: true, json: () => Promise.resolve({ work_items: [], count: 0 }) }),
   );
 });
 

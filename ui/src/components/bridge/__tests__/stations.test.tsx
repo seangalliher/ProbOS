@@ -51,7 +51,7 @@ describe('AD-943 station taxonomy (STATION_ORDER / STATION_META)', () => {
 
 describe('AD-943 buildBridgeStations factory', () => {
   it('returns the 6 stations in canonical order with the migrated bodies/config', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
+    const stations = buildBridgeStations({ dmChannelCount: 4, workItemCount: 7, totalUnread: 3 });
     expect(stations.map(s => s.id)).toEqual(STATION_ORDER);
 
     const comms = stations.find(s => s.id === 'communications')!;
@@ -81,7 +81,7 @@ describe('AD-943 buildBridgeStations factory', () => {
   });
 
   it('AD-944: personnel/science/command are now populated with the migrated launches', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
+    const stations = buildBridgeStations({ dmChannelCount: 0, workItemCount: 0, totalUnread: 0 });
     const ids = (id: string) =>
       stations.find(s => s.id === id)!.actions.map(a => a.id);
     expect(ids('personnel')).toEqual(['crew-action', 'personnel-toggle', 'behavioral-metrics-toggle']);
@@ -93,7 +93,7 @@ describe('AD-943 buildBridgeStations factory', () => {
   });
 
   it('AD-946: operations/engineering carry an onExpandLabel; the others are undefined', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
+    const stations = buildBridgeStations({ dmChannelCount: 0, workItemCount: 0, totalUnread: 0 });
     const byId = (id: string) => stations.find(s => s.id === id)!;
     expect(byId('operations').onExpandLabel).toBe('Work Board');
     expect(byId('engineering').onExpandLabel).toBe('System');
@@ -103,7 +103,7 @@ describe('AD-943 buildBridgeStations factory', () => {
   });
 
   it('the descriptor can HOLD a future launch (AD-944 shape) and invoke it', () => {
-    const stations = buildBridgeStations({ dmChannelCount: 0, kanbanCount: 0, totalUnread: 0 });
+    const stations = buildBridgeStations({ dmChannelCount: 0, workItemCount: 0, totalUnread: 0 });
     const personnel = stations.find(s => s.id === 'personnel')!;
     let fired = false;
     const action: StationAction = {

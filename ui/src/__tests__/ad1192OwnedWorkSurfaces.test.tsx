@@ -159,7 +159,7 @@ beforeEach(() => {
   localStorage.setItem('probos.workspaceFiles.collapsed', '0');
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
     ok: true,
-    json: async () => ({ work_items: [] }),
+    json: async () => ({ work_items: [], count: 0 }),
   }));
   vi.mocked(fetchTaskSteps).mockResolvedValue([{ label: 'Legacy', status: 'submitted' }]);
   useStore.setState({

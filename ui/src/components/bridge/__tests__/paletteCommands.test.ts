@@ -10,7 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const STATIONS = () => buildBridgeStations({ dmChannelCount: 4, kanbanCount: 7, totalUnread: 3 });
+const STATIONS = () => buildBridgeStations({ dmChannelCount: 4, workItemCount: 7, totalUnread: 3 });
 
 describe('AD-946 buildPaletteCommands — flatten the station registry', () => {
   it('returns the 16 Captain-facing launches with the expected labels', () => {
