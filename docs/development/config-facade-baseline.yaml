@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1794
-  field_definitions: 1787
+  canonical_dump_leaves: 1798
+  field_definitions: 1791
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: e61d25eb33199ec5a9f0ef61fae0650b967e75c60ffd5f755cbcfbfe65d65a0d
+canonical_dump_sha256: 6af3a7196497330f750dc0c325023ae2f56a79acbc4af0d16c01807430bdb828
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -509,7 +509,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 093053255bb7073be7d1296d45c89fe75407699c5c1e5e4d9c2467cd42db81f4
+    schema_sha256: 3e578a0af9ac3346a86217e12fabe138f8163ecad56e46db27fdaf2c4db5ff84
     fields:
     - {default: 'False', name: tool_search_enabled}
     - {default: 'False', name: delegation_enabled}
@@ -528,6 +528,10 @@ models:
     - {default: '4', name: crew_sigma_max_entries}
     - {default: '0.35', name: crew_sigma_min_score}
     - {default: 'False', name: self_query_enabled}
+    - {default: None, name: delegation_tree_max_tokens}
+    - {default: None, name: delegation_tree_max_iterations}
+    - {default: None, name: delegation_tree_max_concurrent}
+    - {default: None, name: delegation_tree_max_children}
   AnomalyWindowConfig:
     qualname: AnomalyWindowConfig
     bases:
@@ -3289,7 +3293,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6ee639666e7b6b0f02980a75a27eaac1d81f22dbc46f4a4a3d2cd0839c8747ed
+    schema_sha256: 15f5379d4e608758aa7644e3128f7a28f856b8820cc25f2e56087031c1ad117e
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

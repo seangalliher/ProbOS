@@ -176,7 +176,8 @@ REMAINING_TRUE_LEAVES: tuple[str, ...] = (
 
 EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "AgenticDispatchConfig": 21,
-    "AgenticToolsConfig": 16,
+    # AD-1190 adds seven: tree tokens ge; tree iterations, concurrent, children ge+le.
+    "AgenticToolsConfig": 23,
     "AutonomyBoundariesConfig": 0,
     "CapabilityTriageConfig": 0,
     "ClassificationGateConfig": 0,
@@ -238,7 +239,12 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                               'crew_sigma_max_chars': 2000,
                               'crew_sigma_max_entries': 4,
                               'crew_sigma_min_score': 0.35,
-                              'self_query_enabled': False},
+                              'self_query_enabled': False,
+                              # AD-1190 post-extraction addition: four default-None tree ceilings.
+                              'delegation_tree_max_tokens': None,
+                              'delegation_tree_max_iterations': None,
+                              'delegation_tree_max_concurrent': None,
+                              'delegation_tree_max_children': None},
     'AutonomyBoundariesConfig': {'enabled': True},
     'CapabilityTriageConfig': {   'grant_fast_path_enabled': False,
                                   'grant_trust_floor': 0.8},
@@ -631,7 +637,8 @@ def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     """Premise on both halves: exhaustive, and not trivially satisfiable."""
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
     # AD-1206 R2: the old 59 excluded RepairConfig's now-required signed64 ceiling.
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 60
+    # AD-1190: +7 for the four AgenticToolsConfig delegation-tree ceilings (60 -> 67).
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 67
     assert sorted(n for n, c in EXPECTED_BOUND_COUNTS.items() if c) == [
         "AgenticDispatchConfig",
         "AgenticToolsConfig",

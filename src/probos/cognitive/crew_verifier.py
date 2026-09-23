@@ -68,6 +68,7 @@ from probos.fault_detection import (
     ToolFaultTurn,
     fault_observer_for,
 )
+from probos.tools.delegation_budget import read_tree_ceilings
 from probos.tools.protocol import (
     ToolAccessGrant,
     ToolPermission,
@@ -269,6 +270,11 @@ class _SessionAgenticToolsConfig:
     delegation_max_depth: int
     delegation_max_iterations: int
     delegation_tier: str
+    # AD-1190: no defaults, so a projection cannot silently leave its root unbudgeted.
+    delegation_tree_max_tokens: int | None
+    delegation_tree_max_iterations: int | None
+    delegation_tree_max_concurrent: int | None
+    delegation_tree_max_children: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1022,6 +1028,7 @@ def _session_correction_runtime(
     execution_cfg = getattr(config, "execution", None)
     mcp_cfg = getattr(config, "mcp", None)
     agentic_cfg = getattr(config, "agentic_tools", None)
+    ceilings = read_tree_ceilings(agentic_cfg)
     projected_config = _SessionCorrectionConfig(
         execution=_SessionExecutionConfig(
             enabled=getattr(execution_cfg, "enabled", False) is True,
@@ -1037,6 +1044,10 @@ def _session_correction_runtime(
                 getattr(agentic_cfg, "delegation_max_iterations", 5)
             ),
             delegation_tier=str(getattr(agentic_cfg, "delegation_tier", "standard")),
+            delegation_tree_max_tokens=ceilings.max_tokens,
+            delegation_tree_max_iterations=ceilings.max_iterations,
+            delegation_tree_max_concurrent=ceilings.max_concurrent,
+            delegation_tree_max_children=ceilings.max_children,
         ),
     )
 

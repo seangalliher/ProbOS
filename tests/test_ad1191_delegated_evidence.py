@@ -114,7 +114,8 @@ def test_result_field_prefixes_and_default_outcome_are_unchanged() -> None:
         (ToolResult, native), (ToolCallResult, call),
         (DelegatedToolResult, native + ["evidence"]),
         (DelegatedToolCallResult, call + ["evidence"]),
-        (WorkItemAgenticOutcome, outcome + ["delegation_evidence"]),
+        # AD-1190 appends `iterations` after delegation_evidence; the pinned prefix is unchanged.
+        (WorkItemAgenticOutcome, outcome + ["delegation_evidence", "iterations"]),
     ):
         assert [item.name for item in dataclasses.fields(model)] == expected
     assert WorkItemAgenticOutcome("text", "complete").delegation_evidence is None

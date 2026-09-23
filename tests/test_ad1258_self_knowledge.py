@@ -1051,7 +1051,15 @@ def test_self_query_config_default_and_facade_identity() -> None:
     assert AgenticToolsConfig is OwnedAgenticToolsConfig
     assert AgenticToolsConfig().self_query_enabled is False
     assert SystemConfig().agentic_tools.self_query_enabled is False
-    assert list(AgenticToolsConfig.model_fields)[-1] == "self_query_enabled"
+    # Was `[-1] == "self_query_enabled"`: it pinned AD-1258's append-only order, not "last forever";
+    # AD-1190 appends its four tree ceilings after it, so the order is pinned across both.
+    assert list(AgenticToolsConfig.model_fields)[-5:] == [
+        "self_query_enabled",
+        "delegation_tree_max_tokens",
+        "delegation_tree_max_iterations",
+        "delegation_tree_max_concurrent",
+        "delegation_tree_max_children",
+    ]
 
 
 @pytest.mark.parametrize(

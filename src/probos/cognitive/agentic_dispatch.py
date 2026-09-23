@@ -52,6 +52,10 @@ from probos.integrations.mcp_bridge.risk import (
 )
 from probos.tools.browser.lifecycle import BrowserUse
 from probos.tools.browser.tool import BrowserTool
+from probos.tools.delegation_budget import (
+    DELEGATION_TREE_BUDGET_KEY,
+    DelegationTreeBudget,
+)
 from probos.tools.delegation_evidence import (
     DelegationEvidence,
     DelegationEvidenceCollector,
@@ -85,6 +89,7 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
         "_delegation_depth",
         "_crew_session_id",
         "_crew_work_item_id",
+        DELEGATION_TREE_BUDGET_KEY,
     }
 )
 _AGENTIC_RANKS = frozenset(
@@ -1742,6 +1747,8 @@ class WorkItemAgenticOutcome:
     # untouched.
     tool_invocations: ToolInvocations | None = None
     delegation_evidence: DelegationEvidence | None = None
+    # AD-1190: this loop's iteration count; appended last and defaulted.
+    iterations: int = 0
 
 
 @dataclass(kw_only=True)
@@ -1909,7 +1916,8 @@ class WorkItemAgenticExecutor:
         # PURE PASS-THROUGH — this method also serves the AD-839 conversational
         # path and the AD-1072 delegation path, so it deliberately reads NO
         # config for these. The crew executor owns the policy and resolves
-        # them; every other caller leaves them None and gets today's loop.
+        # them; every other caller leaves them None and gets today's loop,
+        # except that an AD-1190 delegation grant also passes ``token_budget``.
         compactor: Any = None,
         compaction_threshold: int | None = None,
         token_budget: int | None = None,
@@ -1974,6 +1982,22 @@ class WorkItemAgenticExecutor:
             raise ValueError("agentic_context_invalid")
         else:
             _context = dict(extra_context)
+        # AD-1190: only a delegated run may carry a tree budget, and only the exact type.
+        if DELEGATION_TREE_BUDGET_KEY in _context and (
+            type(_context[DELEGATION_TREE_BUDGET_KEY]) is not DelegationTreeBudget
+            or type(_context.get("_delegation_depth")) is not int
+            or _context["_delegation_depth"] < 1
+        ):
+            raise ValueError("agentic_context_invalid")
+        # AD-1190: under configured ceilings a delegated run must carry its tree's budget.
+        if (
+            "_delegation_depth" in _context
+            and DELEGATION_TREE_BUDGET_KEY not in _context
+            and DelegationTreeBudget.from_config(
+                getattr(getattr(runtime, "config", None), "agentic_tools", None)
+            ) is not None
+        ):
+            raise ValueError("agentic_context_invalid")
 
         department, rank = _resolve_agentic_identity(
             runtime=runtime,
@@ -2343,6 +2367,12 @@ class WorkItemAgenticExecutor:
                     agent_id, exc_info=True,
                 )
                 delegate_ids = []
+
+        # AD-1190: a root run that offers delegation opens its tree's budget.
+        if delegate_ids and "_delegation_depth" not in _context:
+            tree_budget = DelegationTreeBudget.from_config(agentic_tools_cfg)
+            if tree_budget is not None:
+                _context[DELEGATION_TREE_BUDGET_KEY] = tree_budget
 
         self_query_ids: list[str] = []
         if (
@@ -2916,6 +2946,17 @@ class WorkItemAgenticExecutor:
                 "total; recording zero so downstream evidence remains bounded",
                 agent_id,
             )
+        raw_iterations = getattr(agentic_result, "iterations", 0)
+        if type(raw_iterations) is int and raw_iterations >= 0:
+            iterations = raw_iterations
+        else:
+            iterations = 0
+            logger.warning(
+                "AD-1190: agentic result for agent %s carried an invalid "
+                "iteration count; recording zero, so if this run is a delegated "
+                "child its tree budget charges the full iteration grant instead",
+                agent_id,
+            )
         # BF-680: the loop substitutes a client-side estimate when the provider
         # reports no usage. Surface that here, correlated to the agent and
         # thread. AD-1152 optionally preserves it beside the frozen execution
@@ -3000,6 +3041,7 @@ class WorkItemAgenticExecutor:
                 artifact_refs=artifact_refs,
                 artifact_omissions=ignored_artifact_entries,
             ),
+            iterations=iterations,
         )
         if fault_observer is None:
             if owned_view_references:
