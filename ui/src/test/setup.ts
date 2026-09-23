@@ -20,10 +20,13 @@ import { resetSharedSpeechLedger } from '../components/profile/speechLedgerStore
 // here would evaluate its static imports ahead of a test file's
 // `vi.mock('.../audio/voice')`.
 import { resetSpeechArbiterForTests } from '../audio/speechQueueStore';
+// Issue #1375: the live-read fence is module-scoped and importless for the same reason.
+import { resetLiveReadFenceForTests } from '../store/liveReadFence';
 
 beforeEach(() => {
   resetSharedSpeechLedger();
   resetSpeechArbiterForTests();
+  resetLiveReadFenceForTests();
 });
 
 // AD-722b: jsdom ships a `WebSocket` global that hangs in CONNECTING and

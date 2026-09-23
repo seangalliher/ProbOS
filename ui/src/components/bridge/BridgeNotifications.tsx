@@ -93,6 +93,7 @@ export function NotificationCard({ notification }: { notification: NotificationV
         cancelFromSource();
       }
     });
+    const issuedAt = useStore.getState().beginLiveRead();
     const outcome = await fetchNotificationContext(notification.id, controller.signal);
     if (cancelled) return;
     if (!sourceVisible()) {
@@ -122,7 +123,7 @@ export function NotificationCard({ notification }: { notification: NotificationV
       return;
     }
     current.setChatThread(thread);
-    current.hydrateCrewSession(session.task_id, session);
+    current.hydrateCrewSession(session.task_id, session, issuedAt);
     current.openGroupChatThread(hostId, thread.id);
     current.setNotificationNavigation({
       requestId, generation,

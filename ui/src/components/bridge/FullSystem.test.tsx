@@ -81,7 +81,7 @@ describe('FullSystem (AD-841a desktop console mount)', () => {
   it('reachable_via_engineering_system_launch', () => {
     const stations = buildBridgeStations({
       dmChannelCount: 0,
-      kanbanCount: 0,
+      workItemCount: 0,
       totalUnread: 0,
     });
     const engineering = stations.find((s) => s.id === 'engineering');

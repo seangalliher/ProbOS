@@ -6,6 +6,9 @@ import {
   initialToolProgress, isToolProgressType, parseToolProgress, reduceToolProgress,
 } from './liveToolProgress';
 import type { ToolProgressState } from './liveToolProgress';
+import { liveReadFence } from './liveReadFence';
+import { WorkItemReconciler, bindWorkItemReconciler } from './workItemReconciliation';
+import type { WorkItemReadState } from './workItemReconciliation';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
   BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
@@ -33,7 +36,7 @@ import type {
   Workspace,  // AD-1023
   ArtifactVersionAddedData, ChatThreadMessageAppendedData,
   CrewSessionDetailProjection, CrewSessionProjectionEventData,
-  CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
+  CrewParentRefreshCommand, CrewSessionSummaryProjection, LiveArtifactRefreshCommand,
   LiveDropGate, LiveDropRecord,
   LiveRailOwner, LiveThreadRefreshCommand, LiveTodoRefreshCommand,
   RoomSummary, SkillRequestView, CapabilityDecisionOutcome, ApprovalQueue, ApprovalPayload, ApprovalRefreshOptions,
@@ -491,6 +494,8 @@ export interface HXIState {
   mainViewer: 'canvas' | 'kanban' | 'system' | 'work' | 'bills';
   agentTasks: AgentTaskView[] | null;
   workItems: WorkItemView[] | null;
+  // Issue #1375: keyed `item:<id>`, `scope:parent:<id>` or `items`; absent means the last read was fresh.
+  workItemReadStates: ReadonlyMap<string, WorkItemReadState>;
   workBookings: BookingView[] | null;
   bookableResources: BookableResourceView[] | null;
   workTypeDefinitions: WorkTypeDefinitionView[] | null;
@@ -551,6 +556,7 @@ export interface HXIState {
   liveThreadRefresh: LiveThreadRefreshCommand | null;
   liveArtifactRefresh: LiveArtifactRefreshCommand | null;
   liveTodoRefresh: LiveTodoRefreshCommand | null;
+  crewParentRefresh: CrewParentRefreshCommand | null;
   liveCrewOwnerParentId: string | null;
   liveRailOwner: LiveRailOwner | null;
   // BF-720: every place a live frame stops travelling. ``liveDropCount`` is a
@@ -750,15 +756,21 @@ export interface HXIState {
   // the response.thread_id field here; AD-792 sidebar consumes the hydrated map.
   setThreadForAgent: (agentId: string, threadId: string) => void;
   setChatThread: (thread: AD791aChatThreadView) => void;
+  // Issue #1375: the fence stamp a crew or room read captures just before it sends its request.
+  beginLiveRead: () => number;
+  // Issue #1375: with `issuedAt`, a read older than the parent's last live write is refused; returns whether it applied.
   hydrateCrewSession: (
     parentId: string,
     projection: CrewSessionDetailProjection,
-  ) => void;
+    issuedAt?: number,
+  ) => boolean;
   hydrateCrewSessionSummaries: (
     summaries: Readonly<Record<string, CrewSessionSummaryProjection>>,
   ) => void;
+  // Issue #1375: with `issuedAt`, a room the stream wrote after the read was issued keeps its live summary.
   hydrateRoomSummaries: (
     summaries: Readonly<Record<string, RoomSummary>>,
+    issuedAt?: number,
   ) => void;
   claimLiveCrewOwner: (parentId: string) => symbol;
   releaseLiveCrewOwner: (parentId: string, claim: symbol) => void;
@@ -903,6 +915,10 @@ export interface HXIState {
   // Scheduled Tasks (Phase 25a)
   refreshScheduledTasks: () => Promise<void>;
   // Workforce actions (AD-497)
+  // Issue #1375: the work-item reconciler's write surface.
+  applyWorkItemRecords: (records: readonly WorkItemView[]) => void;
+  removeWorkItems: (ids: readonly string[]) => void;
+  setWorkItemReadState: (key: string, state: WorkItemReadState | null) => void;
   moveWorkItem: (itemId: string, newStatus: string) => Promise<void>;
   assignWorkItem: (itemId: string, resourceId: string) => Promise<void>;
   createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) => Promise<void>;
@@ -1624,6 +1640,7 @@ export const useStore = create<HXIState>((set, get) => ({
   mainViewer: 'canvas' as const,
   agentTasks: null,
   workItems: null,
+  workItemReadStates: new Map(),
   workBookings: null,
   bookableResources: null,
   workTypeDefinitions: null,
@@ -1666,6 +1683,7 @@ export const useStore = create<HXIState>((set, get) => ({
   liveThreadRefresh: null,
   liveArtifactRefresh: null,
   liveTodoRefresh: null,
+  crewParentRefresh: null,
   liveCrewOwnerParentId: null,
   liveRailOwner: null,
   // BF-720: no frame has been dropped yet.
@@ -2297,8 +2315,11 @@ export const useStore = create<HXIState>((set, get) => ({
     next.set(thread.id, thread);
     set({ chatThreads: next });
   },
-  hydrateCrewSession: (parentId, projection) => {
-    if (projection.task_id !== parentId) return;
+  beginLiveRead: () => liveReadFence.begin(),
+  hydrateCrewSession: (parentId, projection, issuedAt) => {
+    if (projection.task_id !== parentId) return false;
+    const key = `crew:${parentId}`;
+    if (issuedAt !== undefined && !liveReadFence.accepts(key, issuedAt)) return false;
     const current = get().crewSessionsByParent.get(parentId);
     if (
       current
@@ -2306,10 +2327,12 @@ export const useStore = create<HXIState>((set, get) => ({
         current.thread_id !== projection.thread_id
         || projection.revision < current.revision
       )
-    ) return;
+    ) return false;
     const next = new Map(get().crewSessionsByParent);
     next.set(parentId, projection);
     set({ crewSessionsByParent: next });
+    if (issuedAt !== undefined) liveReadFence.markApplied(key, issuedAt);
+    return true;
   },
   hydrateCrewSessionSummaries: (summaries) => {
     const next = new Map<string, CrewSessionSummaryProjection>();
@@ -2318,19 +2341,40 @@ export const useStore = create<HXIState>((set, get) => ({
     }
     set({ crewSessionSummariesByThread: next });
   },
-  hydrateRoomSummaries: (summaries) => {
+  hydrateRoomSummaries: (summaries, issuedAt) => {
+    const keepsLive = (threadId: string): boolean => (
+      issuedAt !== undefined && !liveReadFence.accepts(`room:${threadId}`, issuedAt)
+    );
+    const current = get();
     const next = new Map<string, RoomSummary>();
     const sessionNext = new Map<string, CrewSessionSummaryProjection>();
+    const decided = new Set<string>();
     for (const [threadId, summary] of Object.entries(summaries)) {
+      if (keepsLive(threadId)) continue;
+      decided.add(threadId);
       if (isLiveRoomSummary(summary)) {
         next.set(threadId, summary);
         if ('session' in summary) sessionNext.set(threadId, summary.session);
+      }
+    }
+    if (issuedAt !== undefined) {
+      // Rooms the response omits are still dropped, unless the stream wrote them after this read was issued.
+      for (const [threadId, summary] of current.roomSummariesByThread) {
+        if (keepsLive(threadId)) next.set(threadId, summary);
+        else decided.add(threadId);
+      }
+      for (const [threadId, session] of current.crewSessionSummariesByThread) {
+        if (keepsLive(threadId)) sessionNext.set(threadId, session);
+        else decided.add(threadId);
       }
     }
     set({
       roomSummariesByThread: next,
       crewSessionSummariesByThread: sessionNext,
     });
+    if (issuedAt !== undefined) {
+      for (const threadId of decided) liveReadFence.markApplied(`room:${threadId}`, issuedAt);
+    }
   },
   claimLiveCrewOwner: (parentId) => {
     const claim = Symbol('liveCrewOwner');
@@ -2804,6 +2848,33 @@ export const useStore = create<HXIState>((set, get) => ({
       set({ scheduledTasks: data.tasks || [] });
     } catch { /* fail silently */ }
   },
+  applyWorkItemRecords: (records) => {
+    if (records.length === 0) return;
+    const next = [...(get().workItems ?? [])];
+    for (const record of records) {
+      const index = next.findIndex(item => item.id === record.id);
+      if (index >= 0) next[index] = record;
+      else next.push(record);
+    }
+    set({ workItems: next });
+  },
+  removeWorkItems: (ids) => {
+    const drop = new Set(ids);
+    const current = get().workItems;
+    if (!current?.some(item => drop.has(item.id))) return;
+    set({ workItems: current.filter(item => !drop.has(item.id)) });
+  },
+  setWorkItemReadState: (key, state) => {
+    const current = get().workItemReadStates;
+    if (state === null) {
+      if (!current.has(key)) return;
+      const next = new Map(current);
+      next.delete(key);
+      set({ workItemReadStates: next });
+    } else if (current.get(key) !== state) {
+      set({ workItemReadStates: boundedMapSet(current, key, state) });
+    }
+  },
   moveWorkItem: async (itemId: string, newStatus: string) => {
     try {
       const resp = await fetch(`/api/work-items/${itemId}/transition`, {
@@ -2812,6 +2883,7 @@ export const useStore = create<HXIState>((set, get) => ({
         body: JSON.stringify({ status: newStatus }),
       });
       if (!resp.ok) throw new Error(await resp.text());
+      workItemReconciler.invalidate(itemId);
     } catch (e) {
       console.error('Failed to move work item:', e);
     }
@@ -2824,6 +2896,7 @@ export const useStore = create<HXIState>((set, get) => ({
         body: JSON.stringify({ resource_id: resourceId }),
       });
       if (!resp.ok) throw new Error(await resp.text());
+      workItemReconciler.invalidate(itemId);
     } catch (e) {
       console.error('Failed to assign work item:', e);
     }
@@ -3150,6 +3223,7 @@ export const useStore = create<HXIState>((set, get) => ({
         liveArtifactRefresh: null,
         liveTodoRefresh: null,
       });
+      workItemReconciler.observeItemEpoch();
     } else {
       if (authority.liveGeneration === null || authority.liveGeneration !== generation) {
         get().recordLiveDrop(
@@ -3164,6 +3238,7 @@ export const useStore = create<HXIState>((set, get) => ({
           liveRepairEpoch: authority.liveRepairEpoch + 1,
           toolProgress: reduceToolProgress(authority.toolProgress, { kind: 'loss' }),
         });
+        workItemReconciler.observeItemEpoch();
         void get().refreshActiveGame();
         return;
       }
@@ -3182,6 +3257,7 @@ export const useStore = create<HXIState>((set, get) => ({
           }
           : {}),
       });
+      if (sequence > authority.liveSequence + 1) workItemReconciler.observeItemEpoch();
     }
 
     const observation = parseToolProgress(type, data);
@@ -3297,16 +3373,16 @@ export const useStore = create<HXIState>((set, get) => ({
         if ((data as any).scheduled_tasks) {
           set({ scheduledTasks: (data as any).scheduled_tasks });
         }
-        // Hydrate workforce from snapshot (AD-497)
+        // Hydrate workforce from snapshot (AD-497); #1375: work items upsert and never remove.
         if ((data as any).workforce) {
           const wf = (data as any).workforce;
           set({
-            workItems: wf.work_items?.length ? wf.work_items : null,
             workBookings: wf.bookings?.length ? wf.bookings : null,
             bookableResources: wf.resources?.length ? wf.resources : null,
             workTypeDefinitions: wf.work_types?.length ? wf.work_types : null,
             workTemplates: wf.templates?.length ? wf.templates : null,
           });
+          workItemReconciler.applySnapshotRows(wf.work_items);
         }
         // AD-526b: Rehydrate active game on page refresh
         set(state => ({ gameConnectionGeneration: state.gameConnectionGeneration + 1,
@@ -3319,6 +3395,8 @@ export const useStore = create<HXIState>((set, get) => ({
       case 'crew_session_projection': {
         const projection = parseCrewSessionProjection(data);
         if (projection === null) break;
+        // #1375: the hub suppresses native child status frames, so even a projection dropped below re-reads P's scope.
+        workItemReconciler.frameScopeChanged(projection.parent_id);
         const current = get();
         const cached = current.crewSessionsByParent.get(projection.parent_id);
         if (
@@ -3332,7 +3410,8 @@ export const useStore = create<HXIState>((set, get) => ({
             )
           )
         ) break;
-        const crewSessionsByParent = current.liveCrewOwnerParentId === projection.parent_id
+        const ownsDetail = current.liveCrewOwnerParentId === projection.parent_id;
+        const crewSessionsByParent = ownsDetail
           ? boundedMapSet(
               current.crewSessionsByParent,
               projection.parent_id,
@@ -3356,6 +3435,9 @@ export const useStore = create<HXIState>((set, get) => ({
           parentId: projection.parent_id,
           requestId: sequence,
         } : current.liveTodoRefresh;
+        // Issue #1375 I2: a crew or room read issued before this write must not overwrite it.
+        if (ownsDetail) liveReadFence.observe(`crew:${projection.parent_id}`);
+        liveReadFence.observe(`room:${projection.thread_id}`);
         set({
           crewSessionsByParent,
           crewSessionSummariesByThread,
@@ -3799,22 +3881,16 @@ export const useStore = create<HXIState>((set, get) => ({
         break;
       }
 
-      // AD-497: Workforce events
+      // AD-497 / #1375: work-item frames only invalidate; the record comes from its REST read.
+      case 'work_item_status_changed':
+      case 'work_item_claimed':
+        invalidateWorkItemFrame(data);
+        break;
+
       case 'work_item_created':
       case 'work_item_updated':
       case 'work_item_assigned': {
-        const item = data.work_item as WorkItemView;
-        if (item) {
-          const current = get().workItems || [];
-          const idx = current.findIndex(w => w.id === item.id);
-          if (idx >= 0) {
-            const updated = [...current];
-            updated[idx] = item;
-            set({ workItems: updated });
-          } else {
-            set({ workItems: [...current, item] });
-          }
-        }
+        invalidateWorkItemFrame(data);
         if (data.booking) {
           const booking = data.booking as BookingView;
           const cBookings = get().workBookings || [];
@@ -3831,11 +3907,8 @@ export const useStore = create<HXIState>((set, get) => ({
       }
 
       case 'work_item_deleted': {
-        const deletedId = data.work_item_id as string;
-        if (deletedId) {
-          const current = get().workItems || [];
-          set({ workItems: current.filter(w => w.id !== deletedId) });
-        }
+        const deletedId = data.work_item_id;
+        if (typeof deletedId === 'string') workItemReconciler.frameChanged(deletedId);
         break;
       }
 
@@ -4105,6 +4178,28 @@ export const useStore = create<HXIState>((set, get) => ({
     }
   },
 }));
+
+export const workItemReconciler = bindWorkItemReconciler(new WorkItemReconciler({
+  fetch: (url, init) => fetch(url, init),
+  fence: liveReadFence,
+  apply: records => useStore.getState().applyWorkItemRecords(records),
+  remove: ids => useStore.getState().removeWorkItems(ids),
+  setMeta: (key, state) => useStore.getState().setWorkItemReadState(key, state),
+  cached: () => useStore.getState().workItems ?? [],
+}));
+
+function invalidateWorkItemFrame(data: Record<string, unknown>): void {
+  const item = data.work_item;
+  if (!isLiveRecord(item) || typeof item.id !== 'string') return;
+  workItemReconciler.frameChanged(item.id);
+  const parentId = item.parent_id;
+  // A legacy room re-reads its own tree; a native room follows its parent's projection instead.
+  if (isBoundedLiveId(parentId)) {
+    useStore.setState({
+      crewParentRefresh: { parentId, stamp: liveReadFence.observe(`crew:${parentId}`) },
+    });
+  }
+}
 
 export { POOL_HUES, GROUP_TINT_HEXES, computeLayout };
 

@@ -419,7 +419,9 @@ describe('AD-931 ChatsPanel', () => {
     const row = screen.getByTestId('chat-row-g3');
     const context = screen.getByTestId('room-session-g3');
     expect(row.textContent).toContain(session.goal);
-    expect(context.textContent).toContain('done · 2/3 done · 0 active · 1 failed');
+    // Issue #1375 (S22): this pinned "0 active · 1 failed", which misnamed both populations: the projection's
+    // `active` is every child not yet finished and its `failed` counts cancelled children too.
+    expect(context.textContent).toContain('done · 2/3 done · 0 remaining · 1 failed/cancelled');
     expect(context.textContent).toContain('Facilitator mccoy · Owners mccoy');
     expect(context.textContent).toContain('Readiness brief accepted.');
     expect(context.textContent).toContain('Result artifact-medical · verified');

@@ -22,6 +22,7 @@ import type {
   LegacyCrewChildView,
   LegacyCrewTaskTree,
 } from '../../store/types';
+import { liveReadFence } from '../../store/liveReadFence';
 import { useStore } from '../../store/useStore';
 import { fetchCrewTaskDetail } from '../sidebar/threadApi';
 
@@ -479,7 +480,7 @@ function SessionBand({
               <div style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%`, height: '100%', background: ACCEPT_GREEN }} />
             </div>
             <div style={{ marginTop: 5, fontSize: 10, color: '#9aa4ba' }}>
-              {progress.active} active · {progress.failed} failed
+              {progress.active} remaining · {progress.failed} failed/cancelled
             </div>
           </div>
           {session.blocker ? (
@@ -593,6 +594,8 @@ export default function CrewCollaborationPanel({
   const liveRepairEpoch = useStore(state => state.liveRepairEpoch);
   const claimLiveCrewOwner = useStore(state => state.claimLiveCrewOwner);
   const releaseLiveCrewOwner = useStore(state => state.releaseLiveCrewOwner);
+  const crewParentRefresh = useStore(state => state.crewParentRefresh);
+  const seenParentRefreshRef = useRef(crewParentRefresh);
   const cachedSession = useStore(state => state.crewSessionsByParent.get(parentId));
   const ownerKey = `${threadId}\u0000${parentId}`;
   const ownedCachedSession = cachedSession?.thread_id === threadId
@@ -682,6 +685,7 @@ export default function CrewCollaborationPanel({
       state: hasOwnedCache ? 'refreshing' : 'loading',
       staleError: false,
     });
+    const issuedAt = useStore.getState().beginLiveRead();
     const outcome = await fetchCrewTaskDetail(targetParentId);
     const currentAuthority = useStore.getState();
     if (
@@ -706,9 +710,24 @@ export default function CrewCollaborationPanel({
           finish();
           return;
         }
-        hydrateCrewSession(targetParentId, outcome.response.session);
+        if (
+          !liveReadFence.accepts(`crew:${targetParentId}`, issuedAt)
+          && useStore.getState().crewSessionsByParent.get(targetParentId)?.thread_id !== targetThreadId
+        ) {
+          // Issue #1375: the fence refuses this read and nothing live stands in, so read again rather than go blank.
+          pendingLoadRef.current = true;
+          finish();
+          return;
+        }
+        hydrateCrewSession(targetParentId, outcome.response.session, issuedAt);
         setLegacyResponse(null);
       } else {
+        if (!liveReadFence.accepts(`crew:${targetParentId}`, issuedAt)) {
+          // Issue #1375: a child changed after this read was issued, so read again rather than show it.
+          pendingLoadRef.current = true;
+          finish();
+          return;
+        }
         setLegacyResponse({ ownerKey: targetOwnerKey, tree: outcome.response });
       }
       setStatus({ ownerKey: targetOwnerKey, state: 'ready', staleError: false });
@@ -777,6 +796,14 @@ export default function CrewCollaborationPanel({
     : ownedCachedSession
       ? { session: ownedCachedSession }
       : currentLegacy;
+  const showsLegacyTree = response !== null && !('session' in response);
+
+  useEffect(() => {
+    if (crewParentRefresh === seenParentRefreshRef.current) return;
+    seenParentRefreshRef.current = crewParentRefresh;
+    // Issue #1375: a legacy child changed; a native session refreshes from its live projection.
+    if (crewParentRefresh?.parentId === parentId && showsLegacyTree) void load(threadId, parentId);
+  }, [crewParentRefresh, load, parentId, showsLegacyTree, threadId]);
 
   let content: React.ReactNode;
   if (!response && currentStatus.state === 'loading') {

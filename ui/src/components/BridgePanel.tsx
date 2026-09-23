@@ -8,7 +8,7 @@ import { NotificationCard } from './bridge/BridgeNotifications';
 import { BridgeShutdown } from './bridge/BridgeSystem';
 import { BridgeFaults } from './bridge/BridgeFaults';
 import { useFaultReports } from '../hooks/useFaultReports';
-import { buildBridgeStations, isPopulated, type StationId, type StationAction } from './bridge/stations';
+import { buildBridgeStations, isPopulated, useOperationsWorkItemCount, type StationId, type StationAction } from './bridge/stations';
 import { timeAgo } from './wardroom/timeAgo';
 import { ApprovalQueueStatus } from './approvals/ApprovalsCenterPanel';
 import { ApprovalRefreshGlyph } from './skill/SkillRequestPanel';
@@ -299,7 +299,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
   const faultsEmpty = faultReports.resource.status === 'empty' && faultReports.resource.data?.total === 0;
   const agentTasks = useStore(s => s.agentTasks);
   const notifications = useStore(s => s.notifications);
-  const missionControlTasks = useStore(s => s.missionControlTasks);
+  const workItemCount = useOperationsWorkItemCount();
   const dmChannels = useStore(s => s.wardRoomDmChannels);
   const refreshDms = useStore(s => s.refreshWardRoomDmChannels);
   const wardRoomUnread = useStore(s => s.wardRoomUnread);
@@ -346,9 +346,6 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
     n => !(n.notification_type === 'action_required' && !n.acknowledged)
   );
   const unreadNotifs = infoNotifs.filter(n => !n.acknowledged).length;
-
-  // KANBAN
-  const kanbanTasks = missionControlTasks ?? [];
 
   // RECENT
   const recentTasks = (agentTasks ?? [])
@@ -488,7 +485,7 @@ export function BridgePanel({ open, onClose }: { open: boolean; onClose: () => v
             hidden by isPopulated until AD-944/945/946 fill them. ── */}
         {buildBridgeStations({
           dmChannelCount: dmChannels.length,
-          kanbanCount: kanbanTasks.length,
+          workItemCount,
           totalUnread,
         })
           .filter(isPopulated)

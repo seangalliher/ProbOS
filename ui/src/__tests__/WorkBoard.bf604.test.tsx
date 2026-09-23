@@ -31,7 +31,7 @@ import WorkBoard from '../components/work/WorkBoard';
 
 beforeEach(() => {
   (global as any).fetch = vi.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve({ work_items: [] }) }),
+    Promise.resolve({ ok: true, json: () => Promise.resolve({ work_items: [], count: 0 }) }),
   );
 });
 

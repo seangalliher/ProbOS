@@ -693,6 +693,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
     setStartPending(true);
     setStartError('');
     try {
+      const issuedAt = useStore.getState().beginLiveRead();
       const result = await startRoomWork(threadId, {
         goal: startGoal.trim(),
         success_criteria: criteriaValues,
@@ -705,7 +706,7 @@ export function WorkspaceFilesRail(props: WorkspaceFilesRailProps): ReactElement
         return;
       }
       setStartedSessionBinding({ threadId, parentId: result.parent_id });
-      useStore.getState().hydrateCrewSession(result.parent_id, result.session);
+      useStore.getState().hydrateCrewSession(result.parent_id, result.session, issuedAt);
       onSessionBound?.(result);
       setStartDialogOpen(false);
       if (!blockedRetryOriginRef.current) restoreStartOpener();

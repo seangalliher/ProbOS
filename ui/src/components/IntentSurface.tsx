@@ -22,7 +22,7 @@ import {
 import { WakeWordIndicator } from './WakeWordIndicator';
 import { soundEngine } from '../audio/soundEngine';
 import { BridgePanel } from './BridgePanel';
-import { buildBridgeStations } from './bridge/stations';
+import { buildBridgeStations, useOperationsWorkItemCount } from './bridge/stations';
 import { buildPaletteCommands, matchPaletteCommands, type PaletteCommand } from './bridge/paletteCommands';
 import { CommandPalette } from './CommandPalette';
 import { ViewSwitcher } from './ViewSwitcher';
@@ -130,16 +130,16 @@ export function IntentSurface() {
   // AD-946: the command palette derives its launches from the SAME station
   // registry the Bridge renders (one source of truth, no hand-duplicated list).
   const wardRoomDmChannels = useStore((s) => s.wardRoomDmChannels);
-  const missionControlTasks = useStore((s) => s.missionControlTasks);
+  const workItemCount = useOperationsWorkItemCount();
   const wardRoomUnread = useStore((s) => s.wardRoomUnread);
   const paletteCommands = useMemo<PaletteCommand[]>(() => {
     const totalUnread = Object.values(wardRoomUnread ?? {}).reduce((sum, n) => sum + n, 0);
     return buildPaletteCommands(buildBridgeStations({
       dmChannelCount: (wardRoomDmChannels ?? []).length,
-      kanbanCount: (missionControlTasks ?? []).length,
+      workItemCount,
       totalUnread,
     }));
-  }, [wardRoomDmChannels, missionControlTasks, wardRoomUnread]);
+  }, [wardRoomDmChannels, workItemCount, wardRoomUnread]);
 
   /* ── consume pending char from global keydown ── */
   useEffect(() => {

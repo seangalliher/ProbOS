@@ -1,0 +1,424 @@
+{
+  "regenerate": "python -u tests/fixtures/issue1375_work_state_bridge.py --write ui/e2e/fixtures/issue1375_work_state.json  (from the repository root, PYTHONPATH=<root>/src and <root>)",
+  "scenarios": {
+    "native_failed": {
+      "checkpoints": [
+        {
+          "frames": [
+            "{\"type\":\"state_snapshot\",\"data\":{\"agents\":[],\"connections\":[],\"pools\":[],\"system_mode\":\"active\",\"tc_n\":0.0,\"routing_entropy\":0.0,\"fresh_boot\":false,\"temporal\":{\"current_time_utc\":\"2026-07-23T00:00:00+00:00\",\"uptime_seconds\":0.0,\"lifecycle_state\":\"running\",\"stasis_duration\":null,\"session_id\":\"test-session\"},\"pool_groups\":{},\"pool_to_group\":{},\"directives\":{\"active\":0,\"pending\":0},\"notifications\":[],\"unread_count\":0,\"scheduled_tasks\":[],\"ward_room_stats\":null,\"skill_framework\":false,\"acm\":false,\"workforce\":{\"work_items\":[],\"bookings\":[],\"resources\":[]}},\"timestamp\":1784764800.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":0}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":1,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"discussing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764805.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":1}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":1,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"discussing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764806.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":2}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":1,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"discussing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764807.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":3}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":1,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"discussing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764808.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":4}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":1,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"discussing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764809.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":5}}"
+          ],
+          "name": "adopted",
+          "rest": {
+            "/api/crew-tasks/ad1192-canonical-1": {
+              "body": "{\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"discussing\",\"revision\":1,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764802.0,\"started_at\":null,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":0,\"active\":1,\"active_child\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"status\":\"open\",\"owner_id\":\"worker-a\"}},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0}}",
+              "status": 200
+            },
+            "/api/work-items/ad1192-canonical-1": {
+              "body": "{\"work_item\":{\"id\":\"ad1192-canonical-1\",\"title\":\"Canonical corrected crossing\",\"description\":\"Canonical deterministic correction and publication\",\"work_type\":\"crew_session\",\"status\":\"open\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"facilitator-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764804.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"crew_recovery\":{\"attempt_count\":0,\"final_verification_ref\":null,\"interrupted_child_ids\":[],\"last_attempt_at\":null,\"last_error_code\":null,\"next_attempt_at\":null,\"phase\":\"planned\",\"plan\":{\"children\":[{\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"row_hash\":\"1375200000000000000000000000000000000000000000000000000000000004\",\"spec_id\":\"canonical-spec-0\"}],\"plan_hash\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"plan_seed_hash\":\"1375200000000000000000000000000000000000000000000000000000000006\",\"version\":1},\"provenance_ref\":null,\"result_artifact_id\":null,\"retry_count\":0,\"synthesis_ref\":null,\"version\":1},\"crew_session\":{\"blocked_duration_seconds\":0.0,\"blocked_reason\":null,\"blocked_since\":null,\"completed_at\":null,\"created_at\":1784764801.0,\"duplicate_resume_count\":0,\"evidence_refs\":[],\"expected_deliverable\":\"An actual corrected canonical result\",\"facilitator_id\":\"facilitator-a\",\"first_result_at\":null,\"goal\":\"canonical corrected result\",\"last_result_summary\":\"\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"previous_state\":null,\"result_artifact_id\":null,\"result_ref\":null,\"revision\":1,\"started_at\":null,\"state\":\"discussing\",\"success_criteria\":[\"Corrected result is independently verified\"],\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"transitioned_at\":1784764802.0,\"verified_at\":null,\"version\":1},\"steps_gate_completion\":true},\"steps\":[{\"assigned_to\":null,\"confirmed_by\":null,\"label\":\"Captain release gate\",\"note\":null,\"status\":\"pending\",\"submitted_by\":null},{\"assigned_to\":\"worker-a\",\"label\":\"Canonical child 0\",\"status\":\"pending\"}],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/crew-1375200000000000000000000000000000000000000000000000000000000003": {
+              "body": "{\"work_item\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"open\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764803.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/crew-1375200000000000000000000000000000000000000000000000000000000003/owned-steps": {
+              "body": "{\"version\":1,\"parent_id\":\"ad1192-canonical-1\",\"requested_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"turn_id\":\"http-owner\",\"view_id\":\"13752000000000000000000000000007\",\"mode\":\"active\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"steps_digest\":\"1375200000000000000000000000000000000000000000000000000000000008\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000009\",\"plan_token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"steps_digest\":\"1375200000000000000000000000000000000000000000000000000000000008\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000009\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000007\",\"turn_id\":\"http-owner\"},\"rows\":[{\"step_id\":\"13752000000000000000000000000011\",\"ordinal\":1,\"kind\":\"manual\",\"child_id\":null,\"revision\":1,\"digest\":\"1375200000000000000000000000000000000000000000000000000000000012\",\"todo\":{\"label\":\"Captain release gate\",\"status\":\"pending\",\"assigned_to\":null,\"submitted_by\":null,\"confirmed_by\":null,\"note\":null},\"actions\":[\"edit_note\",\"manual_submit\"],\"evidence\":{\"permit_state\":\"unstarted\",\"assignment_epoch\":1,\"booking_id\":null,\"has_submission\":false,\"review_accepted\":null},\"token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"step_id\":\"13752000000000000000000000000011\",\"row_revision\":1,\"row_digest\":\"1375200000000000000000000000000000000000000000000000000000000012\",\"source_digest\":null,\"assignment_epoch\":1,\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000007\",\"turn_id\":\"http-owner\"},\"detail_url\":\"/api/work-items/ad1192-canonical-1/owned-steps?detail=13752000000000000000000000000011\"},{\"step_id\":\"13752000000000000000000000000013\",\"ordinal\":2,\"kind\":\"child\",\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"revision\":1,\"digest\":\"1375200000000000000000000000000000000000000000000000000000000014\",\"todo\":{\"label\":\"Canonical child 0\",\"status\":\"pending\",\"assigned_to\":\"worker-a\",\"submitted_by\":null,\"confirmed_by\":null,\"note\":null},\"actions\":[\"reassign_unstarted\",\"cancel_execution\"],\"evidence\":{\"permit_state\":\"unstarted\",\"assignment_epoch\":1,\"booking_id\":null,\"has_submission\":false,\"review_accepted\":null},\"token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"step_id\":\"13752000000000000000000000000013\",\"row_revision\":1,\"row_digest\":\"1375200000000000000000000000000000000000000000000000000000000014\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000015\",\"assignment_epoch\":1,\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000007\",\"turn_id\":\"http-owner\"},\"detail_url\":\"/api/work-items/ad1192-canonical-1/owned-steps?detail=13752000000000000000000000000013\"}],\"previous_cursor\":null,\"next_cursor\":null,\"omitted_step_ids\":[],\"recovery\":[\"replace_manual_prefix\",\"replan_unstarted\"],\"finalization\":\"none\",\"reference\":{\"version\":1,\"parent_id\":\"ad1192-canonical-1\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"turn_id\":\"http-owner\",\"view_id\":\"13752000000000000000000000000007\",\"content_hash\":\"1375200000000000000000000000000000000000000000000000000000000016\"}}",
+              "status": 200
+            },
+            "/api/work-items?parent_id=ad1192-canonical-1&limit=1001": {
+              "body": "{\"work_items\":[{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"open\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764803.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"open\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764803.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null},{\"id\":\"ad1192-canonical-1\",\"title\":\"Canonical corrected crossing\",\"description\":\"Canonical deterministic correction and publication\",\"work_type\":\"crew_session\",\"status\":\"open\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"facilitator-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764804.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"crew_recovery\":{\"attempt_count\":0,\"final_verification_ref\":null,\"interrupted_child_ids\":[],\"last_attempt_at\":null,\"last_error_code\":null,\"next_attempt_at\":null,\"phase\":\"planned\",\"plan\":{\"children\":[{\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"row_hash\":\"1375200000000000000000000000000000000000000000000000000000000004\",\"spec_id\":\"canonical-spec-0\"}],\"plan_hash\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"plan_seed_hash\":\"1375200000000000000000000000000000000000000000000000000000000006\",\"version\":1},\"provenance_ref\":null,\"result_artifact_id\":null,\"retry_count\":0,\"synthesis_ref\":null,\"version\":1},\"crew_session\":{\"blocked_duration_seconds\":0.0,\"blocked_reason\":null,\"blocked_since\":null,\"completed_at\":null,\"created_at\":1784764801.0,\"duplicate_resume_count\":0,\"evidence_refs\":[],\"expected_deliverable\":\"An actual corrected canonical result\",\"facilitator_id\":\"facilitator-a\",\"first_result_at\":null,\"goal\":\"canonical corrected result\",\"last_result_summary\":\"\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"previous_state\":null,\"result_artifact_id\":null,\"result_ref\":null,\"revision\":1,\"started_at\":null,\"state\":\"discussing\",\"success_criteria\":[\"Corrected result is independently verified\"],\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"transitioned_at\":1784764802.0,\"verified_at\":null,\"version\":1},\"steps_gate_completion\":true},\"steps\":[{\"assigned_to\":null,\"confirmed_by\":null,\"label\":\"Captain release gate\",\"note\":null,\"status\":\"pending\",\"submitted_by\":null},{\"assigned_to\":\"worker-a\",\"label\":\"Canonical child 0\",\"status\":\"pending\"}],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":2}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        },
+        {
+          "frames": [
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764815.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":6}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764816.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":7}}",
+            "{\"type\":\"crew_task_started\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"child_count\":1},\"timestamp\":1784764817.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":8}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764818.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":9}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764819.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":10}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764820.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":11}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764821.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":12}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764822.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":13}}",
+            "{\"type\":\"crew_session_projection\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"revision\":2,\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0},\"room_summary\":{\"outputs\":0,\"steps_total\":2,\"steps_done\":0,\"topic\":\"canonical corrected result\",\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"state\":\"executing\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0},\"last_result_summary\":\"\",\"blocker\":null,\"needs_attention\":false,\"result_artifact_id\":null,\"verified_at\":null}}},\"timestamp\":1784764823.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":14}}",
+            "{\"type\":\"subtask_completed\",\"data\":{\"parent_id\":\"ad1192-canonical-1\",\"work_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"spec_id\":\"canonical-spec-0\",\"agent_id\":\"worker-a\",\"status\":\"failed\"},\"timestamp\":1784764824.0,\"stream\":{\"generation\":\"13752000000000000000000000000001\",\"sequence\":15}}"
+          ],
+          "name": "failed",
+          "rest": {
+            "/api/crew-tasks/ad1192-canonical-1": {
+              "body": "{\"session\":{\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"goal\":\"canonical corrected result\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"facilitator_id\":\"facilitator-a\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"state\":\"executing\",\"revision\":2,\"success_criteria\":[\"Corrected result is independently verified\"],\"expected_deliverable\":\"An actual corrected canonical result\",\"timestamps\":{\"created_at\":1784764801.0,\"transitioned_at\":1784764810.0,\"started_at\":1784764810.0,\"first_result_at\":null,\"verified_at\":null,\"completed_at\":null},\"progress\":{\"total\":1,\"done\":0,\"failed\":1,\"active\":0,\"active_child\":null},\"last_result_summary\":\"\",\"blocker\":null,\"result\":null,\"verification\":null,\"duplicate_resume_count\":0}}",
+              "status": 200
+            },
+            "/api/work-items/ad1192-canonical-1": {
+              "body": "{\"work_item\":{\"id\":\"ad1192-canonical-1\",\"title\":\"Canonical corrected crossing\",\"description\":\"Canonical deterministic correction and publication\",\"work_type\":\"crew_session\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"facilitator-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764814.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"crew_recovery\":{\"attempt_count\":0,\"final_verification_ref\":null,\"interrupted_child_ids\":[],\"last_attempt_at\":null,\"last_error_code\":null,\"next_attempt_at\":null,\"phase\":\"executing\",\"plan\":{\"children\":[{\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"row_hash\":\"1375200000000000000000000000000000000000000000000000000000000004\",\"spec_id\":\"canonical-spec-0\"}],\"plan_hash\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"plan_seed_hash\":\"1375200000000000000000000000000000000000000000000000000000000006\",\"version\":1},\"provenance_ref\":null,\"result_artifact_id\":null,\"retry_count\":0,\"synthesis_ref\":null,\"version\":1},\"crew_session\":{\"blocked_duration_seconds\":0.0,\"blocked_reason\":null,\"blocked_since\":null,\"completed_at\":null,\"created_at\":1784764801.0,\"duplicate_resume_count\":0,\"evidence_refs\":[],\"expected_deliverable\":\"An actual corrected canonical result\",\"facilitator_id\":\"facilitator-a\",\"first_result_at\":null,\"goal\":\"canonical corrected result\",\"last_result_summary\":\"\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"previous_state\":\"discussing\",\"result_artifact_id\":null,\"result_ref\":null,\"revision\":2,\"started_at\":1784764810.0,\"state\":\"executing\",\"success_criteria\":[\"Corrected result is independently verified\"],\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"transitioned_at\":1784764810.0,\"verified_at\":null,\"version\":1},\"steps_gate_completion\":true},\"steps\":[{\"assigned_to\":null,\"confirmed_by\":null,\"label\":\"Captain release gate\",\"note\":null,\"status\":\"pending\",\"submitted_by\":null},{\"assigned_to\":\"worker-a\",\"label\":\"Canonical child 0\",\"status\":\"rejected\",\"submitted_by\":\"worker-a\"}],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/crew-1375200000000000000000000000000000000000000000000000000000000003": {
+              "body": "{\"work_item\":{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764813.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":7,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"crew_execution\":{\"artifact_refs\":[],\"assigned_to\":\"worker-a\",\"blocked_dependency_ids\":[],\"finished_at\":1784764812.0,\"output_summary\":\"initial-canonical-result\",\"parent_id\":\"ad1192-canonical-1\",\"started_at\":1784764811.0,\"status\":\"failed\",\"stopped_reason\":\"error\",\"thread_id\":\"13752000000000000000000000000002\",\"tokens_used\":7,\"tool_trace_ref\":null,\"version\":1,\"work_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\"},\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/crew-1375200000000000000000000000000000000000000000000000000000000003/owned-steps": {
+              "body": "{\"version\":1,\"parent_id\":\"ad1192-canonical-1\",\"requested_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"turn_id\":\"http-owner\",\"view_id\":\"13752000000000000000000000000017\",\"mode\":\"active\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"steps_digest\":\"1375200000000000000000000000000000000000000000000000000000000018\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000019\",\"plan_token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"steps_digest\":\"1375200000000000000000000000000000000000000000000000000000000018\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000019\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000017\",\"turn_id\":\"http-owner\"},\"rows\":[{\"step_id\":\"13752000000000000000000000000011\",\"ordinal\":1,\"kind\":\"manual\",\"child_id\":null,\"revision\":1,\"digest\":\"1375200000000000000000000000000000000000000000000000000000000012\",\"todo\":{\"label\":\"Captain release gate\",\"status\":\"pending\",\"assigned_to\":null,\"submitted_by\":null,\"confirmed_by\":null,\"note\":null},\"actions\":[\"edit_note\",\"manual_submit\"],\"evidence\":{\"permit_state\":\"unstarted\",\"assignment_epoch\":1,\"booking_id\":null,\"has_submission\":false,\"review_accepted\":null},\"token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"step_id\":\"13752000000000000000000000000011\",\"row_revision\":1,\"row_digest\":\"1375200000000000000000000000000000000000000000000000000000000012\",\"source_digest\":null,\"assignment_epoch\":1,\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000017\",\"turn_id\":\"http-owner\"},\"detail_url\":\"/api/work-items/ad1192-canonical-1/owned-steps?detail=13752000000000000000000000000011\"},{\"step_id\":\"13752000000000000000000000000013\",\"ordinal\":2,\"kind\":\"child\",\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"revision\":3,\"digest\":\"1375200000000000000000000000000000000000000000000000000000000020\",\"todo\":{\"label\":\"Canonical child 0\",\"status\":\"rejected\",\"assigned_to\":\"worker-a\",\"submitted_by\":\"worker-a\",\"confirmed_by\":null,\"note\":null},\"actions\":[],\"evidence\":{\"permit_state\":\"terminal\",\"assignment_epoch\":1,\"booking_id\":null,\"has_submission\":true,\"review_accepted\":null},\"token\":{\"parent_id\":\"ad1192-canonical-1\",\"incarnation\":\"13752000000000000000000000000010\",\"layout_revision\":2,\"plan_revision\":1,\"plan_digest\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"step_id\":\"13752000000000000000000000000013\",\"row_revision\":3,\"row_digest\":\"1375200000000000000000000000000000000000000000000000000000000020\",\"source_digest\":\"1375200000000000000000000000000000000000000000000000000000000021\",\"assignment_epoch\":1,\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"view_id\":\"13752000000000000000000000000017\",\"turn_id\":\"http-owner\"},\"detail_url\":\"/api/work-items/ad1192-canonical-1/owned-steps?detail=13752000000000000000000000000013\"}],\"previous_cursor\":null,\"next_cursor\":null,\"omitted_step_ids\":[],\"recovery\":[\"replace_manual_prefix\"],\"finalization\":\"none\",\"reference\":{\"version\":1,\"parent_id\":\"ad1192-canonical-1\",\"actor_id\":\"captain\",\"thread_id\":\"13752000000000000000000000000002\",\"turn_id\":\"http-owner\",\"view_id\":\"13752000000000000000000000000017\",\"content_hash\":\"1375200000000000000000000000000000000000000000000000000000000022\"}}",
+              "status": 200
+            },
+            "/api/work-items?parent_id=ad1192-canonical-1&limit=1001": {
+              "body": "{\"work_items\":[{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764813.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":7,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"crew_execution\":{\"artifact_refs\":[],\"assigned_to\":\"worker-a\",\"blocked_dependency_ids\":[],\"finished_at\":1784764812.0,\"output_summary\":\"initial-canonical-result\",\"parent_id\":\"ad1192-canonical-1\",\"started_at\":1784764811.0,\"status\":\"failed\",\"stopped_reason\":\"error\",\"thread_id\":\"13752000000000000000000000000002\",\"tokens_used\":7,\"tool_trace_ref\":null,\"version\":1,\"work_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\"},\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"title\":\"Canonical child 0\",\"description\":\"canonical deterministic child 0\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":\"ad1192-canonical-1\",\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"facilitator-a\",\"created_at\":1784764803.0,\"updated_at\":1784764813.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":7,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"capability\":null,\"crew_execution\":{\"artifact_refs\":[],\"assigned_to\":\"worker-a\",\"blocked_dependency_ids\":[],\"finished_at\":1784764812.0,\"output_summary\":\"initial-canonical-result\",\"parent_id\":\"ad1192-canonical-1\",\"started_at\":1784764811.0,\"status\":\"failed\",\"stopped_reason\":\"error\",\"thread_id\":\"13752000000000000000000000000002\",\"tokens_used\":7,\"tool_trace_ref\":null,\"version\":1,\"work_item_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\"},\"department\":null,\"expected_output\":null,\"resources\":[],\"spec_id\":\"canonical-spec-0\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"ad1192-canonical-1\",\"title\":\"Canonical corrected crossing\",\"description\":\"Canonical deterministic correction and publication\",\"work_type\":\"crew_session\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"facilitator-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764814.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[],\"metadata\":{\"crew_recovery\":{\"attempt_count\":0,\"final_verification_ref\":null,\"interrupted_child_ids\":[],\"last_attempt_at\":null,\"last_error_code\":null,\"next_attempt_at\":null,\"phase\":\"executing\",\"plan\":{\"children\":[{\"child_id\":\"crew-1375200000000000000000000000000000000000000000000000000000000003\",\"row_hash\":\"1375200000000000000000000000000000000000000000000000000000000004\",\"spec_id\":\"canonical-spec-0\"}],\"plan_hash\":\"1375200000000000000000000000000000000000000000000000000000000005\",\"plan_seed_hash\":\"1375200000000000000000000000000000000000000000000000000000000006\",\"version\":1},\"provenance_ref\":null,\"result_artifact_id\":null,\"retry_count\":0,\"synthesis_ref\":null,\"version\":1},\"crew_session\":{\"blocked_duration_seconds\":0.0,\"blocked_reason\":null,\"blocked_since\":null,\"completed_at\":null,\"created_at\":1784764801.0,\"duplicate_resume_count\":0,\"evidence_refs\":[],\"expected_deliverable\":\"An actual corrected canonical result\",\"facilitator_id\":\"facilitator-a\",\"first_result_at\":null,\"goal\":\"canonical corrected result\",\"last_result_summary\":\"\",\"origin\":\"captain\",\"originator_id\":\"captain\",\"owner_ids\":[\"facilitator-a\",\"worker-a\",\"verifier-a\"],\"previous_state\":\"discussing\",\"result_artifact_id\":null,\"result_ref\":null,\"revision\":2,\"started_at\":1784764810.0,\"state\":\"executing\",\"success_criteria\":[\"Corrected result is independently verified\"],\"task_id\":\"ad1192-canonical-1\",\"thread_id\":\"13752000000000000000000000000002\",\"transitioned_at\":1784764810.0,\"verified_at\":null,\"version\":1},\"steps_gate_completion\":true},\"steps\":[{\"assigned_to\":null,\"confirmed_by\":null,\"label\":\"Captain release gate\",\"note\":null,\"status\":\"pending\",\"submitted_by\":null},{\"assigned_to\":\"worker-a\",\"label\":\"Canonical child 0\",\"status\":\"rejected\",\"submitted_by\":\"worker-a\"}],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        }
+      ],
+      "ids": {
+        "P": "ad1192-canonical-1",
+        "T": "13752000000000000000000000000002",
+        "X": "crew-1375200000000000000000000000000000000000000000000000000000000003"
+      },
+      "url_templates": [
+        "/api/work-items/{X}",
+        "/api/work-items/{P}",
+        "/api/work-items?parent_id={P}&limit=1001",
+        "/api/crew-tasks/{P}",
+        "/api/work-items/{X}/owned-steps",
+        "/api/work-items?status=draft&limit=101",
+        "/api/work-items?status=open&limit=101",
+        "/api/work-items?status=scheduled&limit=101",
+        "/api/work-items?status=in_progress&limit=101",
+        "/api/work-items?status=review&limit=101",
+        "/api/work-items?status=blocked&limit=101",
+        "/api/work-items?status=failed&limit=101",
+        "/api/work-items?status=done&limit=21",
+        "/api/work-items?status=cancelled&limit=21"
+      ]
+    },
+    "promoted_failed": {
+      "checkpoints": [
+        {
+          "frames": [
+            "{\"type\":\"state_snapshot\",\"data\":{\"agents\":[],\"connections\":[],\"pools\":[],\"system_mode\":\"active\",\"tc_n\":0.0,\"routing_entropy\":0.0,\"fresh_boot\":false,\"temporal\":{\"current_time_utc\":\"2026-07-23T00:00:00+00:00\",\"uptime_seconds\":0.0,\"lifecycle_state\":\"running\",\"stasis_duration\":null,\"session_id\":\"test-session\"},\"pool_groups\":{},\"pool_to_group\":{},\"directives\":{\"active\":0,\"pending\":0},\"notifications\":[],\"unread_count\":0,\"scheduled_tasks\":[],\"ward_room_stats\":null,\"skill_framework\":false,\"acm\":false,\"workforce\":{\"work_items\":[],\"bookings\":[],\"resources\":[]}},\"timestamp\":1784764800.0,\"stream\":{\"generation\":\"13751000000000000000000000000001\",\"sequence\":0}}",
+            "{\"type\":\"work_item_created\",\"data\":{\"work_item\":{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"open\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764801.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}},\"timestamp\":1784764803.0,\"stream\":{\"generation\":\"13751000000000000000000000000001\",\"sequence\":1}}",
+            "{\"type\":\"work_item_status_changed\",\"data\":{\"work_item\":{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null},\"old_status\":\"open\",\"new_status\":\"in_progress\"},\"timestamp\":1784764804.0,\"stream\":{\"generation\":\"13751000000000000000000000000001\",\"sequence\":2}}"
+          ],
+          "name": "promoted",
+          "rest": {
+            "/api/work-items/137510000002": {
+              "body": "{\"work_item\":{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/137510000002/owned-steps": {
+              "body": "{\"version\":1,\"mode\":\"unmanaged\",\"parent_id\":\"137510000002\",\"requested_item_id\":\"137510000002\",\"reference\":null,\"rows\":[],\"previous_cursor\":null,\"next_cursor\":null,\"recovery\":[],\"finalization\":\"none\"}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        },
+        {
+          "frames": [
+            "{\"type\":\"work_item_status_changed\",\"data\":{\"work_item\":{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null},\"old_status\":\"in_progress\",\"new_status\":\"failed\"},\"timestamp\":1784764806.0,\"stream\":{\"generation\":\"13751000000000000000000000000001\",\"sequence\":3}}"
+          ],
+          "name": "failed",
+          "rest": {
+            "/api/work-items/137510000002": {
+              "body": "{\"work_item\":{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/137510000002/owned-steps": {
+              "body": "{\"version\":1,\"mode\":\"unmanaged\",\"parent_id\":\"137510000002\",\"requested_item_id\":\"137510000002\",\"reference\":null,\"rows\":[],\"previous_cursor\":null,\"next_cursor\":null,\"recovery\":[],\"finalization\":\"none\"}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"137510000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        }
+      ],
+      "ids": {
+        "X": "137510000002"
+      },
+      "url_templates": [
+        "/api/work-items/{X}",
+        "/api/work-items/{X}/owned-steps",
+        "/api/work-items?status=draft&limit=101",
+        "/api/work-items?status=open&limit=101",
+        "/api/work-items?status=scheduled&limit=101",
+        "/api/work-items?status=in_progress&limit=101",
+        "/api/work-items?status=review&limit=101",
+        "/api/work-items?status=blocked&limit=101",
+        "/api/work-items?status=failed&limit=101",
+        "/api/work-items?status=done&limit=21",
+        "/api/work-items?status=cancelled&limit=21"
+      ]
+    },
+    "restart": {
+      "checkpoints": [
+        {
+          "frames": [
+            "{\"type\":\"state_snapshot\",\"data\":{\"agents\":[],\"connections\":[],\"pools\":[],\"system_mode\":\"active\",\"tc_n\":0.0,\"routing_entropy\":0.0,\"fresh_boot\":false,\"temporal\":{\"current_time_utc\":\"2026-07-23T00:00:00+00:00\",\"uptime_seconds\":0.0,\"lifecycle_state\":\"running\",\"stasis_duration\":null,\"session_id\":\"test-session\"},\"pool_groups\":{},\"pool_to_group\":{},\"directives\":{\"active\":0,\"pending\":0},\"notifications\":[],\"unread_count\":0,\"scheduled_tasks\":[],\"ward_room_stats\":null,\"skill_framework\":false,\"acm\":false,\"workforce\":{\"work_items\":[],\"bookings\":[],\"resources\":[]}},\"timestamp\":1784764800.0,\"stream\":{\"generation\":\"13753000000000000000000000000001\",\"sequence\":0}}",
+            "{\"type\":\"work_item_created\",\"data\":{\"work_item\":{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"open\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764801.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}},\"timestamp\":1784764803.0,\"stream\":{\"generation\":\"13753000000000000000000000000001\",\"sequence\":1}}",
+            "{\"type\":\"work_item_status_changed\",\"data\":{\"work_item\":{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null},\"old_status\":\"open\",\"new_status\":\"in_progress\"},\"timestamp\":1784764804.0,\"stream\":{\"generation\":\"13753000000000000000000000000001\",\"sequence\":2}}"
+          ],
+          "name": "in_progress",
+          "rest": {
+            "/api/work-items/137530000002": {
+              "body": "{\"work_item\":{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/137530000002/owned-steps": {
+              "body": "{\"version\":1,\"mode\":\"unmanaged\",\"parent_id\":\"137530000002\",\"requested_item_id\":\"137530000002\",\"reference\":null,\"rows\":[],\"previous_cursor\":null,\"next_cursor\":null,\"recovery\":[],\"finalization\":\"none\"}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"in_progress\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764802.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        },
+        {
+          "frames": [
+            "{\"type\":\"state_snapshot\",\"data\":{\"agents\":[],\"connections\":[],\"pools\":[],\"system_mode\":\"active\",\"tc_n\":0.0,\"routing_entropy\":0.0,\"fresh_boot\":false,\"temporal\":{\"current_time_utc\":\"2026-07-23T00:00:00+00:00\",\"uptime_seconds\":0.0,\"lifecycle_state\":\"running\",\"stasis_duration\":null,\"session_id\":\"test-session\"},\"pool_groups\":{},\"pool_to_group\":{},\"directives\":{\"active\":0,\"pending\":0},\"notifications\":[],\"unread_count\":0,\"scheduled_tasks\":[],\"ward_room_stats\":null,\"skill_framework\":false,\"acm\":false,\"workforce\":{\"work_items\":[{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"bookings\":[],\"resources\":[]}},\"timestamp\":1784764806.0,\"stream\":{\"generation\":\"13753000000000000000000000000003\",\"sequence\":0}}"
+          ],
+          "name": "restarted",
+          "rest": {
+            "/api/work-items/137530000002": {
+              "body": "{\"work_item\":{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}}",
+              "status": 200
+            },
+            "/api/work-items/137530000002/owned-steps": {
+              "body": "{\"version\":1,\"mode\":\"unmanaged\",\"parent_id\":\"137530000002\",\"requested_item_id\":\"137530000002\",\"reference\":null,\"rows\":[],\"previous_cursor\":null,\"next_cursor\":null,\"recovery\":[],\"finalization\":\"none\"}",
+              "status": 200
+            },
+            "/api/work-items?status=blocked&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=cancelled&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=done&limit=21": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=draft&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=failed&limit=101": {
+              "body": "{\"work_items\":[{\"id\":\"137530000002\",\"title\":\"Survey the aft sensor array\",\"description\":\"Survey the aft sensor array\",\"work_type\":\"task\",\"status\":\"failed\",\"priority\":3,\"parent_id\":null,\"project_id\":null,\"depends_on\":[],\"assigned_to\":\"worker-a\",\"created_by\":\"captain\",\"created_at\":1784764801.0,\"updated_at\":1784764805.0,\"due_at\":null,\"estimated_tokens\":null,\"actual_tokens\":0,\"trust_requirement\":0.0,\"required_capabilities\":[],\"tags\":[\"conversational-turn\"],\"metadata\":{\"source\":\"dm_agentic_promotion\",\"thread_id\":\"issue1375-thread\",\"agent_id\":\"worker-a\"},\"steps\":[],\"verification\":{},\"schedule\":{},\"ttl_seconds\":null,\"template_id\":null}],\"count\":1}",
+              "status": 200
+            },
+            "/api/work-items?status=in_progress&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=open&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=review&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            },
+            "/api/work-items?status=scheduled&limit=101": {
+              "body": "{\"work_items\":[],\"count\":0}",
+              "status": 200
+            }
+          }
+        }
+      ],
+      "ids": {
+        "X": "137530000002"
+      },
+      "url_templates": [
+        "/api/work-items/{X}",
+        "/api/work-items/{X}/owned-steps",
+        "/api/work-items?status=draft&limit=101",
+        "/api/work-items?status=open&limit=101",
+        "/api/work-items?status=scheduled&limit=101",
+        "/api/work-items?status=in_progress&limit=101",
+        "/api/work-items?status=review&limit=101",
+        "/api/work-items?status=blocked&limit=101",
+        "/api/work-items?status=failed&limit=101",
+        "/api/work-items?status=done&limit=21",
+        "/api/work-items?status=cancelled&limit=21"
+      ]
+    }
+  }
+}
