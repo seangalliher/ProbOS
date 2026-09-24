@@ -72,6 +72,7 @@ from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage, LLMRequest
 
 if TYPE_CHECKING:
+    from probos.cognitive.tool_manifest import ToolManifestOffer
     from probos.mesh.intent import IntentBus
     from probos.substrate.agent import BaseAgent
     from probos.tools.registry import ToolRegistry
@@ -239,6 +240,13 @@ _APPROVAL_CREDENTIAL_REFUSAL: str = (
 _APPROVAL_STANDING_DISPOSITION: str = (
     "(This action ran under a standing approval issued by the Captain, valid "
     "until {expiry}.)"
+)
+
+# AD-1189: refusal for a direct call to a tool whose full definition is withheld.
+_DEFERRED_SCHEMA_REFUSAL: str = (
+    "That tool's full definition was not in your tool list yet, so the call "
+    "was not run. Its definition has been requested and joins your tool list "
+    "from your next step; call it again then, with the parameters it declares."
 )
 
 
@@ -667,6 +675,8 @@ class DispatchToolExecutor(ToolExecutor):
         # AD-1154: None = unarmed = AD-1153 behaviour. Set only by
         # ``arm_approval_inbox``.
         self._approval_inbox: Any = None
+        # AD-1189: None = unarmed. Set only by ``arm_deferred_schemas``.
+        self._deferred_schemas: Any = None
 
     def arm_approval_inbox(
         self,
@@ -691,6 +701,10 @@ class DispatchToolExecutor(ToolExecutor):
             approval_store=approval_store,
             config=config,
         )
+
+    def arm_deferred_schemas(self, offer: Any) -> None:
+        """AD-1189: refuse calls to tools whose full definition *offer* withholds."""
+        self._deferred_schemas = offer
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
         """AD-1153 / DD-1: confine ``browser`` calls to ``actions``.
@@ -1058,6 +1072,8 @@ class DispatchToolExecutor(ToolExecutor):
         **kwargs: Any,
     ) -> ToolResult:
         context = kwargs.get("context")
+        if self._deferred_schemas is not None and self._deferred_schemas.withhold_call(tool_id):
+            return ToolResult(error=_DEFERRED_SCHEMA_REFUSAL)
         if tool_id == "browser" and type(params) is dict and not params.get("session_id"):
             bound = context.get("browser_session_id") if type(context) is dict else None
             if type(bound) is str and bound:
@@ -1569,7 +1585,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
         error in (
             _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
-            "consensus_blocked", "requires_confirmation",
+            _DEFERRED_SCHEMA_REFUSAL, "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
     ):
@@ -1578,6 +1594,49 @@ def classify_tool_fault_error(error: Any) -> str | None:
     if type(error) is str and error.startswith("generated entry pre-launch check failed:"):
         return "other"
     return classify_tool_error(error)
+
+
+@dataclass(frozen=True)
+class _DefectEvidence:
+    """AD-1189: the two fields AD-1257 detection and AD-1205 collection read."""
+
+    tool_calls: list[Any]
+    tool_results: list[Any]
+
+
+def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
+    """AD-1189: *agentic_result* as defect evidence, without refused withheld-tool calls.
+
+    A refused call never ran, so it says nothing about the tool. The same object is
+    returned when nothing was refused; every other consumer reads the raw result.
+    """
+    calls = getattr(agentic_result, "tool_calls", None)
+    results = getattr(agentic_result, "tool_results", None)
+    if not isinstance(calls, (list, tuple)) or not isinstance(results, (list, tuple)):
+        return agentic_result
+    kept: list[Any] = []
+    refused_ids: set[str] = set()
+    for result in results:
+        output = getattr(result, "output", None)
+        if (
+            getattr(result, "is_error", False) is True
+            and type(output) is str
+            and output == _DEFERRED_SCHEMA_REFUSAL
+        ):
+            result_id = getattr(result, "id", None)
+            if type(result_id) is str:
+                refused_ids.add(result_id)
+            continue
+        kept.append(result)
+    if len(kept) == len(results):
+        return agentic_result
+    return _DefectEvidence(
+        tool_calls=[
+            call for call in calls
+            if type(getattr(call, "id", None)) is not str or call.id not in refused_ids
+        ],
+        tool_results=kept,
+    )
 
 
 def _duplicate_tool_ids(items: Any) -> set[str]:
@@ -2580,6 +2639,54 @@ class WorkItemAgenticExecutor:
         else:
             _captain_row = _captain_browser_session(runtime)
 
+        # AD-1189: default-OFF; at 0 nothing is imported or registered.
+        manifest_offer: ToolManifestOffer | None = None
+        # After an arming attempt, load_tools enters an offer only as the armed meta.
+        skipped_meta_ids: frozenset[str] = frozenset()
+        deferred_threshold = getattr(
+            agentic_tools_cfg, "deferred_tool_schema_threshold_bytes", 0
+        )
+        if (
+            type(deferred_threshold) is int
+            and deferred_threshold > 0
+            and registry is not None
+        ):
+            try:
+                from probos.cognitive.tool_manifest import (
+                    LOAD_TOOLS_ID,
+                    arm_tool_manifest,
+                    is_load_tools_registration,
+                )
+
+                try:
+                    manifest_offer = arm_tool_manifest(
+                        registry, agent_id=agent_id, threshold_bytes=deferred_threshold,
+                    )
+                finally:
+                    if is_load_tools_registration(registry.get(LOAD_TOOLS_ID)):
+                        skipped_meta_ids = frozenset({LOAD_TOOLS_ID})
+                if manifest_offer is not None and not registry.check_permission(
+                    agent_id,
+                    LOAD_TOOLS_ID,
+                    ToolPermission.READ,
+                    agent_department=department,
+                    agent_rank=rank,
+                ):
+                    logger.warning(
+                        "AD-1189: agent %s may not invoke %s, so a withheld tool "
+                        "definition could never be loaded; offering every "
+                        "definition in full",
+                        agent_id, LOAD_TOOLS_ID,
+                    )
+                    manifest_offer = None
+            except Exception:
+                logger.warning(
+                    "AD-1189: arming deferred tool schemas failed for agent %s; "
+                    "offering every definition in full",
+                    agent_id, exc_info=True,
+                )
+                manifest_offer = None
+
         offered_names: set[str] = set()
 
         def _build_tools(
@@ -2592,9 +2699,11 @@ class WorkItemAgenticExecutor:
             only for the exact definition objects retained after dedupe."""
             built: list[dict[str, Any]] = []
             mcp_definition_ids: dict[int, str] = {}
+            keep_full: set[str] = set()
             if registry is None:
                 return built, ()
-            for tid in ids:
+            meta_ids = () if manifest_offer is None else (manifest_offer.meta_tool_id,)
+            for tid in [*(t for t in ids if t not in skipped_meta_ids), *meta_ids]:
                 reg = registry.get(tid)
                 if reg is None:
                     continue
@@ -2611,10 +2720,18 @@ class WorkItemAgenticExecutor:
                 built.append(definition)
                 if tid.startswith("mcp:"):
                     mcp_definition_ids[id(definition)] = tid
+                if manifest_offer is not None and (
+                    _is_mcp_id(tid)
+                    or not manifest_offer.may_defer(tid)
+                    or (tid == "browser" and _captain_row is not None)
+                ):
+                    keep_full.add((definition.get("function") or {}).get("name") or "")
             # BF-757: last gate before the provider. A duplicate function name
             # makes it reject the WHOLE request, so one collision would cost the
             # agent every tool rather than the one.
             deduped = dedupe_llm_definitions(built, agent_id=agent_id)
+            if manifest_offer is not None:
+                deduped = manifest_offer.present(deduped, keep_full=frozenset(keep_full))
             # AD-1248 / DD-1a: record what the model was ACTUALLY offered, POST
             # dedupe -- a pre-dedupe capture names tools that were never sent.
             # Accumulated because BF-755 can re-offer mid-turn, so a single
@@ -2633,6 +2750,43 @@ class WorkItemAgenticExecutor:
         tools, published_mcp_ids = _build_tools(tool_ids)
         if mcp_offer is not None:
             mcp_offer.acknowledge_published(published_mcp_ids)
+        # AD-1189: a manifest that would not shrink the offer is dropped (run as at 0).
+        if manifest_offer is not None and not manifest_offer.armed:
+            manifest_offer = None
+        elif manifest_offer is not None:
+            executor.arm_deferred_schemas(manifest_offer)
+            full_bytes, presented_bytes = manifest_offer.offer_bytes
+            logger.info(
+                "AD-1189: agent %s's first offer withholds %d tool definition(s) "
+                "behind load_tools: %d bytes presented instead of %d",
+                agent_id, manifest_offer.withheld_count, presented_bytes, full_bytes,
+            )
+
+        # AD-1189: after a fallback re-offer, the published MCP ids may describe an older offer.
+        mcp_publication_stale: list[bool] = [False]
+
+        def _republish_manifest_loads() -> list[dict[str, Any]] | None:
+            """AD-1189: offer requested definitions in full through the one builder."""
+            if (
+                manifest_offer is None
+                or not manifest_offer.armed
+                or not manifest_offer.has_pending_loads()
+            ):
+                return None
+            try:
+                refreshed, presented_mcp_ids = _build_tools(tool_ids)
+                manifest_offer.commit_presentation()
+                if presented_mcp_ids != published_mcp_ids:
+                    mcp_publication_stale[0] = True
+                return refreshed
+            except Exception:
+                logger.warning(
+                    "AD-1189: re-offering requested tool definitions for %s failed; "
+                    "keeping the last offer; withheld tools stay refused until a "
+                    "re-offer succeeds",
+                    agent_id[:12], exc_info=True,
+                )
+                return None
 
         def _refresh_tools() -> list[dict[str, Any]] | None:
             """AD-1241: recheck selected members after every tool iteration.
@@ -2644,7 +2798,7 @@ class WorkItemAgenticExecutor:
             """
             nonlocal published_mcp_ids
             if workbench is None or not mcp_offer_armed or mcp_offer is None:
-                return None
+                return _republish_manifest_loads()
             try:
                 current = workbench.dispatch_tool_ids(
                     agent_id, candidate_ids=mcp_offer.selected_ids
@@ -2655,12 +2809,18 @@ class WorkItemAgenticExecutor:
                     *non_mcp_ids[mcp_insert_at:],
                 ]))
                 if merged == tool_ids:
-                    mcp_offer.acknowledge_published(published_mcp_ids)
-                    return None
+                    if not mcp_publication_stale[0] and (
+                        manifest_offer is None or not manifest_offer.has_pending_loads()
+                    ):
+                        mcp_offer.acknowledge_published(published_mcp_ids)
+                        return None
                 refreshed, refreshed_mcp_ids = _build_tools(merged)
                 mcp_offer.acknowledge_published(refreshed_mcp_ids)
+                if manifest_offer is not None:
+                    manifest_offer.commit_presentation()
                 tool_ids[:] = merged
                 published_mcp_ids = refreshed_mcp_ids
+                mcp_publication_stale[0] = False
                 return refreshed
             except Exception:
                 logger.warning(
@@ -2669,7 +2829,8 @@ class WorkItemAgenticExecutor:
                     "a successful refresh; invocation still checks current access",
                     agent_id[:12], exc_info=True,
                 )
-                return None
+                # AD-1189: pending loads still re-offer, rebuilt from the last accepted ids.
+                return _republish_manifest_loads()
 
         # AD-1065: the conversational chat path passes a lower iteration cap +
         # a faster tier than the task-path defaults (25 / deep). When both are
@@ -2699,7 +2860,8 @@ class WorkItemAgenticExecutor:
         # never receives the kwarg, so its construction is byte-identical and
         # every test double pinning the old signature keeps working (the BF-678
         # class).
-        if mcp_offer_armed and mcp_offer is not None:
+        # AD-1189: an armed manifest needs the same seam; both off => no kwarg.
+        if (mcp_offer_armed and mcp_offer is not None) or manifest_offer is not None:
             _loop_kwargs["refresh_tools"] = _refresh_tools
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
@@ -2847,6 +3009,8 @@ class WorkItemAgenticExecutor:
         )
         if mcp_offer_armed and mcp_offer is not None:
             _context[MCP_DISPATCH_OFFER_CONTEXT_KEY] = mcp_offer
+        if manifest_offer is not None:
+            _context[manifest_offer.context_key] = manifest_offer
         # AD-1162: supply the key AD-1158 reads. Without a producer, every agent
         # browser call created a fresh signed-out session while the Captain
         # watched a different one. Bound only when the Captain actually has a
@@ -2999,6 +3163,8 @@ class WorkItemAgenticExecutor:
                 "The owned-steps agentic turn stopped without a response "
                 f"({agentic_result.stopped_reason}); no additional request was issued."
             )
+        # AD-1189: refused calls to withheld tools never ran, so they are not defect evidence.
+        _defect_outcome = _without_deferred_schema_refusals(agentic_result)
         outcome_fields: dict[str, Any] = dict(
             final_text=final_text,
             stopped_reason=agentic_result.stopped_reason,
@@ -3023,7 +3189,7 @@ class WorkItemAgenticExecutor:
             # often a tool had failed. Pure data: ``run()`` serves five callers
             # and none of them is forced to act on this.
             tool_defect=detect_tool_defect(
-                agentic_result, resolve_tool_id=_fault_tool_id_resolver,
+                _defect_outcome, resolve_tool_id=_fault_tool_id_resolver,
             ),
             # AD-1269: says "the pairs were read here", which is the only thing
             # that distinguishes a verdict of None from a field nobody set.
@@ -3052,7 +3218,7 @@ class WorkItemAgenticExecutor:
             return WorkItemAgenticOutcome(**outcome_fields)
         assert fault_turn is not None
         observation = await observe_completed_tool_run(
-            fault_observer, outcome=agentic_result, turn=fault_turn,
+            fault_observer, outcome=_defect_outcome, turn=fault_turn,
             classify_error=classify_tool_fault_error, agent_id=agent_id,
             resolve_tool_id=_fault_tool_id_resolver,
             denied_tools=executor.denied_tools, thread_id=thread_id,

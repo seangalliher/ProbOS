@@ -221,6 +221,8 @@ async def _off_observation(
         "delegation_tree_max_concurrent", "delegation_tree_max_children",
     ):
         assert config["agentic_tools"].pop(name) is None
+    # AD-1189's inert 0 threshold was added after this capture too.
+    assert config["agentic_tools"].pop("deferred_tool_schema_threshold_bytes") == 0
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
