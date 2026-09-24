@@ -775,6 +775,30 @@ class AgenticToolsConfig(BaseModel):  # AD-1072
             "child starts."
         ),
     )
+    deferred_tool_schema_threshold_bytes: int = Field(
+        default=0,
+        ge=0,
+        le=1_048_576,
+        description=(
+            "AD-1189: deferred tool schemas for the agentic loop. 0 (the "
+            "default) sends every tool definition in full on every model "
+            "call, byte-identical to before. N > 0 withholds each native tool "
+            "definition whose compact UTF-8 JSON encoding exceeds N bytes: it "
+            "is listed by name, with one line, in the load_tools meta-tool, "
+            "and its full definition joins the tool list from the next model "
+            "call after the model requests it by name or by query, provided "
+            "the tool is still in the run's tool set (if that re-offer fails, "
+            "the tool stays withheld). The mode arms only when it makes the "
+            "offer smaller and the agent may invoke load_tools; otherwise "
+            "every definition is offered in full, as at 0. Never withheld: "
+            "MCP tools and find_mcp_tool, read_owned_steps, and the browser "
+            "while it announces the Captain's shared session. A call to a "
+            "withheld tool still in the run's tool set is refused without "
+            "running, and its definition is requested. Session-correction "
+            "runs keep full definitions. Off by default pending AD-1186 Ship "
+            "Trials."
+        ),
+    )
 
 
 class DiscoveryConfig(BaseModel):

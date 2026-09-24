@@ -1053,12 +1053,14 @@ def test_self_query_config_default_and_facade_identity() -> None:
     assert SystemConfig().agentic_tools.self_query_enabled is False
     # Was `[-1] == "self_query_enabled"`: it pinned AD-1258's append-only order, not "last forever";
     # AD-1190 appends its four tree ceilings after it, so the order is pinned across both.
-    assert list(AgenticToolsConfig.model_fields)[-5:] == [
+    # AD-1189 appends its deferred-schema threshold last: the order is pinned across all three.
+    assert list(AgenticToolsConfig.model_fields)[-6:] == [
         "self_query_enabled",
         "delegation_tree_max_tokens",
         "delegation_tree_max_iterations",
         "delegation_tree_max_concurrent",
         "delegation_tree_max_children",
+        "deferred_tool_schema_threshold_bytes",
     ]
 
 

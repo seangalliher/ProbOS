@@ -177,7 +177,8 @@ REMAINING_TRUE_LEAVES: tuple[str, ...] = (
 EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "AgenticDispatchConfig": 21,
     # AD-1190 adds seven: tree tokens ge; tree iterations, concurrent, children ge+le.
-    "AgenticToolsConfig": 23,
+    # AD-1189 adds two: the deferred-schema threshold's ge+le.
+    "AgenticToolsConfig": 25,
     "AutonomyBoundariesConfig": 0,
     "CapabilityTriageConfig": 0,
     "ClassificationGateConfig": 0,
@@ -244,7 +245,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                               'delegation_tree_max_tokens': None,
                               'delegation_tree_max_iterations': None,
                               'delegation_tree_max_concurrent': None,
-                              'delegation_tree_max_children': None},
+                              'delegation_tree_max_children': None,
+                              # AD-1189 post-extraction addition: the inert 0 threshold.
+                              'deferred_tool_schema_threshold_bytes': 0},
     'AutonomyBoundariesConfig': {'enabled': True},
     'CapabilityTriageConfig': {   'grant_fast_path_enabled': False,
                                   'grant_trust_floor': 0.8},
@@ -638,7 +641,8 @@ def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
     # AD-1206 R2: the old 59 excluded RepairConfig's now-required signed64 ceiling.
     # AD-1190: +7 for the four AgenticToolsConfig delegation-tree ceilings (60 -> 67).
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 67
+    # AD-1189: +2 for the AgenticToolsConfig deferred-schema threshold (67 -> 69).
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 69
     assert sorted(n for n, c in EXPECTED_BOUND_COUNTS.items() if c) == [
         "AgenticDispatchConfig",
         "AgenticToolsConfig",
