@@ -6,7 +6,7 @@ This guide gets you from zero to talking with the ship's crew in five minutes.
 
 - Python 3.12+
 - ~500MB disk space
-- One LLM endpoint (one of: local Ollama, GitHub Copilot proxy, Anthropic API key)
+- One LLM endpoint: OpenAI, OpenRouter, a local Ollama, the GitHub Copilot proxy, or any OpenAI-compatible server
 
 ## Install
 
@@ -22,14 +22,18 @@ cd ProbOS
 pip install -e .
 ```
 
-## Initialize
+## Configure your model
 
 ```bash
-probos init
+probos setup
 ```
 
-ProbOS will detect available LLM providers and prompt you for an endpoint and
-model. The defaults are sensible.
+ProbOS detects a local Ollama or Copilot proxy, then asks for a provider and
+model, and for an API key when the provider needs one. It checks them against
+the provider before writing `~/.probos/config.yaml`, and never prints the key
+itself: provider error excerpts have its literal, percent-encoded and base64
+forms redacted, though a provider can still echo it in another form.
+`probos init` still creates a base config without a provider check.
 
 ## Diagnostic check
 

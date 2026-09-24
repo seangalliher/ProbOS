@@ -153,13 +153,14 @@ uv run python demo.py
 
 ### LLM Backend
 
-ProbOS connects to an OpenAI-compatible LLM endpoint (configurable in `config/system.yaml`). Three options:
+ProbOS connects to an OpenAI-compatible LLM endpoint. `uv run python -m probos setup` asks for a provider, model and (when needed) API key, checks them against the provider, and writes `~/.probos/config.yaml`, which ProbOS loads in preference to `config/system.yaml`; in a source checkout, `--config config/system.yaml` edits that file instead (do not commit it with a key).
 
 | Option | Setup |
 |--------|-------|
 | **No LLM (default)** | Works out of the box — falls back to a built-in `MockLLMClient` with regex pattern matching. Good for exploring the architecture and running tests. |
-| **Ollama (local)** | Install [Ollama](https://ollama.com/), pull a model (`ollama pull qwen3.5:35b`), update `config/system.yaml` endpoints to `http://127.0.0.1:11434`. |
-| **OpenAI-compatible API** | Point `llm_base_url` in `config/system.yaml` to any OpenAI-compatible endpoint and set your API key. |
+| **Ollama (local)** | Install [Ollama](https://ollama.com/), pull a model (`ollama pull qwen3.5:35b`), then run setup with `--provider ollama`. |
+| **OpenAI, OpenRouter or another OpenAI-compatible API** | Run setup with `--provider openai`, `openrouter` or `custom --base-url <url>`; without prompts: `--provider openrouter --api-key-env OPENROUTER_API_KEY --model <model-id> --yes`. |
+| **Copilot Proxy** | Run setup with `--provider copilot-proxy` to use a VS Code Copilot proxy extension at `127.0.0.1:8080`. |
 
 ## Interactive Shell
 

@@ -4,6 +4,7 @@ Usage::
 
     probos                  # interactive shell (default)
     probos init             # create ~/.probos/ config
+    probos setup            # configure an LLM provider (alias: probos model)
     probos serve            # HTTP + WebSocket API server
     probos serve --interactive  # API server + interactive shell
     probos --config config/node-1.yaml
@@ -23,6 +24,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING, NamedTuple
 
 # BF-276 (2026-05-12): Windows + pipe-redirected stdout (e.g.
 # ``probos serve --interactive | tee log.txt``) drops to cp1252 encoding by
@@ -48,11 +51,15 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from probos import provider_setup
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, _LLM_TIERS
 from probos.config import load_config
 from probos.runtime import ProbOSRuntime
 from probos.experience.shell import ProbOSShell
+
+if TYPE_CHECKING:
+    import httpx
 
 
 def _default_data_dir() -> Path:
@@ -437,20 +444,30 @@ async def _check_nats(config, console: Console) -> None:
     )
 
 
-def _load_config_with_fallback(config_path: Path | None) -> tuple:
-    """Load config from the provided path, ~/.probos, or project default."""
+def _repo_default_config_path() -> Path:
+    """Return the source checkout's ``config/system.yaml`` (outside the package in a wheel install)."""
+    project_root = Path(__file__).resolve().parent.parent.parent
+    return project_root / "config" / "system.yaml"
+
+
+def _resolve_config_path(config_path: Path | None) -> Path:
+    """Return the config file the shell and ``serve`` load: explicit, else ~/.probos, else project default."""
     if config_path is not None:
-        return load_config(config_path), config_path
+        return config_path
 
     # Try ~/.probos/config.yaml first
     home_config = _probos_home() / "config.yaml"
     if home_config.exists():
-        return load_config(home_config), home_config
+        return home_config
 
     # Fall back to project-bundled config
-    project_root = Path(__file__).resolve().parent.parent.parent
-    default_path = project_root / "config" / "system.yaml"
-    return load_config(default_path), default_path
+    return _repo_default_config_path()
+
+
+def _load_config_with_fallback(config_path: Path | None) -> tuple:
+    """Load config from the provided path, ~/.probos, or project default."""
+    resolved = _resolve_config_path(config_path)
+    return load_config(resolved), resolved
 
 
 def _render_boot_summary(status: dict, verbose: bool) -> list[str]:
@@ -984,65 +1001,18 @@ def _detect_llm_providers(console: Console) -> dict[str, str]:
     return detected
 
 
-def _cmd_init(args: argparse.Namespace) -> None:
-    """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
-    from rich.prompt import Prompt
-
-    console = Console()
-    home = Path(args.probos_home) if args.probos_home else _probos_home()
-
-    # AD-711: resolve security profile (default strict; invalid → strict).
-    profile = getattr(args, "security_profile", "strict")
-    if profile not in ("strict", "relaxed"):
-        profile = "strict"
-
-    if (home / "config.yaml").exists() and not args.force:
-        console.print(
-            f"[yellow]Config already exists at {home / 'config.yaml'}[/yellow]\n"
-            f"Use [bold]--force[/bold] to overwrite."
-        )
-        return
-
-    console.print(
-        Panel.fit(
-            "[bold blue]ProbOS Init[/bold blue]\n"
-            "Setting up your ProbOS configuration.",
-            border_style="blue",
-        )
-    )
-    console.print()
-
-    # Auto-detect providers
-    console.print("  [dim]Detecting LLM providers...[/dim]")
-    detected = _detect_llm_providers(console)
-    for name, url in detected.items():
-        console.print(f"  [green]\u2713[/green] {name}: {url}")
-    if not detected:
-        console.print("  [yellow]\u26a0[/yellow] No local LLM providers detected.")
-
-    # Prompt for endpoint with detected default
-    default_url = next(iter(detected.values()), "http://127.0.0.1:8080/v1")
-    if default_url == "http://localhost:11434":
-        default_url = "http://localhost:11434/v1"
-    elif default_url == "http://127.0.0.1:8080":
-        default_url = "http://127.0.0.1:8080/v1"
-    llm_url = Prompt.ask("  LLM endpoint URL", default=default_url, console=console)
-
-    # Prompt for model with sensible default per provider
-    if "ollama" in detected or ":11434" in llm_url:
-        default_model = "llama3.1:8b"
-    else:
-        default_model = "claude-sonnet-4-20250514"
-    llm_model = Prompt.ask("  LLM model", default=default_model, console=console)
-
-    api_format = "ollama" if ":11434" in llm_url else "openai"
-
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "data").mkdir(exist_ok=True)
-    (home / "notes").mkdir(exist_ok=True)
-
+def _render_init_config(
+    home: Path,
+    *,
+    llm_url: str,
+    llm_model: str,
+    api_format: str,
+    profile: str,
+    generated_by: str = "probos init",
+) -> str:
+    """Render the ``probos init`` config text; ``probos setup`` reuses it as its create-path scaffold."""
     config_content = f"""\
-# ProbOS Configuration -- generated by `probos init`
+# ProbOS Configuration -- generated by `{generated_by}`
 system:
   name: "ProbOS"
   version: "0.1.0"
@@ -1101,8 +1071,70 @@ security:
       - "shell:rm -rf /"
       - "fs:write:.env"
 """
-    config_content = config_content + (
+    return config_content + (
         security_block_strict if profile == "strict" else security_block_relaxed
+    )
+
+
+def _cmd_init(args: argparse.Namespace) -> None:
+    """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
+    from rich.prompt import Prompt
+
+    console = Console()
+    home = Path(args.probos_home) if args.probos_home else _probos_home()
+
+    # AD-711: resolve security profile (default strict; invalid → strict).
+    profile = getattr(args, "security_profile", "strict")
+    if profile not in ("strict", "relaxed"):
+        profile = "strict"
+
+    if (home / "config.yaml").exists() and not args.force:
+        console.print(
+            f"[yellow]Config already exists at {home / 'config.yaml'}[/yellow]\n"
+            f"Use [bold]--force[/bold] to overwrite."
+        )
+        return
+
+    console.print(
+        Panel.fit(
+            "[bold blue]ProbOS Init[/bold blue]\n"
+            "Setting up your ProbOS configuration.",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+    # Auto-detect providers
+    console.print("  [dim]Detecting LLM providers...[/dim]")
+    detected = _detect_llm_providers(console)
+    for name, url in detected.items():
+        console.print(f"  [green]\u2713[/green] {name}: {url}")
+    if not detected:
+        console.print("  [yellow]\u26a0[/yellow] No local LLM providers detected.")
+
+    # Prompt for endpoint with detected default
+    default_url = next(iter(detected.values()), "http://127.0.0.1:8080/v1")
+    if default_url == "http://localhost:11434":
+        default_url = "http://localhost:11434/v1"
+    elif default_url == "http://127.0.0.1:8080":
+        default_url = "http://127.0.0.1:8080/v1"
+    llm_url = Prompt.ask("  LLM endpoint URL", default=default_url, console=console)
+
+    # Prompt for model with sensible default per provider
+    if "ollama" in detected or ":11434" in llm_url:
+        default_model = "llama3.1:8b"
+    else:
+        default_model = "claude-sonnet-4-20250514"
+    llm_model = Prompt.ask("  LLM model", default=default_model, console=console)
+
+    api_format = "ollama" if ":11434" in llm_url else "openai"
+
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "data").mkdir(exist_ok=True)
+    (home / "notes").mkdir(exist_ok=True)
+
+    config_content = _render_init_config(
+        home, llm_url=llm_url, llm_model=llm_model, api_format=api_format, profile=profile,
     )
     (home / "config.yaml").write_text(config_content, encoding="utf-8")
 
@@ -1119,6 +1151,606 @@ security:
             border_style="green",
         )
     )
+
+
+def _add_setup_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """Register ``probos setup`` and its alias ``probos model`` (AD-1135)."""
+    setup_parser = subparsers.add_parser(
+        "setup",
+        aliases=["model"],
+        help="Configure an OpenAI-compatible LLM provider for the text tiers",
+    )
+    setup_parser.add_argument(
+        "--provider", choices=tuple(provider_setup.PRESETS), default=None, help="Provider preset",
+    )
+    setup_parser.add_argument(
+        "--base-url", metavar="URL", default=None, help="OpenAI-compatible base URL, usually ending in /v1",
+    )
+    key_source = setup_parser.add_mutually_exclusive_group()
+    key_source.add_argument(
+        "--api-key-env", metavar="VAR", default=None, help="Read the API key from this environment variable",
+    )
+    key_source.add_argument(
+        "--api-key", metavar="KEY", default=None,
+        help="The API key itself; visible in shell history and the process list, so prefer --api-key-env",
+    )
+    setup_parser.add_argument("--model", metavar="NAME", default=None, help="Model for every text tier")
+    for tier in provider_setup.TEXT_TIERS:
+        setup_parser.add_argument(
+            f"--model-{tier}", metavar="NAME", default=None, help=f"Model for the {tier} tier (overrides --model)",
+        )
+    setup_parser.add_argument(
+        "--skip-validation", action="store_true", help="Write without contacting the provider",
+    )
+    setup_parser.add_argument(
+        "--allow-insecure-http", action="store_true",
+        help="Allow sending an API key over plain http:// to a non-loopback host",
+    )
+    setup_parser.add_argument(
+        "--force", action="store_true",
+        help="Rewrite the config when it cannot be edited in place (keeps every setting, drops comments)",
+    )
+    setup_parser.add_argument(
+        "--yes", "-y", action="store_true", help="Never prompt; missing required input exits 1",
+    )
+    target = setup_parser.add_mutually_exclusive_group()
+    target.add_argument(
+        "--probos-home", metavar="DIR", default=None, help="Write DIR/config.yaml instead of ~/.probos/config.yaml",
+    )
+    # SUPPRESS: when absent here, a --config given before `setup` (the root parser's) is kept, not reset to None.
+    target.add_argument(
+        "--config", "-c", type=Path, metavar="PATH", default=argparse.SUPPRESS, help="Edit or create this config file",
+    )
+
+
+def _setup_target(args: argparse.Namespace) -> Path:
+    """AD-1135 Q1: ``--config PATH`` (before or after ``setup``), else ``config.yaml`` in ``--probos-home`` or ~/.probos."""
+    config = getattr(args, "config", None)
+    if config is not None:
+        return Path(config)
+    home = Path(args.probos_home) if args.probos_home else _probos_home()
+    return home / "config.yaml"
+
+
+def _setup_scaffold(home: Path) -> str:
+    """Return ``probos init``'s config scaffold for setup's create path (AD-1135 B2).
+
+    Init interpolates the home path raw into a double-quoted YAML string, where a
+    double quote, a backslash or a non-printable character breaks the file or
+    silently changes ``knowledge.repo_path``; raise SetupInputError (exit 2) instead.
+    """
+    # Provider values never enter the init template's raw f-string: it gets placeholders, the editor the values.
+    scaffold = _render_init_config(
+        home,
+        llm_url="http://127.0.0.1:8080/v1",
+        llm_model="unset",
+        api_format="openai",
+        profile="strict",
+        generated_by="probos setup",
+    )
+    intended = (home / "knowledge").as_posix()
+    try:
+        knowledge = provider_setup.parse_config_text(scaffold).get("knowledge")
+    except provider_setup.ConfigEditRefused:
+        knowledge = None
+    if not isinstance(knowledge, dict) or knowledge.get("repo_path") != intended:
+        found = [
+            name
+            for name, present in (
+                ("a double quote", '"' in intended),
+                ("a backslash", "\\" in intended),
+                ("a non-printable character", not intended.isprintable()),
+            )
+            if present
+        ]
+        raise provider_setup.SetupInputError(
+            f"the config directory path contains {' and '.join(found) or 'characters'} that probos init's "
+            "config template cannot carry; choose another directory"
+        )
+    return scaffold
+
+
+# Caps the model suggestions at one screen; costs showing the rest of a long listing (OpenRouter lists hundreds).
+_SETUP_SUGGESTIONS = 20
+
+
+def _setup_preset(args: argparse.Namespace, console: Console) -> provider_setup.ProviderPreset | int:
+    """Return the ``--provider`` preset, or ask for one defaulting to a detected local server (M4)."""
+    from rich.markup import escape
+    from rich.prompt import Prompt
+
+    if args.provider is not None:
+        return provider_setup.PRESETS[args.provider]
+    if args.yes:
+        console.print("[red]--provider is required.[/red]")
+        return 1
+    console.print("  [dim]Detecting local LLM providers...[/dim]")
+    detected = _detect_llm_providers(console)
+    # Only a local server with a preset picks the default; an ANTHROPIC_API_KEY has no preset.
+    local = [name for name in ("ollama", "copilot-proxy") if name in detected]
+    for name in local:
+        console.print(f"  [green]\u2713[/green] {escape(name)} answers at {escape(detected[name])}")
+    for preset in provider_setup.PRESETS.values():
+        console.print(f"    {escape(preset.name)}: {escape(preset.label)}")
+    name = Prompt.ask(
+        "  Provider", choices=list(provider_setup.PRESETS), default=local[0] if local else "openai", console=console,
+    )
+    return provider_setup.PRESETS[name]
+
+
+def _setup_api_key(
+    args: argparse.Namespace, console: Console, preset: provider_setup.ProviderPreset,
+) -> str | int:
+    """Return the key from the flags, the preset's variable once confirmed, or a hidden prompt; never printed."""
+    import getpass
+
+    from rich.markup import escape
+    from rich.prompt import Confirm
+
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env, "")
+        if not api_key:
+            console.print(f"[red]Environment variable {escape(args.api_key_env)} is not set or is empty.[/red]")
+            return 1
+        return api_key
+    api_key = args.api_key or ""
+    if args.api_key is None and not args.yes:
+        key_env = preset.key_env
+        if key_env and os.environ.get(key_env) and Confirm.ask(
+            f"  Use the API key in the {escape(key_env)} environment variable?", default=True, console=console,
+        ):
+            return os.environ[key_env]
+        if preset.requires_key or preset.name == "custom":
+            hint = "input hidden" if preset.requires_key else "optional, input hidden"
+            api_key = getpass.getpass(f"  API key ({hint}): ").strip()
+    if preset.requires_key and not api_key:
+        example = f", for example --api-key-env {preset.key_env}" if preset.key_env else ""
+        console.print(
+            f"[red]Provider {escape(preset.name)} needs an API key: "
+            f"pass --api-key-env VAR or --api-key KEY{escape(example)}.[/red]"
+        )
+        return 1
+    return api_key
+
+
+def _setup_allow_insecure_http(args: argparse.Namespace, console: Console, base_url: str, api_key: str) -> bool | None:
+    """Whether the key may go over plain http; interactive users are asked before any request (B5), None if not."""
+    from rich.markup import escape
+    from rich.prompt import Confirm
+
+    if args.allow_insecure_http or args.yes or not provider_setup.sends_key_in_clear(base_url, api_key):
+        return args.allow_insecure_http
+    console.print(
+        f"[yellow]{escape(base_url)} is plain http:// to a non-loopback host, "
+        "so the API key would travel unencrypted.[/yellow]"
+    )
+    if Confirm.ask("  Send the API key over plain http anyway?", default=False, console=console):
+        return True
+    console.print("  Nothing was written.")
+    return None
+
+
+def _setup_listing(
+    console: Console, base_url: str, api_key: str, transport: httpx.BaseTransport | None,
+) -> provider_setup.ProbeResult | None:
+    """Probe the model listing; return an OK or NOT_FOUND result, or print the failure and return None."""
+    from rich.markup import escape
+
+    outcome = provider_setup.ProbeOutcome
+    console.print(f"  Checking {escape(base_url)} ...")
+    listing = provider_setup.probe_models(base_url, api_key, transport=transport)
+    if listing.outcome is outcome.NOT_FOUND:
+        console.print(
+            f"  [dim]No model listing at this base URL (HTTP {listing.status_code}); checking chat directly.[/dim]"
+        )
+        return listing
+    if listing.outcome is outcome.OK:
+        return listing
+    console.print(f"[red]\u2717 Provider check failed:[/red] {escape(listing.message)}")
+    if listing.outcome is outcome.BAD_RESPONSE:
+        console.print(
+            "  Hint: a web page may have answered instead of the API; "
+            "OpenAI-compatible base URLs usually end in /v1."
+        )
+    return None
+
+
+def _setup_models(
+    args: argparse.Namespace,
+    console: Console,
+    preset: provider_setup.ProviderPreset,
+    base_url: str,
+    api_key: str,
+    transport: httpx.BaseTransport | None,
+) -> tuple[dict[str, str], provider_setup.ProbeResult | None] | int:
+    """Resolve each text tier's model from the flags and preset, asking for the rest unless ``--yes`` (M4).
+
+    Returns the models and the listing fetched to suggest one, if it was; or the exit code.
+    """
+    from rich.markup import escape
+    from rich.prompt import Confirm, Prompt
+
+    models = {
+        tier: getattr(args, f"model_{tier}") or args.model or preset.models.get(tier) or ""
+        for tier in provider_setup.TEXT_TIERS
+    }
+    gaps = [tier for tier, model in models.items() if not model]
+    if not gaps:
+        return models, None
+    if args.yes:
+        console.print(f"[red]A model is required: pass --model NAME (or --model-{gaps[0]} NAME).[/red]")
+        return 1
+    listing: provider_setup.ProbeResult | None = None
+    if not args.skip_validation:
+        listing = _setup_listing(console, base_url, api_key, transport)
+        if listing is None:
+            console.print("  Nothing was written.")
+            return 3
+    listed = listing.model_ids if listing is not None else ()
+    if listing is not None and listed:
+        # probe_models withheld every ID holding a form of the key; its message counts them (B8).
+        console.print(f"  {escape(listing.message[:1].upper() + listing.message[1:])}:")
+        for model_id in listed[:_SETUP_SUGGESTIONS]:
+            console.print(f"    {escape(provider_setup.redact(model_id, api_key))}")
+        if len(listed) > _SETUP_SUGGESTIONS:
+            console.print(f"    ... and {len(listed) - _SETUP_SUGGESTIONS} more")
+    if preset.name == "ollama" and listed:
+        model = Prompt.ask("  Model", default=listed[0], console=console).strip()
+    else:
+        model = Prompt.ask("  Model", console=console).strip()
+    if not model:
+        console.print("[red]A model is required.[/red]")
+        return 1
+    try:
+        # B9: before a per-tier question offers it back as its default.
+        provider_setup.validate_holds_no_key(model, api_key, name=f"the model for the {gaps[0]} tier")
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Invalid setting:[/red] {escape(str(exc))}")
+        return 2
+    for tier in gaps:
+        models[tier] = model
+    if len(gaps) > 1 and Confirm.ask("  Use a different model for each tier?", default=False, console=console):
+        for tier in gaps:
+            models[tier] = Prompt.ask(f"  Model for the {tier} tier", default=model, console=console).strip()
+    return models, listing
+
+
+def _setup_choice(
+    args: argparse.Namespace, console: Console, transport: httpx.BaseTransport | None,
+) -> tuple[provider_setup.ProviderChoice, provider_setup.ProbeResult | None] | int:
+    """Build the provider choice from the flags, asking for what they leave out unless ``--yes`` (M4).
+
+    Returns the choice and any listing fetched to suggest a model, or prints why not and
+    returns the exit code.
+    """
+    from rich.markup import escape
+    from rich.prompt import Prompt
+
+    preset = _setup_preset(args, console)
+    if isinstance(preset, int):
+        return preset
+    raw_url = args.base_url or preset.base_url
+    if not raw_url and not args.yes:
+        raw_url = Prompt.ask("  Base URL (OpenAI-compatible, usually ending in /v1)", console=console).strip()
+    if not raw_url:
+        console.print(f"[red]--base-url is required for provider {escape(preset.name)}.[/red]")
+        return 1
+    try:
+        base_url = provider_setup.normalize_base_url(raw_url)
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Invalid --base-url:[/red] {escape(str(exc))}")
+        return 2
+    api_key = _setup_api_key(args, console, preset)
+    if isinstance(api_key, int):
+        return api_key
+    try:
+        # B9: before the plain-http warning or the model listing shows the URL.
+        provider_setup.validate_holds_no_key(base_url, api_key, name="the base URL")
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Invalid --base-url:[/red] {escape(str(exc))}")
+        return 2
+    allow_insecure_http = _setup_allow_insecure_http(args, console, base_url, api_key)
+    if allow_insecure_http is None:
+        return 1
+    try:
+        provider_setup.validate_key_transport(base_url, api_key, allow_insecure_http=allow_insecure_http)
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Invalid setting:[/red] {escape(str(exc))}")
+        return 2
+    resolved = _setup_models(args, console, preset, base_url, api_key, transport)
+    if isinstance(resolved, int):
+        return resolved
+    models, listing = resolved
+    choice = provider_setup.ProviderChoice(
+        provider=preset.name, base_url=base_url, models=MappingProxyType(models), api_key=api_key,
+    )
+    try:
+        provider_setup.validate_choice(choice, allow_insecure_http=allow_insecure_http)
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Invalid setting:[/red] {escape(str(exc))}")
+        return 2
+    return choice, listing
+
+
+def _setup_validate(
+    console: Console,
+    choice: provider_setup.ProviderChoice,
+    listing: provider_setup.ProbeResult,
+    transport: httpx.BaseTransport | None,
+) -> bool:
+    """Probe each distinct model after an OK or NOT_FOUND listing; print the first failure and return False."""
+    from rich.markup import escape
+
+    outcome = provider_setup.ProbeOutcome
+    for model in dict.fromkeys(choice.models.values()):
+        result = provider_setup.probe_chat(
+            choice.base_url, choice.api_key, model, model_ids=listing.model_ids, transport=transport,
+        )
+        if result.outcome is outcome.OK:
+            console.print(f"  [green]\u2713[/green] {escape(result.message)}")
+            continue
+        if listing.outcome is outcome.NOT_FOUND and result.outcome is outcome.NOT_FOUND:
+            console.print(
+                "[red]\u2717 Provider check failed:[/red] no OpenAI-compatible API at this base URL; "
+                "they usually end in /v1 (OpenRouter: /api/v1)."
+            )
+        else:
+            console.print(f"[red]\u2717 Provider check failed:[/red] {escape(result.message)}")
+        return False
+    return True
+
+
+def _same_path(first: Path, second: Path) -> bool:
+    return os.path.normcase(str(first.resolve())) == os.path.normcase(str(second.resolve()))
+
+
+def _setup_candidate(
+    args: argparse.Namespace,
+    console: Console,
+    target: Path,
+    existing: str | None,
+    values: dict[str, str],
+) -> str | int:
+    """Return the text setup would install (AD-1135 Q2), or print why not and return the exit code."""
+    from rich.markup import escape
+
+    try:
+        scaffold = existing if existing is not None else _setup_scaffold(target.parent)
+    except provider_setup.SetupInputError as exc:
+        console.print(f"[red]Cannot create {escape(str(target))}:[/red] {escape(str(exc))}")
+        return 2
+    try:
+        return provider_setup.apply_managed_values(scaffold, values)
+    except provider_setup.ConfigEditRefused as exc:
+        refusal = str(exc)
+    if existing is None or not args.force:
+        console.print(f"[red]Cannot edit {escape(str(target))}:[/red] {escape(refusal)}")
+        if existing is not None:
+            console.print("  Pass --force to rewrite it: every setting is kept, but its comments are not.")
+        return 4
+    try:
+        candidate = provider_setup.rewrite_with_managed_values(
+            existing,
+            values,
+            header="Rewritten by `probos setup --force`; the previous file, comments included, is its backup.",
+        )
+    except provider_setup.ConfigEditRefused as exc:
+        console.print(f"[red]Cannot rewrite {escape(str(target))}:[/red] {escape(str(exc))}")
+        return 4
+    console.print(
+        f"[yellow]--force: {escape(str(target))} will be rewritten[/yellow] ({escape(refusal)}); "
+        "every setting is kept, its comments are not."
+    )
+    return candidate
+
+
+def _setup_shadow_guard(args: argparse.Namespace, console: Console, target: Path) -> bool:
+    """AD-1135 Q1: confirm before a new ~/.probos/config.yaml hides a checkout's config/system.yaml."""
+    from rich.markup import escape
+    from rich.prompt import Confirm
+
+    current = _resolve_config_path(None)
+    if target.exists() or not _same_path(target, _probos_home() / "config.yaml") or not current.exists():
+        return True
+    console.print(
+        f"[yellow]Creating {escape(str(target))} changes the file probos and probos serve load:[/yellow] "
+        f"they read {escape(str(current))} today and will read the new file instead, where settings "
+        "it does not list fall back to their defaults."
+    )
+    if args.yes or Confirm.ask("  Create it anyway?", default=False, console=console):
+        return True
+    console.print("  Nothing was written.")
+    return False
+
+
+def _setup_shared_url_notes(console: Console, shared_url_tiers: dict[str, str], api_key: str) -> None:
+    """Name each optional tier that kept the shared llm_base_url in place (AD-1135 B7), one line per tier."""
+    from rich.markup import escape
+
+    for tier, model in shared_url_tiers.items():
+        shown = provider_setup.redact(model, api_key)  # read from the existing file, which can hold the key
+        console.print(
+            f"  Left the shared llm_base_url unchanged because {escape(tier)} (model {escape(repr(shown))}) uses it; "
+            f"give {escape(tier)} its own llm_base_url_{escape(tier)} to move it"
+        )
+
+
+def _setup_report(
+    console: Console,
+    target: Path,
+    existing: str | None,
+    values: dict[str, str],
+    backup: Path | None,
+    *,
+    api_key: str,
+    shared_url_tiers: dict[str, str],
+) -> None:
+    """Print what setup wrote; of the key, only its presence is ever shown."""
+    from rich.markup import escape
+
+    verb = "Created" if existing is None else "Updated"
+    console.print(f"[green]\u2713[/green] {verb} {escape(str(target))}")
+    changed = provider_setup.changed_keys(existing, values)
+    console.print(f"  Changed keys: {escape(', '.join(changed) or 'none')}")
+    console.print(f"  API key: {'present' if api_key else 'not set'}")
+    if backup is not None:
+        console.print(f"  Backup: {escape(str(backup))}")
+    _setup_shared_url_notes(console, shared_url_tiers, api_key)
+    if api_key and _same_path(target, _repo_default_config_path()):
+        console.print(
+            "[yellow]This is the source checkout's tracked config/system.yaml: "
+            "do not commit it with the API key.[/yellow]"
+        )
+    loaded = _resolve_config_path(None)
+    if not _same_path(loaded, target):
+        quoted = escape(f'"{target}"')
+        console.print(
+            f"probos and probos serve load {escape(str(loaded))}; to use this file, start them with "
+            f"[bold]probos serve --config {quoted}[/bold] or [bold]probos --config {quoted}[/bold]."
+        )
+    elif _same_path(target, _probos_home() / "config.yaml"):
+        console.print("Run [bold]probos doctor[/bold] to check the rest of the installation.")
+    if os.environ.get("PROBOS_LLM_URL"):
+        console.print(
+            "[yellow]PROBOS_LLM_URL is set.[/yellow] It replaces only the shared llm_base_url, so the "
+            "fast, standard and deep tiers configured here ignore it; tiers without their own endpoint use it."
+        )
+    console.print("Restart [bold]probos serve[/bold] (or the [bold]probos[/bold] shell) to use the new provider.")
+    console.print(
+        "[dim]Restart any running HXI before saving settings there: a settings save rewrites "
+        "this file from the configuration it booted with.[/dim]"
+    )
+
+
+def _setup_confirm_write(
+    console: Console, target: Path, choice: provider_setup.ProviderChoice, shared_url_tiers: dict[str, str],
+) -> bool:
+    """Show what would be written, the key only as present or not, and ask the final question (M4)."""
+    from rich.markup import escape
+    from rich.prompt import Confirm
+
+    shown = {tier: provider_setup.redact(choice.models[tier], choice.api_key) for tier in provider_setup.TEXT_TIERS}
+    models = ", ".join(f"{tier} {escape(model)}" for tier, model in shown.items())
+    console.print(
+        f"  Provider {escape(choice.provider)} at {escape(choice.base_url)}; models: {models}; "
+        f"API key: {'present' if choice.api_key else 'not set'}."
+    )
+    _setup_shared_url_notes(console, shared_url_tiers, choice.api_key)
+    if Confirm.ask(f"  Write {escape(str(target))}?", default=True, console=console):
+        return True
+    console.print("  Nothing was written.")
+    return False
+
+
+class _SetupPlan(NamedTuple):
+    """What ``probos setup`` installs once every check and question has passed."""
+
+    target: Path
+    existing: str | None
+    had_bom: bool
+    choice: provider_setup.ProviderChoice
+    values: dict[str, str]
+    candidate: str
+    kept: dict[str, provider_setup.TierEndpoint]
+    shared_url_tiers: dict[str, str]
+
+
+def _setup_plan(
+    args: argparse.Namespace, console: Console, transport: httpx.BaseTransport | None,
+) -> _SetupPlan | int:
+    """Run AD-1135 section 3.4 steps 1-5 and, unless ``--yes``, the final question; return the plan or an exit code."""
+    from rich.markup import escape
+
+    if getattr(args, "config", None) is not None and args.probos_home:
+        console.print(
+            "[red]--config and --probos-home both choose the file setup writes; pass only one[/red] "
+            "(a --config before setup counts too)."
+        )
+        return 2
+    target = _setup_target(args)
+    existing: str | None = None
+    had_bom = False
+    kept: dict[str, provider_setup.TierEndpoint] = {}
+    if target.exists():
+        try:
+            existing, had_bom = provider_setup.read_config_text(target)
+            # Not YAML, or optional-tier settings that do not load: exit 4 before anything else, --force included.
+            kept = provider_setup.optional_tier_endpoints(existing)
+        except provider_setup.ConfigEditRefused as exc:
+            console.print(f"[red]Cannot edit {escape(str(target))}:[/red] {escape(str(exc))}")
+            return 4
+
+    chosen = _setup_choice(args, console, transport)
+    if isinstance(chosen, int):
+        return chosen
+    choice, listing = chosen
+    shared_url_tiers = provider_setup.tiers_using_shared_url(kept)  # B7: these keep the shared URL where it is
+    values = provider_setup.managed_values(choice, retain_shared_url=bool(shared_url_tiers))
+    candidate = _setup_candidate(args, console, target, existing, values)
+    if isinstance(candidate, int):
+        return candidate
+    if not _setup_shadow_guard(args, console, target):
+        return 1
+
+    if args.skip_validation:
+        console.print("  [yellow]Skipped the provider check (--skip-validation).[/yellow]")
+    else:
+        if listing is None:
+            listing = _setup_listing(console, choice.base_url, choice.api_key, transport)
+        if listing is None or not _setup_validate(console, choice, listing, transport):
+            console.print("  Nothing was written.")
+            return 3
+
+    if candidate == existing:
+        console.print(f"[green]\u2713[/green] {escape(str(target))} already uses this provider; nothing was written.")
+        return 0
+    if not args.yes and not _setup_confirm_write(console, target, choice, shared_url_tiers):
+        return 1
+    return _SetupPlan(target, existing, had_bom, choice, values, candidate, kept, shared_url_tiers)
+
+
+def _cmd_setup(args: argparse.Namespace, *, transport: httpx.BaseTransport | None = None) -> int:
+    """Handle ``probos setup`` / ``probos model`` (AD-1135): point the text tiers at one provider.
+
+    Without ``--yes`` it asks for whatever the flags leave out; Ctrl+C or EOF before the
+    write cancels with exit 1. ``transport`` is the probes' test seam; production passes None.
+    """
+    from rich.markup import escape
+
+    console = Console(soft_wrap=True)  # never hard-wrap a path or URL mid-string (B4)
+    try:
+        plan = _setup_plan(args, console, transport)
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Cancelled.[/yellow] Nothing was written.")
+        return 1
+    if isinstance(plan, int):
+        return plan
+    try:
+        backup = provider_setup.write_config_atomic(
+            plan.target,
+            plan.candidate,
+            had_bom=plan.had_bom,
+            create=plan.existing is None,
+            verify=lambda path: provider_setup.verify_config_file(path, plan.choice, kept=plan.kept),
+        )
+    except (provider_setup.ConfigEditRefused, OSError) as exc:
+        key = plan.choice.api_key  # B9: the target path, and so an OSError that names it, can hold the key
+        target = escape(provider_setup.redact(str(plan.target), key))
+        console.print(f"[red]Could not write {target}:[/red] {escape(provider_setup.redact(str(exc), key))}")
+        if isinstance(exc, provider_setup.ConfigReplaceFailed):
+            backup = escape(provider_setup.redact(str(exc.backup), key))
+            console.print(f"  It was not replaced; the backup taken first is kept at {backup}")
+        return 4
+    _setup_report(
+        console,
+        plan.target,
+        plan.existing,
+        plan.values,
+        backup,
+        api_key=plan.choice.api_key,
+        shared_url_tiers=plan.shared_url_tiers,
+    )
+    return 0
 
 
 def _cmd_qa_run_contracts(args: argparse.Namespace) -> int:
@@ -2416,6 +3048,9 @@ def main() -> None:
         help="Security defaults to bake into the generated config (default: strict)",
     )
 
+    # --- probos setup / probos model (AD-1135) ---
+    _add_setup_parser(subparsers)
+
     # --- probos doctor (AD-484) ---
     subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")
 
@@ -2642,6 +3277,11 @@ def main() -> None:
     reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
 
     args = parser.parse_args()
+
+    if args.command in ("setup", "model"):
+        # sync command; needs no event-loop policy
+        import sys
+        sys.exit(_cmd_setup(args))
 
     # Windows ProactorEventLoop doesn't support add_reader required by pyzmq.
     import sys
