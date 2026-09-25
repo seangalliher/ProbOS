@@ -36,6 +36,7 @@ from probos.dm_reply import (  # AD-1248 / AD-1295
     mint_scope,
     scope_from_source,
 )
+from probos.execution.long_runs import EXECUTION_LONG_RUN_GRANT_KEY, LongRunGrant  # AD-1246
 from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
 from probos.fault_detection import (
     FaultObservationResult,
@@ -91,6 +92,7 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
         "_crew_session_id",
         "_crew_work_item_id",
         DELEGATION_TREE_BUDGET_KEY,
+        EXECUTION_LONG_RUN_GRANT_KEY,  # AD-1246: a direct DM turn's long-run grant
     }
 )
 _AGENTIC_RANKS = frozenset(
@@ -2046,6 +2048,16 @@ class WorkItemAgenticExecutor:
             type(_context[DELEGATION_TREE_BUDGET_KEY]) is not DelegationTreeBudget
             or type(_context.get("_delegation_depth")) is not int
             or _context["_delegation_depth"] < 1
+        ):
+            raise ValueError("agentic_context_invalid")
+        # AD-1246: the exact grant type only, and only on a direct turn -- a
+        # delegated or crew run cannot stop waiting the way AD-1165 does.
+        if EXECUTION_LONG_RUN_GRANT_KEY in _context and (
+            type(_context[EXECUTION_LONG_RUN_GRANT_KEY]) is not LongRunGrant
+            or any(
+                key in _context
+                for key in ("_delegation_depth", "_crew_session_id", "_crew_work_item_id")
+            )
         ):
             raise ValueError("agentic_context_invalid")
         # AD-1190: under configured ceilings a delegated run must carry its tree's budget.

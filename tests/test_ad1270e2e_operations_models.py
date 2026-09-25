@@ -140,6 +140,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
         "fetch_broker_max_body_bytes": 8388608,
         "workspace_write_enabled": False,
         "timeout_seconds": 30.0,
+        # AD-1246: the long run_python reach (0 = off) and its ship-wide slot limit.
+        "max_runtime_seconds": 0.0,
+        "max_concurrent_long_runs": 2,
         "max_output_bytes": 65536,
         "max_memory_mb": 512,
         "stage_thread_artifacts": False,

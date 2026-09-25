@@ -49,6 +49,12 @@ from probos.execution.isolation import (
     _remove_workdir,
     _still_present,
 )
+from probos.execution import long_runs as _long_runs
+from probos.execution.long_runs import (
+    EXECUTION_LONG_RUN_GRANT_KEY,
+    coerce_positive_seconds,
+    plan_long_run,
+)
 from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
 logger = logging.getLogger(__name__)
@@ -61,6 +67,12 @@ _SCRIPT_NAME = "script.py"
 def _execution_error(result: ExecutionResult) -> str | None:
     """Forward sandbox-owned errors; stderr alone cannot establish launch origin."""
     return result.error or None
+
+
+def _long_reach_seconds(cfg: Any) -> float | None:
+    """AD-1246: the armed long reach, or None where only the inline wall clock applies."""
+    reach = coerce_positive_seconds(getattr(cfg, "max_runtime_seconds", None))
+    return reach if reach > _long_runs.INLINE_WALL_CLOCK_SECONDS else None
 
 
 # AD-1221: the ship also generates the fetch helper and, when the workdir must
@@ -383,6 +395,15 @@ class CodeExecutionTool:
             parts: list[str] = []
             if timeout:
                 parts.append(f"{float(timeout):.0f}s wall clock")
+                # AD-1246: only an armed vessel extends it; unarmed, the text is today's.
+                reach = _long_reach_seconds(cfg)
+                if reach is not None:
+                    parts[-1] += (
+                        " by default (the timeout parameter raises it to "
+                        f"{_long_runs.INLINE_WALL_CLOCK_SECONDS:.0f}s, or to {reach:.0f}s "
+                        "in a direct conversation turn, which continues in the background "
+                        "once it outlasts a reply)"
+                    )
             if out_bytes:
                 # BF-786: the cap is sliced onto stdout and stderr separately
                 # (isolation.py), so a total figure understates it by half.
@@ -508,7 +529,7 @@ class CodeExecutionTool:
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
+        schema: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "code": {
@@ -522,6 +543,15 @@ class CodeExecutionTool:
             },
             "required": ["code"],
         }
+        reach = _long_reach_seconds(self._cfg())
+        if reach is not None:
+            # AD-1246: armed only; the unarmed literal above is golden-pinned.
+            schema["properties"]["timeout"]["description"] = (
+                "Optional max seconds (default from config; capped at "
+                f"{_long_runs.INLINE_WALL_CLOCK_SECONDS:.0f}, or at {reach:.0f} in a direct "
+                "conversation turn that continues in the background)."
+            )
+        return schema
 
     @property
     def output_schema(self) -> dict[str, Any]:
@@ -692,6 +722,20 @@ class CodeExecutionTool:
         timeout = self._resolve_timeout(
             (params or {}).get("timeout"), getattr(cfg, "timeout_seconds", 30),
         )
+        # AD-1246: a granted call in a promotable DM turn may run past the inline
+        # clock. Planned after every early return and just before `try:`, so a
+        # refused or disabled call never takes a long-run slot; None is today's path.
+        plan = plan_long_run(
+            (params or {}).get("timeout"),
+            max_runtime_seconds=getattr(cfg, "max_runtime_seconds", 0.0),
+            max_concurrent=getattr(cfg, "max_concurrent_long_runs", 0),
+            grant=ctx.get(EXECUTION_LONG_RUN_GRANT_KEY),
+            service=getattr(self._runtime, "execution_long_runs", None),
+            execution_id=execution_id,
+        )
+        ticket = plan.ticket if plan is not None else None
+        if plan is not None:
+            timeout = plan.timeout_seconds
         try:
             # BF-788: resolve HERE, where the directory is owned. `scratch_dir`
             # defaults to a relative path, and this same `workdir` is later
@@ -729,7 +773,13 @@ class CodeExecutionTool:
             dep_summary = await self._maybe_install_missing(
                 code, requested_by=requesting_agent
             )
-            sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
+            if ticket is None:
+                sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
+            else:
+                # AD-1246: a long run gets the service's pool, not a default thread.
+                sandbox = SubprocessSandbox(
+                    scratch_root=str(scratch_root), executor=ticket.executor,
+                )
             # AD-1221: stand up a loopback fetch relay for THIS run only, so the
             # script can fetch and extract in one process. Returns ({}, None)
             # when the capability is off, which is the byte-identical old path.
@@ -757,6 +807,8 @@ class CodeExecutionTool:
                     # both the only place that CAN remove it and the only place
                     # that is free to.
                     cleanup_on_cancel=cleanup_on_cancel,
+                    # AD-1246: only a long run carries a switch.
+                    kill_switch=(ticket.kill_switch if ticket is not None else None),
                 )
             )
             produced = await self._capture_artifacts(
@@ -773,7 +825,10 @@ class CodeExecutionTool:
                 result=res,
                 artifact_count=artifact_count,
                 fetch_broker=bool(broker_env),
-                error_type=("sandbox_error" if res.error else None),
+                error_type=(
+                    "stopped_at_shutdown" if res.error == "stopped: shutdown"
+                    else "sandbox_error" if res.error else None
+                ),
                 launch_state=("launched" if launch.launched else "not_launched"),
             )
             output: dict[str, Any] = {
@@ -785,6 +840,13 @@ class CodeExecutionTool:
                 "artifacts": [a["name"] for a in produced],
                 "artifact_details": produced,
             }
+            error_text = _execution_error(res)
+            # AD-1246: a granted run whose request was lowered, and that then hit
+            # the lowered clock, is told why; no other result carries this key.
+            if plan is not None and plan.wall_clock is not None and res.timed_out:
+                output["wall_clock"] = dict(plan.wall_clock)
+                # A failed call's error is all the model reads, so the note rides there too.
+                error_text = f"{res.error}. {plan.wall_clock['note']}"
             # AD-1278: BF-763 removed the quorum gate in exchange for a record.
             # When that record will not outlive the process, the run says so in
             # its own result -- a log line is not where anyone looks. "queued"
@@ -804,7 +866,7 @@ class CodeExecutionTool:
                     output["dependencies"] = unimportable
             return ToolResult(
                 output=output,
-                error=_execution_error(res),
+                error=error_text,
                 duration_ms=(time.monotonic() - t0) * 1000.0,
             )
         except Exception as exc:
@@ -834,6 +896,14 @@ class CodeExecutionTool:
                 )
             return ToolResult(error=f"execution failed: {exc}")
         finally:
+            # AD-1246: first, and `finish` never raises, so no teardown step below
+            # can leak the long-run slot. Unless this call was cancelled (or
+            # otherwise interrupted) mid-run, no worker is still running for it.
+            # Under cancellation the switch has fired and the worker is still
+            # reaping, so the slot frees a few milliseconds early; a run admitted
+            # in that window can wait that long for a pool thread.
+            if ticket is not None:
+                ticket.finish()
             # AD-1247: audit first, in its OWN try/finally, so a sink that
             # raises cannot skip the teardown below. A leaked workdir and a
             # lingering listener are how an audit write turns into two new
@@ -1168,4 +1238,7 @@ class CodeExecutionTool:
             t = float(requested) if requested is not None else float(default)
         except (TypeError, ValueError):
             t = float(default) if isinstance(default, (int, float)) else 30.0
-        return max(1.0, min(t, 300.0))
+        # AD-1246: the 1.0 floor turns a zero, negative or NaN request into a
+        # one-second run; zero or negative would otherwise be killed at once.
+        # The ceiling is the inline wall clock, read from long_runs at call time.
+        return max(1.0, min(t, _long_runs.INLINE_WALL_CLOCK_SECONDS))

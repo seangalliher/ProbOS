@@ -91,6 +91,7 @@ reproducing the wrong words verbatim would make the ban unenforceable.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import shutil
@@ -487,6 +488,48 @@ async def remove_workdir_off_loop(workdir: Path) -> None:
     await asyncio.shield(future)
 
 
+class KillSwitch:
+    """AD-1246: lets an owner outside the worker thread stop a running child.
+
+    The worker attaches the Popen it spawned and detaches it once the child is
+    reaped; once detached, ``fire`` signals nothing. ``fire`` never reaps -- the
+    worker still does, so the result keeps describing a real exit.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._reason: str | None = None
+
+    @property
+    def reason(self) -> str | None:
+        """Why the switch fired (the first reason wins), or None if it never did."""
+        with self._lock:
+            return self._reason
+
+    def attach(self, proc: subprocess.Popen) -> bool:
+        """Hold ``proc`` for ``fire``. False when already fired: the caller kills it."""
+        with self._lock:
+            if self._reason is not None:
+                return False
+            self._proc = proc
+            return True
+
+    def detach(self) -> None:
+        """Forget a reaped child, so a later ``fire`` cannot signal a reused pid."""
+        with self._lock:
+            self._proc = None
+
+    def fire(self, reason: str) -> None:
+        """Record ``reason`` (first wins) and kill the attached child if still running."""
+        with self._lock:
+            if self._reason is None:
+                self._reason = reason
+            proc = self._proc
+            if proc is not None and proc.returncode is None:
+                SubprocessSandbox._kill(proc)
+
+
 @dataclass
 class ExecutionRequest:
     """One unit of work to run under isolation. Either ``code`` (Python source,
@@ -519,6 +562,11 @@ class ExecutionRequest:
     # child releases the directory -- but the loop side takes it when the
     # worker finished first, and the caller takes it when no worker ever ran.
     cleanup_on_cancel: "CancelCleanup | None" = None
+    # AD-1246: set only for a long run, so the run's owner can stop the child
+    # from outside the worker (the awaiting turn's cancellation, or the
+    # long-run service's close). None, as every other caller leaves it, acts
+    # as before; `repr()` and `dataclasses.asdict()` gain the key regardless.
+    kill_switch: KillSwitch | None = None
 
 
 @dataclass
@@ -606,8 +654,13 @@ class SubprocessSandbox:
 
     tier: IsolationTier = IsolationTier.SUBPROCESS
 
-    def __init__(self, *, scratch_root: Path | str = "data/execution") -> None:
+    def __init__(
+        self, *, scratch_root: Path | str = "data/execution",
+        executor: concurrent.futures.Executor | None = None,
+    ) -> None:
         self._scratch_root = Path(scratch_root)
+        # AD-1246: None is the loop's default executor; a long run brings its own.
+        self._executor = executor
 
     def available(self) -> bool:
         return True  # always available — pure stdlib + the running interpreter
@@ -641,8 +694,11 @@ class SubprocessSandbox:
                     tier=int(self.tier),
                 )
         try:
-            return await loop.run_in_executor(None, self._run_sync, request)
+            return await loop.run_in_executor(self._executor, self._run_sync, request)
         except asyncio.CancelledError:
+            # AD-1246: nobody is left to report this run, so stop it, not orphan it.
+            if request.kill_switch is not None:
+                request.kill_switch.fire("cancelled")
             cleanup = request.cleanup_on_cancel
             if cleanup is not None and cleanup.note_cancelled():
                 # True means no worker will do the teardown -- but for two
@@ -810,6 +866,11 @@ class SubprocessSandbox:
             if request.launch_outcome is not None:
                 request.launch_outcome.launched = True
                 request.launch_outcome.resolved.set()
+            # AD-1246: from here an outside owner can stop the child; a switch
+            # that fired before the child existed is honoured now.
+            switch = request.kill_switch
+            if switch is not None and not switch.attach(proc):
+                self._kill(proc)
             try:
                 out_b, err_b = proc.communicate(timeout=request.timeout_seconds)
             except subprocess.TimeoutExpired:
@@ -846,15 +907,21 @@ class SubprocessSandbox:
             stdout = (out_b or b"")[:cap].decode("utf-8", errors="replace")
             stderr = (err_b or b"")[:cap].decode("utf-8", errors="replace")
             duration_ms = (time.monotonic() - started) * 1000.0
+            # AD-1246: a child the switch stopped says why; a clean exit stays clean.
+            stop_reason = switch.reason if switch is not None else None
+            stopped = stop_reason is not None and proc.returncode != 0
             return ExecutionResult(
-                success=(not timed_out and proc.returncode == 0),
+                success=(not timed_out and not stopped and proc.returncode == 0),
                 stdout=stdout,
                 stderr=stderr,
                 exit_code=proc.returncode,
                 timed_out=timed_out,
                 duration_ms=duration_ms,
                 tier=int(self.tier),
-                error=("timed out" if timed_out else ""),
+                error=(
+                    "timed out" if timed_out
+                    else f"stopped: {stop_reason}" if stopped else ""
+                ),
                 workdir=str(workdir),
                 child_reaped=child_reaped,
             )
@@ -871,6 +938,9 @@ class SubprocessSandbox:
                 timed_out=timed_out, child_reaped=child_reaped,
             )
         finally:
+            # AD-1246: detach only a reaped child, so no later fire can reach a reused pid.
+            if request.kill_switch is not None and child_reaped:
+                request.kill_switch.detach()
             if created_workdir and not child_reaped:
                 # AD-1298: neither `CancelCleanup` owner can see this
                 # directory -- both are gated on `request.workdir is not
@@ -1010,7 +1080,11 @@ class SubprocessSandbox:
     @staticmethod
     def _make_limits(request: ExecutionRequest):
         mem_bytes = max(64, int(request.max_memory_mb)) * 1024 * 1024
+        # AD-1246: a POSIX backstop in CPU seconds over all threads; the +1 keeps the wall
+        # clock the normal end of a single-threaded run; a multi-threaded one can hit this first.
         cpu_seconds = max(1, int(request.timeout_seconds) + 1)
+        # AD-1246: kept as shipped. One file this size is runaway output, about ten
+        # times the 25 MiB artifact cap; a script that needs a bigger file fails.
         fsize_bytes = 256 * 1024 * 1024  # 256 MB max single-file write
 
         def _apply() -> None:  # pragma: no cover - POSIX child process only
@@ -1048,6 +1122,8 @@ class SubprocessSandbox:
         """
         try:
             self._kill(proc)
+            # AD-1246: a killed child exits in milliseconds; one still alive after 5 s is
+            # reported as not reaped, its workdir kept, rather than waited on.
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 — already unwinding; best effort
             logger.warning(

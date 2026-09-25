@@ -500,6 +500,8 @@ AD-993/994: sandboxed code execution (tiered isolation).
 | `fetch_broker_max_body_bytes` | `int` | `8388608` | — |  |
 | `workspace_write_enabled` | `bool` | `False` | — |  |
 | `timeout_seconds` | `float` | `30.0` | — |  |
+| `max_runtime_seconds` | `float` | `0.0` | ≥ 0.0, ≤ 86400.0 |  |
+| `max_concurrent_long_runs` | `int` | `2` | ≥ 1, ≤ 16 |  |
 | `max_output_bytes` | `int` | `65536` | — |  |
 | `max_memory_mb` | `int` | `512` | — |  |
 | `stage_thread_artifacts` | `bool` | `False` | — |  |

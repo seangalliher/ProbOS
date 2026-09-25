@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1799
-  field_definitions: 1792
+  canonical_dump_leaves: 1801
+  field_definitions: 1794
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 2bfcece81ce2c9023ada7245aaee884d6d805c3a0a47f09f2332dfb4e14d94ee
+canonical_dump_sha256: 3893d181fe3f00ffbd9458c78d3e7576db44437c30c19b55de16924871bc5f1d
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1745,7 +1745,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 23cd2470ce9ff70c8cb0fda8156e0f61da05decaca1c1c97107627567d0210b5
+    schema_sha256: b37ea7a1fd4614c81e195df060a521abf1ec24e28a90d1b78bde2eaef81d7848
     fields:
     - {default: 'False', name: enabled}
     - {default: '1', name: default_tier}
@@ -1756,6 +1756,8 @@ models:
     - {default: '8388608', name: fetch_broker_max_body_bytes}
     - {default: 'False', name: workspace_write_enabled}
     - {default: '30.0', name: timeout_seconds}
+    - {default: '0.0', name: max_runtime_seconds}
+    - {default: '2', name: max_concurrent_long_runs}
     - {default: '65536', name: max_output_bytes}
     - {default: '512', name: max_memory_mb}
     - {default: 'False', name: stage_thread_artifacts}
@@ -3294,7 +3296,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f5196a7f3643466e5ca6e6ae90e3b32129cb4dc13399832c587fafcb153b339a
+    schema_sha256: 9fd829c34a140439e44975951365571b8d44c5cf9d05dadc2debbb2ba22d0d25
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

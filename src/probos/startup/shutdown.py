@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
+from probos.execution.long_runs import LONG_RUN_SETTLE_SECONDS, LongRunService
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
@@ -340,6 +341,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # from beginning after shutdown starts.
     runtime.close_confab_probe_scheduling()
 
+    # AD-1246: fire every long run_python kill switch before anything awaits. A
+    # sandbox child survives its parent's os._exit, and nothing later tries to
+    # stop it. The switch reaches the direct child only, not its descendants.
+    long_runs = getattr(runtime, "execution_long_runs", None)
+    if isinstance(long_runs, LongRunService):
+        long_runs.close("shutdown")
+
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
     # __main__.py enforces a 10s timeout on stop() (`__main__.py:653`, `:938`;
@@ -367,6 +375,10 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     if crew_stop is not None and asyncio.iscoroutinefunction(crew_stop):
         await crew_stop()
+
+    # AD-1246: bounded, and returns without suspending when no long run is in flight.
+    if isinstance(long_runs, LongRunService):
+        await long_runs.wait_settled(LONG_RUN_SETTLE_SECONDS)
 
     if not runtime._started:
         return

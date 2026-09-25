@@ -4599,6 +4599,9 @@ class CognitiveAgent(BaseAgent):
                     "fault_turn": ToolFaultTurn(),
                     "fault_attempted": _fault_attempted,
                 }
+            # AD-1246: filled below only when this turn can be promoted and the
+            # vessel is armed; empty, the spread adds nothing to executor.run.
+            _long_run_kwargs: dict[str, Any] = {}
 
             def _record_promotion(work_item_id: str) -> None:
                 _promoted["work_item_id"] = work_item_id
@@ -4684,6 +4687,7 @@ class CognitiveAgent(BaseAgent):
                     **owned_presentation_kwargs,
                     **_diagnostic_kwargs,
                     **_fault_kwargs,
+                    **_long_run_kwargs,
                 )
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
@@ -4786,6 +4790,29 @@ class CognitiveAgent(BaseAgent):
                     _bg_slot = lambda: _cm.slot(  # noqa: E731
                         "direct_message_promoted", _PROMOTED_RUN_PRIORITY,
                     )
+
+                # AD-1246: this turn can stop waiting, so a run_python call in it
+                # may ask for more than the inline wall clock (probos.execution.long_runs).
+                if thread_id:
+                    from probos.execution.long_runs import (
+                        EXECUTION_LONG_RUN_GRANT_KEY, LongRunGrant,
+                    )
+
+                    _grant = LongRunGrant.for_promoted_turn(
+                        max_runtime_seconds=_coerce_promotion_budget(getattr(
+                            getattr(getattr(runtime, "config", None), "execution", None),
+                            "max_runtime_seconds", 0.0,
+                        )),
+                        promote_after_seconds=promote_after,
+                        deadline_seconds=_coerce_promotion_budget(
+                            getattr(cfg, "promoted_run_deadline_seconds", 0.0)
+                        ),
+                        now=time.monotonic(),
+                    )
+                    if _grant is not None:
+                        _long_run_kwargs["extra_context"] = {
+                            EXECUTION_LONG_RUN_GRANT_KEY: _grant,
+                        }
 
                 text = await run_with_promotion(
                     _agentic_turn,

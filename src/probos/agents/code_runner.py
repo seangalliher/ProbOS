@@ -498,6 +498,8 @@ class CodeRunnerAgent(BaseAgent):
             t = float(requested) if requested is not None else float(default)
         except (TypeError, ValueError):
             t = float(default)
+        # AD-1246: run_python's inline ceiling, for the same reason: the mesh path cannot
+        # promote, so 300 s bounds how long a run holds its caller, and stops a longer job.
         return max(1.0, min(t, 300.0))
 
     @staticmethod
