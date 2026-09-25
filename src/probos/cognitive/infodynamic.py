@@ -18,6 +18,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.event_persistence import ROUTED_CATEGORY
 from probos.events import EventType
 
 logger = logging.getLogger(__name__)
@@ -106,10 +107,11 @@ class InfodynamicProbe:
                 entropy=0.0, sample_size=0, bucket_count=0,
             )
         try:
-            # AD-491: EventLog.query() does NOT accept `since=` (verified at
-            # event_log.py:132 — signature is category/agent_id/limit only).
+            # AD-491: EventLog.query() does NOT accept `since=`; its filters are
+            # category, agent_id and limit, plus AD-1195's keyword exclude_category.
             # We pull the latest 10K rows and post-filter by timestamp.
-            events = await log.query(limit=10_000)
+            # AD-1195: the AD-491 category signal is defined over pre-AD-1195 categories.
+            events = await log.query(limit=10_000, exclude_category=ROUTED_CATEGORY)
         except Exception:
             logger.debug("AD-491: event_log query failed; entropy=0", exc_info=True)
             return EntropySignal(

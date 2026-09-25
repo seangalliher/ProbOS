@@ -158,7 +158,7 @@ class ObservabilityBridge:
     async def _collect_vitals(self) -> dict[str, Any]:
         # AD-641a revision: event_log.query()/query_structured() are async
         # (verified at src/probos/substrate/event_log.py:132, 170). Live query()
-        # signature accepts (category=, agent_id=, limit=) only -- there is NO
+        # signature accepts category=, agent_id=, limit= and exclude_category= -- there is NO
         # event_type= parameter. Use query_structured(event=...) to filter by
         # event name. Returned rows are dicts (per _row_to_dict at event_log.py:249)
         # with keys including agent_type and data (payload deserialized).

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.events import EventType
 from probos.tools.protocol import (
     Tool,
     ToolAccessGrant,
@@ -279,7 +280,8 @@ class TestCheckAndInvoke:
                 agent_rank="ensign",
             )
         assert len(events) == 1
-        assert events[0][0] == "TOOL_PERMISSION_DENIED"
+        # AD-1195: was the NAME string, which no value-keyed consumer could see; now the enum member.
+        assert events[0][0] == EventType.TOOL_PERMISSION_DENIED
         assert events[0][1]["agent_id"] == "agent_1"
 
     @pytest.mark.asyncio

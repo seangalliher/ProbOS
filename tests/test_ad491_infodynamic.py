@@ -50,8 +50,15 @@ class _FakeEventLog:
     def __init__(self, events: list[dict[str, Any]]) -> None:
         self._events = events
 
-    async def query(self, limit: int = 100) -> list[dict[str, Any]]:
-        return list(self._events[:limit])
+    async def query(
+        self, limit: int = 100, *, exclude_category: str | None = None
+    ) -> list[dict[str, Any]]:
+        # AD-1195: the probe now excludes routed rows; the fake filters them as EventLog does.
+        kept = [
+            e for e in self._events
+            if not exclude_category or e.get("category") != exclude_category
+        ]
+        return kept[:limit]
 
 
 class _FakeRuntime:

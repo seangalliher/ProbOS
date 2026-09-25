@@ -259,6 +259,11 @@ def _detach_json_value(
     return _truncated_data(), True
 
 
+def bounded_json_payload(value: object) -> tuple[EventLogJsonValue, bool]:
+    """AD-1195: bound and redact ``value`` as ``query_governed`` does a row's data; True if cut."""
+    return _detach_json_value(value)
+
+
 def _decode_event_data(raw_data: object) -> tuple[object, EventLogJsonValue, bool]:
     if raw_data is None:
         return None, None, False
@@ -571,6 +576,11 @@ class EventLog:
             self._db = None
             self._busy_timeout_ms = None
 
+    @property
+    def is_open(self) -> bool:
+        """AD-1195: True while the database connection is open."""
+        return self._db is not None
+
     async def log(
         self,
         category: str,
@@ -812,11 +822,16 @@ class EventLog:
         category: str | None = None,
         agent_id: str | None = None,
         limit: int = 100,
+        *,
+        exclude_category: str | None = None,
     ) -> list[dict]:
         """Query recent events, optionally filtered.
 
         AD-664: Results now include correlation_id, parent_event_id, and
         data (deserialized from JSON).
+
+        AD-1195: ``exclude_category`` leaves out that category's rows before the
+        limit applies; unset or empty, the SQL and parameters are exactly as before.
         """
         if not self._db:
             return []
@@ -833,6 +848,9 @@ class EventLog:
         if agent_id:
             conditions.append("agent_id = ?")
             params.append(agent_id)
+        if exclude_category:
+            conditions.append("category != ?")
+            params.append(exclude_category)
 
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
