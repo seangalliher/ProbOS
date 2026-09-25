@@ -7,7 +7,7 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ExecutionConfig(BaseModel):
@@ -99,8 +99,32 @@ class ExecutionConfig(BaseModel):
     # require opting into arbitrary code execution. When False the write endpoint
     # 503s; the read endpoint + all AD-997/998 behavior are unaffected.
     workspace_write_enabled: bool = False
+    # AD-1246: the wall clock for a call that names no `timeout`. Kept at the
+    # shipped 30 s: it keeps an unasked-for runaway short on every surface,
+    # including those that cannot promote. A longer job asks through `timeout`.
     timeout_seconds: float = 30.0
+    # AD-1246: the longest a single run_python execution may run inside a direct
+    # conversation turn that AD-1165 can promote (dm_agentic.promote_to_task_after_seconds
+    # > 0). 0 = no long reach: every run keeps the 300 s inline ceiling.
+    # Defends against a script that never finishes holding a long-run slot, a
+    # thread and the turn's BF-732 slot; costs any single job longer than this.
+    # The turn's BF-733 deadline (dm_agentic.promoted_run_deadline_seconds), less
+    # a 300 s answer margin, also lowers it, but never below the 300 s inline
+    # clock; a turn with less time left than that can be stopped by the watchdog
+    # first. Recommended 1800; default 0 because a capability increase is the
+    # operator's choice (see fetch_broker_enabled).
+    max_runtime_seconds: float = Field(default=0.0, ge=0.0, le=86400.0)
+    # AD-1246: ship-wide long runs at once. Each holds a dedicated thread, a
+    # child process and its turn's BF-732 promoted-run slot, which comes from
+    # that agent's AD-672 limit (default 4; smallest shipped role override 3).
+    # 2 leaves at least one of those slots free even when both runs are one
+    # agent's. It costs a further long run its reach: that run gets the 300 s
+    # inline clock and says so (long_runs_busy). Upper bound = the long-run pool size.
+    max_concurrent_long_runs: int = Field(default=2, ge=1, le=16)
     max_output_bytes: int = 65536           # 64 KB per stream
+    # AD-1246: kept as shipped. It bounds a runaway allocation on POSIX (best effort)
+    # and costs any job that needs more. Windows does not enforce it (BF-781), so
+    # run_python's description leaves it out there.
     max_memory_mb: int = 512                # RLIMIT_AS on POSIX; advisory on Windows
     # AD-1074d: stage the chat thread's current artifacts (the latest version of
     # each name) into the sandbox working folder BEFORE the script runs, so a
@@ -119,7 +143,21 @@ class ExecutionConfig(BaseModel):
     # intent is not quorum-approved before it runs (BF-779).
     allow_package_install: bool = False
     pip_index_url: str = "https://pypi.org/simple"
+    # AD-1246: kept as shipped. It covers a cold venv plus a handful of wheels and
+    # cuts off an install stuck on the network, at the cost of a slow source build.
     install_timeout_seconds: float = 180.0  # venv create + pip install is slower
+
+    @field_validator("max_runtime_seconds")
+    @classmethod
+    def _long_reach_must_lengthen(cls, v: float) -> float:
+        # 300.0 twins probos.execution.long_runs.INLINE_WALL_CLOCK_SECONDS. This
+        # module may not import probos, so test_ad1246_long_run_units asserts they agree.
+        if 0.0 < v <= 300.0:
+            raise ValueError(
+                "execution.max_runtime_seconds must be 0 (off) or above 300 "
+                "(the inline wall clock)"
+            )
+        return v
 
 
 class QAConfig(BaseModel):

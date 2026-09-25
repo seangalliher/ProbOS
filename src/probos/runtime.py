@@ -736,6 +736,12 @@ class ProbOSRuntime:
             db_path=self._data_dir / "artifacts.db",
         )
 
+        # AD-1246: long run_python executions -- ship-wide slots, a dedicated
+        # executor and a kill switch per run. Constructing it starts nothing.
+        # Closed first thing at shutdown, with the entry gates, before any await.
+        from probos.execution.long_runs import LongRunService
+        self.execution_long_runs = LongRunService()
+
         # AD-815a (Wave 200): TaskSession substrate — anchors cowork-style
         # work to a thread (AD-791) + work item (AD-477) with inputs/
         # outputs/scratch folders under the per-thread workspace.
