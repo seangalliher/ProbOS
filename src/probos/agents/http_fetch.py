@@ -32,6 +32,29 @@ logger = logging.getLogger(__name__)
 #: answer, not a redirect.
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
+#: #1421: the only methods the governed fetch sends; both are safe (RFC 9110 9.2.1).
+SAFE_FETCH_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
+
+#: #1421: routes a refused request to the Captain (DP 13(c)); keep it gap-regex clean.
+UNSAFE_METHOD_REFUSAL: str = (
+    "The ship's HTTP fetch sends only GET and HEAD requests, so this request was "
+    "not sent. A request that changes something on the server, such as POST, "
+    "PUT, PATCH or DELETE, is the Captain's decision: ask the Captain, and name "
+    "the URL and the method."
+)
+
+
+def safe_fetch_method(method: object) -> str | None:
+    """#1421: the canonical safe method ``method`` names, or ``None`` to refuse it.
+
+    Case-insensitive, as httpx is; the caller sends the returned string, never
+    ``method``. ``str.upper`` is unbound so a ``str`` subclass cannot answer for itself.
+    """
+    if not isinstance(method, str):
+        return None
+    canonical = str.upper(method)
+    return canonical if canonical in SAFE_FETCH_METHODS else None
+
 
 @dataclass
 class DomainRateState:
@@ -48,8 +71,10 @@ class DomainRateState:
 class HttpFetchAgent(BaseAgent):
     """Concrete agent that fetches URLs via HTTP.
 
-    Read-only: GET requests are non-destructive and don't require
-    consensus.  URL safety is enforced by red team verification.
+    Sends only GET and HEAD, both safe methods (RFC 9110 9.2.1), which is why
+    the intent needs no consensus; any other method is refused before any
+    request (#1421). URL safety is the SSRF guard's, applied on every hop
+    (BF-819, BF-821).
 
     Capabilities: http_fetch.
     """
@@ -316,9 +341,9 @@ class HttpFetchAgent(BaseAgent):
         *,
         max_body_bytes: int | None = None,
     ) -> dict[str, Any]:
-        """Public governed fetch: SSRF validation, per-domain rate limiting,
-        429 retry and profile recording, exactly as the ``http_fetch`` intent
-        gets them.
+        """Public governed fetch: GET and HEAD only (#1421), SSRF validation,
+        per-domain rate limiting, 429 retry and profile recording, exactly as
+        the ``http_fetch`` intent gets them.
 
         Exists so an in-process consumer (AD-1221's sandbox fetch broker) can
         reach the governed path without reaching into a private method, and
@@ -346,6 +371,17 @@ class HttpFetchAgent(BaseAgent):
         reused: the map is class-level and outlives any one loop, and awaiting
         a dead loop's task raises rather than fetching.
         """
+        # #1421: before DNS, the limiter and coalescing; the canonical form is sent on.
+        safe = safe_fetch_method(method)
+        if safe is None:
+            # The method is caller-supplied: any part of it in the log could leak
+            # a host or forge a log line (review, 2026-09-25), so the line is fixed.
+            logger.info(
+                "#1421: refused an http_fetch whose method is not GET or HEAD; "
+                "no request was made"
+            )
+            return {"success": False, "error": UNSAFE_METHOD_REFUSAL}
+        method = safe
         error = self._validate_url(url)
         if error:
             return {"success": False, "error": f"SSRF protection: {error}"}
