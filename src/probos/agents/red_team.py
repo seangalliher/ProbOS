@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from probos.agents.http_fetch import safe_fetch_method
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -401,9 +402,22 @@ class RedTeamAgent(BaseAgent):
         claimed: IntentResult,
         params: dict[str, Any],
     ) -> VerificationResult:
-        """Verify HTTP fetch by re-fetching the same URL."""
+        """Verify HTTP fetch by re-fetching the same URL (GET and HEAD only, #1421)."""
         url = params.get("url", "")
-        method = params.get("method", "GET")
+        method = safe_fetch_method(params.get("method", "GET"))
+        if method is None:
+            # #1421: never repeat a state-changing request; the agent refuses them.
+            return VerificationResult(
+                verifier_id=self.id,
+                target_agent_id=target_agent_id,
+                intent_id=intent.id,
+                verified=not claimed.success,
+                discrepancy=(
+                    "Agent claims success for an http_fetch method that is never sent"
+                    if claimed.success else ""
+                ),
+                confidence=self.confidence,
+            )
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
                 response = await client.request(method, url)

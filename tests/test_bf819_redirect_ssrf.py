@@ -303,7 +303,8 @@ class TestTheMethodFollowsTheSpec:
         _wire(monkeypatch, handler)
         agent = HttpFetchAgent(agent_id=f"m{status}", pool="http")
 
-        await agent._fetch_url("https://example.com/start", "POST")
+        # #1421: _fetch_url now refuses unsafe methods; the loop's redirect rules are pinned one layer down.
+        await agent._fetch_url_uncoalesced("https://example.com/start", "POST", HttpFetchAgent.MAX_BODY_BYTES)
 
         assert methods == ["POST", "GET"]
 
@@ -322,7 +323,8 @@ class TestTheMethodFollowsTheSpec:
         _wire(monkeypatch, handler)
         agent = HttpFetchAgent(agent_id=f"m{status}", pool="http")
 
-        await agent._fetch_url("https://example.com/start", "POST")
+        # #1421: _fetch_url now refuses unsafe methods; the loop's redirect rules are pinned one layer down.
+        await agent._fetch_url_uncoalesced("https://example.com/start", "POST", HttpFetchAgent.MAX_BODY_BYTES)
 
         assert methods == ["POST", "POST"]
 
@@ -382,7 +384,8 @@ class TestTheMethodFollowsTheSpec:
         _wire(monkeypatch, handler)
         agent = HttpFetchAgent(agent_id=f"p{method}", pool="http")
 
-        await agent._fetch_url("https://example.com/start", method)
+        # #1421: _fetch_url now refuses unsafe methods; the loop's redirect rules are pinned one layer down.
+        await agent._fetch_url_uncoalesced("https://example.com/start", method, HttpFetchAgent.MAX_BODY_BYTES)
 
         assert methods == [method, method]
 
