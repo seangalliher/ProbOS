@@ -118,6 +118,7 @@ from probos.mesh.gossip import GossipProtocol
 from probos.mesh.intent import IntentBus
 from probos.mesh.routing import HebbianRouter
 from probos.mesh.signal import SignalManager
+from probos.substrate.durable_events import DurableEventRouter, DurableEventStats
 from probos.substrate.event_log import EventLog
 from probos.substrate.heartbeat import HeartbeatAgent
 from probos.substrate.pool import ResourcePool
@@ -630,6 +631,8 @@ class ProbOSRuntime:
 
         # --- Event log ---
         self.event_log = EventLog(db_path=self._data_dir / "events.db")
+        # AD-1195: persists DURABLE EventType members to the event log.
+        self.durable_events = DurableEventRouter(self.event_log)
 
         # --- Credential Store (AD-395) ---
         self.credential_store = CredentialStore(
@@ -1798,6 +1801,14 @@ class ProbOSRuntime:
         # even if NATS publish or local dispatch fails.
         self._check_night_order_escalation(type_str, event.get("data", {}))
 
+        # AD-1195: DURABLE members are persisted by the router: non-blocking and
+        # transport-independent. It sits before the NATS branch because that branch
+        # returns early at the no-loop fallback. A host without a router (BF-708
+        # borrowed-method hosts) behaves exactly as before, like `nats_bus` below.
+        router = getattr(self, "durable_events", None)
+        if router is not None:
+            router.offer(event)
+
         # Step 3: Route — NATS or fallback (mutually exclusive, no-dual-delivery)
         if getattr(self, 'nats_bus', None) and self.nats_bus.connected:
             # AD-637d: JetStream publish
@@ -1863,6 +1874,10 @@ class ProbOSRuntime:
             self._emit_event(event)
         else:
             self._emit_event(event, data or {})
+
+    async def drain_durable_events(self) -> DurableEventStats:
+        """AD-1195: stop admitting durable rows; flush within the wait budget."""
+        return await self.durable_events.drain()
 
     def _emit_from_any_thread(
         self,
@@ -2596,6 +2611,8 @@ class ProbOSRuntime:
             background_register=self._background_tasks.add,
         )
         self.identity_registry = infra.identity_registry
+        # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
+        self.durable_events.bind_loop(self._dispatch_loop)
 
         # Phase 1b: NATS event bus (AD-637)
         from probos.startup.nats import init_nats

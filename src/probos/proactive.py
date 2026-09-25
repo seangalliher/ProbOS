@@ -33,6 +33,7 @@ from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.duty_schedule import DutySchedule
+from probos.event_persistence import ROUTED_CATEGORY
 from probos.events import EventType
 from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
@@ -1976,7 +1977,8 @@ class ProactiveCognitiveLoop:
         # 3. Recent system events
         if hasattr(rt, 'event_log') and rt.event_log:
             try:
-                events = await rt.event_log.query(limit=10)
+                # AD-1195: durable routed rows are forensic records, not recent system activity.
+                events = await rt.event_log.query(limit=10, exclude_category=ROUTED_CATEGORY)
                 if events:
                     context["recent_events"] = [
                         {

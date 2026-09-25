@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Any, Callable
 
+from probos.events import EventType
 from probos.tools.protocol import (
     Tool,
     ToolAccessGrant,
@@ -366,7 +367,7 @@ class ToolRegistry:
                         tool_id,
                     )
             if self._emit_event:
-                self._emit_event("TOOL_PERMISSION_DENIED", {
+                self._emit_event(EventType.TOOL_PERMISSION_DENIED, {
                     "agent_id": agent_id, "tool_id": tool_id,
                     "required": required.value, "held": held.value,
                 })

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any
 
+from probos.event_persistence import assert_complete as _assert_persistence_complete
+
 
 # ---------------------------------------------------------------------------
 # Event type registry
@@ -527,6 +529,10 @@ class EventType(str, Enum):
     ESCALATION_START = "escalation_start"
     ESCALATION_RESOLVED = "escalation_resolved"
     ESCALATION_EXHAUSTED = "escalation_exhausted"
+
+
+# AD-1195: the import fails while a member is neither declared nor grandfathered.
+_assert_persistence_complete(EventType.__members__)
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ from probos.cognitive.swe_harness.tool_call import (
     llm_function_name,
 )
 from probos.config import BrowserToolConfig
+from probos.events import EventType
 from probos.integrations.mcp_bridge import MCPBridge
 from probos.integrations.mcp_bridge.access import resolve_mcp_access
 from probos.integrations.mcp_bridge.reaper import McpWorkbenchReaper
@@ -2875,7 +2876,8 @@ async def test_correction_alias_keeps_current_source_authority_and_loto(
         assert len(invocations) == 1
         assert environment.events == []
         if change in {"restriction", "registration-disabled"}:
-            assert [event for event, payload in source_events] == ["TOOL_PERMISSION_DENIED"]
+            # AD-1195: was the NAME string, which no value-keyed consumer could see; now the enum member.
+            assert [event for event, payload in source_events] == [EventType.TOOL_PERMISSION_DENIED]
             assert source_events[0][1]["tool_id"] == target
         elif change == "loto":
             assert len(source_events) == 1

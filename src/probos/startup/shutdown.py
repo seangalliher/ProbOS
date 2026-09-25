@@ -7,6 +7,7 @@ services, persistence of knowledge artifacts, and session record writing.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -1225,6 +1226,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 "AD-524: ArchiveStore shutdown close failed; shutdown continues "
                 "and the OS will reclaim the connection if needed: %s",
                 e,
+            )
+
+    # AD-1195: flush queued durable rows while the EventLog is still open, so
+    # they land before the stopped row. A runtime double whose attribute is
+    # not a coroutine function (a MagicMock) is skipped silently (BF-254).
+    drain = getattr(runtime, "drain_durable_events", None)
+    if drain is not None and inspect.iscoroutinefunction(drain):
+        try:
+            await drain()
+        except Exception:
+            logger.warning(
+                "AD-1195: durable event drain failed; queued durable rows may be lost and shutdown continues",
+                exc_info=True,
             )
 
     try:

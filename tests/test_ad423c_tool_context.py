@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
+from probos.events import EventType
 from probos.tools.context import ToolContext
 from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry, ToolPermissionDenied
@@ -210,7 +211,8 @@ class TestToolContextInvocation:
 
         await ctx.invoke("nonexistent", {})
 
-        assert not [e for e in events if e[0] == "TOOL_PERMISSION_DENIED"]
+        # AD-1195: was the NAME string, which the producer no longer emits, so it would pass vacuously.
+        assert not [e for e in events if e[0] == EventType.TOOL_PERMISSION_DENIED]
 
     @pytest.mark.asyncio
     async def test_a_real_tool_is_still_denied_and_still_audited(self):

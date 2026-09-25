@@ -2009,7 +2009,8 @@ async def test_session_correction_registry_is_event_neutral_and_not_shared(
         EventType.AGENTIC_LOOP_ITERATION,
         EventType.AGENTIC_TOOL_CALL_STARTED,
         EventType.AGENTIC_TOOL_CALL_COMPLETED,
-        "TOOL_PERMISSION_DENIED",
+        # AD-1195: was the NAME string, which no value-keyed consumer could see; now the enum member.
+        EventType.TOOL_PERMISSION_DENIED,
     }.issubset({event_type for event_type, _data in stores.events.events})
 
 
