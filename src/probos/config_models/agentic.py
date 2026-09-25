@@ -219,7 +219,21 @@ class DmAgenticConfig(BaseModel):  # AD-1065
     + per-call latency); 1:1 only (group / ward-room / proactive / vision turns
     keep the single-pass path)."""
     enabled: bool = False
-    max_iterations: int = Field(default=5, ge=1, le=25)
+    max_iterations: int = Field(
+        default=5,
+        ge=1,
+        le=25,
+        description=(
+            "AD-1065: the step limit of one conversational agentic pass, in model "
+            "iterations. It is the runaway backstop for every step that is not "
+            "tier 1. AD-1208: with token_budget set, an iteration whose every "
+            "tool call is tier 1 -- observation only: a browser action that "
+            "classify_action puts at tier 1, or a tool in the agentic loop's "
+            "read-only allowlist (PARALLEL_SAFE_TOOL_IDS) -- is not counted "
+            "here; the token budget and max_total_iterations bound those steps "
+            "instead."
+        ),
+    )
     tier: str = "standard"
     continue_or_ask_enabled: bool = Field(
         default=False,
@@ -259,7 +273,10 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "tool calls, so at this ceiling of 5 that is 5 x 25 x 16 = 2000 tool "
             "invocations for a single chat turn. A pass only happens while a "
             "live standing rule permits it, so reaching that ceiling requires "
-            "the Captain to have issued one."
+            "the Captain to have issued one. That worst case is for an unarmed "
+            "turn: with token_budget set (AD-1208), a pass may run up to "
+            "max_total_iterations iterations, bounded by the turn's one shared "
+            "token_budget."
         ),
     )
     promote_to_task_after_seconds: float = Field(
@@ -415,6 +432,43 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "0 disables compaction even then. The default leaves generous room "
             "below a 200k context window while still engaging well before the "
             "runaway growth measured above."
+        ),
+    )
+    token_budget: int | None = Field(
+        default=None,
+        ge=1024,
+        description=(
+            "AD-1208: the most one conversational agentic turn may spend, in "
+            "tokens, across all of its passes; AD-1164 continuations share what "
+            "is left. None, the default, supplies no budget and the turn runs "
+            "exactly as before. When set, an iteration whose every tool call is "
+            "tier 1 (observation only; see max_iterations) is not counted toward "
+            "max_iterations, so read-only research is bounded by cost instead of "
+            "a step count; every other step still counts. This is the budget of "
+            "an agent at neutral trust: the agent's trust record scales it "
+            "between half and twice this value, read once when the turn starts, "
+            "and never changes which tools the agent may use. A turn this budget "
+            "stops says so ahead of any partial work, and files no approval "
+            "request. It counts the loop's own model calls, checked after each "
+            "one, so a turn can overshoot by one call per pass. Compaction's "
+            "calls, and model calls a tool makes itself (read_page, web_search, "
+            "the browser's verify), are not counted. On a provider that reports "
+            "no usage the count is a client-side estimate (BF-680)."
+        ),
+    )
+    max_total_iterations: int = Field(
+        default=100,
+        ge=1,
+        le=250,
+        description=(
+            "AD-1208: with token_budget set, the most iterations one pass may "
+            "run, counted or not, and never fewer than max_iterations. It bounds "
+            "a tier-1 run whose steps stay cheap enough that the token budget "
+            "never binds, including steps whose tools spend outside it. Trust "
+            "does not move it. Ignored when token_budget is None. WORST CASE "
+            "with continue_or_ask: 5 passes x 250 iterations = 1250 tier-1 "
+            "iterations for one chat turn, their metered spend inside the one "
+            "shared token_budget."
         ),
     )
 

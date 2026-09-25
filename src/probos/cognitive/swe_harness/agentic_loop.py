@@ -528,6 +528,72 @@ def partition_tool_uses(
     return parallel, sequential
 
 
+def is_tier_1_tool_call(name: object, arguments: object) -> bool:
+    """AD-1208: is this call tier 1 -- observation only -- on the AD-706c-2 ladder?
+
+    One answer built from the two classifiers that already exist, re-deriving
+    neither: a ``browser`` call is tier 1 exactly when the real
+    ``classify_action`` says so, and any other tool exactly when its id is in
+    :data:`PARALLEL_SAFE_TOOL_IDS`. Everything else is not. Only tier 1 is
+    decided here; no gate consults this function.
+    """
+    if type(name) is not str:
+        return False
+    if name in PARALLEL_SAFE_TOOL_IDS:
+        return True
+    if name != "browser" or type(arguments) is not dict:
+        return False
+    action = arguments.get("action")
+    if type(action) is not str:
+        return False
+    from probos.tools.browser.actions import classify_action
+
+    try:
+        return classify_action(None, action, arguments) == 1  # type: ignore[arg-type]
+    except Exception:
+        # Only the click family reads the session, and it is never tier 1; the
+        # loop holds no session and must not create one (AD-1154 DD-10).
+        logger.debug(
+            "AD-1208: browser action %.32r needs a session to classify; the step "
+            "counts toward max_iterations", action, exc_info=True,
+        )
+        return False
+
+
+def _counts_toward_max_iterations(tool_uses: list[ToolUseBlock]) -> bool:
+    """AD-1208: an armed step counts unless every call in it is tier 1."""
+    if not tool_uses:
+        return True
+    for use in tool_uses:
+        call = getattr(use, "tool_call", None)
+        if not is_tier_1_tool_call(getattr(call, "name", None), getattr(call, "arguments", None)):
+            return True
+    return False
+
+
+def _resolve_max_total_iterations(
+    value: int | None, *, max_iterations: int, token_budget: int | None,
+) -> int | None:
+    """AD-1208: validate the tier-1 step backstop against its companions.
+
+    None -- every caller but an armed conversational turn -- disables the
+    exemption. A set value must be an int no smaller than an int
+    ``max_iterations >= 1`` and must sit beside an int ``token_budget >= 1``,
+    because the budget is what bounds the steps it stops counting.
+    """
+    if value is None:
+        return None
+    if (
+        type(value) is not int
+        or type(max_iterations) is not int
+        or not 1 <= max_iterations <= value
+    ):
+        raise ValueError("agentic_loop_max_total_iterations_invalid")
+    if type(token_budget) is not int or token_budget < 1:
+        raise ValueError("agentic_loop_max_total_iterations_requires_token_budget")
+    return value
+
+
 def resolve_parallel_tool_settings(cfg: Any) -> dict[str, Any]:
     """AD-1147: read the parallel-tool settings off an ``AgenticLoopConfig``.
 
@@ -863,11 +929,20 @@ class AgenticLoop:
         on_model_request_presented: Callable[
             [LLMRequest, tuple[PresentedToolResult, ...]], Awaitable[None]
         ] | None = None,
+        max_total_iterations: int | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
         self._max_iter = max_iterations
         self._budget = token_budget
+        # AD-1208: armed (not None), an iteration whose every call is tier 1
+        # (is_tier_1_tool_call) is not counted toward ``max_iterations`` and this
+        # bounds all iterations instead. Only meaningful beside a token budget, which
+        # is what bounds that work, so the pair is checked here (Fail Fast). None --
+        # every caller but the armed DM turn -- is the AD-545 count verbatim.
+        self._max_total_iter = _resolve_max_total_iterations(
+            max_total_iterations, max_iterations=max_iterations, token_budget=token_budget,
+        )
         self._emit = event_emit_fn
         self._tier = tier
         self._compactor = compactor
@@ -1013,7 +1088,13 @@ class AgenticLoop:
             tuple[dict[str, Any], tuple[PresentedToolResult, ...]]
         ] = []
 
-        for iteration in range(1, self._max_iter + 1):
+        # AD-1208: the steps counted toward ``max_iterations`` while armed; unarmed
+        # the ceiling IS max_iterations and nothing below reads this.
+        counted_iterations = 0
+        iteration_ceiling = (
+            self._max_iter if self._max_total_iter is None else self._max_total_iter
+        )
+        for iteration in range(1, iteration_ceiling + 1):
             result.iterations = iteration
             self._fire_event(
                 "AGENTIC_LOOP_ITERATION",
@@ -1212,7 +1293,18 @@ class AgenticLoop:
                     )
                     return result
 
-            if self._budget is not None and result.total_tokens >= self._budget:
+            # AD-1208: armed (max_total_iterations set), a response with no tool call and
+            # non-whitespace answer text (the joined text blocks, else response.content: what
+            # the completion path returns) is complete even past the budget. An empty or
+            # whitespace-only one, like one with calls pending, keeps the "token_budget" stop,
+            # so the DM turn gives its no-work statement and makes no further model call. No
+            # other caller sets the keyword (native_builder, crew children, AD-1190 trees), so
+            # theirs is unchanged.
+            if self._budget is not None and result.total_tokens >= self._budget and not (
+                self._max_total_iter is not None
+                and not any(isinstance(b, ToolUseBlock) for b in response.content_blocks)
+                and _completion_is_non_empty(response)
+            ):
                 result.stopped_reason = "token_budget"
                 for block in response.content_blocks:
                     if isinstance(block, TextBlock):
@@ -1380,6 +1472,23 @@ class AgenticLoop:
                         agent_id[:12], iteration, len(tools), len(refreshed),
                     )
                     tools = refreshed
+
+            # AD-1208: count this step unless every call in it was tier 1, by the
+            # shared predicate (classify_action for the browser, the AD-1147 read-only
+            # allowlist for the rest). Anything else makes the step count. Armed only.
+            if self._max_total_iter is not None and _counts_toward_max_iterations(tool_uses):
+                counted_iterations += 1
+                if counted_iterations >= self._max_iter:
+                    break
+
+        if self._max_total_iter is not None:
+            logger.info(
+                "AD-1208: agent %s stopped at a step limit after %d iteration(s): %d "
+                "counted toward max_iterations=%d, max_total_iterations=%d, %d of "
+                "token_budget=%d spent",
+                agent_id[:12], result.iterations, counted_iterations, self._max_iter,
+                self._max_total_iter, result.total_tokens, self._budget,
+            )
 
         # BF-697: report the work. This exit is reached ONLY after the loop has
         # executed tool calls (a turn without them exits ``complete`` above), so

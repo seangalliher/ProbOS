@@ -226,6 +226,9 @@ async def _off_observation(
     # AD-1246's inert long-run reach (0 = off) and its slot limit were added after this capture too.
     assert config["execution"].pop("max_runtime_seconds") == 0.0
     assert config["execution"].pop("max_concurrent_long_runs") == 2
+    # AD-1208's inert conversational cost budget (None = off) and its step backstop were added after this capture too.
+    assert config["dm_agentic"].pop("token_budget") is None
+    assert config["dm_agentic"].pop("max_total_iterations") == 100
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

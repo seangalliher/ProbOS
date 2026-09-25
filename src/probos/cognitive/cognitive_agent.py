@@ -4651,6 +4651,19 @@ class CognitiveAgent(BaseAgent):
                     _compactor = SessionCompactor()
                     _compaction_threshold = threshold
 
+            # AD-1208: unarmed (token_budget None, the default) imports nothing, reads
+            # no trust and passes nothing new; armed, trust scales the budget only.
+            _turn_cost = None
+            if type(getattr(cfg, "token_budget", None)) is int:
+                from probos.cognitive.turn_cost import TurnCostBudget
+
+                _turn_cost = TurnCostBudget.from_config(
+                    cfg,
+                    max_iterations=max_iterations,
+                    agent_id=self.id,
+                    trust_source=getattr(runtime, "trust_network", None),
+                )
+
             async def _run_pass(task_text: str) -> Any:
                 _last_trace_ref["ref"] = None
                 owned_turn_id: str | None = None
@@ -4688,7 +4701,10 @@ class CognitiveAgent(BaseAgent):
                     **_diagnostic_kwargs,
                     **_fault_kwargs,
                     **_long_run_kwargs,
+                    **(_turn_cost.loop_kwargs() if _turn_cost is not None else {}),
                 )
+                if _turn_cost is not None:
+                    _turn_cost.record(outcome)
                 _last_stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
                 )
@@ -4753,6 +4769,10 @@ class CognitiveAgent(BaseAgent):
                         config=cfg,
                         fault_attempted=_fault_attempted,
                     )
+                # AD-1208: a cost stop says so ahead of any partial work, inline and
+                # promoted alike; nothing is filed (continue_or_ask gate 2).
+                if _turn_cost is not None and _last_stop["reason"] == "token_budget":
+                    turn_text = _turn_cost.render_stop(turn_text)
                 return turn_text
 
             # AD-1165: same arming-site convention — a non-positive budget skips
