@@ -76,6 +76,7 @@ from probos.execution.isolation import (
     SubprocessSandbox,
     remove_workdir_off_loop,
 )
+from probos.execution.long_runs import SHUTDOWN_REFUSAL, track_inline_run
 from probos.execution.workspace import WorkspaceManager
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -242,6 +243,14 @@ class CodeRunnerAgent(BaseAgent):
         sandbox_submitted = False
         audit_attempted = False
         res: Any = None
+        # #1417: the script run carries a kill switch the runtime tracks, so the
+        # bus's TTL cancelling this handler, or shutdown, kills the child instead
+        # of orphaning it. The venv and pip runs below carry none, by decision: a
+        # TTL (60 s by default) shorter than an install (up to 180 s) would kill
+        # pip mid-write and leave the reused `.venv` half-installed.
+        ticket = track_inline_run(getattr(self._runtime, "execution_long_runs", None), execution_id)
+        if ticket is None:
+            return {"success": False, "error": SHUTDOWN_REFUSAL}
         try:
             workdir.mkdir(parents=True, exist_ok=True)
             if packages:
@@ -271,6 +280,7 @@ class CodeRunnerAgent(BaseAgent):
                 allow_network=False,
                 python_executable=py_exe,
                 launch_outcome=launch,
+                kill_switch=ticket.kill_switch,
             ))
             audit_attempted = True
             audit_outcome = self._auditor.record(
@@ -280,7 +290,11 @@ class CodeRunnerAgent(BaseAgent):
                 timeout_seconds=timeout,
                 duration_ms=(time.monotonic() - t0) * 1000.0,
                 result=res,
-                error_type=("sandbox_error" if res.error else None),
+                # #1417: the tool's mapping, so the two paths label a shutdown kill the same way.
+                error_type=(
+                    "stopped_at_shutdown" if res.error == "stopped: shutdown"
+                    else "sandbox_error" if res.error else None
+                ),
                 launch_state=("launched" if launch.launched else "not_launched"),
             )
             data: dict[str, Any] = {
@@ -308,6 +322,9 @@ class CodeRunnerAgent(BaseAgent):
                 "error": res.error or None,
             }
         finally:
+            # #1417: first, and `finish` never raises, so nothing below can leave
+            # this run tracked; shutdown's settle wait ends here.
+            ticket.finish()
             # AD-1280: audit first, in its OWN try/finally, so a sink that
             # raises cannot skip the reap below. A leaked workdir is how an
             # audit write turns into a second defect.

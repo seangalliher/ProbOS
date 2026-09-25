@@ -341,9 +341,11 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # from beginning after shutdown starts.
     runtime.close_confab_probe_scheduling()
 
-    # AD-1246: fire every long run_python kill switch before anything awaits. A
+    # AD-1246 / #1417: fire the kill switch of every run_python child the service
+    # tracks, long and inline, before anything awaits, and refuse any new one. A
     # sandbox child survives its parent's os._exit, and nothing later tries to
-    # stop it. The switch reaches the direct child only, not its descendants.
+    # stop it. The kill reaches what SubprocessSandbox._kill reaches; on Windows
+    # a process the child started itself survives it.
     long_runs = getattr(runtime, "execution_long_runs", None)
     if isinstance(long_runs, LongRunService):
         long_runs.close("shutdown")
@@ -376,7 +378,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if crew_stop is not None and asyncio.iscoroutinefunction(crew_stop):
         await crew_stop()
 
-    # AD-1246: bounded, and returns without suspending when no long run is in flight.
+    # AD-1246: bounded, and returns without suspending when no tracked run is in flight.
     if isinstance(long_runs, LongRunService):
         await long_runs.wait_settled(LONG_RUN_SETTLE_SECONDS)
 
