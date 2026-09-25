@@ -4,7 +4,8 @@ The unit that promotes stays the TURN (AD-1165): a 1:1 DM agentic turn that
 outlives ``dm_agentic.promote_to_task_after_seconds`` becomes a background work
 item without being cancelled or re-run. What stopped a long job was the tool's
 inline wall clock, which every caller shares whether or not it can wait. This
-module carries more reach to the one caller that can, and nowhere else:
+module carries more reach to the one caller that can, and nowhere else; since
+#1417 it also gives every other run an owner that can stop it:
 
 * ``LongRunGrant`` -- created by the DM turn only when it can be promoted and
   the vessel is armed (``execution.max_runtime_seconds`` above the inline
@@ -14,10 +15,15 @@ module carries more reach to the one caller that can, and nowhere else:
 * ``LongRunService`` -- the ship-wide slots, a dedicated executor (so a long run
   never occupies a thread of the shared default executor) and one
   ``KillSwitch`` per admitted run.
+* ``track_inline_run`` / ``LongRunService.track`` (#1417) -- every other
+  ``run_python`` execution. No slot and no executor of its own, but a
+  ``KillSwitch`` that ``close`` reaches, so a run in flight at shutdown is
+  stopped before the process exits instead of outliving it. Once closed, the
+  service refuses, so nothing is launched that nothing would stop.
 
-Nothing here cancels or re-runs anything. A long run ends on its own wall
-clock, when the turn awaiting it is cancelled (nobody is left to report it), or
-when ``LongRunService.close`` fires its kill switch.
+Nothing here cancels or re-runs anything. A run ends on its own wall clock,
+when the caller awaiting it is cancelled (nobody is left to report it), or when
+``LongRunService.close`` fires its kill switch.
 """
 
 from __future__ import annotations
@@ -46,6 +52,13 @@ INLINE_WALL_CLOCK_SECONDS: float = 300.0
 # Invocation-context key that carries a ``LongRunGrant`` from the DM turn to the tool.
 EXECUTION_LONG_RUN_GRANT_KEY: str = "_execution_long_run_grant"
 
+# #1417: what a run_python call is told when shutdown began before it launched.
+# A child started now would outlive the process (os._exit), so nothing is
+# launched and nothing is recorded: no execution happened.
+SHUTDOWN_REFUSAL: str = (
+    "Not started: ProbOS is shutting down, so no new run_python execution is launched."
+)
+
 # Held back from the turn's BF-733 deadline so the model can still read the
 # result and answer before the watchdog stops the turn. It equals one LLM call
 # at the 300 s tier timeout the shipped config/system.yaml sets
@@ -56,7 +69,8 @@ _LONG_RUN_ANSWER_MARGIN_SECONDS: float = 300.0
 # How long the stop path waits for killed runs to reach their audit record. It
 # equals the tool's launch-resolve bound (``execution.audit.LAUNCH_RESOLVE_SECONDS``)
 # and is a fifth of the 10 s budget ``__main__`` gives ``runtime.stop()``; a stop
-# that finds a long run still unwinding can take up to that much longer.
+# that finds a tracked run (long or inline) still unwinding can take up to that
+# much longer.
 LONG_RUN_SETTLE_SECONDS: float = 2.0
 
 # The upper bound of ``execution.max_concurrent_long_runs``, so every admitted
@@ -126,18 +140,21 @@ class LongRunGrant:
 
 
 class LongRunTicket:
-    """One admitted long run: its slot, its kill switch and the executor it runs on.
+    """One tracked run: its kill switch, the executor it runs on, and when it settled.
 
-    Constructed only by ``LongRunService.admit``.
+    An admitted long run (``LongRunService.admit``) holds a slot and brings the
+    service's executor. An inline run (``LongRunService.track``, #1417) holds no
+    slot, and ``executor`` is None, so its caller keeps the default executor.
+    Constructed only by ``LongRunService`` and ``track_inline_run``.
     """
 
     def __init__(
         self,
         *,
         execution_id: str,
-        executor: concurrent.futures.Executor,
+        executor: concurrent.futures.Executor | None,
         settled: asyncio.Future[None],
-        on_finish: Callable[[str], None],
+        on_finish: Callable[[LongRunTicket], None],
     ) -> None:
         self.execution_id = execution_id
         self.kill_switch = KillSwitch()
@@ -146,16 +163,17 @@ class LongRunTicket:
         self._on_finish = on_finish
 
     def finish(self) -> None:
-        """Release the slot, then mark the run settled. Idempotent; never raises.
+        """Release the run, then mark it settled. Idempotent; never raises.
 
-        Called on the loop thread, first in the tool's outermost ``finally``.
+        Called on the loop thread, first in its caller's outermost ``finally``.
         """
         try:
-            self._on_finish(self.execution_id)
+            self._on_finish(self)
         except Exception:  # noqa: BLE001 -- the caller's teardown must still run
             logger.warning(
-                "AD-1246: releasing long-run slot %s raised; the slot may stay "
-                "held, and the run is marked settled so no settle wait blocks on it",
+                "AD-1246: releasing run %s from the long-run service raised; it may "
+                "stay tracked, and the run is marked settled so no settle wait "
+                "blocks on it",
                 self.execution_id, exc_info=True,
             )
         if not self.settled.done():
@@ -163,28 +181,35 @@ class LongRunTicket:
 
 
 class LongRunService:
-    """Ship-wide owner of long ``run_python`` executions (AD-1246).
+    """Ship-wide owner of every ``run_python`` execution that shutdown must stop.
 
-    Holds the admitted runs, the dedicated executor they run on and a kill
-    switch per run. Constructing it creates no thread, executor or loop object;
-    the executor is created by the first admission.
+    AD-1246: the admitted long runs, the dedicated executor they run on, and a
+    kill switch per run. #1417: every other (inline) run is tracked too, with a
+    kill switch and nothing else. Constructing it creates no thread, executor or
+    loop object; the executor is created by the first admission.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._active: dict[str, LongRunTicket] = {}
+        # #1417: inline runs, by identity -- no slot, so no capacity or
+        # duplicate-id refusal.
+        self._inline: set[LongRunTicket] = set()
         self._closed = False
         self._executor: concurrent.futures.ThreadPoolExecutor | None = None
 
     @property
     def active_count(self) -> int:
-        """Admitted runs whose ticket has not finished."""
+        """Admitted long runs whose ticket has not finished.
+
+        Inline runs (#1417) hold no slot and are not counted.
+        """
         with self._lock:
             return len(self._active)
 
     @property
     def closed(self) -> bool:
-        """True once ``close`` ran; no further run is admitted."""
+        """True once ``close`` ran; no further run is admitted or tracked."""
         with self._lock:
             return self._closed
 
@@ -212,8 +237,27 @@ class LongRunService:
             self._active[execution_id] = ticket
         return ticket
 
+    def track(self, execution_id: str) -> LongRunTicket | None:
+        """#1417: a ticket for one inline run, or ``None`` once ``close`` ran.
+
+        No slot and no executor (``executor`` is None: the caller keeps the default
+        one). Never refused for capacity or a duplicate id -- an inline run is
+        bounded by its own wall clock, not by slots. Synchronous and never blocks.
+        Must be called on the running loop, which owns the ticket's ``settled``.
+        """
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            if self._closed:
+                return None
+            ticket = LongRunTicket(
+                execution_id=execution_id, executor=None,
+                settled=loop.create_future(), on_finish=self._untrack,
+            )
+            self._inline.add(ticket)
+        return ticket
+
     def close(self, reason: str) -> None:
-        """Refuse further admission and fire every active run's kill switch.
+        """Refuse further runs and fire the kill switch of every tracked one.
 
         Synchronous and idempotent. In-flight workers keep their threads: each
         still has to reap its killed child and return that result.
@@ -223,29 +267,31 @@ class LongRunService:
                 return
             self._closed = True
             tickets = list(self._active.values())
+            inline = list(self._inline)
             executor = self._executor
-        for ticket in tickets:
+        for ticket in (*tickets, *inline):
             ticket.kill_switch.fire(reason)
         if executor is not None:
             executor.shutdown(wait=False)
-        # Silent when nothing was running, so an unarmed or idle vessel's
-        # shutdown log is unchanged.
-        if tickets:
+        # Silent when nothing was running, so an idle vessel's shutdown log is
+        # unchanged.
+        if tickets or inline:
             logger.info(
                 "AD-1246: long-run service closed (%s); fired the kill switch of %d "
-                "active run(s) and refuses any further long run",
-                reason, len(tickets),
+                "long and %d inline run(s) and refuses any further run",
+                reason, len(tickets), len(inline),
             )
 
     async def wait_settled(self, timeout: float) -> bool:
-        """Wait up to ``timeout`` for every active run to settle; True when all did.
+        """Wait up to ``timeout`` for every tracked run to settle; True when all did.
 
-        Returns without suspending when nothing is active.
+        One bound for all of them, long and inline. Returns without suspending
+        when nothing is tracked.
         """
         with self._lock:
             pending = {
                 ticket.settled: ticket.execution_id
-                for ticket in self._active.values()
+                for ticket in (*self._active.values(), *self._inline)
                 if not ticket.settled.done()
             }
         if not pending:
@@ -253,7 +299,7 @@ class LongRunService:
         _, unsettled = await asyncio.wait(set(pending), timeout=timeout)
         if unsettled:
             logger.warning(
-                "AD-1246: %d long run(s) did not settle within %.1fs (%s); "
+                "AD-1246: %d run_python run(s) did not settle within %.1fs (%s); "
                 "continuing without waiting for them",
                 len(unsettled), timeout,
                 ", ".join(sorted(pending[future] for future in unsettled)),
@@ -261,9 +307,34 @@ class LongRunService:
             return False
         return True
 
-    def _release(self, execution_id: str) -> None:
+    def _release(self, ticket: LongRunTicket) -> None:
         with self._lock:
-            self._active.pop(execution_id, None)
+            self._active.pop(ticket.execution_id, None)
+
+    def _untrack(self, ticket: LongRunTicket) -> None:
+        with self._lock:
+            self._inline.discard(ticket)
+
+
+def track_inline_run(service: Any, execution_id: str) -> LongRunTicket | None:
+    """#1417: the ticket a run without a long-run slot carries; ``None`` means refuse.
+
+    Tracked when ``service`` is the runtime's ``LongRunService``, so shutdown's
+    ``close`` reaches the child, and ``None`` once that service is closed.
+    Anything else (a runtime without one) gets an untracked ticket:
+    cancellation still kills the child, and no shutdown exists to reach it.
+    Must be called on the running loop.
+    """
+    if isinstance(service, LongRunService):
+        return service.track(execution_id)
+    return LongRunTicket(
+        execution_id=execution_id, executor=None,
+        settled=asyncio.get_running_loop().create_future(), on_finish=_untracked,
+    )
+
+
+def _untracked(_ticket: LongRunTicket) -> None:
+    """Nothing to release: the ticket was never tracked."""
 
 
 @dataclass(frozen=True)

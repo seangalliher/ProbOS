@@ -494,6 +494,10 @@ class KillSwitch:
     The worker attaches the Popen it spawned and detaches it once the child is
     reaped; once detached, ``fire`` signals nothing. ``fire`` never reaps -- the
     worker still does, so the result keeps describing a real exit.
+
+    What it reaches is whatever ``SubprocessSandbox._kill`` reaches; see there
+    rather than a summary here. On Windows a process the child started itself
+    was measured surviving it (#1417).
     """
 
     def __init__(self) -> None:
@@ -562,10 +566,12 @@ class ExecutionRequest:
     # child releases the directory -- but the loop side takes it when the
     # worker finished first, and the caller takes it when no worker ever ran.
     cleanup_on_cancel: "CancelCleanup | None" = None
-    # AD-1246: set only for a long run, so the run's owner can stop the child
-    # from outside the worker (the awaiting turn's cancellation, or the
-    # long-run service's close). None, as every other caller leaves it, acts
-    # as before; `repr()` and `dataclasses.asdict()` gain the key regardless.
+    # AD-1246 / #1417: lets the run's owner stop the child from outside the
+    # worker -- the awaiting caller's cancellation, or the long-run service's
+    # close at shutdown. The tool and the mesh agent give every run_python
+    # execution one; None (their venv/pip runs, SkillForge, direct callers)
+    # acts as before. `repr()` gains the key regardless, and a request that
+    # carries one cannot be deep-copied or `asdict()`-ed (it holds a lock).
     kill_switch: KillSwitch | None = None
 
 
@@ -1067,7 +1073,7 @@ class SubprocessSandbox:
     def _platform_kwargs(self, request: ExecutionRequest) -> dict:
         kwargs: dict = {}
         if sys.platform == "win32":
-            # New process group so we can signal the whole tree on timeout.
+            # New process group; _kill still ends only this child on Windows, not its tree (#1417).
             kwargs["creationflags"] = getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
             )

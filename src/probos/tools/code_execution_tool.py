@@ -52,8 +52,10 @@ from probos.execution.isolation import (
 from probos.execution import long_runs as _long_runs
 from probos.execution.long_runs import (
     EXECUTION_LONG_RUN_GRANT_KEY,
+    SHUTDOWN_REFUSAL,
     coerce_positive_seconds,
     plan_long_run,
+    track_inline_run,
 )
 from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 
@@ -736,6 +738,16 @@ class CodeExecutionTool:
         ticket = plan.ticket if plan is not None else None
         if plan is not None:
             timeout = plan.timeout_seconds
+        # #1417: every other run is tracked too, so cancelling its caller or
+        # shutting the runtime down kills the child instead of orphaning it.
+        # Still before `try:` and only when no long ticket is held, so a refusal
+        # here leaks nothing. None means shutdown has begun: refuse before launch.
+        if ticket is None:
+            ticket = track_inline_run(
+                getattr(self._runtime, "execution_long_runs", None), execution_id,
+            )
+            if ticket is None:
+                return ToolResult(error=SHUTDOWN_REFUSAL)
         try:
             # BF-788: resolve HERE, where the directory is owned. `scratch_dir`
             # defaults to a relative path, and this same `workdir` is later
@@ -773,7 +785,7 @@ class CodeExecutionTool:
             dep_summary = await self._maybe_install_missing(
                 code, requested_by=requesting_agent
             )
-            if ticket is None:
+            if ticket.executor is None:
                 sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
             else:
                 # AD-1246: a long run gets the service's pool, not a default thread.
@@ -807,8 +819,9 @@ class CodeExecutionTool:
                     # both the only place that CAN remove it and the only place
                     # that is free to.
                     cleanup_on_cancel=cleanup_on_cancel,
-                    # AD-1246: only a long run carries a switch.
-                    kill_switch=(ticket.kill_switch if ticket is not None else None),
+                    # AD-1246 / #1417: every run carries one, so whoever owns it can
+                    # stop the child: this call's cancellation, or shutdown's close.
+                    kill_switch=ticket.kill_switch,
                 )
             )
             produced = await self._capture_artifacts(
@@ -897,11 +910,12 @@ class CodeExecutionTool:
             return ToolResult(error=f"execution failed: {exc}")
         finally:
             # AD-1246: first, and `finish` never raises, so no teardown step below
-            # can leak the long-run slot. Unless this call was cancelled (or
-            # otherwise interrupted) mid-run, no worker is still running for it.
-            # Under cancellation the switch has fired and the worker is still
-            # reaping, so the slot frees a few milliseconds early; a run admitted
-            # in that window can wait that long for a pool thread.
+            # can leave the run tracked (or, for a long run, its slot held). Unless
+            # this call was cancelled (or otherwise interrupted) mid-run, no worker
+            # is still running for it. Under cancellation the switch has fired and
+            # the worker is still reaping, so the slot frees a few milliseconds
+            # early; a run admitted in that window can wait that long for a pool
+            # thread.
             if ticket is not None:
                 ticket.finish()
             # AD-1247: audit first, in its OWN try/finally, so a sink that

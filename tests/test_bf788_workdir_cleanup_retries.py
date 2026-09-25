@@ -1145,7 +1145,7 @@ async def test_a_malformed_scratch_dir_degrades_instead_of_escaping(
 
 
 async def test_a_cancelled_run_does_not_delete_files_from_a_live_child(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The behaviour this whole change most has to get right.
 
@@ -1159,6 +1159,13 @@ async def test_a_cancelled_run_does_not_delete_files_from_a_live_child(
 
     from probos.config import ExecutionConfig
     from probos.tools.code_execution_tool import CodeExecutionTool
+
+    # #1417: every tool run now carries a kill switch, so a cancel kills the direct
+    # child. A child the kill does not reach (on Windows, a process the script
+    # started itself) is the case this hand-off still protects, so here the kill
+    # is recorded rather than delivered.
+    killed: list[object] = []
+    monkeypatch.setattr(SubprocessSandbox, "_kill", staticmethod(killed.append))
 
     out = tmp_path / "out.txt"
     mark = tmp_path / "mark.txt"
@@ -1197,6 +1204,8 @@ async def test_a_cancelled_run_does_not_delete_files_from_a_live_child(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    # Premise: the tool passed a kill switch, and the cancel fired it at the child.
+    assert len(killed) == 1, f"the cancel's kill reached {len(killed)} processes, not the child"
 
     for _ in range(200):
         if out.exists():

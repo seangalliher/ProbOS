@@ -47,7 +47,8 @@ cancellable, it only needs the worker to honour the decision.
 proves residual 1 is closed, and
 ``test_bf839_the_probe_reproduces_the_corruption_when_the_abort_is_ignored``
 is what proves that test discriminates -- it runs the identical scenario with
-the arbitration reverted in memory and asserts the measured HEAD symptoms come
+the arbitration reverted in memory (and, since #1417, the kill switch's kill
+recorded rather than delivered) and asserts the measured HEAD symptoms come
 back. A probe that cannot reproduce the known race proves nothing.
 """
 
@@ -346,6 +347,7 @@ def _start_boundary_scenario(
     monkeypatch: pytest.MonkeyPatch,
     *,
     honour_abort: bool,
+    deliver_kill: bool = True,
 ) -> dict[str, Any]:
     """Wire the measured start-boundary race and return what was observed.
 
@@ -360,6 +362,10 @@ def _start_boundary_scenario(
 
     ``honour_abort=False`` reverts exactly one thing in memory -- the worker's
     obedience -- so the corruption can be shown to come back.
+
+    ``deliver_kill=False`` (#1417) records the kill switch's kill instead of
+    delivering it, so a child spawned after the cancel lives on. ``results``
+    holds what the worker's run returned (``_run_sync_inner``).
     """
     outcome = tmp_path / "child_outcome.txt"
     entered, release, worker_done = (
@@ -368,6 +374,8 @@ def _start_boundary_scenario(
     seen: list[ExecutionRequest] = []
     begin_calls: list[bool] = []
     popen_argv: list[list[str]] = []
+    results: list[ExecutionResult] = []
+    killed: list[Any] = []
 
     real_begin = CancelCleanup.begin_worker
 
@@ -377,6 +385,14 @@ def _start_boundary_scenario(
         # The in-memory revert of AD-1298's decisive property: a worker that
         # ignores the abort and proceeds is precisely HEAD.
         return True if not honour_abort else answer
+
+    original_run_sync_inner = SubprocessSandbox._run_sync_inner
+
+    def recording_inner(self: SubprocessSandbox, request: ExecutionRequest) -> ExecutionResult:
+        # Here, not in `gated`: with honour_abort=False, `_run_sync` then raises (ABORTED).
+        result = original_run_sync_inner(self, request)
+        results.append(result)
+        return result
 
     original_run_sync = SubprocessSandbox._run_sync
 
@@ -402,7 +418,10 @@ def _start_boundary_scenario(
 
     monkeypatch.setattr(CancelCleanup, "begin_worker", recording_begin)
     monkeypatch.setattr(SubprocessSandbox, "_run_sync", gated)
+    monkeypatch.setattr(SubprocessSandbox, "_run_sync_inner", recording_inner)
     monkeypatch.setattr(iso.subprocess, "Popen", _Counting)
+    if not deliver_kill:
+        monkeypatch.setattr(SubprocessSandbox, "_kill", staticmethod(killed.append))
 
     code = (
         "import pathlib\n"
@@ -421,6 +440,8 @@ def _start_boundary_scenario(
         "seen": seen,
         "begin_calls": begin_calls,
         "popen_argv": popen_argv,
+        "results": results,
+        "killed": killed,
         "code": code,
     }
 
@@ -529,9 +550,21 @@ async def test_bf839_the_probe_reproduces_the_corruption_when_the_abort_is_ignor
 
     Without this, a green test above is indistinguishable from a probe that
     never reproduced the race at all.
+
+    #1417: every tool run now carries a kill switch, which kills a child spawned
+    after the cancel as soon as the worker attaches it. The switch is an
+    independent barrier; this proves the first one is still necessary, so its
+    kill is recorded rather than delivered (``deliver_kill=False``).
     """
-    scenario = _start_boundary_scenario(tmp_path, monkeypatch, honour_abort=False)
+    scenario = _start_boundary_scenario(
+        tmp_path, monkeypatch, honour_abort=False, deliver_kill=False,
+    )
     observed = await _drive_start_boundary(tmp_path, scenario)
+
+    # Premise (#1417): the tool passed a kill switch, and its kill at attach
+    # reached the spawned child -- recorded here, not delivered.
+    assert len(scenario["killed"]) == 1, scenario["killed"]
+    assert [list(scenario["killed"][0].args)] == observed["popen_argv"]
 
     assert observed["workdir_before_worker_entry"] is False, (
         "the caller did not remove the directory, so this run does not "
@@ -543,6 +576,33 @@ async def test_bf839_the_probe_reproduces_the_corruption_when_the_abort_is_ignor
     assert observed["child_outcome"] == "FileNotFoundError", (
         "the child did not die on the file it was staged with; the "
         f"reproduction is not the measured one (got {observed['child_outcome']!r})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_bf839_the_switch_alone_stops_the_child_when_the_abort_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1417: the second barrier on its own.
+
+    The worker ignores the abort, as in the reproduction above, but the kill
+    switch fired at the cancel is left to act: it kills the spawned child at
+    ``attach``, long before a script that sleeps 3 s could write its outcome.
+    """
+    scenario = _start_boundary_scenario(tmp_path, monkeypatch, honour_abort=False)
+    scenario["code"] = (
+        "import pathlib, time\n"
+        "time.sleep(3)\n"
+        f"pathlib.Path(r'{scenario['outcome']}').write_text('slept')\n"
+    )
+    observed = await _drive_start_boundary(tmp_path, scenario)
+
+    assert observed["popen_argv"], "no child was spawned, so the switch had nothing to stop"
+    assert observed["launched"] is True
+    assert [result.error for result in scenario["results"]] == ["stopped: cancelled"]
+    # `_drive_start_boundary` waited up to 10 s for an outcome, well past the 3 s sleep.
+    assert not scenario["outcome"].exists(), (
+        f"the child outlived the switch and wrote {scenario['outcome'].read_text()!r}"
     )
 
 
