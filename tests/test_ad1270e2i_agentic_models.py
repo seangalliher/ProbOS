@@ -186,7 +186,8 @@ EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "CrewDevelopmentConfig": 0,
     "DiscoveryConfig": 0,
     "DiscoveryLearningConfig": 4,
-    "DmAgenticConfig": 15,
+    # AD-1208 adds three: token_budget ge; max_total_iterations ge+le.
+    "DmAgenticConfig": 18,
     "DmDeliberateConfig": 0,
     "DmSanityGateConfig": 0,
     "DmTargetedLookupConfig": 0,
@@ -276,7 +277,10 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                            'hold_degraded_turn_ttl_seconds': 900.0,
                            'hold_degraded_turn_max_threads': 16,
                            'compaction_enabled': False,
-                           'compaction_threshold_tokens': 60000},
+                           'compaction_threshold_tokens': 60000,
+                           # AD-1208 post-extraction addition: the inert None budget and its step backstop.
+                           'token_budget': None,
+                           'max_total_iterations': 100},
     'DmDeliberateConfig': {'enabled': False, 'tier': 'deep', 'max_tokens': 800},
     'DmSanityGateConfig': {   'enabled': True,
                               'length_floor': 5,
@@ -642,7 +646,8 @@ def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     # AD-1206 R2: the old 59 excluded RepairConfig's now-required signed64 ceiling.
     # AD-1190: +7 for the four AgenticToolsConfig delegation-tree ceilings (60 -> 67).
     # AD-1189: +2 for the AgenticToolsConfig deferred-schema threshold (67 -> 69).
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 69
+    # AD-1208: +3 for DmAgenticConfig token_budget (ge) and max_total_iterations (ge, le) (69 -> 72).
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 72
     assert sorted(n for n, c in EXPECTED_BOUND_COUNTS.items() if c) == [
         "AgenticDispatchConfig",
         "AgenticToolsConfig",

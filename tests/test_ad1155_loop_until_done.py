@@ -524,13 +524,14 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "fault_turn",
         "fault_attempted",
     ]
-    assert list(params)[21:] == [
+    assert list(params)[21:26] == [
         "owned_steps_execution_port",
         "owned_steps_execution_lease",
         "owned_steps_execution_permit",
         "owned_steps_turn_id",
         "owned_steps_initial_view",
     ]
+    assert list(params)[26:] == ["max_total_iterations"]  # AD-1208: a spend/step control, not continuation policy
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params
     )

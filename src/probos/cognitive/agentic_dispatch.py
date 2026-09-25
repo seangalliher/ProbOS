@@ -1901,6 +1901,7 @@ class WorkItemAgenticExecutor:
         owned_steps_execution_permit: owned_steps.OwnedStepExecutionPermit | None = None,
         owned_steps_turn_id: str | None = None,
         owned_steps_initial_view: owned_steps.OwnedStepsViewReference | None = None,
+        max_total_iterations: int | None = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
         if any(value is not None for value in (
@@ -1930,6 +1931,10 @@ class WorkItemAgenticExecutor:
             arguments["owned_steps_turn_id"] = owned_steps_turn_id
         if owned_steps_initial_view is not None:
             arguments["owned_steps_initial_view"] = owned_steps_initial_view
+        # AD-1208: forwarded only when armed, so every other caller's arguments are
+        # unchanged (test_ad1239 pins the exact dict).
+        if max_total_iterations is not None:
+            arguments["max_total_iterations"] = max_total_iterations
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -1978,7 +1983,9 @@ class WorkItemAgenticExecutor:
         # path and the AD-1072 delegation path, so it deliberately reads NO
         # config for these. The crew executor owns the policy and resolves
         # them; every other caller leaves them None and gets today's loop,
-        # except that an AD-1190 delegation grant also passes ``token_budget``.
+        # except that an AD-1190 delegation grant also passes ``token_budget``,
+        # and an armed AD-1208 conversational turn passes it with
+        # ``max_total_iterations``.
         compactor: Any = None,
         compaction_threshold: int | None = None,
         token_budget: int | None = None,
@@ -1995,6 +2002,7 @@ class WorkItemAgenticExecutor:
         browser_use: BrowserUse | None = None,
         fault_turn: ToolFaultTurn | None = None,
         fault_attempted: str = "",
+        max_total_iterations: int | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -2862,6 +2870,10 @@ class WorkItemAgenticExecutor:
             _loop_kwargs["compaction_threshold"] = compaction_threshold
         if token_budget is not None:
             _loop_kwargs["token_budget"] = token_budget
+        # AD-1208: the tier-1 step backstop, pass-through like token_budget.
+        # Absent => never passed, so AgenticLoop counts every step (AD-545).
+        if max_total_iterations is not None:
+            _loop_kwargs["max_total_iterations"] = max_total_iterations
         # BF-731: same additive shape. Absent => the kwarg is never passed to
         # AgenticLoop, which in turn never passes it to complete(), so the task
         # path and every test double keep the exact call they had before.
