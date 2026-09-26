@@ -35,7 +35,54 @@ from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
 logger = logging.getLogger(__name__)
 
 # Statuses from which no further work will occur (workforce._TERMINAL_STATUSES).
-_TERMINAL = frozenset({"done", "failed", "cancelled"})
+# AD-1228: public so the standing-interest service follows the same set.
+TERMINAL_WORK_ITEM_STATUSES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
+_TERMINAL = TERMINAL_WORK_ITEM_STATUSES
+
+
+def owns_work_item(item: Any, agent_id: str) -> bool:
+    """Only the assignee may read an item's state.
+
+    Reporting another agent's task would be a guess dressed as an answer,
+    and would leak one crew member's work into another's context. An empty
+    ``agent_id`` (synthetic runtimes, tests) is not treated as a wildcard.
+    """
+    if not agent_id:
+        return False
+    return str(getattr(item, "assigned_to", "") or "") == agent_id
+
+
+async def resolve_owned_work_item(store: Any, wanted: str, agent_id: str) -> Any:
+    """Find an item by id or id-prefix, scoped to this agent's work.
+
+    Raw exact id first, preserving short and whitespace-bearing identities.
+    Only then trim for the existing exact/prefix fallback of at least eight
+    characters, as acknowledgements may quote shortened IDs.
+    """
+    get = getattr(store, "get_work_item", None)
+    if callable(get):
+        exact = await get(wanted)
+        if exact is not None and owns_work_item(exact, agent_id):
+            return exact
+
+    trimmed = wanted.strip()
+    if len(trimmed) < 8:
+        return None
+    if trimmed != wanted and callable(get):
+        exact = await get(trimmed)
+        if exact is not None and owns_work_item(exact, agent_id):
+            return exact
+    wanted = trimmed
+
+    listing = getattr(store, "list_work_items", None)
+    if not callable(listing):
+        return None
+    for item in await listing() or []:
+        if str(getattr(item, "id", "")).startswith(wanted) and owns_work_item(
+            item, agent_id
+        ):
+            return item
+    return None
 
 
 class WorkItemStatusTool:
@@ -166,48 +213,13 @@ class WorkItemStatusTool:
 
     # ── Internals ─────────────────────────────────────────────────
     async def _resolve(self, store: Any, wanted: str, agent_id: str) -> Any:
-        """Find an item by id or id-prefix, scoped to this agent's work.
-
-        Raw exact id first, preserving short and whitespace-bearing identities.
-        Only then trim for the existing exact/prefix fallback of at least eight
-        characters, as acknowledgements may quote shortened IDs.
-        """
-        get = getattr(store, "get_work_item", None)
-        if callable(get):
-            exact = await get(wanted)
-            if exact is not None and self._owned_by(exact, agent_id):
-                return exact
-
-        trimmed = wanted.strip()
-        if len(trimmed) < 8:
-            return None
-        if trimmed != wanted and callable(get):
-            exact = await get(trimmed)
-            if exact is not None and self._owned_by(exact, agent_id):
-                return exact
-        wanted = trimmed
-
-        listing = getattr(store, "list_work_items", None)
-        if not callable(listing):
-            return None
-        for item in await listing() or []:
-            if str(getattr(item, "id", "")).startswith(wanted) and self._owned_by(
-                item, agent_id
-            ):
-                return item
-        return None
+        """Find an item by id or id-prefix, scoped to this agent's work (``resolve_owned_work_item``)."""
+        return await resolve_owned_work_item(store, wanted, agent_id)
 
     @staticmethod
     def _owned_by(item: Any, agent_id: str) -> bool:
-        """Only the assignee may read an item's state.
-
-        Reporting another agent's task would be a guess dressed as an answer,
-        and would leak one crew member's work into another's context. An empty
-        ``agent_id`` (synthetic runtimes, tests) is not treated as a wildcard.
-        """
-        if not agent_id:
-            return False
-        return str(getattr(item, "assigned_to", "") or "") == agent_id
+        """Only the assignee may read an item's state (``owns_work_item``)."""
+        return owns_work_item(item, agent_id)
 
     @staticmethod
     def _describe(item: Any) -> dict[str, Any]:

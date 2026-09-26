@@ -114,4 +114,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "data. Promotion condition: AD-1266 demonstrates a rebuild."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.standing-interests",
+        title="Agent standing interests (AD-1228)",
+        owner_module="probos.cognitive.standing_interest_store",
+        owner_symbol="StandingInterestStore",
+        canonical_path="standing_interests.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.cognitive.standing_interest_store.StandingInterestStore",
+        retention=StoreRetention.BOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Live rows only: at most max_per_agent per agent, each with a NOT NULL expires_at "
+            "at most the TTL ceiling. Revoke, expiry and a delivered one-shot delete the row; "
+            "expired rows are deleted at start and by every register that writes, and no read "
+            "returns one. Agent-authored, so unlike AD-1213/1214 nothing is kept soft-revoked "
+            "(BF-735)."
+        ),
+        notes=(
+            "Constructed only when proactive_cognitive.enabled, standing_interests_enabled, a "
+            "Ward Room and a tool registry exist. Pending notices and edge/debounce state are in "
+            "memory; resume() re-queues work-item notices after a restart."
+        ),
+    ),
 )

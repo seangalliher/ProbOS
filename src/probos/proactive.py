@@ -45,6 +45,7 @@ from probos.utils import format_duration
 
 if TYPE_CHECKING:
     from probos.cognitive.novelty_gate import NoveltyGate
+    from probos.cognitive.standing_interests import StandingInterestService
     from probos.config import DutyScheduleConfig, ProactiveCognitiveConfig, WardRoomConfig
     from probos.knowledge.store import KnowledgeStore
     from probos.runtime import ProbOSRuntime
@@ -502,6 +503,10 @@ class ProactiveCognitiveLoop:
     # BF-039: Cold-start episode dampening — 3x cooldown for this window
     COLD_START_WINDOW_SECONDS = 600  # 10 minutes
 
+    # AD-1228: class default -- seven suites build this loop via ``__new__`` or
+    # ``MagicMock(spec=...)`` (H-12), so the attribute must exist without __init__.
+    _standing_interests: "StandingInterestService | None" = None
+
     def __init__(
         self,
         *,
@@ -535,6 +540,7 @@ class ProactiveCognitiveLoop:
         # cycle when a [GROUP_CHAT] attempt is suppressed (operant feedback so the
         # behavior does not extinguish on a silent failure).
         self._gc_coaching: dict[str, str] = {}
+        self._standing_interests = None  # AD-1228: set_standing_interests()
         self._llm_failure_count: int = 0  # BF-069: consecutive proactive failures
         self._llm_status: str = "operational"  # AD-576: "operational" | "degraded" | "offline"
         self._llm_offline_since: float = 0.0   # AD-576: monotonic timestamp of first failure
@@ -557,6 +563,10 @@ class ProactiveCognitiveLoop:
     def set_novelty_gate(self, gate: "NoveltyGate") -> None:
         """AD-493: Set novelty gate (public setter for LoD)."""
         self._novelty_gate = gate
+
+    def set_standing_interests(self, service: "StandingInterestService | None") -> None:
+        """AD-1228: attach the notice source (None detaches). Public setter (LoD)."""
+        self._standing_interests = service
 
     def set_qualification_config(self, config: Any) -> None:
         """AD-595e: Set qualification enforcement config."""
@@ -1158,44 +1168,52 @@ class ProactiveCognitiveLoop:
         except Exception:
             logger.debug("Recent post count tracking failed", exc_info=True)
 
-        intent = IntentMessage(
-            intent="proactive_think",
-            params={
-                "context_parts": context_parts,
-                "trust_score": format_trust(trust_score),
-                "agency_level": agency_from_rank(rank).value,
-                "rank": rank.value,  # AD-437: for action space awareness
-                "agent_type": agent.agent_type,
-                "duty": {
-                    "duty_id": duty.duty_id,
-                    "description": duty.description,
-                } if duty else None,
-            },
-            target_agent_id=agent.id,
-        )
-
-        # AD-576b: tight in-cycle retry on transient LLM errors before
-        # incrementing the failure counter. Two attempts at [0.5, 1.5]s
-        # backoff; counter increments only after both fail.
-        _BACKOFFS_SECONDS = (0.5, 1.5)
-        _LLM_ERROR_KEYWORDS = (
-            "llm", "timeout", "connection", "unreachable",
-            "rate limit", "api error", "httpx", "openai",
-        )
-        result = await agent.handle_intent(intent)
-        for _backoff in _BACKOFFS_SECONDS:
-            if result and result.success and result.result:
-                break
-            _is_transient = (
-                not result
-                or (result and hasattr(result, 'error') and result.error and
-                    any(kw in str(result.error).lower() for kw in _LLM_ERROR_KEYWORDS))
+        standing_taken = await self._inject_standing_interest_notices(agent.id, context_parts)
+        standing_settled = not standing_taken
+        try:
+            intent = IntentMessage(
+                intent="proactive_think",
+                params={
+                    "context_parts": context_parts,
+                    "trust_score": format_trust(trust_score),
+                    "agency_level": agency_from_rank(rank).value,
+                    "rank": rank.value,  # AD-437: for action space awareness
+                    "agent_type": agent.agent_type,
+                    "duty": {
+                        "duty_id": duty.duty_id,
+                        "description": duty.description,
+                    } if duty else None,
+                },
+                target_agent_id=agent.id,
             )
-            if not _is_transient:
-                break
-            await asyncio.sleep(_backoff)
-            result = await agent.handle_intent(intent)
 
+            # AD-576b: tight in-cycle retry on transient LLM errors before
+            # incrementing the failure counter. Two attempts at [0.5, 1.5]s
+            # backoff; counter increments only after both fail.
+            _BACKOFFS_SECONDS = (0.5, 1.5)
+            _LLM_ERROR_KEYWORDS = (
+                "llm", "timeout", "connection", "unreachable",
+                "rate limit", "api error", "httpx", "openai",
+            )
+            result = await agent.handle_intent(intent)
+            for _backoff in _BACKOFFS_SECONDS:
+                if result and result.success and result.result:
+                    break
+                _is_transient = (
+                    not result
+                    or (result and hasattr(result, 'error') and result.error and
+                        any(kw in str(result.error).lower() for kw in _LLM_ERROR_KEYWORDS))
+                )
+                if not _is_transient:
+                    break
+                await asyncio.sleep(_backoff)
+                result = await agent.handle_intent(intent)
+
+            standing_settled = await self._settle_standing_interest_notices(agent.id, standing_taken, result)
+        finally:
+            # AD-1228 (A-6): a think that raised, or whose settle did not finish, returns its notices.
+            if not standing_settled:
+                self._standing_interests.restore_notices(agent.id, standing_taken)
         if not result or not result.success or not result.result:
             # BF-228: Only count actual LLM errors toward LLM failure status,
             # not empty responses or chain-level issues.
@@ -4307,6 +4325,47 @@ class ProactiveCognitiveLoop:
         note = self._gc_coaching.pop(agent_id, None)
         if note:
             context["system_note"] = note
+
+    async def _inject_standing_interest_notices(self, agent_id: str, context: dict) -> tuple:
+        """AD-1228: append this agent's fired standing-interest notices to ``system_note``.
+
+        Returns the notices taken, so ``_settle_standing_interest_notices`` can
+        retire them once the think reaches the model or put them back when it
+        does not. ``()`` when there is no service, no agent id, or no notice.
+        """
+        service = self._standing_interests
+        if service is None or not agent_id:
+            return ()
+        taken, text = await service.take_notices(agent_id)
+        if not taken:
+            return ()
+        existing = context.get("system_note")
+        context["system_note"] = f"{existing}\n\n{text}" if existing else text
+        return taken
+
+    async def _settle_standing_interest_notices(self, agent_id: str, taken: tuple, result: Any) -> bool:
+        """AD-1228: settle the notices a think carried; False tells the caller's ``finally`` to restore them.
+
+        A reply consumes them. A bare ``[NO_RESPONSE]`` -- a deliberate silence or an AD-672
+        shed, which look the same -- counts toward the service's silent cap (A-6). Any
+        other outcome returns them.
+        """
+        if not taken:
+            return True
+        delivered = result is not None and result.success is True
+        reply = result.result.strip() if delivered and isinstance(result.result, str) else ""
+        silent = reply == "[NO_RESPONSE]"
+        delivered = bool(reply) and not silent
+        try:
+            await self._standing_interests.settle(agent_id, taken, delivered=delivered, silent=silent)
+        except Exception:
+            logger.warning(
+                "AD-1228: settling %d standing interest notice(s) for %s failed; the think's own "
+                "outcome stands and the notices go back to the queue",
+                len(taken), agent_id, exc_info=True,
+            )
+            return False
+        return True
 
     def _record_escalation_suggestion(self, agent_id: str, title: str) -> None:
         """AD-1079: queue a one-shot Ward-Room->room escalation hint. Never

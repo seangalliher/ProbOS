@@ -155,6 +155,8 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
+    from probos.cognitive.standing_interest_store import StandingInterestStore  # AD-1228
+    from probos.cognitive.standing_interests import StandingInterestService  # AD-1228
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
     from probos.capability_request import CapabilityRequestStore
@@ -457,6 +459,8 @@ class ProbOSRuntime:
     skill_request_store: SkillRequestStore | None
     approval_authority_store: ApprovalAuthorityStore | None  # AD-1213
     decision_pre_clearance_store: DecisionPreClearanceStore | None  # AD-1214
+    standing_interest_store: StandingInterestStore | None  # AD-1228
+    standing_interests: StandingInterestService | None  # AD-1228
     delegated_approvals: DelegatedApprovalService | None  # AD-1213
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
@@ -1030,6 +1034,10 @@ class ProbOSRuntime:
         self.approval_authority_store: ApprovalAuthorityStore | None = None
         self.decision_pre_clearance_store: DecisionPreClearanceStore | None = None  # AD-1214
         self.delegated_approvals: DelegatedApprovalService | None = None
+
+        # --- Standing interests (AD-1228): set by finalize only while enabled ---
+        self.standing_interest_store: StandingInterestStore | None = None
+        self.standing_interests: StandingInterestService | None = None
 
         # --- Capability Gap Driver (AD-855) ---
         self.capability_gap_driver: "CapabilityGapDriver | None" = None

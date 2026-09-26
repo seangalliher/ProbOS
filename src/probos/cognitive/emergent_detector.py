@@ -97,6 +97,39 @@ class TrendReport:
     timestamp: float
 
 
+def linear_regression(xs: list[float], ys: list[float]) -> tuple[float, float, float]:
+    """Simple linear regression. Returns (slope, intercept, r_squared).
+
+    Pure Python — no numpy dependency.
+    """
+    n = len(xs)
+    if n < 2:
+        return 0.0, 0.0, 0.0
+
+    sum_x = sum(xs)
+    sum_y = sum(ys)
+    sum_xy = sum(x * y for x, y in zip(xs, ys))
+    sum_x2 = sum(x * x for x in xs)
+
+    denom = n * sum_x2 - sum_x * sum_x
+    if abs(denom) < 1e-15:
+        return 0.0, sum_y / n if n else 0.0, 0.0
+
+    slope = (n * sum_xy - sum_x * sum_y) / denom
+    intercept = (sum_y - slope * sum_x) / n
+
+    # R-squared
+    y_mean = sum_y / n
+    ss_tot = sum((y - y_mean) ** 2 for y in ys)
+    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
+
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
+    # Clamp to [0, 1] for numerical stability
+    r_squared = max(0.0, min(1.0, r_squared))
+
+    return slope, intercept, r_squared
+
+
 class EmergentDetector:
     """Monitors system dynamics for emergent behavior patterns.
 
@@ -1201,32 +1234,7 @@ class EmergentDetector:
 
         Pure Python — no numpy dependency.
         """
-        n = len(xs)
-        if n < 2:
-            return 0.0, 0.0, 0.0
-
-        sum_x = sum(xs)
-        sum_y = sum(ys)
-        sum_xy = sum(x * y for x, y in zip(xs, ys))
-        sum_x2 = sum(x * x for x in xs)
-
-        denom = n * sum_x2 - sum_x * sum_x
-        if abs(denom) < 1e-15:
-            return 0.0, sum_y / n if n else 0.0, 0.0
-
-        slope = (n * sum_xy - sum_x * sum_y) / denom
-        intercept = (sum_y - slope * sum_x) / n
-
-        # R-squared
-        y_mean = sum_y / n
-        ss_tot = sum((y - y_mean) ** 2 for y in ys)
-        ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys))
-
-        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 1e-15 else 0.0
-        # Clamp to [0, 1] for numerical stability
-        r_squared = max(0.0, min(1.0, r_squared))
-
-        return slope, intercept, r_squared
+        return linear_regression(xs, ys)
 
     def compute_trends(self, min_window: int = 20) -> TrendReport | None:
         """Compute trend regression over the snapshot ring buffer.
