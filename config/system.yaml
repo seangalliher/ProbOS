@@ -520,15 +520,50 @@ dm_agentic:
   # prerequisite for ever raising that cap again.
   compaction_enabled: true
   compaction_threshold_tokens: 60000
+  # AD-1208 (2026-09-25): ARMED on this instance at the Captain's direction
+  # (#1154). A turn is now bounded by what it spends as well as by steps: while
+  # token_budget is set, a step whose every call is tier 1 -- the read-only
+  # PARALLEL_SAFE_TOOL_IDS (web_search, read_page, http_fetch, which since #1421
+  # sends only GET/HEAD, search_capabilities, event_log_query) and the browser
+  # actions classify_action rates tier 1 -- no longer counts toward
+  # max_iterations above. Every other step still counts, and tier-3 approval is
+  # untouched. Unset token_budget to disarm; nothing is persisted.
+  #
+  # 500000 is the budget at NEUTRAL trust; trust scales it 0.5x-2x once per
+  # turn. Measured 2026-09-25 in trust.db: every crew officer is at or near the
+  # 2x ceiling (counselor 0.984, architect 0.986, yeoman 0.812 = 1.89x), so a
+  # DM turn here actually gets ~1,000,000. In the live log (327 agentic runs,
+  # July-September) the median run spent 19,856 tokens, p95 165,462, max
+  # 934,297. Those runs were capped at 25 counted steps and the largest was a
+  # step-limit stop, so they show what such work cost under the old cap, not
+  # what an armed run will spend: a run like it now keeps going until the
+  # budget binds. 324 of those 327 totals are BF-680 estimates (3 mixed): the
+  # proxy reports no usage here, so this is a context-volume brake, not a bill.
+  token_budget: 500000
+  # 50, not the field default 100. This vessel offers the browser on DM turns,
+  # and the uncounted steps include browser `wait` (no duration bound, R-8) and
+  # tools that spend outside the budget (read_page, web_search, browser verify,
+  # R-9). Every iteration re-sends the whole history, and the first call alone
+  # is estimated at 16.5k-23k tokens here, so ~1M is roughly 43-60
+  # first-call-sized requests -- a rough equivalence, not a bound, because
+  # compaction and completion size vary what later calls cost. 50 sits in that
+  # range rather than twice above it, and it is the hard bound on iterations,
+  # including the uncounted steps whose spend the budget cannot see. With
+  # continue_or_ask below, one turn may run 2 passes x 50 iterations, all
+  # inside the one shared token_budget.
+  max_total_iterations: 50
   # AD-1164 (2026-07-29): the step limit becomes a checkpoint that asks instead
   # of a cliff that truncates. On exhausting max_iterations the turn either
   # re-invokes (only while a live AD-1154 standing rule for
   # dm_agentic.continue -- nothing issues one yet, so today this branch is
   # dormant) or files a kind="continue" request into the approval inbox and
   # returns the partial work saying plainly that it stopped mid-task.
-  # Worst case here: 2 passes x 10 iterations x 3 parallel tool calls = 60 tool
-  # invocations for one chat turn -- and the second pass needs a standing rule
-  # the Captain has not issued, so the real ceiling today is 30.
+  # Worst case here: 2 passes of up to 25 counted iterations each -- up to 50
+  # per pass, counted or not, while AD-1208's token_budget is armed (above),
+  # all inside one shared budget. That bounds model rounds, not tool calls:
+  # agentic_loop.max_parallel_tool_calls limits how many run at once, not how
+  # many one response may request (AD-1208 F-5). The second pass also needs a
+  # live standing rule for dm_agentic.continue.
   continue_or_ask_enabled: true
   continue_or_ask_max_passes: 2
   # AD-1165 (2026-07-30): a turn that outgrows a reply becomes a background
