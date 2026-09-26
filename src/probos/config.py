@@ -2972,6 +2972,46 @@ class ProactiveCognitiveConfig(BaseModel):
     # proactive_scan emissions arriving within this window are collapsed into
     # a single Captain DM digest. Set <= 0 to flush each scan immediately.
     yeoman_digest_window_seconds: float = 60.0
+    # AD-1228 (#1201): standing interests -- an agent registers interest in one declared
+    # condition and is told in its next proactive think when it becomes true (no polling).
+    standing_interests_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1228: let crew agents register a standing interest in one declared condition "
+            "(their own work item finishing, or -- for the Counselor and clinical-grant holders -- "
+            "a crew member's falling trust or high self-similarity) and be told when it becomes "
+            "true. Delivery is in the agent's next proactive think, so it needs "
+            "proactive_cognitive.enabled and a Ward Room. Off means no store, service, tool or "
+            "listener exists."
+        ),
+    )
+    standing_interest_max_per_agent: int = Field(
+        default=12, ge=1, le=32,
+        description=(
+            "AD-1228: most live standing interests one agent may hold; a new one past it is "
+            "refused and a renewal is not."
+        ),
+    )
+    standing_interest_default_ttl_hours: int = Field(
+        default=24, ge=1, le=720,
+        description=(
+            "AD-1228: how long a standing interest lasts when none is asked for. Clamped to "
+            "standing_interest_max_ttl_hours."
+        ),
+    )
+    standing_interest_max_ttl_hours: int = Field(
+        default=168, ge=1, le=720,
+        description=(
+            "AD-1228: ceiling on a standing interest's lifetime. A longer request is clamped, not "
+            "rejected; expires_at is NOT NULL in the standing_interests schema."
+        ),
+    )
+    standing_interest_min_fire_interval_seconds: int = Field(
+        default=3600, ge=60, le=86_400,
+        description=(
+            "AD-1228: the shortest time between two notices from one standing interest."
+        ),
+    )
 
 
 class ProactiveScanConfig(BaseModel):

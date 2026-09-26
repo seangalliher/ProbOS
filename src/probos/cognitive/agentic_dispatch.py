@@ -2370,6 +2370,23 @@ class WorkItemAgenticExecutor:
                 )
                 recall_ids = []
 
+        # AD-1228 (#1201): offer the standing_interest tool wherever it is
+        # registered -- finalize registers it only while the feature is on, so
+        # with the feature off nothing changes here. Offered at READ, so an
+        # ensign can list the interests held about them; the tool itself gates
+        # register and revoke on write. The executor never registers it: without
+        # the feature there is no service behind it.
+        interest_ids: list[str] = []
+        if registry is not None and registry.get("standing_interest") is not None:
+            if registry.check_permission(
+                agent_id,
+                "standing_interest",
+                ToolPermission.READ,
+                agent_department=department,
+                agent_rank=rank,
+            ):
+                interest_ids = ["standing_interest"]
+
         # AD-1072: the conversational-loop discovery + delegation tools, both
         # default-OFF (config.agentic_tools). With both flags off this whole
         # section is inert and ``tool_ids`` is byte-identical to the AD-1068 set.
@@ -2628,7 +2645,7 @@ class WorkItemAgenticExecutor:
         tool_ids = list(
             dict.fromkeys([
                 *granted_ids, *mesh_ids, *mcp_ids, *exec_ids, *skill_ids,
-                *status_ids, *owned_steps_ids, *recall_ids,
+                *status_ids, *owned_steps_ids, *recall_ids, *interest_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
                 *publish_ids, *work_pull_ids, *browser_ids, *self_query_ids,
             ])

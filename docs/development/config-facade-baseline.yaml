@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1810
-  field_definitions: 1803
+  canonical_dump_leaves: 1815
+  field_definitions: 1808
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: c1d61d68e8e131c189b0c59546aa318e59a1833920c15e1c0147bd012e028393
+canonical_dump_sha256: 803df446bb4f8f421ed00a2e03683143771ad4e012484dff1607e482c93a7c35
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2747,7 +2747,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bd2ed38dd38933c779ff5ae4f09334fdfa9c0edb9bc57ad7bc459466e1dbe922
+    schema_sha256: 3d20a6c71b82446066c93b3897bcba7a3a02f50aa74ecb9a044f267e0a09af7d
     fields:
     - {default: 'False', name: enabled}
     - {default: '120.0', name: interval_seconds}
@@ -2759,6 +2759,11 @@ models:
     - {default: 'True', name: stagger_enabled}
     - {default: '5.0', name: min_stagger_seconds}
     - {default: '60.0', name: yeoman_digest_window_seconds}
+    - {default: 'False', name: standing_interests_enabled}
+    - {default: '12', name: standing_interest_max_per_agent}
+    - {default: '24', name: standing_interest_default_ttl_hours}
+    - {default: '168', name: standing_interest_max_ttl_hours}
+    - {default: '3600', name: standing_interest_min_fire_interval_seconds}
   ProactiveScanCalendarConfig:
     qualname: ProactiveScanCalendarConfig
     bases:
@@ -3305,7 +3310,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b22b21a96bc1bee37e9aa9e31885d76f1c72801b9792563b8e59398fae2c9469
+    schema_sha256: 87da35fdbcb508582d5d9bc2ddce85e505d5bce6e96573a14719b9e4d0ca96b0
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

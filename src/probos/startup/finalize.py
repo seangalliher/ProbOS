@@ -3621,6 +3621,108 @@ def make_cognitive_queue_rehydrator(
     return _rehydrate_cognitive_queue
 
 
+async def _wire_standing_interests(*, runtime: Any, config: "SystemConfig", proactive_loop: Any) -> bool:
+    """AD-1228: build the standing-interest store, service, listeners, observer and tool.
+
+    Off (the default) returns False before any side effect. On, a runtime with no
+    tool registry or no data directory is logged and nothing is built. Any failure
+    detaches what was attached, stops the store it started and returns False: the
+    feature is then absent for this session and nothing else changes.
+    """
+    settings = config.proactive_cognitive
+    if not settings.standing_interests_enabled:
+        return False
+    for attribute, label in (("tool_registry", "tool registry"), ("data_dir", "data directory")):
+        if getattr(runtime, attribute, None) is None:
+            logger.warning(
+                "AD-1228: standing interests are enabled but the runtime has no %s; nothing is "
+                "wired and no agent is offered the standing_interest tool",
+                label,
+            )
+            return False
+    from pathlib import Path
+
+    from probos.cognitive.standing_interest_store import StandingInterestStore
+    from probos.cognitive.standing_interests import StandingInterestService
+    from probos.events import EventType
+    from probos.tools.standing_interest_tool import (
+        STANDING_INTEREST_TOOL_DEFAULT_PERMISSIONS,
+        StandingInterestTool,
+    )
+
+    db_path = Path(runtime.data_dir) / "standing_interests.db"
+    store = StandingInterestStore(db_path=str(db_path))
+    started = False
+    attached: list[Any] = []
+    history: Any = None
+    loop_attached = False
+    try:
+        await store.start()
+        started = True
+        service = StandingInterestService(
+            store=store,
+            trust_history=runtime.trust_network,
+            agents=runtime.registry,
+            callsigns=getattr(runtime, "callsign_registry", None),
+            work_items=getattr(runtime, "work_item_store", None),
+            grant_store=getattr(runtime, "clearance_grant_store", None),
+            clinical_audit=getattr(runtime, "clinical_access_audit", None),
+            max_per_agent=settings.standing_interest_max_per_agent,
+            default_ttl_hours=settings.standing_interest_default_ttl_hours,
+            max_ttl_hours=settings.standing_interest_max_ttl_hours,
+            min_fire_interval_seconds=settings.standing_interest_min_fire_interval_seconds,
+            session_started_at=float(runtime._start_time_wall),
+        )
+        await service.resume()
+        # remove_event_listener matches by identity, so each bound method is held for detaching.
+        on_trust = service.on_trust_update
+        on_work = service.on_work_item_event
+        runtime.add_event_listener(on_trust, [EventType.TRUST_UPDATE.value])
+        attached.append(on_trust)
+        runtime.add_event_listener(on_work, [EventType.WORK_ITEM_STATUS_CHANGED.value, EventType.WORK_ITEM_UPDATED.value])
+        attached.append(on_work)
+        history = runtime.self_similarity_history
+        history.set_record_observer(service.on_self_similarity)
+        proactive_loop.set_standing_interests(service)
+        loop_attached = True
+        runtime.tool_registry.register(
+            StandingInterestTool(service=service),
+            provider="AD-1228",
+            tags=["standing_interest"],
+            default_permissions=dict(STANDING_INTEREST_TOOL_DEFAULT_PERMISSIONS),
+        )
+        runtime.standing_interest_store = store
+        runtime.standing_interests = service
+    except Exception:
+        logger.warning(
+            "AD-1228: wiring standing interests failed; the feature is absent for this session "
+            "and every other subsystem is unaffected",
+            exc_info=True,
+        )
+        for listener in attached:
+            runtime.remove_event_listener(listener)
+        if history is not None:
+            history.set_record_observer(None)
+        if loop_attached:
+            proactive_loop.set_standing_interests(None)
+        if started:
+            try:
+                await store.stop()
+            except Exception:
+                logger.warning(
+                    "AD-1228: closing the standing interest store after a failed wiring also "
+                    "failed; startup continues without the feature",
+                    exc_info=True,
+                )
+        return False
+    logger.info(
+        "AD-1228: standing interests wired (store=%s, limit=%d per agent); notices arrive in "
+        "the next proactive think",
+        db_path, settings.standing_interest_max_per_agent,
+    )
+    return True
+
+
 async def finalize_startup(
     *,
     runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
@@ -3848,6 +3950,8 @@ async def finalize_startup(
             logger.info("AD-493: NoveltyGate enabled (threshold=%.2f, decay=%.1fh)",
                          config.novelty_gate.similarity_threshold,
                          config.novelty_gate.decay_hours)
+        # AD-1228: attach standing interests before the loop starts (off: no side effect).
+        await _wire_standing_interests(runtime=runtime, config=config, proactive_loop=proactive_loop)
         await proactive_loop.start()
         logger.info("proactive-cognitive-loop started (interval=%ss)", config.proactive_cognitive.interval_seconds)
 

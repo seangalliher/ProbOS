@@ -1094,6 +1094,11 @@ Proactive Cognitive Loop — periodic idle-think (Phase 28b).
 | `stagger_enabled` | `bool` | `True` | — |  |
 | `min_stagger_seconds` | `float` | `5.0` | — |  |
 | `yeoman_digest_window_seconds` | `float` | `60.0` | — |  |
+| `standing_interests_enabled` | `bool` | `False` | — | AD-1228: let crew agents register a standing interest in one declared condition (their own work item finishing, or -- for the Counselor and clinical-grant holders -- a crew member's falling trust or high self-similarity) and be told when it becomes true. Delivery is in the agent's next proactive think, so it needs proactive_cognitive.enabled and a Ward Room. Off means no store, service, tool or listener exists. |
+| `standing_interest_max_per_agent` | `int` | `12` | ≥ 1, ≤ 32 | AD-1228: most live standing interests one agent may hold; a new one past it is refused and a renewal is not. |
+| `standing_interest_default_ttl_hours` | `int` | `24` | ≥ 1, ≤ 720 | AD-1228: how long a standing interest lasts when none is asked for. Clamped to standing_interest_max_ttl_hours. |
+| `standing_interest_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1228: ceiling on a standing interest's lifetime. A longer request is clamped, not rejected; expires_at is NOT NULL in the standing_interests schema. |
+| `standing_interest_min_fire_interval_seconds` | `int` | `3600` | ≥ 60, ≤ 86400 | AD-1228: the shortest time between two notices from one standing interest. |
 
 ## `proactive_scan`
 

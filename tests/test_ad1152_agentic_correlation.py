@@ -238,6 +238,12 @@ async def _off_observation(
     assert config["approval_inbox"].pop("decision_pre_clearance_enabled") is False
     assert config["approval_inbox"].pop("decision_pre_clearance_default_ttl_hours") == 24
     assert config["approval_inbox"].pop("decision_pre_clearance_max_ttl_hours") == 168
+    # AD-1228's five inert proactive_cognitive fields were added after this capture too.
+    assert config["proactive_cognitive"].pop("standing_interests_enabled") is False
+    assert config["proactive_cognitive"].pop("standing_interest_max_per_agent") == 12
+    assert config["proactive_cognitive"].pop("standing_interest_default_ttl_hours") == 24
+    assert config["proactive_cognitive"].pop("standing_interest_max_ttl_hours") == 168
+    assert config["proactive_cognitive"].pop("standing_interest_min_fire_interval_seconds") == 3600
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
