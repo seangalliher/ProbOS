@@ -12,15 +12,15 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: 7dd9542289fbe3b574b09f4e9b5fe934c35f424c plus AD-1152 candidate
+  measured_at_commit: bf596520abef9fc0c99323e7d3dd28d67154159a plus AD-1213 candidate
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 429
-  default_false: 204
+  boolean_fields_reachable: 430
+  default_false: 205
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 119
+  default_false_never_armed: 120
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -136,6 +136,16 @@ flags:
   external_dependency: null
   requires:
   - approval_inbox.enabled
+  conflicts_with: []
+- path: approval_inbox.delegated_approvals_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1213_delegated_approvals.py::test_e2e_chief_decides_through_the_real_tool_and_the_work_item_resumes
+    -- the real permission chain, stores, ontology, fulfiller and gap driver carry a chief's
+    decision from the tool to a resumed work item; the OFF tests prove both Captain routes
+    unchanged.
+  external_dependency: null
+  requires: []
   conflicts_with: []
 - path: memory.hybrid_recall_enabled
   kind: product-feature

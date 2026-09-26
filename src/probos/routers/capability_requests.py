@@ -28,6 +28,7 @@ from probos.cognitive.capability_triage import (
     fulfil_grant,
     fulfil_install,
 )
+from probos.delegated_approvals import audit_captain_decision, captain_decision_guard
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -140,32 +141,38 @@ async def decide_capability_request(
 async def _decide_request(
     request_id: str, req: CapabilityRequestDecideRequest, runtime: Any, store: Any,
 ) -> dict[str, Any]:
-    existing = await store.get(request_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="capability request not found")
-    standing: dict[str, Any] | None = None
-    if existing.status == "pending":
-        decided = await store.decide(
-            request_id, req.approve, reason=req.reason, decided_by="captain"
-        )
-        if decided is None:  # pragma: no cover - guarded above, defensive only
+    # AD-1213: serialized against delegated decisions while they are wired; a no-op context when off.
+    async with captain_decision_guard(runtime, "capability"):
+        existing = await store.get(request_id)
+        if existing is None:
             raise HTTPException(status_code=404, detail="capability request not found")
+        newly_decided = existing.status == "pending"
+        if newly_decided:
+            decided = await store.decide(
+                request_id, req.approve, reason=req.reason, decided_by="captain"
+            )
+            if decided is None:  # pragma: no cover - guarded above, defensive only
+                raise HTTPException(status_code=404, detail="capability request not found")
+        elif existing.status == "approved" and req.approve:
+            # BF-722: retry the fulfilment of an approval already on record. No
+            # decide(), so no second trust outcome; no standing rule either, since
+            # the one decision that could issue it has already been made.
+            decided = existing
+            logger.info(
+                "BF-722: capability request %s is already approved; retrying "
+                "fulfilment without re-deciding it",
+                request_id[:12],
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"capability request already decided (status={existing.status})",
+            )
+    # AD-1213: after the lock, so a write to another store never holds it (Q6, H-1).
+    standing: dict[str, Any] | None = None
+    if newly_decided:
         standing = await _maybe_issue_standing_rule(runtime, decided, req)
-    elif existing.status == "approved" and req.approve:
-        # BF-722: retry the fulfilment of an approval already on record. No
-        # decide(), so no second trust outcome; no standing rule either, since
-        # the one decision that could issue it has already been made.
-        decided = existing
-        logger.info(
-            "BF-722: capability request %s is already approved; retrying "
-            "fulfilment without re-deciding it",
-            request_id[:12],
-        )
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"capability request already decided (status={existing.status})",
-        )
+        audit_captain_decision(runtime, "capability", decided)
 
     # AD-1204: after the standing rule, so a resumed turn that immediately
     # consults ``_standing_rule_permits`` sees the rule the same approval just
@@ -371,6 +378,10 @@ async def _maybe_fulfil_on_approval(
         decided.kind, decided.id[:12],
     )
     return True
+
+# AD-1213: the one description of fulfilment, bound by the composition root
+# into the delegated-approval service (startup/finalize.py).
+fulfil_on_approval = _maybe_fulfil_on_approval
 
 # AD-1175: request kinds a standing rule can be scoped to.
 #

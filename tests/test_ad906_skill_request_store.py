@@ -210,3 +210,29 @@ async def test_real_db_roundtrip_persists_and_reloads(tmp_path: Any) -> None:
         assert loaded.decided_at == updated.decided_at
     finally:
         await s2.stop()
+
+
+async def test_get_durable_reads_the_committed_row(store: SkillRequestStore) -> None:
+    req = await store.file_request(
+        "agent-1", "summarization",
+        skill_label="Summarization", source="self", justification="condense long reports",
+    )
+    await store.decide(req.id, True, reason="ok", decided_by="captain")
+
+    committed = await store.get(req.id, durable=True)
+    cached = await store.get(req.id)
+
+    assert committed is not None and committed is not cached  # a separate read, not the cache
+    assert (committed.id, committed.status, committed.decided_by) == (req.id, "approved", "captain")
+    assert await store.get("missing", durable=True) is None
+
+
+async def test_get_durable_without_a_database_returns_none() -> None:
+    cache_only = SkillRequestStore()
+    await cache_only.start()
+    req = await cache_only.file_request(
+        "agent-1", "summarization", skill_label="Summarization", source="self", justification="j",
+    )
+
+    assert await cache_only.get(req.id) is not None
+    assert await cache_only.get(req.id, durable=True) is None

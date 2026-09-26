@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from probos.api_models import SkillRequestDecideRequest, SkillRequestFileRequest
+from probos.delegated_approvals import audit_captain_decision, captain_decision_guard
 from probos.routers.deps import get_runtime
 from probos.routers.readiness import failed_read, unavailable_dependency
 from probos.skill_request import SkillRequest
@@ -133,19 +134,22 @@ async def decide_skill_request(
     if not runtime.skill_request_store:
         raise HTTPException(status_code=503, detail="skill request store not available")
     store = runtime.skill_request_store
-    existing = await store.get(request_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="skill request not found")
-    if existing.status != "requested":
-        raise HTTPException(
-            status_code=400,
-            detail=f"skill request already decided (status={existing.status})",
+    # AD-1213: serialized against delegated decisions while they are wired; a no-op context when off.
+    async with captain_decision_guard(runtime, "skill"):
+        existing = await store.get(request_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="skill request not found")
+        if existing.status != "requested":
+            raise HTTPException(
+                status_code=400,
+                detail=f"skill request already decided (status={existing.status})",
+            )
+        decided = await store.decide(
+            request_id, req.approve, reason=req.reason, decided_by="captain"
         )
-    decided = await store.decide(
-        request_id, req.approve, reason=req.reason, decided_by="captain"
-    )
-    if decided is None:  # pragma: no cover - guarded above, defensive only
-        raise HTTPException(status_code=404, detail="skill request not found")
+        if decided is None:  # pragma: no cover - guarded above, defensive only
+            raise HTTPException(status_code=404, detail="skill request not found")
+    audit_captain_decision(runtime, "skill", decided)
     return {"request": _serialize(decided)}
 
 

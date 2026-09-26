@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1803
-  field_definitions: 1796
+  canonical_dump_leaves: 1807
+  field_definitions: 1800
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 27124208a27035b4b42c9bd619ae12813bb0c8d00f94ed7d82abd42e354fd6c9
+canonical_dump_sha256: 0152e7b527ad908670a28d8ab511b6d63c2cc62ea02cb74813e891a925f7c9b8
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -548,7 +548,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: aa30085c0d17b3bd45a8ffd050b4790347b42aca7fe343c3151cdcc09ccd6671
+    schema_sha256: 2ee8ade25096b5e428419b6ad8e729aff080e00755a9be0458d525de71aa64be
     fields:
     - {default: 'False', name: enabled}
     - {default: 'False', name: standing_rules_enabled}
@@ -559,6 +559,10 @@ models:
     - {default: 'False', name: work_permits_enabled}
     - {default: '3600.0', name: work_permit_default_ttl_seconds}
     - {default: '2', name: work_permit_max_tier_ceiling}
+    - {default: 'False', name: delegated_approvals_enabled}
+    - {default: '300', name: approval_grace_seconds}
+    - {default: '168', name: first_officer_delegation_max_ttl_hours}
+    - {default: '72', name: captain_unavailable_max_ttl_hours}
   ArchiveConfig:
     qualname: ArchiveConfig
     bases:
@@ -3298,7 +3302,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9fab3e1ebd2364a48dcd5b770b9c04ad9ea6ebb9f82e30e6e4b6aa6e94f959e5
+    schema_sha256: d84b7d0c5ff3043a3e79b60b75b82cc5eb9bd9a32ac183754c97bdf73208329f
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -72,4 +72,26 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "conditional on enabled snapshots; restore behavior is unverified."
         ),
     ),
+    StoreDeclaration(
+        id="approvals.approval-authority",
+        title="Captain approval-authority records (AD-1213)",
+        owner_module="probos.approval_authority",
+        owner_symbol="ApprovalAuthorityStore",
+        canonical_path="approval_authority.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.approval_authority.ApprovalAuthorityStore",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM: revoking or superseding a record flips its "
+            "revoked flag, so every delegation and unavailability mark stays "
+            "on the record. Growth is bounded by how often the Captain acts."
+        ),
+        backup="included",
+        restore="point-in-time",
+        notes=(
+            "Constructed only when approval_inbox.delegated_approvals_enabled. "
+            "expires_at is NOT NULL: neither a First Officer delegation nor a "
+            "Captain-unavailable mark can be issued without an expiry."
+        ),
+    ),
 )

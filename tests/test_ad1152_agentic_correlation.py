@@ -229,6 +229,11 @@ async def _off_observation(
     # AD-1208's inert conversational cost budget (None = off) and its step backstop were added after this capture too.
     assert config["dm_agentic"].pop("token_budget") is None
     assert config["dm_agentic"].pop("max_total_iterations") == 100
+    # AD-1213's four inert approval_inbox fields were added after this capture too.
+    assert config["approval_inbox"].pop("delegated_approvals_enabled") is False
+    assert config["approval_inbox"].pop("approval_grace_seconds") == 300
+    assert config["approval_inbox"].pop("first_officer_delegation_max_ttl_hours") == 168
+    assert config["approval_inbox"].pop("captain_unavailable_max_ttl_hours") == 72
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

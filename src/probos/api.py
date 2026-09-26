@@ -278,6 +278,7 @@ def create_app(runtime: Any) -> FastAPI:
         desktop as desktop_router,  # AD-841: read-only desktop integration status console
         traces as traces_router,  # AD-1203: read the persisted tool traces (#1147)
         faults as faults_router,  # AD-1207: bounded fault observations (#1152)
+        approval_authority as approval_authority_router,  # AD-1213: the Captain's approval-authority controls
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -321,6 +322,7 @@ def create_app(runtime: Any) -> FastAPI:
         desktop_router,  # AD-841: read-only desktop integration status console
         traces_router,  # AD-1203: read the persisted tool traces (#1147)
         faults_router,  # AD-1207: bounded fault observations (#1152)
+        approval_authority_router,  # AD-1213: the Captain's approval-authority controls
     ):
         app.include_router(r.router)
 

@@ -361,8 +361,31 @@ class SkillRequestStore(EventEmitterMixin):
         """Return all requests filed for a given agent, regardless of status."""
         return [r for r in self._cache.values() if r.agent_id == agent_id]
 
-    async def get(self, request_id: str) -> SkillRequest | None:
-        """Return a request by id, or None if unknown."""
+    async def get(
+        self, request_id: str, *, durable: bool = False,
+    ) -> SkillRequest | None:
+        """Return a request by id from the cache, or None if unknown.
+
+        ``durable=True`` reads the committed row on a separate connection instead,
+        as ``CapabilityRequestStore.get`` does: the cache is published only after
+        a commit, so after a failed ``decide`` it cannot say whether the commit
+        landed (AD-1213). None without a database.
+        """
+        if durable:
+            if not self.db_path or self._db is None:
+                return None
+            db = await self._connection_factory.connect(self.db_path)
+            try:
+                cursor = await db.execute(
+                    "SELECT id, agent_id, skill_id, skill_label, source, justification, "
+                    "status, linked_simulation_id, created_at, decided_at, decided_by, "
+                    "decision_reason, pre_metric, post_metric "
+                    "FROM skill_requests WHERE id = ?", (request_id,),
+                )
+                row = await cursor.fetchone()
+                return self._row_to_request(row) if row is not None else None
+            finally:
+                await db.close()
         return self._cache.get(request_id)
 
     @staticmethod

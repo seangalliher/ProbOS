@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from probos.approval_authority import REVIEW_TOOL_ID
 from probos.capability_request import validate_install_payload, validate_python_install_target
 from probos.integrations.mcp_bridge.registration import register_record
 from probos.tools.protocol import ToolPermission, permission_includes
@@ -99,6 +100,13 @@ def _derive_tool_permission(registration: Any) -> ToolPermission:
 def _is_non_destructive(permission: ToolPermission) -> bool:
     """OBSERVE/READ are non-destructive; WRITE/FULL are destructive."""
     return not permission_includes(permission, ToolPermission.WRITE)
+
+
+# AD-1213: the one definition of "destructive", public so delegated-approval
+# eligibility reuses these exact objects (#1170: "do not invent a second
+# definition of destructive").
+derive_tool_permission = _derive_tool_permission
+is_non_destructive = _is_non_destructive
 
 
 def _agent_has_permission(
@@ -231,7 +239,8 @@ async def triage_and_file(
 
       - **grant** — auto-approved when the grant fast path passes, then issued via
         ``ToolPermissionStore.issue_grant`` and marked fulfilled; otherwise left
-        pending for the Captain.
+        pending for the Captain. A grant of the AD-1213 review tool is always
+        left pending: conferring decision authority is the Captain's alone.
       - **install** — always left pending for Captain approval (no fast path).
       - **build** — routed to ``self_mod_pipeline.handle_unhandled_intent`` which
         owns its own approval gate; marked fulfilled on a successful build.
@@ -321,6 +330,15 @@ async def _route_grant(
     config: CapabilityTriageConfig | None,
 ) -> CapabilityRequest:
     """Evaluate the grant fast path; auto-approve + issue + fulfil when it passes."""
+    if tool_id == REVIEW_TOOL_ID:
+        # AD-1213: this grant confers authority to decide other agents' requests,
+        # so it is the Captain's alone and the fast path never applies to it.
+        logger.info(
+            "AD-1213: a grant of %s to %s confers decision authority; request %s is "
+            "left pending for the Captain",
+            tool_id, agent_id, req.id[:12],
+        )
+        return req
     permission = _derive_tool_permission(tool_registration)
     non_destructive = _is_non_destructive(permission)
 

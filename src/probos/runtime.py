@@ -153,6 +153,7 @@ from probos.warm_boot import WarmBootService
 
 if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
+    from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
     from probos.capability_request import CapabilityRequestStore
@@ -174,6 +175,7 @@ if TYPE_CHECKING:
     from probos.cognitive.self_mod import SelfModificationPipeline
     from probos.cognitive.strategy_advisor import StrategyAdvisor
     from probos.conn import ConnManager
+    from probos.delegated_approvals import DelegatedApprovalService  # AD-1213
     from probos.sop.runtime import BillRuntime  # AD-618d
     from probos.federation.bridge import FederationBridge
     from probos.federation.transport import FederationTransport
@@ -452,6 +454,8 @@ class ProbOSRuntime:
     capability_request_store: CapabilityRequestStore | None
     repair_issue_fulfiller: RepairIssueFulfiller | None
     skill_request_store: SkillRequestStore | None
+    approval_authority_store: ApprovalAuthorityStore | None  # AD-1213
+    delegated_approvals: DelegatedApprovalService | None  # AD-1213
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
     task_scheduler: TaskScheduler | None
@@ -1019,6 +1023,10 @@ class ProbOSRuntime:
 
         # --- Skill Requests (AD-906) ---
         self.skill_request_store: SkillRequestStore | None = None
+
+        # --- Delegated approvals (AD-1213): set by startup only while enabled ---
+        self.approval_authority_store: ApprovalAuthorityStore | None = None
+        self.delegated_approvals: DelegatedApprovalService | None = None
 
         # --- Capability Gap Driver (AD-855) ---
         self.capability_gap_driver: "CapabilityGapDriver | None" = None
@@ -3098,6 +3106,7 @@ class ProbOSRuntime:
         # capability_request_store's "I need something I do not have".
         self.fault_report_store = comm.fault_report_store
         self.skill_request_store = comm.skill_request_store
+        self.approval_authority_store = comm.approval_authority_store  # AD-1213
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal

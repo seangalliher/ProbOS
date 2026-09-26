@@ -1769,7 +1769,7 @@ class AgenticLoop:
                     for domain in requested_domains
                 )
             )
-            if use.tool_call.name in ("discover_work_items", "claim_work_item", "self_query"):
+            if use.tool_call.name in ("discover_work_items", "claim_work_item", "self_query", "review_requests"):
                 max_chars = self._tool_result_max_chars
                 head_chars = self._tool_result_head_chars
                 tail_chars = self._tool_result_tail_chars
