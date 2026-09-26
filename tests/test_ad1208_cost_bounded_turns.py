@@ -10,7 +10,7 @@ AD-1208 gives the turn the per-turn token budget the loop has always supported
 every call is tier 1 -- observation only -- is not counted toward
 ``max_iterations``; tokens and a total-iteration backstop
 (``dm_agentic.max_total_iterations``) bound that work instead. Every other step
-counts exactly as before. With ``token_budget`` unset, the shipped default, the
+counts exactly as before. With ``token_budget`` unset, the field default, the
 turn is byte-identical to what it was.
 """
 
@@ -311,12 +311,38 @@ def test_m2_descriptions_state_the_cap_and_the_exemption() -> None:
     assert "Trust does not move it" in fields["max_total_iterations"].description
 
 
-def test_m2_reference_yaml_leaves_the_vessel_unarmed() -> None:
+def test_m2_reference_yaml_arms_the_vessel_at_the_captains_values() -> None:
+    # Captain decision 2026-09-25 (#1154). This test was
+    # test_m2_reference_yaml_leaves_the_vessel_unarmed and pinned token_budget
+    # None while arming was an open Captain question. The answer was to arm at
+    # 500000 with max_total_iterations 50 -- not the field default 100, because
+    # this vessel offers the browser on DM turns (R-8, R-9). It still pins the
+    # reference file, now at the values the Captain chose.
     config = load_config(_REPO_ROOT / "config" / "system.yaml")
+    dm = config.dm_agentic
 
     # Premise: the reference file's own dm_agentic section was read (default False).
-    assert config.dm_agentic.enabled is True
-    assert config.dm_agentic.token_budget is None
+    assert dm.enabled is True
+    assert dm.token_budget == 500_000
+    assert dm.max_total_iterations == 50
+    # The stated backstop is the one the turn arms with: the arming site raises
+    # it to max_iterations only when it is lower, and it is not.
+    assert dm.max_total_iterations >= dm.max_iterations
+
+    # Through the real arming path, from this file: neutral trust arms exactly
+    # the configured value, a senior crew record the 2x ceiling, and trust never
+    # moves the backstop.
+    neutral = turn_cost.TurnCostBudget.from_config(
+        dm, max_iterations=dm.max_iterations,
+        agent_id="counselor-ezri", trust_source=_network(2.0, 2.0),
+    )
+    senior = turn_cost.TurnCostBudget.from_config(
+        dm, max_iterations=dm.max_iterations,
+        agent_id="counselor-ezri", trust_source=_network(125.32, 2.0),
+    )
+    assert neutral is not None and senior is not None
+    assert neutral.loop_kwargs() == {"token_budget": 500_000, "max_total_iterations": 50}
+    assert senior.loop_kwargs() == {"token_budget": 1_000_000, "max_total_iterations": 50}
 
 
 # ── M3: the loop -- tier-1 steps uncounted while armed, by one shared predicate ──

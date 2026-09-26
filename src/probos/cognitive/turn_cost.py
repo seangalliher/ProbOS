@@ -3,7 +3,7 @@
 A 1:1 DM agentic turn can be bounded by what it spends, not only by how many
 steps it takes. This module owns that per-turn policy for the DM path:
 
-* The ceiling is ``dm_agentic.token_budget`` (``None`` = off, the shipped
+* The ceiling is ``dm_agentic.token_budget`` (``None`` = off, the field
   default). Parsing rejects a value below 1024 (the field's ``ge``); only a
   value that bypassed validation (``model_construct``, a non-config double)
   reaches the check here, where it degrades to "off" -- the
