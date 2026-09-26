@@ -183,8 +183,6 @@ class _CallsignLookup(Protocol):
 class _WorkItemReader(Protocol):
     async def get_work_item(self, work_item_id: str) -> Any: ...
 
-    async def list_work_items(self, *args: Any, **kwargs: Any) -> list[Any]: ...
-
 
 @dataclass(frozen=True)
 class StandingInterestNotice:
