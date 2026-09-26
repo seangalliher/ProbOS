@@ -927,7 +927,11 @@ def test_new_config_fields_default_off_and_validate_bounds() -> None:
         "delegated_approvals_enabled", "approval_grace_seconds",
         "first_officer_delegation_max_ttl_hours", "captain_unavailable_max_ttl_hours",
     ]
-    assert list(ApprovalInboxConfig.model_fields)[-4:] == new
+    # AD-1214 appends its three fields after these four, so this pin is index-relative
+    # (it was ``[-4:]``, which pinned "last" rather than "in this order").
+    field_names = list(ApprovalInboxConfig.model_fields)
+    first = field_names.index(new[0])
+    assert field_names[first:first + 4] == new
     for name in new:
         assert "AD-1213" in (ApprovalInboxConfig.model_fields[name].description or ""), name
     for name, value in (

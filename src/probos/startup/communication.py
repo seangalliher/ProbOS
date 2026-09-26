@@ -20,6 +20,7 @@ from probos.types import Priority
 if TYPE_CHECKING:
     from probos.approval_authority import ApprovalAuthorityStore
     from probos.config import SystemConfig
+    from probos.decision_pre_clearance import DecisionPreClearanceStore
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
     from probos.protocols import EventLogQueryAuditSink, EventLogReaderProtocol
@@ -254,6 +255,21 @@ async def _start_approval_authority_store(
     store = ApprovalAuthorityStore(db_path=str(data_dir / "approval_authority.db"))
     await store.start()
     logger.info("AD-1213: approval-authority store started")
+    return store
+
+
+async def _start_decision_pre_clearance_store(
+    config: "SystemConfig", data_dir: Path,
+) -> "DecisionPreClearanceStore | None":
+    """AD-1214: the Captain's decision pre-clearances; None unless both flags are on."""
+    inbox = config.approval_inbox
+    if not (inbox.delegated_approvals_enabled and inbox.decision_pre_clearance_enabled):
+        return None
+    from probos.decision_pre_clearance import DecisionPreClearanceStore
+
+    store = DecisionPreClearanceStore(db_path=str(data_dir / "decision_pre_clearances.db"))
+    await store.start()
+    logger.info("AD-1214: decision pre-clearance store started")
     return store
 
 
@@ -579,6 +595,12 @@ async def init_communication(
     # default False): when off, no store exists and the Captain's controls 503.
     approval_authority_store = await _start_approval_authority_store(config, data_dir)
 
+    # --- Decision Pre-Clearance Store (AD-1214) ---
+    # Gated dark behind approval_inbox.decision_pre_clearance_enabled, which also
+    # needs delegated_approvals_enabled (both default False): when off, no store
+    # exists, every delegated decision notifies the Captain, and the routes 503.
+    decision_pre_clearance_store = await _start_decision_pre_clearance_store(config, data_dir)
+
     # --- Tool Registry (AD-423a) ---
     from probos.tools.registry import ToolRegistry
 
@@ -872,4 +894,5 @@ async def init_communication(
         action_approval_store=action_approval_store,
         hook_bus=hook_bus,
         approval_authority_store=approval_authority_store,
+        decision_pre_clearance_store=decision_pre_clearance_store,
     )

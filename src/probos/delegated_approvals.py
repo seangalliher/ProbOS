@@ -39,6 +39,15 @@ from typing import TYPE_CHECKING, Any, Protocol
 from probos.approval_authority import CAPTAIN_UNAVAILABLE, FIRST_OFFICER_DELEGATION, REVIEW_TOOL_ID
 from probos.capability_request import validate_action_payload
 from probos.cognitive.capability_triage import derive_tool_permission, is_non_destructive
+from probos.decision_pre_clearance import (
+    PRE_CLEARANCE_AUDIT_CATEGORY,
+    PreClearance,
+    PreClearanceBook,
+    PreClearanceKey,
+    confirm_pre_clearance,
+    make_offer,
+    pre_clearance_key,
+)
 
 if TYPE_CHECKING:
     from probos.ontology.models import Post
@@ -318,6 +327,7 @@ class DecisionOutcome:
     audited: bool = False
     notified: bool = False
     decidable_after: float | None = None
+    pre_cleared: bool = False
 
     @property
     def decided(self) -> bool:
@@ -459,7 +469,7 @@ def _refused(queue: Any, request_id: Any, refusal: Refusal, verdict: Verdict | N
 def _audit_detail(
     queue: str, req: Any, *, decider_id: str, role: DeciderRole, decider_post: str,
     approve: bool, request_class: RequestClass, verdict: Verdict | None, reason: Any,
-    status: str | None = None,
+    status: str | None = None, pre_clearance_id: str | None = None,
 ) -> str:
     """One compact, key-sorted JSON object of bounded fields: no payload, no full rationale."""
     kind, target = _kind_and_target(queue, req)
@@ -476,12 +486,14 @@ def _audit_detail(
         "approve": approve,
         "status": str(getattr(req, "status", "")) if status is None else status,
         "request_class": request_class.value,
-        "pre_cleared": False,  # always, until #1171
+        "pre_cleared": pre_clearance_id is not None,  # AD-1214
         "grace_seconds": fo.grace_seconds if fo else None,
         "captain_unavailable": fo.captain_unavailable if fo else None,
         "delegation_id": fo.delegation_id if fo else None,
         "reason": str(reason or "")[:MAX_REASON_CHARS],
     }
+    if pre_clearance_id is not None:  # AD-1214: only when pre-cleared, so every other entry keeps 17 keys
+        detail["pre_clearance_id"] = pre_clearance_id
     if queue == "capability":
         detail["kind"] = kind
     else:
@@ -497,9 +509,10 @@ class DelegatedApprovalService:
     (``captain_decision_guard``). Inside the lock the awaits are on the request
     store the Captain's route uses anyway and on one re-read of the work-item
     chain, bounded by ``origin_recheck_budget``; the verdict and the audit
-    append are synchronous. So another store can hold up a Captain decision by
-    at most that wait budget, and a work-item store that is already wedged when
-    an agent calls stalls only that agent's lock-free first read. Any
+    append are synchronous, and so is the AD-1214 pre-clearance lookup. So
+    another store can hold up a Captain decision by at most that wait budget,
+    and a work-item store that is already wedged when an agent calls stalls
+    only that agent's lock-free first read. Any
     dependency may be ``None``: one the check needs refuses the agent, and every
     refusal leaves the request with the Captain; a missing notifier or
     fulfilment degrades after the commit.
@@ -519,6 +532,7 @@ class DelegatedApprovalService:
         notify: Callable[..., Any] | None,
         fulfil: Callable[..., Awaitable[bool]] | None,
         settings: Callable[[], Any] | None,
+        pre_clearances: PreClearanceBook | None = None,
         clock: Callable[[], float] = time.time,
         origin_recheck_budget: float = ORIGIN_RECHECK_BUDGET_SECONDS,
     ) -> None:
@@ -535,6 +549,7 @@ class DelegatedApprovalService:
         self._notify = notify
         self._fulfil = fulfil
         self._settings = settings
+        self._pre_clearances = pre_clearances
         self._clock = clock
         self._origin_recheck_budget = origin_recheck_budget
         self._locks: dict[str, asyncio.Lock] = {queue: asyncio.Lock() for queue in QUEUES}
@@ -582,6 +597,12 @@ class DelegatedApprovalService:
         wedged when the agent calls never reaches the Captain's lock. The two
         stores share no transaction: a reassignment committed while the decision
         itself is being written is not caught.
+
+        AD-1214: a matched pre-clearance, and both flags, are re-read immediately
+        after the commit, inside the lock, and that re-read is the linearisation
+        point: a revocation, expiry or switch-off that completes before it makes the
+        decision notify (after a switch-off, without an offer), and one that
+        completes after it does not.
         """
         if type(queue) is not str or queue not in QUEUES:
             return _refused(queue, request_id, Refusal.UNKNOWN_QUEUE)
@@ -646,7 +667,12 @@ class DelegatedApprovalService:
                 return _refused(queue, request_id, Refusal.STATE_UNREADABLE)
             if verdict.refusal is not None:
                 return _refused(queue, request_id, verdict.refusal, verdict)
-            written, entry = _append_decision(audit_log, identity, queue, req, verdict, approve, text)
+            # AD-1214: synchronous and cache-only, and only after every refusal -- it widens nothing.
+            key, match, offer_hours = self._pre_clearance(identity, queue, req, verdict, approve)
+            written, entry = _append_decision(
+                audit_log, identity, queue, req, verdict, approve, text,
+                pre_clearance_id=None if match is None else match.id,
+            )
             if not written:  # the entry precedes the commit, so this refusal commits nothing
                 return _refused(queue, request_id, Refusal.AUDIT_UNAVAILABLE, verdict)
             try:
@@ -670,11 +696,27 @@ class DelegatedApprovalService:
             if decided is None:  # an unknown id: the store wrote nothing
                 _void_decision(audit_log, identity, queue, req, entry)
                 return _refused(queue, request_id, Refusal.UNKNOWN_REQUEST, verdict)
-        notified = self._notify_captain(identity, queue, decided, verdict, approve, text)
+            lapsed = match  # AD-1214: the linearisation point -- are both flags and the match still live?
+            armed = lapsed is None or _pre_clearance_armed(self._settings)
+            match = confirm_pre_clearance(self._pre_clearances, key, match) if armed else None
+            if lapsed is not None and match is None:
+                _record_lapse(audit_log, identity, queue, req, lapsed, entry, switched_off=not armed)
+        if match is not None:  # AD-1214: audited above; the Captain pre-cleared this exact class
+            notified = False
+            logger.info(
+                "AD-1214: %s's decision on %s request %s matched pre-clearance %s; it is audited and "
+                "the Captain is not notified", identity.agent_id, queue, str(request_id)[:12], match.id[:12],
+            )
+        else:
+            notified = self._notify_captain(
+                identity, queue, decided, verdict, approve, text,
+                offer_key=key if armed else None, offer_hours=offer_hours,  # switched off: no offer
+            )
         if queue != "capability":
             return DecisionOutcome(
                 queue, request_id, status=str(getattr(decided, "status", "")), role=verdict.role,
                 request_class=verdict.request_class, audited=True, notified=notified,
+                pre_cleared=match is not None,
             )
         fulfilled = await self._fulfilled(store, decided, approve)
         try:  # report the state the store holds now, as the Captain's route does
@@ -684,7 +726,7 @@ class DelegatedApprovalService:
         return DecisionOutcome(
             queue, request_id, status=str(getattr(current, "status", "")), role=verdict.role,
             request_class=verdict.request_class, fulfilled=fulfilled, audited=True,
-            notified=notified,
+            notified=notified, pre_cleared=match is not None,
         )
 
     async def list_reviewable(
@@ -853,8 +895,43 @@ class DelegatedApprovalService:
             created_at=getattr(req, "created_at", None), now=now,
         )
 
+    def _pre_clearance(
+        self, identity: _Identity, queue: str, req: Any, verdict: Verdict, approve: bool,
+    ) -> tuple[PreClearanceKey | None, PreClearance | None, int]:
+        """AD-1214: ``(key, live pre-clearance, offer hours)``; synchronous, cache-only, never raises."""
+        if self._pre_clearances is None:
+            return None, None, 0
+        try:
+            settings = self._settings()  # type: ignore[misc]
+            if settings.decision_pre_clearance_enabled is not True:
+                return None, None, 0
+            requester = self._registered(getattr(req, "agent_id", None))
+            key = None if requester is None else pre_clearance_key(
+                queue=queue,
+                kind=_kind_and_target(queue, req)[0],
+                target=getattr(req, "target" if queue == "capability" else "skill_id", None),
+                install_payload=getattr(req, "payload", None),
+                request_class=getattr(verdict.request_class, "value", None),
+                requester_department=getattr(requester[2], "department_id", None),
+                decider_post=getattr(identity.post, "id", None),
+                decider_role=getattr(verdict.role, "value", None),
+                approve=approve,
+            )
+            if key is None:
+                return None, None, 0
+            ttl = (settings.decision_pre_clearance_default_ttl_hours, settings.decision_pre_clearance_max_ttl_hours)
+            return key, self._pre_clearances.lookup(key), min(ttl)  # the default, clamped to the ceiling
+        except Exception:
+            logger.warning(
+                "AD-1214: the pre-clearance for %s's decision on %s request %s could not be read; "
+                "the decision proceeds and the Captain is notified as usual",
+                identity.agent_id, queue, str(getattr(req, "id", ""))[:12], exc_info=True,
+            )
+            return None, None, 0
+
     def _notify_captain(
         self, identity: _Identity, queue: str, decided: Any, verdict: Verdict, approve: bool, reason: str,
+        *, offer_key: PreClearanceKey | None = None, offer_hours: int = 0,
     ) -> bool:
         """Tell the Captain, in the notification drawer, who decided what (log-and-degrade)."""
         request_id = str(getattr(decided, "id", ""))
@@ -865,6 +942,8 @@ class DelegatedApprovalService:
                 identity.agent_id, queue, request_id[:12],
             )
             return False
+        book = self._pre_clearances
+        offer = None if offer_key is None or book is None else make_offer(book, offer_key, hours=offer_hours)
         try:
             kind, target = _kind_and_target(queue, decided)
             verb = "approved" if approve else "denied"
@@ -876,7 +955,13 @@ class DelegatedApprovalService:
                 f"Class: {verdict.request_class.value}. Reason: {note_reason}. "
                 "Not pre-cleared (AD-1213)."
             )
-            self._notify(identity.agent_id, title, detail=detail, notification_type="info")
+            if offer is None:
+                self._notify(identity.agent_id, title, detail=detail, notification_type="info")
+            else:  # AD-1214: the offer sentence, and the marker the HXI's Pre-clear control reads
+                self._notify(
+                    identity.agent_id, title, detail=f"{detail} {offer[1]}", notification_type="info",
+                    action_url=offer[0],
+                )
         except Exception:
             logger.warning(
                 "AD-1213: %s's decision on %s request %s is recorded and audited, but the "
@@ -909,7 +994,7 @@ class DelegatedApprovalService:
 
 def _append_decision(
     audit_log: AuditSink, identity: _Identity, queue: str, req: Any, verdict: Verdict,
-    approve: bool, reason: str,
+    approve: bool, reason: str, *, pre_clearance_id: str | None = None,
 ) -> tuple[bool, Any]:
     """Append a delegated decision's entry before it is committed; ``(False, None)`` refuses the agent."""
     try:
@@ -917,7 +1002,7 @@ def _append_decision(
             queue, req, decider_id=identity.agent_id, role=verdict.role,  # type: ignore[arg-type]
             decider_post=identity.post.id, approve=approve,
             request_class=verdict.request_class, verdict=verdict, reason=reason,
-            status="approved" if approve else "denied",
+            status="approved" if approve else "denied", pre_clearance_id=pre_clearance_id,
         ))
     except Exception:
         logger.error(
@@ -948,6 +1033,53 @@ def _void_decision(audit_log: AuditSink, identity: _Identity, queue: str, req: A
             "happen, and the request stays with the Captain",
             identity.agent_id, queue, request_id[:12], exc_info=True,
         )
+
+
+def _pre_clearance_armed(settings: Callable[[], Any] | None) -> bool:
+    """AD-1214: both approval_inbox flags, read live now, are exactly ``True``; a failed read counts as off."""
+    try:
+        inbox = settings()  # type: ignore[misc]
+        return inbox.delegated_approvals_enabled is True and inbox.decision_pre_clearance_enabled is True
+    except Exception:
+        logger.warning(
+            "AD-1214: approval_inbox settings could not be re-read when a pre-cleared decision was "
+            "committed; pre-clearance is treated as switched off and the Captain is notified without an offer",
+            exc_info=True,
+        )
+        return False
+
+
+def _record_lapse(
+    audit_log: AuditSink, identity: _Identity, queue: str, req: Any, lapsed: PreClearance, entry: Any,
+    *, switched_off: bool,
+) -> None:
+    """AD-1214: correct a decision entry that says pre-cleared when its pre-clearance lapsed before the commit."""
+    request_id = str(getattr(req, "id", ""))
+    cause = "switched_off" if switched_off else "expired_or_revoked"
+    try:
+        audit_log.append(category=PRE_CLEARANCE_AUDIT_CATEGORY, detail=json.dumps({
+            "v": 1,
+            "action": "lapsed_before_commit",
+            "cause": cause,
+            "queue": queue,
+            "request_id": request_id,
+            "decider_id": identity.agent_id,
+            "pre_clearance_id": lapsed.id,
+            "entry_hash": getattr(entry, "entry_hash", None),
+        }, sort_keys=True, separators=(",", ":")))
+    except Exception:
+        logger.error(
+            "AD-1214: pre-clearance %s lapsed (%s) before %s's decision on %s request %s was committed, "
+            "and recording that correction failed; the decision entry still reads pre-cleared, and "
+            "the Captain is notified",
+            lapsed.id[:12], cause, identity.agent_id, queue, request_id[:12], exc_info=True,
+        )
+        return
+    logger.info(
+        "AD-1214: pre-clearance %s lapsed (%s) before %s's decision on %s request %s was committed; the "
+        "correction is audited and the Captain is notified",
+        lapsed.id[:12], cause, identity.agent_id, queue, request_id[:12],
+    )
 
 
 async def _reconcile_failed_commit(

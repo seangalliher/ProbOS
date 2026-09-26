@@ -1528,7 +1528,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1246 adds execution.max_runtime_seconds (0) and max_concurrent_long_runs (2) (1792 -> 1794).
     # AD-1208 adds dm_agentic.token_budget (None) and max_total_iterations (100) (1794 -> 1796).
     # AD-1213 adds four approval_inbox fields (1796 -> 1800).
-    assert counts["field_definitions"] == 1800  # AD-1206 intentionally adds github_repository.
+    # AD-1214 adds three approval_inbox fields (1800 -> 1803).
+    assert counts["field_definitions"] == 1803  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

@@ -79,10 +79,27 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
     ``first_officer_delegation_max_ttl_hours`` and
     ``captain_unavailable_max_ttl_hours``.
 
-    Cross-field relation documented rather than validated (AD-1142 precedent):
+    **AD-1214: decision pre-clearances.** With
+    ``decision_pre_clearance_enabled`` (which requires
+    ``delegated_approvals_enabled``) the Captain's notification of a delegated
+    decision offers to pre-clear its exact class: the queue, the request kind, its
+    exact target, the request class, the requester's department, the deciding
+    post, that post's role, and approve-or-deny. A later decision whose eight
+    values all equal a live pre-clearance is committed and audited as before --
+    its entry carries ``pre_cleared: true`` and the pre-clearance id -- and the
+    Captain is not notified. It widens nothing: every AD-1213 rule still decides
+    whether an agent may decide at all. A pre-clearance accepted from the
+    notification lasts ``decision_pre_clearance_default_ttl_hours``; the API may
+    ask for longer, clamped to ``decision_pre_clearance_max_ttl_hours``. The
+    Captain can revoke one at any time, and an expired or revoked pre-clearance
+    means the next decision of that class notifies, and offers, again.
+
+    Cross-field relations documented rather than validated (AD-1142 precedent):
     ``standing_rule_default_ttl_hours`` should be ``<=
-    standing_rule_max_ttl_hours``. It is clamped at issue time; a
-    ``@model_validator`` here would turn an unrelated ``POST /config`` into a 422.
+    standing_rule_max_ttl_hours``, and ``decision_pre_clearance_default_ttl_hours``
+    should be ``<= decision_pre_clearance_max_ttl_hours`` (AD-1214). Each is clamped
+    at issue time; a ``@model_validator`` here would turn an unrelated
+    ``POST /config`` into a 422.
     """
 
     enabled: bool = Field(
@@ -248,6 +265,33 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
             "AD-1213: ceiling on how long the Captain may be marked "
             "unavailable. The mark always expires, so a forgotten mark cannot "
             "leave the grace period at zero indefinitely."
+        ),
+    )
+    decision_pre_clearance_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1214: let the Captain pre-clear one exact class of delegated "
+            "decision from its notification. Requires "
+            "delegated_approvals_enabled. A pre-clearance only stops the "
+            "Captain's notification for one exact class; every AD-1213 rule "
+            "still decides who may decide, and every decision is still "
+            "audited. Off means delegated decisions notify exactly as under "
+            "AD-1213 and no pre-clearance store exists."
+        ),
+    )
+    decision_pre_clearance_default_ttl_hours: int = Field(
+        default=24, ge=1, le=720,
+        description=(
+            "AD-1214: how long a pre-clearance accepted from a notification "
+            "lasts. Clamped to decision_pre_clearance_max_ttl_hours."
+        ),
+    )
+    decision_pre_clearance_max_ttl_hours: int = Field(
+        default=168, ge=1, le=720,
+        description=(
+            "AD-1214: ceiling on a decision pre-clearance's lifetime. A longer "
+            "request is clamped, not rejected; expires_at is NOT NULL in the "
+            "decision_pre_clearances schema."
         ),
     )
 

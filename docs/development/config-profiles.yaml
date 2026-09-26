@@ -12,15 +12,15 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: bf596520abef9fc0c99323e7d3dd28d67154159a plus AD-1213 candidate
+  measured_at_commit: 740017b7a60ca744d2fc99b033a84eebd817b558 plus AD-1214 candidate
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 430
-  default_false: 205
+  boolean_fields_reachable: 431
+  default_false: 206
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 120
+  default_false_never_armed: 121
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -146,6 +146,18 @@ flags:
     unchanged.
   external_dependency: null
   requires: []
+  conflicts_with: []
+- path: approval_inbox.decision_pre_clearance_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1214_decision_pre_clearance.py::test_e2e_notify_then_pre_clear_then_same_class_silent_then_other_class_notifies
+    -- the real permission chain, stores, notification queue and route carry one delegated
+    decision from its offer to the Captain's pre-clearance; the same class then decides
+    silently and audited while a different class still notifies; the OFF tests prove the
+    AD-1213 notification, audit entry and tool receipt unchanged.
+  external_dependency: null
+  requires:
+  - approval_inbox.delegated_approvals_enabled
   conflicts_with: []
 - path: memory.hybrid_recall_enabled
   kind: product-feature

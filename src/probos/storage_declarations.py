@@ -94,4 +94,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "Captain-unavailable mark can be issued without an expiry."
         ),
     ),
+    StoreDeclaration(
+        id="approvals.decision-pre-clearances",
+        title="Captain decision pre-clearances (AD-1214)",
+        owner_module="probos.decision_pre_clearance",
+        owner_symbol="DecisionPreClearanceStore",
+        canonical_path="decision_pre_clearances.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.decision_pre_clearance.DecisionPreClearanceStore",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM: revoking or superseding a pre-clearance flips its "
+            "revoked flag, so every pre-clearance stays on the record. Growth is "
+            "bounded by how often the Captain acts."
+        ),
+        backup="included",
+        restore="point-in-time",
+        notes=(
+            "Constructed only when approval_inbox.delegated_approvals_enabled "
+            "and decision_pre_clearance_enabled. expires_at and every key column "
+            "are NOT NULL and CHECK-bounded, so no pre-clearance exists without "
+            "an expiry or with a wildcard. It stops a notification; it confers "
+            "no authority. Offers are in memory only."
+        ),
+    ),
 )
