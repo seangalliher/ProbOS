@@ -563,6 +563,11 @@ def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, 
         # added no rows. It costs four renders per widening to move the byte
         # count without moving the content, so it is not carried.
         #
+        # AD-1250 (#1294) measured the other joint direction -- lowering the
+        # allowance before calling a wider ration an overflow -- and declined
+        # it: at a 3,000 cap it kept 32 records by eliding every long leaf,
+        # where this order keeps 13 whole. See DECISIONS.md AD-1250.
+        #
         # A ceiling on the ration multiplier was likewise written and removed:
         # at 512 it left the final render, render count, largest intermediate
         # string and elapsed time identical on the shapes measured here. Review
@@ -588,9 +593,10 @@ def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, 
                 # a CAP-INDEPENDENT ladder. The render grows roughly linearly
                 # in kept entries, so the ratio of the budget to the current
                 # render estimates how much wider the ration can be -- rounded
-                # DOWN to a power of two, so every cap explores the same set of
-                # rations and a larger cap can only reach the same rung or a
-                # further one.
+                # DOWN to a power of two, so the first jump lands on one
+                # cap-independent ladder and a larger cap never starts lower.
+                # The bisection after an overflow has no such guarantee
+                # (AD-1250: 28 log entries kept at a 7,995 cap, 27 at 7,996).
                 #
                 # The raw ratio is what a first version used, and it broke cap
                 # monotonicity: a budget of 5,954 characters rendered 126 rows
