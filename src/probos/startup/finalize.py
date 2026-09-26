@@ -3069,6 +3069,74 @@ def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -
     return True
 
 
+def _wire_delegated_approvals(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-1213: chiefs and the First Officer decide requests under the Captain's rules.
+
+    Builds the DelegatedApprovalService from the runtime's stores, binds the
+    Captain route's own fulfilment into it, and registers ``review_requests``
+    with every rank at ``none`` so that only a Captain grant reaches it. Never
+    raises (H-3): off, a missing dependency -- the audit log included -- or any
+    failure leaves the feature unwired and the Captain decides every request.
+    """
+    try:
+        if not config.approval_inbox.delegated_approvals_enabled:
+            return False
+        required = (
+            "approval_authority_store", "capability_request_store", "registry",
+            "ontology", "tool_registry", "audit_log",
+        )
+        missing = [name for name in required if getattr(runtime, name, None) is None]
+        if missing:
+            logger.warning(
+                "AD-1213: delegated approvals are enabled but the runtime has no %s; the "
+                "review tool is not registered and the Captain decides every request",
+                ", ".join(missing),
+            )
+            return False
+        import functools
+
+        from probos.delegated_approvals import REVIEW_TOOL_ID, DelegatedApprovalService
+        from probos.routers.capability_requests import fulfil_on_approval
+        from probos.tools.review_requests_tool import (
+            REVIEW_TOOL_DEFAULT_PERMISSIONS,
+            ReviewRequestsTool,
+        )
+
+        service = DelegatedApprovalService(
+            capability_requests=runtime.capability_request_store,
+            skill_requests=getattr(runtime, "skill_request_store", None),
+            authority_store=runtime.approval_authority_store,
+            agent_registry=runtime.registry,
+            ontology=runtime.ontology,
+            tool_registry=runtime.tool_registry,
+            work_items=getattr(runtime, "work_item_store", None),
+            audit_log=runtime.audit_log,
+            notify=runtime.notify,
+            fulfil=functools.partial(fulfil_on_approval, runtime),
+            settings=lambda: runtime.config.approval_inbox,
+        )
+        runtime.delegated_approvals = service
+        if runtime.tool_registry.get(REVIEW_TOOL_ID) is None:
+            runtime.tool_registry.register(
+                ReviewRequestsTool(service=service),
+                provider="delegated_approvals",
+                tags=["review_requests", "approvals"],
+                default_permissions=dict(REVIEW_TOOL_DEFAULT_PERMISSIONS),
+            )
+    except Exception:
+        logger.exception(
+            "AD-1213: wiring delegated approvals failed; the review tool is not offered "
+            "and the Captain decides every request"
+        )
+        runtime.delegated_approvals = None
+        return False
+    logger.info(
+        "AD-1213: delegated approvals wired; review_requests reaches an agent only "
+        "through a Captain grant"
+    )
+    return True
+
+
 def _wire_skill_request_training(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-907: Wire the skill-request holodeck-training completion subscriber.
 
@@ -5114,6 +5182,12 @@ async def finalize_startup(
                     "AD-857: capability-request Captain-DM notifier wired "
                     "during finalization"
                 )
+
+            # AD-1213: a chief or the First Officer decides requests under the
+            # Captain's rules through the grant-gated review_requests tool. Needs the
+            # audit log wired above; never raises (H-3). Tier-2 log-and-degrade.
+            if _wire_delegated_approvals(runtime=runtime, config=config):
+                logger.info("AD-1213: delegated approvals wired during finalization")
 
             # AD-907: skill-request holodeck-training completion subscriber --
             # advances an in-training skill request to completed when its linked

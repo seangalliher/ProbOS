@@ -67,6 +67,18 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
     ``POST /api/capability-requests/{id}/decide`` is API-only until a follow-up
     adds the control. Heuristic auto-approval is deliberately deferred.
 
+    **AD-1213: chain-of-command approvals.** With
+    ``delegated_approvals_enabled`` a request has three levels of authority: the
+    Captain, always; a department chief, for a non-destructive request from crew
+    under their direct, in-department command; and the First Officer, for what the
+    Captain has delegated, once ``approval_grace_seconds`` have passed (zero while
+    the Captain is marked unavailable). A floor stays with the Captain alone: every
+    ``action`` request, every consensus build, and anything that cannot be
+    classified. Both records that widen authority -- the First Officer delegation
+    and the Captain-unavailable mark -- always expire, clamped to
+    ``first_officer_delegation_max_ttl_hours`` and
+    ``captain_unavailable_max_ttl_hours``.
+
     Cross-field relation documented rather than validated (AD-1142 precedent):
     ``standing_rule_default_ttl_hours`` should be ``<=
     standing_rule_max_ttl_hours``. It is clamped at issue time; a
@@ -199,6 +211,43 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
             "Bounded 1-3 because that is the whole tier ladder classify_action "
             "returns; a ceiling outside it is unrepresentable rather than "
             "merely discouraged."
+        ),
+    )
+    delegated_approvals_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1213: let a department chief decide a non-destructive request "
+            "from crew under their direct command, and the First Officer "
+            "decide a request the Captain has delegated (after "
+            "approval_grace_seconds). Every such decision is notified to the "
+            "Captain and audited. Off by default; off means both Captain "
+            "decide routes behave exactly as before AD-1213 and no store, "
+            "service or review tool exists."
+        ),
+    )
+    approval_grace_seconds: int = Field(
+        default=300, ge=0, le=86_400,
+        description=(
+            "AD-1213: seconds a delegated request stays the Captain's alone "
+            "before the First Officer may decide it. Zero while the Captain is "
+            "marked unavailable. Never applies to a department chief's "
+            "in-department decision."
+        ),
+    )
+    first_officer_delegation_max_ttl_hours: int = Field(
+        default=168, ge=1, le=720,
+        description=(
+            "AD-1213: ceiling on a First Officer delegation's lifetime. A "
+            "longer request is clamped, not rejected; expires_at is NOT NULL "
+            "in the approval_authority schema."
+        ),
+    )
+    captain_unavailable_max_ttl_hours: int = Field(
+        default=72, ge=1, le=720,
+        description=(
+            "AD-1213: ceiling on how long the Captain may be marked "
+            "unavailable. The mark always expires, so a forgotten mark cannot "
+            "leave the grace period at zero indefinitely."
         ),
     )
 

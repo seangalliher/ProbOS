@@ -18,6 +18,7 @@ from probos.startup.results import CommunicationResult
 from probos.types import Priority
 
 if TYPE_CHECKING:
+    from probos.approval_authority import ApprovalAuthorityStore
     from probos.config import SystemConfig
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
@@ -240,6 +241,20 @@ def _register_work_item_pull_tools(
                 "senior_officer": permission,
             },
         )
+
+
+async def _start_approval_authority_store(
+    config: "SystemConfig", data_dir: Path,
+) -> "ApprovalAuthorityStore | None":
+    """AD-1213: the Captain's expiring approval-authority records; None while off."""
+    if not config.approval_inbox.delegated_approvals_enabled:
+        return None
+    from probos.approval_authority import ApprovalAuthorityStore
+
+    store = ApprovalAuthorityStore(db_path=str(data_dir / "approval_authority.db"))
+    await store.start()
+    logger.info("AD-1213: approval-authority store started")
+    return store
 
 
 async def init_communication(
@@ -559,6 +574,11 @@ async def init_communication(
         await skill_request_store.start()
         logger.info("skill-request-store started (AD-906)")
 
+    # --- Approval Authority Store (AD-1213) ---
+    # Gated dark behind approval_inbox.delegated_approvals_enabled (Pydantic
+    # default False): when off, no store exists and the Captain's controls 503.
+    approval_authority_store = await _start_approval_authority_store(config, data_dir)
+
     # --- Tool Registry (AD-423a) ---
     from probos.tools.registry import ToolRegistry
 
@@ -851,4 +871,5 @@ async def init_communication(
         intent_grant_store=intent_grant_store,
         action_approval_store=action_approval_store,
         hook_bus=hook_bus,
+        approval_authority_store=approval_authority_store,
     )
