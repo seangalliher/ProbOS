@@ -234,6 +234,10 @@ async def _off_observation(
     assert config["approval_inbox"].pop("approval_grace_seconds") == 300
     assert config["approval_inbox"].pop("first_officer_delegation_max_ttl_hours") == 168
     assert config["approval_inbox"].pop("captain_unavailable_max_ttl_hours") == 72
+    # AD-1214's three inert approval_inbox fields were added after this capture too.
+    assert config["approval_inbox"].pop("decision_pre_clearance_enabled") is False
+    assert config["approval_inbox"].pop("decision_pre_clearance_default_ttl_hours") == 24
+    assert config["approval_inbox"].pop("decision_pre_clearance_max_ttl_hours") == 168
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

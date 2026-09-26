@@ -154,6 +154,7 @@ from probos.warm_boot import WarmBootService
 if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
+    from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
     from probos.capability_request import CapabilityRequestStore
@@ -455,6 +456,7 @@ class ProbOSRuntime:
     repair_issue_fulfiller: RepairIssueFulfiller | None
     skill_request_store: SkillRequestStore | None
     approval_authority_store: ApprovalAuthorityStore | None  # AD-1213
+    decision_pre_clearance_store: DecisionPreClearanceStore | None  # AD-1214
     delegated_approvals: DelegatedApprovalService | None  # AD-1213
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
@@ -1026,6 +1028,7 @@ class ProbOSRuntime:
 
         # --- Delegated approvals (AD-1213): set by startup only while enabled ---
         self.approval_authority_store: ApprovalAuthorityStore | None = None
+        self.decision_pre_clearance_store: DecisionPreClearanceStore | None = None  # AD-1214
         self.delegated_approvals: DelegatedApprovalService | None = None
 
         # --- Capability Gap Driver (AD-855) ---
@@ -3107,6 +3110,7 @@ class ProbOSRuntime:
         self.fault_report_store = comm.fault_report_store
         self.skill_request_store = comm.skill_request_store
         self.approval_authority_store = comm.approval_authority_store  # AD-1213
+        self.decision_pre_clearance_store = comm.decision_pre_clearance_store  # AD-1214
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal

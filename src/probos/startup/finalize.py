@@ -3102,6 +3102,29 @@ def _wire_delegated_approvals(*, runtime: Any, config: "SystemConfig") -> bool:
             ReviewRequestsTool,
         )
 
+        # AD-1214: a missing pre-clearance store only means no pre-clearance, so it is not required.
+        pre_clearances = (
+            getattr(runtime, "decision_pre_clearance_store", None)
+            if config.approval_inbox.decision_pre_clearance_enabled else None
+        )
+
+        def pre_clearing() -> bool:
+            """AD-1214: a store is wired and both flags read True now; the review tool's texts follow it."""
+            try:
+                inbox = runtime.config.approval_inbox
+                return (
+                    pre_clearances is not None
+                    and inbox.delegated_approvals_enabled is True
+                    and inbox.decision_pre_clearance_enabled is True
+                )
+            except Exception:
+                logger.warning(
+                    "AD-1214: approval_inbox settings could not be read; the review tool describes "
+                    "decisions as under AD-1213 until they can be",
+                    exc_info=True,
+                )
+                return False
+
         service = DelegatedApprovalService(
             capability_requests=runtime.capability_request_store,
             skill_requests=getattr(runtime, "skill_request_store", None),
@@ -3114,11 +3137,12 @@ def _wire_delegated_approvals(*, runtime: Any, config: "SystemConfig") -> bool:
             notify=runtime.notify,
             fulfil=functools.partial(fulfil_on_approval, runtime),
             settings=lambda: runtime.config.approval_inbox,
+            pre_clearances=pre_clearances,
         )
         runtime.delegated_approvals = service
         if runtime.tool_registry.get(REVIEW_TOOL_ID) is None:
             runtime.tool_registry.register(
-                ReviewRequestsTool(service=service),
+                ReviewRequestsTool(service=service, pre_clearance=pre_clearing),
                 provider="delegated_approvals",
                 tags=["review_requests", "approvals"],
                 default_permissions=dict(REVIEW_TOOL_DEFAULT_PERMISSIONS),

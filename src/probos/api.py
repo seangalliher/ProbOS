@@ -279,6 +279,7 @@ def create_app(runtime: Any) -> FastAPI:
         traces as traces_router,  # AD-1203: read the persisted tool traces (#1147)
         faults as faults_router,  # AD-1207: bounded fault observations (#1152)
         approval_authority as approval_authority_router,  # AD-1213: the Captain's approval-authority controls
+        decision_pre_clearances as decision_pre_clearances_router,  # AD-1214: the Captain's decision pre-clearances
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -323,6 +324,7 @@ def create_app(runtime: Any) -> FastAPI:
         traces_router,  # AD-1203: read the persisted tool traces (#1147)
         faults_router,  # AD-1207: bounded fault observations (#1152)
         approval_authority_router,  # AD-1213: the Captain's approval-authority controls
+        decision_pre_clearances_router,  # AD-1214: the Captain's decision pre-clearances
     ):
         app.include_router(r.router)
 

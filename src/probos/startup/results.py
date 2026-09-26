@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.agent_onboarding import AgentOnboardingService
     from probos.approval_authority import ApprovalAuthorityStore
+    from probos.decision_pre_clearance import DecisionPreClearanceStore
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
     from probos.build_dispatcher import BuildDispatcher
@@ -183,6 +184,7 @@ class CommunicationResult:
     action_approval_store: "ActionApprovalStore | None" = None  # AD-1154
     hook_bus: "HookBus | None" = None  # AD-1004 substrate / AD-1012 wiring
     approval_authority_store: "ApprovalAuthorityStore | None" = None  # AD-1213
+    decision_pre_clearance_store: "DecisionPreClearanceStore | None" = None  # AD-1214
 
 
 @dataclass

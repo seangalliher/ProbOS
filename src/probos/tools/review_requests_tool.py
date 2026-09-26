@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -114,10 +115,13 @@ def _render(presentation: ToolResultPresentation, value: dict[str, Any]) -> str 
 class ReviewRequestsTool:
     """List the requests an agent may decide, and decide one, through the delegated-approval service."""
 
-    def __init__(self, *, service: DelegatedApprovalService) -> None:
+    def __init__(
+        self, *, service: DelegatedApprovalService, pre_clearance: Callable[[], bool] | None = None,
+    ) -> None:
         if service is None:
             raise ValueError("AD-1213: ReviewRequestsTool needs the delegated-approval service")
         self._service = service
+        self._pre_clearance = pre_clearance  # AD-1214: read on every use; None keeps every text AD-1213's
 
     @property
     def tool_id(self) -> str:
@@ -133,10 +137,14 @@ class ReviewRequestsTool:
 
     @property
     def description(self) -> str:
+        reported = (
+            "reported to the Captain, unless the Captain has pre-cleared that exact class of decision. "
+            if self._pre_clearing() else "reported to the Captain. "
+        )
         return (
             "List the capability and skill requests you currently hold authority to decide, "
             "and approve or deny one. Only requests from crew under your command appear. "
-            "Every decision is recorded under your identity and reported to the Captain. "
+            f"Every decision is recorded under your identity and {reported}"
             "A request outside your authority stays with the Captain."
         )
 
@@ -162,7 +170,8 @@ class ReviewRequestsTool:
             "description": (
                 "A complete pre-rendered Python-literal object (not JSON). list: requests "
                 "and more; decide: decided, queue, request_id, status, fulfilled, "
-                "captain_notified, audited, role and request_class."
+                f"captain_notified, {'pre_cleared, ' if self._pre_clearing() else ''}audited, role and "
+                "request_class."
             ),
         }
 
@@ -231,6 +240,8 @@ class ReviewRequestsTool:
         )
         if outcome.refusal is not None:
             return ToolResult(error=_refusal_text(outcome.refusal, outcome.decidable_after))
+        # AD-1214: a pre-cleared decision is never reported without saying so, whatever the flag reads now.
+        says_pre_cleared = outcome.pre_cleared is True or self._pre_clearing()
         receipt = {
             "decided": True,
             "queue": outcome.queue,
@@ -238,6 +249,7 @@ class ReviewRequestsTool:
             "status": outcome.status,
             "fulfilled": outcome.fulfilled,
             "captain_notified": outcome.notified,
+            **({"pre_cleared": outcome.pre_cleared} if says_pre_cleared else {}),
             "audited": outcome.audited,
             "role": outcome.role.value if outcome.role is not None else None,
             "request_class": (
@@ -256,3 +268,17 @@ class ReviewRequestsTool:
         if rendered is None:  # the decision is committed: never report it as a refusal
             return ToolResult(error=_RECEIPT_ERROR)
         return ToolResult(output=rendered)
+
+    def _pre_clearing(self) -> bool:
+        """AD-1214: the predicate, read on every call; absent, raising or anything but ``True`` reads as off."""
+        if self._pre_clearance is None:
+            return False
+        try:
+            return self._pre_clearance() is True
+        except Exception:
+            logger.warning(
+                "AD-1214: review_requests could not read whether pre-clearance is on; it describes "
+                "decisions as under AD-1213, and a pre-cleared decision still reports pre_cleared",
+                exc_info=True,
+            )
+            return False

@@ -1821,6 +1821,9 @@ AD-1154: park an unattended consequential action instead of performing it.
 | `approval_grace_seconds` | `int` | `300` | ≥ 0, ≤ 86400 | AD-1213: seconds a delegated request stays the Captain's alone before the First Officer may decide it. Zero while the Captain is marked unavailable. Never applies to a department chief's in-department decision. |
 | `first_officer_delegation_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1213: ceiling on a First Officer delegation's lifetime. A longer request is clamped, not rejected; expires_at is NOT NULL in the approval_authority schema. |
 | `captain_unavailable_max_ttl_hours` | `int` | `72` | ≥ 1, ≤ 720 | AD-1213: ceiling on how long the Captain may be marked unavailable. The mark always expires, so a forgotten mark cannot leave the grace period at zero indefinitely. |
+| `decision_pre_clearance_enabled` | `bool` | `False` | — | AD-1214: let the Captain pre-clear one exact class of delegated decision from its notification. Requires delegated_approvals_enabled. A pre-clearance only stops the Captain's notification for one exact class; every AD-1213 rule still decides who may decide, and every decision is still audited. Off means delegated decisions notify exactly as under AD-1213 and no pre-clearance store exists. |
+| `decision_pre_clearance_default_ttl_hours` | `int` | `24` | ≥ 1, ≤ 720 | AD-1214: how long a pre-clearance accepted from a notification lasts. Clamped to decision_pre_clearance_max_ttl_hours. |
+| `decision_pre_clearance_max_ttl_hours` | `int` | `168` | ≥ 1, ≤ 720 | AD-1214: ceiling on a decision pre-clearance's lifetime. A longer request is clamped, not rejected; expires_at is NOT NULL in the decision_pre_clearances schema. |
 
 ## `dm_mesh_synthesis`
 

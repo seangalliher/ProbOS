@@ -237,6 +237,7 @@ async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
         ("capability_request_store", "capability request store"),
         ("fault_report_store", "fault report store"),  # AD-1169
         ("approval_authority_store", "approval authority store"),  # AD-1213
+        ("decision_pre_clearance_store", "decision pre-clearance store"),  # AD-1214
         ("knowledge_edges", "knowledge edge store"),
         ("personal_ontology_prober", "personal ontology prober"),
         ("rejection_cache", "relationship rejection cache"),

@@ -24,6 +24,62 @@ export function formatRelativeTime(timestamp: number): string {
   return `${Math.floor(hr / 24)}d ago`;
 }
 
+// AD-1214: a delegated decision's notification may offer to pre-clear its exact class.
+// The server wrote the marker; the card posts only its opaque offer id, never a scope.
+const PRE_CLEAR_OFFER_RE = /^approval-pre-clear:([0-9a-f]{32})$/;
+const PRE_CLEAR_ROUTE = '/api/decision-pre-clearances';
+
+type PreClearState = { state: 'idle' | 'busy' | 'done' | 'undone' | 'failed'; text: string; recordId?: string };
+type PreClearResult = { ok: true; id: string; expiresAt: number } | { ok: false; status: number | null };
+
+function operatorHeaders(json: boolean): Record<string, string> {
+  const token = new URLSearchParams(window.location.search).get('token');
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function preClearOffer(offerId: string): Promise<PreClearResult> {
+  try {
+    const response = await fetch(PRE_CLEAR_ROUTE, {
+      method: 'POST', mode: 'same-origin', redirect: 'error', cache: 'no-store',
+      headers: operatorHeaders(true), body: JSON.stringify({ offer_id: offerId }),
+    });
+    if (!response.ok || response.redirected) return { ok: false, status: response.status };
+    const body: unknown = await response.json();
+    const record: unknown = typeof body === 'object' && body !== null
+      ? (body as { pre_clearance?: unknown }).pre_clearance : undefined;
+    const { id, expires_at: expiresAt } = (typeof record === 'object' && record !== null ? record : {}) as {
+      id?: unknown; expires_at?: unknown;
+    };
+    if (typeof id !== 'string' || typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) {
+      return { ok: false, status: response.status };
+    }
+    return { ok: true, id, expiresAt };
+  } catch {
+    return { ok: false, status: null };
+  }
+}
+
+async function undoPreClearance(recordId: string): Promise<{ ok: boolean; status: number | null }> {
+  try {
+    const response = await fetch(`${PRE_CLEAR_ROUTE}/${encodeURIComponent(recordId)}`, {
+      method: 'DELETE', mode: 'same-origin', redirect: 'error', cache: 'no-store',
+      headers: operatorHeaders(false),
+    });
+    return { ok: response.ok && !response.redirected, status: response.status };
+  } catch {
+    return { ok: false, status: null };
+  }
+}
+
+function preClearFailure(status: number | null, creating: boolean): string {
+  if (status === 401) return 'Pre-clear refused: authentication required.';
+  if (creating && status === 404) return 'This offer has lapsed; the next decision of this class offers it again.';
+  return status === null ? 'Pre-clear failed. Retry to try again.' : `Pre-clear failed (${status}). Retry to try again.`;
+}
+
 export function NotificationCard({ notification }: { notification: NotificationView }) {
   const borderColor = TYPE_COLORS[notification.notification_type] || '#5090d0';
   const isUnread = !notification.acknowledged;
@@ -32,6 +88,8 @@ export function NotificationCard({ notification }: { notification: NotificationV
   const [message, setMessage] = useState<string | null>(null);
   const pending = useRef<{ cancel: () => void } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const offerId = PRE_CLEAR_OFFER_RE.exec(notification.action_url ?? '')?.[1] ?? null;
+  const [preClear, setPreClear] = useState<PreClearState>({ state: 'idle', text: '' });
 
   useEffect(() => () => { pending.current?.cancel(); }, [notification.id]);
 
@@ -148,6 +206,27 @@ export function NotificationCard({ notification }: { notification: NotificationV
     } catch { /* swallow */ }
   }
 
+  async function handlePreClear(e: MouseEvent) {
+    e.stopPropagation();
+    if (offerId === null) return;
+    setPreClear({ state: 'busy', text: '' });
+    const result = await preClearOffer(offerId);
+    setPreClear(result.ok
+      ? { state: 'done', text: `Pre-cleared until ${new Date(result.expiresAt * 1000).toLocaleString()}.`, recordId: result.id }
+      : { state: 'failed', text: preClearFailure(result.status, true) });
+  }
+
+  async function handleUndoPreClear(e: MouseEvent) {
+    e.stopPropagation();
+    const recordId = preClear.recordId;
+    if (recordId === undefined) return;
+    setPreClear({ state: 'busy', text: '', recordId });
+    const result = await undoPreClearance(recordId);
+    setPreClear(result.ok
+      ? { state: 'undone', text: 'Pre-clearance undone; this class notifies again.' }
+      : { state: 'failed', text: preClearFailure(result.status, false), recordId });
+  }
+
   return (
     <div
       ref={cardRef}
@@ -181,9 +260,9 @@ export function NotificationCard({ notification }: { notification: NotificationV
 
       {notification.detail && (
         <div style={{ fontSize: 10, color: '#777', marginBottom: 3 }}>
-          {notification.detail.length > 120
-            ? notification.detail.slice(0, 120) + '\u2026'
-            : notification.detail}
+          {offerId !== null || notification.detail.length <= 120
+            ? notification.detail
+            : notification.detail.slice(0, 120) + '\u2026'}
         </div>
       )}
 
@@ -204,6 +283,54 @@ export function NotificationCard({ notification }: { notification: NotificationV
       {(loading || message) && (
         <div role="status" style={{ marginTop: 6, fontSize: 11, color: '#bbb', overflowWrap: 'anywhere' }}>
           {loading ? 'Opening room context...' : message}
+        </div>
+      )}
+      {offerId !== null && preClear.recordId === undefined && preClear.state !== 'undone' && (
+        <button
+          type="button"
+          data-testid="notification-pre-clear"
+          onClick={handlePreClear}
+          disabled={preClear.state === 'busy'}
+          style={{
+            marginTop: 6,
+            marginRight: 8,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            padding: '3px 8px',
+            borderRadius: 5,
+            border: '1px solid #f0b060',
+            background: 'rgba(240,176,96,0.12)',
+            color: '#f0b060',
+            fontSize: 10,
+            fontWeight: 600,
+            cursor: preClear.state === 'busy' ? 'wait' : 'pointer',
+          }}
+        >
+          <svg width={11} height={11} viewBox="0 0 24 24" fill="none"
+            stroke="#f0b060" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+            aria-hidden="true">
+            <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+            <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+            <path d="M3 3l18 18" />
+          </svg>
+          Pre-clear
+        </button>
+      )}
+      {preClear.recordId !== undefined && preClear.state !== 'undone' && (
+        <button
+          type="button"
+          data-testid="notification-pre-clear-undo"
+          onClick={handleUndoPreClear}
+          disabled={preClear.state === 'busy'}
+          style={{ marginTop: 6, marginRight: 8, color: '#bbb', background: 'transparent', border: '1px solid #666680', borderRadius: 4, cursor: preClear.state === 'busy' ? 'wait' : 'pointer' }}
+        >
+          Undo pre-clearance
+        </button>
+      )}
+      {preClear.text && (
+        <div role="status" data-testid="notification-pre-clear-status" style={{ marginTop: 6, fontSize: 11, color: '#bbb', overflowWrap: 'anywhere' }}>
+          {preClear.text}
         </div>
       )}
       {isUnread && (
