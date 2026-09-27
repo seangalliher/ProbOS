@@ -1,26 +1,11 @@
 """AD-612A: DM regex robustness — tolerant of format variations."""
 
-import re
 import pytest
 
-# AD-612: Replicate the two-tier regex from proactive.py for unit testing.
-# Tier 1+2 (unified): Closed DMs
-_CLOSED_PATTERN = re.compile(
-    r'\[DM\s+@?(\S+)\]'
-    r'\s*'
-    r'((?:(?!\[DM\s).)*?)'
-    r'\[/DM\]',
-    re.DOTALL | re.IGNORECASE,
-)
-
-# Tier 3: Unclosed DMs
-_UNCLOSED_PATTERN = re.compile(
-    r'\[DM\s+@?(\S+)\]'
-    r'\s*'
-    r'(.+?)'
-    r'(?=\[DM\s|\Z)',
-    re.DOTALL | re.IGNORECASE,
-)
+# BF-874: import the production patterns. This file used to replicate them, so it pinned
+# nothing -- the production regex could change and these cases would still pass.
+from probos.proactive import _DM_CLOSED_PATTERN as _CLOSED_PATTERN
+from probos.proactive import _DM_UNCLOSED_PATTERN as _UNCLOSED_PATTERN
 
 
 def _extract(text: str) -> list[tuple[str, str]]:
