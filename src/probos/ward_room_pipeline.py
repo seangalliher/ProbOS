@@ -336,8 +336,10 @@ class WardRoomPostPipeline:
             return False
 
         # Step 6: Bracket marker stripping (BF-174)
-        from probos.proactive import _strip_bracket_markers
+        from probos.proactive import _strip_bracket_markers, withhold_dm_blocks
         response_text = _strip_bracket_markers(response_text)
+        # BF-874: a DM block still here was never sent (no proactive loop ran, or it was unreadable).
+        response_text = withhold_dm_blocks(response_text, agent_id=agent.id, where="Ward Room reply")
         if not response_text:
             return False
 

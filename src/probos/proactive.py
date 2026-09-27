@@ -95,6 +95,97 @@ _STATUS_PATTERN = re.compile(
 )
 
 
+# AD-612 / BF-874 (#1429): the [DM @callsign] ... [/DM] action tag. The callsign runs to the
+# first closing bracket, so a multi-word callsign ("Number One") parses; the character class
+# and the 64-character bound are those of the AD-1229 title reader
+# (``ward_room.receipt_facts._ADDRESSED_TITLE_RE``), so a delivered DM's title is one it reads.
+# Tier 1+2 is a closed block whose body cannot cross another [DM tag; tier 3 is an unclosed
+# block whose body runs to the next [DM tag or the end of the text.
+_DM_OPEN_TAG = r'\[DM\s+@?([^\[\]\r\n]{1,64})\]'
+_DM_CLOSED_PATTERN = re.compile(_DM_OPEN_TAG + r'\s*((?:(?!\[DM\s).)*?)\[/DM\]', re.DOTALL | re.IGNORECASE)
+_DM_UNCLOSED_PATTERN = re.compile(_DM_OPEN_TAG + r'\s*(.+?)(?=\[DM\s|\Z)', re.DOTALL | re.IGNORECASE)
+# BF-874: DM syntax the two tiers could not read -- an opening tag with no space after DM, a
+# callsign past the bound, no closing bracket -- goes WITH its body: every other [DM word and
+# [/DM] is paired by depth, and an opener nothing closes takes the rest of the text (the tier-3
+# rule). A [/DM] nothing opened takes the text back to the block before it (a nested or doubled
+# closer ends a body the first one did not). Removing only a tag posts its body, which is what
+# BF-203's catch-all does (measured).
+_DM_TAG_PATTERN = re.compile(r'\[\s*(?:(?P<close>/\s*DM\s*\])|DM\b)', re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class DmStrip:
+    """BF-874: a text with every DM block removed, and how many of each kind went."""
+
+    text: str
+    readable: int
+    unreadable: int
+    stray_closers: int
+
+
+def _dm_step_blocks(text: str) -> list[tuple[int, int]]:
+    """BF-874: the spans the DM step reads as blocks -- closed ones, then unclosed ones in what is left."""
+    closed = [m.span() for m in _DM_CLOSED_PATTERN.finditer(text)]
+    keep = list(zip([0, *(b for _, b in closed)], [*(a for a, _ in closed), len(text)]))
+    origin = [i for a, b in keep for i in range(a, b)]
+    rest = ''.join(text[a:b] for a, b in keep)
+    return closed + [(origin[m.start()], origin[m.end() - 1] + 1) for m in _DM_UNCLOSED_PATTERN.finditer(rest)]
+
+
+def strip_dm_blocks(text: str) -> DmStrip:
+    """BF-874: remove every [DM ...] block, readable or not, and every stray [/DM] with the text before it."""
+    readable = sorted(_dm_step_blocks(text))
+    spans = list(readable)
+    unreadable = strays = depth = opened = bound = k = 0
+    for tag in _DM_TAG_PATTERN.finditer(text):
+        while k < len(readable) and readable[k][1] <= tag.start():
+            bound = max(bound, readable[k][1])
+            k += 1
+        if k < len(readable) and readable[k][0] <= tag.start():
+            continue  # inside a block the DM step reads
+        if not tag.group('close'):
+            if not depth:
+                opened = tag.start()
+            depth += 1
+        elif depth:
+            depth -= 1
+            if not depth:
+                spans.append((opened, tag.end()))
+                unreadable += 1
+                bound = tag.end()
+        else:
+            spans.append((bound, tag.end()))
+            strays += 1
+    if depth:
+        spans.append((opened, len(text)))
+        unreadable += 1
+    public, pos = [], 0
+    for a, b in sorted(spans):
+        public.append(text[pos:max(pos, a)])
+        pos = max(pos, b)
+    public.append(text[pos:])
+    return DmStrip(''.join(public).strip(), len(readable), unreadable, strays)
+
+
+def withhold_dm_blocks(text: str, *, agent_id: str, where: str, dm_step_ran: bool = False) -> str:
+    """BF-874: fail closed before agent text is posted -- no DM block, sent or not, is posted.
+
+    A block still here was never sent: its tag could not be read, its author is below
+    ``communications.dm_min_rank``, it sat inside a [REPLY] block, or no proactive loop ran.
+    ``dm_step_ran``: ``text`` is the DM step's input, whose readable blocks that step already
+    sent or dropped with its own log; they are removed but not reported as unsent.
+    """
+    stripped = strip_dm_blocks(text)
+    blocks = stripped.unreadable + (0 if dm_step_ran else stripped.readable)
+    if blocks or stripped.stray_closers:
+        logger.warning(
+            "BF-874: withheld %d unsent DM block(s) (%d unreadable) and %d stray [/DM] (each with the text "
+            "before it) from agent %s's %s; none of it was sent or posted",
+            blocks, stripped.unreadable, stripped.stray_closers, agent_id, where,
+        )
+    return stripped.text
+
+
 # AD-1157: the [NOTEBOOK] action tag, with the classification an agent selects.
 # Matches [NOTEBOOK topic-slug] body [/NOTEBOOK] and the newer
 # [NOTEBOOK topic-slug private|department|ship] body [/NOTEBOOK].
@@ -2865,6 +2956,9 @@ class ProactiveCognitiveLoop:
 
         # Truncate to first sentence/line for title, use full text as body
         text = _strip_bracket_markers(text)  # BF-174
+        text = withhold_dm_blocks(text, agent_id=agent.id, where="observation")  # BF-874
+        if not text:  # BF-874: nothing but DM blocks
+            return
         title_text = text.split('\n')[0][:100]
         if len(title_text) < len(text.split('\n')[0]):
             title_text += "..."
@@ -2956,9 +3050,13 @@ class ProactiveCognitiveLoop:
             dm_min_rank_str = rt.config.communications.dm_min_rank
         dm_min_rank = Rank[dm_min_rank_str.upper()] if dm_min_rank_str.upper() in Rank.__members__ else Rank.ENSIGN
         _RANK_ORDER_DM = [Rank.ENSIGN, Rank.LIEUTENANT, Rank.COMMANDER, Rank.SENIOR]
-        if _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(dm_min_rank):
-            text, dm_actions = await self.extract_and_execute_dms(agent, text)
+        dm_step_ran = _RANK_ORDER_DM.index(rank) >= _RANK_ORDER_DM.index(dm_min_rank)
+        if dm_step_ran:
+            _, dm_actions = await self.extract_and_execute_dms(agent, text)
             actions_executed.extend(dm_actions)
+        # BF-874: fail closed here, before the BF-203 catch-all takes a tag and leaves its body. The guard
+        # reads the DM step's input, not its output, so a stray [/DM] after a sent block is bounded by it.
+        text = withhold_dm_blocks(text, agent_id=agent.id, where="response", dm_step_ran=dm_step_ran)
 
         # --- Group Chat (Commander+) --- AD-924
         gc_min_rank_str = "commander"
@@ -3916,6 +4014,7 @@ class ProactiveCognitiveLoop:
                 _reply_sanity = apply_dm_sanity(rt, agent.id, reply_body)
                 reply_body = _reply_sanity.cleaned_text
                 reply_body = _strip_bracket_markers(reply_body)  # BF-174
+                reply_body = withhold_dm_blocks(reply_body, agent_id=agent.id, where="thread reply")  # BF-874
                 if not reply_body:
                     continue
 
@@ -4662,30 +4761,13 @@ class ProactiveCognitiveLoop:
         self, agent: Any, text: str,
     ) -> tuple[str, list[dict]]:
         """AD-453: Extract [DM @callsign]...[/DM] blocks and send as DMs."""
-        import re
         rt = self._runtime
         actions: list[dict] = []
+        sender_label = getattr(agent, 'callsign', '') or agent.agent_type
 
-        # AD-612: Two-tier DM extraction — tolerant of format variations.
-        # Tier 1+2 (unified): Closed DMs with any whitespace (multiline or single-line)
-        pattern = re.compile(
-            r'\[DM\s+@?(\S+)\]'        # Opening tag, capture callsign
-            r'\s*'                      # Optional whitespace (including newlines)
-            r'((?:(?!\[DM\s).)*?)'      # Body (non-greedy, can't cross [DM boundary)
-            r'\[/DM\]'                  # Closing tag
-            ,
-            re.DOTALL | re.IGNORECASE,
-        )
-
-        # Tier 3: Unclosed DMs — match [DM @callsign] text to next [DM or end
-        unclosed_pattern = re.compile(
-            r'\[DM\s+@?(\S+)\]'        # Opening tag, capture callsign
-            r'\s*'                      # Optional whitespace
-            r'(.+?)'                    # Body (non-greedy, at least 1 char)
-            r'(?=\[DM\s|\Z)'           # Lookahead: next [DM tag or end of string
-            ,
-            re.DOTALL | re.IGNORECASE,
-        )
+        # AD-612 / BF-874: the two tiers are the module patterns, which read a multi-word callsign.
+        pattern = _DM_CLOSED_PATTERN
+        unclosed_pattern = _DM_UNCLOSED_PATTERN
 
         # Collect all DM matches (closed first, then unclosed from remaining text)
         all_dm_matches: list[tuple[str, str]] = []  # (callsign, body)
@@ -4696,6 +4778,7 @@ class ProactiveCognitiveLoop:
             all_dm_matches.append((match.group(1), match.group(2).strip()))
 
         for target_callsign, dm_body in all_dm_matches:
+            target_callsign = target_callsign.strip()  # BF-874: "[DM @Troi ]" and "[DM @ Troi]"
             if not dm_body:
                 continue
 
@@ -4707,9 +4790,9 @@ class ProactiveCognitiveLoop:
             last_dm_send = self._dm_send_cooldowns.get(dm_pair_key, 0.0)
             if now - last_dm_send < 60.0:
                 logger.debug(
-                    "BF-163: %s DM to @%s throttled (%.0fs remaining)",
+                    "BF-163: %s DM to a callsign of %s characters throttled (%.0fs remaining)",
                     getattr(agent, 'callsign', agent.agent_type),
-                    target_callsign,
+                    len(target_callsign),  # BF-874: never the tag text (BF-163)
                     60.0 - (now - last_dm_send),
                 )
                 continue
@@ -4725,9 +4808,9 @@ class ProactiveCognitiveLoop:
                 )
                 if sim >= 0.6:
                     logger.debug(
-                        "AD-614: %s DM to @%s suppressed (similarity %.2f)",
+                        "AD-614: %s DM to a callsign of %s characters suppressed (similarity %.2f)",
                         getattr(agent, 'callsign', agent.agent_type),
-                        target_callsign,
+                        len(target_callsign),  # BF-874: never the tag text (AD-614)
                         sim,
                     )
                     continue
@@ -4776,7 +4859,7 @@ class ProactiveCognitiveLoop:
                 if resolved:
                     target_agent_type = resolved.get("agent_type")
             if not target_agent_type:
-                logger.debug("AD-453: DM target @%s not found in registry", target_callsign)
+                logger.warning("BF-874: %s's DM was not sent: no crew member has the %d-character callsign it names; its text is not posted", sender_label, len(target_callsign))
                 continue
 
             # Don't DM yourself
@@ -4790,6 +4873,7 @@ class ProactiveCognitiveLoop:
                     target_full_id = a.id
                     break
             if not target_full_id:
+                logger.warning("BF-874: %s's DM was not sent: no %s is aboard; its text is not posted", sender_label, target_agent_type)
                 continue
 
             try:
