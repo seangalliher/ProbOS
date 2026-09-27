@@ -136,12 +136,15 @@ class MCPAppRegistry:
     def unregister_app(self, name: str) -> bool:
         return self._tools.pop(name, None) is not None
 
-    def has_tool(self, name: str) -> bool:
-        return name in self._tools
+    def has_tool(self, name: str, *, include_external: bool = True) -> bool:
+        reg = self._tools.get(name)
+        return reg is not None and (include_external or not reg.external)
 
-    def list_tools(self) -> list[dict[str, Any]]:
+    def list_tools(self, *, include_external: bool = True) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for reg in self._tools.values():
+            if reg.external and not include_external:
+                continue
             entry = {
                 "name": reg.name,
                 "description": reg.description,
@@ -239,10 +242,10 @@ class MCPAppRegistry:
     # --- Tool invocation ---
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
+        self, name: str, arguments: dict[str, Any], *, include_external: bool = True
     ) -> dict[str, Any]:
         reg = self._tools.get(name)
-        if reg is None:
+        if reg is None or (reg.external and not include_external):
             return {
                 "isError": True,
                 "content": [

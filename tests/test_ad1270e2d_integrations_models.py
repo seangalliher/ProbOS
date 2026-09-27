@@ -213,10 +213,12 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
         "announce_interval_seconds": 5.0,
     },
     "FederationMCPServerConfig": {
+        "auth_token": "",  # BF-875 post-extraction addition: the inert empty token.
         "enabled": False,
         "bind_host": "127.0.0.1",
         "bind_port": 8765,
         "path_prefix": "/mcp",
+        "exposed_intents": [],  # BF-875 post-extraction addition: nothing exposed.
     },
     "FederationPeerTrustConfig": {
         "probationary_alpha": 1.0,

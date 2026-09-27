@@ -7,19 +7,54 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 
 class FederationMCPServerConfig(BaseModel):
     """AD-480a: Inbound MCP server — exposes ProbOS capabilities as MCP tools."""
 
+    # BF-875: declared before ``enabled`` so the enabled check can read it without echoing it.
+    auth_token: str = Field(
+        default="",
+        repr=False,
+        description=(
+            "BF-875: the static bearer token every MCP request must present. Required when "
+            "enabled: at least 32 visible ASCII characters, no spaces. A secret: set it in "
+            "system.yaml; it is never logged."
+        ),
+    )
     enabled: bool = False  # Default-False per AD-695 + W82 + W88 precedent
     bind_host: str = "127.0.0.1"
     bind_port: int = Field(default=8765, ge=1, le=65535)
     path_prefix: str = "/mcp"
+    exposed_intents: list[str] = Field(
+        default_factory=list,
+        description=(
+            "BF-875: the only intents an authenticated MCP caller may run. An intent that no "
+            "agent declares, or that requires consensus, is never dispatched even if listed. "
+            "Empty (the default) exposes no intents."
+        ),
+    )
+
+    @field_validator("auth_token", mode="before")
+    @classmethod
+    def _report_a_non_string_token_as_none(cls, value: object) -> object:
+        # BF-875: pydantic's type error prints its input; None reports a mistyped token without it.
+        return value if isinstance(value, str) else None
+
+    @field_validator("enabled")
+    @classmethod
+    def _require_auth_token_when_enabled(cls, enabled: bool, info: ValidationInfo) -> bool:
+        if enabled and re.fullmatch(r"[\x21-\x7e]{32,}", info.data.get("auth_token", "")) is None:
+            raise ValueError(
+                "federation.mcp_server.enabled requires auth_token: at least 32 visible "
+                "ASCII characters with no spaces (BF-875)"
+            )
+        return enabled
 
 
 class MCPAppHostConfig(BaseModel):

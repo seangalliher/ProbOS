@@ -2957,8 +2957,8 @@ MCP (Model Context Protocol) is becoming the standard for inter-agent tool shari
 
 - ProbOS exposes its agent capabilities as MCP tools
 - MCP tool calls are translated to `IntentMessage` and dispatched through the intent bus
-- MCP-originated intents go through the same governance pipeline as any federated intent: consensus, red team verification, escalation
-- The MCP adapter is a transport, not a trust bypass
+- MCP-originated intents go through the same governance pipeline as any federated intent: consensus, red team verification, escalation *(Correction, BF-875 #1431: not as built. The server broadcast every call on the intent bus, which has no consensus, red-team or escalation step. Since BF-875 a caller needs the `federation.mcp_server.auth_token` bearer token and may run only intents listed in `exposed_intents`; an intent any agent declares `requires_consensus` is refused, not voted on. AD-698 pre-intent hooks still apply.)*
+- The MCP adapter is a transport, not a trust bypass *(BF-875 #1431: true only since BF-875's token and allowlist; before it, it was a bypass.)*
 
 **Outbound (MCP Client)**
 
@@ -2972,7 +2972,7 @@ MCP (Model Context Protocol) is becoming the standard for inter-agent tool shari
 - MCP clients treated as federated peers with configurable trust
 - New clients start with probationary trust (same `Beta(alpha, beta)` prior as new agents — AD-110)
 - Trust updated based on outcome quality of submitted intents
-- Destructive intents from MCP clients always require full consensus regardless of accumulated trust
+- Destructive intents from MCP clients always require full consensus regardless of accumulated trust *(Correction, BF-875 #1431: they are refused outright; the MCP server has no consensus path.)*
 
 **Transport Coexistence**
 
@@ -3002,7 +3002,7 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 - ProbOS exposes agent capabilities as A2A-discoverable services
 - External agents can send tasks to ProbOS agents via A2A task protocol
 - A2A tasks are translated to `IntentMessage` and dispatched through the intent bus
-- Full governance applies: consensus, red team verification, trust scoring
+- Full governance applies: consensus, red team verification, trust scoring *(Correction, BF-875 #1431: not as built. `tasks/send` broadcasts with no consensus step, and the bearer check passes a caller that names no configured peer. Outside BF-875's scope; filed as #1433 and recorded in #1419.)*
 - ProbOS publishes an Agent Card describing available capabilities, authentication requirements, and supported modalities
 
 **Outbound (A2A Client)**
@@ -3017,7 +3017,7 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 - External A2A agents treated as federated crew members with discounted trust (same δ factor as trust transitivity)
 - New A2A peers start with probationary trust, same as MCP clients
 - Trust updated based on task outcome quality, measured by Shapley attribution
-- A2A agents never bypass consensus — they're collaborators, not privileged operators
+- A2A agents never bypass consensus — they're collaborators, not privileged operators *(Correction, BF-875 #1431: not as built; see the A2A server entry above.)*
 - Agent Card metadata (publisher, version, capabilities) stored for provenance tracking
 
 **MCP vs A2A Decision Matrix**

@@ -246,6 +246,9 @@ async def _off_observation(
     assert config["proactive_cognitive"].pop("standing_interest_min_fire_interval_seconds") == 3600
     # AD-1229's inert ward_room flag was added after this capture too.
     assert config["ward_room"].pop("message_receipts_enabled") is False
+    # BF-875's inert (empty) MCP server token and allowlist were added after this capture too.
+    assert config["federation"]["mcp_server"].pop("auth_token") == ""
+    assert config["federation"]["mcp_server"].pop("exposed_intents") == []
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
