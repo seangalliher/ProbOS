@@ -244,6 +244,8 @@ async def _off_observation(
     assert config["proactive_cognitive"].pop("standing_interest_default_ttl_hours") == 24
     assert config["proactive_cognitive"].pop("standing_interest_max_ttl_hours") == 168
     assert config["proactive_cognitive"].pop("standing_interest_min_fire_interval_seconds") == 3600
+    # AD-1229's inert ward_room flag was added after this capture too.
+    assert config["ward_room"].pop("message_receipts_enabled") is False
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

@@ -847,6 +847,7 @@ Ward Room communication fabric configuration (AD-407).
 | `dm_response_budget` | `int` | `6` | — |  |
 | `dm_response_window_seconds` | `float` | `600.0` | — |  |
 | `dm_pair_exchange_budget` | `int` | `8` | — |  |
+| `message_receipts_enabled` | `bool` | `False` | — |  |
 
 ## `group_chat`
 
