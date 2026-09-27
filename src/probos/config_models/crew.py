@@ -291,6 +291,7 @@ class WardRoomConfig(BaseModel):
     dm_response_budget: int = 6             # BF-257: max DM responses per agent per window
     dm_response_window_seconds: float = 600.0  # BF-257: sliding window (10 minutes)
     dm_pair_exchange_budget: int = 8        # BF-257: max exchanges per A<->B pair per window
+    message_receipts_enabled: bool = False  # AD-1229: offer agents the read-only message_receipts tool (their own DMs: delivered, replied)
 
 
 class AssignmentConfig(BaseModel):

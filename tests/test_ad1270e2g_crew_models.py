@@ -245,7 +245,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                           'event_coalesce_ms': 200,
                           'dm_response_budget': 6,
                           'dm_response_window_seconds': 600.0,
-                          'dm_pair_exchange_budget': 8},
+                          'dm_pair_exchange_budget': 8,
+                          'message_receipts_enabled': False},
     'WardRoomHebbianConfig': {   'enabled': True,
                                  'learning_rate': 0.1,
                                  'decay_factor': 0.99}}

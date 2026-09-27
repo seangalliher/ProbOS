@@ -2318,6 +2318,38 @@ class WorkItemAgenticExecutor:
                 )
                 status_ids = []
 
+        # AD-1229 (#1202): let the agent READ what became of a direct message it
+        # sent -- delivered, and whether the recipient wrote back -- instead of
+        # inferring it from later prose or asking again. Read-only and scoped to
+        # the asking agent's own DMs; it reports what the Ward Room stores and
+        # never a judgement. `is True` keeps a mock config from arming it.
+        # Registered idempotently, mirroring the AD-1209 block above.
+        receipt_ids: list[str] = []
+        _ward_room_cfg = getattr(getattr(runtime, "config", None), "ward_room", None)
+        if (
+            getattr(_ward_room_cfg, "message_receipts_enabled", False) is True
+            and getattr(runtime, "ward_room", None) is not None
+            and registry is not None
+        ):
+            try:
+                from probos.tools.message_receipts_tool import MessageReceiptsTool
+
+                if registry.get("message_receipts") is None:
+                    registry.register(
+                        MessageReceiptsTool(runtime=runtime),
+                        provider="AD-1229",
+                        tags=["message_receipts", "ward_room"],
+                    )
+                receipt_ids = ["message_receipts"]
+            except Exception:
+                logger.warning(
+                    "AD-1229: failed to register/offer the message_receipts tool "
+                    "for agent %s; continuing without it -- whether a DM was "
+                    "answered may be judged from recollection",
+                    agent_id, exc_info=True,
+                )
+                receipt_ids = []
+
         owned_steps_ids: list[str] = []
         if (
             owned_steps_turn_id is not None
@@ -2648,6 +2680,7 @@ class WorkItemAgenticExecutor:
                 *status_ids, *owned_steps_ids, *recall_ids, *interest_ids,
                 *search_ids, *delegate_ids, *event_log_ids, *oracle_ids,
                 *publish_ids, *work_pull_ids, *browser_ids, *self_query_ids,
+                *receipt_ids,
             ])
         )
         # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP

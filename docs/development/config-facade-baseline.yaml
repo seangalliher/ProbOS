@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1815
-  field_definitions: 1808
+  canonical_dump_leaves: 1816
+  field_definitions: 1809
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 803df446bb4f8f421ed00a2e03683143771ad4e012484dff1607e482c93a7c35
+canonical_dump_sha256: 55e5259f3284aed1c06eeadd00e1d8ef0aeac376db505d767ab4bd72d06d79b6
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -3310,7 +3310,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 87da35fdbcb508582d5d9bc2ddce85e505d5bce6e96573a14719b9e4d0ca96b0
+    schema_sha256: e02adb4e3f98bbc828776adc82ec8ace42503adf9014202837a459cb2d402733
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3699,7 +3699,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: ef6f941c88ea50a5584913d6999b12398a04f099d71a357d0ee9a7d4b2be11aa
+    schema_sha256: 4479ad905c231d1480f1b04d12b340cb52ae84b8a19fb3835b2686a9ff3df313
     fields:
     - {default: 'False', name: enabled}
     - {default: '5', name: max_agent_rounds}
@@ -3718,6 +3718,7 @@ models:
     - {default: '6', name: dm_response_budget}
     - {default: '600.0', name: dm_response_window_seconds}
     - {default: '8', name: dm_pair_exchange_budget}
+    - {default: 'False', name: message_receipts_enabled}
   WardRoomHebbianConfig:
     qualname: WardRoomHebbianConfig
     bases:

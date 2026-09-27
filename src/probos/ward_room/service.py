@@ -21,6 +21,7 @@ from probos.ward_room.models import (
     WardRoomThread,
     _SCHEMA,
 )
+from probos.ward_room.receipt_facts import DmFactsPage, DmReceiptFacts
 from probos.ward_room.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class WardRoomService(EventEmitterMixin):
         self._threads: ThreadManager | None = None
         self._messages: MessageStore | None = None
         self._last_stats: dict[str, Any] | None = None
+        self._receipt_facts: DmReceiptFacts | None = None  # AD-1229: built in start()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -139,8 +141,11 @@ class WardRoomService(EventEmitterMixin):
         await self._channels._refresh_channel_cache()
         # Share refreshed cache reference with threads
         self._threads._channel_cache = self._channels._channel_cache
+        # AD-1229: body-free DM receipt facts over the same connection; runs nothing until asked.
+        self._receipt_facts = DmReceiptFacts(db=self._db)
 
     async def stop(self) -> None:
+        self._receipt_facts = None  # AD-1229: it reads through the connection closed below
         if self._db:
             await self._db.close()
             self._db = None
@@ -439,3 +444,13 @@ class WardRoomService(EventEmitterMixin):
 
     async def get_unread_dms(self, agent_id: str, limit: int = 3, exchange_limit: int = 0) -> list[dict]:
         return await self._messages.get_unread_dms(agent_id, limit, exchange_limit=exchange_limit)
+
+    async def dm_receipt_facts(
+        self, author_id: str, *, since: float, limit: int, channel_names: tuple[str, ...] = (),
+    ) -> DmFactsPage:
+        """AD-1229: delivery and reply facts for DM threads ``author_id`` wrote -- never their text."""
+        if self._receipt_facts is None:
+            return DmFactsPage(threads=(), truncated=False)
+        return await self._receipt_facts.threads_by_author(
+            author_id, since=since, limit=limit, channel_names=channel_names,
+        )

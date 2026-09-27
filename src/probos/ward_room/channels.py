@@ -11,6 +11,35 @@ from probos.ward_room.models import WardRoomChannel
 
 logger = logging.getLogger(__name__)
 
+#: AD-1229 (#1202): the key the Captain holds in a DM channel name. The Captain
+#: is not a registered agent, so the name carries this word instead of an id.
+CAPTAIN_DM_KEY = "captain"
+
+
+def dm_channel_name(agent_a_id: str, agent_b_id: str) -> str:
+    """AD-453: the DM channel name for a pair -- both ids sorted, each cut to 8 characters.
+
+    Promoted from ``get_or_create_dm_channel`` by AD-1229 so the receipts reader
+    derives the name exactly as the writer does. Eight characters of an id are its
+    agent type's prefix (``substrate/identity.py``), so types that share a prefix
+    share a channel name; a reader must not treat a key as one agent.
+    """
+    sorted_ids = sorted([agent_a_id, agent_b_id])
+    return f"dm-{sorted_ids[0][:8]}-{sorted_ids[1][:8]}"
+
+
+def captain_dm_channel_name(agent_id: str) -> str:
+    """AD-485: the Captain DM channel an agent writes to (the proactive and notifier form)."""
+    return f"dm-{CAPTAIN_DM_KEY}-{agent_id[:8]}"
+
+
+def dm_channel_keys(name: str) -> tuple[str, str] | None:
+    """AD-1229: the two keys of a ``dm-<key>-<key>`` channel name, or None for any other name."""
+    parts = name.split("-")
+    if len(parts) != 3 or parts[0] != "dm" or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
 
 class ChannelManager:
     """Channel CRUD, default channel creation, and channel caching."""
@@ -199,8 +228,7 @@ class ChannelManager:
         """AD-453: Get or create a DM channel between two agents."""
         if not self._db:
             raise ValueError("Ward Room not initialized")
-        sorted_ids = sorted([agent_a_id, agent_b_id])
-        channel_name = f"dm-{sorted_ids[0][:8]}-{sorted_ids[1][:8]}"
+        channel_name = dm_channel_name(agent_a_id, agent_b_id)
 
         # Check if channel already exists
         async with self._db.execute(
