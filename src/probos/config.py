@@ -2287,11 +2287,49 @@ class PerceptionConfig(BaseModel):
 class FederationA2AConfig(BaseModel):
     """AD-480d / AD-480e: Inbound A2A server + outbound A2A clients."""
 
+    # BF-876: declared before ``enabled`` so the enabled check can read it without echoing it.
+    auth_token: str = Field(
+        default="",
+        repr=False,
+        description=(
+            "BF-876: the static bearer token every inbound A2A request must present. Required "
+            "when enabled: at least 32 visible ASCII characters, no spaces. Never one of the "
+            "outbound_peers tokens, which are what this ship presents to its peers. A secret: "
+            "set it in system.yaml; it is never logged."
+        ),
+    )
     enabled: bool = False  # Default-False per AD-695 + W82 + W88 precedent
     bind_host: str = "127.0.0.1"
     bind_port: int = Field(default=8766, ge=1, le=65535)
     agent_card_path: str = "/.well-known/agent.json"
+    exposed_intents: list[str] = Field(
+        default_factory=list,
+        description=(
+            "BF-876: the only intents an authenticated A2A caller may run with tasks/send, and "
+            "the only skills the agent card lists. An intent that no agent declares, or that "
+            "requires consensus, is never dispatched even if listed. Empty (the default) "
+            "exposes no intents."
+        ),
+    )
     outbound_peers: list[A2APeerConfig] = Field(default_factory=list)
+
+    @field_validator("auth_token", mode="before")
+    @classmethod
+    def _report_a_non_string_token_as_none(cls, value: object) -> object:
+        # BF-876: pydantic's type error prints its input; None reports a mistyped token without it.
+        return value if isinstance(value, str) else None
+
+    @field_validator("enabled")
+    @classmethod
+    def _require_auth_token_when_enabled(cls, enabled: bool, info: Any) -> bool:
+        # BF-876: BF-875's rule, spelled without ``re`` so the probos.config facade gains no name.
+        token = info.data.get("auth_token", "")
+        if enabled and not (len(token) >= 32 and all("!" <= ch <= "~" for ch in token)):
+            raise ValueError(
+                "federation.a2a.enabled requires auth_token: at least 32 visible ASCII "
+                "characters with no spaces (BF-876)"
+            )
+        return enabled
 
 
 class FederationConfig(BaseModel):

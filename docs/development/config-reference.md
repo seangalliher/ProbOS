@@ -366,10 +366,12 @@ AD-480d / AD-480e: Inbound A2A server + outbound A2A clients.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
+| `auth_token` | `str` | `''` | — | BF-876: the static bearer token every inbound A2A request must present. Required when enabled: at least 32 visible ASCII characters, no spaces. Never one of the outbound_peers tokens, which are what this ship presents to its peers. A secret: set it in system.yaml; it is never logged. |
 | `enabled` | `bool` | `False` | — |  |
 | `bind_host` | `str` | `'127.0.0.1'` | — |  |
 | `bind_port` | `int` | `8766` | ≥ 1, ≤ 65535 |  |
 | `agent_card_path` | `str` | `'/.well-known/agent.json'` | — |  |
+| `exposed_intents` | `list[str]` | `[]` | — | BF-876: the only intents an authenticated A2A caller may run with tasks/send, and the only skills the agent card lists. An intent that no agent declares, or that requires consensus, is never dispatched even if listed. Empty (the default) exposes no intents. |
 | `outbound_peers` | `list[probos.config_models.integrations.A2APeerConfig]` | `[]` | — |  |
 
 ## `ard`

@@ -249,6 +249,9 @@ async def _off_observation(
     # BF-875's inert (empty) MCP server token and allowlist were added after this capture too.
     assert config["federation"]["mcp_server"].pop("auth_token") == ""
     assert config["federation"]["mcp_server"].pop("exposed_intents") == []
+    # BF-876's inert (empty) A2A server token and allowlist were added after this capture too.
+    assert config["federation"]["a2a"].pop("auth_token") == ""
+    assert config["federation"]["a2a"].pop("exposed_intents") == []
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

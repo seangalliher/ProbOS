@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1817
-  field_definitions: 1811
+  canonical_dump_leaves: 1818
+  field_definitions: 1813
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: b7f7383c8ef8d005278ea25f41254225942f557ad5a6b0aa14b37f21ca8c5b81
+canonical_dump_sha256: ab003a885160eed2be5ca5b27097754f948ded14e5c2f55a69ec4b7badd650f4
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1802,12 +1802,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a51d7168458a299ef9c2c5741efcea146fd0f526097a8cf8a110b2326e4a680b
+    schema_sha256: 2fb90a6afc5e5d774e389f9b5f284887aa8eb38e46c465942bf0afdfcad39d8a
     fields:
+    - {default: '''''', name: auth_token}
     - {default: 'False', name: enabled}
     - {default: '''127.0.0.1''', name: bind_host}
     - {default: '8766', name: bind_port}
     - {default: '''/.well-known/agent.json''', name: agent_card_path}
+    - {default: <required>, has_default_factory: true, name: exposed_intents}
     - {default: <required>, has_default_factory: true, name: outbound_peers}
   FederationArdConfig:
     qualname: FederationArdConfig
@@ -1838,7 +1840,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 5192c34a7b81298f16e62fafe0ed0cb0c7ac7e2d70746f22a233c95141d53d7b
+    schema_sha256: 3eb99808ca770de00db442f53baae34bb4d48802f63f83fdbdf816cacb2d7ad9
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -3312,7 +3314,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 15eb5c94fc067e1564405ded7c46ae0540ce365ed4dcbb6c1bea56f278ff153b
+    schema_sha256: 9029f2a1e45b313140d928f3f680d63a6b98335c1a6855e2056dd28c91c5212a
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

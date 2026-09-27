@@ -35,6 +35,7 @@ _UNAVAILABLE = (
     "an intent named in federation.mcp_server.exposed_intents that does not require consensus"
 )
 _NOT_AN_OBJECT = "Invalid Request: the body must be a JSON-RPC request object"
+_NOT_JSON_RPC_2_0 = 'Invalid Request: a JSON-RPC 2.0 request carries "jsonrpc": "2.0" and a string method'
 MAX_REQUEST_BYTES = 1_048_576  # BF-875: one JSON-RPC request; cost: a larger request is refused with 413 (the HXI games send a few hundred bytes)
 _TOO_LARGE = f"Invalid Request: the request body exceeds {MAX_REQUEST_BYTES} bytes"
 
@@ -59,15 +60,15 @@ def exposable_intents(
     collect: Callable[[], Iterable[IntentDescriptor]] | None,
     exposed: Collection[str],
 ) -> dict[str, IntentDescriptor]:
-    """BF-875: the intents MCP may dispatch: listed, declared, and never consensus-flagged."""
+    """BF-875: what an inbound server may dispatch: listed, declared, never consensus-flagged (BF-876: A2A too)."""
     if collect is None or not exposed:
         return {}
     try:
         declared = list(collect())
     except Exception:
         logger.warning(
-            "BF-875: reading the intent descriptors failed; the MCP server exposes no "
-            "intents until a read succeeds",
+            "BF-875: reading the intent descriptors failed; the inbound MCP or A2A server "
+            "exposes no intents until a read succeeds",
             exc_info=True,
         )
         return {}
@@ -111,19 +112,31 @@ def _encodes_as_utf8(payload: dict[str, Any]) -> bool:
     return True
 
 
+def strict_json_loads(data: str | bytes) -> Any:
+    """BF-876: ``json.loads`` under BF-875's number rules, for every JSON an inbound server parses.
+
+    Malformed JSON or bytes, NaN, Infinity, a float overflow and an integer past Python's digit
+    limit raise ``ValueError``; nesting past the recursion budget raises ``RecursionError``.
+    """
+    return json.loads(data, parse_constant=_refuse_non_finite, parse_float=_finite_float)
+
+
 def parse_jsonrpc_request(body: bytes) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """BF-875: ``(request, None)``, or ``(None, error)`` for a door to return with HTTP 400.
 
     A malformed body is the caller's error, never a 500. A batch (a JSON array) is
     refused as -32600 rather than half-supported, and
     a number JSON cannot hold (too many digits, NaN, Infinity) is a parse error.
+    BF-876: an object without ``"jsonrpc": "2.0"`` and a string ``method`` is -32600.
     """
     try:
-        payload = json.loads(body, parse_constant=_refuse_non_finite, parse_float=_finite_float)
+        payload = strict_json_loads(body)
     except (ValueError, RecursionError):  # BF-875: bad JSON, bad UTF-8, a huge or non-finite number, deep nesting
         return None, _jsonrpc_error(None, -32700, "Parse error")
     if not isinstance(payload, dict):
         return None, _jsonrpc_error(None, -32600, _NOT_AN_OBJECT)
+    if payload.get("jsonrpc") != JSONRPC_VERSION or not isinstance(payload.get("method"), str):  # BF-876: the HXI bridge forwards nothing else
+        return None, _jsonrpc_error(None, -32600, _NOT_JSON_RPC_2_0)
     if "id" in payload and not _is_jsonrpc_id(payload["id"]):  # BF-875: JSON-RPC 2.0 ids are a string, a number or null
         return None, _jsonrpc_error(
             None, -32600, "Invalid Request: id must be a string, a number or null"
@@ -319,7 +332,7 @@ class FederationMCPServer:
             if method == "resources/read":
                 return await self._handle_resources_read(request_id, params)
             return self._error_envelope(
-                request_id, -32601, f"Method not found: {method}"
+                request_id, -32601, f"Method not found: {str(method)[:80]}"
             )
         except Exception as exc:
             self._emit_failed(method, reason="server_error", detail=str(exc))
@@ -376,7 +389,7 @@ class FederationMCPServer:
         result = await registry.read_resource(uri)
         if result is None:
             return self._error_envelope(
-                request_id, -32000, f"resource not found: {uri}"
+                request_id, -32000, f"resource not found: {uri[:80]}"
             )
         return {
             "jsonrpc": JSONRPC_VERSION,

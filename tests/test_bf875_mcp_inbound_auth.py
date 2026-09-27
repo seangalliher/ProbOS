@@ -822,9 +822,20 @@ _INVALID_REQUESTS = {
     "escaped_lone_surrogate": b'{"jsonrpc":"2.0","id":"\\ud800","method":"tools/list"}',
     "raw_lone_surrogate": b'{"jsonrpc":"2.0","id":1,"method":"\xed\xa0\x80"}',
 }
+# BF-876 A-2: an object that is not a JSON-RPC 2.0 request; each was dispatched, or 200 with -32601.
+_NOT_JSON_RPC_2_0_BODIES = {
+    "jsonrpc_1_0": b'{"jsonrpc":"1.0","id":1,"method":"tools/list"}',
+    "jsonrpc_number": b'{"jsonrpc":2.0,"id":1,"method":"tools/list"}',
+    "jsonrpc_missing": b'{"id":1,"method":"tools/list"}',
+    "method_missing": b'{"jsonrpc":"2.0","id":1}',
+    "method_number": b'{"jsonrpc":"2.0","id":1,"method":5}',
+    "method_null": b'{"jsonrpc":"2.0","id":1,"method":null}',
+    "empty_object": b"{}",
+}
 _PARSER_CASES = {**_MALFORMED, **{shape: (b'{"id": ' + number + b"}", -32700)
                                   for shape, number in _NUMBERS_JSON_CANNOT_HOLD.items()},
-                 **{shape: (body, -32600) for shape, body in _INVALID_REQUESTS.items()}}
+                 **{shape: (body, -32600) for shape, body in _INVALID_REQUESTS.items()},
+                 **{shape: (body, -32600) for shape, body in _NOT_JSON_RPC_2_0_BODIES.items()}}
 
 
 @pytest.mark.parametrize("body,code", list(_PARSER_CASES.values()), ids=list(_PARSER_CASES))
@@ -835,7 +846,9 @@ def test_parse_jsonrpc_request_refuses_anything_but_an_object(body: bytes, code:
 
 
 def test_parse_jsonrpc_request_returns_the_object() -> None:
-    assert parse_jsonrpc_request(b'{"jsonrpc": "2.0", "id": 7}') == ({"jsonrpc": "2.0", "id": 7}, None)
+    # BF-876 A-2: a request needs a string method; this pin sent none, which is -32600 since.
+    body = b'{"jsonrpc": "2.0", "id": 7, "method": "tools/list"}'
+    assert parse_jsonrpc_request(body) == ({"jsonrpc": "2.0", "id": 7, "method": "tools/list"}, None)
 
 
 @pytest.mark.asyncio
@@ -1163,3 +1176,58 @@ def test_config_non_string_token_through_load_config_is_refused_without_echo(tmp
         assert caught.value.errors()[0]["loc"] == ("federation", "mcp_server", "auth_token"), label
         assert not _echoes(_SAMPLE, str(caught.value)), label
         assert not _echoes(_SAMPLE, caught.value.json()), label
+
+
+# ---------------------------------------------------------------- BF-876 A-2: the shared parser and bounded echoes
+
+
+_ENVELOPE_BREAKS = {
+    "jsonrpc_1_0": lambda call: {**call, "jsonrpc": "1.0"},
+    "jsonrpc_missing": lambda call: {k: v for k, v in call.items() if k != "jsonrpc"},
+    "method_missing": lambda call: {k: v for k, v in call.items() if k != "method"},
+    "empty_object": lambda call: {},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reshape", list(_ENVELOPE_BREAKS.values()), ids=list(_ENVELOPE_BREAKS))
+@pytest.mark.parametrize("door", ["door_a", "door_b"])
+async def test_a_body_that_is_not_a_json_rpc_2_0_request_is_400_at_both_doors(door: str, reshape,
+                                                                              tmp_path: Path) -> None:
+    ship = _ship()
+    dispatched = _spy_on_broadcasts(ship)
+    call = _list_directory(tmp_path)
+    # Premise: the same call as a JSON-RPC 2.0 request is answered, and door A dispatches it.
+    premise = await _post_through(door, ship, json.dumps(call).encode())
+    assert premise.status_code == 200
+    assert dispatched == (["list_directory"] if door == "door_a" else [])
+    dispatched.clear()
+    response = await _post_through(door, ship, json.dumps(reshape(call)).encode())
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == -32600
+    assert dispatched == [] and ship.shell_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["door_a", "door_b"])
+async def test_an_unknown_method_is_echoed_in_at_most_80_characters_at_both_doors(door: str) -> None:
+    ship = _ship()
+    short = await _post_through(door, ship, b'{"jsonrpc": "2.0", "id": 1, "method": "nope/x"}')
+    long = await _post_through(door, ship, json.dumps({"jsonrpc": "2.0", "id": 2, "method": "x" * 200_000}).encode())
+    # Premise: an unknown method is echoed, so the bound below is what is tested.
+    assert short.json()["error"] == {"code": -32601, "message": "Method not found: nope/x"}
+    assert long.json()["error"] == {"code": -32601, "message": "Method not found: " + "x" * 80}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", ["door_a", "door_b"])
+async def test_an_unknown_resource_uri_is_echoed_in_at_most_80_characters_at_both_doors(door: str) -> None:
+    registry = MCPAppRegistry(internal_default_csp=_CSP, external_default_csp=_CSP)
+    registry.register_app_resource(uri=_APP_URI, mime_type="text/html", content=b"<p>bf876</p>")
+    ship = _ship(registry=registry)
+    long_uri = "ui://" + "y" * 200_000
+    short = await _post_through(door, ship, json.dumps(_read_resource("ui://nope")).encode())
+    long = await _post_through(door, ship, json.dumps(_read_resource(long_uri)).encode())
+    # Premise: an unknown uri is echoed, so the bound below is what is tested.
+    assert short.json()["error"] == {"code": -32000, "message": "resource not found: ui://nope"}
+    assert long.json()["error"] == {"code": -32000, "message": "resource not found: " + long_uri[:80]}
