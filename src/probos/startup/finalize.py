@@ -4831,6 +4831,7 @@ async def finalize_startup(
             from probos.federation.mcp_server import FederationMCPServer
             runtime.federation_mcp_server = FederationMCPServer(
                 runtime=runtime, config=config.federation.mcp_server,
+                collect_intent_descriptors_fn=runtime._collect_intent_descriptors,
             )
             await runtime.federation_mcp_server.start()
             logger.info(

@@ -6084,13 +6084,9 @@ class ProbOSRuntime:
     def _collect_intent_descriptors(self) -> list[IntentDescriptor]:
         """Collect unique intent descriptors from all registered agent templates
         and cognitive skill catalog (AD-596b)."""
-        seen: set[str] = set()
-        descriptors: list[IntentDescriptor] = []
+        declared: list[IntentDescriptor] = []
         for type_name, agent_class in self.spawner._templates.items():
-            for desc in getattr(agent_class, "intent_descriptors", []):
-                if desc.name not in seen:
-                    seen.add(desc.name)
-                    descriptors.append(desc)
+            declared.extend(getattr(agent_class, "intent_descriptors", []))
 
         operations = getattr(self.config, "operations", None)
         dispatch = getattr(self.config, "agentic_dispatch", None)
@@ -6102,23 +6098,25 @@ class ProbOSRuntime:
                 START_CREW_SESSION_DESCRIPTOR,
             )
 
-            if START_CREW_SESSION_DESCRIPTOR.name not in seen:
-                seen.add(START_CREW_SESSION_DESCRIPTOR.name)
-                descriptors.append(START_CREW_SESSION_DESCRIPTOR)
+            declared.append(START_CREW_SESSION_DESCRIPTOR)
 
         # AD-596b: collect from cognitive skill catalog
         if self.cognitive_skill_catalog:
             for entry in self.cognitive_skill_catalog.list_entries():
                 for intent_name in entry.intents:
-                    if intent_name not in seen:
-                        seen.add(intent_name)
-                        descriptors.append(IntentDescriptor(
-                            name=intent_name,
-                            description=f"[Cognitive Skill: {entry.name}] {entry.description}",
-                            tier="domain",
-                        ))
+                    declared.append(IntentDescriptor(
+                        name=intent_name,
+                        description=f"[Cognitive Skill: {entry.name}] {entry.description}",
+                        tier="domain",
+                    ))
 
-        return descriptors
+        # BF-875: the first declaration of a name wins, but any consensus declaration flags it.
+        unique: dict[str, IntentDescriptor] = {}
+        for desc in declared:
+            kept = unique.setdefault(desc.name, desc)
+            if desc.requires_consensus and not kept.requires_consensus:
+                unique[desc.name] = replace(kept, requires_consensus=True)
+        return list(unique.values())
 
     def _build_pool_intent_map(self) -> dict[str, list[str]]:
         """Build mapping of pool_name -> list of intent names for demand tracking.

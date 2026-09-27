@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1816
-  field_definitions: 1809
+  canonical_dump_leaves: 1817
+  field_definitions: 1811
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 55e5259f3284aed1c06eeadd00e1d8ef0aeac376db505d767ab4bd72d06d79b6
+canonical_dump_sha256: b7f7383c8ef8d005278ea25f41254225942f557ad5a6b0aa14b37f21ca8c5b81
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1838,7 +1838,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 04c247baf23a88e4b6dfa2ce3694f6ab1e686ed873420cb2aab430f164608975
+    schema_sha256: 5192c34a7b81298f16e62fafe0ed0cb0c7ac7e2d70746f22a233c95141d53d7b
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -1876,12 +1876,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 134c2d626a348fc6f031920b993d809b935071da9860ebc82957b27efdc6850e
+    schema_sha256: a37933f7e68d27af15d4abf8110c4ee4f5e48f83c692b132c1f2656dcc52e042
     fields:
+    - {default: '''''', name: auth_token}
     - {default: 'False', name: enabled}
     - {default: '''127.0.0.1''', name: bind_host}
     - {default: '8765', name: bind_port}
     - {default: '''/mcp''', name: path_prefix}
+    - {default: <required>, has_default_factory: true, name: exposed_intents}
   FederationPeerTrustConfig:
     qualname: FederationPeerTrustConfig
     bases:
@@ -3310,7 +3312,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: e02adb4e3f98bbc828776adc82ec8ace42503adf9014202837a459cb2d402733
+    schema_sha256: 15eb5c94fc067e1564405ded7c46ae0540ce365ed4dcbb6c1bea56f278ff153b
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

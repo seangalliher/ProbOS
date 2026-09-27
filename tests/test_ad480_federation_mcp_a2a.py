@@ -539,10 +539,21 @@ class TestA2AServerInbound:
 # -------------------- TestMCPServerInbound (480a + 480b) --------------------
 
 
+# BF-875 (#1431): an intent now needs the bearer token, a place in exposed_intents and a
+# declaration; the helper supplies all three so these tests keep asserting dispatch itself.
+_TEST_TOKEN = "t" * 40  # synthetic
+_AUTH = f"Bearer {_TEST_TOKEN}"
+
+
 def _mcp_server_with_runtime(**kw) -> tuple[FederationMCPServer, object]:
     runtime = _stub_runtime(**kw)
-    cfg = FederationMCPServerConfig()
-    server = FederationMCPServer(runtime=runtime, config=cfg)
+    descriptors = runtime.decomposer._intent_descriptors
+    cfg = FederationMCPServerConfig(auth_token=_TEST_TOKEN, exposed_intents=list(descriptors))
+    server = FederationMCPServer(
+        runtime=runtime,
+        config=cfg,
+        collect_intent_descriptors_fn=lambda: list(descriptors.values()),
+    )
     return server, runtime
 
 
@@ -573,6 +584,7 @@ class TestMCPServerInbound:
         server, _ = _mcp_server_with_runtime(descriptors=descriptors)
         out = await server.handle_jsonrpc(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            auth_header=_AUTH,  # BF-875: intents are listed only to an authenticated caller
         )
         tools = out["result"]["tools"]
         assert tools[0]["name"] == "echo"
@@ -586,6 +598,7 @@ class TestMCPServerInbound:
         server, _ = _mcp_server_with_runtime(descriptors=descriptors)
         out = await server.handle_jsonrpc(
             {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+            auth_header=_AUTH,  # BF-875: intents are listed only to an authenticated caller
         )
         schema = out["result"]["tools"][0]["inputSchema"]
         assert schema["type"] == "object"
@@ -598,7 +611,7 @@ class TestMCPServerInbound:
         await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 4, "method": "tools/call",
             "params": {"name": "echo", "arguments": {"text": "hi"}},
-        }, session_id="s-1")
+        }, session_id="s-1", auth_header=_AUTH)  # BF-875: intents need the token
         assert runtime.intent_bus.broadcast.await_count == 1
         kwargs = runtime.intent_bus.broadcast.await_args.kwargs
         assert kwargs["federated"] is False
@@ -615,18 +628,22 @@ class TestMCPServerInbound:
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 5, "method": "tools/call",
             "params": {"name": "echo", "arguments": {}},
-        })
+        }, auth_header=_AUTH)  # BF-875: intents need the token
         text = out["result"]["content"][0]["text"]
         assert json.loads(text) == {"v": 2}
         assert out["result"]["isError"] is False
 
     @pytest.mark.asyncio
     async def test_handle_jsonrpc_tools_call_unknown_intent_returns_no_handler_error(self):
-        server, _ = _mcp_server_with_runtime(broadcast_results=[])
+        # BF-875: "nope" is declared and exposed so the call reaches the bus; an undeclared
+        # name is refused before it (test_bf875_mcp_inbound_auth.py).
+        server, _ = _mcp_server_with_runtime(
+            broadcast_results=[], descriptors={"nope": _make_descriptor("nope")},
+        )
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 6, "method": "tools/call",
             "params": {"name": "nope", "arguments": {}},
-        })
+        }, auth_header=_AUTH)
         assert out["error"]["code"] == -32000
         assert "no agent" in out["error"]["message"]
 
@@ -640,7 +657,7 @@ class TestMCPServerInbound:
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 7, "method": "tools/call",
             "params": {"name": "echo", "arguments": {}},
-        })
+        }, auth_header=_AUTH)  # BF-875: intents need the token
         assert out["error"]["code"] == -32000
         assert "boom" in out["error"]["message"]
 
@@ -667,7 +684,7 @@ class TestMCPServerInbound:
         await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 10, "method": "tools/call",
             "params": {"name": "echo", "arguments": {}},
-        }, session_id="sid-7")
+        }, session_id="sid-7", auth_header=_AUTH)  # BF-875: intents need the token
         peers = runtime.federation_peer_registry.list_peers(protocol="mcp")
         assert any(p.peer_id == "mcp-session:sid-7" for p in peers)
 
@@ -677,7 +694,7 @@ class TestMCPServerInbound:
         await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 11, "method": "tools/call",
             "params": {"name": "echo", "arguments": {}},
-        }, session_id="sid-8")
+        }, session_id="sid-8", auth_header=_AUTH)  # BF-875: intents need the token
         assert any(
             o[0] == "mcp-peer:mcp-session:sid-8" and o[1] is True
             for o in runtime.trust_network.outcomes
@@ -731,13 +748,21 @@ class TestProbationaryTrustWiring:
         after = tn.priors["mcp-peer:p"][1]
         assert after > before
 
-    def test_destructive_intent_requires_consensus_regardless_of_trust(self):
-        # IntentDescriptor.requires_consensus is honored at the existing
-        # dispatcher (verified at consensus pipeline tests). Here we assert
-        # that a destructive descriptor remains marked even after federation
-        # projection — AD-480 does not strip the flag.
-        desc = _make_descriptor("rm_file", requires_consensus=True)
-        assert desc.requires_consensus is True
+    @pytest.mark.asyncio
+    async def test_destructive_intent_requires_consensus_regardless_of_trust(self):
+        # BF-875 (#1431): this asserted only that the descriptor kept its flag, which held
+        # while the MCP server broadcast the intent with no consensus step. It now crosses
+        # the seam: a highly trusted, authenticated peer with the intent listed is still
+        # refused before the bus.
+        descriptors = {"rm_file": _make_descriptor("rm_file", requires_consensus=True)}
+        server, runtime = _mcp_server_with_runtime(descriptors=descriptors)
+        runtime.trust_network.priors["mcp-peer:mcp-session:trusted"] = (100.0, 1.0)
+        out = await server.handle_jsonrpc({
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {"name": "rm_file", "arguments": {}},
+        }, session_id="trusted", auth_header=_AUTH)
+        assert out["error"]["code"] == -32602
+        assert runtime.intent_bus.broadcast.await_count == 0
 
     @pytest.mark.asyncio
     async def test_config_overrides_default_alpha_beta(self):
@@ -958,7 +983,8 @@ class TestStartupWiring:
     @pytest.mark.asyncio
     async def test_mcp_server_enabled_attempts_start(self):
         # When enabled-but-starlette-missing, start() is a no-op (degrade-to-warn).
-        cfg = FederationMCPServerConfig(enabled=True, bind_port=18765)
+        # BF-875: enabled now requires a usable token at parse time.
+        cfg = FederationMCPServerConfig(enabled=True, bind_port=18765, auth_token=_TEST_TOKEN)
         runtime = _stub_runtime()
         server = FederationMCPServer(runtime=runtime, config=cfg)
         # start() must not raise even if uvicorn cannot actually bind in test env.

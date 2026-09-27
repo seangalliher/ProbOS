@@ -353,10 +353,12 @@ AD-480a: Inbound MCP server — exposes ProbOS capabilities as MCP tools.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
+| `auth_token` | `str` | `''` | — | BF-875: the static bearer token every MCP request must present. Required when enabled: at least 32 visible ASCII characters, no spaces. A secret: set it in system.yaml; it is never logged. |
 | `enabled` | `bool` | `False` | — |  |
 | `bind_host` | `str` | `'127.0.0.1'` | — |  |
 | `bind_port` | `int` | `8765` | ≥ 1, ≤ 65535 |  |
 | `path_prefix` | `str` | `'/mcp'` | — |  |
+| `exposed_intents` | `list[str]` | `[]` | — | BF-875: the only intents an authenticated MCP caller may run. An intent that no agent declares, or that requires consensus, is never dispatched even if listed. Empty (the default) exposes no intents. |
 
 ## `a2a`
 

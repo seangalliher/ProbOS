@@ -18,6 +18,7 @@ from probos.config import SystemConfig
 from probos.crew_session_live import LoadedCrewSessionProjection, load_crew_session_projection
 from probos.crew_session_projection import CrewSessionProjectionError
 from probos.events import OSActivityEvent
+from probos.federation.mcp_server import is_json_media_type, parse_jsonrpc_request, read_bounded_body
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.notification_context import NotificationContextError, NotificationContextResolver
 from probos.proactive import build_proactive_status_snapshot
@@ -863,8 +864,17 @@ async def mcp_jsonrpc(request: Request, runtime: Any = Depends(get_runtime)):
     """AD-597a: forward MCP JSON-RPC payload to FederationMCPServer."""
     if getattr(runtime, "federation_mcp_server", None) is None:
         raise HTTPException(status_code=503, detail="MCP server not running")
-    payload = await request.json()
+    # BF-875: a text/plain post needs no CORS preflight, so any web page could send one.
+    if not is_json_media_type(request.headers.get("content-type", "")):
+        raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+    body = await read_bounded_body(request)
+    if body is None:  # BF-875: Door B refuses an oversized body
+        raise HTTPException(status_code=413, detail="Request body too large")
+    payload, error = parse_jsonrpc_request(body)
+    if error is not None:
+        return JSONResponse(error, status_code=400)
     session_id = request.headers.get("mcp-session-id", "")
+    # BF-875: no auth_header, so this HXI bridge reaches app tools and never an intent.
     response = await runtime.federation_mcp_server.handle_jsonrpc(
         payload, session_id=session_id
     )

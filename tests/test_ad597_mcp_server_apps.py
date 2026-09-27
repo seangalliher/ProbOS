@@ -150,10 +150,16 @@ async def test_tools_list_merges_intent_and_app_tools():
         name="game-move", description="", input_schema={},
         ui_resource_uri="", handler=_h,
     )
-    srv = _server(rt)
+    # BF-875: intent-derived tools are listed only to an authenticated caller, and only
+    # those in exposed_intents.
+    srv = FederationMCPServer(
+        runtime=rt,
+        config=FederationMCPServerConfig(auth_token="t" * 40, exposed_intents=["echo"]),
+        collect_intent_descriptors_fn=lambda: list(rt.decomposer._intent_descriptors.values()),
+    )
     out = await srv.handle_jsonrpc({
         "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {},
-    })
+    }, auth_header="Bearer " + "t" * 40)
     names = {t["name"] for t in out["result"]["tools"]}
     assert "echo" in names  # intent-derived
     assert "game-move" in names  # app-registry
