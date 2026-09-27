@@ -4847,6 +4847,7 @@ async def finalize_startup(
             from probos.federation.a2a.server import FederationA2AServer
             runtime.federation_a2a_server = FederationA2AServer(
                 runtime=runtime, config=config.federation.a2a,
+                collect_intent_descriptors_fn=runtime._collect_intent_descriptors,
             )
             await runtime.federation_a2a_server.start()
             logger.info(

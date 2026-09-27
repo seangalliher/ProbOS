@@ -1532,7 +1532,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1228 adds five proactive_cognitive fields (1803 -> 1808).
     # AD-1229 adds ward_room.message_receipts_enabled (1808 -> 1809).
     # BF-875 adds federation.mcp_server.auth_token and exposed_intents (1809 -> 1811).
-    assert counts["field_definitions"] == 1811  # AD-1206 intentionally adds github_repository.
+    # BF-876 adds federation.a2a.auth_token and exposed_intents (1811 -> 1813).
+    assert counts["field_definitions"] == 1813  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

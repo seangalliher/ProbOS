@@ -293,7 +293,9 @@ class TestAgentCard:
             "sum": _make_descriptor("sum", description="add", tier="utility"),
         }
         runtime = _stub_runtime(descriptors=descriptors)
-        card = AgentCard.from_runtime(runtime)
+        # BF-876: skills come from the descriptors passed in (what the A2A server may dispatch).
+        # The decomposer read only ever worked on this dict stub; production stores a list.
+        card = AgentCard.from_runtime(runtime, descriptors=descriptors.values())
         ids = sorted(s.id for s in card.skills)
         assert ids == ["echo", "sum"]
 
@@ -408,12 +410,25 @@ class TestA2AClient:
 # -------------------- TestA2AServerInbound (480d) --------------------
 
 
+# BF-876 (#1433): every A2A request now needs the inbound bearer token, and tasks/send an intent
+# in exposed_intents that an agent declares; the helper supplies all three so these tests keep
+# asserting dispatch itself.
+_A2A_TOKEN = "a" * 40  # synthetic
+_A2A_AUTH = f"Bearer {_A2A_TOKEN}"
+
+
 def _a2a_server_with_runtime(*, broadcast_results=None, descriptors=None,
                               outbound_peers=None) -> tuple[FederationA2AServer, object]:
     runtime = _stub_runtime(descriptors=descriptors,
                             broadcast_results=broadcast_results)
-    cfg = FederationA2AConfig(outbound_peers=outbound_peers or [])
-    server = FederationA2AServer(runtime=runtime, config=cfg)
+    declared = runtime.decomposer._intent_descriptors
+    cfg = FederationA2AConfig(auth_token=_A2A_TOKEN, exposed_intents=list(declared),
+                              outbound_peers=outbound_peers or [])
+    server = FederationA2AServer(
+        runtime=runtime,
+        config=cfg,
+        collect_intent_descriptors_fn=lambda: list(declared.values()),
+    )
     return server, runtime
 
 
@@ -436,7 +451,7 @@ class TestA2AServerInbound:
                 "parts": [{"type": "text", "text": 'echo:{"text":"hi"}'}],
             }},
         }
-        result = await server.handle_jsonrpc(payload, peer_id="peer-x")
+        result = await server.handle_jsonrpc(payload, peer_id="peer-x", auth_header=_A2A_AUTH)
         assert "result" in result
         assert runtime.intent_bus.broadcast.await_count == 1
         sent_intent = runtime.intent_bus.broadcast.await_args.args[0]
@@ -453,7 +468,7 @@ class TestA2AServerInbound:
                 "parts": [{"type": "text", "text": "echo:{}"}],
             }},
         }
-        out = await server.handle_jsonrpc(payload, peer_id="p")
+        out = await server.handle_jsonrpc(payload, peer_id="p", auth_header=_A2A_AUTH)
         assert out["result"]["id"] == "task-42"
         assert out["result"]["status"]["state"] == "completed"
         assert out["result"]["artifacts"][0]["parts"][0]["type"] == "text"
@@ -467,11 +482,11 @@ class TestA2AServerInbound:
             "params": {"id": "tx", "message": {
                 "parts": [{"type": "text", "text": "echo:{}"}],
             }},
-        }, peer_id="p")
+        }, peer_id="p", auth_header=_A2A_AUTH)
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 2, "method": "tasks/get",
             "params": {"id": "tx"},
-        })
+        }, auth_header=_A2A_AUTH)
         assert out["result"]["id"] == "tx"
 
     @pytest.mark.asyncio
@@ -480,7 +495,7 @@ class TestA2AServerInbound:
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 3, "method": "tasks/get",
             "params": {"id": "missing"},
-        })
+        }, auth_header=_A2A_AUTH)
         assert out["error"]["code"] == -32602
 
     @pytest.mark.asyncio
@@ -488,7 +503,7 @@ class TestA2AServerInbound:
         server, _ = _a2a_server_with_runtime()
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 4, "method": "totally/unknown", "params": {},
-        })
+        }, auth_header=_A2A_AUTH)
         assert out["error"]["code"] == -32601
 
     @pytest.mark.asyncio
@@ -497,7 +512,7 @@ class TestA2AServerInbound:
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 5, "method": "tasks/sendSubscribe",
             "params": {},
-        })
+        }, auth_header=_A2A_AUTH)
         assert out["error"]["code"] == -32601
 
     @pytest.mark.asyncio
@@ -506,19 +521,22 @@ class TestA2AServerInbound:
         out = await server.handle_jsonrpc({
             "jsonrpc": "2.0", "id": 6, "method": "tasks/pushNotification/set",
             "params": {},
-        })
+        }, auth_header=_A2A_AUTH)
         assert out["error"]["code"] == -32601
 
     @pytest.mark.asyncio
     async def test_handle_jsonrpc_auth_token_mismatch_returns_invalid_request(self):
+        # BF-876: the credential is federation.a2a.auth_token. The outbound peer token -- what
+        # this ship presents to that peer -- used to be the credential and now authenticates no one.
         server, _ = _a2a_server_with_runtime(outbound_peers=[
             A2APeerConfig(peer_url="https://peer.example.com",
                           auth_token="expected"),
         ])
-        out = await server.handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 7, "method": "tasks/send", "params": {},
-        }, peer_id="https://peer.example.com", auth_header="Bearer wrong")
-        assert out["error"]["code"] == -32600
+        for presented in ("Bearer wrong", "Bearer expected"):
+            out = await server.handle_jsonrpc({
+                "jsonrpc": "2.0", "id": 7, "method": "tasks/send", "params": {},
+            }, peer_id="https://peer.example.com", auth_header=presented)
+            assert out["error"]["code"] == -32600
 
     @pytest.mark.asyncio
     async def test_handle_jsonrpc_records_outcome_on_success_path(self):
@@ -528,7 +546,7 @@ class TestA2AServerInbound:
             "params": {"id": "ts", "message": {
                 "parts": [{"type": "text", "text": "echo:{}"}],
             }},
-        }, peer_id="peer-1")
+        }, peer_id="peer-1", auth_header=_A2A_AUTH)
         # Outcome was recorded for peer-1
         assert any(
             o[0] == "a2a-peer:peer-1" and o[1] is True
@@ -998,7 +1016,8 @@ class TestStartupWiring:
 
     @pytest.mark.asyncio
     async def test_a2a_server_enabled_attempts_start(self):
-        cfg = FederationA2AConfig(enabled=True, bind_port=18766)
+        # BF-876: enabled now requires a usable token at parse time.
+        cfg = FederationA2AConfig(enabled=True, bind_port=18766, auth_token=_A2A_TOKEN)
         runtime = _stub_runtime()
         server = FederationA2AServer(runtime=runtime, config=cfg)
         try:

@@ -26,6 +26,32 @@ class A2AProtocolError(Exception):
     """Raised on JSON-RPC error or malformed payload."""
 
 
+def _security_schemes(raw: Any) -> dict[str, dict[str, str]] | None:
+    """BF-876: a card's A2A 0.2.0 ``securitySchemes`` if every scheme is an object of strings, else None.
+
+    JSON object keys are always strings, so only values are checked.
+    """
+    if isinstance(raw, dict) and all(
+        isinstance(scheme, dict) and all(isinstance(value, str) for value in scheme.values())
+        for scheme in raw.values()
+    ):
+        return raw
+    return None
+
+
+def _security(raw: Any) -> list[dict[str, list[str]]] | None:
+    """BF-876: a card's A2A 0.2.0 ``security`` if it is a list of objects of string lists, else None."""
+    if isinstance(raw, list) and all(
+        isinstance(requirement, dict) and all(
+            isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes)
+            for scopes in requirement.values()
+        )
+        for requirement in raw
+    ):
+        return raw
+    return None
+
+
 class A2AClient:
     def __init__(
         self,
@@ -184,4 +210,6 @@ class A2AClient:
                 if isinstance(prov_raw, dict)
                 else None
             ),
+            securitySchemes=_security_schemes(payload.get("securitySchemes")),
+            security=_security(payload.get("security")),
         )

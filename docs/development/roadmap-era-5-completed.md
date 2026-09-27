@@ -3002,8 +3002,8 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 - ProbOS exposes agent capabilities as A2A-discoverable services
 - External agents can send tasks to ProbOS agents via A2A task protocol
 - A2A tasks are translated to `IntentMessage` and dispatched through the intent bus
-- Full governance applies: consensus, red team verification, trust scoring *(Correction, BF-875 #1431: not as built. `tasks/send` broadcasts with no consensus step, and the bearer check passes a caller that names no configured peer. Outside BF-875's scope; filed as #1433 and recorded in #1419.)*
-- ProbOS publishes an Agent Card describing available capabilities, authentication requirements, and supported modalities
+- Full governance applies: consensus, red team verification, trust scoring *(Correction, BF-875 #1431: not as built. `tasks/send` broadcasts with no consensus step, and the bearer check passes a caller that names no configured peer. Outside BF-875's scope; filed as #1433 and recorded in #1419.)* *(BF-876 #1433: every request now needs `federation.a2a.auth_token`, and `tasks/send` dispatches only a non-consensus intent named in `federation.a2a.exposed_intents`; a consensus-flagged intent is refused, not voted on.)*
+- ProbOS publishes an Agent Card describing available capabilities, authentication requirements, and supported modalities *(BF-876 #1433: true only since BF-876; before it the card listed no skills and no authentication requirement.)*
 
 **Outbound (A2A Client)**
 
@@ -3017,7 +3017,7 @@ Nodes:   ZeroMQ        ←→ Federation (ProbOS-to-ProbOS)
 - External A2A agents treated as federated crew members with discounted trust (same δ factor as trust transitivity)
 - New A2A peers start with probationary trust, same as MCP clients
 - Trust updated based on task outcome quality, measured by Shapley attribution
-- A2A agents never bypass consensus — they're collaborators, not privileged operators *(Correction, BF-875 #1431: not as built; see the A2A server entry above.)*
+- A2A agents never bypass consensus — they're collaborators, not privileged operators *(Correction, BF-875 #1431: not as built; see the A2A server entry above.)* *(BF-876 #1433: an A2A caller cannot reach a consensus-flagged intent at all; it is refused.)*
 - Agent Card metadata (publisher, version, capabilities) stored for provenance tracking
 
 **MCP vs A2A Decision Matrix**
