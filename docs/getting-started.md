@@ -26,9 +26,15 @@ Unlike a single-agent assistant, ProbOS:
 
 ## Where Things Live
 
-- `~/.probos/config.yaml` -- your runtime configuration.
-- `~/.probos/data/` -- episodic memory, trust DB, and runtime state.
+- `~/.probos/config.yaml` -- your runtime configuration, written by `probos setup`.
+  Without it, a source checkout's `config/system.yaml` is used.
+- The data directory -- episodic memory, trust DB, and runtime state:
+  `~/AppData/Local/ProbOS/data` on Windows, `~/Library/Application Support/ProbOS/data`
+  on macOS, and `$XDG_DATA_HOME/ProbOS/data` (by default `~/.local/share/ProbOS/data`)
+  elsewhere. `probos --data-dir DIR` uses another one.
 - `~/.probos/knowledge/` -- the agent's knowledge repository.
+
+`probos doctor` prints the config file and data directory it checked.
 
 ## Next
 

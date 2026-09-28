@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    import httpx
 
 
 class CheckOutcome(Enum):
@@ -36,12 +39,20 @@ class DoctorContext:
 
     `config` is the loaded `SystemConfig`, or `None` when the config-file
     check itself failed (subsequent checks should degrade gracefully).
+
+    AD-1137: `config_target` is the file doctor was asked to check, whether
+    or not it exists; `config_error` says why an existing file did not load,
+    naming settings but never showing a value from it; `provider_transport`
+    is the provider probes' test seam and is `None` in production.
     """
 
     config: Any
     home_dir: Path
     data_dir: Path
     config_path: Path | None
+    config_target: Path | None = None
+    config_error: str = ""
+    provider_transport: httpx.BaseTransport | None = None
 
 
 class DoctorCheck(Protocol):

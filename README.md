@@ -1,6 +1,6 @@
 # ProbOS
 
-> **Alpha** — ProbOS is under active development. APIs will change, features may break, and documentation may lag behind the code. Contributions and feedback welcome.
+> **Alpha** — ProbOS is under active development. APIs will change, features may break, and documentation may lag behind the code. The getting-started path is **Beta**: an automated test runs the [quickstart](docs/quickstart.md)'s `probos setup`, `probos doctor` and first conversation end to end; the install step is not part of the test. Contributions and feedback welcome.
 
 **Nooplex readiness:** ProbOS currently implements an alpha, single-mesh Cognitive Mesh with an experimental federation substrate. A dependable supported mesh, authenticated multi-mesh operation, the Nooplex Core Fabric, and emergence validation are separate evidence gates tracked in the [Nooplex Readiness Map](docs/development/nooplex-readiness.md).
 
@@ -133,6 +133,8 @@ A test agent (`CorruptedFileReaderAgent`) deliberately returns fabricated data t
 
 ## Quick Start
 
+New to ProbOS? The [quickstart](docs/quickstart.md) goes from install to a first conversation; an automated test runs it from `probos setup` on.
+
 **Requirements:** Python 3.12+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
@@ -141,7 +143,7 @@ git clone https://github.com/seangalliher/ProbOS.git
 cd ProbOS
 uv sync
 
-# Run tests (1590 Python + 15 Vitest = 1605 total)
+# Run tests
 uv run pytest tests/ -v
 
 # Launch interactive shell
@@ -153,7 +155,7 @@ uv run python demo.py
 
 ### LLM Backend
 
-ProbOS connects to an OpenAI-compatible LLM endpoint. `uv run python -m probos setup` asks for a provider, model and (when needed) API key, checks them against the provider, and writes `~/.probos/config.yaml`, which ProbOS loads in preference to `config/system.yaml`; in a source checkout, `--config config/system.yaml` edits that file instead (do not commit it with a key).
+ProbOS connects to an OpenAI-compatible LLM endpoint. `uv run python -m probos setup` asks for a provider, model and (when needed) API key, checks them against the provider, and writes `~/.probos/config.yaml`, which ProbOS loads in preference to `config/system.yaml`; in a source checkout, `--config config/system.yaml` edits that file instead (do not commit it with a key). Then `uv run python -m probos doctor` checks that each tier's provider answers with that key and model.
 
 | Option | Setup |
 |--------|-------|

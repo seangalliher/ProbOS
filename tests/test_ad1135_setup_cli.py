@@ -1081,7 +1081,9 @@ def test_cmd_setup_custom_probos_home_prints_serve_config_command(
     out = capsys.readouterr().out
     assert f'probos serve --config "{target}"' in out
     assert f'probos --config "{target}"' in out
-    assert "probos doctor" not in out  # doctor reads only the default home config
+    # AD-1137 (#1056) inverts this pin, which read `"probos doctor" not in out` while doctor read only
+    # ~/.probos/config.yaml: doctor now checks the file it is given, so setup names the command.
+    assert f'probos doctor --config "{target}"' in out
 
 
 def test_cmd_setup_config_flag_targets_the_explicit_file(

@@ -143,6 +143,11 @@ def test_doctor_returns_nonzero_on_missing_config(monkeypatch, tmp_path):
     import argparse
 
     monkeypatch.setattr(probos_main, "_probos_home", lambda: tmp_path)
+    # AD-1137: doctor now checks the file probos would load, which falls back to the checkout's
+    # config/system.yaml; point that away too, so the config really is missing and no real
+    # provider is probed.
+    monkeypatch.setattr(probos_main, "_repo_default_config_path", lambda: tmp_path / "repo" / "system.yaml")
+    monkeypatch.setattr(probos_main, "_default_data_dir", lambda: tmp_path / "data")
 
     args = argparse.Namespace(command="doctor")
     code = probos_main._cmd_doctor(args)

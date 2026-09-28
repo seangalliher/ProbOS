@@ -2,8 +2,9 @@
 
 Provider presets, the managed ``cognitive`` keys, input validation, classified
 provider probes and a fail-closed, line-preserving config editor. It runs in the
-operator's own CLI process against a URL the operator typed; within ``probos``
-only ``probos.__main__`` imports it.
+operator's own CLI process against a URL the operator gave; within ``probos``
+only the CLI imports it: ``probos.__main__`` and the ``probos doctor`` checks
+(AD-1137).
 
 Setup never prints the API key. Probe messages never include a 401 or 403 body,
 any part of a redirect's Location, or a chat reply's text. The key's literal,
@@ -25,13 +26,13 @@ import ipaddress
 import os
 import re
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from urllib.parse import quote, quote_plus, urlsplit
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
 import httpx
 import yaml
@@ -318,6 +319,55 @@ def redact(text: str, api_key: str) -> str:
     return _key_pattern(api_key).sub(_REDACTED, text)
 
 
+def redact_keys(text: str, api_keys: Iterable[str]) -> str:
+    """``redact`` for each of ``api_keys``, the longest first, so a key that holds another is replaced whole."""
+    for api_key in sorted(set(api_keys), key=lambda key: (-len(key), key)):
+        text = redact(text, api_key)
+    return text
+
+
+def configured_api_keys(cognitive: CognitiveConfig) -> list[str]:
+    """Every API key some tier would send (a tier without its own sends the shared one), longest first."""
+    keys = {cognitive.tier_config(tier)["api_key"] for tier in (*TEXT_TIERS, *OPTIONAL_TIERS)}
+    return sorted((key for key in keys if key), key=lambda key: (-len(key), key))
+
+
+# Path words of OpenAI-compatible base URLs: /api/v1, /openai/v1, /inference/v1, /compatible-mode/v1.
+_API_PATH_WORDS = frozenset({"api", "openai", "inference", "compatible-mode"})
+_API_VERSION_RE = re.compile(r"v\d{1,2}(?:(?:alpha|beta)\d{0,2})?", re.IGNORECASE)
+
+
+def shown_base_url(base_url: str, api_keys: Iterable[str] = ()) -> str:
+    """``base_url`` as ProbOS shows a configured URL: scheme, host, port and the API path segments.
+
+    A config file can hold a credential in the userinfo, query, fragment or any path segment
+    (AD-1137 A-2), so the first three are dropped and each path segment that is neither an API
+    version nor in ``_API_PATH_WORDS`` is shown as ``<redacted>``, which costs only detail. Then
+    every form of each of ``api_keys`` is redacted from what is left (A-3), because a hand-written
+    config can hold its key where that rule keeps text: as an API path word, a version, the host
+    or the port. ``probos setup`` refuses a base URL that holds the key. ``probos doctor`` passes
+    no keys, because it redacts every configured key from its whole message; the boot banner
+    passes ``configured_api_keys``. Setup echoes the URL the operator typed, which
+    ``normalize_base_url`` refuses with userinfo, a query or a fragment.
+    """
+    try:
+        parts = urlsplit(base_url)
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        return "the configured base URL"
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host if port is None else f"{host}:{port}"
+    path = "/".join(
+        segment if not segment or segment.lower() in _API_PATH_WORDS or _API_VERSION_RE.fullmatch(segment)
+        else _REDACTED
+        for segment in parts.path.split("/")
+    )
+    shown = urlunsplit((parts.scheme, netloc, path, "", ""))
+    return redact_keys(shown, api_keys)
+
+
 def _excerpt(text: str, api_key: str) -> str:
     # Redact before and after folding whitespace, which can rebuild a key that holds a space, and before
     # capping, so the cap cannot cut a key form in half.
@@ -356,10 +406,13 @@ def _request(
     transport: httpx.BaseTransport | None,
     path: str,
     payload: Mapping[str, object] | None = None,
+    on_client: Callable[[httpx.Client], None] | None = None,
 ) -> httpx.Response | ProbeResult:
     """Send one probe (a POST when ``payload`` is given); a transport failure comes back as a ProbeResult."""
     try:
         with _probe_client(base_url, api_key, timeout, transport) as client:
+            if on_client is not None:
+                on_client(client)
             return client.get(path) if payload is None else client.post(path, json=payload)
     except httpx.TimeoutException as exc:
         message = f"the provider did not answer within {timeout:g} s ({type(exc).__name__})"
@@ -402,13 +455,17 @@ def probe_models(
     *,
     timeout: float = MODELS_PROBE_TIMEOUT_S,
     transport: httpx.BaseTransport | None = None,
+    on_client: Callable[[httpx.Client], None] | None = None,
 ) -> ProbeResult:
     """``GET {base}/models``: classify reachability, the key and the path, and return the listed model IDs.
 
     A 404 or 405 is NOT_FOUND: no listing at this path or for this method (B5). An ID that
-    ``carries_key`` is withheld from ``model_ids``, and the message counts it (B8).
+    ``carries_key`` is withheld from ``model_ids``, and the message counts it (B8). ``on_client``
+    receives the probe's client before the request is sent, so another thread can close it: that ends an
+    established request but not one still connecting, and a request started after the close raises httpx's
+    RuntimeError (``probos doctor``, AD-1137 A-4).
     """
-    response = _request(base_url, api_key, timeout, transport, "models")
+    response = _request(base_url, api_key, timeout, transport, "models", on_client=on_client)
     if isinstance(response, ProbeResult):
         return response
     status = response.status_code
@@ -438,6 +495,7 @@ def probe_chat(
     model_ids: Sequence[str] = (),
     timeout: float = CHAT_PROBE_TIMEOUT_S,
     transport: httpx.BaseTransport | None = None,
+    on_client: Callable[[httpx.Client], None] | None = None,
 ) -> ProbeResult:
     """One-token ``POST {base}/chat/completions`` with the runtime's boot-probe payload.
 
@@ -445,11 +503,11 @@ def probe_chat(
     non-empty, and as a missing endpoint otherwise; an ID that ``carries_key`` is
     never offered as a close match. A 200 passes only when the runtime's boot probe
     would accept the same body: non-blank text in ``choices[0].message``
-    ``content``, else in ``reasoning``.
+    ``content``, else in ``reasoning``. ``on_client`` is as for ``probe_models``.
     """
     payload = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
     subject = f"the chat check for model {model!r}"
-    response = _request(base_url, api_key, timeout, transport, "chat/completions", payload)
+    response = _request(base_url, api_key, timeout, transport, "chat/completions", payload, on_client)
     if isinstance(response, ProbeResult):
         return response
     status = response.status_code
@@ -703,8 +761,8 @@ def read_config_text(path: Path) -> tuple[str, bool]:
     return text, had_bom
 
 
-def _load_errors(exc: ValidationError, prefix: str = "") -> str:
-    # Pydantic's loc and msg only: its input could be a value the operator typed.
+def validation_summary(exc: ValidationError, prefix: str = "") -> str:
+    """Each Pydantic error as ``loc: msg``, joined; never its input, which could be a value the operator typed."""
     return "; ".join(
         f"{prefix}{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
     )
@@ -741,7 +799,7 @@ def optional_tier_endpoints(text: str | None) -> dict[str, TierEndpoint]:
         config = CognitiveConfig.model_validate(settings)
     except ValidationError as exc:
         raise ConfigEditRefused(
-            f"the optional tiers' endpoint settings do not load: {_load_errors(exc, 'cognitive.')}"
+            f"the optional tiers' endpoint settings do not load: {validation_summary(exc, 'cognitive.')}"
         ) from None
     endpoints = {}
     for tier in OPTIONAL_TIERS:
@@ -777,7 +835,7 @@ def verify_config_file(
     try:
         config = load_config(path)
     except ValidationError as exc:
-        raise ConfigEditRefused(redact(f"the result does not load: {_load_errors(exc)}", choice.api_key)) from None
+        raise ConfigEditRefused(redact(f"the result does not load: {validation_summary(exc)}", choice.api_key)) from None
     for tier in TEXT_TIERS:
         resolved = config.cognitive.tier_config(tier)
         if (resolved["base_url"], resolved["api_key"], resolved["model"], resolved["api_format"]) != (
