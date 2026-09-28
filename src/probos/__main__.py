@@ -298,26 +298,27 @@ async def _ensure_ollama(config, console: Console) -> None:
 
 async def _create_llm_client(config, console: Console):
     """Create an LLM client from config, falling back to MockLLMClient."""
+    from rich.markup import escape
+
     cog = config.cognitive
     client = OpenAICompatibleClient(config=cog, rate_config=config.llm_rate)
 
     console.print("  Checking LLM endpoints...")
     connectivity = await client.check_connectivity()
 
+    keys = provider_setup.configured_api_keys(cog)  # AD-1137 A-3: shown nowhere below, as in `probos doctor`
     for tier in _LLM_TIERS:
         tc = cog.tier_config(tier)
         # AD-742a: skip unconfigured optional tiers in the boot banner.
         if not tc.get("model"):
             continue
         reachable = connectivity.get(tier, False)
+        where = escape(provider_setup.shown_base_url(tc["base_url"], keys))  # AD-1137 A-2: as `probos doctor` shows it
         if reachable:
-            console.print(
-                f"  [green]\u2713[/green] LLM {tier}: {tc['model']} at {tc['base_url']}"
-            )
+            model = escape(provider_setup.redact_keys(tc["model"], keys))
+            console.print(f"  [green]\u2713[/green] LLM {tier}: {model} at {where}")
         else:
-            console.print(
-                f"  [yellow]\u2717[/yellow] LLM {tier}: {tc['base_url']} unreachable"
-            )
+            console.print(f"  [yellow]\u2717[/yellow] LLM {tier}: {where} unreachable")
 
     if not any(connectivity.values()):
         # All endpoints unreachable — fall back to mock
@@ -329,8 +330,10 @@ async def _create_llm_client(config, console: Console):
         )
         return MockLLMClient()
 
-    if not all(connectivity.values()):
-        down_tiers = [t for t, r in connectivity.items() if not r]
+    # AD-1137 (#1414 F-f): as in the per-tier lines above (AD-742a), a tier without a model is
+    # unconfigured, not unreachable, so the warning does not name it.
+    down_tiers = [t for t, r in connectivity.items() if not r and cog.tier_config(t).get("model")]
+    if down_tiers:
         console.print(
             f"  [yellow]\u26a0 Warning: {', '.join(down_tiers)} tier(s) unreachable[/yellow]"
         )
@@ -1606,9 +1609,10 @@ def _setup_report(
         quoted = escape(f'"{target}"')
         console.print(
             f"probos and probos serve load {escape(str(loaded))}; to use this file, start them with "
-            f"[bold]probos serve --config {quoted}[/bold] or [bold]probos --config {quoted}[/bold]."
+            f"[bold]probos serve --config {quoted}[/bold] or [bold]probos --config {quoted}[/bold], "
+            f"and check it with [bold]probos doctor --config {quoted}[/bold]."
         )
-    elif _same_path(target, _probos_home() / "config.yaml"):
+    else:  # AD-1137: doctor checks the file probos loads, which is this one
         console.print("Run [bold]probos doctor[/bold] to check the rest of the installation.")
     if os.environ.get("PROBOS_LLM_URL"):
         console.print(
@@ -1821,12 +1825,21 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     (`_probos_home`, `_default_data_dir` in this module) still work for
     tests.
 
+    AD-1137: checks the config file ``probos`` and ``probos serve`` would
+    load (``--config`` before or after ``doctor``, else ``_resolve_config_path``)
+    and the data directory from ``--data-dir``, else the platform default.
+
     Returns the count of failed checks (0 = healthy, non-zero = issues).
     """
     from probos.doctor import run_doctor
     from probos.doctor.runner import build_context
-    ctx = build_context(home_dir=_probos_home(), data_dir=_default_data_dir())
-    return asyncio.run(run_doctor(args, Console(), ctx=ctx))
+    ctx = build_context(
+        home_dir=_probos_home(),
+        data_dir=getattr(args, "data_dir", None) or _default_data_dir(),
+        config_path=_resolve_config_path(getattr(args, "config", None)),
+    )
+    # soft_wrap: a path or URL is never hard-wrapped mid-string, as in setup (AD-1135 B4).
+    return asyncio.run(run_doctor(args, Console(soft_wrap=True), ctx=ctx))
 
 
 def _cmd_pairing(args: argparse.Namespace) -> int:
@@ -3052,7 +3065,16 @@ def main() -> None:
     _add_setup_parser(subparsers)
 
     # --- probos doctor (AD-484) ---
-    subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")
+    doctor_parser = subparsers.add_parser("doctor", help="Run a diagnostic check on the ProbOS environment")
+    # AD-1137, SUPPRESS as for setup: a --config or --data-dir given before `doctor` (the root parser's) is kept.
+    doctor_parser.add_argument(
+        "--config", "-c", type=Path, metavar="PATH", default=argparse.SUPPRESS,
+        help="Check this config file (default: the one probos loads)",
+    )
+    doctor_parser.add_argument(
+        "--data-dir", type=Path, metavar="DIR", default=argparse.SUPPRESS,
+        help="Check this data directory (default: platform-specific)",
+    )
 
     # --- probos pairing (AD-802) ---
     pairing_parser = subparsers.add_parser(

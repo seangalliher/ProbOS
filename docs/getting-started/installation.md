@@ -1,5 +1,8 @@
 # Installation
 
+The [Quickstart](../quickstart.md) is the shortest path; an automated test runs it from `probos setup` on.
+This page covers the uv workflow and the other LLM options.
+
 ## Requirements
 
 - Python 3.12+
@@ -37,6 +40,13 @@ uv run python -m probos setup
 uv run python -m probos setup --provider openrouter --api-key-env OPENROUTER_API_KEY --model <model-id> --yes
 ```
 
+Then check what setup wrote. Doctor reports whether each tier's provider answers with that key
+and model, and exits non-zero while any check fails:
+
+```bash
+uv run python -m probos doctor
+```
+
 | Option | Setup |
 |--------|-------|
 | **No LLM (default)** | Works out of the box — falls back to a built-in `MockLLMClient` with regex pattern matching. Good for exploring the architecture and running tests. |
@@ -47,14 +57,14 @@ uv run python -m probos setup --provider openrouter --api-key-env OPENROUTER_API
 Setup writes `~/.probos/config.yaml`, which `probos` and `probos serve` load in preference to the repository's `config/system.yaml`. In a source checkout, adding `--config config/system.yaml` makes setup edit that file instead; do not commit it with a key. Setup configures only the fast, standard and deep tiers. While an optional tier such as vision has a model but no `llm_base_url_<tier>` of its own, it uses the shared `llm_base_url`, so setup leaves that URL unchanged and names the tier.
 
 !!! tip "No LLM required for testing"
-    The mock client handles all standard operations, so you can explore ProbOS without setting up a local LLM. The full test suite (2502 pytest + 34 vitest = 2536 tests) runs entirely on the mock client.
+    The mock client handles all standard operations, so you can explore ProbOS without setting up a local LLM. The test suite needs no LLM.
 
 ## Run Tests
 
 ```bash
-# Python tests (2502 tests)
+# Python tests
 uv run pytest tests/ -v
 
-# UI tests (34 Vitest tests)
+# UI tests (Vitest)
 cd ui && npx vitest run
 ```

@@ -696,7 +696,9 @@ def test_provider_setup_is_imported_only_by_the_cli() -> None:
                 importers.add(relative)
 
     assert scanned > 100  # premise: the walk saw the package, not an empty directory
-    assert importers == {"__main__.py"}
+    # AD-1137 (#1056): `probos doctor` checks providers with setup's probes; both run in the operator's
+    # CLI, and tests/test_ad1137_doctor.py pins the doctor package to __main__ in turn.
+    assert importers == {"__main__.py", "doctor/runner.py", "doctor/checks/llm_check.py"}
 
 
 def _values() -> dict[str, str]:
