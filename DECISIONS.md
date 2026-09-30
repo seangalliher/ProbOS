@@ -9865,7 +9865,7 @@ Five variants were measured against the ordered search over 36 payload shapes at
 **Date:** 2026-09-30. **Existing issue:** #1131. **Decision:** Execute the Architect's build contract and its normative design diff, taking the top-ranked option of each decision below. AD-1194 was already allocated to #1131, so no number is allocated.
 
 - **A1 (how NL gaps join the ladder):** an unattended NL gap files a pending build through `triage_and_file(unified=True, gap_class="intent")` and designs nothing; the HXI Build Agent click and the shell prompt record the Captain's decision on the gap's request before designing; an inbox approval designs through the existing build fulfiller.
-- **B1 (the discover rung):** AD-1049's discovery surface becomes a recording rung, gated by `federation.ard.discovery_before_design`; its candidates are recorded, it is never selected, and a failure is recorded as `not_run`.
+- **B1 (the discover rung):** AD-1049's discovery surface becomes a recording rung, gated by `federation.ard.discovery_before_design`; its candidates are recorded, it is never selected, and a failure is recorded as `not_run`. The rung reaches that surface through a lazy import in `cognitive/capability_triage.py`, a cognitive-to-federation import documented as an exception in `tests/test_layer_boundaries.py`: it is the same advisory surface the core runtime calls with the ladder off, and it runs only when the switch is on.
 - **C1 (the forge rung):** forge is recorded, not wired: it is never selected, and SkillForge is not called.
 - **D1 (where the record lives, and F1):** one nullable `triage` column on the existing `CapabilityRequestStore`, validated on write and on read; F1 is fixed by a build-specific validator on read and a normaliser on write.
 
