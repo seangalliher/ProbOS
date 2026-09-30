@@ -113,6 +113,12 @@ ALLOWED_EXCEPTIONS = {
     ("cognitive/crew_trust.py", "probos.consensus.shapley"),
     ("cognitive/crew_trust.py", "probos.consensus.crew_trust_effect"),
     ("cognitive/crew_session.py", "probos.consensus.crew_trust_effect"),
+    # AD-1194: the capability ladder's discover rung (``ard_discoverer``) calls
+    # AD-1049's advisory surface, ``surface_discovery_candidates`` -- the same
+    # surface the core runtime calls with the ladder off. The import is lazy and
+    # runs only when ``federation.ard.discovery_before_design`` is enabled; the
+    # surface reports candidates and never adopts one (AD-1049's rule).
+    ("cognitive/capability_triage.py", "probos.federation.ard.adoption"),
 }
 
 

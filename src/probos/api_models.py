@@ -96,6 +96,9 @@ class SelfModRequest(BaseModel):
     intent_description: str
     parameters: dict[str, str] = {}
     original_message: str = ""
+    # AD-1194 A-2: the build request the proposal filed; under the unified ladder the
+    # Build Agent click approves exactly that request.
+    capability_request_id: str = Field(default="", max_length=64)
 
 
 class EnrichRequest(BaseModel):

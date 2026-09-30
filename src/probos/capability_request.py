@@ -23,7 +23,13 @@ The ``payload`` column carries the action shape (``tool_id`` / ``action`` /
 ``params`` / ``scope_key`` / ``session_id`` / ``thread_id``) because ``target``
 is a bare string. Install requests additionally carry typed package or MCP
 identity provenance. Legacy install NULLs remain distinguishable from invalid
-non-null payloads; grant and build decoding is unchanged.
+non-null payloads. A build carries BF-744's design context, re-validated on read
+by ``validate_build_payload`` (AD-1194: it used to be read back as an ``action``
+payload, which it never is, so it was dropped on every restart).
+
+AD-1194 adds a nullable ``triage`` column: the ladder's record of what each rung
+concluded for the gap a request came from. It is evidence for the Captain, never
+authority -- no fulfiller reads it.
 
 **Approval of an ``action`` request does NOT replay the parked action** — see
 :meth:`file_action_request`. The recorded ``session_id`` is forensic only.
@@ -32,6 +38,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -86,7 +93,8 @@ CREATE TABLE IF NOT EXISTS capability_requests (
     decided_at REAL,
     decided_by TEXT NOT NULL DEFAULT '',
     decision_reason TEXT NOT NULL DEFAULT '',
-    payload TEXT
+    payload TEXT,
+    triage TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_caprequests_status ON capability_requests(status);
 CREATE INDEX IF NOT EXISTS idx_caprequests_agent ON capability_requests(agent_id);
@@ -254,6 +262,147 @@ def validate_python_install_target(value: object) -> str | None:
     return value
 
 
+def _fits(value: Any, max_chars: int) -> bool:
+    """Serialisable, within ``max_chars`` canonically, and bindable as UTF-8 (BF-854)."""
+    try:
+        encoded = _canonical_json(value)
+        encoded.encode("utf-8")
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return len(encoded) <= max_chars
+
+
+# AD-1194: BF-744's build design context. ``_decode_payload`` validated a build
+# row as an ACTION payload, so every build payload came back ``None`` after a
+# restart: an approve-later build then designed with ``requires_consensus=False``
+# and delegated approval classified it DESTRUCTIVE rather than Captain-reserved.
+BUILD_PAYLOAD_KEYS: tuple[str, ...] = (
+    "intent_description",
+    "parameters",
+    "requires_consensus",
+    "execution_context",
+)
+BUILD_TEXT_MAX_CHARS = 4000
+BUILD_PARAMETER_MAX_CHARS = 500
+MAX_BUILD_PARAMETERS = 20
+_BUILD_PAYLOAD_MAX_CHARS = 12000
+
+
+def validate_build_payload(payload: Any) -> dict[str, Any] | None:
+    """Return ``payload`` when it is a well-formed build design context, else None.
+
+    A subset of :data:`BUILD_PAYLOAD_KEYS`, each value of its declared type and
+    within its bound. Checked on read: a stored row is an untrusted input, and
+    ``capability_triage._build_payload`` normalises what it files to this shape.
+    """
+    if type(payload) is not dict or not set(payload) <= set(BUILD_PAYLOAD_KEYS):
+        return None
+    for key in ("intent_description", "execution_context"):
+        if key in payload and (
+            type(payload[key]) is not str or len(payload[key]) > BUILD_TEXT_MAX_CHARS
+        ):
+            return None
+    if "requires_consensus" in payload and type(payload["requires_consensus"]) is not bool:
+        return None
+    params = payload.get("parameters", {})
+    if (
+        type(params) is not dict
+        or len(params) > MAX_BUILD_PARAMETERS
+        or any(
+            type(key) is not str or type(value) is not str
+            or len(key) > BUILD_PARAMETER_MAX_CHARS or len(value) > BUILD_PARAMETER_MAX_CHARS
+            for key, value in params.items()
+        )
+    ):
+        return None
+    return payload if _fits(payload, _BUILD_PAYLOAD_MAX_CHARS) else None
+
+
+def build_requires_consensus(payload: Any) -> bool:
+    """AD-1194 A-2: whether a build's design context requires consensus.
+
+    ``fulfil_build``'s expression, and ``classify_capability_request``'s: such a
+    build is Captain-reserved, and the store refuses any other decider on it.
+    """
+    ctx = payload if isinstance(payload, dict) else {}
+    return bool(ctx.get("requires_consensus", False))
+
+
+# AD-1194: the ladder record a unified filing carries, validated on write and on
+# read like every other column. The vocabularies are the ladder's own; a test pins
+# them to ``capability_triage``'s Literal types.
+TRIAGE_RECORD_VERSION = 1
+TRIAGE_GAP_CLASSES: frozenset[str] = frozenset({"tool", "intent", "package"})
+TRIAGE_RUNGS: tuple[str, ...] = ("grant", "discover", "install", "forge", "build")
+TRIAGE_OUTCOMES: frozenset[str] = frozenset(
+    {"selected", "escalated", "not_applicable", "not_run"}
+)
+TRIAGE_REASON_MAX_CHARS = 200
+TRIAGE_MAX_CANDIDATES = 5
+TRIAGE_CANDIDATE_MAX_CHARS = 120
+_TRIAGE_MAX_CHARS = 4000
+_TRIAGE_SELECTABLE: frozenset[str] = frozenset({"grant", "install", "build"})
+_TRIAGE_KEYS: frozenset[str] = frozenset({"version", "gap_class", "selected", "rungs"})
+_TRIAGE_RUNG_KEYS: frozenset[str] = frozenset({"rung", "outcome", "reason", "candidates"})
+
+
+def validate_triage_record(record: Any) -> dict[str, Any] | None:
+    """Return ``record`` when it is a well-formed AD-1194 triage record, else None.
+
+    Exact keys at both levels, every rung present once and in ladder order,
+    exactly one ``selected`` rung and it is a fulfilment rung, every string
+    bounded. Never raises.
+    """
+    if type(record) is not dict or set(record) != _TRIAGE_KEYS:
+        return None
+    rungs = record["rungs"]
+    if (
+        type(record["version"]) is not int
+        or record["version"] != TRIAGE_RECORD_VERSION
+        or type(record["gap_class"]) is not str
+        or record["gap_class"] not in TRIAGE_GAP_CLASSES
+        or type(record["selected"]) is not str
+        or record["selected"] not in _TRIAGE_SELECTABLE
+        or type(rungs) is not list
+        or [type(v) is dict and v.get("rung") for v in rungs] != list(TRIAGE_RUNGS)
+    ):
+        return None
+    for verdict in rungs:
+        candidates = verdict["candidates"] if set(verdict) == _TRIAGE_RUNG_KEYS else None
+        if (
+            type(candidates) is not list
+            or type(verdict["outcome"]) is not str
+            or verdict["outcome"] not in TRIAGE_OUTCOMES
+            or type(verdict["reason"]) is not str
+            or len(verdict["reason"]) > TRIAGE_REASON_MAX_CHARS
+            or len(candidates) > TRIAGE_MAX_CANDIDATES
+            or any(
+                type(c) is not str or len(c) > TRIAGE_CANDIDATE_MAX_CHARS for c in candidates
+            )
+        ):
+            return None
+    if [v["rung"] for v in rungs if v["outcome"] == "selected"] != [record["selected"]]:
+        return None
+    return record if _fits(record, _TRIAGE_MAX_CHARS) else None
+
+
+def _decode_triage(raw: Any) -> dict[str, Any] | None:
+    """Decode + re-validate a stored ``triage`` column. Never raises."""
+    if raw is None:
+        return None
+    try:
+        decoded = json.loads(raw) if type(raw) is str else None
+    except (ValueError, TypeError):
+        decoded = None
+    validated = validate_triage_record(decoded)
+    if validated is None:
+        logger.warning(
+            "AD-1194: capability_requests.triage is not a valid triage record; "
+            "loading the row with triage=None -- the request itself is unaffected"
+        )
+    return validated
+
+
 def _decode_payload(raw: Any, kind: str = "action") -> dict[str, Any] | None:
     """Decode + re-validate a stored ``payload`` column. Never raises."""
     if raw is None:
@@ -285,7 +434,11 @@ def _decode_payload(raw: Any, kind: str = "action") -> dict[str, Any] | None:
             "loading the row with payload=None"
         )
         return None
-    validated = validate_action_payload(decoded)
+    # AD-1194: a build row carries BF-744's design context, never an action.
+    validated = (
+        validate_build_payload(decoded) if kind == "build"
+        else validate_action_payload(decoded)
+    )
     if validated is None:
         logger.warning(
             "AD-1154: capability_requests.payload failed exact-key validation; "
@@ -364,6 +517,15 @@ class CapabilityRequest:
     # AD-1154 / DD-1: appended LAST so no existing positional index shifts.
     # NULL for grant/build and legacy install rows; typed installs carry identity.
     payload: dict[str, Any] | None = None
+    # AD-1194: the ladder's record for this gap; NULL unless filed through it.
+    triage: dict[str, Any] | None = None
+
+
+#: Every column, in the order ``_row_to_request`` reads them.
+_SELECT_REQUESTS = (
+    "SELECT id, agent_id, kind, target, rationale, work_item_id, status, created_at, "
+    "decided_at, decided_by, decision_reason, payload, triage FROM capability_requests"
+)
 
 
 def _row_to_request(row: tuple[Any, ...]) -> CapabilityRequest:
@@ -381,7 +543,101 @@ def _row_to_request(row: tuple[Any, ...]) -> CapabilityRequest:
         decision_reason=row[10],
         # AD-1154: appended LAST, matching the schema / dataclass / SELECT.
         payload=_decode_payload(row[11], kind=row[2]),
+        # AD-1194: appended after payload, matching the schema and SELECT order.
+        triage=_decode_triage(row[12]),
     )
+
+
+async def _migrate_payload_column(db: Any) -> None:
+    """Add the columns appended since a table was created (AD-1154, AD-1194).
+
+    ``payload`` (AD-1154 / DD-1) made the table 12 columns and ``triage``
+    (AD-1194) 13. ``CREATE TABLE IF NOT EXISTS`` is a no-op against an
+    existing table, so an operator upgrading in place would otherwise hit
+    ``table has no column named ...`` on the first INSERT. Guarded on
+    ``PRAGMA table_info`` so a fresh DB skips it and a restart is idempotent.
+    A module function since AD-1194 A-1, to keep the store within its SRP budget.
+    """
+    async with db.execute("PRAGMA table_info(capability_requests)") as cursor:
+        columns = {row[1] async for row in cursor}
+    for column, ad in (("payload", "AD-1154"), ("triage", "AD-1194")):
+        if column in columns:
+            continue
+        await db.execute(f"ALTER TABLE capability_requests ADD COLUMN {column} TEXT")
+        await db.commit()
+        logger.info(
+            "%s: migrated capability_requests (added %s); existing rows "
+            "load with %s=None", ad, column, column,
+        )
+
+
+async def _decide_ladder_row(
+    factory: ConnectionFactory,
+    db_path: str,
+    cached: CapabilityRequest,
+    approve: bool,
+    reason: str,
+    decided_by: str,
+) -> tuple[CapabilityRequest | None, CapabilityRequest | None]:
+    """AD-1194 A-2: decide a request filed through the ladder on its committed row.
+
+    Another store sharing the database may have raised or decided the row since
+    this one cached it. So one ``BEGIN IMMEDIATE`` transaction, on a connection of
+    its own, reads the row as committed and refuses -- writing nothing -- unless it
+    is still pending and, for a build whose committed context requires consensus,
+    unless the Captain decides it; the decision is then written as a compare-and-set
+    on ``pending``. A store with no database decides on its cache, the only copy.
+    Returns ``(committed, decided)``: the row as read, and the decision, or ``None``.
+    """
+    db = await factory.connect(db_path) if db_path else None
+    try:
+        row: CapabilityRequest | None = cached
+        if db is not None:
+            await db.execute("PRAGMA busy_timeout=5000")
+            await db.execute("BEGIN IMMEDIATE")
+            cursor = await db.execute(f"{_SELECT_REQUESTS} WHERE id = ?", (cached.id,))
+            found = await cursor.fetchone()
+            row = _row_to_request(found) if found is not None else None
+        if row is None or row.status != "pending" or (
+            row.kind == "build" and decided_by != "captain"
+            and build_requires_consensus(row.payload)
+        ):
+            if db is not None:
+                await db.execute("ROLLBACK")
+            logger.warning(
+                "AD-1194: %s's decision on capability request %s was not recorded: %s",
+                decided_by, cached.id[:12],
+                "it is no longer on record" if row is None
+                else f"it is already {row.status}" if row.status != "pending"
+                else "a build that requires consensus is the Captain's to decide",
+            )
+            return row, None
+        decided = replace(
+            row,
+            status="approved" if approve else "denied",
+            decided_at=time.time(),
+            decided_by=decided_by,
+            decision_reason=reason,
+        )
+        if db is not None:
+            cursor = await db.execute(
+                "UPDATE capability_requests SET status = ?, decided_at = ?, decided_by = ?, "
+                "decision_reason = ? WHERE id = ? AND status = 'pending'",
+                (decided.status, decided.decided_at, decided.decided_by,
+                 decided.decision_reason, decided.id),
+            )
+            if cursor.rowcount != 1:  # pragma: no cover - the transaction holds the write lock
+                raise RuntimeError(f"capability request {decided.id[:12]} changed mid-decision")
+            await db.commit()
+        return row, decided
+    except BaseException:
+        if db is not None:
+            with contextlib.suppress(Exception):
+                await db.execute("ROLLBACK")
+        raise
+    finally:
+        if db is not None:
+            await db.close()
 
 
 class CapabilityRequestStore(EventEmitterMixin):
@@ -411,6 +667,10 @@ class CapabilityRequestStore(EventEmitterMixin):
         # In-memory cache: request_id -> CapabilityRequest
         self._cache: dict[str, CapabilityRequest] = {}
         self.repair_decision_lock = asyncio.Lock()
+        # AD-1194 A-1: held across find-then-file by a producer filing one request per gap.
+        self.gap_filing_lock = asyncio.Lock()
+        # AD-1194 A-1: decide() and require_build_consensus() each read, commit, publish.
+        self._decision_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self.db_path:
@@ -420,34 +680,9 @@ class CapabilityRequestStore(EventEmitterMixin):
             await self._db.execute("PRAGMA synchronous=NORMAL")
             await self._db.executescript(_SCHEMA)
             await self._db.commit()
-            await self._migrate_payload_column()
+            await _migrate_payload_column(self._db)
             await self._refresh_cache()
             logger.info("CapabilityRequestStore started (db=%s)", self.db_path)
-
-    async def _migrate_payload_column(self) -> None:
-        """AD-1154 / DD-1: add ``payload`` to a pre-AD-1154 11-column table.
-
-        ``CREATE TABLE IF NOT EXISTS`` is a no-op against an existing table, so an
-        operator upgrading in place would otherwise hit ``table has no column named
-        payload`` on the first INSERT. Guarded on ``PRAGMA table_info`` so a
-        fresh DB (already 12 columns) skips it and a restart is idempotent.
-        """
-        if not self._db:
-            return
-        async with self._db.execute(
-            "PRAGMA table_info(capability_requests)"
-        ) as cursor:
-            columns = {row[1] async for row in cursor}
-        if "payload" in columns:
-            return
-        await self._db.execute(
-            "ALTER TABLE capability_requests ADD COLUMN payload TEXT"
-        )
-        await self._db.commit()
-        logger.info(
-            "AD-1154: migrated capability_requests to 12 columns "
-            "(added payload); existing rows load with payload=None"
-        )
 
     async def stop(self) -> None:
         if self._db:
@@ -459,12 +694,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         self._cache.clear()
         if not self._db:
             return
-        async with self._db.execute(
-            "SELECT id, agent_id, kind, target, rationale, work_item_id, "
-            "status, created_at, decided_at, decided_by, decision_reason, "
-            "payload "
-            "FROM capability_requests"
-        ) as cursor:
+        async with self._db.execute(_SELECT_REQUESTS) as cursor:
             async for row in cursor:
                 req = _row_to_request(row)
                 self._cache[req.id] = req
@@ -477,12 +707,21 @@ class CapabilityRequestStore(EventEmitterMixin):
         rationale: str = "",
         work_item_id: str | None = None,
         payload: dict[str, Any] | None = None,
+        triage: dict[str, Any] | None = None,
     ) -> CapabilityRequest:
         """File a new pending capability request. Writes DB + cache, emits FILED.
 
         ``payload`` carries action data or validated install provenance. Legacy
         callers passing nothing still write NULL, not an invalid install sentinel.
+        ``triage`` is AD-1194's ladder record: evidence, so an invalid one is
+        dropped with a warning rather than costing the Captain the ask.
         """
+        if triage is not None and validate_triage_record(triage) is None:
+            logger.warning(
+                "AD-1194: %s request for %r carried an invalid triage record; "
+                "filing it without one", kind, target,
+            )
+            triage = None
         encoded_payload: str | None = None
         if kind == "install" and payload is not None:
             validated = validate_install_payload(payload)
@@ -503,16 +742,18 @@ class CapabilityRequestStore(EventEmitterMixin):
             status="pending",
             created_at=time.time(),
             payload=payload,
+            triage=triage,
         )
         if self._db:
             await self._db.execute(
                 "INSERT INTO capability_requests "
                 "(id, agent_id, kind, target, rationale, work_item_id, "
                 "status, created_at, decided_at, decided_by, decision_reason, "
-                "payload) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '', ?)",
+                "payload, triage) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '', ?, ?)",
                 (req.id, req.agent_id, req.kind, req.target, req.rationale,
-                 req.work_item_id, req.status, req.created_at, encoded_payload),
+                 req.work_item_id, req.status, req.created_at, encoded_payload,
+                 _canonical_json(triage) if triage is not None else None),
             )
             await self._db.commit()
         self._cache[req.id] = req
@@ -719,30 +960,45 @@ class CapabilityRequestStore(EventEmitterMixin):
         pending original. Trust and DECIDED follow the commit for the same
         reason: a decision that did not persist must not move trust or wake a
         blocked work item.
+
+        AD-1194: it holds the lock :meth:`require_build_consensus` holds. A-2: a
+        request filed through the ladder is decided on its committed row
+        (:func:`_decide_ladder_row`); ``None`` then also means that row refused it.
         """
-        req = await self.get(request_id)
-        if req is None:
-            logger.warning(
-                "AD-853: decide() called for unknown request %s; ignoring",
-                request_id[:12],
-            )
-            return None
-        updated = replace(
-            req,
-            status="approved" if approve else "denied",
-            decided_at=time.time(),
-            decided_by=decided_by,
-            decision_reason=reason,
-        )
-        if self._db:
-            await self._db.execute(
-                "UPDATE capability_requests SET status = ?, decided_at = ?, "
-                "decided_by = ?, decision_reason = ? WHERE id = ?",
-                (updated.status, updated.decided_at, updated.decided_by,
-                 updated.decision_reason, updated.id),
-            )
-            await self._db.commit()
-        self._cache[updated.id] = updated
+        async with self._decision_lock:
+            req = await self.get(request_id)
+            if req is None:
+                logger.warning(
+                    "AD-853: decide() called for unknown request %s; ignoring",
+                    request_id[:12],
+                )
+                return None
+            if req.triage is not None:
+                committed, updated = await _decide_ladder_row(
+                    self._connection_factory, self.db_path if self._db else "",
+                    req, approve, reason, decided_by,
+                )
+                if updated is None:
+                    if committed is not None:  # the cache learns what was committed
+                        self._cache[committed.id] = committed
+                    return None
+            else:
+                updated = replace(
+                    req,
+                    status="approved" if approve else "denied",
+                    decided_at=time.time(),
+                    decided_by=decided_by,
+                    decision_reason=reason,
+                )
+                if self._db:
+                    await self._db.execute(
+                        "UPDATE capability_requests SET status = ?, decided_at = ?, "
+                        "decided_by = ?, decision_reason = ? WHERE id = ?",
+                        (updated.status, updated.decided_at, updated.decided_by,
+                         updated.decision_reason, updated.id),
+                    )
+                    await self._db.commit()
+            self._cache[updated.id] = updated
         if self._trust_network is not None:
             try:
                 self._trust_network.record_outcome(
@@ -810,6 +1066,45 @@ class CapabilityRequestStore(EventEmitterMixin):
         )
         return updated
 
+    async def require_build_consensus(self, request_id: str) -> CapabilityRequest | None:
+        """AD-1194 A-1: record that a still-pending build requires consensus.
+
+        Monotone: the one change it makes is to set the build payload's
+        ``requires_consensus`` to ``True``, so it strengthens a build's governance
+        and never weakens it. Returns the request as stored -- unchanged when it
+        already requires consensus -- or ``None``, writing nothing, when the id is
+        unknown, the request is not a pending build (in the cache, and compared and
+        set in the database), or the raised payload would not load after a restart.
+        """
+        async with self._decision_lock:
+            req = self._cache.get(request_id)
+            if req is None or req.kind != "build" or req.status != "pending":
+                return None
+            base = validate_build_payload(req.payload) or {}
+            if base.get("requires_consensus") is True:
+                return req
+            payload = {**base, "requires_consensus": True}
+            if validate_build_payload(payload) is None:  # it would load as None
+                return None
+            updated = replace(req, payload=payload)
+            if self._db:
+                cursor = await self._db.execute(
+                    "UPDATE capability_requests SET payload = ? "
+                    "WHERE id = ? AND status = 'pending'",
+                    (_canonical_json(updated.payload), updated.id),
+                )
+                await self._db.commit()
+                if cursor.rowcount != 1:
+                    logger.warning(
+                        "AD-1194: build request %s is pending in the cache but not in "
+                        "the database; its consensus requirement was not raised",
+                        request_id[:12],
+                    )
+                    return None
+            self._cache[updated.id] = updated
+        logger.info("AD-1194: build request %s now requires consensus", request_id[:12])
+        return updated
+
     async def list_pending(self) -> list[CapabilityRequest]:
         """Return all requests still awaiting a decision."""
         return [r for r in self._cache.values() if r.status == "pending"]
@@ -833,11 +1128,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             # on the writer connection for Captain authority.
             db = await self._connection_factory.connect(self.db_path)
             try:
-                cursor = await db.execute(
-                    "SELECT id, agent_id, kind, target, rationale, work_item_id, "
-                    "status, created_at, decided_at, decided_by, decision_reason, "
-                    "payload FROM capability_requests WHERE id = ?", (request_id,),
-                )
+                cursor = await db.execute(f"{_SELECT_REQUESTS} WHERE id = ?", (request_id,))
                 row = await cursor.fetchone()
                 return _row_to_request(row) if row is not None else None
             finally:

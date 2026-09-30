@@ -660,7 +660,7 @@ class FaultReportStore:
         observed_as`` and the store would come up with an empty cache, so every
         recurring fault would file a fresh row. Guarded on ``PRAGMA table_info``
         so a fresh DB skips it and a restart is idempotent. Same shape as
-        ``CapabilityRequestStore._migrate_payload_column``.
+        ``capability_request._migrate_payload_column``.
         """
         if not self._db:
             return

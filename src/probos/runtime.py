@@ -291,7 +291,7 @@ class LiveEventListenerHandle:
 
 
 async def file_dependency_install_requests(
-    store: Any, packages: list[str], requested_by: str
+    store: Any, packages: list[str], requested_by: str, *, unified: bool = False,
 ) -> list[str]:
     """AD-1220: file one ``install`` capability request per package.
 
@@ -319,6 +319,10 @@ async def file_dependency_install_requests(
     approving an install should answer *who* wants the library and why, and an
     unattributed request cannot. With no requester the ask is skipped and the
     previous decline-only behaviour stands exactly.
+
+    AD-1194: ``unified`` files each ask through the capability ladder as a
+    ``package`` gap -- the same install request, plus the record of why no
+    cheaper rung applied. Deduplication above is unchanged.
     """
     from probos.capability_request import validate_install_payload, validate_python_install_target
 
@@ -381,18 +385,31 @@ async def file_dependency_install_requests(
     for package in valid_packages:
         if package in already:
             continue
+        rationale = (
+            f"A script needs the {package} library, which is not "
+            "installed. Approving installs it into the environment the "
+            "sandbox shares, so the next run can import it."
+        )
         try:
-            await store.file_request(
-                agent_id=requested_by,
-                kind="install",
-                target=package,
-                payload={"install_kind": "python"},
-                rationale=(
-                    f"A script needs the {package} library, which is not "
-                    "installed. Approving installs it into the environment the "
-                    "sandbox shares, so the next run can import it."
-                ),
-            )
+            if unified:
+                from probos.cognitive.capability_triage import triage_and_file
+
+                await triage_and_file(
+                    gap_target=package,
+                    agent_id=requested_by,
+                    store=store,
+                    rationale=rationale,
+                    gap_class="package",
+                    unified=True,
+                )
+            else:
+                await store.file_request(
+                    agent_id=requested_by,
+                    kind="install",
+                    target=package,
+                    payload={"install_kind": "python"},
+                    rationale=rationale,
+                )
         except Exception:
             logger.warning(
                 "AD-1220: filing the install request for %r on behalf of agent "
@@ -4211,10 +4228,13 @@ class ProbOSRuntime:
                 # console, so on an API/HXI vessel this branch WAS the end of
                 # the road — the package was never installed and the Captain
                 # was never told it had been wanted.
+                from probos.cognitive.capability_triage import unified_ladder_enabled
+
                 filed = await file_dependency_install_requests(
                     getattr(self, "capability_request_store", None),
                     prompt_tier,
                     requested_by,
+                    unified=unified_ladder_enabled(getattr(self, "config", None)),
                 )
                 if self.event_log:
                     await self.event_log.log(
@@ -5443,6 +5463,7 @@ class ProbOSRuntime:
             # Skip only if the response is a genuine conversational reply
             # (greeting, help text).  Capability-gap responses ("I don't
             # have X") should still trigger self-mod.
+            from probos.cognitive.capability_triage import unified_ladder_enabled
             from probos.cognitive.decomposer import is_capability_gap
             self_mod_result = None
             is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
@@ -5453,7 +5474,20 @@ class ProbOSRuntime:
             ):
                 if auto_selfmod:
                     intent_meta = await self._extract_unhandled_intent(text)
-                    if intent_meta:
+                    if intent_meta and unified_ladder_enabled(self.config):
+                        # AD-1194: an unattended NL gap files a PENDING build through
+                        # the capability ladder and designs nothing. The pipeline's
+                        # approval gate passes when no console callback is wired --
+                        # a serve vessel until its first HXI slash command, which
+                        # wires a stdin prompt nobody answers -- so this branch used
+                        # to design and register an agent nobody approved. The Captain
+                        # now approves it on the capability-request surface, and its
+                        # build fulfiller designs with the context recorded here.
+                        # AD-1049's surface runs as the ladder's discover rung.
+                        from probos.cognitive.nl_gap_triage import pending_nl_gap_result
+
+                        self_mod_result = await pending_nl_gap_result(self, intent_meta)
+                    elif intent_meta:
                         # AD-1049: discovery-before-design (default-OFF; governance —
                         # SURFACE an existing resource, NEVER auto-adopt). Byte-identical
                         # when off: the guard short-circuits before any work runs.
@@ -5535,6 +5569,14 @@ class ProbOSRuntime:
                                 "description": intent_meta.get("description", ""),
                                 "parameters": intent_meta.get("parameters", {}),
                             }
+                            if unified_ladder_enabled(self.config):
+                                # AD-1194: the chat route files this proposal as a
+                                # pending build, which must keep the gap's consensus
+                                # requirement (BF-744). The client round trip carries
+                                # no such field, so it rides on the proposal.
+                                self_mod_result["requires_consensus"] = intent_meta.get(
+                                    "requires_consensus", False
+                                )
 
             if not dag.nodes:
                 logger.warning("No intents parsed from NL input: %s", text[:50])

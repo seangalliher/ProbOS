@@ -251,7 +251,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                               'deferred_tool_schema_threshold_bytes': 0},
     'AutonomyBoundariesConfig': {'enabled': True},
     'CapabilityTriageConfig': {   'grant_fast_path_enabled': False,
-                                  'grant_trust_floor': 0.8},
+                                  'grant_trust_floor': 0.8,
+                                  # AD-1194 post-extraction addition: the default-off flag.
+                                  'unified_ladder_enabled': False},
     'ClassificationGateConfig': {'enabled': True},
     'CreativeExpressionConfig': {'enabled': True, 'default_classification': 'ship'},
     'CrewDevelopmentConfig': {'enabled': True},

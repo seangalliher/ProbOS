@@ -132,6 +132,8 @@ export interface SelfModProposal {
   parameters: Record<string, string>;
   original_message: string;
   status: 'proposed' | 'approved' | 'rejected';
+  /** AD-1194 A-2: the build request the proposal filed (unified ladder only). */
+  capability_request_id?: string;
 }
 
 export interface BuildProposal {

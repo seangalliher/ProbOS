@@ -917,6 +917,12 @@ class CapabilityTriageConfig(BaseModel):
 
     grant_fast_path_enabled: bool = False
     grant_trust_floor: float = 0.8
+    # AD-1194: file every capability gap -- the NL path, AD-855's work items,
+    # AD-1220's missing packages -- through the whole ladder and record each
+    # rung's verdict on the request. Off keeps every producer exactly as it was,
+    # including the NL path's direct design. On, no gap is designed until the
+    # Captain approves its build request.
+    unified_ladder_enabled: bool = False
 
     @field_validator("grant_trust_floor")
     @classmethod

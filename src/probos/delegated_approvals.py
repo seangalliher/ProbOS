@@ -37,7 +37,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from probos.approval_authority import CAPTAIN_UNAVAILABLE, FIRST_OFFICER_DELEGATION, REVIEW_TOOL_ID
-from probos.capability_request import validate_action_payload
+from probos.capability_request import build_requires_consensus, validate_action_payload
 from probos.cognitive.capability_triage import derive_tool_permission, is_non_destructive
 from probos.decision_pre_clearance import (
     PRE_CLEARANCE_AUDIT_CATEGORY,
@@ -195,12 +195,10 @@ def classify_capability_request(req: Any, *, tool_registry: ToolLookup | None) -
         )
     if kind == "install":
         return RequestClass.DESTRUCTIVE
-    if kind == "build":
-        payload = getattr(req, "payload", None)
-        ctx = payload if isinstance(payload, dict) else {}  # fulfil_build's own expression
+    if kind == "build":  # fulfil_build's expression; the store applies it to a ladder decision (AD-1194 A-2)
         return (
             RequestClass.CAPTAIN_RESERVED
-            if bool(ctx.get("requires_consensus", False))
+            if build_requires_consensus(getattr(req, "payload", None))
             else RequestClass.DESTRUCTIVE
         )
     return RequestClass.UNCLASSIFIABLE
