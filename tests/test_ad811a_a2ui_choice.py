@@ -333,6 +333,9 @@ def test_full_steps_order_regression() -> None:
         "step_4m_write_claim_guard",
         # The old list predated owned feedback between the guard and storage.
         "step_4o_owned_steps_feedback",
+        # AD-1156: the plan-mode notice follows the feedback step and precedes
+        # storage, so it is on the text the Captain sees and the episode stores.
+        "step_4p_plan_mode_notice",
         "step_5_episodic_store",
         "step_6_working_memory_record",
         "step_7_divergence_check",

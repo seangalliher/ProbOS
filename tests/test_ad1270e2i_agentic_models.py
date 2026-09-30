@@ -280,7 +280,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                            'compaction_threshold_tokens': 60000,
                            # AD-1208 post-extraction addition: the inert None budget and its step backstop.
                            'token_budget': None,
-                           'max_total_iterations': 100},
+                           'max_total_iterations': 100,
+                           # AD-1156: default-OFF plan/execute modes (a bool, no bound).
+                           'agent_modes_enabled': False},
     'DmDeliberateConfig': {'enabled': False, 'tier': 'deep', 'max_tokens': 800},
     'DmSanityGateConfig': {   'enabled': True,
                               'length_floor': 5,

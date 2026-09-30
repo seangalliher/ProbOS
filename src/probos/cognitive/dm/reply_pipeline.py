@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos import work_item_steps as owned_steps
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
@@ -38,6 +38,9 @@ from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
 )
 from probos.dm_reply import DmReply, ToolInvocations  # AD-1248 / AD-1295
 from probos.hooks.bus import HookEvent
+
+if TYPE_CHECKING:
+    from probos.cognitive.agent_mode import PlanModeReplyGate
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +191,21 @@ class DmReplyContext:
         ],
     ] = field(default_factory=dict)
     owned_steps_feedback: str | None = None
+    # AD-1156: opened by the one-to-one route when agent modes and the
+    # dm_agentic loop are on and a thread store exists. When it holds the reply,
+    # ``DmReplyPipeline._run_steps`` runs only the steps that keep the reply in
+    # its conversation, and ``step_4p_plan_mode_notice`` says what it held back.
+    # ``None`` -- every other construction site -- leaves every step as it was.
+    plan_mode_gate: PlanModeReplyGate | None = None
+    # AD-1156 A-3: what a plan-mode pass took out of the reply for the Captain to
+    # see -- an unsent DM, a note's text, a checklist change -- in pipeline order.
+    # ``step_4p_plan_mode_notice`` shows it after the last step that reads the
+    # reply for requests, so no later step acts on it.
+    plan_mode_shown: list[str] = field(default_factory=list)
+    # AD-1156 A-4: the reply as plan mode's passes left it, before
+    # ``step_4p_plan_mode_notice`` shows what they held back and adds the notice.
+    # Step 5 stores it, with the notice; ``None`` until step 4p has one to add.
+    plan_mode_reply_text: str | None = None
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
@@ -199,6 +217,224 @@ class DmReplyContext:
     @response_text.setter
     def response_text(self, value: str) -> None:
         self.reply = self.reply.with_body(value)
+
+
+# ── AD-1156 A-2, A-3, A-4: the reply in plan mode ───────────────────────────
+# A reply plan mode holds writes only three things: the reply itself and how it is
+# delivered; the record of its conversation (the transcript, this conversation's
+# episode, the agent's working memory, the reply's own content filed as this
+# thread's artifacts or choice card); and what an allowed read costs. It starts no
+# work and sends, posts, saves, generates or schedules nothing, and nothing its
+# text drives changes state the ship or other agents act on -- trust, Hebbian
+# weights, the divergence record (A-3). ``DmReplyPipeline._run_steps`` decides it
+# per step, so a step none of the tables below names does not run in plan mode.
+# A pass leaves every later step the text its step would leave it: what a step
+# would take out of the reply to act on, its pass takes out too, and the three
+# that keep it for the Captain (a DM, a note, a checklist change) put it on
+# ``ctx.plan_mode_shown``, which the notice step shows after the last step that
+# reads the reply for requests (A-3). The episode step 5 stores carries the
+# plan-mode marker and the reply as the passes left it, with the notice, so
+# dreaming learns nothing from it later (A-4). A reply that reaches the Captain
+# without this pipeline -- the AD-1230 replay, the AD-1165 report -- gets the
+# passes and the notice alone (A-4, ``project_plan_mode_reply``).
+
+
+def _withhold_challenge(ctx: DmReplyContext) -> int:
+    """Strip a ``[CHALLENGE]`` step 2 would issue, as it strips one it issued."""
+    gate = ctx.sanity_gate
+    if not ctx.response_text or gate is None or not getattr(ctx.runtime, "recreation_service", None):
+        return 0
+    if gate.extract_challenge(ctx.response_text) is None:
+        return 0
+    ctx.response_text = gate.strip_challenge(ctx.response_text)
+    return 1
+
+
+def _withhold_move(ctx: DmReplyContext) -> int:
+    """Strip a ``[MOVE]`` step 3 would make, as it strips one it made."""
+    gate = ctx.sanity_gate
+    if not ctx.response_text or gate is None or not getattr(ctx.runtime, "recreation_service", None):
+        return 0
+    if gate.extract_move(ctx.response_text) is None:
+        return 0
+    ctx.response_text = gate.strip_move(ctx.response_text)
+    return 1
+
+
+def _withhold_image(ctx: DmReplyContext) -> int:
+    """Strip every ``[GEN_IMAGE]``, as step 4c does; it generates one image at most."""
+    gate = ctx.sanity_gate
+    if gate is None or not ctx.response_text:
+        return 0
+    av_cfg = getattr(getattr(ctx.runtime, "config", None), "avatars", None)
+    prompts = gate.extract_gen_image(
+        ctx.response_text, max_chars=int(getattr(av_cfg, "image_gen_max_prompt_chars", 512)),
+    )
+    ctx.response_text = gate.strip_gen_image(ctx.response_text)
+    return 1 if prompts else 0
+
+
+def _withhold_follow_up(ctx: DmReplyContext) -> int:
+    """Strip every ``[FOLLOW_UP]``, as step 4d does; it schedules one at most."""
+    gate = ctx.sanity_gate
+    if gate is None or not ctx.response_text:
+        return 0
+    followup = gate.extract_followup(ctx.response_text)
+    ctx.response_text = gate.strip_followup(ctx.response_text)
+    return 0 if followup is None else 1
+
+
+def _withhold_action(ctx: DmReplyContext) -> int:
+    """Strip the ``[ACTION]`` markers step 4e would queue, as it does on every outcome."""
+    browser_cfg = getattr(getattr(ctx.runtime, "config", None), "browser_tool", None)
+    if not ctx.response_text or not getattr(browser_cfg, "action_dispatch_enabled", False):
+        return 0
+    from probos.cognitive.dm.action_parser import parse_action_envelopes, strip_action_markers
+
+    envelopes = parse_action_envelopes(ctx.response_text)
+    if not envelopes:
+        return 0
+    ctx.response_text = strip_action_markers(ctx.response_text)
+    return len(envelopes)
+
+
+def _withhold_dm(ctx: DmReplyContext) -> int:
+    """Take out the ``[DM]`` blocks step 4b would send, as it takes them out, and
+    keep them for the Captain (BF-874): unsent, shown after the reply."""
+    if not ctx.response_text or "[DM" not in ctx.response_text:
+        return 0
+    from probos.proactive import split_dm_blocks
+
+    ctx.response_text, blocks = split_dm_blocks(ctx.response_text)
+    ctx.plan_mode_shown.extend(blocks)
+    return len(blocks)
+
+
+def _withhold_notebook(ctx: DmReplyContext) -> int:
+    """Take out the ``[NOTEBOOK]`` blocks step 4i would save, as it takes them out,
+    and keep the text of each entry for the Captain, shown after the reply."""
+    if not ctx.response_text or "[NOTEBOOK" not in ctx.response_text:
+        return 0
+    from probos.proactive import split_notebook_blocks
+
+    ctx.response_text, entries = split_notebook_blocks(ctx.response_text)
+    ctx.plan_mode_shown.extend(entries)
+    return len(entries)
+
+
+def _withhold_create_task(ctx: DmReplyContext) -> int:
+    """Strip a ``[CREATE_TASK]`` step 4g would open, as every path that opens none does."""
+    gate = ctx.sanity_gate
+    if not ctx.response_text or gate is None or gate.extract_create_task(ctx.response_text) is None:
+        return 0
+    ctx.response_text = gate.strip_create_task(ctx.response_text)
+    return 1
+
+
+def _withhold_todos(ctx: DmReplyContext) -> int:
+    """Take out the room-todo tags step 4l would apply to a task, as it takes them
+    out, and keep them for the Captain, shown after the reply; strip them where it
+    would only strip. Its prose-plan seeding (AD-1085a), which no tag asks for, is
+    not done either."""
+    text = ctx.response_text or ""
+    comms_cfg = getattr(getattr(ctx.runtime, "config", None), "communications", None)
+    if not text or not getattr(comms_cfg, "room_todos_enabled", False):
+        return 0
+    from probos.cognitive.dm.todo_extractor import has_todo_tag, split_todo_tags
+
+    if not has_todo_tag(text):
+        return 0
+    thread_store = getattr(ctx.runtime, "chat_thread_store", None)
+    wired = getattr(ctx.runtime, "work_item_store", None) is not None and thread_store is not None
+    thread = thread_store.get_thread(ctx.chat_thread_id) if wired and ctx.chat_thread_id else None
+    ctx.response_text, tags = split_todo_tags(text)
+    if not getattr(thread, "task_id", None):
+        return 0
+    ctx.plan_mode_shown.extend(tags)
+    return 1
+
+
+def _withhold_divergence_check(ctx: DmReplyContext) -> None:
+    """Strip the self-tag step 7 strips, and score nothing: its result, history,
+    trust and Hebbian updates are what the ship and other agents act on (A-3)."""
+    t_cfg = getattr(getattr(ctx.runtime, "config", None), "avatar_telemetry", None)
+    if ctx.response_text and getattr(t_cfg, "divergence_detection", False):
+        from probos.avatars.divergence_detector import strip_intent_self_tag
+
+        ctx.response_text = strip_intent_self_tag(ctx.response_text)
+
+
+def _withhold_emotion(ctx: DmReplyContext) -> None:
+    """Resolve no emotion: step 9 reads step 7's result, which plan mode does not
+    compute, so the slot holds an earlier reply's. The reply is spoken with the
+    default prosody (A-3)."""
+
+
+#: AD-1156 A-4: the most of a reply step 5 stores in an episode.
+_EPISODE_RESPONSE_CHARS = 500
+
+
+def _plan_mode_episode_response(ctx: DmReplyContext, gate: PlanModeReplyGate) -> str:
+    """AD-1156 A-4: the reply a plan-mode turn's episode stores.
+
+    The reply as plan mode's passes left it -- what they held back is taken out
+    and not shown, since the transcript shows it -- then the notice that says so.
+    Within step 5's 500 characters the reply gives way, so the notice is whole; a
+    notice longer than that alone, which only a held count of 23 digits or more
+    makes, has its list of what was held cut to fit (A-6; A-5 cut its end, which lost
+    the clause that none of it was sent), so the text never exceeds 500 characters.
+    """
+    reply = ctx.response_text if ctx.plan_mode_reply_text is None else ctx.plan_mode_reply_text
+    notice = gate.notice(_EPISODE_RESPONSE_CHARS)
+    if not notice:
+        return reply[:_EPISODE_RESPONSE_CHARS]
+    kept = reply[: max(0, _EPISODE_RESPONSE_CHARS - len(notice) - 2)].rstrip()
+    return f"{kept}\n\n{notice}" if kept else notice
+
+
+#: The steps that run unchanged in plan mode: each only shapes the reply, reads,
+#: or records its conversation.
+_PLAN_MODE_ALLOWED_STEPS: frozenset[str] = frozenset({
+    "step_1_sanity_gate_retry",  # asks the agent again, on this thread (A-3)
+    "step_4_self_check_parse",  # the agent looks at its own render
+    "step_4h_mesh_read_parse",  # allowlisted reads only
+    "step_4f_extract_artifacts",  # the reply's own content, filed in this thread
+    "step_4k_extract_a2ui",  # a choice card for the Captain, in this thread
+    "step_4j_deliberate_parse",
+    "step_4n_tool_write_ledger",
+    "step_4m_write_claim_guard",
+    "step_4o_owned_steps_feedback",
+    "step_4p_plan_mode_notice",
+    "step_5_episodic_store",
+    "step_6_working_memory_record",
+    "step_8_mark_emitted",
+})
+
+#: The steps that act outside the conversation, each with its notice kind
+#: (``agent_mode.PLAN_MODE_WITHHELD_REPLY_TAGS``) and the pass that runs instead.
+#: A pass changes only the reply text, leaving it as its step leaves it, keeps on
+#: ``ctx.plan_mode_shown`` what the Captain is to see, and returns how many
+#: requests it held back.
+_PLAN_MODE_WITHHELD_STEPS: dict[str, tuple[str, Callable[[DmReplyContext], int]]] = {
+    "step_2_challenge_parse": ("challenge", _withhold_challenge),
+    "step_3_move_parse": ("move", _withhold_move),
+    "step_4c_image_gen_parse": ("image", _withhold_image),
+    "step_4d_follow_up_parse": ("follow_up", _withhold_follow_up),
+    "step_4e_action_dispatch": ("action", _withhold_action),
+    "step_4b_dm_outbound_parse": ("dm", _withhold_dm),
+    "step_4i_notebook_parse": ("notebook", _withhold_notebook),
+    "step_4g_create_task_parse": ("create_task", _withhold_create_task),
+    "step_4l_extract_todos": ("todos", _withhold_todos),
+}
+
+#: The steps that nothing in the reply asks for but that write what the ship or
+#: other agents act on, each with the pass that runs instead and is not announced
+#: (A-3): the divergence check's trust, Hebbian and divergence-record updates, and
+#: the emotion step, which reads that check's result.
+_PLAN_MODE_QUIET_STEPS: dict[str, Callable[[DmReplyContext], None]] = {
+    "step_7_divergence_check": _withhold_divergence_check,
+    "step_9_emotion_resolve": _withhold_emotion,
+}
 
 
 class DmReplyPipeline:
@@ -221,7 +457,7 @@ class DmReplyPipeline:
 
     def _full_steps(self) -> tuple[Callable, ...]:
         """AD-933: the full DM one-shot chain in load-bearing order, the single
-        source of truth executed by :meth:`run`. **23 steps** (BF-796: this said
+        source of truth executed by :meth:`run`. **24 steps** (BF-796: this said
         18 while the tuple returned 20 -- a reader trusts this line when judging
         whether an insertion is in scope, so it is now guarded by a test rather
         than maintained by hand) after AD-934 inserted
@@ -236,12 +472,15 @@ class DmReplyPipeline:
         ledger PRODUCER, so it must run before the only consumer). AD-1192 adds
         ``step_4o_owned_steps_feedback`` after the guard and before episodic
         storage, so authoritative refusal feedback survives the final rewrite.
+        AD-1156 adds ``step_4p_plan_mode_notice`` after that feedback step and
+        before episodic storage, for the same reason: the notice of what plan
+        mode held back is on the text the Captain sees and the episode stores.
         Ordering is
         invariant (sanity gate before challenge/move parsers, self-check before
         episodic store, deliberate re-roll before episodic store, write-claim
         guard after the re-roll, tool-ledger before the guard, divergence before
         ``mark_reply_emitted``, emotion after divergence) and MUST stay
-        byte-identical apart from those four insertions."""
+        byte-identical apart from those five insertions."""
         return (
             self.step_1_sanity_gate_retry,
             self.step_2_challenge_parse,
@@ -261,6 +500,7 @@ class DmReplyPipeline:
             self.step_4n_tool_write_ledger,  # AD-1295 (#1087)
             self.step_4m_write_claim_guard,  # AD-1285 (#1087)
             self.step_4o_owned_steps_feedback,
+            self.step_4p_plan_mode_notice,  # AD-1156
             self.step_5_episodic_store,
             self.step_6_working_memory_record,
             self.step_7_divergence_check,
@@ -320,15 +560,65 @@ class DmReplyPipeline:
         """AD-933: run an ordered tuple of pipeline steps under the verbatim
         AD-726 per-step Tier-2 guard — a runaway step is logged but never
         blocks the reply. Shared by :meth:`run` (full chain) and
-        :meth:`run_escalation_only` (escalation subset)."""
+        :meth:`run_escalation_only` (escalation subset). AD-1156: a step
+        :meth:`_plan_mode_holds_back` holds back does not run; without a gate it
+        is never asked (A-3), so a reply outside plan mode runs as before."""
+        gate = self.ctx.plan_mode_gate
         for step in steps:
             try:
+                if gate is not None and self._plan_mode_holds_back(step, gate):
+                    continue
                 await step()
             except Exception:
                 logger.warning(
                     "AD-726: pipeline step %s raised for agent=%s; continuing",
                     step.__name__, self.ctx.agent_id, exc_info=True,
                 )
+
+    def _plan_mode_holds_back(self, step: Callable, gate: PlanModeReplyGate) -> bool:
+        """AD-1156: True when plan mode holds this reply and ``step`` is not one
+        that keeps it in its conversation. The step's pass has then run in its
+        place, and what a withheld step held back is recorded; a step no table
+        names is skipped. The thread is read only at the first step that could be
+        held."""
+        name = getattr(step, "__name__", "")
+        if name in _PLAN_MODE_ALLOWED_STEPS or not gate.withholds():
+            return False
+        quiet = _PLAN_MODE_QUIET_STEPS.get(name)
+        if quiet is not None:
+            quiet(self.ctx)
+            return True
+        withheld = _PLAN_MODE_WITHHELD_STEPS.get(name)
+        if withheld is None:
+            logger.warning(
+                "AD-1156: reply step %s has no plan-mode classification, so plan "
+                "mode skipped it for agent=%s; classify it in reply_pipeline",
+                name, self.ctx.agent_id,
+            )
+            return True
+        kind, hold = withheld
+        count = hold(self.ctx)
+        if count:
+            gate.record(kind, count)
+        return True
+
+    async def run_plan_mode_text(self) -> None:
+        """AD-1156 A-4: plan mode's work on the reply text, and nothing else.
+
+        For a reply that reaches the Captain without :meth:`run`
+        (:func:`project_plan_mode_reply`). Each held or quiet step's pass runs in
+        its place, in pipeline order, as :meth:`_run_steps` runs it, then the
+        notice step; no step runs, so nothing is sent, saved, started, filed or
+        scored. A no-op unless the gate holds the reply.
+        """
+        gate = self.ctx.plan_mode_gate
+        if gate is None or not gate.withholds():
+            return
+        await self._run_steps(tuple(
+            step for step in self._full_steps()
+            if step.__name__ == "step_4p_plan_mode_notice"
+            or step.__name__ not in _PLAN_MODE_ALLOWED_STEPS
+        ))
 
     async def run_escalation_only(self) -> None:
         """AD-933: run ONLY the channel-agnostic escalation subset
@@ -375,6 +665,14 @@ class DmReplyPipeline:
                     params={**self.ctx.params, "text": self.ctx.message_text + retry_hint, "is_retry": True},
                     target_agent_id=self.ctx.agent_id,
                     ttl_seconds=60.0,
+                    # AD-1156 A-3: with agent modes on, ask on this conversation's
+                    # thread, so the retry runs under its mode -- and in plan mode
+                    # at least when the route dispatched the turn in plan mode (the
+                    # params above carry that). Without a gate, as before (F-26).
+                    thread_id=(
+                        (self.ctx.chat_thread_id or None)
+                        if self.ctx.plan_mode_gate is not None else None
+                    ),
                 )
                 try:
                     retry_resp = await self.ctx.runtime.intent_bus.send(retry_intent)
@@ -2149,6 +2447,36 @@ class DmReplyPipeline:
                 f"{self.ctx.response_text}\n\n{feedback}".strip()
             )
 
+    # --- step 4p: AD-1156 plan-mode notice ---
+    async def step_4p_plan_mode_notice(self) -> None:
+        """AD-1156: tell the Captain what plan mode held back.
+
+        After the AD-934 re-roll and the feedback step, so the notice is on the
+        text the Captain sees; before episodic storage, which records the reply as
+        the passes left it, with the notice (A-4). A no-op unless plan mode held a
+        request back. What a pass kept for the Captain (``ctx.plan_mode_shown``)
+        comes first, then the notice: this is after the last step that reads the
+        reply for requests, so nothing acts on it (A-3). The log carries kinds and
+        counts.
+        """
+        gate = self.ctx.plan_mode_gate
+        if gate is None:
+            return
+        notice = gate.notice()
+        if not notice:
+            return
+        logger.info(
+            "AD-1156: plan mode held back %s from agent %s's reply on thread %s; "
+            "none of it was sent, saved or started",
+            gate.summary(), self.ctx.agent_id, self.ctx.chat_thread_id or "<unresolved>",
+        )
+        self.ctx.plan_mode_reply_text = self.ctx.response_text
+        if self.ctx.plan_mode_shown:
+            shown = "\n\n".join(self.ctx.plan_mode_shown)
+            self.ctx.response_text = f"{self.ctx.response_text}\n\n{shown}".strip()
+        if notice not in self.ctx.response_text:
+            self.ctx.response_text = f"{self.ctx.response_text}\n\n{notice}".strip()
+
     # --- step 5: AD-430b HXI 1:1 episodic store ---
     async def step_5_episodic_store(self) -> None:
         """AD-430b: Store HXI 1:1 interaction as episodic memory. Verbatim move."""
@@ -2157,7 +2485,7 @@ class DmReplyPipeline:
             try:
                 import time as _time
                 from probos.cognitive.episodic import resolve_sovereign_id
-                from probos.types import AnchorFrame, Episode
+                from probos.types import EPISODE_PLAN_MODE_KEY, AnchorFrame, Episode
                 sovereign_id = resolve_sovereign_id(self.ctx.agent)
                 # BF-795 (#1259): the AD-1248 disclosure is composed at egress,
                 # AFTER this step, and ``response`` below is front-truncated at
@@ -2170,6 +2498,45 @@ class DmReplyPipeline:
                 failed_tool_call_count = (
                     failures.failed_call_count if failures is not None else 0
                 )
+                # AD-1156 A-4: when plan mode governed the turn, the episode stores
+                # the reply as plan mode left it, with the notice, and carries the
+                # marker dreaming reads. Without a gate nothing here is asked.
+                gate = self.ctx.plan_mode_gate
+                plan_response = (
+                    _plan_mode_episode_response(self.ctx, gate)
+                    if gate is not None and gate.withholds() else None
+                )
+                outcome: dict[str, Any] = {
+                    "intent": "direct_message",
+                    # Stays the literal ``True``: five consumers
+                    # (decomposer, retrieval_practice, contradiction_detector,
+                    # dreaming trust, importance_scorer) read this as
+                    # task-execution truth. A turn that answered the Captain
+                    # but whose write channel produced nothing DID execute;
+                    # only a claimed side-effect is missing, and
+                    # ``self_contradicted_channels`` carries that without
+                    # overloading a boolean five subsystems read differently.
+                    # A plan-mode turn's too: the conversation took place, and
+                    # the marker below keeps dreaming from learning from it.
+                    "success": True,
+                    "response": self.ctx.response_text[:500] if plan_response is None else plan_response,
+                    "session_type": "1:1",
+                    "callsign": self.ctx.callsign,
+                    "source": "hxi_profile",
+                    "agent_type": self.ctx.agent.agent_type,
+                    # AD-730: tag DM episodes that included an image so Counselor
+                    # wellness and AD-722a divergence analysis can filter on it.
+                    "has_image_attachment": self.ctx.has_image_attachment,
+                    # AD-720d-1: per-attachment timing + partial-resolve metric.
+                    "image_count": sum(
+                        1 for r in self.ctx.per_attachment
+                        if r["ok"] and (r.get("mime") or "").startswith("image/")
+                    ) if self.ctx.has_image_attachment else 0,
+                    "failed_image_count": sum(1 for r in self.ctx.per_attachment if not r["ok"]),
+                    "per_attachment_timing": self.ctx.per_attachment,
+                }
+                if plan_response is not None:
+                    outcome[EPISODE_PLAN_MODE_KEY] = True
                 episode = Episode(
                     user_input=f"[1:1 with {self.ctx.callsign or self.ctx.agent_id}] Captain: {self.ctx.req_message}",
                     timestamp=_time.time(),
@@ -2177,33 +2544,7 @@ class DmReplyPipeline:
                     self_contradicted_channels=list(self.ctx.write_ledger.self_contradicted_channels),
                     failed_tool_names=failed_tool_names,  # BF-795 (#1259)
                     failed_tool_call_count=failed_tool_call_count,  # BF-795 (#1259)
-                    outcomes=[{
-                        "intent": "direct_message",
-                        # Stays the literal ``True``: five consumers
-                        # (decomposer, retrieval_practice, contradiction_detector,
-                        # dreaming trust, importance_scorer) read this as
-                        # task-execution truth. A turn that answered the Captain
-                        # but whose write channel produced nothing DID execute;
-                        # only a claimed side-effect is missing, and
-                        # ``self_contradicted_channels`` carries that without
-                        # overloading a boolean five subsystems read differently.
-                        "success": True,
-                        "response": self.ctx.response_text[:500],
-                        "session_type": "1:1",
-                        "callsign": self.ctx.callsign,
-                        "source": "hxi_profile",
-                        "agent_type": self.ctx.agent.agent_type,
-                        # AD-730: tag DM episodes that included an image so Counselor
-                        # wellness and AD-722a divergence analysis can filter on it.
-                        "has_image_attachment": self.ctx.has_image_attachment,
-                        # AD-720d-1: per-attachment timing + partial-resolve metric.
-                        "image_count": sum(
-                            1 for r in self.ctx.per_attachment
-                            if r["ok"] and (r.get("mime") or "").startswith("image/")
-                        ) if self.ctx.has_image_attachment else 0,
-                        "failed_image_count": sum(1 for r in self.ctx.per_attachment if not r["ok"]),
-                        "per_attachment_timing": self.ctx.per_attachment,
-                    }],
+                    outcomes=[outcome],
                     reflection=f"Captain had a 1:1 conversation with {self.ctx.callsign or self.ctx.agent_id} via HXI.",
                     source="direct",
                     anchors=AnchorFrame(
@@ -2336,3 +2677,44 @@ class DmReplyPipeline:
             response["gameMoveExecuted"] = True
             response["gameStatus"] = self.ctx.game_move_result.get("state", {}).get("status", "")
         return response
+
+
+async def project_plan_mode_reply(
+    reply: DmReply,
+    *,
+    runtime: Any,
+    agent_id: str,
+    chat_thread_id: str,
+    gate: PlanModeReplyGate,
+) -> tuple[DmReply, str]:
+    """AD-1156 A-4: a reply that reaches the Captain without this pipeline, as plan
+    mode leaves it.
+
+    AD-1230's replay of a held turn and AD-1165's report of a promoted run post
+    the agent's answer themselves. The caller has opened ``gate`` for the turn;
+    when it holds the reply, plan mode's passes and notice run on the text alone
+    (:meth:`DmReplyPipeline.run_plan_mode_text`) -- held requests taken out, what
+    the Captain is to see shown after the reply, the notice last -- and nothing
+    is sent, saved, started, filed or scored. Returns the reply the Captain sees
+    and the text an episode of it stores. A gate that does not hold the reply
+    returns ``reply`` unchanged.
+    """
+    ctx = DmReplyContext(
+        runtime=runtime,
+        agent=None,
+        agent_id=agent_id,
+        callsign=None,
+        req_message="",
+        reply=reply,
+        has_image_attachment=False,
+        per_attachment=[],
+        sanity_gate=getattr(runtime, "dm_sanity_gate", None),
+        params={},
+        message_text="",
+        sampling_state=None,
+        avatar_event_bus=None,
+        chat_thread_id=chat_thread_id,
+        plan_mode_gate=gate,
+    )
+    await DmReplyPipeline(ctx).run_plan_mode_text()
+    return ctx.reply, _plan_mode_episode_response(ctx, gate)

@@ -88,6 +88,9 @@ _LITERAL_PAIRS: frozenset[tuple[str, str]] = frozenset({
 _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     ('backup', 'backup_complete'),
     ('backup', 'backup_failed'),
+    # AD-1156: /mode's transition record, through MODE_CHANGED_EVENT. Best effort:
+    # the thread's record is authoritative, so a missing row is never evidence.
+    ('cognitive', 'agent_mode_changed'),
     ('consensus', 'device_actuate_committed'),
     ('consensus', 'device_actuate_failed'),
     ('consensus', 'mcp_invoke_committed'),

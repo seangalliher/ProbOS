@@ -52,9 +52,25 @@ from probos.types import (
     EpisodeDuplicatePolicy,
     EpisodeStoreOutcome,
     MemorySource,
+    episode_ran_in_plan_mode,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _outcome_evidence(episodes: list[Any]) -> list[Any]:
+    """AD-1156 A-4: the episodes whose outcome a dream step may learn from.
+
+    A turn plan mode governed records a conversation and a plan the Captain has
+    not approved, not work done, so no step learns from its outcome: not the
+    Hebbian replay, trust consolidation, contradiction detection, pre-warming or
+    clustering -- so no step that reads the clusters either (procedures,
+    anti-patterns, failure distillation, expertise, the bridge, reflection
+    promotion, gap detection) -- and not procedure evolution. The steps that keep
+    memory keep it: decay, retrieval practice, activation and pruning, source
+    attribution, relationship inference.
+    """
+    return [ep for ep in episodes if not episode_ran_in_plan_mode(ep)]
 
 
 class DreamingEngine:
@@ -453,7 +469,7 @@ class DreamingEngine:
         await self._reinforce_skills_for_episodes(episodes)
 
         # Step 3.5: Contradiction detection (AD-403)
-        contradictions = detect_contradictions(episodes)
+        contradictions = detect_contradictions(_outcome_evidence(episodes))
         contradictions_found = len(contradictions)
         if contradictions and self._contradiction_resolve_fn:
             try:
@@ -483,7 +499,7 @@ class DreamingEngine:
             if embeddings:
                 # BF-169: Group episodes by primary intent_type
                 intent_groups: dict[str, list] = {}
-                for ep in episodes:
+                for ep in _outcome_evidence(episodes):
                     primary_intent = ""
                     for outcome in getattr(ep, "outcomes", []):
                         intent = outcome.get("intent", "")
@@ -1815,6 +1831,12 @@ class DreamingEngine:
 
         return report
 
+    async def _recall_evidence_by_intent(self, intent_type: str) -> list[Episode]:
+        """Recent episodes of ``intent_type`` a procedure may evolve from: every
+        procedure-evolution path recalls through here, and no plan-mode
+        conversation's episode is among them (AD-1156 A-4, :func:`_outcome_evidence`)."""
+        return _outcome_evidence(await self.episodic_memory.recall_by_intent(intent_type))
+
     async def _evolve_degraded_procedures(
         self, episodes: list[Episode], procedures: list,
     ) -> int:
@@ -1851,7 +1873,7 @@ class DreamingEngine:
             seen_ids: set = set()
             for intent_type in (parent.intent_types or []):
                 try:
-                    recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                    recalled = await self._recall_evidence_by_intent(intent_type)
                     for ep in recalled:
                         if ep.id not in seen_ids:
                             fresh_episodes.append(ep)
@@ -1972,7 +1994,7 @@ class DreamingEngine:
         seen_ids: set = set()
         for intent_type in (parent.intent_types or []):
             try:
-                recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                recalled = await self._recall_evidence_by_intent(intent_type)
                 for ep in recalled:
                     if ep.id not in seen_ids:
                         fresh_episodes.append(ep)
@@ -2162,7 +2184,7 @@ class DreamingEngine:
                 seen_ids: set = set()
                 for intent_type in (parent.intent_types or []):
                     try:
-                        recalled = await self.episodic_memory.recall_by_intent(intent_type)
+                        recalled = await self._recall_evidence_by_intent(intent_type)
                         for ep in recalled:
                             if ep.id not in seen_ids:
                                 fresh_episodes.append(ep)
@@ -2398,7 +2420,7 @@ class DreamingEngine:
         """Replay episodes: strengthen weights for successes, weaken for failures."""
         strengthened = 0
 
-        for episode in episodes:
+        for episode in _outcome_evidence(episodes):
             intents = self._extract_intents(episode)
             agent_ids = episode.agent_ids
 
@@ -2517,7 +2539,7 @@ class DreamingEngine:
         agent_successes: Counter[str] = Counter()
         agent_failures: Counter[str] = Counter()
 
-        for episode in episodes:
+        for episode in _outcome_evidence(episodes):
             all_success = all(o.get("success", False) for o in episode.outcomes) if episode.outcomes else False
             all_failed = all(not o.get("success", True) for o in episode.outcomes) if episode.outcomes else False
 
@@ -2581,6 +2603,7 @@ class DreamingEngine:
         """
         # Build bigram counts of intent sequences
         bigram_counts: Counter[str] = Counter()
+        episodes = _outcome_evidence(episodes)
 
         for episode in episodes:
             intents = self._extract_intents(episode)

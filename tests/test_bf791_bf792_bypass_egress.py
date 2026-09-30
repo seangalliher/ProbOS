@@ -337,6 +337,9 @@ _COMPOSED_SINKS = {
 #: checked". The assertion below that the sink module itself references the
 #: composition is what turns that sentence into a checked claim.
 _OTHER_SINKS = {
+    # AD-1156: /mode writes the Captain's command and the handler's system
+    # reply. Neither row is model-authored, so both are stored as written.
+    "probos/cognitive/commands/mode_command.py",
     "probos/cognitive/crew_executor.py",
     "probos/cognitive/turn_promotion.py",
     "probos/proactive.py",

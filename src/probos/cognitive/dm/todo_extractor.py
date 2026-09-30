@@ -53,6 +53,8 @@ _ANY_RE = re.compile(
     r"\[/?(?:TODOS|PLAN|TODO_DONE|TODO_CONFIRM|TODO_REJECT|TODO_VIEW)\b",
     re.IGNORECASE,
 )
+# The tags, in the order ``strip_todo_tags`` and ``split_todo_tags`` remove them.
+_TAG_RES = (_TODOS_RE, _PLAN_RE, _DONE_RE, _CONFIRM_RE, _REJECT_RE, _VIEW_RE)
 
 
 @dataclass
@@ -121,16 +123,20 @@ def strip_todo_tags(text: str) -> str:
     """Remove every room-todo tag from ``text`` (so they never reach the
     transcript). Returns the trimmed remainder."""
     text = text or ""
-    for rx in (
-        _TODOS_RE,
-        _PLAN_RE,
-        _DONE_RE,
-        _CONFIRM_RE,
-        _REJECT_RE,
-        _VIEW_RE,
-    ):
+    for rx in _TAG_RES:
         text = rx.sub("", text)
     return text.strip()
+
+
+def split_todo_tags(text: str) -> tuple[str, list[str]]:
+    """AD-1156: ``text`` as :func:`strip_todo_tags` leaves it, and the tags it
+    removes, in the order it removes them. Pure."""
+    text = text or ""
+    tags: list[str] = []
+    for rx in _TAG_RES:
+        tags.extend(match.group(0) for match in rx.finditer(text))
+        text = rx.sub("", text)
+    return text.strip(), tags
 
 
 # AD-1085a: a numbered/bulleted plan line. ≥2 contiguous items are treated as

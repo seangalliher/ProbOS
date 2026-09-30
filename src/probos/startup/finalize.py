@@ -2856,10 +2856,20 @@ def _wire_deferred_turns(*, runtime: Any, config: "SystemConfig") -> bool:
         )
         return False
 
+    from probos.cognitive.agent_mode import AGENT_MODE_FLOOR_PARAM, open_plan_mode_replay_gate
     from probos.cognitive.deferred_turns import DeferredTurnQueue
     from probos.types import IntentMessage
 
     async def _dispatch(thread_id: str, agent_id: str, params: dict[str, Any]) -> str:
+        # AD-1156 A-4: the route's reply gate, for an answer the route never sees.
+        # Opened before the send, like the route's: its first read is the
+        # thread's mode now, raised to plan by the floor the route set when it
+        # dispatched the held turn in plan mode. ``None`` -- nothing read -- with
+        # agent modes off.
+        plan_gate = open_plan_mode_replay_gate(
+            runtime, runtime.chat_thread_store, thread_id, params.get(AGENT_MODE_FLOOR_PARAM),
+            agent_id=agent_id,  # A-9: the held turn's agent names both reads
+        )
         # A FRESH IntentMessage, never the original object: re-sending one
         # reuses its ``message_id``, and correlation maps keyed on that id treat
         # a duplicate live key as the same in-flight request.
@@ -2877,6 +2887,17 @@ def _wire_deferred_turns(*, runtime: Any, config: "SystemConfig") -> bool:
             # fail a tool has the disclosure as its only truthful content.
             from probos.dm_reply import DmReply
 
+            if plan_gate is not None and plan_gate.withholds():
+                # AD-1156 A-4: plan mode governed the replay, so the answer is
+                # posted as the pipeline would leave it: held requests taken
+                # out, what the Captain is to see shown, and the notice.
+                from probos.cognitive.dm.reply_pipeline import project_plan_mode_reply
+
+                projected, _ = await project_plan_mode_reply(
+                    DmReply.from_intent_result(result), runtime=runtime,
+                    agent_id=agent_id, chat_thread_id=thread_id, gate=plan_gate,
+                )
+                return str(projected.render())
             return str(DmReply.from_intent_result(result).render())
         return ""
 
