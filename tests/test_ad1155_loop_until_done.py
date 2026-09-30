@@ -491,6 +491,10 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
     AD-1205 appends diagnostic identity/raw-attempted context only. These are
     not continuation controls or routing changes; the earlier drift guard
     remains intact.
+
+    AD-1156 appends ``plan_mode_tool_ids``, which narrows the tool offer for a
+    plan-mode conversational turn and is forwarded only when set. It is not
+    continuation policy either, and the five other callers never pass it.
     """
     from typing import Callable, get_type_hints
 
@@ -531,7 +535,10 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "owned_steps_turn_id",
         "owned_steps_initial_view",
     ]
-    assert list(params)[26:] == ["max_total_iterations"]  # AD-1208: a spend/step control, not continuation policy
+    assert list(params)[26:] == [
+        "max_total_iterations",  # AD-1208: a spend/step control, not continuation policy
+        "plan_mode_tool_ids",  # AD-1156: narrows the offer; forwarded only when set
+    ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params
     )

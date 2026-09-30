@@ -4532,6 +4532,52 @@ class CognitiveAgent(BaseAgent):
                     or self.id
                 ),
             )
+            # AD-1156: the conversation's plan/execute mode, read ONCE per turn so
+            # every pass (AD-1164) and a promoted run (AD-1165) share it; a change
+            # applies from the Captain's next turn. A-3: a turn the route
+            # dispatched in plan mode -- this one, its sanity-gate retry, a replay
+            # of it -- runs in plan mode at least. Default-OFF: unless
+            # ``agent_modes_enabled`` is exactly True nothing is imported, and
+            # ``system_prompt`` and the executor kwargs are unchanged.
+            _plan_mode_kwargs: dict[str, Any] = {}
+            # AD-1156 A-4: a promoted plan-mode run posts its report as plan mode
+            # leaves a reply, and marks its episode. Empty outside plan mode, so
+            # the promotion call is unchanged there.
+            _plan_mode_promotion: dict[str, Any] = {}
+            if getattr(cfg, "agent_modes_enabled", False) is True:
+                from probos.cognitive.agent_mode import (
+                    AGENT_MODE_FLOOR_PARAM,
+                    PLAN_MODE_TOOL_IDS,
+                    floor_turn_agent_mode,
+                    read_turn_agent_mode,
+                    render_agent_mode_instructions,
+                )
+                from probos.threads.agent_mode import AGENT_MODE_PLAN
+
+                _turn_mode = floor_turn_agent_mode(
+                    # A-9: this turn's own agent, so a record set for another never governs it
+                    read_turn_agent_mode(getattr(runtime, "chat_thread_store", None), thread_id, agent_id=self.id),
+                    (observation.get("params") or {}).get(AGENT_MODE_FLOOR_PARAM),
+                )
+                if not thread_id and getattr(runtime, "chat_thread_store", None) is not None:
+                    # A-6: with a store, no thread means resolving it failed, so the
+                    # mode cannot be confirmed: held, as the route holds a thread it
+                    # cannot resolve.
+                    logger.warning(
+                        "AD-1156: agent %s's conversation thread could not be resolved, "
+                        "so its mode cannot be confirmed; this turn is held in plan mode "
+                        "and runs no tool that changes state",
+                        self.id,
+                    )
+                    _turn_mode = floor_turn_agent_mode(_turn_mode, AGENT_MODE_PLAN)
+                if _turn_mode is not None:
+                    system_prompt = system_prompt + render_agent_mode_instructions(_turn_mode)
+                    if _turn_mode.mode == AGENT_MODE_PLAN:
+                        _plan_mode_kwargs["plan_mode_tool_ids"] = PLAN_MODE_TOOL_IDS
+                        _plan_mode_promotion["plan_mode"] = True
+                        # AD-1156 A-4: read by ``_store_action_episode``, which
+                        # marks the agent's own record of this turn.
+                        observation["_plan_mode_turn"] = True
             max_iterations = getattr(cfg, "max_iterations", 5)
             tier = getattr(cfg, "tier", "standard")
             # BF-731: the same AD-637f classification the single-pass path
@@ -4702,6 +4748,7 @@ class CognitiveAgent(BaseAgent):
                     **_fault_kwargs,
                     **_long_run_kwargs,
                     **(_turn_cost.loop_kwargs() if _turn_cost is not None else {}),
+                    **_plan_mode_kwargs,
                 )
                 if _turn_cost is not None:
                     _turn_cost.record(outcome)
@@ -4853,6 +4900,7 @@ class CognitiveAgent(BaseAgent):
                     trace_ref_provider=lambda: _last_trace_ref["ref"],
                     on_promoted=_record_promotion,
                     **_promotion_diagnostic_kwargs,
+                    **_plan_mode_promotion,
                     background_slot=_bg_slot,
                     # BF-733: bound the promoted run. Same defensive coercion as
                     # the budget above and for the same reason -- a MagicMock
@@ -11581,7 +11629,7 @@ class CognitiveAgent(BaseAgent):
 
         try:
             import time as _time
-            from probos.types import AnchorFrame, Episode, MemorySource
+            from probos.types import EPISODE_PLAN_MODE_KEY, AnchorFrame, Episode, MemorySource
 
             result_text = str(report.get("result", ""))[:500]
             callsign = ""
@@ -11638,6 +11686,10 @@ class CognitiveAgent(BaseAgent):
                         "undeclared_actions": observation["_undeclared_action_feedback"].get("undeclared_actions", []),
                         "missed_skills": observation["_undeclared_action_feedback"].get("missed_skills", []),
                     } if observation.get("_undeclared_action_feedback") else {}),
+                    # AD-1156 A-4: a turn plan mode governed -- a direct message
+                    # from another surface that resolved to a plan-mode thread --
+                    # is a conversation, not work done, so dreaming passes over it.
+                    **({EPISODE_PLAN_MODE_KEY: True} if observation.get("_plan_mode_turn") is True else {}),
                 }],
                 dag_summary=self._build_episode_dag_summary(observation),  # AD-568e
                 reflection=f"{callsign or self.agent_type} handled {intent.intent}: {result_text[:100]}",

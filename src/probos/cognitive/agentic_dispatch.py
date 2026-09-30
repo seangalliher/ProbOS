@@ -251,6 +251,21 @@ _DEFERRED_SCHEMA_REFUSAL: str = (
     "from your next step; call it again then, with the parameters it declares."
 )
 
+# AD-1156: refusal for a call plan mode withholds. Error-shaped and final, in the
+# AD-1154 voice: it must not read as a capability gap (checked against the real
+# ``_CAPABILITY_GAP_RE``), must not read as success, and must not invite a retry.
+_PLAN_MODE_TOOL_REFUSAL: str = (
+    "This conversation is in plan mode, so that call was refused and did not "
+    "run. Only the tools in your current list are open until the Captain "
+    "switches to execute mode; finish the plan and name the step that needs "
+    "this tool."
+)
+# AD-1189 / AD-1156: refusals of calls that never ran. They say nothing about
+# the tool, so they are never defect evidence.
+_NEVER_RAN_REFUSALS: frozenset[str] = frozenset(
+    {_DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL}
+)
+
 
 @dataclass(frozen=True)
 class _ApprovalInboxArming:
@@ -666,6 +681,8 @@ class DispatchToolExecutor(ToolExecutor):
     AD-1154 adds an OPT-IN approval inbox on the same seam. Also unarmed by
     default: an executor that never calls :meth:`arm_approval_inbox` behaves
     byte-identically to AD-1153.
+
+    AD-1156 adds an OPT-IN plan-mode confinement (:meth:`restrict_to_plan_mode`).
     """
 
     def __init__(self, *, registry: Any) -> None:
@@ -679,6 +696,7 @@ class DispatchToolExecutor(ToolExecutor):
         self._approval_inbox: Any = None
         # AD-1189: None = unarmed. Set only by ``arm_deferred_schemas``.
         self._deferred_schemas: Any = None
+        self._plan_mode_tool_ids: frozenset[str] | None = None  # AD-1156: None = unarmed
 
     def arm_approval_inbox(
         self,
@@ -707,6 +725,10 @@ class DispatchToolExecutor(ToolExecutor):
     def arm_deferred_schemas(self, offer: Any) -> None:
         """AD-1189: refuse calls to tools whose full definition *offer* withholds."""
         self._deferred_schemas = offer
+
+    def restrict_to_plan_mode(self, tool_ids: frozenset[str]) -> None:
+        """AD-1156: refuse, first in :meth:`invoke`, every call to a tool not in ``tool_ids``."""
+        self._plan_mode_tool_ids = tool_ids
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
         """AD-1153 / DD-1: confine ``browser`` calls to ``actions``.
@@ -1073,6 +1095,13 @@ class DispatchToolExecutor(ToolExecutor):
         params: dict[str, Any],
         **kwargs: Any,
     ) -> ToolResult:
+        # AD-1156: first, so a tool plan mode withholds is never resolved, parked or run.
+        if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
+            logger.info(
+                "AD-1156: plan mode refused a tool call from agent %s (a %s id of %d characters); not run",
+                agent_id[:12], type(tool_id).__name__, len(tool_id) if type(tool_id) is str else -1,
+            )
+            return ToolResult(error=_PLAN_MODE_TOOL_REFUSAL)
         context = kwargs.get("context")
         if self._deferred_schemas is not None and self._deferred_schemas.withhold_call(tool_id):
             return ToolResult(error=_DEFERRED_SCHEMA_REFUSAL)
@@ -1587,7 +1616,8 @@ def classify_tool_fault_error(error: Any) -> str | None:
         error in (
             _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
-            _DEFERRED_SCHEMA_REFUSAL, "consensus_blocked", "requires_confirmation",
+            _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
+            "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
     ):
@@ -1609,8 +1639,9 @@ class _DefectEvidence:
 def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
     """AD-1189: *agentic_result* as defect evidence, without refused withheld-tool calls.
 
-    A refused call never ran, so it says nothing about the tool. The same object is
-    returned when nothing was refused; every other consumer reads the raw result.
+    A refused call never ran, so it says nothing about the tool. AD-1156 adds the
+    plan-mode refusal on the same terms. The same object is returned when nothing
+    was refused; every other consumer reads the raw result.
     """
     calls = getattr(agentic_result, "tool_calls", None)
     results = getattr(agentic_result, "tool_results", None)
@@ -1623,7 +1654,7 @@ def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
         if (
             getattr(result, "is_error", False) is True
             and type(output) is str
-            and output == _DEFERRED_SCHEMA_REFUSAL
+            and output in _NEVER_RAN_REFUSALS
         ):
             result_id = getattr(result, "id", None)
             if type(result_id) is str:
@@ -1902,6 +1933,7 @@ class WorkItemAgenticExecutor:
         owned_steps_turn_id: str | None = None,
         owned_steps_initial_view: owned_steps.OwnedStepsViewReference | None = None,
         max_total_iterations: int | None = None,
+        plan_mode_tool_ids: frozenset[str] | None = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
         if any(value is not None for value in (
@@ -1935,6 +1967,9 @@ class WorkItemAgenticExecutor:
         # unchanged (test_ad1239 pins the exact dict).
         if max_total_iterations is not None:
             arguments["max_total_iterations"] = max_total_iterations
+        # AD-1156: forwarded only in plan mode, for the same reason.
+        if plan_mode_tool_ids is not None:
+            arguments["plan_mode_tool_ids"] = plan_mode_tool_ids
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -2003,6 +2038,9 @@ class WorkItemAgenticExecutor:
         fault_turn: ToolFaultTurn | None = None,
         fault_attempted: str = "",
         max_total_iterations: int | None = None,
+        # AD-1156: plan mode's read-only allowlist. None -- every caller but a
+        # plan-mode conversational turn -- leaves the offer and invoke unchanged.
+        plan_mode_tool_ids: frozenset[str] | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -2077,6 +2115,14 @@ class WorkItemAgenticExecutor:
             ) is not None
         ):
             raise ValueError("agentic_context_invalid")
+
+        # AD-1156: the allowlist is exact, or the run does not start.
+        if plan_mode_tool_ids is not None and (
+            type(plan_mode_tool_ids) is not frozenset
+            or not plan_mode_tool_ids
+            or any(type(tool_id) is not str or not tool_id for tool_id in plan_mode_tool_ids)
+        ):
+            raise ValueError("plan_mode_tool_ids_invalid")
 
         department, rank = _resolve_agentic_identity(
             runtime=runtime,
@@ -2196,7 +2242,9 @@ class WorkItemAgenticExecutor:
         # the initial offer. Arming on the workbench alone would let a mid-turn
         # refresh introduce MCP tools on a vessel where the operator turned
         # agent_tools_enabled off.
-        mcp_offer_armed = workbench is not None and bool(
+        # AD-1156: plan mode withholds MCP, so neither the first offer nor the
+        # refresher arms.
+        mcp_offer_armed = plan_mode_tool_ids is None and workbench is not None and bool(
             getattr(mcp_cfg, "agent_tools_enabled", False)
         )
         if mcp_offer_armed:
@@ -2621,7 +2669,8 @@ class WorkItemAgenticExecutor:
         # token is minted on this path today.
         browser_ids: list[str] = []
         if (
-            getattr(agentic_tools_cfg, "browser_enabled", False)
+            plan_mode_tool_ids is None  # AD-1156: plan mode withholds the browser
+            and getattr(agentic_tools_cfg, "browser_enabled", False)
             and registry is not None
             and registry.get("browser") is not None
         ):
@@ -2683,6 +2732,16 @@ class WorkItemAgenticExecutor:
                 *receipt_ids,
             ])
         )
+        # AD-1156: plan mode narrows the offer to its allowlist and arms the
+        # matching invoke-time guard -- one decision, two consequences (BF-690).
+        # The guard is what holds for a tool the model names without being
+        # offered it, because the registry resolves every REGISTERED tool; it
+        # refuses before a call is resolved, parked (AD-1154) or run. Filtered
+        # after every block has contributed, so a tool added to the union later
+        # is withheld until it is classified, not offered by default.
+        if plan_mode_tool_ids is not None:
+            tool_ids = [tool_id for tool_id in tool_ids if tool_id in plan_mode_tool_ids]
+            executor.restrict_to_plan_mode(plan_mode_tool_ids)
         # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP
         # half from the current authorized view rather than unioning onto the
         # old one. An append-only merge could never drop a tool whose server was

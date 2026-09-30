@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1818
-  field_definitions: 1813
+  canonical_dump_leaves: 1819
+  field_definitions: 1814
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: ab003a885160eed2be5ca5b27097754f948ded14e5c2f55a69ec4b7badd650f4
+canonical_dump_sha256: 541d4ebb014ea94cae816ba9f0fa3dcf14ea8989cd1ec3dcd53c8efed384bc9d
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1445,7 +1445,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 19670326f8718d7b58423f5badd4c56fa24d67c16a4b34861cd7ccb650397ab9
+    schema_sha256: 661c828b83321ecaf53ebb7410cde02e008c40056a4293cda124ae99d27a3ea9
     fields:
     - {default: 'False', name: enabled}
     - {default: '5', name: max_iterations}
@@ -1462,6 +1462,7 @@ models:
     - {default: '60000', name: compaction_threshold_tokens}
     - {default: None, name: token_budget}
     - {default: '100', name: max_total_iterations}
+    - {default: 'False', name: agent_modes_enabled}
   DmDeliberateConfig:
     qualname: DmDeliberateConfig
     bases:
@@ -3314,7 +3315,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9029f2a1e45b313140d928f3f680d63a6b98335c1a6855e2056dd28c91c5212a
+    schema_sha256: cc1d8f6c6b3b2b2adbbf8e29a81c2ca0824a9b5b04da74e844da4eb60fe7c8b7
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

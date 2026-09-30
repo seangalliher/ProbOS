@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Callable, Iterable
 
 if TYPE_CHECKING:
     from probos.cognitive.chat_facilitator import ConvergenceEvidence
+    from probos.threads.agent_mode import AgentModeTransition
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,8 @@ class ChatThread:
     preprompt: str | None = None
     model: str | None = None
     metadata: dict = field(default_factory=dict)
+    # AD-1156: False when the stored column is not a JSON object; not serialized.
+    metadata_readable: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -492,6 +495,97 @@ class ChatThreadStore:
                 conn.execute("ROLLBACK")
                 raise
         return self.get_thread(thread_id)
+
+    def set_agent_mode(
+        self, thread_id: str, mode: str, *, changed_by: str,
+        expected_participant: str | None = None,
+    ) -> AgentModeTransition | None:
+        """AD-1156: record an explicit plan/execute mode change on a thread.
+
+        The one writer of ``metadata.agent_mode`` (schema:
+        :mod:`probos.threads.agent_mode`). A scoped read-modify-write under
+        ``BEGIN IMMEDIATE``, like :meth:`set_meeting_active`, so sibling keys
+        survive and two concurrent commands cannot both advance the same
+        revision. Requesting the current mode writes nothing and returns the
+        existing record with ``changed=False``. A stored record that does not
+        parse is replaced by a fresh one at revision 1, with a WARNING.
+
+        Returns ``None`` when the thread row is missing. Raises ``ValueError``
+        (:class:`~probos.threads.agent_mode.AgentModeRecordError`) for an
+        unknown mode or an empty ``changed_by``, and writes nothing. Raises
+        :class:`~probos.threads.agent_mode.AgentModeNotOneToOneError`, and writes
+        nothing, when the thread does not have exactly one participant (A-6): a
+        record governs only a one-to-one thread, and the caller's copy of the
+        thread can predate a change to its participants. With ``expected_participant``
+        (A-7) it also raises, and writes nothing, when that one participant is not the
+        named agent: a participant replaced after the caller read the thread cannot
+        take a mode addressed to another agent. The record names the agent it is set for
+        (A-8): the agent named, or without one the thread's one participant; a record set
+        for another agent is not continued, and the new one starts at revision 1.
+        """
+        from probos.threads.agent_mode import (
+            AGENT_MODE_METADATA_KEY,
+            AgentModeNotOneToOneError,
+            AgentModeRecordError,
+            advance_agent_mode,
+            parse_agent_mode_record,
+        )
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT metadata, participants FROM chat_threads WHERE id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    conn.execute("ROLLBACK")
+                    return None
+                participants = json.loads(row["participants"]) if row["participants"] else []
+                if type(participants) is not list or len(participants) != 1:
+                    raise AgentModeNotOneToOneError("agent_mode_thread_not_one_to_one")
+                # A-7: the one participant is the agent the caller addressed, checked inside the transaction
+                if expected_participant is not None and participants != [expected_participant]:
+                    raise AgentModeNotOneToOneError("agent_mode_thread_not_with_agent")
+                existing: dict = {}
+                if row["metadata"]:
+                    try:
+                        existing = json.loads(row["metadata"]) or {}
+                    except (json.JSONDecodeError, TypeError):
+                        existing = {}
+                if type(existing) is not dict:
+                    existing = {}
+                current = None
+                if existing.get(AGENT_MODE_METADATA_KEY) is not None:
+                    try:
+                        current = parse_agent_mode_record(
+                            existing[AGENT_MODE_METADATA_KEY]
+                        )
+                    except AgentModeRecordError:
+                        logger.warning(
+                            "AD-1156: thread %s carried an unreadable mode record; "
+                            "replacing it with a fresh record at revision 1",
+                            thread_id,
+                        )
+                # A-8: the record names the agent it is set for, the one the caller addressed
+                agent_id = expected_participant if expected_participant is not None else participants[0]
+                transition = advance_agent_mode(
+                    current, mode, changed_by=changed_by, changed_at=self._clock(),
+                    agent_id=agent_id,
+                )
+                if not transition.changed:
+                    conn.execute("ROLLBACK")
+                    return transition
+                existing[AGENT_MODE_METADATA_KEY] = transition.record.to_dict()
+                conn.execute(
+                    "UPDATE chat_threads SET metadata = ? WHERE id = ?",
+                    (json.dumps(existing), thread_id),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return transition
 
     def is_title_locked(self, thread_id: str) -> bool:
         """AD-794: True when ``metadata.title_locked`` is set.
@@ -1879,10 +1973,11 @@ def _row_to_thread(row: sqlite3.Row) -> ChatThread:
     preprompt = row["preprompt"] if "preprompt" in keys else None
     model = row["model"] if "model" in keys else None
     raw_meta = row["metadata"] if "metadata" in keys else None
+    readable = True
     try:
         metadata = json.loads(raw_meta) if raw_meta else {}
     except (json.JSONDecodeError, TypeError):
-        metadata = {}
+        metadata, readable = {}, False
     return ChatThread(
         id=row["id"],
         title=row["title"],
@@ -1898,6 +1993,7 @@ def _row_to_thread(row: sqlite3.Row) -> ChatThread:
         preprompt=preprompt,
         model=model,
         metadata=metadata,
+        metadata_readable=readable and type(metadata) is dict,
     )
 
 

@@ -105,7 +105,7 @@ class SessionManager:
         if not self.agent_id or not self.callsign:
             return
 
-        from probos.types import IntentMessage, Episode, AnchorFrame
+        from probos.types import IntentMessage, Episode, AnchorFrame, EPISODE_PLAN_MODE_KEY
 
         intent = IntentMessage(
             intent="direct_message",
@@ -119,6 +119,22 @@ class SessionManager:
             ttl_seconds=60.0,  # AD-636: Extended TTL for Captain DMs
         )
 
+        # AD-1156 A-5: the session has no thread of its own, so the agent runs its turn
+        # under its default thread's mode; read that mode as the route reads its thread's,
+        # before sending and once the answer is back. ``None``, reading nothing, with modes off.
+        from probos.cognitive.agent_mode import AGENT_MODE_FLOOR_PARAM, open_plan_mode_session_gate
+        from probos.threads.agent_mode import AGENT_MODE_PLAN
+
+        plan_gate = open_plan_mode_session_gate(
+            runtime, getattr(runtime, "chat_thread_store", None), self.agent_id, self.callsign,
+        )
+        # A-6: the turn runs on the thread the gate read -- the agent takes a thread id in
+        # its params before looking up its default thread -- and, like the route's, in plan
+        # mode at least when the gate read plan mode or could not confirm the mode.
+        if plan_gate is not None and plan_gate.thread_id:
+            intent.params["thread_id"] = plan_gate.thread_id
+        if plan_gate is not None and plan_gate.planned_at_dispatch:
+            intent.params[AGENT_MODE_FLOOR_PARAM] = AGENT_MODE_PLAN
         result = await runtime.intent_bus.send(intent)
         response_text = ""
         if result is not None:
@@ -163,6 +179,9 @@ class SessionManager:
                         "session_type": "1:1",
                         "callsign": self.callsign,
                         "agent_type": self.agent_type,
+                        # AD-1156 A-5: a turn plan mode governed is a conversation,
+                        # not work done, so dreaming passes over it.
+                        **({EPISODE_PLAN_MODE_KEY: True} if plan_gate is not None and plan_gate.withholds() else {}),
                     }],
                     reflection=f"Captain had a 1:1 conversation with {self.callsign}.",
                     source="direct",

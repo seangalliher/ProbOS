@@ -664,6 +664,7 @@ async def _close_expired_unconfirmed_turn(
     work_item_id: str,
     request_text: str,
     grace_seconds: float,
+    plan_mode: bool = False,
 ) -> None:
     """BF-825: the reporter writes the ending itself, and discards the answer.
 
@@ -677,6 +678,9 @@ async def _close_expired_unconfirmed_turn(
     EPISODE is still stored, and stored as a failure, because the transcript,
     the board and the recall layer have to agree about this run -- disagreement
     between exactly those three sinks is the defect being closed.
+
+    ``plan_mode`` (AD-1156 A-4): the run was a plan-mode turn, so its episode
+    carries the plan-mode marker.
     """
     logger.warning(
         "BF-825: the promoted run for work item %s did not land within %.1fs "
@@ -697,6 +701,7 @@ async def _close_expired_unconfirmed_turn(
         body=_REPORT_ABANDON_UNCONFIRMED,
         complete=False,
         failed=True,
+        plan_mode=plan_mode,
     )
     store = getattr(runtime, "work_item_store", None)
     if store is None:
@@ -1289,6 +1294,8 @@ async def _store_promoted_episode(
     body: str,
     complete: bool,
     failed: bool,
+    plan_mode: bool = False,
+    plan_mode_response: str | None = None,
 ) -> None:
     """AD-1166: put a promoted run's REAL outcome into episodic memory.
 
@@ -1315,6 +1322,11 @@ async def _store_promoted_episode(
     is also written to the content-addressable stores and the outcome carries a
     ref to it, so the agent can read its own work back later instead of having
     to carry it. OFF ⇒ this function is byte-identical to AD-1166.
+
+    AD-1156 A-4: ``plan_mode`` -- the run was a plan-mode turn -- gives the
+    outcome the plan-mode marker, so dreaming learns nothing from it, and
+    ``plan_mode_response``, when given, is the text it stores: the report as plan
+    mode left it, with the notice (``reply_pipeline.project_plan_mode_reply``).
     """
     memory = getattr(runtime, "episodic_memory", None)
     if memory is None:
@@ -1353,7 +1365,7 @@ async def _store_promoted_episode(
         import time as _time
 
         from probos.cognitive.episodic import resolve_sovereign_id
-        from probos.types import AnchorFrame, Episode
+        from probos.types import EPISODE_PLAN_MODE_KEY, AnchorFrame, Episode
 
         # Sovereignty: episode ``agent_ids`` must carry the sovereign id, not
         # the pool id. ``resolve_sovereign_id`` already falls back to
@@ -1390,6 +1402,10 @@ async def _store_promoted_episode(
         }
         if artifact_ref is not None:
             outcome["artifact_ref"] = artifact_ref
+        if plan_mode:
+            outcome[EPISODE_PLAN_MODE_KEY] = True
+            if plan_mode_response is not None:
+                outcome["response"] = plan_mode_response
 
         await memory.store(Episode(
             user_input=f"[1:1 background task] Captain: {request_text}",
@@ -1422,6 +1438,45 @@ async def _store_promoted_episode(
         )
 
 
+async def _plan_mode_report(
+    *, runtime: Any, agent_id: str, thread_id: str, body: str,
+) -> tuple[str, str | None]:
+    """AD-1156 A-4: a plan-mode run's report, as plan mode leaves a reply.
+
+    The report bypasses ``DmReplyPipeline``, as the AD-1230 replay does, so plan
+    mode's passes and notice run here on its text alone
+    (``reply_pipeline.project_plan_mode_reply``): the requests it held back are
+    taken out, what the Captain is to see is shown after the report, and the
+    notice says none of it was sent, saved or started. Returns the body to post
+    and the text its episode stores. Log-and-degrade: a projection that raises
+    leaves the report as composed, so a report is never lost to it.
+    """
+    try:
+        from probos.cognitive.agent_mode import PlanModeReplyGate, TurnAgentMode
+        from probos.cognitive.dm.reply_pipeline import project_plan_mode_reply
+        from probos.dm_reply import DmReply
+        from probos.threads.agent_mode import AGENT_MODE_PLAN
+
+        gate = PlanModeReplyGate(
+            getattr(runtime, "chat_thread_store", None), thread_id,
+            TurnAgentMode(mode=AGENT_MODE_PLAN, record=None),
+            agent_id=agent_id,  # A-9: the run's agent; the gate is held, so it decides nothing
+        )
+        reply, episode_response = await project_plan_mode_reply(
+            DmReply(body=body), runtime=runtime, agent_id=agent_id,
+            chat_thread_id=thread_id, gate=gate,
+        )
+    except Exception:
+        logger.warning(
+            "AD-1156: plan mode's passes over a plan-mode run's report on thread "
+            "%s raised; the report is posted as composed and its episode still "
+            "carries the plan-mode marker",
+            thread_id, exc_info=True,
+        )
+        return body, None
+    return reply.body, episode_response
+
+
 async def _finish_promoted_turn(
     task: "asyncio.Task[str]",
     *,
@@ -1436,6 +1491,7 @@ async def _finish_promoted_turn(
     supervisor: "_PromotedRunSupervisor | None" = None,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
+    plan_mode: bool = False,
 ) -> None:
     """Await a promoted run, report it into the thread, close the work item.
 
@@ -1450,6 +1506,10 @@ async def _finish_promoted_turn(
     wait. ``strand_timeout_seconds`` is the reconciler's own threshold, from
     which the ownership lease derives its refresh interval; ``0`` leaves the
     lease disarmed.
+
+    ``plan_mode`` (AD-1156 A-4): the run was a plan-mode turn. Its report is
+    posted as plan mode leaves a reply and its episode carries the plan-mode
+    marker (:func:`_plan_mode_report`).
     """
     text = ""
     failed = False
@@ -1577,6 +1637,7 @@ async def _finish_promoted_turn(
             work_item_id=work_item_id,
             request_text=request_text,
             grace_seconds=unconfirmed_grace_seconds,
+            plan_mode=plan_mode,
         )
         return
 
@@ -1610,6 +1671,12 @@ async def _finish_promoted_turn(
         # A reply that was nothing but markers composes to "" and correctly
         # falls through to the empty-report wording.
         body = compose_bypass_reply(text) or _REPORT_EMPTY
+    # AD-1156 A-4: a plan-mode run's report, as plan mode leaves a reply.
+    plan_mode_response = None
+    if plan_mode and not (failed or abandoned):
+        body, plan_mode_response = await _plan_mode_report(
+            runtime=runtime, agent_id=agent_id, thread_id=thread_id, body=body,
+        )
     # AD-1248: the awaited task returns a plain string, so the run's tool
     # failures cannot be recovered here -- exactly the reason BF-704 introduced
     # ``completed_probe``. Same shape, same reason. Omitting it renders
@@ -1677,6 +1744,8 @@ async def _finish_promoted_turn(
         # killed). Kept because an abandoned run IS a failed delivery, and a
         # later reader of this argument should get that answer.
         failed=failed or abandoned,
+        plan_mode=plan_mode,
+        plan_mode_response=plan_mode_response,
     )
 
     store = getattr(runtime, "work_item_store", None)
@@ -1739,6 +1808,7 @@ async def _report_holding_slot(
     deadline_seconds: float = 0.0,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
+    plan_mode: bool = False,
 ) -> None:
     """BF-732: hold a concurrency slot for as long as the promoted run lives.
 
@@ -1789,6 +1859,7 @@ async def _report_holding_slot(
             background_slot=background_slot,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
+            plan_mode=plan_mode,
         )
     except asyncio.CancelledError:
         # The reporter can be cancelled while QUEUED for a slot, i.e. before
@@ -1888,6 +1959,7 @@ async def _report_with_supervisor(
     trace_ref_provider: Callable[[], str | None] | None = None,
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
+    plan_mode: bool = False,
 ) -> None:
     """Acquire the BF-732 slot if there is one, then report under it."""
     slot = None
@@ -1928,6 +2000,7 @@ async def _report_with_supervisor(
             supervisor=supervisor,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
+            plan_mode=plan_mode,
         )
     finally:
         if held:
@@ -1962,6 +2035,7 @@ async def run_with_promotion(
     strand_timeout_seconds: float = 0.0,
     run_id_provider: Callable[[], str | None] | None = None,
     trace_ref_provider: Callable[[], str | None] | None = None,
+    plan_mode: bool = False,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -2062,6 +2136,11 @@ async def run_with_promotion(
     numeric defaults: with the watchdog disarmed there is no interim notice and
     no second wait to bound, and only a lease keyed on "a reporter is waiting"
     still holds. ``0`` leaves it disarmed.
+
+    ``plan_mode`` (AD-1156 A-4) says the run is a plan-mode turn: its report is
+    posted as plan mode leaves a reply, since it bypasses the reply pipeline, and
+    its episode carries the plan-mode marker, so dreaming learns nothing from it.
+    The inline path is untouched: its text goes through the pipeline.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -2144,6 +2223,7 @@ async def run_with_promotion(
             deadline_seconds=deadline_seconds,
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
+            plan_mode=plan_mode,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",
     )

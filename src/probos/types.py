@@ -747,6 +747,31 @@ def episode_is_self_contradicted(episode: Episode) -> bool:
     return bool(getattr(episode, "self_contradicted_channels", None))
 
 
+#: AD-1156 A-4: the outcome key, set to ``True``, of an episode that records a turn
+#: plan mode governed. It lives inside the outcome rather than in a field of its own
+#: so that every path keeping an episode's outcomes keeps it: the vector store's
+#: ``outcomes_json``, the knowledge store's episode files (which drop fields they do
+#: not name), and a federation recall's redacted copy.
+EPISODE_PLAN_MODE_KEY: str = "plan_mode"
+
+
+def episode_ran_in_plan_mode(episode: Any) -> bool:
+    """AD-1156 A-4: whether plan mode governed the turn this episode records.
+
+    Such a turn was asked for a plan and could not act, so its outcome records a
+    conversation and a plan the Captain has not approved, not work done: dreaming
+    learns nothing from it and keeps it as memory (``dreaming._outcome_evidence``).
+
+    Total, like :func:`episode_is_self_contradicted`: an episode written before
+    A-4, in execute mode or with agent modes off -- or a mapping, or outcomes that
+    are not a list of mappings -- reads ``False``.
+    """
+    outcomes = episode.get("outcomes") if isinstance(episode, dict) else getattr(episode, "outcomes", None)
+    if not isinstance(outcomes, list):
+        return False
+    return any(isinstance(o, dict) and o.get(EPISODE_PLAN_MODE_KEY) is True for o in outcomes)
+
+
 # ------------------------------------------------------------------
 # Phase 3b-2: Attention types
 # ------------------------------------------------------------------

@@ -471,6 +471,21 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "shared token_budget."
         ),
     )
+    agent_modes_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1156: plan and execute modes for one-to-one conversations. "
+            "When true, the Captain can send /mode plan or /mode execute in an "
+            "agent's direct-message panel; the choice is stored on that "
+            "conversation's thread and read at the start of every turn. In "
+            "plan mode the agent is told to draft a plan without carrying it "
+            "out, and its tool list is narrowed to read-only research tools: "
+            "a call to any other tool is refused without running. /mode "
+            "execute approves working autonomously. Effective only while the "
+            "agentic loop runs (enabled). Off by default: /mode is then "
+            "ordinary message text and every turn runs exactly as before."
+        ),
+    )
 
 
 class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)

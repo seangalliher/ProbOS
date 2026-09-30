@@ -252,6 +252,8 @@ async def _off_observation(
     # BF-876's inert (empty) A2A server token and allowlist were added after this capture too.
     assert config["federation"]["a2a"].pop("auth_token") == ""
     assert config["federation"]["a2a"].pop("exposed_intents") == []
+    # AD-1156's inert plan/execute-mode flag was added after this capture too.
+    assert config["dm_agentic"].pop("agent_modes_enabled") is False
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

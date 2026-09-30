@@ -167,6 +167,16 @@ def strip_dm_blocks(text: str) -> DmStrip:
     return DmStrip(''.join(public).strip(), len(readable), unreadable, strays)
 
 
+def split_dm_blocks(text: str) -> tuple[str, list[str]]:
+    """AD-1156: ``text`` as ``extract_and_execute_dms`` leaves it, and the blocks it
+    reads, in the order it sends them: closed ones, then unclosed ones in what is
+    left. Sends nothing."""
+    blocks = [match.group(0).strip() for match in _DM_CLOSED_PATTERN.finditer(text)]
+    rest = _DM_CLOSED_PATTERN.sub('', text).strip()
+    blocks += [match.group(0).strip() for match in _DM_UNCLOSED_PATTERN.finditer(rest)]
+    return _DM_UNCLOSED_PATTERN.sub('', rest).strip(), blocks
+
+
 def withhold_dm_blocks(text: str, *, agent_id: str, where: str, dm_step_ran: bool = False) -> str:
     """BF-874: fail closed before agent text is posted -- no DM block, sent or not, is posted.
 
@@ -211,6 +221,14 @@ _NOTEBOOK_PATTERN = re.compile(
     r'\[/NOTEBOOK\]',
     re.DOTALL,
 )
+
+
+def split_notebook_blocks(text: str) -> tuple[str, list[str]]:
+    """AD-1156: ``text`` as the notebook writer leaves it -- every block it reads
+    removed, the rest trimmed -- and the entries it would save: each non-empty
+    body, trimmed, in order. Saves nothing."""
+    bodies = [match.group(3).strip() for match in _NOTEBOOK_PATTERN.finditer(text)]
+    return _NOTEBOOK_PATTERN.sub("", text).strip(), [body for body in bodies if body]
 
 # AD-1157: what an agent may select on the tag. ``fleet`` is deliberately
 # absent — a fleet-classified record is level 3 against the ``ship`` scope every

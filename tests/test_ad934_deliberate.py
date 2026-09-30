@@ -237,7 +237,8 @@ def test_full_steps_orders_4j_between_4g_and_5() -> None:
     # AD-1081 4l, then AD-1295 4n (the tool-loop write channel), then AD-1285
     # 4m write-claim guard. 4n is the PRODUCER, so it precedes its consumer.
     # The old count omitted the admitted feedback step after the write guard.
-    assert len(names) == 23
+    # AD-1156 adds the plan-mode notice after that feedback step (23 -> 24).
+    assert len(names) == 24
     assert (
         names.index("step_4g_create_task_parse")
         < names.index("step_4j_deliberate_parse")

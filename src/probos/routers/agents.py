@@ -47,6 +47,14 @@ from probos.cognitive.commands.personality_command import (
     handle_personality_command,
     is_personality_command,
 )
+from probos.cognitive.agent_mode import (
+    AGENT_MODE_FLOOR_PARAM,
+    agent_modes_enabled,
+    dm_agentic_loop_enabled,
+    open_plan_mode_reply_gate,
+)
+from probos.cognitive.commands.mode_command import handle_mode_command, is_mode_command
+from probos.threads.agent_mode import AGENT_MODE_PLAN
 from probos.routers.deps import get_runtime
 from probos.routers.auth import require_crew_scope, verify_ws_token
 
@@ -2746,6 +2754,21 @@ def _hold_degraded_turn(
     )
 
 
+def _cancel_pending_follow_up(runtime: Any, agent_id: str) -> None:
+    """AD-743: a Captain message cancels the agent's pending pacing follow-up, so
+    the synthesized user-turn does not double-fire after it. Tier-2: a scheduler
+    that raises is logged and the message proceeds."""
+    _pacing = getattr(runtime, "conversation_pacing_scheduler", None)
+    if _pacing is not None:
+        try:
+            _pacing.cancel_for_conversation(agent_id)
+        except Exception:
+            logger.debug(
+                "AD-743: pacing cancel_for_conversation raised for agent=%s",
+                agent_id, exc_info=True,
+            )
+
+
 class _DmSamplingGuard:
     """BF-813: one owner for the AD-722f HIGH-tier DM sampling bracket.
 
@@ -3027,6 +3050,32 @@ async def _agent_chat_impl(
             "results": None,
         }
 
+    # AD-1156: /mode -- the one writer of this conversation's plan/execute
+    # mode. Default-OFF (``dm_agentic.agent_modes_enabled``): off, a message
+    # starting /mode reaches the agent as ordinary text, exactly as before.
+    # Same place and contract as /personality above: before auto-name and the
+    # captain append (the handler logs both sides itself), and an early
+    # return, so the command is never dispatched to the agent.
+    if (
+        _thread_store is not None
+        and thread is not None
+        and not req.system_trigger
+        and agent_modes_enabled(runtime)
+        and is_mode_command(req.message)
+    ):
+        # A-3: /mode is a Captain message too, so it cancels a pending AD-743
+        # follow-up as every other message does: one an execute-mode reply
+        # scheduled must not run after the Captain chose plan mode.
+        _cancel_pending_follow_up(runtime, agent_id)
+        return await handle_mode_command(
+            req.message,
+            thread=thread,
+            agent_id=agent_id,
+            store=_thread_store,
+            loop_enabled=dm_agentic_loop_enabled(runtime),
+            event_log=getattr(runtime, "event_log", None),
+        )
+
     # AD-794: first-turn auto-name from the message body. Idempotent;
     # returns None when the thread is locked, already renamed, or the
     # heuristic produced no useful title. Refresh the local ``thread``
@@ -3067,15 +3116,7 @@ async def _agent_chat_impl(
 
     # AD-743: Captain interruption cancels any pending pacing follow-up so the
     # synthesized user-turn doesn't double-fire after a fresh Captain message.
-    _pacing = getattr(runtime, "conversation_pacing_scheduler", None)
-    if _pacing is not None:
-        try:
-            _pacing.cancel_for_conversation(agent_id)
-        except Exception:
-            logger.debug(
-                "AD-743: pacing cancel_for_conversation raised for agent=%s",
-                agent_id, exc_info=True,
-            )
+    _cancel_pending_follow_up(runtime, agent_id)
 
     # AD-725 (Wave 159): targeted sub-intent dispatch (DM one-shot pre-LLM
     # lookup). Tier-2 — never blocks the DM. When the classifier matches and
@@ -3588,6 +3629,22 @@ async def _agent_chat_impl(
                 exc_info=True,
             )
 
+    # AD-1156: plan mode holds the reply to its conversation. The mode is read
+    # here, before the agent runs, and again when the reply pipeline first reaches
+    # a step that could act outside it, so a turn plan mode touched at any point
+    # stays held. ``None`` -- nothing read, the pipeline unchanged -- unless agent
+    # modes and the dm_agentic loop are both on and a thread store exists; a
+    # thread the route could not resolve holds the reply. A-9: both reads name the
+    # agent this route admitted, so a thread that changes hands after the admission
+    # above -- there are awaits between -- gives this turn no other agent's mode.
+    _plan_mode_gate = open_plan_mode_reply_gate(runtime, _thread_store, thread, agent_id=agent_id)
+    # A-3: a turn dispatched in plan mode stays in plan mode for every agent pass
+    # it causes -- the sanity-gate retry, a replay of a held turn -- whatever the
+    # thread says by then. ``_params`` is the one dict the intent, the reply
+    # context and a held turn all carry.
+    if _plan_mode_gate is not None and _plan_mode_gate.planned_at_dispatch:
+        _params[AGENT_MODE_FLOOR_PARAM] = AGENT_MODE_PLAN
+
     # AD-1230: a thread whose earlier turn is still held takes no new work. The
     # check is here rather than after the send so a blocked thread does not
     # spend an LLM call on an endpoint that is already in cooldown.
@@ -3733,6 +3790,7 @@ async def _agent_chat_impl(
         ),
         owned_steps_views=_owned_steps_views,
         owned_steps_feedback=_owned_steps_capture_feedback,
+        plan_mode_gate=_plan_mode_gate,  # AD-1156
     ))
     await pipeline.run()
     response = pipeline.build_response()
