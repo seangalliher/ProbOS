@@ -9919,3 +9919,43 @@ Five variants were measured against the ordered search over 36 payload shapes at
 5. Arming the flag also refuses the HXI enrich ("vibe") build: its click carries an edited design, which the request does not record (R9). The follow-up is to record the Captain's guidance with his approval, as an amendment committed with the decision, which needs a decision on how an amended design is bounded and audited.
 
 **Ownership and rollback:** Rollback is leaving `capability_triage.unified_ladder_enabled` off. An ordinary Git revert needs no migration: HEAD's code names its columns, so a database that gained the `triage` column still loads, and the column is then unused. Acceptance requires the changes to follow the Engineering Principles in `.github/copilot-instructions.md`; the Diff Reviewer checks them before commit.
+
+### BF-878 OPEN -- A work item whose capability request settled before it was parked resumes, or is cancelled
+
+**Date:** 2026-09-30. **Existing issue:** #1439. **Decision:** Execute the Architect's build contract, option A1 as amended by A-1: resolve a settled request at the single parking point, and let a resolution act only on an item still parked on its own request. BF-878 was already allocated to #1439, so no number is allocated. It resolves AD-1194's residual R5.
+
+**The defect.** `CapabilityGapDriver.on_capability_gap` files the request (`triage_and_file`) and only then parks the work item (`block_on_request`). When the request settles inside the filing, the event arrives before the item is blocked, and `on_capability_event` acts only on a `blocked` item, so the event is dropped. The item then stays `blocked` with no re-dispatch. Filing settles a request in two ways: AD-854's grant fast path issues the grant and marks it fulfilled, and a file-time build is designed and fulfilled. A decision between filing and parking does the same on AD-1204's continue path. Measured at `cf13eb4f` with the real stores and driver: a fast-path grant, a file-time build and a continue ask decided before parking each leave the item `blocked` with 0 re-dispatches, and a request denied before parking leaves it `blocked` instead of `cancelled`.
+
+**What changes.**
+- `block_on_request`, which both the gap path and the continue path use to park an item, now reads the request after parking. It resumes the item if the request is `fulfilled` and cancels it if it is `denied`, as the event handler would have, and only when the request links to this item.
+- The driver's resume and cancel move the item only while it is still `blocked` on the request being resolved. `WorkItemStore.transition_work_item` gains two keyword-only compare-and-set arguments, read inside the write transaction: `expected_status`, and `expected`, which holds top-level metadata values and reads a missing key as `None`, as `merge_work_item_metadata` does. Without the status check, the post-park check and a late event could both act: measured at `cf13eb4f`, two deliveries of one event re-dispatched one item twice, because BF-606 returns the item on a same-status move. Without the request check, a duplicate or late resolution of an older request resumed or cancelled an item parked on a newer one.
+- Parking writes `blocked`, `blocked_reason` and `capability_request_id` in one write, through a third keyword-only argument, `metadata_patch`. It follows `update_work_item`'s reserved-key rule and keeps the park's two events in their old order. Parking used to be two writes, and an event delivered between them saw the item `blocked` with the previous request's id.
+- A resolution that finds the item already moved on logs at DEBUG, and one that finds it parked on another request logs at INFO. A move refused for any other reason keeps AD-855's warning.
+- If the post-park check fails, the warning says the item's board status may not reflect the request and needs a manual transition if a later event does not correct it. A later event can still resolve it.
+
+**What it does not claim.** On AD-1204's continue path the post-park check gives the item what the event handler gives it: the move back to `in_progress` and one `WorkItemRouter.on_work_item_created` call. That is all it gives. AD-1165's promoted items carry the `conversational-turn` tag and no `dispatchable` metadata, and the real router declines them: measured, `is_dispatchable` is False and nothing is delivered. Whether AD-1204's continue ever resumes the turn itself is #1163.
+
+**Why this option.**
+- Resolving at the parking point covers the grant, build and continue paths, and a decision taken in the window. Reconciling only in `on_capability_gap` would miss the continue path. Parking before filing would reorder AD-854 and AD-1194's filing and park an item with no request id. An in-process lock would be blind to other writers, such as the HXI transition route.
+- Checking the request (A-1): a one-write park with a strict request-id compare-and-set was chosen. Writing the request id before the status would stamp it on an item whose move is then refused, and name a request on an item that is not parked. Clearing the id on resume would change AD-855's resume. Accepting a missing id would, with the old park, keep the window between its two writes open; with a one-write park every driver park records its id, so a missing id means a row parked before this change or a block the driver did not write, such as the Captain's by hand, which a linked request's event would then undo.
+
+**Measured evidence:**
+- Premise probes on the staged candidate: the review's held post-park check, a duplicate FULFILLED after the item was parked again, a stale denial after a manual unblock and re-park, and an event delivered between the park's two writes each resolved the item on the older request. The last three do the same at `cf13eb4f`. The real router delivered nothing for a resumed continue item, and a FULFILLED after a failed post-park check still resumed the item.
+- `tests/test_bf878_settled_request_resumes_the_item.py` has 22 cases, run with the real work-item, request and permission stores, the real driver, and AD-1211's event-bus double. 16 of them fail at `cf13eb4f`, each on the defect it names, and all 22 pass after the change. They cover:
+  - the grant, the build, the continue ask and the denial;
+  - a restart between filing and parking, and the degrade path;
+  - both forced races with the post-park check, each resolved once;
+  - four stale resolutions of an older request: a held check, a duplicate event, a late denial and an event during the park;
+  - a refused resume that still warns, the store's three new arguments, and a move without them that reads no metadata.
+- The consumer family passes 3,568: the 55 test files that reference the driver, parking, resume, the continue path or `transition_work_item`.
+- All 25 targeted mutants are killed, against a green null control. The 25th restores Python equality in the patched move's change test, which read `True == 1` as unchanged and dropped the write (round-2 review).
+
+**Honest limits:**
+- An item already stranded before this change stays `blocked`. Nothing re-reads a parked item's request, so it needs a manual transition.
+- A crash between the parking commit and the post-park check leaves the item `blocked`, the same class as a lost event.
+- A row parked before this change whose request id was never written is no longer resumed by its request's event. HEAD parked in two writes and the second could fail; such a row needs a manual transition.
+- The request id stays in the metadata after a resume. An item the Captain blocks by hand while it still names an old request can be resumed by a duplicate of that request's event; `cf13eb4f` resumes it on any linked request's event.
+- An item parked on a second request before its first resolved waits on the second only.
+- The driver's "BLOCKED on" and "parked blocked" INFO lines now print after the BF-878 resume or cancel lines.
+
+**Ownership and rollback:** A Git revert needs no migration: no column, config key or event type is added. The three keyword-only arguments default to `None`, and a move without `expected` or `metadata_patch` does not read the metadata, so every existing caller's behaviour is kept, including on a row whose metadata is not a JSON object. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.

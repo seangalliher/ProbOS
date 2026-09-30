@@ -9966,8 +9966,33 @@ class WorkItemStore(EventEmitterMixin):
 
     async def transition_work_item(
         self, work_item_id: str, new_status: str, source: str = "system",
+        *, expected_status: str | None = None,
+        expected: dict[str, Any] | None = None,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> WorkItem | None:
-        """Transition work item status with validation."""
+        """Transition work item status with validation.
+
+        BF-878: ``expected_status`` and ``expected`` make the move a compare-and-set,
+        read inside the write transaction. ``expected`` holds top-level metadata
+        values and reads a missing key as ``None``, as
+        :meth:`merge_work_item_metadata` does. An item that does not match is left
+        alone and None is returned -- the BF-606 same-status case included -- so of
+        two callers racing one move, exactly one is told it made it.
+
+        ``metadata_patch`` is shallow-merged into the metadata in the same write, so
+        no reader sees the new status without the keys recorded with it. When it
+        changes the metadata, WORK_ITEM_UPDATED follows any status event.
+        """
+        if metadata_patch is not None:
+            if type(metadata_patch) is not dict or any(
+                type(key) is not str for key in metadata_patch
+            ):
+                raise ValueError("work_item_metadata_patch_invalid")
+            _reject_reserved_metadata(metadata_patch)
+        if expected is not None and (
+            type(expected) is not dict or any(type(key) is not str for key in expected)
+        ):
+            raise ValueError("work_item_metadata_expected_invalid")
         if not self._db:
             return None
         async with self._booking_transaction():
@@ -9977,6 +10002,23 @@ class WorkItemStore(EventEmitterMixin):
                 return None
             if item.work_type == "crew_session":
                 raise ValueError("crew_session_write_reserved")
+            if expected_status is not None and item.status != expected_status:
+                return None
+            # The metadata is read only for a caller that asks about it or writes it,
+            # so a row whose metadata is not a JSON object still moves as before.
+            metadata = item.metadata
+            metadata_changed = False
+            if expected is not None or metadata_patch:
+                current = dict(item.metadata or {})
+                if expected is not None and not all(
+                    _json_values_exactly_equal(current.get(key), value)
+                    for key, value in expected.items()
+                ):
+                    return None
+                metadata = {**current, **metadata_patch} if metadata_patch else current
+                # Exact JSON comparison: Python equality reads True == 1 and 1 == 1.0,
+                # so a type-distinct value would be reported as written and dropped.
+                metadata_changed = not _json_values_exactly_equal(metadata, current)
             # BF-606: A same-status transition is an idempotent no-op, not a state
             # machine violation. ``work_item_dispatched`` is delivered at-least-once
             # (broadcast fan-out to every crew agent, AD-855 capability-gap resume
@@ -9986,23 +10028,40 @@ class WorkItemStore(EventEmitterMixin):
             # warnings dozens of times for a single stuck item (observed: work item
             # 1e0ffcdb7b57) and returned None, which callers read as failure. Return
             # the item unchanged: no DB write, no STATUS_CHANGED event, no warning.
-            if new_status == item.status:
+            # A metadata_patch that changes the metadata is still written.
+            status_changed = new_status != item.status
+            if not status_changed and not metadata_changed:
                 return item
-            if not self._validate_work_item_status_transition(item, new_status):
+            if status_changed and not self._validate_work_item_status_transition(
+                dataclasses.replace(item, metadata=metadata) if metadata_changed else item,
+                new_status,
+            ):
                 return None
             old_status = item.status
             now = time.time()
-            await self._db.execute(
-                "UPDATE work_items SET status = ?, updated_at = ? WHERE id = ?",
-                (new_status, now, work_item_id),
-            )
+            if metadata_changed:
+                await self._db.execute(
+                    "UPDATE work_items SET status = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                    (new_status, json.dumps(metadata), now, work_item_id),
+                )
+            else:
+                await self._db.execute(
+                    "UPDATE work_items SET status = ?, updated_at = ? WHERE id = ?",
+                    (new_status, now, work_item_id),
+                )
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
-        self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
-            "work_item": self._event_work_item_projection(updated),
-            "old_status": old_status,
-            "new_status": new_status,
-        })
+        if status_changed:
+            self._emit(EventType.WORK_ITEM_STATUS_CHANGED, {
+                "work_item": self._event_work_item_projection(updated),
+                "old_status": old_status,
+                "new_status": new_status,
+            })
+        if metadata_changed:
+            self._emit(
+                EventType.WORK_ITEM_UPDATED,
+                {"work_item": self._event_work_item_projection(updated)},
+            )
         return updated
 
     async def delete_work_item(self, work_item_id: str) -> bool:
