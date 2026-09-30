@@ -902,6 +902,8 @@ export function IntentSurface() {
           intent_description: proposal.intent_description,
           parameters: proposal.parameters || {},
           original_message: proposal.original_message || '',
+          // AD-1194 A-2: names the build request the click approves; JSON drops it when absent.
+          capability_request_id: proposal.capability_request_id,
         }),
       });
       // Progress and results come via WebSocket events

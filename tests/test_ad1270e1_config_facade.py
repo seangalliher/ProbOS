@@ -1534,7 +1534,8 @@ def test_committed_baseline_records_the_measured_surface(
     # BF-875 adds federation.mcp_server.auth_token and exposed_intents (1809 -> 1811).
     # BF-876 adds federation.a2a.auth_token and exposed_intents (1811 -> 1813).
     # AD-1156 adds dm_agentic.agent_modes_enabled (1813 -> 1814).
-    assert counts["field_definitions"] == 1814  # AD-1206 intentionally adds github_repository.
+    # AD-1194 adds capability_triage.unified_ladder_enabled (1814 -> 1815).
+    assert counts["field_definitions"] == 1815  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

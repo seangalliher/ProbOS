@@ -359,8 +359,11 @@ class TestDurability:
             # A write must now succeed against the migrated table.
             fresh = await store.file_action_request("agent-a", _payload())
             # Assert
-            assert columns[-1] == "payload"
-            assert len(columns) == 12
+            # AD-1194 appended ``triage`` after ``payload``, so the migrated legacy
+            # table is 13 columns with payload second to last. What this pins is
+            # unchanged: the migration still adds payload, and in order.
+            assert columns[-2:] == ["payload", "triage"]
+            assert len(columns) == 13
             assert legacy is not None
             assert legacy.payload is None
             assert legacy.status == "pending"

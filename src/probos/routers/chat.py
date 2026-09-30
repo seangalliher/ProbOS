@@ -954,6 +954,31 @@ async def chat(
             "original_message": req.message,
             "status": "proposed",
         }
+        from probos.cognitive import nl_gap_triage
+        from probos.cognitive.capability_triage import unified_ladder_enabled
+
+        if unified_ladder_enabled(getattr(runtime, "config", None)):
+            # AD-1194: the proposal is also a pending build request, filed now so
+            # the gap -- and its consensus requirement -- is recorded server-side
+            # whether or not anyone clicks Build Agent.
+            filed = await nl_gap_triage.file_nl_gap(
+                runtime,
+                {
+                    "name": self_mod.get("intent", ""),
+                    "description": self_mod.get("description", ""),
+                    "parameters": self_mod.get("parameters", {}),
+                    "requires_consensus": self_mod.get("requires_consensus", False),
+                },
+                execution_context=nl_gap_triage.successful_execution_context(runtime),
+            )
+            if filed is not None:
+                # A-2: the card shows the design its request records -- a sighting
+                # that joined an earlier card shows that card's -- and names the
+                # request, so the click approves exactly it and designs what it showed.
+                design = nl_gap_triage.recorded_design(filed)
+                self_mod_proposal["intent_description"] = design["intent_description"]
+                self_mod_proposal["parameters"] = design["parameters"]
+                self_mod_proposal["capability_request_id"] = filed.id
         if not response_text or response_text.startswith("("):
             response_text = (
                 f"I don't have a capability for "
@@ -1451,15 +1476,48 @@ async def _run_selfmod(
                 "message": step_labels.get(step, f"Step {current}/{total}: {step}"),
             })
 
+        # AD-1194: under the unified ladder, clicking Build Agent is the Captain's
+        # decision on the build request the proposal filed. A-2: the click names that
+        # request by id and carries the design it showed, and the agent is designed
+        # from the row the approval committed -- its consensus requirement included,
+        # which the client never sends (BF-744) -- not from the click's body.
+        from probos.cognitive import nl_gap_triage
+        from probos.cognitive.capability_triage import unified_ladder_enabled
+
+        ladder_request = None
+        design: dict[str, Any] = {
+            "intent_name": req.intent_name,
+            "intent_description": req.intent_description,
+            "parameters": req.parameters,
+            "execution_context": exec_context,
+        }
+        if unified_ladder_enabled(getattr(rt, "config", None)):
+            approval = await nl_gap_triage.approve_nl_gap(
+                rt, req.capability_request_id, intent_name=req.intent_name,
+                description=req.intent_description, parameters=req.parameters,
+                reason="Captain approved the build from HXI chat",
+            )
+            if approval.request is None:
+                logger.warning(
+                    "AD-1194: the Build Agent click for %r approved nothing, so nothing "
+                    "was designed: %s", req.intent_name, approval.refusal,
+                )
+                rt.emit_event(EventType.SELF_MOD_FAILURE, {
+                    "intent": req.intent_name,
+                    "message": f"Agent design not started: {approval.refusal}.",
+                    "error": "capability request not recorded",
+                })
+                return
+            ladder_request = approval.request
+            design = nl_gap_triage.recorded_design(ladder_request)
+
         record = await rt.self_mod_pipeline.handle_unhandled_intent(
-            intent_name=req.intent_name,
-            intent_description=req.intent_description,
-            parameters=req.parameters,
-            execution_context=exec_context,
-            on_progress=_on_progress,
+            **design, on_progress=_on_progress,
         )
 
         if record and record.status == "active":
+            if ladder_request is not None:
+                await nl_gap_triage.fulfil_nl_gap(rt, ladder_request)
             # Post-creation work
             knowledge_stored = False
             if rt._knowledge_store:

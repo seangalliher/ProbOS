@@ -27,8 +27,14 @@ from probos.cognitive.capability_triage import (
     fulfil_build,
     fulfil_grant,
     fulfil_install,
+    unified_ladder_enabled,
 )
-from probos.delegated_approvals import audit_captain_decision, captain_decision_guard
+from probos.delegated_approvals import (
+    RequestClass,
+    audit_captain_decision,
+    captain_decision_guard,
+    classify_capability_request,
+)
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -60,6 +66,11 @@ def _serialize(
         # Action/build context or typed install provenance; legacy rows may be NULL.
         "payload": req.payload,
     }
+    triage = getattr(req, "triage", None)
+    if triage is not None:
+        # AD-1194: the ladder's record, present only on requests filed through
+        # it, so every other request serialises exactly as before.
+        result["triage"] = triage
     if include_retry:
         result["can_retry_fulfilment"] = (
             req.status == "approved" and can_fulfil_request(req)
@@ -110,7 +121,8 @@ async def decide_capability_request(
 
     Unknown id -> 404. Already-decided (non-pending) -> 400. The store's
     ``decide()`` has no already-decided guard, so the pending check is owned
-    here (AD-857 correction #2).
+    here (AD-857 correction #2) -- except that, since AD-1194 A-2, it decides a
+    ladder filing on its committed row and refuses one another store decided first.
 
     BF-722: one exception to that guard — an ``approved`` request re-approved is
     a retry of the FULFILMENT, not a re-decision. Fulfilment can fail while the
@@ -146,14 +158,18 @@ async def _decide_request(
         existing = await store.get(request_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="capability request not found")
-        newly_decided = existing.status == "pending"
-        if newly_decided:
+        decided = None
+        if existing.status == "pending":
             decided = await store.decide(
                 request_id, req.approve, reason=req.reason, decided_by="captain"
             )
-            if decided is None:  # pragma: no cover - guarded above, defensive only
-                raise HTTPException(status_code=404, detail="capability request not found")
-        elif existing.status == "approved" and req.approve:
+            if decided is None:
+                # AD-1194 A-2: another store sharing the database decided this ladder
+                # filing first. The store refused, and its cache now holds the row as
+                # committed, so answer from it as if it had been read first.
+                existing = await store.get(request_id) or existing
+        newly_decided = decided is not None
+        if decided is None and existing.status == "approved" and req.approve:
             # BF-722: retry the fulfilment of an approval already on record. No
             # decide(), so no second trust outcome; no standing rule either, since
             # the one decision that could issue it has already been made.
@@ -163,7 +179,7 @@ async def _decide_request(
                 "fulfilment without re-deciding it",
                 request_id[:12],
             )
-        else:
+        elif decided is None:
             raise HTTPException(
                 status_code=400,
                 detail=f"capability request already decided (status={existing.status})",
@@ -288,10 +304,52 @@ async def _fulfil_install_request(
     )
 
 
+def _approval_admits_design(decided: CapabilityRequest) -> bool:
+    """AD-1194 A-1: is the approval on record one the approval policy admits for this build?
+
+    The Captain's admits any build. Any other decider on record is a delegate --
+    AD-1213 records the deciding agent's id -- and the policy lets a delegate decide
+    a build only when it does not require consensus. Read from the record, never
+    from the flag, which only says that the ladder is on.
+    """
+    decider = str(decided.decided_by or "").strip()
+    if decider == "captain":
+        return True
+    return bool(decider) and (
+        classify_capability_request(decided, tool_registry=None) is RequestClass.DESTRUCTIVE
+    )
+
+
+async def _committed_request(store: Any, request_id: str) -> CapabilityRequest | None:
+    """AD-1194 A-2: the request as committed -- a store may share its database."""
+    if getattr(store, "db_path", ""):
+        return await store.get(request_id, durable=True)
+    return await store.get(request_id)
+
+
 async def _fulfil_build_request(
     runtime: Any, store: Any, decided: CapabilityRequest
 ) -> CapabilityRequest | None:
-    """AD-1211: build the agent this request asked for, then fulfil it."""
+    """AD-1211: build the agent this request asked for, then fulfil it.
+
+    AD-1194 A-2: under the unified ladder the design follows the approval as
+    committed, re-read here -- a caller's copy (a cache, the BF-722 retry's) can
+    predate another store's decision or consensus raise.
+    """
+    unified = unified_ladder_enabled(getattr(runtime, "config", None))
+    if unified:
+        committed = await _committed_request(store, decided.id)
+        if committed is None or committed.status != "approved" or not _approval_admits_design(committed):
+            logger.error(
+                "AD-1194: build request %s is not, as committed, an approval the "
+                "approval policy admits (status=%s, decided by %r; a build that requires "
+                "consensus is the Captain's alone, and an approval names its decider); "
+                "nothing was designed",
+                decided.id[:12], getattr(committed, "status", None),
+                getattr(committed, "decided_by", None),
+            )
+            return None
+        decided = committed
     return await fulfil_build(
         decided.id,
         store=store,
@@ -302,6 +360,11 @@ async def _fulfil_build_request(
         # file time. Without it an approved build designed an agent with
         # requires_consensus=False no matter how destructive the gap was.
         design_context=decided.payload,
+        # AD-1194: under the unified ladder the recorded approval -- the Captain's,
+        # or a delegate's the policy admits (above) -- IS the design approval, so
+        # the pipeline's console prompt must not ask again, or, with no callback
+        # wired, be the only "approval" a build ever had.
+        pre_approved=unified,
     )
 
 

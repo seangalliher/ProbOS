@@ -166,6 +166,30 @@ class ExecutionRenderer:
                         intent_meta = None  # skip self-mod flow below
 
                 if intent_meta:
+                    # AD-1194: under the unified ladder the gap is filed -- or joins its
+                    # pending card -- BEFORE the proposal is shown, so the answer below
+                    # is the Captain's decision on a recorded request that carries the
+                    # ladder's discovery evidence. A-2: what is shown, and designed, is
+                    # the design that request records; a sighting that joined an
+                    # earlier card shows that card's design, not its own.
+                    from probos.cognitive import nl_gap_triage
+                    from probos.cognitive.capability_triage import unified_ladder_enabled
+
+                    ladder_request = None
+                    ladder_on = unified_ladder_enabled(getattr(self.runtime, "config", None))
+                    if ladder_on:
+                        ladder_request = await nl_gap_triage.file_nl_gap(
+                            self.runtime, intent_meta,
+                        )
+                    shown = (
+                        nl_gap_triage.recorded_design(ladder_request)
+                        if ladder_request is not None else {
+                            "intent_name": intent_meta["name"],
+                            "intent_description": intent_meta["description"],
+                            "parameters": intent_meta.get("parameters", {}),
+                        }
+                    )
+
                     # Phase A: Strategy proposal
                     recommender = StrategyRecommender(
                         intent_descriptors=self.runtime._collect_intent_descriptors(),
@@ -177,22 +201,42 @@ class ExecutionRenderer:
                         else None,
                     )
                     proposal = recommender.propose(
-                        intent_name=intent_meta["name"],
-                        intent_description=intent_meta["description"],
-                        parameters=intent_meta.get("parameters", {}),
+                        intent_name=shown["intent_name"],
+                        intent_description=shown["intent_description"],
+                        parameters=shown["parameters"],
                     )
+                    # AD-1194 A-3: under the ladder the gap is a build request, and every
+                    # surface fulfils one by designing a new agent with the consensus
+                    # requirement its committed approval records. A skill is attached to an
+                    # existing agent by ``handle_add_skill`` and carries no consensus
+                    # requirement -- and a sighting that requires consensus can arrive after
+                    # the decision, filing a new request (R13) -- so under the ladder the
+                    # shell offers no skill. The recommender always proposes a new agent.
+                    skill_withdrawn = ladder_on and any(
+                        opt.strategy == "add_skill" for opt in proposal.options
+                    )
+                    if skill_withdrawn:
+                        proposal.options = [
+                            opt for opt in proposal.options if opt.strategy != "add_skill"
+                        ]
 
                     # Display strategy options
                     self.console.print(
                         "\n[yellow bold]\U0001f527 Self-Modification Proposal:[/yellow bold]"
                     )
                     self.console.print(
-                        f"  [bold]Unhandled intent:[/bold] [cyan]{intent_meta['name']}[/cyan]"
+                        f"  [bold]Unhandled intent:[/bold] [cyan]{shown['intent_name']}[/cyan]"
                     )
                     self.console.print(
-                        f"  [bold]Purpose:[/bold] {intent_meta['description']}"
+                        f"  [bold]Purpose:[/bold] {shown['intent_description']}"
                     )
                     self.console.print()
+                    if skill_withdrawn:
+                        self.console.print(
+                            "  [dim]A skill is not offered: an approved build request is "
+                            "designed as a new agent, with any consensus requirement it "
+                            "records.[/dim]"
+                        )
 
                     if len(proposal.options) == 1:
                         # Single option — simpler prompt
@@ -239,9 +283,37 @@ class ExecutionRenderer:
                         if 0 <= idx < len(proposal.options):
                             chosen_option = proposal.options[idx]
 
+                    approved_request = None
+                    if chosen_option is not None and ladder_request is not None:
+                        approved_request = await nl_gap_triage.decide_nl_gap(
+                            self.runtime, ladder_request, approve=True,
+                            reason="Captain approved at the shell prompt",
+                        )
+
                     if chosen_option is None:
                         self.console.print("[dim]Self-modification rejected by user.[/dim]")
+                        if ladder_request is not None:
+                            await nl_gap_triage.decide_nl_gap(
+                                self.runtime, ladder_request, approve=False,
+                                reason="Captain declined at the shell prompt",
+                            )
+                    elif ladder_on and approved_request is None:
+                        # AD-1194 A-1: under the ladder a design follows a recorded
+                        # approval, and this one could not be recorded.
+                        self.console.print(
+                            "[yellow]Not designed: the gap's build request could not be "
+                            "recorded as approved.[/yellow]"
+                        )
                     else:
+                        # A-2: design what the approval committed -- the recorded design
+                        # and its consensus requirement, never weaker than the sighting's.
+                        design = (
+                            nl_gap_triage.recorded_design(approved_request)
+                            if approved_request is not None else dict(shown)
+                        )
+                        requires_consensus = design.pop("requires_consensus", False) or intent_meta.get(
+                            "requires_consensus", False
+                        )
                         # Phase B: Execute chosen strategy
                         orig_approval = self.runtime.self_mod_pipeline._user_approval_fn
                         self.runtime.self_mod_pipeline._user_approval_fn = None
@@ -256,9 +328,9 @@ class ExecutionRenderer:
                                 self._status.start()
                                 try:
                                     record = await self.runtime.self_mod_pipeline.handle_add_skill(
-                                        intent_name=intent_meta["name"],
-                                        intent_description=intent_meta["description"],
-                                        parameters=intent_meta.get("parameters", {}),
+                                        intent_name=design["intent_name"],
+                                        intent_description=design["intent_description"],
+                                        parameters=design["parameters"],
                                         target_agent_type=chosen_option.target_agent_type or "skill_agent",
                                     )
                                 finally:
@@ -273,10 +345,7 @@ class ExecutionRenderer:
                                 self._status.start()
                                 try:
                                     record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
-                                        intent_name=intent_meta["name"],
-                                        intent_description=intent_meta["description"],
-                                        parameters=intent_meta.get("parameters", {}),
-                                        requires_consensus=intent_meta.get("requires_consensus", False),
+                                        **design, requires_consensus=requires_consensus,
                                     )
                                 finally:
                                     if self._status is not None:
@@ -286,6 +355,8 @@ class ExecutionRenderer:
                             self.runtime.self_mod_pipeline._user_approval_fn = orig_approval
 
                         if record and record.status == "active":
+                            if approved_request is not None:
+                                await nl_gap_triage.fulfil_nl_gap(self.runtime, approved_request)
                             strategy_label = "Skill" if chosen_option.strategy == "add_skill" else "Agent"
                             self.console.print(
                                 f"  [green bold]\u2713 {strategy_label} '{record.agent_type}' "
@@ -298,7 +369,7 @@ class ExecutionRenderer:
                                     id="t1",
                                     intent=intent_meta["name"],
                                     params=actual,
-                                    use_consensus=intent_meta.get("requires_consensus", False),
+                                    use_consensus=requires_consensus,
                                 )],
                                 source_text=text,
                                 reflect=True,

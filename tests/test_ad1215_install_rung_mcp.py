@@ -849,7 +849,11 @@ async def test_action_validation_and_non_install_decoding_remain_unchanged(
     await store.start()
     assert (await store.get(action.id)).payload == payload
     assert (await store.get(grant.id)).payload is None
-    assert (await store.get(build.id)).payload is None
+    # AD-1194 (F1): this line pinned the defect. A build's BF-744 design context
+    # was re-validated as an ACTION payload on read, so it was dropped on every
+    # restart and an approve-later build lost its consensus gate. It survives now;
+    # the action and grant decoding above are what "unchanged" still guards.
+    assert (await store.get(build.id)).payload == {"intent_description": "unchanged"}
 
 
 @pytest.mark.parametrize("store_present", [False, True])

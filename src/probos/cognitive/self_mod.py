@@ -108,10 +108,15 @@ class SelfModificationPipeline:
         requires_consensus: bool = False,
         execution_context: str = "",
         on_progress: Callable[[str, int, int], Awaitable[None]] | None = None,
+        pre_approved: bool = False,
     ) -> DesignedAgentRecord | None:
         """Full pipeline: design -> validate -> sandbox -> register -> track.
 
         Returns DesignedAgentRecord if successful, None if any step fails.
+
+        AD-1194: ``pre_approved`` means the Captain already approved this design
+        on the capability-request route, so the user-approval prompt is not asked
+        again. Every other gate still runs.
         """
         # AD-872: cheap pre-design shape gate. Honest-degrade (Tier-2): a gate
         # failure must NEVER block a legitimate forge — log and fall through to
@@ -160,8 +165,9 @@ class SelfModificationPipeline:
             self._records.append(record)
             return record
 
-        # User approval gate
-        if self._config.require_user_approval and self._user_approval_fn:
+        # User approval gate -- not asked twice for a design the Captain already
+        # approved on the capability-request route (AD-1194).
+        if self._config.require_user_approval and self._user_approval_fn and not pre_approved:
             description = (
                 f"Intent: {intent_name}\n"
                 f"Description: {intent_description}\n"

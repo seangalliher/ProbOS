@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1819
-  field_definitions: 1814
+  canonical_dump_leaves: 1820
+  field_definitions: 1815
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 541d4ebb014ea94cae816ba9f0fa3dcf14ea8989cd1ec3dcd53c8efed384bc9d
+canonical_dump_sha256: afac56b60f86c03dc0db094a90f9181366ffb7a60b9d3f5599c64aeb13dd6b96
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -888,10 +888,11 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 3b5ee9b4e09468c8c3dacf41cdfda3f3ff4412480c157c615cc005dadbf62824
+    schema_sha256: 12805ee60de5804181d2bdf10e62397a2f9760658a8e2a04d86b38df3ff8cb7f
     fields:
     - {default: 'False', name: grant_fast_path_enabled}
     - {default: '0.8', name: grant_trust_floor}
+    - {default: 'False', name: unified_ladder_enabled}
   CaptainsLogConfig:
     qualname: CaptainsLogConfig
     bases:
@@ -3315,7 +3316,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: cc1d8f6c6b3b2b2adbbf8e29a81c2ca0824a9b5b04da74e844da4eb60fe7c8b7
+    schema_sha256: 5993f0e5d9a7898894aa1a254ffe227b70252204f97e62e8207aa62f44302042
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

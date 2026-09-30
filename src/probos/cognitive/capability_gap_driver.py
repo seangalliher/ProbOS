@@ -29,7 +29,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from probos.cognitive.capability_triage import triage_and_file
+from probos.cognitive.capability_triage import (
+    ard_discoverer,
+    triage_and_file,
+    unified_ladder_enabled,
+)
 from probos.events import EventType
 
 if TYPE_CHECKING:
@@ -74,6 +78,15 @@ class CapabilityGapDriver:
                 work_item_id, gap_target,
             )
             return None
+        # AD-1194: under the unified ladder a tool gap walks every rung and the
+        # request records each verdict; a build is then left pending, not built.
+        ladder: dict[str, Any] = {}
+        if unified_ladder_enabled(getattr(self._runtime, "config", None)):
+            ladder = {
+                "unified": True,
+                "gap_class": "tool",
+                "discover_candidates": ard_discoverer(self._runtime),
+            }
         try:
             # File first so the request id is available for item metadata and
             # the request carries the originating work_item_id (AD-853 link).
@@ -92,6 +105,7 @@ class CapabilityGapDriver:
                 trust_network=getattr(self._runtime, "trust_network", None),
                 self_mod_pipeline=getattr(self._runtime, "self_mod_pipeline", None),
                 config=self._triage_config(),
+                **ladder,
             )
             # Transition via the validated state machine.
             blocked = await self.block_on_request(

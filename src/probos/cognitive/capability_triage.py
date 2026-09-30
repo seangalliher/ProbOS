@@ -11,15 +11,34 @@ the cheapest reversible rung, aligned with the three governance axioms:
 The real gap surface is a plain ``str`` (``runtime._last_capability_gap`` / the
 unhandled-intent name); the driver resolves it into the three booleans the pure
 ``triage`` consumes. There is intentionally NO ``CapabilityGap`` dataclass.
+
+AD-1194 makes this the one ladder every gap producer files through --
+``grant -> discover -> install -> forge -> build`` -- when
+``capability_triage.unified_ladder_enabled`` is set; see :func:`evaluate_ladder`.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from probos.approval_authority import REVIEW_TOOL_ID
-from probos.capability_request import validate_install_payload, validate_python_install_target
+from probos.capability_request import (
+    BUILD_PARAMETER_MAX_CHARS,
+    BUILD_PAYLOAD_KEYS,
+    BUILD_TEXT_MAX_CHARS,
+    MAX_BUILD_PARAMETERS,
+    TRIAGE_CANDIDATE_MAX_CHARS,
+    TRIAGE_MAX_CANDIDATES,
+    TRIAGE_REASON_MAX_CHARS,
+    TRIAGE_RECORD_VERSION,
+    build_requires_consensus,
+    validate_build_payload,
+    validate_install_payload,
+    validate_python_install_target,
+)
 from probos.integrations.mcp_bridge.registration import register_record
 from probos.tools.protocol import ToolPermission, permission_includes
 
@@ -195,12 +214,239 @@ def _match_mcp_server(
     return None
 
 
-_DESIGN_CONTEXT_KEYS = (
-    "intent_description",
-    "parameters",
-    "requires_consensus",
-    "execution_context",
-)
+# ── AD-1194: one ladder for every capability-gap producer ──────────────────
+#
+# ``triage`` above selects among the three FULFILMENT rungs. #1131 put every gap
+# producer through the same policy -- AD-855's work items (a tool gap), the
+# ordinary NL path (an intent gap), AD-1220's missing libraries (a package gap)
+# -- and added two rungs that are deliberately never selected:
+#
+#   * discover SURFACES AD-1049's ARD candidates and never adopts (AD-1049 DD-1),
+#     so it informs the Captain's decision without closing the gap itself;
+#   * forge is SkillForge's SKILL.md package, and no current gap class is closed
+#     by one: a tool gap needs a registered tool, an intent gap an agent that
+#     handles the intent, a package gap the package. It is not wired to forge
+#     artifacts that leave the gap open: a record marks it not applicable, with
+#     its class's reason, when a build is selected, and not run when a cheaper
+#     rung is, as it does every rung above the selected one.
+#
+# So ``selected`` is always a rung the existing store, route and fulfillers
+# already handle, and the record is evidence for the Captain, never authority:
+# no fulfiller reads it.
+
+GapClass = Literal["tool", "intent", "package"]
+LadderRung = Literal["grant", "discover", "install", "forge", "build"]
+RungOutcome = Literal["selected", "escalated", "not_applicable", "not_run"]
+#: A discover rung: gap target in, candidate labels out, ``None`` if it did not run.
+DiscoverFn = Callable[[str], Awaitable["list[str] | None"]]
+
+LADDER_ORDER: tuple[LadderRung, ...] = ("grant", "discover", "install", "forge", "build")
+
+_SELECTED_REASONS: dict[tuple[str, str], str] = {
+    ("tool", "grant"): (
+        "a registered tool the agent lacks permission for; a grant is the most "
+        "reversible fix"
+    ),
+    ("tool", "install"): (
+        "a registered but disabled MCP server matches; enabling it is reversible"
+    ),
+    ("tool", "build"): (
+        "no cheaper rung closes this gap; a new agent is designed only after "
+        "Captain approval"
+    ),
+    ("intent", "build"): (
+        "only an agent that handles this intent closes the gap; it is designed "
+        "only after Captain approval"
+    ),
+    ("package", "install"): (
+        "installing the library is the only rung that provides it; it runs only "
+        "after Captain approval"
+    ),
+}
+_FORGE_REASONS: dict[str, str] = {
+    "tool": "a SKILL.md package cannot register a tool",
+    "intent": "a SKILL.md package does not register an intent",
+}
+
+
+def unified_ladder_enabled(config: Any) -> bool:
+    """AD-1194: whether gap producers file through the whole ladder.
+
+    Reads ``config.capability_triage.unified_ladder_enabled`` and accepts only a
+    real ``True``, so a missing section or a ``MagicMock`` config -- common in
+    this repository's tests -- keeps every producer on its HEAD behaviour.
+    """
+    section = getattr(config, "capability_triage", None) if config is not None else None
+    return getattr(section, "unified_ladder_enabled", False) is True
+
+
+def _clean(text: str, limit: int) -> str:
+    """Cut to ``limit`` and make it bindable: SQLite binds UTF-8, a lone surrogate is not."""
+    return text[:limit].encode("utf-8", "replace").decode("utf-8")
+
+
+@dataclass(frozen=True)
+class RungVerdict:
+    """What one rung concluded for a gap, and why (AD-1194)."""
+
+    rung: LadderRung
+    outcome: RungOutcome
+    reason: str
+    candidates: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """The bounded form ``validate_triage_record`` accepts."""
+        return {
+            "rung": self.rung,
+            "outcome": self.outcome,
+            "reason": _clean(self.reason, TRIAGE_REASON_MAX_CHARS),
+            "candidates": [
+                _clean(candidate, TRIAGE_CANDIDATE_MAX_CHARS)
+                for candidate in self.candidates[:TRIAGE_MAX_CANDIDATES]
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class TriageRecord:
+    """The whole ladder for one gap: every rung in order, and the one selected."""
+
+    gap_class: GapClass
+    selected: Rung
+    rungs: tuple[RungVerdict, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """What a request's ``triage`` column stores."""
+        return {
+            "version": TRIAGE_RECORD_VERSION,
+            "gap_class": self.gap_class,
+            "selected": self.selected,
+            "rungs": [verdict.to_dict() for verdict in self.rungs],
+        }
+
+
+def evaluate_ladder(
+    *,
+    gap_class: GapClass,
+    tool_registered: bool = False,
+    agent_has_permission: bool = False,
+    skill_known: bool = False,
+    discovery: list[str] | None = None,
+) -> TriageRecord:
+    """AD-1194: walk ``grant -> discover -> install -> forge -> build`` for one gap. Pure.
+
+    For a ``tool`` gap the selected rung is exactly what :func:`triage` returns
+    for the same booleans, so routing AD-855 through the ladder cannot change
+    which rung it files. An ``intent`` gap is closed only by an agent that handles
+    the intent (``build``) and a ``package`` gap only by installing it. Every rung
+    below the selected one records why it did not close the gap; every rung above
+    it records that it did not run.
+
+    ``discovery`` is the discover rung's result: ``None`` when it did not run, a
+    list -- possibly empty -- of candidate labels when it did.
+    """
+    if gap_class == "package":
+        selected: Rung = "install"
+    elif gap_class == "intent":
+        selected = "build"
+    else:
+        selected = triage(
+            tool_registered=tool_registered,
+            agent_has_permission=agent_has_permission,
+            skill_known=skill_known,
+        )
+    cut = LADDER_ORDER.index(selected)
+    rungs: list[RungVerdict] = []
+    for index, rung in enumerate(LADDER_ORDER):
+        if rung == selected:
+            rungs.append(RungVerdict(rung, "selected", _SELECTED_REASONS[(gap_class, rung)]))
+        elif index > cut:
+            rungs.append(RungVerdict(rung, "not_run", f"a cheaper rung ({selected}) was selected"))
+        else:
+            rungs.append(_passed_over(rung, gap_class, tool_registered, discovery))
+    return TriageRecord(gap_class=gap_class, selected=selected, rungs=tuple(rungs))
+
+
+def _passed_over(
+    rung: LadderRung,
+    gap_class: GapClass,
+    tool_registered: bool,
+    discovery: list[str] | None,
+) -> RungVerdict:
+    """Why a rung below the selected one did not close the gap."""
+    if rung == "grant":
+        if gap_class == "intent":
+            return RungVerdict(
+                rung, "not_applicable",
+                "an unhandled intent needs an agent that handles it; no tool grant makes one",
+            )
+        if gap_class == "package":
+            return RungVerdict(rung, "not_applicable", "a missing library is not a tool permission")
+        return RungVerdict(
+            rung, "escalated",
+            "the agent already holds a grant for this tool" if tool_registered
+            else "no registered tool has this id",
+        )
+    if rung == "discover":
+        if gap_class == "package":
+            return RungVerdict(
+                rung, "not_applicable",
+                "catalog resources are agents and servers, not importable libraries",
+            )
+        if discovery is None:
+            return RungVerdict(rung, "not_run", "discovery-before-design is off or was unavailable")
+        return RungVerdict(
+            rung, "escalated",
+            f"{len(discovery)} candidate(s) surfaced for the Captain; discovery never adopts"
+            if discovery else "no catalog resource matched",
+            tuple(discovery),
+        )
+    if rung == "install":
+        if gap_class == "intent":
+            return RungVerdict(
+                rung, "not_applicable",
+                "MCP tools are not decomposer intents, so enabling a server cannot handle this intent",
+            )
+        return RungVerdict(rung, "escalated", "no registered but disabled MCP server matches")
+    return RungVerdict(rung, "not_applicable", _FORGE_REASONS[gap_class])
+
+
+def _discovery_applies(gap_class: GapClass, selected: Rung) -> bool:
+    """Discover sits above grant, and a library is never in a catalog."""
+    return gap_class != "package" and selected != "grant"
+
+
+def candidate_label(candidate: dict[str, Any]) -> str:
+    """One AD-1049 candidate as the short line a triage record keeps."""
+    identifier = candidate.get("identifier") or candidate.get("display_name") or "?"
+    kind = candidate.get("type") or "resource"
+    return f"{identifier} [{kind}] via {candidate.get('source') or '?'}"
+
+
+def ard_discoverer(runtime: Any, description: str = "") -> DiscoverFn:
+    """AD-1049's surface as the ladder's discover rung (AD-1194).
+
+    The rung reports "not run" unless the operator enabled
+    ``federation.ard.discovery_before_design`` -- the switch AD-1049 reads. The
+    surface never adopts and never raises (it degrades to ``[]``), and it still
+    emits its advisory event; adopting a candidate stays an explicit Captain act.
+    """
+
+    async def _discover(gap_target: str) -> list[str] | None:
+        federation = getattr(getattr(runtime, "config", None), "federation", None)
+        if getattr(getattr(federation, "ard", None), "discovery_before_design", False) is not True:
+            return None
+        from probos.federation.ard.adoption import surface_discovery_candidates
+
+        surfaced = await surface_discovery_candidates(
+            runtime, {"name": gap_target, "description": description},
+        )
+        return [candidate_label(candidate) for candidate in surfaced]
+
+    return _discover
+
+
+_DESIGN_CONTEXT_KEYS = BUILD_PAYLOAD_KEYS
 
 
 def _build_payload(design_context: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -208,10 +454,38 @@ def _build_payload(design_context: dict[str, Any] | None) -> dict[str, Any] | No
 
     Bounded to four known keys so a caller cannot use the request payload as an
     open side-channel, and so what a Captain approves is what gets designed.
+
+    AD-1194: normalised to what ``validate_build_payload`` accepts, because that
+    is what survives a restart -- anything else would design from here and be
+    lost to an approval after one. ``requires_consensus`` keeps ``fulfil_build``'s
+    truthiness; texts and parameters are cut to their bounds; a text of the wrong
+    type is dropped rather than stringified. Per-field bounds do not bound the
+    escaped JSON, so a context still too large sheds its least important fields
+    first -- execution context, then parameters, then description -- and never
+    the consensus requirement.
     """
     if not isinstance(design_context, dict):
         return None
-    out = {k: design_context[k] for k in _DESIGN_CONTEXT_KEYS if k in design_context}
+    out: dict[str, Any] = {}
+    for key in ("intent_description", "execution_context"):
+        if isinstance(design_context.get(key), str):
+            out[key] = _clean(design_context[key], BUILD_TEXT_MAX_CHARS)
+    params = design_context.get("parameters")
+    if isinstance(params, dict):
+        out["parameters"] = {
+            _clean(str(name), BUILD_PARAMETER_MAX_CHARS): _clean(str(value), BUILD_PARAMETER_MAX_CHARS)
+            for name, value in list(params.items())[:MAX_BUILD_PARAMETERS]
+        }
+    if "requires_consensus" in design_context:
+        out["requires_consensus"] = bool(design_context["requires_consensus"])
+    for field in ("execution_context", "parameters", "intent_description"):
+        if validate_build_payload(out) is not None:
+            break
+        logger.warning(
+            "AD-1194: a build design context is over its bound; dropping %s so the "
+            "rest, and the consensus requirement, survive a restart", field,
+        )
+        out.pop(field, None)
     return out or None
 
 
@@ -230,6 +504,9 @@ async def triage_and_file(
     self_mod_pipeline: Any = None,
     design_context: dict[str, Any] | None = None,
     config: CapabilityTriageConfig | None = None,
+    gap_class: GapClass = "tool",
+    unified: bool = False,
+    discover_candidates: DiscoverFn | None = None,
 ) -> CapabilityRequest:
     """Resolve a capability gap to a rung, file the request, and route fulfilment.
 
@@ -247,7 +524,30 @@ async def triage_and_file(
 
     Honest-degrades to ``build`` (logged) when the registries needed to resolve a
     cheaper rung are absent.
+
+    AD-1194: with ``unified=True`` the gap walks the whole ladder instead, for a
+    ``gap_class`` of ``tool`` (AD-855), ``intent`` (the NL path) or ``package``
+    (AD-1220). Every rung's verdict is recorded on the request, and a build is
+    left PENDING for the Captain rather than designed here. ``unified=False`` is
+    the body below, unchanged, and ignores the three AD-1194 parameters.
     """
+    if unified:
+        return await _file_through_ladder(
+            gap_target=gap_target,
+            gap_class=gap_class,
+            agent_id=agent_id,
+            store=store,
+            rationale=rationale,
+            work_item_id=work_item_id,
+            tool_registry=tool_registry,
+            permission_store=permission_store,
+            mcp_server_store=mcp_server_store,
+            ontology=ontology,
+            trust_network=trust_network,
+            design_context=design_context,
+            discover_candidates=discover_candidates,
+            config=config,
+        )
     tool_reg = tool_registry.get(gap_target) if tool_registry is not None else None
     tool_registered = tool_reg is not None
     has_permission = _agent_has_permission(permission_store, agent_id, gap_target)
@@ -317,6 +617,110 @@ async def triage_and_file(
     return req
 
 
+async def _file_through_ladder(
+    *,
+    gap_target: str,
+    gap_class: GapClass,
+    agent_id: str,
+    store: CapabilityRequestStore,
+    rationale: str,
+    work_item_id: str | None,
+    tool_registry: Any,
+    permission_store: ToolPermissionStore | None,
+    mcp_server_store: Any,
+    ontology: Any,
+    trust_network: Any,
+    design_context: dict[str, Any] | None,
+    discover_candidates: DiscoverFn | None,
+    config: CapabilityTriageConfig | None,
+) -> CapabilityRequest:
+    """AD-1194: evaluate the whole ladder, record it on the request, file it.
+
+    Only a grant may still be fulfilled at file time, through the unchanged fast
+    path. An install and a build are always left pending for the Captain. A build
+    is never designed here: the pipeline's own approval gate passes when no console
+    callback is wired (a serve vessel until its first HXI slash command) and
+    otherwise asks a console, so a file-time build is not one the Captain approved.
+    """
+    tool_reg: Any = None
+    selected_server: Any = None
+    tool_registered = agent_has_permission = skill_known = False
+    if gap_class == "tool":
+        if tool_registry is None and mcp_server_store is None:
+            logger.warning(
+                "AD-1194: tool gap %r has no tool/MCP registry to resolve against; "
+                "the ladder records it as unregistered and escalates toward build",
+                gap_target,
+            )
+        tool_reg = tool_registry.get(gap_target) if tool_registry is not None else None
+        tool_registered = tool_reg is not None
+        agent_has_permission = _agent_has_permission(permission_store, agent_id, gap_target)
+        selected_server = resolve_installable_mcp_server(mcp_server_store, gap_target)
+        skill_known = selected_server is not None
+    evidence = {
+        "tool_registered": tool_registered,
+        "agent_has_permission": agent_has_permission,
+        "skill_known": skill_known,
+    }
+    discovery: list[str] | None = None
+    if discover_candidates is not None and _discovery_applies(
+        gap_class, evaluate_ladder(gap_class=gap_class, **evidence).selected,
+    ):
+        discovery = await _run_discovery(discover_candidates, gap_target)
+    record = evaluate_ladder(gap_class=gap_class, discovery=discovery, **evidence)
+    kind = record.selected
+    payload: dict[str, Any] | None = None
+    if kind == "install":
+        payload = (
+            {"install_kind": "python"} if gap_class == "package"
+            else {"install_kind": "mcp", "mcp_server_id": selected_server.id}
+        )
+    elif kind == "build":
+        payload = _build_payload(design_context)
+    req = await store.file_request(
+        agent_id=agent_id,
+        kind=kind,
+        target=gap_target,
+        rationale=rationale,
+        work_item_id=work_item_id,
+        payload=payload,
+        triage=record.to_dict(),
+    )
+    logger.info(
+        "AD-1194: %s gap %r for %s -> %s (request %s; %s)",
+        gap_class, gap_target, agent_id, kind, req.id[:12],
+        ", ".join(f"{verdict.rung}={verdict.outcome}" for verdict in record.rungs),
+    )
+    if kind == "grant":
+        return await _route_grant(
+            req,
+            store=store,
+            agent_id=agent_id,
+            tool_id=gap_target,
+            tool_registration=tool_reg,
+            permission_store=permission_store,
+            ontology=ontology,
+            trust_network=trust_network,
+            config=config,
+        )
+    return req
+
+
+async def _run_discovery(discover: DiscoverFn, gap_target: str) -> list[str] | None:
+    """Run the discover rung. Advisory: a failure is recorded as not run, never blocks filing."""
+    try:
+        found = await discover(gap_target)
+    except Exception:
+        logger.warning(
+            "AD-1194: the discover rung failed for %r; recording it as not run and "
+            "filing without candidates", gap_target, exc_info=True,
+        )
+        return None
+    if not isinstance(found, list):
+        return None
+    return [str(candidate) for candidate in found][:TRIAGE_MAX_CANDIDATES]
+
+
 async def _route_grant(
     req: CapabilityRequest,
     *,
@@ -377,12 +781,16 @@ async def _route_grant(
         )
         return req
 
-    await store.decide(
+    decided = await store.decide(
         req.id,
         approve=True,
         reason="grant fast-path: non-destructive + in-dept peer precedent + trust>=floor",
         decided_by="capability_triage",
     )
+    if decided is None:
+        # AD-1194 A-2: a ladder filing is decided on its committed row, and another
+        # store decided this one first; that decision stands and no grant is issued.
+        return await store.get(req.id) or req
     return await fulfil_grant(
         req.id,
         store=store,
@@ -471,6 +879,25 @@ async def fulfil_grant(
     return await store.mark_fulfilled(request_id)
 
 
+def design_of(gap_target: str, rationale: str, design_context: Any) -> dict[str, Any]:
+    """AD-1194 A-2: what a build request designs, from its recorded context.
+
+    The one derivation: :func:`fulfil_build` designs with it, and the attended NL
+    surfaces show and design the same, as ``handle_unhandled_intent`` keywords.
+    """
+    ctx = design_context if isinstance(design_context, dict) else {}
+    params = ctx.get("parameters")
+    return {
+        "intent_name": gap_target,
+        "intent_description": str(
+            ctx.get("intent_description") or rationale or f"Capability gap: {gap_target}"
+        ),
+        "parameters": params if isinstance(params, dict) else {},
+        "requires_consensus": build_requires_consensus(ctx),
+        "execution_context": str(ctx.get("execution_context") or ""),
+    }
+
+
 async def fulfil_build(
     request_id: str,
     *,
@@ -479,6 +906,7 @@ async def fulfil_build(
     rationale: str,
     self_mod_pipeline: Any,
     design_context: dict[str, Any] | None = None,
+    pre_approved: bool = False,
 ) -> CapabilityRequest | None:
     """Run the self-mod pipeline for an approved ``build`` request, then fulfil it.
 
@@ -495,6 +923,10 @@ async def fulfil_build(
     destructive the gap was. That contradicts the standing rule that destructive
     intents must set ``requires_consensus=True``. Absent context reproduces the
     old call exactly, so a caller that has none is unchanged.
+
+    AD-1194: ``pre_approved`` says the Captain already approved this design on
+    the capability-request route, so the pipeline's own prompt is not asked
+    again. It is forwarded only when true, so every other call is unchanged.
     """
     if self_mod_pipeline is None:
         logger.warning(
@@ -504,15 +936,14 @@ async def fulfil_build(
             request_id[:12], gap_target,
         )
         return None
-    ctx = design_context if isinstance(design_context, dict) else {}
-    params = ctx.get("parameters")
+    design = design_of(gap_target, rationale, design_context)
     record = await self_mod_pipeline.handle_unhandled_intent(
-        gap_target,
-        str(ctx.get("intent_description") or rationale
-            or f"Capability gap: {gap_target}"),
-        params if isinstance(params, dict) else {},
-        requires_consensus=bool(ctx.get("requires_consensus", False)),
-        execution_context=str(ctx.get("execution_context") or ""),
+        design["intent_name"],
+        design["intent_description"],
+        design["parameters"],
+        requires_consensus=design["requires_consensus"],
+        execution_context=design["execution_context"],
+        **({"pre_approved": True} if pre_approved else {}),
     )
     status = getattr(record, "status", None) if record is not None else None
     if status != "active":

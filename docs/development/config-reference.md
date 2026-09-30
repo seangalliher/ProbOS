@@ -2708,6 +2708,7 @@ AD-854: Acquire-vs-build triage grant fast-path gating.
 |---|---|---|---|---|
 | `grant_fast_path_enabled` | `bool` | `False` | — |  |
 | `grant_trust_floor` | `float` | `0.8` | — |  |
+| `unified_ladder_enabled` | `bool` | `False` | — |  |
 
 ## `agentic_dispatch`
 

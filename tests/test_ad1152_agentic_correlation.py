@@ -254,6 +254,8 @@ async def _off_observation(
     assert config["federation"]["a2a"].pop("exposed_intents") == []
     # AD-1156's inert plan/execute-mode flag was added after this capture too.
     assert config["dm_agentic"].pop("agent_modes_enabled") is False
+    # AD-1194's inert unified-ladder flag was added after this capture too.
+    assert config["capability_triage"].pop("unified_ladder_enabled") is False
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
