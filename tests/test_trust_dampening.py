@@ -232,6 +232,20 @@ class TestHardTrustFloor:
         tn.reset_floor_hit_count()
         assert tn._floor_hit_count == 0
 
+    def test_absorbs_failure_at_agrees_with_record_outcome_at_and_above_the_floor(self):
+        """BF-879: the absorption rule the vitals monitor asks about is the one applied."""
+        tn = _make_network(hard_trust_floor=0.25)
+        tn.create_with_prior("at", 1.0, 3.0)
+        tn.create_with_prior("above", 1.0, 2.0)
+        assert tn.absorbs_failure_at(tn.get_score("at")) is True
+        assert tn.absorbs_failure_at(tn.get_score("above")) is False
+        assert tn.absorbs_failure_at(0.0) is True
+        assert _make_network().absorbs_failure_at(0.25) is False
+        tn.record_outcome("at", success=False)
+        tn.record_outcome("above", success=False)
+        assert [tn.get_events_for_agent(a)[-1].floor_hit for a in ("at", "above")] == [True, False]
+        assert (tn.get_record("at").alpha, tn.get_record("at").beta) == (1.0, 3.0)
+
 
 # ===========================================================================
 # Network circuit breaker

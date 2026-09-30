@@ -55,6 +55,49 @@ class VitalsMonitorAgent(HeartbeatAgent):
         self._health_floor: float = kwargs.get("health_floor", 0.6)
         self._max_trust_outliers: int = kwargs.get("max_trust_outliers", 3)
 
+    def _trust_outliers(self, trust_network: Any, scores: dict[str, float]) -> list[str]:
+        """Agents below the trust floor on evidence, not on their starting prior (BF-879).
+
+        A record with no observations still holds the prior it was created
+        with. Self-designed agents, federation peers, paired devices and
+        unverified ARD entities all start at the probationary Beta(1, 3) =
+        0.25, below the default floor. Counting them reported every unproven
+        newcomer as degraded, and once more than ``max_trust_outliers`` of
+        them existed, broadcast a ``medical_alert`` on every heartbeat until
+        they had earned trust above the floor.
+
+        ``TrustRecord.observations`` measures evidence against Beta(2, 2), so
+        it reads exactly zero at every shipped prior below the floor: each
+        sums to 4. A record does not store its prior, so for other priors the
+        test is approximate. A configured probationary prior summing to more
+        than 4 is counted from birth, and one summing to less is counted only
+        once its evidence exceeds the shortfall. The same holds for the
+        network's own prior. Only the amount of evidence is tested, not its
+        direction: an agent lifted by a success too small to clear the floor
+        is still reported.
+
+        The evidence test only works where a failure can reach the record.
+        At or below the hard trust floor (AD-558) the network absorbs
+        failures and leaves the record unchanged, so there an agent is
+        counted on its score alone, as before BF-879. The default hard floor,
+        0.05, is below every shipped prior. A hard floor raised to a prior's
+        mean counts every agent born at that prior, and the alert repeats on
+        every heartbeat.
+        """
+        outliers: list[str] = []
+        for agent_id, score in scores.items():
+            if score >= self._trust_floor:
+                continue
+            record = trust_network.get_record(agent_id)
+            if (
+                record is not None
+                and record.observations <= 0
+                and not trust_network.absorbs_failure_at(score)
+            ):
+                continue
+            outliers.append(agent_id)
+        return outliers
+
     async def collect_metrics(self) -> dict[str, Any]:
         """Collect system-wide health metrics."""
         metrics: dict[str, Any] = {
@@ -85,9 +128,7 @@ class VitalsMonitorAgent(HeartbeatAgent):
             score_vals = list(scores.values())
             metrics["trust_mean"] = sum(score_vals) / len(score_vals)
             metrics["trust_min"] = min(score_vals)
-            metrics["trust_outliers"] = [
-                aid for aid, s in scores.items() if s < self._trust_floor
-            ]
+            metrics["trust_outliers"] = self._trust_outliers(rt.trust_network, scores)
         else:
             metrics["trust_mean"] = 1.0
             metrics["trust_min"] = 1.0
@@ -196,9 +237,7 @@ class VitalsMonitorAgent(HeartbeatAgent):
             score_vals = list(scores.values())
             metrics["trust_mean"] = sum(score_vals) / len(score_vals)
             metrics["trust_min"] = min(score_vals)
-            metrics["trust_outliers"] = [
-                aid for aid, s in scores.items() if s < self._trust_floor
-            ]
+            metrics["trust_outliers"] = self._trust_outliers(rt.trust_network, scores)
         else:
             metrics["trust_mean"] = 1.0
             metrics["trust_min"] = 1.0

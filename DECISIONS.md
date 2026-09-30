@@ -9959,3 +9959,70 @@ Five variants were measured against the ordered search over 36 payload shapes at
 - The driver's "BLOCKED on" and "parked blocked" INFO lines now print after the BF-878 resume or cancel lines.
 
 **Ownership and rollback:** A Git revert needs no migration: no column, config key or event type is added. The three keyword-only arguments default to `None`, and a move without `expected` or `metadata_patch` does not read the metadata, so every existing caller's behaviour is kept, including on a row whose metadata is not a JSON object. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
+
+### BF-879 OPEN -- Self-designed agents, and every later member of their pool, start at the probationary trust prior
+
+**Date:** 2026-09-30. **Existing issue:** #1440. **Decision:** Execute the Architect's build contract, option B1: make the prior a property of the designed pool. BF-879 was already allocated to #1440, so no number is allocated.
+
+**The defect.** A self-designed agent is meant to start at the probationary prior Beta(1, 3) = 0.25. Every one started at the crew prior Beta(2, 2) = 0.50. Two defects were stacked:
+- **The setter crashed.** `SelfModManager.set_probationary_trust` called `.id` on `pool.healthy_agents`, which returns ids. The `AttributeError` was swallowed at the pipeline's step 6, which logged "trust boundary risk".
+- **Repairing the setter alone still did nothing.** By the time it runs, the agent already has a record: AD-640's onboarding writes the crew prior during wiring (`tiered_trust.initialize_trust`). The issue named `runtime.py:2563`, but that is the red-team spawn. `TrustNetwork.create_with_prior` is a no-op on an existing record.
+
+Measured at `cf13eb4f` through the real pipeline and registration: (2.0, 2.0) as shipped, and (2.0, 2.0) with the setter repaired, against the configured (1.0, 3.0). The one test that wired the setter stubbed it.
+
+**What changes.**
+- `ProbOSRuntime.create_pool` gains a keyword-only `trust_prior`. When it is set, every member the pool spawns, whether born, added in a surge or refilled after a loss, is given that prior before AD-640's onboarding runs. A record that already exists is never replaced.
+- `SelfModManager.create_designed_pool` passes the probationary prior.
+- The setter now iterates ids, and still keeps an existing record.
+- Pools created without a prior behave as before.
+- The vitals monitor (AD-290) counts an agent as a trust outlier only when its low score rests on evidence. An agent whose record still holds the prior it was born with is unproven, not degraded (A-2 below).
+
+**Why this option.**
+- Seeding the designed pool's ids before spawn covers only its first members. Measured: a member added later still started at (2.0, 2.0). That path becomes more likely, because an agent at 0.25 sits below AD-290's medical trust floor (0.3).
+- A probationary tier in AD-640 would add a trust-tier value to an event payload that HXI consumers read.
+- Overwriting or reseeding a record would clobber earned and restored trust.
+
+**Measured evidence:**
+- The new file `tests/test_bf879_designed_agents_start_probationary.py` has 6 cases, run with a real runtime, `MockLLMClient`, the real pipeline, and no stubbed setter.
+  - Four of the 6 fail at `cf13eb4f`, each on the defect it names. They cover the designed agent itself, later members, a restart, and the setter.
+  - All 6 pass after the change, as do the two parity cases: a pool with no prior, and an agent that already has a record.
+- The consumer family passed 3,057 on the first candidate: self-mod, tiered trust, the other `create_with_prior` callers, pool, onboarding, and every `create_pool` caller.
+- Six targeted mutants are killed.
+
+**Honest limits and intended effects:**
+- Designed agents that already exist keep their persisted records. A prior cannot be told apart from evidence, so no migration is attempted.
+- A new designed agent now scores 0.25, which is the design:
+  - It sits below AD-290's medical trust floor (0.3). The vitals monitor does not count it until it has evidence (A-2).
+  - It sits below AD-529's firewall threshold (0.45) and below the fast-path grant floor (0.8).
+  - It is ranked Ensign rather than Lieutenant for rank-gated skills. Its own designed intent is unaffected.
+- **Found on the way and recorded on #1419:** warm-boot restore of designed agents is inert. It runs before `self_mod_manager` exists and logs the agent as restored, yet no pool is created, and after the restart the agent's trust record is gone.
+
+**A-2: the vitals monitor no longer treats an unproven agent as a degraded one.** Review of the first candidate found a High. The record above had written the alert down as an intended effect; it is not one.
+- **What was measured.** `VitalsMonitorAgent._check_thresholds` broadcasts a `medical_alert` on every heartbeat (5 s) while more than `max_trust_outliers` (3) agents score below `trust_floor` (0.3). Nothing deduplicates it. The Diagnostician, a CognitiveAgent with the AD-272 decision cache off by default, handles each one. With the candidate, four designed agents that had not yet succeeded cost one diagnosis every 5 s, about 720 an hour. `TrustNetwork.decay_all` has no production caller, so nothing lifted them. The same list fed the Captain's bridge advisory, "Multiple Trust Outliers Detected".
+- **What did not follow from it.** The recommended treatment is only displayed (`experience/panels.py`); nothing dispatches it to the Surgeon. The cost was spend and noise, not an automated recycle.
+- **Not new, but made reachable.** Federation peers (AD-480g), paired devices and unverified ARD entities already started at Beta(1, 3) in the same trust network. BF-879 made the state reachable on a default ship.
+- **The change.** `VitalsMonitorAgent._trust_outliers` replaces the two copies of the outlier list, in `collect_metrics` and `scan_now`. It skips an agent whose `TrustRecord.observations` is at most 0, the no-evidence test AD-702 already uses. Every shipped prior below the floor sums to 4, the base against which `observations` is measured, so the test is exact for them while the hard trust floor is below them (A-3). The docstring states where a configured prior makes it approximate. `trust_mean` and `trust_min` are unchanged, so an unproven agent is still visible.
+- **Options considered (Architect, ranked).** (1) The evidence test, chosen: it fixes both the storm and the advisory at their shared source. (2) The same, plus deduplicating repeated alerts: out of scope, because every vitals metric repeats each tick, which is pre-existing and recorded on #1419. (3) Deduplication alone: it leaves the advisory and the wrong meaning of outlier. (4) Crew-only scores: rejected, because it would hide failing designed agents.
+- **Evidence.** 7 new cases in the BF-879 file. They include a real booted ship with four new designed agents over two heartbeats, and the real bridge path through `DreamAdapter.on_post_dream` into `BridgeAlertService`. Six fail on the pre-A-2 monitor. The seventh guards against overcorrection: failing designed agents are still reported at the default hard trust floor (A-3 covers a raised one). The pinned `test_medical_team.py` fake gains `get_record`, modelling its low scores as degraded agents with evidence. Its assertions are unchanged. Five targeted mutants are killed, and 935 + 235 consumer cases pass.
+- **Not claimed.** Genuine outliers still alert on every heartbeat, as before. An agent lifted only by a success too small to clear the floor is still counted. The informational "low trust" flag in introspection still lists unproven agents.
+
+**A-3: at or below the hard trust floor, the monitor counts on score alone.** Round-2 review found a High in A-2. Its evidence test assumed that a failure always reaches the record.
+- **The gap.** At or below AD-558's hard trust floor, `TrustNetwork` absorbs a failure and leaves alpha and beta unchanged. `TrustDampeningConfig.hard_trust_floor` has no bound. The reviewer raised it to 0.25, then gave each of four designed agents one failure. All four records stayed at (1, 3) with `observations` 0, and A-2 reported no outlier and sent no alert.
+- **The change.** `TrustNetwork.absorbs_failure_at(score)` states the absorption rule once. Both `_plan_outcome` and the vitals monitor call it. The monitor skips an unproven agent only where a failure could still show in its record. At the default hard floor, 0.05, nothing changes, because it is below every shipped prior.
+- **Options (Architect, ranked).**
+  1. Ask the network, chosen: one rule, so the two cannot drift, and no config copy.
+  2. Wire `hard_trust_floor` into the monitor as a kwarg: a second copy that hides agents wherever it is not passed.
+  3. Option 2 plus a startup warning: it needs every prior source and detects nothing new.
+  4. Evidence from the trust event log: hidden again after 500 later events, or after a restart.
+  5. Reject the configuration: configs that load today would stop loading.
+- **Evidence.**
+  - 3 new BF-879 cases: a failed agent at a raised floor is reported; the report does not rest on the trust event log; and a booted ship with the floor raised reports its absorbed designed agents.
+  - 1 new case in `test_trust_dampening.py`: the method agrees with `record_outcome`.
+  - 3 of the 3 BF-879 cases fail on the A-2 monitor, and 5 targeted mutants are killed.
+  - The trust consumer family (116 files) passes 6,062. Its one failure is the recorded ward-room ordering flake (#1419 F-10), which passes 12 of 12 isolated reruns; its one skip needs a Windows symlink privilege. The vitals and medical family passes 248.
+- **Limits (measured).**
+  - A raised hard floor counts every agent born at or below it, and the alert repeats every heartbeat, as before BF-879.
+  - A zero-weight failure leaves the record and the score unchanged, and the agent is not counted.
+  - Under a network prior summing to less than 4, such as Beta(1, 1), an agent at 0.267 after two failures is not counted until a third.
+
+**Ownership and rollback:** A Git revert needs no migration. No column, config key or event is added. `TrustNetwork` gains one read-only method, and `trust_prior` defaults to `None`, which keeps every other pool's behaviour. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.

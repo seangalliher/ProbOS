@@ -328,21 +328,36 @@ class SelfModManager:
         self._unregister_agent_type_fn(agent_type)
 
     async def create_designed_pool(self, agent_type: str, pool_name: str, size: int = 1) -> None:
-        """Create a pool for a self-designed agent type."""
+        """Create a pool for a self-designed agent type, its members born probationary.
+
+        BF-879: the pool carries the probationary prior, so a member it spawns later
+        on a refill or a surge starts there too. Written after the pool is created it
+        would be too late: AD-640 has by then given each member a record at the crew
+        prior, and ``create_with_prior`` never overwrites one.
+        """
         ids = generate_pool_ids(agent_type, pool_name, size)
         await self._create_pool_fn(
             pool_name, agent_type, target_size=size,
             agent_ids=ids, llm_client=self._llm_client, runtime=self._runtime,
+            trust_prior=self._probationary_prior(),
         )
 
     async def set_probationary_trust(self, pool_name: str) -> None:
-        """Set probationary trust for all agents in a designed pool."""
+        """Give each member of a designed pool that has no trust record the probationary prior.
+
+        BF-879: ``healthy_agents`` holds agent ids. A member that already has a record
+        keeps it, because ``create_with_prior`` never overwrites one.
+        """
         pool = self._pools.get(pool_name)
         if not pool:
             return
-        for agent in pool.healthy_agents:
-            self._trust_network.create_with_prior(
-                agent.id,
-                alpha=self._config.self_mod.probationary_alpha,
-                beta=self._config.self_mod.probationary_beta,
-            )
+        alpha, beta = self._probationary_prior()
+        for agent_id in pool.healthy_agents:
+            self._trust_network.create_with_prior(agent_id, alpha=alpha, beta=beta)
+
+    def _probationary_prior(self) -> tuple[float, float]:
+        """The configured Beta(alpha, beta) prior a self-designed agent starts at."""
+        return (
+            self._config.self_mod.probationary_alpha,
+            self._config.self_mod.probationary_beta,
+        )

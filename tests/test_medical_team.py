@@ -17,6 +17,7 @@ from probos.agents.medical.pharmacist import PharmacistAgent
 from probos.agents.medical.pathologist import PathologistAgent
 from probos.cognitive.codebase_index import CodebaseIndex
 from probos.cognitive.codebase_skill import create_codebase_skill
+from probos.consensus.trust import TrustRecord
 from probos.types import AgentState, IntentMessage, IntentResult
 
 
@@ -50,6 +51,17 @@ class _MockTrustNetwork:
 
     def all_scores(self) -> dict[str, float]:
         return dict(self._scores)
+
+    def get_record(self, agent_id: str) -> TrustRecord | None:
+        # BF-879: the vitals monitor reports only agents whose low score rests
+        # on evidence. These scores model degraded agents: 6 observations each.
+        score = self._scores.get(agent_id)
+        if score is None:
+            return None
+        return TrustRecord(agent_id=agent_id, alpha=10 * score, beta=10 * (1 - score))
+
+    def absorbs_failure_at(self, score: float) -> bool:
+        return score <= 0.05  # the default AD-558 hard trust floor
 
     def summary(self) -> list[dict]:
         return [{"agent_id": k, "score": v} for k, v in self._scores.items()]
