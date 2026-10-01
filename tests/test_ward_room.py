@@ -11,6 +11,8 @@ from probos.ward_room import (
     WardRoomService, WardRoomChannel, WardRoomThread,
     WardRoomPost, WardRoomEndorsement, WardRoomCredibility,
 )
+from probos.ward_room import messages as ward_room_messages
+from probos.ward_room import threads as ward_room_threads
 
 
 @pytest_asyncio.fixture
@@ -28,6 +30,25 @@ async def ward_room(tmp_path):
     svc._captured_events = events  # For test assertions
     yield svc
     await svc.stop()
+
+
+class _ManualClock:
+    """Stand-in for the ``time`` module as ``ward_room.threads`` sees it.
+
+    ``create_thread`` stamps ``created_at`` and ``last_activity`` from
+    ``time.time()``, so an ordering assertion needs instants the test controls
+    rather than whatever the OS clock hands out. Every other ``time`` attribute
+    passes through to the real module.
+    """
+
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(time, name)
 
 
 # ---------------------------------------------------------------------------
@@ -295,21 +316,46 @@ class TestMembership:
         counts = await ward_room.get_unread_counts("a1")
         assert counts.get(ch.id, 0) == 0
 
-    async def test_unread_counts(self, ward_room):
-        """Subscribe, create threads, verify unread count. Update last_seen, verify 0."""
+    @staticmethod
+    async def _last_seen(ward_room, agent_id: str, channel_id: str) -> float:
+        """The stored ``last_seen``; the service has no public reader for it."""
+        async with ward_room._db.execute(
+            "SELECT last_seen FROM memberships WHERE agent_id = ? AND channel_id = ?",
+            (agent_id, channel_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row[0]
+
+    async def test_unread_counts(self, ward_room, monkeypatch):
+        """Subscribe, create threads, verify unread count. Update last_seen, verify 0.
+
+        The instants are controlled, not read from the OS clock: a thread is
+        unread when ``last_activity > last_seen``, so one created in the same
+        clock tick as ``update_last_seen`` is not, and a sleep shorter than the
+        tick does not prevent that.
+        """
+        first_instant = 1_800_000_000.0
+        clock = _ManualClock(first_instant)
+        monkeypatch.setattr(ward_room_messages, "time", clock)  # subscribe, update_last_seen
+        monkeypatch.setattr(ward_room_threads, "time", clock)  # create_thread
+
         channels = await ward_room.list_channels()
         ch = channels[0]
         await ward_room.subscribe("a1", ch.id)
         # Mark as seen now
         await ward_room.update_last_seen("a1", ch.id)
-        # Create a thread (will have last_activity > last_seen)
-        import time
-        time.sleep(0.01)
-        await ward_room.create_thread(ch.id, "a2", "New thread", "body")
+        seen_first = await self._last_seen(ward_room, "a1", ch.id)
+        # Create a thread, strictly after last_seen
+        clock.now += 60.0
+        thread = await ward_room.create_thread(ch.id, "a2", "New thread", "body")
+        # Premise: the controlled instants are what the compared rows carry.
+        assert (seen_first, thread.last_activity) == (first_instant, first_instant + 60.0)
         counts = await ward_room.get_unread_counts("a1")
-        assert counts.get(ch.id, 0) >= 1
-        # Mark as read
+        assert counts.get(ch.id, 0) == 1
+        # Mark as read, strictly after the thread
+        clock.now += 60.0
         await ward_room.update_last_seen("a1", ch.id)
+        assert await self._last_seen(ward_room, "a1", ch.id) == first_instant + 120.0
         counts = await ward_room.get_unread_counts("a1")
         assert counts.get(ch.id, 0) == 0
 
@@ -1630,10 +1676,20 @@ class TestEndorsementActivation:
         assert result[1].id == thread_c.id
         assert result[2].id == thread_b.id
 
-    # ------ Test 11: browse_threads sort="recent" preserves default order ------
+    # ------ Test 11: browse_threads sort="recent" orders by last_activity ------
     @pytest.mark.asyncio
-    async def test_browse_threads_sort_recent(self, ward_room):
-        """sort='recent' keeps default last_activity order."""
+    async def test_browse_threads_sort_recent(self, ward_room, monkeypatch):
+        """sort='recent' returns the most recently active thread first, whatever its net_score.
+
+        The instants are controlled, not read from the OS clock: two back-to-back
+        ``create_thread`` calls can land in one clock tick and share a
+        ``last_activity``, and ``ORDER BY last_activity DESC`` leaves the order
+        of tied rows unspecified.
+        """
+        first_instant = 1_800_000_000.0
+        clock = _ManualClock(first_instant)
+        monkeypatch.setattr(ward_room_threads, "time", clock)
+
         channels = await ward_room.list_channels()
         ch = channels[0]
 
@@ -1641,9 +1697,14 @@ class TestEndorsementActivation:
             channel_id=ch.id, author_id="troi", title="First", body="A",
             author_callsign="Troi",
         )
+        clock.now += 60.0
         thread_b = await ward_room.create_thread(
             channel_id=ch.id, author_id="riker", title="Second", body="B",
             author_callsign="Riker",
+        )
+        # Premise: the controlled instants are what the rows being ordered carry.
+        assert (thread_a.last_activity, thread_b.last_activity) == (
+            first_instant, first_instant + 60.0,
         )
 
         # Endorse thread A heavily — doesn't affect sort=recent
@@ -1656,8 +1717,7 @@ class TestEndorsementActivation:
         )
 
         # Most recent (thread B) should be first with sort=recent
-        assert len(result) >= 2
-        assert result[0].id == thread_b.id
+        assert [t.id for t in result] == [thread_b.id, thread_a.id]
 
     # ------ Test 12: get_post returns post details with author_id ------
     @pytest.mark.asyncio
