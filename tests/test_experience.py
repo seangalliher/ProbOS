@@ -531,7 +531,7 @@ class TestEventCallback:
 class TestReflectCapability:
 
     @pytest.mark.asyncio
-    async def test_render_dag_result_with_reflection(self, runtime, console):
+    async def test_render_dag_result_with_reflection(self, console):
         """render_dag_result shows reflection text when present."""
         from probos.experience.panels import render_dag_result
         from probos.types import TaskDAG, TaskNode
@@ -552,7 +552,7 @@ class TestReflectCapability:
         assert "largest file" in output
 
     @pytest.mark.asyncio
-    async def test_render_dag_result_without_reflection(self, runtime, console):
+    async def test_render_dag_result_without_reflection(self, console):
         """render_dag_result works normally when no reflection is present."""
         from probos.experience.panels import render_dag_result
         from probos.types import TaskDAG, TaskNode

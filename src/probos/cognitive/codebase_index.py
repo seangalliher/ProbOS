@@ -103,7 +103,21 @@ class CodebaseIndex:
         py_files = sorted(src.rglob("*.py"))
         for py in py_files:
             rel = str(py.relative_to(src)).replace("\\", "/")
-            meta = self._analyze_file(py, rel)
+            try:
+                meta = self._analyze_file(py, rel)
+            except OSError as exc:
+                # #1419 G-1b: a file the walk listed can vanish or become
+                # unreadable before it is read -- an editor's atomic save, a
+                # checkout, a file created and removed by another process. One
+                # such file must not abort the whole index, and with it the
+                # runtime boot that builds it.
+                logger.warning(
+                    "CodebaseIndex: %s could not be read during the scan (%s); "
+                    "leaving it out of the index and continuing",
+                    rel,
+                    exc,
+                )
+                continue
             self._file_tree[rel] = meta
 
         # Scan project documents (AD-299)
@@ -598,6 +612,17 @@ class CodebaseIndex:
                     "Config schema: %s failed to parse; its models are missing "
                     "from codebase self-knowledge. Remaining files still scanned.",
                     config_path.name,
+                )
+                continue
+            except OSError as exc:
+                # #1419 G-1b: listed, then unreadable before it was read -- the
+                # same race build() tolerates for every other source file.
+                logger.warning(
+                    "Config schema: %s could not be read (%s); its models are "
+                    "missing from codebase self-knowledge. Remaining files still "
+                    "scanned.",
+                    config_path.name,
+                    exc,
                 )
                 continue
 
