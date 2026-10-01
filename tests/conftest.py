@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, AsyncMock
 from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
+from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe
+from tests.fixtures.timeout_timer_release import pytest_runtest_protocol  # noqa: F401  (pytest hook)
 
 # AD-721i: defense-in-depth pytest collection ignore for the bundled in-Blender
 # render script. ``pyproject.toml`` already pins ``testpaths = ["tests"]`` so
@@ -29,6 +31,11 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 # developer venv can, and every runtime boot would then discover and run it. Tests of the
 # extension seam opt in explicitly (monkeypatch.delenv); PROBOS_DISABLE_OVERLAY=0 opts a run in.
 os.environ.setdefault("PROBOS_DISABLE_OVERLAY", "1")
+
+# Windows: closing an asyncio loop must not pin an ephemeral TCP port in TIME_WAIT. Module level, so it is in
+# force before any test builds a loop; it touches asyncio's self-pipe only, never a test's own socketpair --
+# see tests/fixtures/abortive_self_pipe.py (WinError 10055 at test setup).
+install_abortive_self_pipe()
 
 
 @pytest.fixture(scope="session", autouse=True)
