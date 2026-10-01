@@ -5,8 +5,8 @@
 ``--collection`` defaults to the sibling ``<stem>.collection.json`` that the
 canonical wrapper writes next to ``<stem>.xml``, and ``--output`` to
 ``tests/fixtures/file_durations.json``. The scheduler in
-``tests/fixtures/duration_scheduler.py`` reads that file to start the longest
-test files first.
+``tests/fixtures/duration_scheduler.py`` reads that file to start each worker on
+one of the heaviest test files.
 
 A testcase is credited to the collected file whose dotted module name (the path
 with ``/`` replaced by ``.`` and the trailing ``.py`` dropped, which is how

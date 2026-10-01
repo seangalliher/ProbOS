@@ -243,35 +243,148 @@ def test_stock_xdist_sends_the_file_with_most_tests_first_and_the_subclass_the_h
     assert ordered.scopes_sent()[0] == "tests/test_heavy.py"
 
 
-def test_the_subclass_empties_the_queue_in_non_increasing_weight() -> None:
-    durations = _durations(_RECORDED)
-    run = _two_workers(_SPEC, durations)
+def _first_units(run: _Run) -> list[str]:
+    """The file each worker that got work started on, in worker order."""
+    return [_scope(run.collection[node.sent[0][0]]) for node in run.nodes if node.sent]
 
-    run.run_to_completion()
 
-    order = run.scopes_sent()
-    weights = [durations.estimate(scope, _SPEC[scope]) for scope in order]
-    assert order == [
-        "tests/test_heavy.py",
-        "tests/test_mid.py",
-        "tests/test_many.py",
-        "tests/test_unit.py",
+# Files of 6, 4, 3 and 2 tests recorded at 1, 8, 5 and 90 s, on two workers: stock xdist, the
+# heaviest-K-then-stock rule and full longest-first (LPT) each send a different sequence.
+_POLICY_SPEC = {
+    "tests/test_six.py": 6,
+    "tests/test_four.py": 4,
+    "tests/test_three.py": 3,
+    "tests/test_two.py": 2,
+}
+_POLICY_RECORDED = {
+    "tests/test_six.py": 1.0,
+    "tests/test_four.py": 8.0,
+    "tests/test_three.py": 5.0,
+    "tests/test_two.py": 90.0,
+}
+
+
+def test_the_subclass_starts_each_worker_on_a_heavy_file_and_keeps_xdists_order_for_the_rest() -> None:
+    durations = _durations(_POLICY_RECORDED)
+    stock = _stock_workers(_POLICY_SPEC)
+    ordered = _two_workers(_POLICY_SPEC, durations)
+    stock.run_to_completion()
+    ordered.run_to_completion()
+
+    full_lpt = sorted(_POLICY_SPEC, key=lambda scope: -durations.estimate(scope, _POLICY_SPEC[scope]))
+    assert stock.scopes_sent() == [
+        "tests/test_six.py", "tests/test_four.py", "tests/test_three.py", "tests/test_two.py",
     ]
-    assert weights == sorted(weights, reverse=True)
+    assert ordered.scopes_sent() == [
+        "tests/test_two.py", "tests/test_four.py", "tests/test_six.py", "tests/test_three.py",
+    ], "the 90 s and 8 s files first, then xdist's order: the 6-test file, then the 3-test file"
+    assert full_lpt == [
+        "tests/test_two.py", "tests/test_four.py", "tests/test_three.py", "tests/test_six.py",
+    ]
+    assert len({tuple(stock.scopes_sent()), tuple(ordered.scopes_sent()), tuple(full_lpt)}) == 3
+    assert _first_units(ordered) == ["tests/test_two.py", "tests/test_four.py"], "gw0 on 90 s, gw1 on 8 s"
 
 
-def test_an_unseen_file_weighs_its_test_count_times_the_suite_mean() -> None:
-    spec = {"tests/test_new.py": 10, "tests/test_a.py": 2, "tests/test_b.py": 1}
-    durations = _durations({"tests/test_a.py": 4.0, "tests/test_b.py": 6.0}, mean=0.5)
+@pytest.mark.parametrize(
+    ("mean", "expected"),
+    [
+        pytest.param(0.5, ["tests/test_new.py", "tests/test_long.py", "tests/test_small.py"], id="mean-0.5-promotes"),
+        pytest.param(0.2, ["tests/test_long.py", "tests/test_new.py", "tests/test_small.py"], id="mean-0.2-keeps-the-slot"),
+    ],
+)
+def test_an_unseen_file_competes_at_its_test_count_times_the_suite_mean(
+    mean: float, expected: list[str]
+) -> None:
+    spec = {"tests/test_long.py": 6, "tests/test_new.py": 4, "tests/test_small.py": 2}
+    durations = _durations({"tests/test_long.py": 1.5, "tests/test_small.py": 0.1}, mean=mean)
     stock = _stock_workers(spec, workers=1)
     ordered = _two_workers(spec, durations, workers=1)
 
     stock.run_to_completion()
     ordered.run_to_completion()
 
-    assert stock.scopes_sent() == ["tests/test_new.py", "tests/test_a.py", "tests/test_b.py"]
-    # b: 6.0 s recorded; new: 10 tests x 0.5 s = 5.0 s estimated; a: 4.0 s recorded.
-    assert ordered.scopes_sent() == ["tests/test_b.py", "tests/test_new.py", "tests/test_a.py"]
+    assert stock.scopes_sent() == ["tests/test_long.py", "tests/test_new.py", "tests/test_small.py"]
+    # The unseen 4-test file weighs 4 x mean: 2.0 s beats the 1.5 s file at 0.5, 0.8 s does not at 0.2.
+    assert ordered.scopes_sent() == expected
+
+
+def test_a_tie_at_the_k_boundary_promotes_the_file_xdist_would_have_started_first() -> None:
+    spec = {"tests/test_z_first.py": 5, "tests/test_y_second.py": 4, "tests/test_c.py": 3, "tests/test_heavy.py": 2}
+    recorded = {
+        "tests/test_z_first.py": 5.0,
+        "tests/test_y_second.py": 5.0,
+        "tests/test_c.py": 0.1,
+        "tests/test_heavy.py": 90.0,
+    }
+    run = _two_workers(spec, _durations(recorded))
+
+    run.run_to_completion()
+
+    # z and y both weigh 5.0 and only one fits beside the heavy file: z, which xdist queues first
+    # (not y, which sorts first by name).
+    assert _first_units(run) == ["tests/test_heavy.py", "tests/test_z_first.py"]
+    assert run.scopes_sent() == [
+        "tests/test_heavy.py", "tests/test_z_first.py", "tests/test_y_second.py", "tests/test_c.py",
+    ]
+
+
+_FOLLOW_SPEC = {f"tests/test_f{number}.py": 10 - number for number in range(1, 7)}
+_FOLLOW_RECORDED = {
+    "tests/test_f1.py": 1.0,
+    "tests/test_f2.py": 2.0,
+    "tests/test_f3.py": 3.0,
+    "tests/test_f4.py": 40.0,
+    "tests/test_f5.py": 30.0,
+    "tests/test_f6.py": 20.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("workers", "expected"),
+    [
+        pytest.param(1, ["f4", "f1", "f2", "f3", "f5", "f6"], id="one-worker-promotes-one-file"),
+        pytest.param(2, ["f4", "f5", "f1", "f2", "f3", "f6"], id="two-workers-promote-two-files"),
+        pytest.param(3, ["f4", "f5", "f6", "f1", "f2", "f3"], id="three-workers-promote-three-files"),
+    ],
+)
+def test_k_follows_the_worker_count(workers: int, expected: list[str]) -> None:
+    expected_scopes = [f"tests/test_{name}.py" for name in expected]
+    run = _two_workers(_FOLLOW_SPEC, _durations(_FOLLOW_RECORDED), workers=workers)
+
+    assert _first_units(run) == expected_scopes[:workers], "one promoted file per worker, heaviest on gw0"
+    run.run_to_completion()
+    assert run.scopes_sent() == expected_scopes
+    assert run.config.lines == [
+        f"{REPORT_PREFIX} heaviest {workers} of 6 files first (one per worker), the rest in xdist's "
+        f"count order (6 recorded, 0 estimated) from {DURATIONS_NAME}"
+    ]
+
+
+def test_with_fewer_files_than_workers_the_order_is_fully_by_weight() -> None:
+    spec = {"tests/test_a.py": 5, "tests/test_b.py": 4, "tests/test_c.py": 3}
+    recorded = {"tests/test_a.py": 1.0, "tests/test_b.py": 2.0, "tests/test_c.py": 3.0}
+    stock = _stock_workers(spec, workers=4)
+    ordered = _two_workers(spec, _durations(recorded), workers=4)
+
+    assert _first_units(stock) == ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
+    assert _first_units(ordered) == ["tests/test_c.py", "tests/test_b.py", "tests/test_a.py"]
+    assert [len(node.sent) for node in ordered.nodes] == [1, 1, 1, 0], "xdist shut the surplus worker down first"
+    assert ordered.config.lines == [
+        f"{REPORT_PREFIX} heaviest 3 of 3 files first (one per worker), the rest in xdist's "
+        f"count order (3 recorded, 0 estimated) from {DURATIONS_NAME}"
+    ]
+
+
+def test_a_promoted_file_of_two_tests_is_topped_up_with_the_head_of_the_stock_rest() -> None:
+    spec = {"tests/test_big.py": 6, "tests/test_mid.py": 5, "tests/test_small.py": 3, "tests/test_few.py": 2}
+    recorded = {"tests/test_big.py": 0.2, "tests/test_mid.py": 8.0, "tests/test_small.py": 5.0, "tests/test_few.py": 90.0}
+    run = _two_workers(spec, _durations(recorded))
+
+    batches = [[_scope(run.collection[batch[0]]) for batch in node.sent] for node in run.nodes]
+
+    # few (2 tests) is promoted to gw0 and is already down to two pending tests, so the #277 top-up
+    # hands gw0 the head of xdist's own order for the rest (big, 6 tests), not the next by weight (small).
+    assert batches == [["tests/test_few.py", "tests/test_big.py"], ["tests/test_mid.py"]]
 
 
 def test_a_recorded_zero_second_file_is_not_mistaken_for_an_unseen_one() -> None:
@@ -362,18 +475,19 @@ def test_the_order_is_applied_once_a_crash_requeue_lands_at_the_tail_and_later_s
     }
     run = _two_workers(spec, _durations(recorded))
     crashed, survivor = run.nodes
+    # b and c are the two heaviest, one per worker; a and d keep xdist's order behind them.
     assert run.scopes_sent() == ["tests/test_b.py", "tests/test_c.py"]
-    assert list(run.scheduler.workqueue) == ["tests/test_d.py", "tests/test_a.py"]
+    assert list(run.scheduler.workqueue) == ["tests/test_a.py", "tests/test_d.py"]
 
     assert run.scheduler.remove_node(crashed) is not None
-    tail = ["tests/test_d.py", "tests/test_a.py", "tests/test_b.py"]
+    tail = ["tests/test_a.py", "tests/test_d.py", "tests/test_b.py"]
     assert list(run.scheduler.workqueue) == tail, "the heaviest unit is requeued at the tail"
     run.scheduler.schedule()
     assert list(run.scheduler.workqueue) == tail, "a later schedule() must not re-sort"
 
     for index in survivor.sent[0][:3]:
         run.scheduler.mark_test_complete(survivor, index)
-    assert _scope(run.collection[survivor.sent[-1][0]]) == "tests/test_d.py"
+    assert _scope(run.collection[survivor.sent[-1][0]]) == "tests/test_a.py", "the survivor pulls the head"
     assert len(run.config.lines) == 1
 
 
@@ -453,7 +567,8 @@ def test_the_applied_line_counts_recorded_and_estimated_files() -> None:
     run = _two_workers(_SPEC, _durations(_RECORDED))
 
     assert run.config.lines == [
-        f"{REPORT_PREFIX} LPT order over 4 files (4 recorded, 0 estimated) from {DURATIONS_NAME}"
+        f"{REPORT_PREFIX} heaviest 2 of 4 files first (one per worker), the rest in xdist's "
+        f"count order (4 recorded, 0 estimated) from {DURATIONS_NAME}"
     ]
 
 
@@ -468,8 +583,9 @@ def test_the_applied_line_names_at_most_five_estimated_files(unseen: int, ellips
 
     named = ", ".join(f"tests/test_new_{number}.py" for number in range(unseen, unseen - 5, -1))
     assert run.config.lines == [
-        f"{REPORT_PREFIX} LPT order over {unseen + 1} files (1 recorded, {unseen} estimated at "
-        f"0.5000 s/test; {named}{ellipsis}) from {DURATIONS_NAME}"
+        f"{REPORT_PREFIX} heaviest 2 of {unseen + 1} files first (one per worker), the rest in "
+        f"xdist's count order (1 recorded, {unseen} estimated at 0.5000 s/test; {named}{ellipsis}) "
+        f"from {DURATIONS_NAME}"
     ]
 
 
@@ -480,7 +596,7 @@ def test_a_first_distribution_that_never_assigns_prints_order_not_applied() -> N
     assert run.events == []
     [line] = run.config.lines
     assert line.startswith(f"{REPORT_PREFIX} order NOT applied")
-    assert "LPT order" not in line
+    assert "heaviest" not in line
 
 
 def test_an_empty_collection_prints_nothing() -> None:
@@ -510,7 +626,8 @@ def test_without_a_terminal_reporter_the_applied_line_is_a_logging_warning(
 
     messages = [record.getMessage() for record in caplog.records if record.name == ds.__name__]
     assert messages == [
-        f"{REPORT_PREFIX} LPT order over 4 files (4 recorded, 0 estimated) from {DURATIONS_NAME}"
+        f"{REPORT_PREFIX} heaviest 2 of 4 files first (one per worker), the rest in xdist's "
+        f"count order (4 recorded, 0 estimated) from {DURATIONS_NAME}"
     ]
 
 
@@ -1275,7 +1392,7 @@ def _run_real_xdist(tmp_path: Path, *, generator: Path | None = None) -> _RealRu
     return _RealRun(process, nodes, ran, dispatched, junit)
 
 
-def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_file_first(
+def test_a_completed_real_xdist_run_executes_every_node_exactly_once_heaviest_files_first_rest_in_count_order(
     tmp_path: Path,
 ) -> None:
     """Real ``pytest -n 2 --dist=loadfile`` with the hook active (only the durations path is
@@ -1287,12 +1404,17 @@ def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_fil
     assert real.process.returncode == 0, real.output
     assert re.search(rf"\b{len(real.nodes)} passed\b", real.process.stdout), real.output
     assert real.report_lines() == [
-        f"{REPORT_PREFIX} LPT order over 4 files (3 recorded, 1 estimated at 0.5000 s/test; "
-        f"test_unseen.py) from {DURATIONS_NAME}"
+        "AD-1270f duration scheduler: heaviest 2 of 4 files first (one per worker), the rest in "
+        "xdist's count order (3 recorded, 1 estimated at 0.5000 s/test; test_unseen.py) "
+        "from tests/fixtures/file_durations.json"
     ]
     assert json.loads(real.dispatched.read_text(encoding="utf-8")) == [
-        "test_heavy.py", "test_mid.py", "test_unseen.py", "test_many.py",
-    ], "longest recorded file first; xdist's own count order would start with test_many.py"
+        "test_heavy.py", "test_mid.py", "test_many.py", "test_unseen.py",
+    ], (
+        "the two heaviest files (90 s, 5 s) start the two workers; the rest follow in xdist's "
+        "count order, many (7 tests) before unseen (3 tests), though unseen weighs more (1.5 s) "
+        "than many (1.0 s) and full longest-first would send it first"
+    )
     assert real.executed() == sorted(real.nodes), "every collected node ran exactly once"
     reported = [
         (element.get("classname"), element.get("name"))

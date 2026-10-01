@@ -209,16 +209,22 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_xdist_make_scheduler(config, log):
-    """AD-1270f P1.4: start the longest test files first under ``--dist=loadfile``.
+    """AD-1270f P1.4: start each worker on one of the heaviest test files under ``--dist=loadfile``.
 
     The hook is ``firstresult`` and xdist's own implementation is ``trylast``, so a
     scheduler returned here wins and ``None`` leaves xdist's stock one in charge.
     ``optionalhook`` keeps this file loadable where xdist is not installed, and the
-    import is lazy so runs that never distribute never load the scheduler. Order
-    only: for a run that completes, every node still runs exactly once, as with
-    stock xdist; with ``--maxfail``/``-x`` the set of nodes run before the stop
-    depends on the order, as with any order change. The details are in
-    ``tests/fixtures/duration_scheduler.py``.
+    import is lazy so runs that never distribute never load the scheduler.
+
+    The rule: with K workers, the K heaviest files (recorded seconds, else test count
+    times the suite mean) go first and every other file keeps xdist's count order. Not
+    longest-first for every file: full longest-first was measured no faster than stock
+    xdist (one tree, canonical flags: stock 668.1 s and 689.9 s, full LPT 721.4 s and
+    689.1 s, this rule 618.0 s). Residual: a heavy file with few tests ranked below K
+    keeps its late stock slot. Order only: for a run that completes, every node still
+    runs exactly once, as with stock xdist; with ``--maxfail``/``-x`` the set of nodes
+    run before the stop depends on the order, as with any order change. The details are
+    in ``tests/fixtures/duration_scheduler.py``.
     """
     from tests.fixtures.duration_scheduler import make_duration_scheduler
 

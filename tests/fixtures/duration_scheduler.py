@@ -1,19 +1,47 @@
-"""AD-1270f P1.4: start the longest test files first under ``--dist=loadfile``.
+"""AD-1270f P1.4: start each worker on one of the heaviest test files under ``--dist=loadfile``.
 
 xdist queues one work unit per test file, most *tests* first. A file with few,
 slow tests (``test_experience.py`` had 109 tests and took 872 s) therefore starts
-late and sets the wall-clock of the whole run while the other workers idle. This
-module orders the same units by their *recorded seconds* instead, longest first
-(LPT), using ``tests/fixtures/file_durations.json`` as written by
-``scripts/gen_file_durations.py``.
+late and can set the wall-clock of the whole run while the other workers idle.
+
+The rule. Only the first distribution changes. Each file is weighted by its recorded
+seconds in ``tests/fixtures/file_durations.json`` (written by
+``scripts/gen_file_durations.py``) or, for a file the data has not seen, by its test
+count times the suite's mean seconds per test. K is the number of workers xdist
+keeps once it has shut down any surplus ones, each about to get exactly one first
+unit. The K heaviest files -- a stable sort, so ties keep xdist's order, at the K
+boundary too -- go first, heaviest first, and every other file keeps xdist's own
+count order. So each worker starts on one of the heaviest files, the first worker
+on the heaviest, and the low-watermark top-up and every later pull take the rest in
+stock order. With no more files than workers this is the full descending order.
+
+Why K files and not every file longest-first. Full longest-first (LPT) balances best
+but was measured to be no faster than stock xdist. One tree (9d305d61), five
+back-to-back runs with the canonical pytest flags (not canonical gates): stock
+668.1 s and 689.9 s; full LPT 721.4 s (its first run) and 689.1 s; this rule 618.0 s
+(one run). Busiest worker over mean busy time: stock 1.181 and 1.173, LPT 1.035 and
+1.027, this rule 1.027. Total busy time: stock 8,228 and 8,550 s, LPT 9,321 and
+9,701 s (about 13% more), this rule 8,660 s. LPT's extra time sits in the 1,331
+files that took under 5 s in the first stock run, which it runs last (649 and 720 s
+under stock, 1,343 and 1,460 s under LPT, 736 s under this rule) -- consistent with
+per-process accumulation in workers that already ran the heavy runtime-boot files,
+the probable cause, not isolated -- and in subprocess-heavy files it starts together
+at t=0 (``test_run_test_gate.py``: 318 and 350 s under stock, 400 and 422 s under
+LPT). Moving only K files out of xdist's order is what keeps the rest as stock runs
+it. These are measurements on one tree, one run of this rule: not a guarantee for
+another tree, and a sign that balance alone is the wrong measure of an order.
+
+Residual. A heavy file with few tests that ranks below K keeps its late stock slot:
+in the measured run ``test_selfmod_e2e.py`` (12 tests, 88 s recorded) ran last on
+one worker, from 461 s to 558 s. Promoting such files too is unmeasured and left out.
 
 What changes, and what cannot. ``DurationOrderedLoadFileScheduling`` is xdist's
 own ``LoadFileScheduling``. Its ``schedule()`` only arms a one-shot flag. The
-first ``_assign_work_unit()`` after xdist has built the whole work queue re-sorts
-that queue in place -- same scope keys, same work-unit dicts, a stable sort so
-ties keep xdist's order -- and then calls xdist. Comparing the collections,
-shutting down surplus workers, the first unit per worker, the low-watermark
-top-ups, crash handling and every later ``schedule()`` stay xdist code.
+first ``_assign_work_unit()`` after xdist has built the whole work queue re-orders
+that queue in place -- same scope keys, same work-unit dicts -- and then calls
+xdist. Comparing the collections, shutting down surplus workers, handing each
+worker its first unit, the low-watermark top-ups, crash handling and every later
+``schedule()`` stay xdist code.
 
 The guarantee is order only, and it is stated as narrowly as it holds. For a run
 that completes, every collected node runs exactly once, as with stock xdist, and
@@ -244,7 +272,15 @@ def _report(config: pytest.Config, message: str) -> None:
 
 
 class DurationOrderedLoadFileScheduling(LoadFileScheduling):
-    """``LoadFileScheduling`` whose first distribution hands out the longest files first."""
+    """``LoadFileScheduling`` whose first distribution starts each worker on a heavy file.
+
+    The K heaviest files (K = the workers xdist kept; recorded seconds, else test count
+    times the suite mean; ties in xdist's order) go first, heaviest first, and every other
+    file keeps xdist's count order. Not longest-first for every file: full longest-first
+    was measured no faster than stock xdist (one tree, canonical flags: stock 668.1 s and
+    689.9 s, full LPT 721.4 s and 689.1 s, this rule 618.0 s). Residual: a heavy file with
+    few tests ranked below K keeps its late stock slot. See the module docstring.
+    """
 
     def __init__(
         self,
@@ -280,15 +316,21 @@ class DurationOrderedLoadFileScheduling(LoadFileScheduling):
         super()._assign_work_unit(node)
 
     def _apply_duration_order(self) -> None:
+        """Move the K heaviest files to the front and leave the rest in xdist's order."""
         queue = self.workqueue
         estimates = {
             scope: self._durations.estimate(scope, len(unit)) for scope, unit in queue.items()
         }
-        ordered = sorted(queue, key=lambda scope: -estimates[scope])
-        for scope in ordered:
+        workers = len(self.nodes)
+        by_weight = sorted(queue, key=lambda scope: -estimates[scope])
+        promoted = by_weight[:workers]
+        chosen = set(promoted)
+        rest = [scope for scope in queue if scope not in chosen]
+        final = promoted + rest
+        for scope in final:
             queue.move_to_end(scope)
-        unseen = [scope for scope in ordered if not self._durations.is_recorded(scope)]
-        detail = f"{len(ordered) - len(unseen)} recorded, {len(unseen)} estimated"
+        unseen = [scope for scope in final if not self._durations.is_recorded(scope)]
+        detail = f"{len(final) - len(unseen)} recorded, {len(unseen)} estimated"
         if unseen:
             names = ", ".join(unseen[:_MAX_REPORTED_NAMES])
             if len(unseen) > _MAX_REPORTED_NAMES:
@@ -296,7 +338,8 @@ class DurationOrderedLoadFileScheduling(LoadFileScheduling):
             detail += f" at {self._durations.mean_test_seconds:.4f} s/test; {names}"
         _report(
             self.config,
-            f"LPT order over {len(ordered)} files ({detail}) from {DURATIONS_NAME}",
+            f"heaviest {len(promoted)} of {len(final)} files first (one per worker), "
+            f"the rest in xdist's count order ({detail}) from {DURATIONS_NAME}",
         )
 
 
