@@ -1,6 +1,6 @@
 # Test Suite Optimization Plan
 
-**Status:** Execution started 2026-09-30. Batch A ships P0.2's #1419 G-1/G-1b, P0.3, P0.4, V2 and one V1 fix. G-2 is deferred (see P0.2). Everything else below is still a proposal. Evidence snapshot taken 2026-09-30.
+**Status:** Execution started 2026-09-30. Batch A (#1443) ships P0.2's #1419 G-1/G-1b, P0.3, P0.4, V2 and one V1 fix. Batch B ships P0.1 (the test_experience.py split) and the rest of V1. G-2 is deferred (see P0.2). Everything else below is still a proposal. Evidence snapshot taken 2026-09-30.
 **Parent program:** AD-1270f "Fail-Broad Impact Selection and Balanced Full Gate" in the [Platform Maturity Program](platform-maturity-program.md) ([#1324](https://github.com/seangalliher/ProbOS/issues/1324)). The flake root causes in P0.2 are already recorded as G-1/G-2 in [#1419](https://github.com/seangalliher/ProbOS/issues/1419).
 **AD allocation:** None. Every item maps to an existing owner. If a production change is picked up and needs its own AD, allocate one with `scripts/ad_ceiling.py` at that point.
 **Scope:** The Python suite under `tests/`, run by the canonical gate ([run_test_gate.py](../../scripts/run_test_gate.py)) and by CI. The UI Vitest job is out of scope: it takes 4.9 minutes in CI and isn't the bottleneck.
