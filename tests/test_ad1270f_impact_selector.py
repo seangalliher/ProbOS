@@ -1367,19 +1367,133 @@ def test_gate_balance_with_an_invalid_worker_file_is_an_error(
     assert "gw1.json" in captured.err and "gate balance:" not in captured.out
 
 
-def test_gate_balance_warns_when_the_evidence_belongs_to_another_run(
-    selector: ModuleType, tmp_path: Path
+def test_gate_balance_errors_when_a_workers_file_is_missing(
+    selector: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    collection, junit, _ = _write_balance_run(tmp_path, timing_seconds=None)
-    payload = json.loads(collection.read_text(encoding="utf-8"))
-    payload["worker_execution_counts"]["gw0"] = 4
-    collection.write_text(json.dumps(payload), encoding="utf-8")
+    """The reviewer's case: gw0.json alone would name gw0 the critical path of a
+    two-worker gate whose gw1 ran something else."""
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=None)
+    control = selector.gate_balance(collection, junit)
+    assert control["errors"] == [] and control["busy"] is not None, "premise: complete"
+    (workers_dir / "gw1.json").unlink()
+    assert [path.name for path in workers_dir.glob("gw*.json")] == ["gw0.json"]
+
+    report = selector.gate_balance(collection, junit)
+    code = selector.main(["--gate-balance", str(collection), str(junit)])
+    captured = capsys.readouterr()
+
+    assert report["busy"] is None
+    assert any("missing ['gw1']" in problem for problem in report["errors"]), report["errors"]
+    assert code == 1
+    assert "missing ['gw1']" in captured.err and "gate balance:" not in captured.out
+
+
+@pytest.mark.parametrize(
+    ("case", "needle"),
+    [
+        ("extra-worker-file", "unexpected ['gw2']"),
+        ("non-zero-exit", "exit status 1"),
+        ("count-differs", "records 4"),
+        ("node-executed-twice", "more than one worker"),
+        ("node-never-executed", "1 missing"),
+        ("evidence-from-another-run", "differ from the collection"),
+    ],
+    ids=[
+        "extra-worker-file",
+        "non-zero-exit",
+        "count-differs",
+        "node-executed-twice",
+        "node-never-executed",
+        "evidence-from-another-run",
+    ],
+)
+def test_gate_balance_errors_when_the_evidence_does_not_match_the_collection(
+    selector: ModuleType, tmp_path: Path, case: str, needle: str
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=None)
+    control = selector.gate_balance(collection, junit)
+    assert control["errors"] == [] and control["busy"] is not None, "premise: a control"
+
+    def worker(name: str) -> dict[str, object]:
+        return json.loads((workers_dir / f"{name}.json").read_text(encoding="utf-8"))
+
+    def save(name: str, payload: dict[str, object]) -> None:
+        (workers_dir / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    if case == "extra-worker-file":
+        extra = worker("gw1")
+        extra["worker_id"] = "gw2"
+        extra["executed_nodeids"] = []
+        save("gw2", extra)
+    elif case == "non-zero-exit":
+        payload = worker("gw1")
+        payload["exitstatus"] = 1
+        save("gw1", payload)
+    elif case == "count-differs":
+        recorded = json.loads(collection.read_text(encoding="utf-8"))
+        recorded["worker_execution_counts"]["gw0"] = 4
+        collection.write_text(json.dumps(recorded), encoding="utf-8")
+    elif case == "node-executed-twice":
+        payload = worker("gw1")
+        payload["executed_nodeids"] = payload["executed_nodeids"] + [worker("gw0")["executed_nodeids"][0]]
+        save("gw1", payload)
+        recorded = json.loads(collection.read_text(encoding="utf-8"))
+        recorded["worker_execution_counts"]["gw1"] = 4
+        collection.write_text(json.dumps(recorded), encoding="utf-8")
+    elif case == "node-never-executed":
+        payload = worker("gw1")
+        payload["executed_nodeids"] = payload["executed_nodeids"][:-1]
+        save("gw1", payload)
+        recorded = json.loads(collection.read_text(encoding="utf-8"))
+        recorded["worker_execution_counts"]["gw1"] = 2
+        collection.write_text(json.dumps(recorded), encoding="utf-8")
+    else:
+        # The directory belongs to another run: the same files, but the collection
+        # artifact records a different set of nodes.
+        recorded = json.loads(collection.read_text(encoding="utf-8"))
+        recorded["collected_nodeids"] = ["tests/test_other.py::test_one"]
+        collection.write_text(json.dumps(recorded), encoding="utf-8")
 
     report = selector.gate_balance(collection, junit)
 
-    assert report["busy"] is not None
-    assert len(report["warnings"]) == 1
-    assert "gw0" in report["warnings"][0] and "another run" in report["warnings"][0]
+    assert report["busy"] is None
+    assert any(needle in problem for problem in report["errors"]), report["errors"]
+
+
+@pytest.mark.parametrize(
+    ("case", "needle"),
+    [
+        ("reversed-stamps", "precedes"),
+        ("unexecuted-file", "did not execute"),
+        ("nan-duration", "bad duration"),
+    ],
+    ids=["reversed-stamps", "unexecuted-file", "nan-duration"],
+)
+def test_gate_balance_does_not_trust_a_timing_block_that_contradicts_the_worker(
+    selector: ModuleType, tmp_path: Path, case: str, needle: str
+) -> None:
+    exact = {"tests/test_a.py": 30.0, "tests/test_b.py": 12.0, "tests/test_c.py": 8.0}
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=exact)
+    control = selector.gate_balance(collection, junit)
+    assert control["warnings"] == [] and control["busy"]["source"] == "timestamps", "premise"
+    path = workers_dir / "gw0.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    block = payload["timing"]
+    if case == "reversed-stamps":
+        block["events"]["session_start"] = _balance_stamp(500.0)
+    elif case == "unexecuted-file":
+        block["files"]["tests/test_ghost.py"] = dict(block["files"]["tests/test_a.py"])
+    else:
+        block["files"]["tests/test_a.py"]["duration_seconds"] = float("nan")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = selector.gate_balance(collection, junit)
+
+    assert report["errors"] == []
+    assert len(report["warnings"]) == 1 and needle in report["warnings"][0]
+    assert report["busy"]["workers"][0]["busy_source"] == "junit"
+    assert report["busy"]["workers"][0]["busy_seconds"] == 30.0
+    assert report["busy"]["source"] == "mixed"
 
 
 def test_gate_balance_honours_an_explicit_workers_dir(

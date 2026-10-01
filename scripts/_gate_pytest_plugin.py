@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 import uuid
@@ -37,6 +38,11 @@ _TIMING_FILES: dict[str, dict[str, Any]] = {}
 _TIMING_FAULTS = 0
 
 
+def _note_fault() -> None:
+    global _TIMING_FAULTS
+    _TIMING_FAULTS += 1
+
+
 def _guarded(record: Callable[..., None], *arguments: object) -> None:
     """Run one timing recorder so that it can never fail the session.
 
@@ -44,11 +50,10 @@ def _guarded(record: Callable[..., None], *arguments: object) -> None:
     the gate's exit code for what is only a measurement. A fault is counted
     instead, and the timing block is then withheld rather than written partial.
     """
-    global _TIMING_FAULTS
     try:
         record(*arguments)
     except Exception:
-        _TIMING_FAULTS += 1
+        _note_fault()
 
 
 def _file_of(nodeid: str) -> str:
@@ -83,7 +88,13 @@ def _note_test_end(nodeid: str) -> None:
 
 
 def _note_report_duration(report: pytest.TestReport) -> None:
-    _file_entry(_file_of(report.nodeid))["duration_seconds"] += float(report.duration)
+    duration = float(report.duration)
+    if not math.isfinite(duration) or duration < 0.0:
+        # A duration that is not a finite, non-negative time cannot be summed
+        # into a busy time; withhold the block instead of trusting it.
+        _note_fault()
+        return
+    _file_entry(_file_of(report.nodeid))["duration_seconds"] += duration
 
 
 def _timing_payload() -> dict[str, Any] | None:
@@ -115,6 +126,19 @@ def _timing_payload() -> dict[str, Any] | None:
 def _digest(values: tuple[str, ...]) -> str:
     payload = json.dumps(values, ensure_ascii=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _render(payload: dict[str, object]) -> str:
+    """The worker file as strict JSON.
+
+    A timing block that cannot be written strictly (NaN or an infinity) is left
+    out rather than written as a literal that other JSON readers reject.
+    """
+    try:
+        return json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    except (TypeError, ValueError):
+        payload.pop("timing", None)
+        return json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
 
 
 @pytest.hookimpl(wrapper=True, tryfirst=True)
@@ -192,10 +216,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     target = destination / f"{worker_id}.json"
     temporary = destination / f".{worker_id}.{uuid.uuid4().hex}.tmp"
     try:
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        temporary.write_text(_render(payload), encoding="utf-8")
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)

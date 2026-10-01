@@ -2819,7 +2819,12 @@ def test_wave_orchestrator_verify_fails_closed_on_invalid_plan_state(
 
 
 # ---------------------------------------------------------------------------
-# Report-only duration budget (P0.5 timing / P3.1): measurement, never authority
+# Report-only duration budget (P0.5 timing / P3.1): measurement, never authority.
+#
+# The budget lives in the manifest, so the receipt's manifest hash covers it like
+# any other manifest field. What it must not change is the outcome: no exit code,
+# not the manifest's ``error`` or ``summary``, not whether a receipt is issued,
+# and not the receipt's own keys, status semantics or validation.
 # ---------------------------------------------------------------------------
 
 _BUDGET_LINE = "DURATION BUDGET (report-only):"
@@ -2934,10 +2939,12 @@ def test_main_reports_a_duration_budget_without_changing_the_gate_outcome(
     worker = json.loads((worker_dirs[0] / "gw0.json").read_text(encoding="utf-8"))
     budget = manifest["duration_budget"]
 
-    # The gate outcome is exactly what it would be without a budget.
+    # The outcome fields are what they would be without a budget. The manifest (and
+    # so the manifest hash the receipt records) legitimately carries the budget.
     assert exit_code == 0
     assert manifest["wrapper_exit_code"] == 0 and manifest["error"] == ""
     assert str(manifest["summary"]).startswith("2 passed")
+    assert manifest["duration_budget_skipped"] is None
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert set(receipt) == _RECEIPT_KEYS
     assert receipt["status"] == _CLEAN_RECEIPT_STATUS
@@ -2983,17 +2990,22 @@ def test_main_reports_a_duration_budget_without_changing_the_gate_outcome(
         assert parsed.stdout.strip() == "1", parsed.stderr
 
 
-@pytest.mark.parametrize(
-    "failure", ["inner-raises", "not-strict-json", "helper-cannot-load"]
+_STUB_JUNIT = (
+    '<testsuites><testsuite tests="2" failures="0" errors="0" skipped="1" '
+    'time="0.02"><testcase name="one" /><testcase name="two"><skipped /></testcase>'
+    "</testsuite></testsuites>"
 )
-def test_main_duration_budget_failure_changes_nothing(
+
+
+def _stub_gate(
     gate: ModuleType,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    failure: str,
+    *,
+    pytest_exit: int = 0,
+    validation_fails: bool = False,
+    write_junit: bool = True,
 ) -> None:
-    repo = _make_gate_repo(tmp_path)
+    """A gate whose pytest phase and collection validation are stubs (no real run)."""
     monkeypatch.setattr(gate, "_running_pytest_processes", lambda: [])
     monkeypatch.setattr(
         gate,
@@ -3003,47 +3015,68 @@ def test_main_duration_budget_failure_changes_nothing(
 
     def full_command(**kwargs: object) -> list[str]:
         junit = Path(str(kwargs["junit_path"]))
+        write = (
+            f"Path({str(junit)!r}).write_text({_STUB_JUNIT!r}); " if write_junit else ""
+        )
         code = (
-            "from pathlib import Path; "
-            f"Path({str(junit)!r}).write_text("
-            "'<testsuites><testsuite tests=\"2\" failures=\"0\" errors=\"0\" "
-            "skipped=\"1\" time=\"0.02\"><testcase name=\"one\" />"
-            "<testcase name=\"two\"><skipped /></testcase>"
-            "</testsuite></testsuites>'); "
-            "print('1 passed, 1 skipped in 0.02s')"
+            "import sys; from pathlib import Path; "
+            f"{write}print('1 passed, 1 skipped in 0.02s'); sys.exit({pytest_exit})"
         )
         return [sys.executable, "-c", code]
 
     def collection_validation(
         _directory: Path, artifact: Path, **_kwargs: object
     ) -> object:
+        if validation_fails:
+            raise RuntimeError("pytest collection evidence is incomplete")
         artifact.write_text("{}\n", encoding="utf-8")
         return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture")
 
     monkeypatch.setattr(gate, "_build_full_command", full_command)
     monkeypatch.setattr(gate, "_validate_collection_manifests", collection_validation)
+
+
+class _Unprintable(Exception):
+    """An exception whose ``str()`` fails, as a broken ``__str__`` does."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("str() of this exception raises")
+
+
+class _UnprintableExit(Exception):
+    def __str__(self) -> str:
+        raise SystemExit(9)
+
+
+@pytest.mark.parametrize(
+    "failure", ["inner-raises", "system-exit", "unprintable-exception"]
+)
+def test_main_duration_budget_failure_leaves_every_outcome_field_unchanged(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    repo = _make_gate_repo(tmp_path)
+    _stub_gate(gate, monkeypatch)
     helper = gate._load_gate_timing()
+
+    def raising(error: BaseException) -> object:
+        def build(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise error
+
+        return build
+
     if failure == "inner-raises":
-
-        def explode(*_args: object, **_kwargs: object) -> dict[str, object]:
-            raise RuntimeError("budget exploded")
-
-        monkeypatch.setattr(helper, "build_duration_budget", explode)
+        monkeypatch.setattr(helper, "build_duration_budget", raising(RuntimeError("budget exploded")))
         expected_error = "RuntimeError: budget exploded"
-    elif failure == "not-strict-json":
-        monkeypatch.setattr(
-            helper,
-            "build_duration_budget",
-            lambda *_a, **_k: {"version": 1, "seconds": float("nan")},
-        )
-        expected_error = "ValueError: "
+    elif failure == "system-exit":
+        monkeypatch.setattr(helper, "build_duration_budget", raising(SystemExit(3)))
+        expected_error = "SystemExit: 3"
     else:
-
-        def cannot_load() -> ModuleType:
-            raise FileNotFoundError("gate timing helper vanished")
-
-        monkeypatch.setattr(gate, "_load_gate_timing", cannot_load)
-        expected_error = "FileNotFoundError: gate timing helper vanished"
+        monkeypatch.setattr(helper, "build_duration_budget", raising(_Unprintable()))
+        expected_error = "_Unprintable: <unprintable>"
     receipt_path = repo / "logs" / "gates" / "isolated.receipt.json"
 
     exit_code = gate.main(
@@ -3075,49 +3108,268 @@ def test_main_duration_budget_failure_changes_nothing(
     assert "unavailable" in line
 
 
-@pytest.mark.parametrize("mode", ["preflight-only", "no-junit-report"])
-def test_main_duration_budget_is_null_without_a_junit_report(
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "inner-raises",
+        "not-strict-json",
+        "helper-cannot-load",
+        "system-exit",
+        "generator-exit",
+        "unprintable-exception",
+        "unprintable-system-exit",
+    ],
+)
+def test_every_failure_shape_becomes_an_error_record_not_an_exception(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    helper = gate._load_gate_timing()
+    errors: dict[str, BaseException] = {
+        "inner-raises": RuntimeError("budget exploded"),
+        "system-exit": SystemExit(3),
+        "generator-exit": GeneratorExit(),
+        "unprintable-exception": _Unprintable(),
+        "unprintable-system-exit": _UnprintableExit(),
+    }
+    expected = {
+        "inner-raises": "RuntimeError: budget exploded",
+        "system-exit": "SystemExit: 3",
+        "generator-exit": "GeneratorExit: ",
+        "unprintable-exception": "_Unprintable: <unprintable>",
+        "unprintable-system-exit": "_UnprintableExit: <unprintable>",
+        "not-strict-json": "ValueError: ",
+        "helper-cannot-load": "FileNotFoundError: gate timing helper vanished",
+    }[failure]
+    if failure in errors:
+
+        def build(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise errors[failure]
+
+        monkeypatch.setattr(helper, "build_duration_budget", build)
+    elif failure == "not-strict-json":
+        monkeypatch.setattr(
+            helper,
+            "build_duration_budget",
+            lambda *_a, **_k: {"version": 1, "seconds": float("nan")},
+        )
+    else:
+
+        def cannot_load() -> ModuleType:
+            raise FileNotFoundError("gate timing helper vanished")
+
+        monkeypatch.setattr(gate, "_load_gate_timing", cannot_load)
+
+    budget = gate._compute_duration_budget(
+        Path("run.xml"), Path("workers"), expected_workers=1
+    )
+
+    assert set(budget) == {"version", "report_only", "error"}
+    assert budget["version"] == 1 and budget["report_only"] is True
+    assert str(budget["error"]).startswith(expected)
+
+
+def test_the_receipt_keeps_its_keys_and_status_and_its_manifest_hash_covers_the_budget(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget is in the manifest, so the receipt's manifest hash covers it like
+    any other manifest field. The receipt itself is the same either way."""
+    _stub_gate(gate, monkeypatch)
+    arguments = ["--label", "hash", "--workers", "16"]
+    (tmp_path / "with").mkdir()
+    (tmp_path / "without").mkdir()
+    with_budget = _make_gate_repo(tmp_path / "with")
+    without_budget = _make_gate_repo(tmp_path / "without")
+    receipts: dict[str, dict] = {}
+    manifests: dict[str, Path] = {}
+    for name, repo in (("with", with_budget), ("without", without_budget)):
+        if name == "without":
+            monkeypatch.setattr(
+                gate,
+                "_duration_budget_outcome",
+                lambda **_kwargs: (None, "left out for this comparison"),
+            )
+        receipt_path = repo / "logs" / "gates" / f"{name}.receipt.json"
+        code = gate.main(
+            ["--repo-root", str(repo), *arguments, "--receipt", str(receipt_path)]
+        )
+        assert code == 0, name
+        receipts[name] = json.loads(receipt_path.read_text(encoding="utf-8"))
+        manifests[name] = repo / receipts[name]["manifest"]["path"]
+    budgeted = json.loads(manifests["with"].read_text(encoding="utf-8"))
+    bare = json.loads(manifests["without"].read_text(encoding="utf-8"))
+    assert isinstance(budgeted["duration_budget"], dict), "premise: a budget was written"
+    assert bare["duration_budget"] is None, "premise: none was written"
+
+    # Same receipt shape, status semantics and evidence totals either way.
+    assert set(receipts["with"]) == set(receipts["without"]) == _RECEIPT_KEYS
+    assert receipts["with"]["status"] == receipts["without"]["status"] == _CLEAN_RECEIPT_STATUS
+    assert receipts["with"]["junit"]["totals"] == receipts["without"]["junit"]["totals"]
+    assert receipts["with"]["collection"]["totals"] == receipts["without"]["collection"]["totals"]
+
+    # The hash is the manifest's hash, budget included: change only the budget and
+    # the receipt no longer matches.
+    scratch = tmp_path / "scratch.json"
+
+    def manifest_hash(payload: dict) -> str:
+        scratch.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return gate._sha256_file(scratch)
+
+    recorded = receipts["with"]["manifest"]["sha256"]
+    assert gate._sha256_file(manifests["with"]) == recorded
+    assert manifest_hash(budgeted) == recorded, "premise: a faithful round trip"
+    budgeted["duration_budget"] = None
+    assert manifest_hash(budgeted) != recorded
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason", "exit_code"),
+    [
+        ("preflight-only", "preflight-only run", 0),
+        ("no-junit-report", "pytest produced no JUnit report", 5),
+        ("validation-failed", "collection validation did not succeed", 5),
+        ("pytest-red", "collection validation did not succeed", 1),
+    ],
+    ids=["preflight-only", "no-junit-report", "validation-failed", "pytest-red"],
+)
+def test_main_duration_budget_is_null_with_a_reason_unless_validation_succeeded(
     gate: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     mode: str,
+    reason: str,
+    exit_code: int,
 ) -> None:
     repo = _make_gate_repo(tmp_path)
-    monkeypatch.setattr(gate, "_running_pytest_processes", lambda: [])
-    monkeypatch.setattr(
+    _stub_gate(
         gate,
-        "_preflight_specs",
-        lambda _root: [gate.PhaseSpec("preflight", [sys.executable, "-c", "pass"])],
+        monkeypatch,
+        pytest_exit=1 if mode == "pytest-red" else 0,
+        validation_fails=mode == "validation-failed",
+        write_junit=mode != "no-junit-report",
     )
-    monkeypatch.setattr(
-        gate,
-        "_build_full_command",
-        lambda **_kwargs: [sys.executable, "-c", "print('1 passed in 0.01s')"],
-    )
+    helper = gate._load_gate_timing()
+    reads: list[str] = []
+
+    def reading(name: str) -> object:
+        def read(*_args: object, **_kwargs: object) -> object:
+            reads.append(name)
+            raise AssertionError(f"{name} ran although validation did not succeed")
+
+        return read
+
+    monkeypatch.setattr(helper, "build_duration_budget", reading("build_duration_budget"))
+    monkeypatch.setattr(helper, "load_worker_evidence", reading("load_worker_evidence"))
     arguments = ["--repo-root", str(repo), "--label", mode]
     if mode == "preflight-only":
         arguments.append("--preflight-only")
 
-    exit_code = gate.main(arguments)
+    code = gate.main(arguments)
     console = capsys.readouterr().out
     manifest = _only_manifest(repo)
 
-    assert manifest["junit_path"] is None, "premise: no JUnit report exists"
-    assert exit_code == (0 if mode == "preflight-only" else 5)
+    assert code == exit_code and manifest["wrapper_exit_code"] == exit_code
+    if mode == "no-junit-report":
+        assert manifest["junit_path"] is None, "premise: no JUnit report exists"
+    elif mode != "preflight-only":
+        assert manifest["junit_path"] is not None, "premise: a JUnit report exists"
     assert "duration_budget" in manifest and manifest["duration_budget"] is None
+    assert manifest["duration_budget_skipped"] == reason
+    assert reads == [], "the workers directory is not read without a validated collection"
     assert _budget_console_lines(console) == []
     assert "Gate exit=" in console
 
 
-def test_gate_result_gains_one_trailing_optional_field(gate: ModuleType) -> None:
+def test_main_stops_the_gate_clock_before_the_advisory_budget_runs(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    repo = _make_gate_repo(tmp_path)
+    _stub_gate(gate, monkeypatch)
+
+    def slow_budget(*_args: object, **_kwargs: object) -> dict[str, object]:
+        time.sleep(1.2)
+        return {"version": 1, "report_only": True, "error": None}
+
+    monkeypatch.setattr(gate, "_compute_duration_budget", slow_budget)
+    started = time.monotonic()
+
+    code = gate.main(["--repo-root", str(repo), "--label", "clock"])
+    wall = time.monotonic() - started
+    finished = datetime.now(timezone.utc)
+    manifest = _only_manifest(repo)
+
+    assert code == 0 and isinstance(manifest["duration_budget"], dict), "premise: the slow budget ran"
+    assert float(manifest["elapsed_seconds"]) + 1.0 <= wall
+    recorded = datetime.fromisoformat(str(manifest["finished_at"]))
+    assert finished - recorded >= timedelta(seconds=1.0)
+
+
+def test_safe_exception_text_never_raises_and_is_capped(gate: ModuleType) -> None:
+    assert gate._safe_exception_text(ValueError("bad value")) == "ValueError: bad value"
+    assert gate._safe_exception_text(SystemExit(3)) == "SystemExit: 3"
+    assert gate._safe_exception_text(_Unprintable()) == "_Unprintable: <unprintable>"
+    assert gate._safe_exception_text(_UnprintableExit()) == "_UnprintableExit: <unprintable>"
+    long = gate._safe_exception_text(ValueError("x" * 5000))
+    assert len(long) == gate._DURATION_BUDGET_ERROR_LIMIT and long.startswith("ValueError: xxx")
+
+
+def test_a_keyboard_interrupt_is_never_turned_into_an_error_record(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = gate._load_gate_timing()
+
+    class InterruptedWhilePrinting(Exception):
+        def __str__(self) -> str:
+            raise KeyboardInterrupt
+
+    def interrupted(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise KeyboardInterrupt
+
+    def interrupted_while_printing(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise InterruptedWhilePrinting()
+
+    for build in (interrupted, interrupted_while_printing):
+        monkeypatch.setattr(helper, "build_duration_budget", build)
+        with pytest.raises(KeyboardInterrupt):
+            gate._compute_duration_budget(Path("run.xml"), Path("workers"), expected_workers=1)
+
+
+def test_the_budget_is_built_from_exactly_the_validated_worker_files(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = gate._load_gate_timing()
+    seen: list[object] = []
+
+    def build(junit: Path, directory: Path, worker_ids: object = None) -> dict[str, object]:
+        seen.append(worker_ids)
+        return {"version": 1}
+
+    monkeypatch.setattr(helper, "build_duration_budget", build)
+
+    gate._compute_duration_budget(Path("run.xml"), Path("workers"), expected_workers=3)
+
+    assert seen == [["gw0", "gw1", "gw2"]]
+
+
+def test_gate_result_gains_two_trailing_optional_fields(gate: ModuleType) -> None:
     import dataclasses
 
     fields = dataclasses.fields(gate.GateResult)
 
-    assert all(field.default is dataclasses.MISSING for field in fields[:-1])
-    assert fields[-1].name == "duration_budget"
-    assert fields[-1].default is None
+    assert all(field.default is dataclasses.MISSING for field in fields[:-2])
+    assert [field.name for field in fields[-2:]] == [
+        "duration_budget",
+        "duration_budget_skipped",
+    ]
+    assert [field.default for field in fields[-2:]] == [None, None]
 
 
 def test_gate_timing_loader_registers_before_exec_and_is_reused(
@@ -3147,7 +3399,9 @@ def test_a_helper_that_fails_to_import_is_contained_and_not_left_registered(
     monkeypatch.setattr(gate, "__file__", str(tmp_path / "run_test_gate.py"))
     monkeypatch.setitem(sys.modules, "_gate_timing", None)
 
-    budget = gate._compute_duration_budget(tmp_path / "run.xml", tmp_path / "workers")
+    budget = gate._compute_duration_budget(
+        tmp_path / "run.xml", tmp_path / "workers", expected_workers=1
+    )
 
     assert budget == {
         "version": 1,

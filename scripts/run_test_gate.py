@@ -102,6 +102,7 @@ _RELEASE_TEST_FILE_EXCLUSIONS = frozenset(
         "tests/ablation/test_sigma_harness_structural.py",
     }
 )
+_DURATION_BUDGET_ERROR_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -178,7 +179,9 @@ class GateResult:
     junit_totals: JUnitTotals | None
     collection_path: str | None
     collection_totals: CollectionTotals | None
+    # Report-only: the budget, or why there is none (see _compute_duration_budget).
     duration_budget: dict[str, object] | None = None
+    duration_budget_skipped: str | None = None
 
 
 class GateLock:
@@ -1517,26 +1520,92 @@ def _load_gate_timing() -> ModuleType:
     return module
 
 
+def _safe_exception_text(exc: BaseException) -> str:
+    """``TypeName: text`` for any exception, however broken, capped in length.
+
+    ``str()`` of an exception runs arbitrary code, so it is guarded and a failure
+    reads ``<unprintable>``. Nothing here is swallowed except that: a
+    ``KeyboardInterrupt`` is an operator's Ctrl+C and always propagates.
+    """
+    try:
+        name = type(exc).__name__
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        name = "<unnamed>"
+    try:
+        text = str(exc)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        text = "<unprintable>"
+    return f"{name}: {text}"[:_DURATION_BUDGET_ERROR_LIMIT]
+
+
 def _compute_duration_budget(
-    junit_path: Path, collection_dir: Path
+    junit_path: Path, collection_dir: Path, *, expected_workers: int
 ) -> dict[str, object]:
     """Report-only duration budget; every failure becomes an error record.
 
-    It runs after all gate validation, so it must never change an exit code, the
-    manifest's ``error`` or ``summary``, or a receipt. The round trip keeps the
-    manifest strict JSON for PowerShell's ``ConvertFrom-Json``.
+    It runs only after collection validation succeeded, and reads only the
+    ``gw0..gw(N-1)`` files that validation just accepted. Anything it raises,
+    ``SystemExit`` and other ``BaseException`` subclasses included, becomes an
+    error record, so it cannot replace the gate's exit code or stop the receipt. A
+    ``KeyboardInterrupt`` is the one exception: it is re-raised, because an
+    operator's Ctrl+C is never advisory.
+
+    The work is linear in the validated evidence (one JUnit report and N small
+    JSON files). Measured at 0.14 to 0.29 s over seven runs on a synthetic gate of
+    37.9k tests and 16 workers, it can lengthen the wrapper's run by about that
+    much and cannot change its outcome. The manifest carries the budget, so the
+    receipt's manifest hash covers it like any other manifest field; the receipt's
+    own keys, status semantics and validation are unchanged. The round trip keeps
+    the manifest strict JSON for PowerShell's ``ConvertFrom-Json``.
     """
     try:
         budget = _load_gate_timing().build_duration_budget(
-            junit_path, collection_dir
+            junit_path,
+            collection_dir,
+            [f"gw{index}" for index in range(expected_workers)],
         )
         return json.loads(json.dumps(budget, allow_nan=False))
-    except Exception as exc:
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # advisory work must not replace the gate's outcome
         return {
             "version": 1,
             "report_only": True,
-            "error": f"{type(exc).__name__}: {_exception_text(exc)}"[:500],
+            "error": _safe_exception_text(exc),
         }
+
+
+def _duration_budget_outcome(
+    *,
+    preflight_only: bool,
+    junit_path: Path,
+    collection_dir: Path,
+    collection_totals: CollectionTotals | None,
+    expected_workers: int,
+) -> tuple[dict[str, object] | None, str | None]:
+    """``(budget, None)``, or ``(None, why there is no budget)``.
+
+    A budget is built only from evidence the wrapper has validated: a JUnit report
+    and a collection whose per-worker files passed ``_validate_collection_manifests``
+    (``collection_totals`` is set only when it returned). A gate that failed
+    earlier, or never ran pytest, has nothing validated to report on.
+    """
+    if preflight_only:
+        return None, "preflight-only run"
+    if not junit_path.exists():
+        return None, "pytest produced no JUnit report"
+    if collection_totals is None:
+        return None, "collection validation did not succeed"
+    return (
+        _compute_duration_budget(
+            junit_path, collection_dir, expected_workers=expected_workers
+        ),
+        None,
+    )
 
 
 def _duration_budget_line(budget: dict[str, Any]) -> str:
@@ -1944,13 +2013,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     error = f"Unable to capture final source tree snapshot: {exc}"
                 if wrapper_exit_code == 0:
                     wrapper_exit_code = 5
-        duration_budget = (
-            None
-            if args.preflight_only or not junit_path.exists()
-            else _compute_duration_budget(junit_path, collection_dir)
-        )
         finished_at = _utc_now()
         elapsed_seconds = round(time.monotonic() - started, 3)
+        # Advisory work comes after the gate's own clock stops, so it never counts
+        # towards the recorded gate time.
+        duration_budget, duration_budget_skipped = _duration_budget_outcome(
+            preflight_only=bool(args.preflight_only),
+            junit_path=junit_path,
+            collection_dir=collection_dir,
+            collection_totals=collection_totals,
+            expected_workers=args.workers,
+        )
         log_text = (
             log_path.read_text(encoding="utf-8", errors="replace")
             if log_path.exists()
@@ -1986,6 +2059,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             ),
             collection_totals=collection_totals,
             duration_budget=duration_budget,
+            duration_budget_skipped=duration_budget_skipped,
         )
         _write_manifest(manifest_path, result)
         if receipt_path is not None and wrapper_exit_code == 0:

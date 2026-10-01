@@ -1548,8 +1548,10 @@ def gate_balance(
 
     ``workers_dir`` defaults to the ``<stem>.collection-workers`` directory the
     gate keeps beside ``<stem>.collection.json``. A gate that kept none yields
-    ``busy: None`` and a warning; an unreadable or invalid ``gw*.json`` is an
-    error.
+    ``busy: None`` and a warning. An unreadable or invalid ``gw*.json``, or
+    evidence that does not match the collection artifact (other workers, a
+    non-zero exit status, a node executed twice or not at all, a different count),
+    is an error and also leaves ``busy`` empty.
     """
     workers_path = (
         workers_dir
@@ -1644,31 +1646,34 @@ def gate_balance(
             ),
         }
     )
-    _attach_busy(report, counts, junit, workers_path)
+    _attach_busy(report, counts, collected_strings, junit, workers_path)
     return report
 
 
 def _attach_busy(
     report: dict[str, Any],
     counts: dict[str, int],
+    collected: list[str],
     junit: _gate_timing.JUnitTimes,
     workers_path: Path,
 ) -> None:
-    """Fill ``busy`` from the per-worker evidence, and report what was wrong."""
+    """Fill ``busy`` from per-worker evidence that stands for the whole gate.
+
+    No per-worker directory is a warning, because gates that predate it exist.
+    Evidence that is there but unreadable, invalid, incomplete or at odds with the
+    collection artifact is an error and leaves ``busy`` empty: a critical path
+    drawn from some of the workers would name the wrong one.
+    """
     load = _gate_timing.load_worker_evidence(workers_path)
     report["warnings"].extend(load.warnings)
     report["errors"].extend(load.errors)
     if load.errors or not load.workers:
         return
+    problems = _gate_timing.evidence_problems(load.workers, counts, collected)
+    if problems:
+        report["errors"].extend(problems)
+        return
     report["busy"] = _gate_timing.compute_busy(load.workers, junit)
-    for worker in load.workers:
-        recorded = counts.get(worker.worker)
-        if recorded is not None and recorded != len(worker.executed_nodeids):
-            report["warnings"].append(
-                f"{worker.worker}: the per-worker evidence executed "
-                f"{len(worker.executed_nodeids)} nodes but the collection artifact "
-                f"records {recorded}; the directory may belong to another run"
-            )
 
 
 def _critical_path_line(busy: dict[str, Any] | None) -> str:

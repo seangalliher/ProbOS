@@ -147,13 +147,12 @@ def _isolated_env(workers_dir: Path) -> dict[str, str]:
     return env
 
 
-@pytest.fixture(scope="module")
-def real_run(tmp_path_factory: pytest.TempPathFactory) -> RealRun:
-    root = tmp_path_factory.mktemp("gate-timing-real")
+def _run_real_gate(root: Path, sources: dict[str, str]) -> RealRun:
+    """Run real pytest, two xdist workers, loadfile, through the gate plugin."""
     suite = root / "t"
     suite.mkdir()
-    (suite / "test_alpha.py").write_text(_ALPHA, encoding="utf-8")
-    (suite / "test_beta.py").write_text(_BETA, encoding="utf-8")
+    for name, source in sources.items():
+        (suite / name).write_text(source, encoding="utf-8")
     workers_dir = root / "workers"
     junit = root / "run.xml"
     wall_before = time.time()
@@ -192,6 +191,26 @@ def real_run(tmp_path_factory: pytest.TempPathFactory) -> RealRun:
         junit=junit,
         wall_before=wall_before,
         wall_after=time.time(),
+    )
+
+
+@pytest.fixture(scope="module")
+def real_run(tmp_path_factory: pytest.TempPathFactory) -> RealRun:
+    return _run_real_gate(
+        tmp_path_factory.mktemp("gate-timing-real"),
+        {"test_alpha.py": _ALPHA, "test_beta.py": _BETA},
+    )
+
+
+_SMALL = "import time\n\n\ndef test_a():\n    time.sleep(0.02)\n\n\ndef test_b():\n    time.sleep(0.02)\n"
+
+
+@pytest.fixture(scope="module")
+def real_run_many(tmp_path_factory: pytest.TempPathFactory) -> RealRun:
+    """Six files over two workers, so at least one worker owns several files."""
+    return _run_real_gate(
+        tmp_path_factory.mktemp("gate-timing-many"),
+        {f"test_m{index}.py": _SMALL for index in range(6)},
     )
 
 
@@ -278,10 +297,11 @@ def _nodes(file: str, count: int) -> list[str]:
 
 
 def _write_junit(path: Path, cases: list[tuple[str, str, str, float]]) -> Path:
+    """A JUnit report that keeps every digit (pytest itself writes three decimals)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
         f'<testcase classname="{classname}" name="{name}" file="{file}" '
-        f'time="{seconds:.3f}"/>'
+        f'time="{seconds!r}"/>'
         for file, classname, name, seconds in cases
     )
     path.write_text(
@@ -404,6 +424,27 @@ def test_real_run_attributes_each_file_to_exactly_one_worker(
         assert owned == len(payload["executed_nodeids"]), worker
 
 
+def test_real_run_with_several_files_per_worker_passes_the_strict_validation(
+    real_run_many: RealRun, timing: ModuleType
+) -> None:
+    payloads = _worker_payloads(real_run_many)
+    per_worker = {name: payload["timing"]["files"] for name, payload in payloads.items()}
+    assert sum(len(files) for files in per_worker.values()) == 6, "premise: all six files ran"
+    assert max(len(files) for files in per_worker.values()) >= 3, "premise: several files on one worker"
+
+    load = timing.load_worker_evidence(real_run_many.workers_dir)
+
+    assert load.errors == () and load.warnings == ()
+    assert all(worker.timing is not None for worker in load.workers)
+    busy = timing.compute_busy(load.workers, timing.read_junit_times(real_run_many.junit))
+    assert busy is not None and busy["source"] == "timestamps"
+    assert timing.evidence_problems(
+        load.workers,
+        {name: len(payload["executed_nodeids"]) for name, payload in payloads.items()},
+        sorted(node for payload in payloads.values() for node in payload["executed_nodeids"]),
+    ) == []
+
+
 def test_real_run_duration_is_the_sum_of_setup_call_and_teardown(
     real_run: RealRun,
 ) -> None:
@@ -482,6 +523,7 @@ def _drive_one_worker_session(
     *,
     first_nodeid: Any = "t/test_x.py::test_a",
     duration: Any = 0.25,
+    before_finish: Any = None,
 ) -> dict[str, Any]:
     monkeypatch.setenv("PROBOS_GATE_COLLECTION_DIR", str(destination))
     report = SimpleNamespace(
@@ -496,6 +538,8 @@ def _drive_one_worker_session(
     plugin.pytest_runtest_logstart(first_nodeid)
     plugin.pytest_runtest_logreport(report)
     plugin.pytest_runtest_logfinish("t/test_x.py::test_a")
+    if before_finish is not None:
+        before_finish(plugin)
     session = SimpleNamespace(
         config=SimpleNamespace(workerinput={"workerid": "gw0"})
     )
@@ -566,6 +610,64 @@ def test_a_timing_fault_withholds_the_block_and_never_raises(
     assert faulted["executed_nodeids"] == control["executed_nodeids"]
 
 
+def _strict(text: str) -> Any:
+    """Parse JSON the way a strict reader does: NaN and Infinity are errors."""
+
+    def refuse(constant: str) -> None:
+        raise ValueError(f"non-strict JSON constant {constant}")
+
+    return json.loads(text, parse_constant=refuse)
+
+
+@pytest.mark.parametrize(
+    "duration",
+    [float("nan"), float("inf"), -0.5],
+    ids=["nan", "infinite", "negative"],
+)
+def test_a_non_finite_or_negative_report_duration_withholds_the_timing_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, duration: float
+) -> None:
+    control = _drive_one_worker_session(
+        _fresh_plugin("gate_plugin_duration_control"), tmp_path / "control", monkeypatch
+    )
+    assert "timing" in control, "premise: a finite duration is recorded"
+
+    faulted = _drive_one_worker_session(
+        _fresh_plugin("gate_plugin_duration_fault"),
+        tmp_path / "fault",
+        monkeypatch,
+        duration=duration,
+    )
+
+    assert "timing" not in faulted
+    assert set(faulted) == set(control) - {"timing"}
+    assert faulted["executed_nodeids"] == control["executed_nodeids"]
+    _strict((tmp_path / "fault" / "gw0.json").read_text(encoding="utf-8"))
+
+
+def test_a_timing_block_that_cannot_be_written_strictly_is_left_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def poison(plugin: ModuleType) -> None:
+        plugin._TIMING_FILES["t/test_x.py"]["duration_seconds"] = float("inf")
+
+    control = _drive_one_worker_session(
+        _fresh_plugin("gate_plugin_strict_control"), tmp_path / "control", monkeypatch
+    )
+    assert "timing" in control, "premise: the same session writes a block"
+
+    poisoned = _drive_one_worker_session(
+        _fresh_plugin("gate_plugin_strict_fault"),
+        tmp_path / "fault",
+        monkeypatch,
+        before_finish=poison,
+    )
+
+    assert "timing" not in poisoned
+    assert set(poisoned) == set(control) - {"timing"}
+    assert _strict((tmp_path / "fault" / "gw0.json").read_text(encoding="utf-8")) == poisoned
+
+
 def test_the_timing_guard_does_not_swallow_a_keyboard_interrupt() -> None:
     plugin = _fresh_plugin("gate_plugin_interrupt")
 
@@ -620,7 +722,7 @@ def test_a_valid_timing_block_wins_over_junit_when_they_differ(
     junit_path, workers_dir = _budget_scenario(tmp_path, with_timing=True)
     big = "tests/test_big.py"
     _write_worker(
-        workers_dir, 0, _nodes(big, 15), _block({big: (151.0, 15)})
+        workers_dir, 0, _nodes(big, 15), _block({big: (149.0, 15)})
     )
     load = timing.load_worker_evidence(workers_dir)
     assert load.errors == () and load.warnings == ()
@@ -628,7 +730,7 @@ def test_a_valid_timing_block_wins_over_junit_when_they_differ(
     busy = timing.compute_busy(load.workers, timing.read_junit_times(junit_path))
 
     first = busy["workers"][0]
-    assert (first["busy_seconds"], first["junit_busy_seconds"]) == (151.0, 150.0)
+    assert (first["busy_seconds"], first["junit_busy_seconds"]) == (149.0, 150.0)
     assert first["busy_source"] == "timestamps"
 
 
@@ -669,7 +771,8 @@ def _with_timing_block(tmp_path: Path, block: Any) -> tuple[Path, Path]:
 
 
 def _rejected_blocks() -> dict[str, Any]:
-    good = lambda: _block({"tests/test_big.py": (150.0, 15)})  # noqa: E731
+    big = "tests/test_big.py"
+    good = lambda: _block({big: (150.0, 15)})  # noqa: E731
     wrong_version = good()
     wrong_version["version"] = 2
     missing_event = good()
@@ -677,18 +780,43 @@ def _rejected_blocks() -> dict[str, Any]:
     non_finite = good()
     non_finite["events"]["session_start"]["monotonic"] = float("nan")
     negative = good()
-    negative["files"]["tests/test_big.py"]["duration_seconds"] = -1.0
+    negative["files"][big]["duration_seconds"] = -1.0
+    nan_duration = good()
+    nan_duration["files"][big]["duration_seconds"] = float("nan")
     miscounted = good()
-    miscounted["files"]["tests/test_big.py"]["node_count"] = 14
+    miscounted["files"][big]["node_count"] = 14
     no_last_end = good()
-    del no_last_end["files"]["tests/test_big.py"]["last_end"]
+    del no_last_end["files"][big]["last_end"]
+    reversed_events = good()
+    reversed_events["events"]["session_start"] = _stamp(500.0)
+    reversed_file = good()
+    reversed_file["files"][big]["first_start"] = _stamp(300.0)
+    reversed_file["files"][big]["last_end"] = _stamp(200.0)
+    before_the_first_test = good()
+    before_the_first_test["files"][big]["first_start"] = _stamp(100.0)
+    unexecuted = good()
+    unexecuted["files"]["tests/test_ghost.py"] = dict(unexecuted["files"][big])
+    unexecuted["files"]["tests/test_ghost.py"]["node_count"] = 0
+    missing_entry = good()
+    missing_entry["files"] = {}
+    over_the_span = _block({big: (150.03, 15)})
+    no_first_test = good()
+    no_first_test["events"]["first_test_start"] = None
     return {
         "wrong-version": wrong_version,
         "missing-event": missing_event,
         "non-finite-stamp": non_finite,
         "negative-duration": negative,
+        "nan-duration": nan_duration,
         "miscounted-nodes": miscounted,
         "missing-last-end": no_last_end,
+        "reversed-events": reversed_events,
+        "reversed-file-stamps": reversed_file,
+        "file-before-the-first-test": before_the_first_test,
+        "unexecuted-file": unexecuted,
+        "executed-file-without-an-entry": missing_entry,
+        "durations-exceed-the-span": over_the_span,
+        "null-first-test-stamp": no_first_test,
         "not-an-object": [],
     }
 
@@ -714,6 +842,132 @@ def test_a_rejected_timing_block_falls_back_to_junit_with_a_warning(
     assert busy["workers"][0]["busy_source"] == "junit"
     assert busy["workers"][0]["busy_seconds"] == 150.0
     assert busy["source"] == "mixed"
+
+
+def test_durations_may_overshoot_the_span_by_one_clock_tick_but_no_more(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    """Windows ``time.monotonic()`` ticks every 15.625 ms, so a span is only known to
+    one tick; the measured worst overshoot was 14.5 ms. Anything past the pinned
+    epsilon cannot be clock granularity."""
+    assert 0.015625 <= timing._MONOTONIC_EPSILON_SECONDS <= 0.05, "premise: one tick"
+    big = "tests/test_big.py"
+    results: dict[float, Any] = {}
+    for seconds in (150.015, 150.03):
+        junit_path, workers_dir = _budget_scenario(tmp_path / str(seconds), with_timing=True)
+        _write_worker(workers_dir, 0, _nodes(big, 15), _block({big: (seconds, 15)}))
+        load = timing.load_worker_evidence(workers_dir)
+        results[seconds] = (load, timing.compute_busy(load.workers, timing.read_junit_times(junit_path)))
+
+    accepted, accepted_busy = results[150.015]
+    assert accepted.warnings == () and accepted.workers[0].timing is not None
+    first = accepted_busy["workers"][0]
+    assert first["busy_seconds"] == 150.015 and first["busy_source"] == "timestamps"
+    assert first["in_span_gap_seconds"] == 0.0, "a gap below zero is clamped, not shown"
+    rejected, rejected_busy = results[150.03]
+    assert rejected.workers[0].timing is None and len(rejected.warnings) == 1
+    assert rejected_busy["workers"][0]["busy_source"] == "junit"
+
+
+def test_a_load_by_worker_id_reads_only_the_named_files(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    junit_path, workers_dir = _budget_scenario(tmp_path, with_timing=True)
+    (workers_dir / "gw9.json").write_text("{not json", encoding="utf-8")
+    (workers_dir / "gwx.json").write_text("{}", encoding="utf-8")
+    assert len(timing.load_worker_evidence(workers_dir).errors) == 2, "premise: junk is seen by a scan"
+
+    named = timing.load_worker_evidence(workers_dir, ["gw0", "gw1", "gw2", "gw3"])
+    budget = timing.build_duration_budget(junit_path, workers_dir, ["gw0", "gw1", "gw2", "gw3"])
+
+    assert named.errors == () and [w.worker for w in named.workers] == ["gw0", "gw1", "gw2", "gw3"]
+    assert budget["error"] is None and budget["critical_path"]["worker"] == "gw0"
+
+
+def test_a_load_by_worker_id_reports_a_missing_file(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    _, workers_dir = _budget_scenario(tmp_path, with_timing=True)
+    (workers_dir / "gw3.json").unlink()
+
+    load = timing.load_worker_evidence(workers_dir, ["gw0", "gw1", "gw2", "gw3"])
+
+    assert load.errors == ("missing worker evidence gw3.json",)
+    assert [w.worker for w in load.workers] == ["gw0", "gw1", "gw2"]
+
+
+def test_workers_a_tenth_of_a_millisecond_apart_are_not_a_tie(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_a.py", [100.0003]) + _file_cases("tests/test_b.py", [100.0004]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes("tests/test_a.py", 1))
+    _write_worker(workers_dir, 1, _nodes("tests/test_b.py", 1))
+    load = timing.load_worker_evidence(workers_dir)
+
+    busy = timing.compute_busy(load.workers, timing.read_junit_times(junit_path))
+
+    assert [w["busy_seconds"] for w in busy["workers"]] == [100.0, 100.0], "premise: they display equal"
+    assert busy["critical_path"]["worker"] == "gw1"
+    assert busy["max_seconds"] == 100.0 and busy["mean_seconds"] == 100.0
+
+
+def test_workers_that_are_exactly_equal_still_tie_to_the_lowest_index(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_a.py", [100.0003]) + _file_cases("tests/test_b.py", [100.0003]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes("tests/test_a.py", 1))
+    _write_worker(workers_dir, 1, _nodes("tests/test_b.py", 1))
+    load = timing.load_worker_evidence(workers_dir)
+
+    busy = timing.compute_busy(load.workers, timing.read_junit_times(junit_path))
+
+    assert busy["critical_path"]["worker"] == "gw0"
+
+
+def test_a_tie_does_not_depend_on_the_order_the_times_are_summed_in(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    assert 0.3 + 0.2 + 0.1 != 0.1 + 0.2 + 0.3, "premise: left-to-right addition disagrees by order"
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_a.py", [0.3, 0.2, 0.1]) + _file_cases("tests/test_b.py", [0.1, 0.2, 0.3]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes("tests/test_a.py", 3))
+    _write_worker(workers_dir, 1, _nodes("tests/test_b.py", 3))
+    load = timing.load_worker_evidence(workers_dir)
+
+    busy = timing.compute_busy(load.workers, timing.read_junit_times(junit_path))
+
+    assert busy["critical_path"]["worker"] == "gw0", "the same times are the same busy time"
+
+
+def test_files_a_tenth_of_a_millisecond_apart_are_not_a_tie(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_a.py", [5.0003]) + _file_cases("tests/test_b.py", [5.0004]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes("tests/test_a.py", 1) + _nodes("tests/test_b.py", 1))
+    load = timing.load_worker_evidence(workers_dir)
+
+    busy = timing.compute_busy(load.workers, timing.read_junit_times(junit_path))
+
+    worker = busy["workers"][0]
+    assert worker["file_count"] == 2
+    # Rounded they are both 5.0, and the smaller path would win a tie; raw, b is larger.
+    assert (worker["dominant_file"], worker["dominant_file_seconds"]) == ("tests/test_b.py", 5.0)
+    assert busy["critical_path"]["file"] == "tests/test_b.py"
 
 
 def test_workers_with_and_without_timing_are_reported_as_mixed(
@@ -902,6 +1156,118 @@ def test_a_twelve_second_test_is_listed_and_a_ten_second_test_is_not(
         "truncated": False,
         "items": [{"id": "tests/test_big.py::test_0", "seconds": 12.0}],
     }
+
+
+def test_a_test_just_over_the_limit_is_listed_though_it_displays_as_the_limit(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    edge = "tests/test_edge.py"
+    junit_path = _write_junit(
+        tmp_path / "run.xml", _file_cases(edge, [10.0004, 10.0, 9.9999])
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes(edge, 3))
+    seconds = timing.read_junit_times(junit_path).node_seconds
+    assert seconds[f"{edge}::test_0"] == 10.0004, "premise: the writer kept every digit"
+
+    budget = timing.build_duration_budget(junit_path, workers_dir)
+
+    assert budget["slow_tests"] == {
+        "count": 1,
+        "truncated": False,
+        "items": [{"id": f"{edge}::test_0", "seconds": 10.0}],
+    }
+
+
+def test_a_file_just_over_the_file_limit_is_flagged_and_one_exactly_on_it_is_not(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    over, on = "tests/test_over.py", "tests/test_on.py"
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases(over, [60.0002, 60.0002]) + _file_cases(on, [60.0, 60.0]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes(over, 2))
+    _write_worker(workers_dir, 1, _nodes(on, 2))
+    files = timing.read_junit_times(junit_path).file_seconds
+    assert files[over] == 120.0004 and files[on] == 120.0, "premise: the sums"
+
+    budget = timing.build_duration_budget(junit_path, workers_dir)
+
+    flagged = {item["file"]: item for item in budget["slow_files"]["items"]}
+    assert flagged[over]["over_file_seconds"] is True
+    assert flagged[over]["seconds"] == 120.0, "displayed rounded, decided raw"
+    assert flagged[on]["over_file_seconds"] is False
+
+
+def test_a_file_just_over_the_share_is_flagged_and_one_exactly_on_it_is_not(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    just_over = 50.0 + 2**-14  # exactly representable, so the mean below is exactly 100.0
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_over.py", [just_over])
+        + _file_cases("tests/test_pad.py", [100.0 - just_over])
+        + _file_cases("tests/test_on.py", [50.0])
+        + _file_cases("tests/test_pad2.py", [50.0]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(
+        workers_dir, 0, _nodes("tests/test_over.py", 1) + _nodes("tests/test_pad.py", 1)
+    )
+    _write_worker(
+        workers_dir, 1, _nodes("tests/test_on.py", 1) + _nodes("tests/test_pad2.py", 1)
+    )
+
+    budget = timing.build_duration_budget(junit_path, workers_dir)
+
+    assert budget["mean_busy_seconds"] == 100.0, "premise: the mean is exactly 100"
+    flagged = {item["file"]: item for item in budget["slow_files"]["items"]}
+    assert flagged["tests/test_over.py"]["over_mean_busy_share"] is True
+    assert flagged["tests/test_over.py"]["seconds"] == 50.0
+    assert "tests/test_on.py" not in flagged
+
+
+def test_the_share_limit_uses_the_raw_mean_not_the_displayed_one(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    """Workers at 99.9996 and 100.0 s: the raw mean is 99.9998 (displayed 100.0), so
+    half of it is 49.9999 and a 49.99995 s file is over it; the displayed mean
+    would have set the limit at 50.0 and missed it."""
+    junit_path = _write_junit(
+        tmp_path / "run.xml",
+        _file_cases("tests/test_edge.py", [49.99995])
+        + _file_cases("tests/test_pad.py", [99.9996 - 49.99995])
+        + _file_cases("tests/test_other.py", [100.0]),
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(
+        workers_dir, 0, _nodes("tests/test_edge.py", 1) + _nodes("tests/test_pad.py", 1)
+    )
+    _write_worker(workers_dir, 1, _nodes("tests/test_other.py", 1))
+
+    budget = timing.build_duration_budget(junit_path, workers_dir)
+
+    assert budget["mean_busy_seconds"] == 100.0, "premise: it displays as 100"
+    flagged = {item["file"]: item for item in budget["slow_files"]["items"]}
+    assert flagged["tests/test_edge.py"]["over_mean_busy_share"] is True
+
+
+def test_budget_lists_order_by_raw_seconds_before_the_id(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    edge = "tests/test_edge.py"
+    junit_path = _write_junit(
+        tmp_path / "run.xml", _file_cases(edge, [10.0003, 10.0004, 10.0003])
+    )
+    workers_dir = tmp_path / "run.collection-workers"
+    _write_worker(workers_dir, 0, _nodes(edge, 3))
+
+    items = timing.build_duration_budget(junit_path, workers_dir)["slow_tests"]["items"]
+
+    assert [item["seconds"] for item in items] == [10.0, 10.0, 10.0], "premise: equal when shown"
+    assert [item["id"] for item in items] == [f"{edge}::test_1", f"{edge}::test_0", f"{edge}::test_2"]
 
 
 def test_each_file_flag_names_its_own_reason(
@@ -1179,6 +1545,108 @@ def test_an_unreadable_or_invalid_worker_file_is_an_error(
 
 
 # ---------------------------------------------------------------------------
+# Evidence has to stand for the whole gate before a critical path is drawn from it
+# ---------------------------------------------------------------------------
+
+
+def _complete_evidence(timing: ModuleType) -> tuple[list[Any], dict[str, int], list[str]]:
+    a, b = "tests/test_a.py", "tests/test_b.py"
+    workers = [
+        timing.WorkerEvidence("gw0", 0, 0, tuple(_nodes(a, 2)), None),
+        timing.WorkerEvidence("gw1", 1, 0, tuple(_nodes(b, 1)), None),
+    ]
+    return workers, {"gw0": 2, "gw1": 1}, _nodes(a, 2) + _nodes(b, 1)
+
+
+def _replace_worker(workers: list[Any], index: int, **changes: Any) -> list[Any]:
+    import dataclasses
+
+    patched = list(workers)
+    patched[index] = dataclasses.replace(patched[index], **changes)
+    return patched
+
+
+def test_complete_evidence_has_no_problems(timing: ModuleType) -> None:
+    workers, counts, collected = _complete_evidence(timing)
+
+    assert timing.evidence_problems(workers, counts, collected) == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing-worker",
+        "unexpected-worker",
+        "non-zero-exit",
+        "no-exit-status",
+        "duplicate-within-a-worker",
+        "duplicate-across-workers",
+        "count-differs",
+        "node-never-executed",
+        "node-not-collected",
+    ],
+)
+def test_incomplete_or_inconsistent_evidence_is_reported(
+    timing: ModuleType, case: str
+) -> None:
+    workers, counts, collected = _complete_evidence(timing)
+    assert timing.evidence_problems(workers, counts, collected) == [], "premise: a control"
+    needle = {
+        "missing-worker": "missing ['gw1']",
+        "unexpected-worker": "unexpected ['gw1']",
+        "non-zero-exit": "exit status 1",
+        "no-exit-status": "exit status None",
+        "duplicate-within-a-worker": "more than once",
+        "duplicate-across-workers": "more than one worker",
+        "count-differs": "records 2",
+        "node-never-executed": "1 missing",
+        "node-not-collected": "1 unexpected",
+    }[case]
+    if case == "missing-worker":
+        workers = workers[:1]
+    elif case == "unexpected-worker":
+        counts = {"gw0": 2}
+    elif case == "non-zero-exit":
+        workers = _replace_worker(workers, 1, exitstatus=1)
+    elif case == "no-exit-status":
+        workers = _replace_worker(workers, 1, exitstatus=None)
+    elif case == "duplicate-within-a-worker":
+        nodes = workers[0].executed_nodeids
+        workers = _replace_worker(workers, 0, executed_nodeids=nodes + (nodes[0],))
+        counts = {"gw0": 3, "gw1": 1}
+    elif case == "duplicate-across-workers":
+        workers = _replace_worker(
+            workers, 1, executed_nodeids=workers[1].executed_nodeids + (workers[0].executed_nodeids[0],)
+        )
+        counts = {"gw0": 2, "gw1": 2}
+    elif case == "count-differs":
+        counts = {"gw0": 2, "gw1": 2}
+    elif case == "node-never-executed":
+        collected = collected + ["tests/test_c.py::test_0"]
+    else:
+        workers = _replace_worker(
+            workers, 1, executed_nodeids=workers[1].executed_nodeids + ("tests/test_z.py::test_0",)
+        )
+        counts = {"gw0": 2, "gw1": 2}
+
+    problems = timing.evidence_problems(workers, counts, collected)
+
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_a_worker_file_records_its_exit_status(
+    timing: ModuleType, tmp_path: Path
+) -> None:
+    _write_worker(tmp_path, 0, ["tests/test_a.py::test_one"])
+    _write_worker(tmp_path, 1, ["tests/test_b.py::test_one"], exitstatus=1)
+    _write_worker(tmp_path, 2, ["tests/test_c.py::test_one"], exitstatus="0")
+
+    load = timing.load_worker_evidence(tmp_path)
+
+    assert [(w.worker, w.exitstatus) for w in load.workers] == [("gw0", 0), ("gw1", 1), ("gw2", None)]
+
+
+# ---------------------------------------------------------------------------
 # What the helper is allowed to be
 # ---------------------------------------------------------------------------
 
@@ -1212,6 +1680,7 @@ def test_the_helper_has_typed_public_functions_and_never_writes() -> None:
         "junit_node_id",
         "read_junit_times",
         "load_worker_evidence",
+        "evidence_problems",
         "default_workers_dir",
         "compute_busy",
         "build_duration_budget",
