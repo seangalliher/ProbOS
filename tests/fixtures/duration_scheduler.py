@@ -30,8 +30,9 @@ The scheduler is used only when every condition holds; otherwise the hook in
 * ``--dist=loadfile`` with xdist's ``--loadscope-reorder`` still on (xdist's own
   ``--no-loadscope-reorder`` is the only opt-out);
 * the durations file loads and passes every check in ``load_file_durations``,
-  including parser failures such as an integer over Python's digit limit, which
-  are a ``DurationDataError`` like any other bad data;
+  including parser failures such as an integer over Python's digit limit, and any
+  fault in the key rule it borrows from ``scripts/gen_file_durations.py`` (a missing,
+  broken or raising script); each is a ``DurationDataError`` like any other bad data;
 * xdist's ``LoadFileScheduling`` still has ``schedule`` and ``_assign_work_unit``
   and starts with an ``OrderedDict`` work queue and no collection.
 
@@ -53,7 +54,6 @@ ordered by the old figure until the file is regenerated.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import math
@@ -62,7 +62,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import TYPE_CHECKING
 
 from xdist.scheduler import LoadFileScheduling
@@ -79,6 +79,7 @@ DURATIONS_PATH = Path(__file__).with_name("file_durations.json")
 DURATIONS_NAME = "tests/fixtures/file_durations.json"
 REPORT_PREFIX = "AD-1270f duration scheduler:"
 _GENERATOR_PATH = Path(__file__).resolve().parents[2] / "scripts" / "gen_file_durations.py"
+_RULE_MODULE = "_ad1270f_file_key_rule"
 _STOCK_ORDER = "using xdist's stock LoadFileScheduling order"
 _MAX_REPORTED_NAMES = 5
 _TOP_LEVEL_KEYS = frozenset({"schema_version", "source", "mean_test_seconds", "files"})
@@ -159,23 +160,38 @@ def _first_clause(exc: BaseException) -> str:
 def _file_key_rule() -> Callable[[str], str | None]:
     """``file_key_problem`` from ``scripts/gen_file_durations.py``, the writer of the file.
 
-    What a ``files`` key may look like is defined once, by the writer, and applied
-    here to every key read, so the two cannot disagree. The script is loaded from its
-    path (it is standard-library only and has no import side effects). Any failure to
-    load the rule is bad data like any other: ``DurationDataError``, so the run falls
-    back to the stock order instead of failing.
+    What a ``files`` key may look like is defined once, by the writer, and applied here
+    to every key read, so the two cannot disagree. The script is not imported: its source
+    is read, compiled and executed here in a fresh module namespace, so nothing is
+    registered in ``sys.modules`` and no bytecode cache is written beside it. It is
+    another file's code running inside the xdist controller, so every way it can fail --
+    executing it, a missing or non-callable rule, and each later call of the rule -- is
+    bad data like any other: ``DurationDataError``, and the run falls back to the stock
+    order. Only ``KeyboardInterrupt``, the operator's own, still propagates.
     """
+    where = _GENERATOR_PATH.name
     try:
-        spec = importlib.util.spec_from_file_location("_ad1270f_file_key_rule", _GENERATOR_PATH)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"no loader for {_GENERATOR_PATH}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.file_key_problem
-    except Exception as exc:  # noqa: BLE001 -- anything the script does at import must degrade
-        raise DurationDataError(
-            f"cannot load the key rule from {_GENERATOR_PATH.name} ({type(exc).__name__})"
-        ) from exc
+        module = ModuleType(_RULE_MODULE)
+        module.__file__ = str(_GENERATOR_PATH)
+        code = compile(_GENERATOR_PATH.read_bytes(), str(_GENERATOR_PATH), "exec", dont_inherit=True)
+        exec(code, module.__dict__)  # noqa: S102 -- this repository's own script, see above
+        rule = module.file_key_problem
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # SystemExit and friends included: nothing here may end the run
+        raise DurationDataError(f"cannot load the key rule from {where} ({type(exc).__name__})") from exc
+    if not callable(rule):
+        raise DurationDataError(f"cannot load the key rule from {where} (file_key_problem is not callable)")
+
+    def checked(key: str) -> str | None:
+        try:
+            return rule(key)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            raise DurationDataError(f"the key rule failed on {key!r} ({type(exc).__name__})") from exc
+
+    return checked
 
 
 def load_file_durations(path: Path = DURATIONS_PATH) -> FileDurations:

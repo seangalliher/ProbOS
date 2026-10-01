@@ -17,6 +17,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -24,7 +25,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import xdist
@@ -819,7 +820,14 @@ def test_the_key_rule_comes_from_the_real_generator_script() -> None:
         pytest.param(None, "FileNotFoundError", id="script-missing"),
         pytest.param("def broken(:\n", "SyntaxError", id="script-does-not-compile"),
         pytest.param("VALUE = 1\n", "AttributeError", id="script-has-no-rule"),
+        pytest.param("file_key_problem = 42\n", "file_key_problem is not callable", id="rule-is-not-callable"),
         pytest.param("raise RuntimeError('boom')\n", "RuntimeError", id="script-fails-on-import"),
+        pytest.param("raise SystemExit(3)\n", "SystemExit", id="script-exits-on-import"),
+        pytest.param(
+            "class Stop(BaseException):\n    pass\n\n\nraise Stop\n",
+            "Stop",
+            id="script-raises-a-non-exception-base-exception",
+        ),
     ],
 )
 def test_an_unloadable_key_rule_falls_back_to_the_stock_order(
@@ -836,6 +844,89 @@ def test_an_unloadable_key_rule_falls_back_to_the_stock_order(
         f"{REPORT_PREFIX} disabled (cannot load the key rule from gen_file_durations.py ({failure})); "
         "using xdist's stock LoadFileScheduling order"
     ]
+
+
+@pytest.mark.parametrize(
+    ("body", "failure"),
+    [
+        pytest.param("def file_key_problem(key):\n    raise RuntimeError('boom')\n", "RuntimeError", id="rule-raises"),
+        pytest.param("def file_key_problem(key):\n    raise SystemExit(2)\n", "SystemExit", id="rule-exits"),
+        pytest.param("def file_key_problem(key):\n    return 1 / 0\n", "ZeroDivisionError", id="rule-divides-by-zero"),
+        pytest.param(
+            "class Stop(BaseException):\n    pass\n\n\n"
+            "def file_key_problem(key):\n    raise Stop\n",
+            "Stop",
+            id="rule-raises-a-non-exception-base-exception",
+        ),
+    ],
+)
+def test_a_key_rule_that_fails_when_called_falls_back_to_the_stock_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, failure: str
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(body, encoding="utf-8")
+    path = tmp_path / "file_durations.json"
+    path.write_text(json.dumps(_valid_payload()), encoding="utf-8")
+    monkeypatch.setattr(ds, "_GENERATOR_PATH", script)
+    config = _Config()
+
+    with pytest.raises(DurationDataError, match="the key rule failed on 'tests/test_a.py'"):
+        load_file_durations(path)
+    assert make_duration_scheduler(config, _QUIET, durations_path=path) is None
+    assert config.lines == [
+        f"{REPORT_PREFIX} disabled (the key rule failed on 'tests/test_a.py' ({failure})); "
+        "using xdist's stock LoadFileScheduling order"
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["raise KeyboardInterrupt\n", "def file_key_problem(key):\n    raise KeyboardInterrupt\n"],
+    ids=["at-import", "when-called"],
+)
+def test_a_keyboard_interrupt_from_the_key_rule_still_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    """The operator's Ctrl-C is not bad data: nothing may turn it into a fallback."""
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(body, encoding="utf-8")
+    path = tmp_path / "file_durations.json"
+    path.write_text(json.dumps(_valid_payload()), encoding="utf-8")
+    monkeypatch.setattr(ds, "_GENERATOR_PATH", script)
+    config = _Config()
+
+    with pytest.raises(KeyboardInterrupt):
+        load_file_durations(path)
+    with pytest.raises(KeyboardInterrupt):
+        make_duration_scheduler(config, _QUIET, durations_path=path)
+    assert config.lines == []
+
+
+def test_loading_the_key_rule_writes_no_bytecode_and_registers_no_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path-loading must leave the scripts directory exactly as it found it."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    real = ds._GENERATOR_PATH
+    control, isolated = tmp_path / "control", tmp_path / "isolated"
+    for directory in (control, isolated):
+        directory.mkdir()
+        shutil.copy(real, directory / real.name)
+    # The premise: the ordinary import machinery does leave a bytecode cache beside a script,
+    # so an empty directory below proves something.
+    spec = importlib.util.spec_from_file_location("_ad1270f_control", control / real.name)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+    assert (control / "__pycache__").is_dir()
+    monkeypatch.setattr(ds, "_GENERATOR_PATH", isolated / real.name)
+
+    durations = load_file_durations()
+    assert make_duration_scheduler(_Config(), _QUIET) is not None
+
+    assert len(durations.files) > 1000, "every committed key went through the loaded rule"
+    assert [path.name for path in isolated.rglob("*")] == [real.name]
+    assert not [name for name in sys.modules if name.startswith("_ad1270f_file_key")]
 
 
 @pytest.mark.parametrize("name", ["schedule", "_assign_work_unit"])
@@ -1060,8 +1151,9 @@ def test_a_subclass_that_drops_one_work_unit_is_rejected_by_the_wrapper_check(
 # --- A real xdist run: the half the fake harness cannot show -----------------------------
 
 #: A throwaway project's conftest: the real hook and the real scheduler (only the durations
-#: path is redirected), a spy that notes each work unit as the controller hands it out, and
-#: an autouse fixture so every test records its own execution, independently of xdist.
+#: path is redirected, and for the fault tests the key-rule script), a spy that notes each
+#: work unit as the controller hands it out, and an autouse fixture so every test records
+#: its own execution, independently of xdist.
 _REAL_RUN_CONFTEST = '''\
 import json
 import os
@@ -1070,14 +1162,16 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.duration_scheduler import make_duration_scheduler
+from tests.fixtures import duration_scheduler
 
 DISPATCHED = []
 
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_xdist_make_scheduler(config, log):
-    scheduler = make_duration_scheduler(
+    if os.environ.get("AD1270F_GENERATOR"):
+        duration_scheduler._GENERATOR_PATH = Path(os.environ["AD1270F_GENERATOR"])
+    scheduler = duration_scheduler.make_duration_scheduler(
         config, log, durations_path=Path(os.environ["AD1270F_DURATIONS"])
     )
     if scheduler is not None:
@@ -1125,13 +1219,27 @@ def _write_real_run_project(project: Path) -> list[str]:
     return nodes
 
 
-def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_file_first(
-    tmp_path: Path,
-) -> None:
-    """Real ``pytest -n 2 --dist=loadfile`` with the hook active (only the durations path is
-    redirected). The fake harness above cannot show that a real DSession, real workers and
-    real reports run each collected node once; this does, and it records the dispatch order
-    on the controller so the order effect is shown without depending on timing."""
+class _RealRun(NamedTuple):
+    process: subprocess.CompletedProcess[str]
+    nodes: list[str]
+    ran: Path
+    dispatched: Path
+    junit: Path
+
+    @property
+    def output(self) -> str:
+        return self.process.stdout + self.process.stderr
+
+    def report_lines(self) -> list[str]:
+        return [line for line in self.process.stdout.splitlines() if line.startswith(REPORT_PREFIX)]
+
+    def executed(self) -> list[str]:
+        """Each test's own record of having run, sorted: independent of xdist's reports."""
+        return sorted(path.read_text(encoding="utf-8") for path in self.ran.iterdir())
+
+
+def _run_real_xdist(tmp_path: Path, *, generator: Path | None = None) -> _RealRun:
+    """A real ``pytest -n 2 --dist=loadfile`` over the throwaway project, with the hook active."""
     project = tmp_path / "project"
     nodes = _write_real_run_project(project)
     durations = tmp_path / "file_durations.json"
@@ -1153,8 +1261,9 @@ def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_fil
         AD1270F_RAN=str(ran),
         AD1270F_DISPATCHED=str(dispatched),
     )
-
-    run = subprocess.run(
+    if generator is not None:
+        environment["AD1270F_GENERATOR"] = str(generator)
+    process = subprocess.run(
         [
             sys.executable, "-m", "pytest", str(project), "-c", str(project / "pytest.ini"),
             "--rootdir", str(project), "-q", "-n", "2", "--dist=loadfile",
@@ -1163,22 +1272,65 @@ def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_fil
         cwd=project, env=environment, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=120,
     )
+    return _RealRun(process, nodes, ran, dispatched, junit)
 
-    output = run.stdout + run.stderr
-    assert run.returncode == 0, output
-    assert re.search(rf"\b{len(nodes)} passed\b", run.stdout), output
-    lines = [line for line in run.stdout.splitlines() if line.startswith(REPORT_PREFIX)]
-    assert lines == [
+
+def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_file_first(
+    tmp_path: Path,
+) -> None:
+    """Real ``pytest -n 2 --dist=loadfile`` with the hook active (only the durations path is
+    redirected). The fake harness above cannot show that a real DSession, real workers and
+    real reports run each collected node once; this does, and it records the dispatch order
+    on the controller so the order effect is shown without depending on timing."""
+    real = _run_real_xdist(tmp_path)
+
+    assert real.process.returncode == 0, real.output
+    assert re.search(rf"\b{len(real.nodes)} passed\b", real.process.stdout), real.output
+    assert real.report_lines() == [
         f"{REPORT_PREFIX} LPT order over 4 files (3 recorded, 1 estimated at 0.5000 s/test; "
         f"test_unseen.py) from {DURATIONS_NAME}"
     ]
-    assert json.loads(dispatched.read_text(encoding="utf-8")) == [
+    assert json.loads(real.dispatched.read_text(encoding="utf-8")) == [
         "test_heavy.py", "test_mid.py", "test_unseen.py", "test_many.py",
     ], "longest recorded file first; xdist's own count order would start with test_many.py"
-    executed = sorted(path.read_text(encoding="utf-8") for path in ran.iterdir())
-    assert executed == sorted(nodes), "every collected node ran exactly once"
+    assert real.executed() == sorted(real.nodes), "every collected node ran exactly once"
     reported = [
         (element.get("classname"), element.get("name"))
-        for element in ET.parse(junit).getroot().iter("testcase")
+        for element in ET.parse(real.junit).getroot().iter("testcase")
     ]
-    assert len(reported) == len(nodes) == len(set(reported))
+    assert len(reported) == len(real.nodes) == len(set(reported))
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        pytest.param(
+            "def file_key_problem(key):\n    raise RuntimeError('boom')\n",
+            "the key rule failed on 'test_heavy.py' (RuntimeError)",
+            id="rule-raises",
+        ),
+        pytest.param(
+            "raise SystemExit(5)\n",
+            "cannot load the key rule from gen_file_durations.py (SystemExit)",
+            id="script-exits-on-import",
+        ),
+    ],
+)
+def test_a_faulty_key_rule_never_ends_a_real_run_it_falls_back_to_xdists_own_scheduler(
+    tmp_path: Path, body: str, reason: str
+) -> None:
+    """An exception or SystemExit from the borrowed key rule used to escape the hook: a real
+    run then ended in INTERNALERROR (exit 3) instead of running the stock scheduler."""
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(body, encoding="utf-8")
+
+    real = _run_real_xdist(tmp_path, generator=script)
+
+    assert real.process.returncode == 0, real.output
+    assert "INTERNALERROR" not in real.output
+    assert re.search(rf"\b{len(real.nodes)} passed\b", real.process.stdout), real.output
+    assert real.report_lines() == [
+        f"{REPORT_PREFIX} disabled ({reason}); using xdist's stock LoadFileScheduling order"
+    ]
+    assert not real.dispatched.exists(), "no scheduler of ours ran: xdist's own did"
+    assert real.executed() == sorted(real.nodes), "every collected node ran exactly once"

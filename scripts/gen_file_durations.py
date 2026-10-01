@@ -26,9 +26,9 @@ Identical inputs give byte-identical output.
 
 Standard library only; it imports none of the gate scripts or tests. What a
 ``files`` key may look like is defined once, here (``file_key_problem``): the
-scheduler's loader loads this file and applies the same function, so the writer
-and the reader cannot disagree. The other schema constants are restated here and
-pinned against the loader by ``tests/test_ad1270f_gen_file_durations.py``.
+scheduler's loader reads and executes this file and applies the same function, so
+the writer and the reader cannot disagree. The other schema constants are restated
+here and pinned against the loader by ``tests/test_ad1270f_gen_file_durations.py``.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def file_key_problem(key: str) -> str | None:
 
     A key is a relative test path as pytest writes it in a node ID: not empty, no
     drive or root, no backslash, no ``..`` segment and no ``::``. The scheduler's
-    loader loads this module and applies this same function to every key it reads.
+    loader executes this file and applies this same function to every key it reads.
     """
     pure = PureWindowsPath(key)
     if (
