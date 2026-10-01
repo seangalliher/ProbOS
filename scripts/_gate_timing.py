@@ -362,7 +362,7 @@ def load_worker_evidence(
         except FileNotFoundError:
             errors.append(f"missing worker evidence {path.name}")
             continue
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             errors.append(f"unreadable worker evidence {path.name}: {exc}")
             continue
         problem = _worker_problem(payload, path.stem)

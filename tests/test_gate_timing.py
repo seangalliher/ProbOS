@@ -1522,6 +1522,7 @@ def test_a_missing_or_empty_workers_dir_is_a_warning_not_an_error(
     ("name", "content", "needle"),
     [
         ("gw1.json", "{not json", "unreadable worker evidence gw1.json"),
+        ("gw1.json", "[" * 100_000 + "]" * 100_000, "unreadable worker evidence gw1.json"),
         ("gw1.json", "[]", "not a JSON object"),
         ("gw1.json", json.dumps({"schema_version": 2, "worker_id": "gw1", "executed_nodeids": []}), "schema_version"),
         ("gw1.json", json.dumps({"schema_version": 1, "worker_id": "gw9", "executed_nodeids": []}), "worker_id"),
@@ -1529,7 +1530,7 @@ def test_a_missing_or_empty_workers_dir_is_a_warning_not_an_error(
         ("gw1.json", json.dumps({"schema_version": 1, "worker_id": "gw1", "executed_nodeids": [1]}), "executed_nodeids"),
         ("gwx.json", "{}", "unexpected worker evidence file name"),
     ],
-    ids=["bad-json", "not-object", "schema", "worker-id", "nodes-not-list", "node-not-str", "file-name"],
+    ids=["bad-json", "too-deeply-nested", "not-object", "schema", "worker-id", "nodes-not-list", "node-not-str", "file-name"],
 )
 def test_an_unreadable_or_invalid_worker_file_is_an_error(
     timing: ModuleType, tmp_path: Path, name: str, content: str, needle: str
