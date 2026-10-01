@@ -207,6 +207,21 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_live)
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_make_scheduler(config, log):
+    """AD-1270f P1.4: start the longest test files first under ``--dist=loadfile``.
+
+    The hook is ``firstresult`` and xdist's own implementation is ``trylast``, so a
+    scheduler returned here wins and ``None`` leaves xdist's stock one in charge.
+    ``optionalhook`` keeps this file loadable where xdist is not installed, and the
+    import is lazy so runs that never distribute never load the scheduler. Order
+    only: see ``tests/fixtures/duration_scheduler.py``.
+    """
+    from tests.fixtures.duration_scheduler import make_duration_scheduler
+
+    return make_duration_scheduler(config, log)
+
+
 @pytest.fixture
 def registry():
     return AgentRegistry()
