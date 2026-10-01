@@ -32,6 +32,7 @@ KEY_EVENT_TYPE = "probos.identity.key-event"
 KEY_EVENT_VERSION = 1
 VC_JWS_TYP = "probos-vc+jws"
 KEY_EVENT_JWS_TYP = "probos-key-event+jws"
+ENVELOPE_JWS_TYP = "probos-envelope+jws"  # AD-1197 federation envelope signatures
 
 EVENT_INCEPTION = "inception"
 EVENT_ROTATION = "rotation"
@@ -173,6 +174,16 @@ class ChainSignatureReport:
     void: tuple[int, ...]
     deferred: tuple[int, ...]
     unsigned: int
+
+
+@dataclass(frozen=True)
+class EnvelopeSignature:
+    """AD-1197: a federation envelope signature and the key state and history it was made under."""
+
+    kid: str
+    jws: str
+    state: KeyState
+    key_events: tuple[KeyEvent, ...]
 
 
 class TransferVerdict(NamedTuple):
@@ -439,6 +450,8 @@ def _next_state(
 def derive_key_state(
     events: Sequence[KeyEvent],
     *,
+    after: KeyState | None = None,
+    used_key_ids: frozenset[str] = frozenset(),
     ship_certificate_hash: str | None = None,
     ship_credential_digest: str | None = None,
 ) -> KeyState | None:
@@ -448,9 +461,14 @@ def derive_key_state(
     does not replay -- a structural fault, a broken sequence, a key id that is not
     its key's fingerprint, or a signature that does not verify. When the ship
     hashes are given, every inception and re-inception must commit to exactly them.
+
+    With ``after`` (AD-1197 A-1) the events continue the history that established that
+    state, and each is replayed from it by exactly these rules; no events returns ``after``.
+    ``used_key_ids`` (AD-1197 A-2) names keys that history used before the records ``after``
+    keeps: no event may reintroduce one, exactly as no event may reintroduce a kept key.
     """
-    state: KeyState | None = None
-    previous_index = 0
+    state: KeyState | None = after  # AD-1197 A-1 continue from a held state
+    previous_index = 0 if after is None else after.active.activated_at  # AD-1197 A-1 indices keep increasing after it
     for item in events:
         payload = _check_payload(item.payload)
         event = payload["event"]
@@ -467,6 +485,8 @@ def derive_key_state(
         _check_sequence(payload, state)
         new_key = _event_key(payload, index)
         if state is not None and state.key(new_key.kid) is not None:
+            raise KeyEventInvalid("a key event may not reintroduce a key the DID already used")
+        if new_key.kid in used_key_ids:  # AD-1197 A-2 a key used before the kept records stays used
             raise KeyEventInvalid("a key event may not reintroduce a key the DID already used")
         if payload["recovery_public_key"]:
             _require_public_key(payload["recovery_public_key"])
@@ -501,6 +521,67 @@ def derive_key_state(
         state = _next_state(state, payload, new_key, digest, index)
         previous_index = index
     return state
+
+
+def _anchor_key_state(item: KeyEvent) -> KeyState:
+    """AD-1197 A-1: the key state one event establishes when the events before it are unknown."""
+    payload = _check_payload(item.payload)
+    event = payload["event"]
+    if event == EVENT_INCEPTION:
+        return _require_state(derive_key_state([item]), event)
+    index = item.index
+    if type(index) is not int or index <= 0:
+        raise KeyEventInvalid("key events must be anchored at increasing ledger indices after genesis")
+    try:
+        payload_bytes = canonical_bytes(payload)
+    except ValueError:
+        raise KeyEventInvalid("a key event payload is not canonicalizable") from None
+    digest = hashlib.sha256(payload_bytes).hexdigest()
+    if item.digest != digest:
+        raise KeyEventInvalid(f"the key event at block {index} does not match its anchored digest")
+    if not payload["did"] or payload["seq"] < 1 or not _DIGEST_RE.fullmatch(payload["prior"]):  # AD-1197 A-1 an anchor follows an earlier event
+        raise KeyEventInvalid("an anchored key event must name its DID and follow an earlier event")
+    new_key = _event_key(payload, index)
+    if payload["recovery_public_key"]:
+        _require_public_key(payload["recovery_public_key"])
+    elif event == EVENT_RECOVERY:
+        raise KeyEventInvalid("a recovery may not remove the recovery key")
+    if payload["reason"] not in _EVENT_REASONS[event]:
+        raise KeyEventInvalid(f"a {event} event does not allow that reason")
+    compromised = payload["compromised_after_index"]
+    if (compromised is not None) != (payload["reason"] == REASON_COMPROMISED):
+        raise KeyEventInvalid("compromised_after_index goes with reason 'compromised', and only with it")
+    if compromised is not None and not 0 < compromised < index:
+        raise KeyEventInvalid("the compromise point must precede the event")
+    _check_ship_binding(payload, ship_certificate_hash=None, ship_credential_digest=None)
+    signatures = item.signatures
+    if not isinstance(signatures, dict) or set(signatures) != _SIGNATURE_ROLES[event]:
+        raise KeyEventInvalid(f"a {event} event must carry exactly the signatures {sorted(_SIGNATURE_ROLES[event])}")
+    _require_signature(payload_bytes, signatures["new"], new_key, "new")  # AD-1197 A-1 the anchor proves its own key
+    state = _next_state(None, payload, new_key, digest, index)
+    if event == EVENT_REINCEPTION:  # AD-1197 A-1 an anchoring re-inception breaks continuity there
+        state = replace(state, continuity="broken", broken_at=(index,))
+    return state
+
+
+def replay_key_events(events: Sequence[KeyEvent]) -> KeyState | None:
+    """AD-1197 A-1: the key state a contiguous run of key events establishes, held from its first event.
+
+    A run that starts at the inception replays exactly as :func:`derive_key_state`. A
+    later first event is an anchor taken on first use: every rule that needs no earlier
+    event is applied to it -- its members, ledger index and digest; its DID, a seq after
+    the inception and a prior digest; its key's fingerprint; its recovery key, which a
+    recovery never removes; its reason and compromise point; the ship-certificate
+    commitment rules; its exact signature roles and its own key's signature -- and what
+    needs the events before it is not known: that it follows them, that the prior or
+    recovery key authorised it, that its key and compromise point fit the earlier keys,
+    and the keys, re-inceptions and ship commitment before it, of which the state keeps
+    no record. Every later event is replayed by :func:`derive_key_state` from the anchor.
+    Returns ``None`` for no events; raises :class:`KeyEventInvalid`.
+    """
+    if not events:
+        return None
+    return derive_key_state(events[1:], after=_anchor_key_state(events[0]))
 
 
 def key_valid_at(record: KeyRecord, index: int) -> bool:
@@ -794,6 +875,37 @@ def keeps_key_history(stored: Sequence[Mapping[str, Any]], blocks: Sequence[Mapp
         if position not in held_positions and payload is not None and payload.get("event") == EVENT_REINCEPTION:  # AD-1196 A-1 no takeover
             return False, f"block {position} re-incepts a key history this ship already holds"
     return True, f"keeps the {len(held_positions)} key events held for this origin"
+
+
+def keeps_held_key_events(
+    held: Sequence[KeyEvent], carried: Sequence[KeyEvent], *, carried_head: int,
+) -> tuple[bool, str]:
+    """AD-1197: whether ``carried`` keeps the key events held for its sender.
+
+    Both are contiguous runs ending at their head; ``held`` was verified before and may
+    start after the inception (A-1), ``carried`` ends at seq ``carried_head``. An older
+    head is a stale key, never a rollback; the carried run must reach the held head, or
+    the events between are unknown; every held event it carries must reappear unchanged;
+    and no event after the held ones may re-incept, because a re-inception is signed only
+    by the key it introduces. Returns ``(keeps, reason)``.
+    """
+    if not held:
+        return True, "keeps"
+    held_first = held[0].payload["seq"]  # AD-1197 A-1 a held run may start after the inception
+    held_head = held_first + len(held) - 1
+    carried_first = carried_head - len(carried) + 1
+    if carried_head < held_head:  # AD-1197 an older key history is stale
+        return False, "stale key"
+    if carried_first > held_head + 1:  # AD-1197 A-1 the carried run must reach the held head
+        return False, "key history gap"
+    for seq in range(max(held_first, carried_first), held_head + 1):
+        mine, theirs = held[seq - held_first], carried[seq - carried_first]
+        if canonical_bytes({"index": theirs.index, "event": theirs.payload, "signatures": theirs.signatures}) != canonical_bytes({"index": mine.index, "event": mine.payload, "signatures": mine.signatures}):  # AD-1197 held key events are immutable
+            return False, "held history"
+    for event in carried[held_head + 1 - carried_first:]:
+        if event.payload.get("event") == EVENT_REINCEPTION:  # AD-1197 no takeover
+            return False, "held history"
+    return True, "keeps"
 
 
 def did_document(state: KeyState) -> dict[str, Any]:

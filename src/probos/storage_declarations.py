@@ -141,4 +141,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "keys never enter this database (OS keyring, or the explicit plaintext_dev directory)."
         ),
     ),
+    StoreDeclaration(
+        id="federation.envelope-replay",
+        title="Federation envelope key holds and replay windows (AD-1197)",
+        owner_module="probos.federation_envelope_store",
+        owner_symbol="EnvelopeStore",
+        canonical_path="federation_envelopes.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.federation.envelope.EnvelopeGuard",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM: one row per sender ever held (at most 256), with at most 4,096 key ids each, at most "
+            "two replay windows per sender and one send-epoch row, updated in place and only ever forward."
+        ),
+        backup="included",
+        restore="unknown",
+        reconstruction="",
+        notes=(
+            "Constructed only when federation.envelope_signing_enabled. Public key-event histories, key ids, counters "
+            "and 64-bit window masks only: no private key, envelope signature or message body. Restoring an older copy "
+            "rolls replay windows back (envelopes recorded after the backup are accepted once more); deleting "
+            "it forgets every hold and every recorded key id (the next envelope from each sender is a first contact), "
+            "and a sender that lost its own copy restarts at epoch 1 until it rotates its key."
+        ),
+    ),
 )

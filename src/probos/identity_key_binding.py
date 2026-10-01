@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from probos.identity_key_store import IdentityKeyStore, build_key_store
 from probos.identity_keys import (
     ATTEST_KEY_EVENT,
+    ENVELOPE_JWS_TYP,
     EVENT_INCEPTION,
     EVENT_RECOVERY,
     EVENT_REINCEPTION,
@@ -44,6 +45,7 @@ from probos.identity_keys import (
     STATUS_NEEDS_RESTART,
     STATUS_UNBOUND,
     VC_JWS_TYP,
+    EnvelopeSignature,
     IdentityKeyError,
     IdentityKeyStateError,
     IdentityKeyUnavailable,
@@ -343,6 +345,33 @@ class IdentityKeyBinding:
                 raise
             return None
         return state.active_kid, jws
+
+    async def sign_envelope(
+        self, statement_for: Callable[[KeyState], Mapping[str, Any]],
+    ) -> EnvelopeSignature | None:
+        """Sign a federation envelope statement with the active key, without the ledger lock (AD-1197).
+
+        ``statement_for`` builds the statement from the key state this signs with, so
+        the statement names that key. Returns ``None`` when the key is not active, when
+        its signature fails -- which latches ``key_unavailable`` while that key is still
+        the active one, as a certificate's does -- or when a key event committed while
+        it signed. Raises ``ValueError`` for a statement with no RFC 8785 form; that
+        latches nothing. The JWS ``typ`` is fixed, so this never signs anything else.
+        """
+        if self._status != STATUS_ACTIVE:  # AD-1197 envelope sign gate
+            return None
+        state, events = _require(self._state, "key state"), tuple(self._events)
+        payload = canonical_bytes(statement_for(state))
+        try:
+            jws = await _sign_detached(self._store, state.active_kid, state.active.public_key, payload, ENVELOPE_JWS_TYP)
+        except IdentityKeyUnavailable as exc:
+            if self._state is state and self._status == STATUS_ACTIVE:  # AD-1197 only the key still active latches
+                self._status, self._reason = STATUS_KEY_UNAVAILABLE, str(exc)  # AD-1197 a failed envelope signature latches
+                _log_degraded(state.did, self._status, self._reason)
+            return None
+        if self._state is not state:  # AD-1197 a key event committed while this signed
+            return None
+        return EnvelopeSignature(kid=state.active_kid, jws=jws, state=state, key_events=events)
 
     async def record_attestation_locked(
         self,

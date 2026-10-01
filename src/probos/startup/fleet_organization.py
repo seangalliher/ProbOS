@@ -14,6 +14,8 @@ from probos.startup.results import FleetOrganizationResult
 from probos.substrate.pool_group import PoolGroup
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from probos.cognitive.llm_client import BaseLLMClient
     from probos.config import SystemConfig
     from probos.consensus.escalation import EscalationManager
@@ -24,6 +26,21 @@ if TYPE_CHECKING:
     from probos.substrate.pool_group import PoolGroupRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _envelope_transport(
+    config: "SystemConfig", transport: Any, identity_key_binding: Any | None, data_dir: "Path | None",
+) -> Any:
+    """AD-1197: the transport wrapped for signed envelopes when armed; the transport itself when off."""
+    if config.federation.envelope_signing_enabled is not True:  # AD-1197 off: the transport itself
+        return transport
+    if data_dir is None:
+        raise ValueError("federation envelope signing needs a data directory for its replay store")
+    from probos.federation.signed_transport import build_signed_transport
+
+    return build_signed_transport(
+        transport, policy=config.federation.envelope_policy, key_binding=identity_key_binding, data_dir=data_dir,
+    )
 
 
 async def organize_fleet(
@@ -44,6 +61,8 @@ async def organize_fleet(
     ),
     relay_topics: tuple["FederationRelayTopic", ...] = (),
     nats_bus: Any | None = None,
+    identity_key_binding: Any | None = None,
+    data_dir: "Path | None" = None,
 ) -> FleetOrganizationResult:
     """Register pool groups, start scaler, set up federation."""
     logger.info("Startup [fleet_organization]: starting")
@@ -166,10 +185,15 @@ async def organize_fleet(
             try:
                 from probos.federation.nats_transport import NATSFederationTransport
 
-                transport = NATSFederationTransport(
-                    node_id=config.federation.node_id,
-                    nats_bus=nats_bus,
-                    peer_node_ids=peer_node_ids,
+                transport = _envelope_transport(
+                    config,
+                    NATSFederationTransport(
+                        node_id=config.federation.node_id,
+                        nats_bus=nats_bus,
+                        peer_node_ids=peer_node_ids,
+                    ),
+                    identity_key_binding,
+                    data_dir,
                 )
                 await transport.start()
                 # AD-479f: TLS pass-through surface — NATSBus consumes config.tls
@@ -192,10 +216,15 @@ async def organize_fleet(
             try:
                 from probos.federation.transport import FederationTransport
 
-                transport = FederationTransport(
-                    node_id=config.federation.node_id,
-                    bind_address=config.federation.bind_address,
-                    peers=config.federation.peers,
+                transport = _envelope_transport(
+                    config,
+                    FederationTransport(
+                        node_id=config.federation.node_id,
+                        bind_address=config.federation.bind_address,
+                        peers=config.federation.peers,
+                    ),
+                    identity_key_binding,
+                    data_dir,
                 )
                 await transport.start()
             except ImportError:

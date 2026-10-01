@@ -1536,8 +1536,9 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1156 adds dm_agentic.agent_modes_enabled (1813 -> 1814).
     # AD-1194 adds capability_triage.unified_ladder_enabled (1814 -> 1815).
     # AD-1196 adds federation.identity_keys_enabled, identity_key_store and identity_recovery_public_key (1815 -> 1818).
-    # AD-1270f P1.2 adds memory.shutdown_write_grace_s and shutdown_dispatch_grace_s (1818 -> 1820).
-    assert counts["field_definitions"] == 1820  # AD-1206 intentionally adds github_repository.
+    # AD-1197 adds federation.envelope_signing_enabled and envelope_policy (1818 -> 1820).
+    # AD-1270f P1.2 adds memory.shutdown_write_grace_s and shutdown_dispatch_grace_s (1820 -> 1822).
+    assert counts["field_definitions"] == 1822  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

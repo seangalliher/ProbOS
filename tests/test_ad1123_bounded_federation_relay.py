@@ -1853,16 +1853,46 @@ _FROZEN_METHOD_HASHES = {
         "ba1ce85fdd6fb6c3f7e821795c92cc97d8d0f3eb39980145491649c46e8f35f2",
     ("src/probos/federation/bridge.py", "FederationBridge", "_handle_direct_message_request"):
         "3c42fe328f49c3667d4e19d8c8a5a9ce15d1c890de8d61bcac48686913487673",
+    # AD-1197 (#1134): rewritten deliberately, not as a side effect. The
+    # serializer now carries the signed-envelope `auth` member when, and only
+    # when, the message has one, so the receiving envelope guard can verify
+    # who sent it. It is ADDITIVE: an unsigned message serializes to exactly
+    # the five members it always did, and a receiver that predates `auth`
+    # ignores the extra member.
+    # Previous hash: 1f45de4520164bcbb565259b2b9356ae0b42ad7a39434a1c85483dc37409cbbf
     ("src/probos/federation/nats_transport.py", "NATSFederationTransport", "_serialize"):
-        "1f45de4520164bcbb565259b2b9356ae0b42ad7a39434a1c85483dc37409cbbf",
+        "986a79ed1ba4943d25ac100c65e7a79256b21529ae7a12d67f449270234db0d1",
+    # AD-1197 (#1134): rewritten deliberately, not as a side effect. The
+    # deserializer now reads the signed-envelope `auth` member, so the envelope
+    # guard can verify it, and keeps a member that is present but null present
+    # (as an empty block, which no verifier accepts), so a malformed block is
+    # never read as an unsigned message (amendment A-1). It is ADDITIVE: a
+    # message without `auth` reads back as `auth=None`, exactly the unsigned
+    # message it always produced.
+    # Previous hash: 88b50d275a63b5a92db1d208350679c179dbc2906756b51d40ff1fad1524d8f1
     ("src/probos/federation/nats_transport.py", "NATSFederationTransport", "_deserialize"):
-        "88b50d275a63b5a92db1d208350679c179dbc2906756b51d40ff1fad1524d8f1",
+        "1e453c2b606e5abd5cd4892c1760ad6510a1e516e8bd7a716d054baa320c97d2",
     ("src/probos/federation/nats_transport.py", "NATSFederationTransport", "send_to_peer"):
         "9ad857133b2532ae9d5176c9530724108d531ebf5f3b4779541f0f45581e1cd6",
+    # AD-1197 (#1134): rewritten deliberately, not as a side effect. The
+    # serializer now carries the signed-envelope `auth` member when, and only
+    # when, the message has one, so the receiving envelope guard can verify
+    # who sent it. It is ADDITIVE: an unsigned message serializes to exactly
+    # the five members it always did, and a receiver that predates `auth`
+    # ignores the extra member.
+    # Previous hash: 11491399ff191d2fb65ff5f0480aafad8a0145f633359dcfd82b1a8b03c5f702
     ("src/probos/federation/transport.py", "FederationTransport", "_serialize"):
-        "11491399ff191d2fb65ff5f0480aafad8a0145f633359dcfd82b1a8b03c5f702",
+        "dd8adbb26ec2afe391480998fb0365d6d4d5f68e33f57e331f32b677e8882361",
+    # AD-1197 (#1134): rewritten deliberately, not as a side effect. The
+    # deserializer now reads the signed-envelope `auth` member, so the envelope
+    # guard can verify it, and keeps a member that is present but null present
+    # (as an empty block, which no verifier accepts), so a malformed block is
+    # never read as an unsigned message (amendment A-1). It is ADDITIVE: a
+    # message without `auth` reads back as `auth=None`, exactly the unsigned
+    # message it always produced.
+    # Previous hash: 7b5024d9d18ea5d90c6eb2ba04e62619c486edafe60b025bfeafea3075aa34f2
     ("src/probos/federation/transport.py", "FederationTransport", "_deserialize"):
-        "7b5024d9d18ea5d90c6eb2ba04e62619c486edafe60b025bfeafea3075aa34f2",
+        "4d532fc8893c1c18137e334cefd2f60c554e306cf80a183bea31aa6a318b38e9",
     ("src/probos/federation/transport.py", "FederationTransport", "send_to_peer"):
         "95f05ada8a2e84aa11648a8fae9a10f86b7b10d8383bb88170aa9783e51c3ad9",
     ("src/probos/federation/mock_transport.py", "MockFederationTransport", "send_to_peer"):
