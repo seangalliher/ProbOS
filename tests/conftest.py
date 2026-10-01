@@ -25,6 +25,11 @@ collect_ignore_glob = ["**/_blender/**"]
 os.environ.setdefault("PROBOS_NATS_ENABLED", "false")
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+# AD-1270f P2.6: local/CI parity. CI installs no ``probos.extensions`` entry point, but a
+# developer venv can, and every runtime boot would then discover and run it. Tests of the
+# extension seam opt in explicitly (monkeypatch.delenv); PROBOS_DISABLE_OVERLAY=0 opts a run in.
+os.environ.setdefault("PROBOS_DISABLE_OVERLAY", "1")
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _ad682_isolated_data_dir(tmp_path_factory, worker_id):
