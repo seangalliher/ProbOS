@@ -413,6 +413,12 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 | AD-1289 | Typed Mission Blackboard - claims, evidence, challenges, decisions, and dissent | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | 2 |
 | AD-1290 | Elastic Scatter/Gather and Team Trials - replicas, reducers, attribution, ablations | [#1337](https://github.com/seangalliher/ProbOS/issues/1337) | 2 |
 
+**Authenticated federation -- bind, sign, admit on the existing two-node cluster (Tier B owner). Parent epic: [#1140](https://github.com/seangalliher/ProbOS/issues/1140).**
+
+| AD | Title | Issue | Priority |
+|----|-------|-------|----------|
+| AD-1196 | Bind `did:probos` identifiers to Ed25519 keys, with rotation, revocation and compromise recovery -- implementation candidate (default-off `federation.identity_keys_enabled`) | [#1133](https://github.com/seangalliher/ProbOS/issues/1133) | 1 |
+
 #### Other Backlog Items
 
 **User Experience & Adoption (Phase 35 + Phase 24) — install, onboarding, channels, getting-started stability (2026-07-23 decomposition):**

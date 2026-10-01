@@ -12,15 +12,15 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: cd3ccfbad4dc4be8b8d86d4abfb99d70e9f0d5f7 plus AD-1156 and AD-1194 candidates
+  measured_at_commit: 8f24ff6f949ed08d520cb05f52564f9c40f03832 plus the AD-1196 candidate
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 435
-  default_false: 210
+  boolean_fields_reachable: 436
+  default_false: 211
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 125
+  default_false_never_armed: 126
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -295,6 +295,16 @@ flags:
   evidence_to_promote: supported arms federation TLS when supported also arms federation.
     Until federation.enabled is admissible, arming its transport security alone changes nothing
     and would be a row that looks like a hardening decision while doing no work.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: federation.identity_keys_enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: 'AD-1196. tests/test_ad1196_did_key_binding.py::test_m1_thin_chain_signs_rotates_revokes_persists_reloads_and_verifies
+    proves an armed vessel signs what it anchors and a peer verifies it after restart. supported arms it
+    only with federation.enabled, once AD-1198 proves admission on the two-node cluster with both nodes
+    armed; arming key binding alone signs credentials no peer yet requires.'
   external_dependency: null
   requires: []
   conflicts_with: []

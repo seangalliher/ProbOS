@@ -12,6 +12,9 @@ cryptographic signature. This is intentional: ProbOS identity is self-sovereign
 within the instance, not designed for external VC verifier interop (yet).
 The hash proves immutability, not third-party authenticity.
 Future: Replace with Ed25519Signature2020 when federation requires it.
+AD-1196: with federation.identity_keys_enabled armed, anchored certificates also
+carry a detached Ed25519 JWS over their RFC 8785 form; the embedded proof stays
+Sha256Hash2024.
 
 'Every agent is born once. Their identity is permanent. Their record is immutable.'
 """
@@ -26,11 +29,14 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
 from probos.captain_card.card import CaptainCard
 from probos.mobility import TransferCertificate
+
+if TYPE_CHECKING:
+    from probos.identity_key_binding import IdentityKeyBinding
 
 
 logger = logging.getLogger(__name__)
@@ -450,7 +456,13 @@ class AgentIdentityRegistry:
     'ACM is the HR department. The Identity Registry is the vital records office.'
     """
 
-    def __init__(self, data_dir: Path, connection_factory: ConnectionFactory | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        connection_factory: ConnectionFactory | None = None,
+        *,
+        key_binding: IdentityKeyBinding | None = None,
+    ) -> None:
         self._data_dir = data_dir
         self._db: DatabaseConnection | None = None
         self._uuid_cache: dict[str, AgentBirthCertificate] = {}  # agent_uuid -> cert
@@ -461,6 +473,9 @@ class AgentIdentityRegistry:
         self._foreign_uuid_cache: dict[str, AgentBirthCertificate] = {}  # foreign agent_uuid -> cert
         self._foreign_chain_cache: dict[str, list[dict[str, Any]]] = {}  # origin_ship_did -> chain blocks
         self._ledger_lock = asyncio.Lock()
+        self._foreign_chain_lock = asyncio.Lock()  # AD-1196 A-1/A-2: chain and transfer imports, one at a time
+        # AD-1196: the ship DID's key binding; None keeps every path as it was before it.
+        self._key_binding = key_binding
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -552,12 +567,18 @@ class AgentIdentityRegistry:
                 len(self._uuid_cache), len(self._asset_cache),
                 len(self._foreign_uuid_cache), len(self._foreign_chain_cache),
             )
+            if self._key_binding is not None:
+                await self._key_binding.attach(
+                    self._db, ledger_lock=self._ledger_lock, append_block=self._append_to_ledger,
+                )
 
         # Load or create ship birth certificate (if instance_id provided)
         if instance_id and not self._ship_certificate:
             self._ship_certificate = await self._load_or_commission_ship(
                 instance_id, vessel_name, version
             )
+        if self._key_binding is not None and self._ship_certificate is not None:
+            await self._key_binding.ensure_inception(self._ship_certificate)
 
     async def stop(self) -> None:
         """Close identity database."""
@@ -793,7 +814,8 @@ class AgentIdentityRegistry:
         cert.certificate_hash = cert.compute_hash()
 
         # Persist certificate
-        vc_json = json.dumps(cert.to_verifiable_credential(), sort_keys=True)
+        vc = cert.to_verifiable_credential()
+        vc_json = json.dumps(vc, sort_keys=True)
         await self._db.execute(
             "INSERT INTO birth_certificates "
             "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
@@ -822,7 +844,23 @@ class AgentIdentityRegistry:
 
         # Append to Identity Ledger (blockchain) — serialized to prevent index conflicts
         async with self._ledger_lock:
-            await self._append_to_ledger(cert.certificate_hash, cert.did)
+            signed = None
+            if self._key_binding is not None:
+                # AD-1196: sign and anchor under one lock, so the signer is the key active at the anchor.
+                signed = await self._key_binding.sign_record_locked(vc)
+            block = await self._append_to_ledger(cert.certificate_hash, cert.did)
+            if self._key_binding is not None and signed is not None:
+                from probos.identity_keys import ATTEST_AGENT_BIRTH
+
+                await self._key_binding.record_attestation_locked(
+                    block_index=block.index, kind=ATTEST_AGENT_BIRTH, subject_did=cert.did,
+                    certificate_hash=cert.certificate_hash, kid=signed[0], jws=signed[1],
+                )
+        if self._key_binding is not None and signed is None:
+            logger.warning(
+                "AD-1196: birth certificate for %s issued UNSIGNED: identity key status is %s",
+                cert.did, self._key_binding.key_status,
+            )
 
         await self._db.commit()
 
@@ -1033,6 +1071,9 @@ class AgentIdentityRegistry:
         if blocks and self._ship_certificate and not blocks[0].get("credential"):
             blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
 
+        if self._key_binding is not None:
+            await self._key_binding.annotate_export(blocks)
+
         return blocks
 
     # ── AD-443: Mobility (Transfer Certificates + Foreign Chains) ─────────
@@ -1079,7 +1120,8 @@ class AgentIdentityRegistry:
 
         Validates the chain via verify_remote_chain BEFORE persisting; rejects
         on any integrity failure. Latest-wins on repeated import for the same
-        origin_ship_did.
+        origin_ship_did, except that, when armed, an origin's verified key history
+        is kept (AD-1196 A-1).
         """
         if not self._db:
             return False, "Registry not started"
@@ -1091,14 +1133,48 @@ class AgentIdentityRegistry:
             )
             return False, message
 
+        if self._key_binding is not None:
+            from probos.identity_keys import verify_chain_signatures
+
+            report = verify_chain_signatures(blocks)
+            if not report.ok:
+                logger.warning(
+                    "AD-1196: import chain from %s rejected: %s; foreign chain not persisted",
+                    blocks[0]["agent_did"], report.reason,
+                )
+                return False, f"Signature check failed: {report.reason}"
+            logger.info(
+                "AD-1196: chain from %s carries %d key events: %d certificate signatures valid, %d void, "
+                "%d checked at transfer import, %d blocks unsigned",
+                blocks[0]["agent_did"], report.key_events, report.valid, len(report.void),
+                len(report.deferred), report.unsigned,
+            )
+            if report.state is not None and report.state.continuity == "broken":
+                logger.info(
+                    "AD-1196: chain from %s re-incepted its key at blocks %s; key continuity is broken there",
+                    blocks[0]["agent_did"], list(report.state.broken_at),
+                )
+
         origin_ship_did = blocks[0]["agent_did"]
-        await self._db.execute(
-            "INSERT OR REPLACE INTO foreign_chains "
-            "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
-            (origin_ship_did, json.dumps(blocks), time.time()),
-        )
-        await self._db.commit()
-        self._foreign_chain_cache[origin_ship_did] = list(blocks)
+        async with self._foreign_chain_lock:  # AD-1196 A-1
+            stored = self._foreign_chain_cache.get(origin_ship_did)
+            if self._key_binding is not None and stored is not None:
+                from probos.identity_keys import keeps_key_history
+
+                keeps, why = keeps_key_history(stored, blocks)
+                if not keeps:  # AD-1196 A-1 key history is append-only per origin
+                    logger.warning(
+                        "AD-1196: import chain from %s rejected: %s; the stored chain is kept",
+                        origin_ship_did, why,
+                    )
+                    return False, f"Key history check failed: {why}"
+            await self._db.execute(
+                "INSERT OR REPLACE INTO foreign_chains "
+                "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
+                (origin_ship_did, json.dumps(blocks), time.time()),
+            )
+            await self._db.commit()
+            self._foreign_chain_cache[origin_ship_did] = list(blocks)
         logger.info(
             "Foreign chain imported: %d blocks from %s; available for transfer verification",
             len(blocks), origin_ship_did,
@@ -1153,6 +1229,27 @@ class AgentIdentityRegistry:
         )
         xfer.certificate_hash = xfer.compute_hash()
 
+        if self._key_binding is not None:
+            # AD-1196: sign and anchor the transfer under the ledger lock; without an active key
+            # signing raises before anything is written.
+            from probos.identity_keys import ATTEST_TRANSFER, credential_digest
+
+            async with self._ledger_lock:
+                async with self._db.execute(
+                    "SELECT certificate_vc_json FROM birth_certificates WHERE did = ?", (cert.did,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                birth_digest = credential_digest(json.loads(row[0]))  # AD-1196 A-1 birth binding
+                signed = await self._key_binding.sign_record_locked(
+                    xfer.to_verifiable_credential(), required=True, birth_credential_digest=birth_digest,
+                )
+                assert signed is not None  # required signing raises instead of returning None
+                block = await self._append_to_ledger(xfer.certificate_hash, xfer.did)
+                await self._key_binding.record_attestation_locked(
+                    block_index=block.index, kind=ATTEST_TRANSFER, subject_did=xfer.did,
+                    certificate_hash=xfer.certificate_hash, kid=signed[0], jws=signed[1],
+                )
+
         await self._db.execute(
             "INSERT INTO transfer_certificates "
             "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
@@ -1182,6 +1279,8 @@ class AgentIdentityRegistry:
         cert claim consistent with chain. On success, persists a foreign
         birth certificate (cache + DB) plus the cert under direction='incoming'.
         Does NOT reassign a slot — caller must call reassign_slot explicitly.
+        AD-1196 A-2: the origin chain is read, checked and the certificate
+        persisted under the foreign-chain lock that import_chain also takes.
         """
         if not self._db:
             return False, "Registry not started"
@@ -1195,95 +1294,111 @@ class AgentIdentityRegistry:
             )
             return False, "Certificate hash mismatch"
 
-        chain = self._foreign_chain_cache.get(cert.origin_ship_did)
-        if chain is None:
-            logger.warning(
-                "Transfer certificate rejected: origin chain %s not imported; "
-                "call import_chain first",
-                cert.origin_ship_did,
+        async with self._foreign_chain_lock:  # AD-1196 A-2 verify and persist under one lock
+            chain = self._foreign_chain_cache.get(cert.origin_ship_did)
+            if chain is None:
+                logger.warning(
+                    "Transfer certificate rejected: origin chain %s not imported; "
+                    "call import_chain first",
+                    cert.origin_ship_did,
+                )
+                return False, f"Origin chain {cert.origin_ship_did} not imported"
+
+            # Confirm the cert claims an agent the origin ship's ledger actually issued.
+            chain_match = False
+            for block in chain:
+                credential = block.get("credential")
+                if not credential:
+                    continue
+                subject = credential.get("credentialSubject") or {}
+                block_did = subject.get("id") or subject.get("did")
+                if block_did != cert.did:
+                    continue
+                chain_match = True
+                break
+
+            if not chain_match:
+                logger.warning(
+                    "Transfer certificate rejected: cert subject %s not present "
+                    "in origin chain %s",
+                    cert.did, cert.origin_ship_did,
+                )
+                return False, (
+                    f"Certificate subject {cert.did} not found in origin chain"
+                )
+
+            birth_index: int | None = None
+            if self._key_binding is not None:
+                from probos.identity_keys import verify_transfer_attestation
+
+                verdict = verify_transfer_attestation(
+                    chain, credential=cert.to_verifiable_credential(),
+                    certificate_hash=cert.certificate_hash, subject_did=cert.did,
+                )
+                if not verdict.accepted:
+                    logger.warning("AD-1196: transfer certificate %s rejected: %s", cert.did, verdict.reason)
+                    return False, verdict.reason
+                logger.info("AD-1196: transfer certificate %s accepted: %s", cert.did, verdict.reason)
+                birth_index = verdict.birth_index
+
+            # Build a foreign AgentBirthCertificate from the cert + chain VC.
+            # Department / post_id / certificate_hash come from the chain VC subject;
+            # cert carries the canonical sovereign fields.
+            fcert: AgentBirthCertificate | None = None
+            birth_blocks = chain if birth_index is None else [chain[birth_index]]  # AD-1196 A-1 bound birth
+            for block in birth_blocks:
+                credential = block.get("credential")
+                if not credential:
+                    continue
+                subject = credential.get("credentialSubject") or {}
+                block_did = subject.get("id") or subject.get("did")
+                if block_did != cert.did:
+                    continue
+                fcert = AgentBirthCertificate(
+                    agent_uuid=cert.agent_uuid,
+                    did=cert.did,
+                    agent_type=cert.agent_type,
+                    callsign=cert.callsign,
+                    instance_id=cert.origin_instance_id,
+                    vessel_name=cert.origin_vessel_name,
+                    birth_timestamp=cert.origin_birth_timestamp,
+                    department=subject.get("department", ""),
+                    post_id=subject.get("postId", subject.get("post_id", "")),
+                    baseline_version=cert.baseline_version,
+                    certificate_hash=block.get("certificate_hash", ""),
+                )
+                break
+
+            if fcert is None:
+                return False, "Failed to reconstruct foreign birth certificate"
+
+            await self._db.execute(
+                "INSERT OR REPLACE INTO foreign_birth_certificates "
+                "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
+                "birth_timestamp, department, post_id, baseline_version, "
+                "certificate_hash, certificate_vc_json, origin_ship_did, imported_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    fcert.agent_uuid, fcert.did, fcert.agent_type, fcert.callsign,
+                    fcert.instance_id, fcert.vessel_name, fcert.birth_timestamp,
+                    fcert.department, fcert.post_id, fcert.baseline_version,
+                    fcert.certificate_hash,
+                    json.dumps(cert.to_verifiable_credential()),
+                    cert.origin_ship_did, time.time(),
+                ),
             )
-            return False, f"Origin chain {cert.origin_ship_did} not imported"
-
-        # Confirm the cert claims an agent the origin ship's ledger actually issued.
-        chain_match = False
-        for block in chain:
-            credential = block.get("credential")
-            if not credential:
-                continue
-            subject = credential.get("credentialSubject") or {}
-            block_did = subject.get("id") or subject.get("did")
-            if block_did != cert.did:
-                continue
-            chain_match = True
-            break
-
-        if not chain_match:
-            logger.warning(
-                "Transfer certificate rejected: cert subject %s not present "
-                "in origin chain %s",
-                cert.did, cert.origin_ship_did,
+            await self._db.execute(
+                "INSERT OR REPLACE INTO transfer_certificates "
+                "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    cert.did, cert.transfer_timestamp, "incoming",
+                    cert.certificate_hash,
+                    json.dumps(cert.to_verifiable_credential()),
+                ),
             )
-            return False, (
-                f"Certificate subject {cert.did} not found in origin chain"
-            )
-
-        # Build a foreign AgentBirthCertificate from the cert + chain VC.
-        # Department / post_id / certificate_hash come from the chain VC subject;
-        # cert carries the canonical sovereign fields.
-        fcert: AgentBirthCertificate | None = None
-        for block in chain:
-            credential = block.get("credential")
-            if not credential:
-                continue
-            subject = credential.get("credentialSubject") or {}
-            block_did = subject.get("id") or subject.get("did")
-            if block_did != cert.did:
-                continue
-            fcert = AgentBirthCertificate(
-                agent_uuid=cert.agent_uuid,
-                did=cert.did,
-                agent_type=cert.agent_type,
-                callsign=cert.callsign,
-                instance_id=cert.origin_instance_id,
-                vessel_name=cert.origin_vessel_name,
-                birth_timestamp=cert.origin_birth_timestamp,
-                department=subject.get("department", ""),
-                post_id=subject.get("postId", subject.get("post_id", "")),
-                baseline_version=cert.baseline_version,
-                certificate_hash=block.get("certificate_hash", ""),
-            )
-            break
-
-        if fcert is None:
-            return False, "Failed to reconstruct foreign birth certificate"
-
-        await self._db.execute(
-            "INSERT OR REPLACE INTO foreign_birth_certificates "
-            "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
-            "birth_timestamp, department, post_id, baseline_version, "
-            "certificate_hash, certificate_vc_json, origin_ship_did, imported_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                fcert.agent_uuid, fcert.did, fcert.agent_type, fcert.callsign,
-                fcert.instance_id, fcert.vessel_name, fcert.birth_timestamp,
-                fcert.department, fcert.post_id, fcert.baseline_version,
-                fcert.certificate_hash,
-                json.dumps(cert.to_verifiable_credential()),
-                cert.origin_ship_did, time.time(),
-            ),
-        )
-        await self._db.execute(
-            "INSERT OR REPLACE INTO transfer_certificates "
-            "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                cert.did, cert.transfer_timestamp, "incoming",
-                cert.certificate_hash,
-                json.dumps(cert.to_verifiable_credential()),
-            ),
-        )
-        await self._db.commit()
-        self._foreign_uuid_cache[fcert.agent_uuid] = fcert
+            await self._db.commit()
+            self._foreign_uuid_cache[fcert.agent_uuid] = fcert
         logger.info(
             "Transfer certificate imported: %s (%s) from %s; "
             "available via get_by_uuid (caller must reassign_slot)",

@@ -31,16 +31,15 @@ bump is required. DD-4: the default-inert contract above is unchanged.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from .catalog import CatalogEntry, TrustManifest
 from .jcs import canonicalize
+from .jws import parse_detached, signing_input, verify_parsed
 from .urn import publisher_domain
 
 logger = logging.getLogger(__name__)
@@ -49,16 +48,6 @@ logger = logging.getLogger(__name__)
 _W_DOMAIN = 1.0
 _W_ATTEST = 0.5
 _W_SIGNATURE = 1.0
-
-# AD-1144 DD-2: the ONLY JWS algorithm this verifier accepts. Pinning it (rather
-# than trusting the header) is the algorithm-confusion defense — ``none``,
-# ``HS256`` and friends are rejected before any key material is touched.
-_JWS_ALG = "EdDSA"
-
-# RFC 7515 section 2 base64url alphabet, unpadded. Validated explicitly because
-# ``base64.urlsafe_b64decode`` SILENTLY DISCARDS out-of-alphabet characters,
-# which would let a tampered segment decode instead of failing at this boundary.
-_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _norm_host(host: str) -> str:
@@ -84,22 +73,6 @@ class VerificationReport:
     alpha: float
     beta: float
     notes: list[str] = field(default_factory=list)
-
-
-def _b64url_encode(data: bytes) -> str:
-    """RFC 7515 section 2 BASE64URL: urlsafe base64 with the padding stripped."""
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(segment: str) -> bytes:
-    """Decode one unpadded base64url segment, rejecting out-of-alphabet input.
-
-    Raises ``ValueError`` on a malformed segment (the caller's trust boundary
-    converts that to ``False``).
-    """
-    if not _B64URL_RE.match(segment):
-        raise ValueError("RFC 7515: segment is not valid unpadded base64url")
-    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
 
 
 def _manifest_payload(manifest: TrustManifest) -> dict[str, Any]:
@@ -156,7 +129,7 @@ def build_jws_signing_input(protected_b64: str, payload: bytes) -> bytes:
     Returns:
         The ASCII bytes an Ed25519 signature is computed over / verified against.
     """
-    return f"{protected_b64}.{_b64url_encode(payload)}".encode("ascii")
+    return signing_input(protected_b64, payload)
 
 
 def _verify_jws_detached(
@@ -179,36 +152,11 @@ def _verify_jws_detached(
 
     Raises on malformed input; the caller converts that to ``False``.
     """
-    parts = jws.split(".")
-    if len(parts) != 3:
+    parsed = parse_detached(jws)
+    if parsed is None:
         return False
-    protected_b64, payload_b64, signature_b64url = parts
-    if payload_b64:
-        # Detached only: an attached payload is a different scheme, and honouring
-        # it would let a signer choose bytes other than the canonical manifest.
-        return False
-
-    header = json.loads(_b64url_decode(protected_b64))
-    if not isinstance(header, dict):
-        return False
-    if header.get("alg") != _JWS_ALG:
-        return False
-    if "crit" in header:
-        # RFC 7515 section 4.1.11: a recipient MUST reject a JWS carrying a
-        # critical header parameter it does not understand — this verifier
-        # understands none. This also rejects the RFC 7797 ``b64: false``
-        # variant, which DD-2 deliberately did not choose.
-        return False
-
-    signing_input = build_jws_signing_input(
-        protected_b64, build_signing_input(manifest)
-    )
-    # ``verify_signature`` speaks STANDARD base64 for the signature; JWS speaks
-    # base64url. Re-encode across that boundary rather than duplicating the
-    # Ed25519 primitive.
-    signature_b64 = base64.b64encode(_b64url_decode(signature_b64url)).decode("ascii")
-    return verify_signature(
-        issuer_public_key_b64, signing_input.decode("ascii"), signature_b64
+    return verify_parsed(
+        parsed, build_signing_input(manifest), issuer_public_key_b64, verify_signature
     )
 
 

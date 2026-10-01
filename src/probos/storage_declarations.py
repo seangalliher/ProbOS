@@ -118,4 +118,27 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "no authority. Offers are in memory only."
         ),
     ),
+    StoreDeclaration(
+        id="identity.key-binding",
+        title="Ship DID key events and certificate signatures (AD-1196)",
+        owner_module="probos.identity_key_binding",
+        owner_symbol="IdentityKeyBinding",
+        canonical_path="identity.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.identity.AgentIdentityRegistry",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "Append-only: one row per key event and per signed certificate, never deleted. "
+            "Growth is bounded by births, transfers and the Captain's key actions."
+        ),
+        backup="included",
+        restore="unknown",
+        reconstruction="",
+        notes=(
+            "Companion tables co-located with the AD-441 identity ledger in identity.db, sharing "
+            "AgentIdentityRegistry's connection and ledger lock; created only when "
+            "federation.identity_keys_enabled. Public keys, key events and signatures only: private "
+            "keys never enter this database (OS keyring, or the explicit plaintext_dev directory)."
+        ),
+    ),
 )

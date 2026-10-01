@@ -256,6 +256,10 @@ async def _off_observation(
     assert config["dm_agentic"].pop("agent_modes_enabled") is False
     # AD-1194's inert unified-ladder flag was added after this capture too.
     assert config["capability_triage"].pop("unified_ladder_enabled") is False
+    # AD-1196's three inert identity-key fields were added after this capture too.
+    assert config["federation"].pop("identity_keys_enabled") is False
+    assert config["federation"].pop("identity_key_store") == "keyring"
+    assert config["federation"].pop("identity_recovery_public_key") == ""
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

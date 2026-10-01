@@ -2377,6 +2377,16 @@ class FederationConfig(BaseModel):
     memory_access_policy: str = "shared_trust"
     shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
     dp_min_cohort_size: int = Field(default=3, ge=1)
+    # AD-1196: bind the ship DID to an Ed25519 key and sign the certificates it
+    # anchors. Default-OFF: off is byte-identical and never touches the OS keyring.
+    identity_keys_enabled: bool = False
+    # AD-1196: where the identity private key lives. "keyring" is the OS keyring
+    # through a recommended (secure) backend only; "plaintext_dev" writes the key
+    # UNENCRYPTED to files for development and is never a fallback.
+    identity_key_store: Literal["keyring", "plaintext_dev"] = "keyring"
+    # AD-1196: the Captain's recovery PUBLIC key (base64 raw Ed25519, or empty).
+    # Its private half stays off the vessel; inception commits this public half.
+    identity_recovery_public_key: str = ""
 
     @field_validator("memory_access_policy")
     @classmethod
@@ -2398,6 +2408,17 @@ class FederationConfig(BaseModel):
             raise ValueError(
                 f"memory_policy must be one of {sorted(valid)}; got {v!r}"
             )
+        return v
+
+    @field_validator("identity_recovery_public_key")
+    @classmethod
+    def _validate_identity_recovery_public_key(cls, v: str) -> str:
+        """AD-1196: empty, or a base64 raw 32-byte Ed25519 public key."""
+        if not v:
+            return v
+        from probos.substrate.device_pairing import decode_public_key
+
+        decode_public_key(v)  # ValueError: refused at parse time
         return v
 
 
