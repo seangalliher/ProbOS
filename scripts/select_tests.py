@@ -91,9 +91,13 @@ What this does NOT catch
     suite-wide measurement. Coverage overhead scales with executed bytecode,
     not wall time.
 8.  **``--gate-balance`` measures, it does not rebalance.** Under
-    ``--dist=loadfile`` the imbalance is a duration property of file grouping,
-    not of any single large file, so per-worker node counts alone understate
-    it. This slice changes no distribution.
+    ``--dist=loadfile`` a file is never split across workers, so one file can
+    set the critical path: ``test_experience.py`` did in every September gate
+    (``docs/development/test-suite-optimization-plan.md`` section 3.2). Per-worker
+    node counts alone understate the imbalance, so the report adds each
+    worker's busy time (from the ``timing`` block of its ``gwN.json`` when
+    present, otherwise from JUnit), the critical-path worker and that worker's
+    dominant file. This slice changes no distribution.
 
 Writes nothing in ``--select``, ``--check`` and ``--gate-balance``. ``--shadow``
 writes exactly two artifacts of its own -- the bulky record under the ignored
@@ -111,6 +115,7 @@ import argparse
 import ast
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -120,6 +125,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Iterable, Sequence
 
 import yaml
@@ -130,6 +136,34 @@ _DEFAULT_LEDGER = (
     _REPO_ROOT / "docs" / "development" / "test-selection-shadow-ledger.jsonl"
 )
 _DEFAULT_ARTIFACT_DIR = _REPO_ROOT / "logs" / "gates"
+
+
+def _load_gate_timing() -> ModuleType:
+    """Load the shared timing helper that sits beside this script, by path.
+
+    ``python -P`` and a path-loaded test have no ``scripts/`` on ``sys.path``, so
+    a plain import would depend on how this file was started.
+    """
+    name = "_gate_timing"
+    path = Path(__file__).resolve().with_name("_gate_timing.py")
+    cached = sys.modules.get(name)
+    cached_file = getattr(cached, "__file__", None)
+    if cached is not None and cached_file and Path(cached_file).resolve() == path:
+        return cached
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"gate timing helper cannot be loaded: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+_gate_timing = _load_gate_timing()
 
 #: Bumped when the map payload shape changes. A drift fires ``map-schema``.
 SCHEMA_VERSION = 1
@@ -1492,40 +1526,44 @@ def _relative_posix(path: Path, repo_root: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def junit_node_id(attributes: dict[str, str]) -> str | None:
-    """Reconstruct a pytest node ID from a JUnit ``testcase`` element.
-
-    ``classname`` is the dotted module path plus any class chain, so the class
-    chain is whatever remains after stripping the module derived from ``file``.
-    """
-    file_name = (attributes.get("file") or "").replace("\\", "/").removeprefix("./")
-    name = attributes.get("name") or ""
-    classname = attributes.get("classname") or ""
-    if not file_name.endswith(".py") or not name:
-        return None
-    module = file_name[: -len(".py")].replace("/", ".")
-    if classname == module:
-        chain: list[str] = []
-    elif classname.startswith(f"{module}."):
-        chain = classname[len(module) + 1 :].split(".")
-    else:
-        return None
-    return "::".join([file_name, *chain, name])
+#: The shared helper owns node-ID reconstruction, so the gate wrapper's duration
+#: budget and this report rebuild node IDs from JUnit identically.
+junit_node_id = _gate_timing.junit_node_id
 
 
-def gate_balance(collection_path: Path, junit_path: Path) -> dict[str, Any]:
-    """Per-worker counts, per-node durations, union equality, duplicates.
+def gate_balance(
+    collection_path: Path,
+    junit_path: Path,
+    *,
+    workers_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Per-worker counts and busy time, per-node durations, union equality, duplicates.
 
     Reports the imbalance; it does **not** change the distribution. Under
-    ``--dist=loadfile`` the imbalance is a duration property of file grouping,
-    so per-worker node counts alone understate it -- durations come from the
-    JUnit ``time`` attributes.
+    ``--dist=loadfile`` a file is never split across workers, so one file can set
+    the critical path and per-worker node counts alone understate the imbalance.
+    ``busy`` therefore adds each worker's busy time (the ``timing`` block of its
+    ``gwN.json`` when valid, otherwise the JUnit ``time`` of its executed nodes),
+    the critical-path worker and that worker's dominant file.
+
+    ``workers_dir`` defaults to the ``<stem>.collection-workers`` directory the
+    gate keeps beside ``<stem>.collection.json``. A gate that kept none yields
+    ``busy: None`` and a warning; an unreadable or invalid ``gw*.json`` is an
+    error.
     """
+    workers_path = (
+        workers_dir
+        if workers_dir is not None
+        else _gate_timing.default_workers_dir(collection_path)
+    )
     report: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "collection": collection_path.as_posix(),
         "junit": junit_path.as_posix(),
         "errors": [],
+        "workers_dir": workers_path.as_posix(),
+        "warnings": [],
+        "busy": None,
     }
     try:
         payload = json.loads(collection_path.read_text(encoding="utf-8"))
@@ -1549,32 +1587,14 @@ def gate_balance(collection_path: Path, junit_path: Path) -> dict[str, Any]:
     )
 
     try:
-        root = ET.parse(junit_path).getroot()
+        junit = _gate_timing.read_junit_times(junit_path)
     except (ET.ParseError, OSError) as exc:
         report["errors"].append(f"unreadable JUnit report: {exc}")
         return report
-    testcases = [
-        element
-        for element in root.iter()
-        if element.tag.rsplit("}", 1)[-1] == "testcase"
-    ]
-    junit_nodes: list[str] = []
-    durations: dict[str, float] = {}
-    file_durations: dict[str, float] = {}
-    unresolved = 0
-    for testcase in testcases:
-        node = junit_node_id(dict(testcase.attrib))
-        if node is None:
-            unresolved += 1
-            continue
-        junit_nodes.append(node)
-        try:
-            seconds = float(testcase.attrib.get("time", "0"))
-        except ValueError:
-            seconds = 0.0
-        durations[node] = durations.get(node, 0.0) + seconds
-        file_name = node.split("::", 1)[0]
-        file_durations[file_name] = file_durations.get(file_name, 0.0) + seconds
+    junit_nodes = list(junit.nodes)
+    durations = junit.node_seconds
+    file_durations = junit.file_seconds
+    unresolved = junit.unresolved
 
     duplicate_junit = sorted({node for node in junit_nodes if junit_nodes.count(node) > 1}) if len(junit_nodes) != len(set(junit_nodes)) else []
     collected_set = set(collected_strings)
@@ -1588,7 +1608,7 @@ def gate_balance(collection_path: Path, junit_path: Path) -> dict[str, Any]:
     report.update(
         {
             "collected_node_count": len(collected_strings),
-            "junit_testcase_count": len(testcases),
+            "junit_testcase_count": junit.testcase_count,
             "junit_node_count": len(junit_nodes),
             "junit_unresolved_testcases": unresolved,
             "union_equal": not only_collected and not only_junit and unresolved == 0,
@@ -1617,13 +1637,55 @@ def gate_balance(collection_path: Path, junit_path: Path) -> dict[str, Any]:
                 for name, seconds in slowest_files
             ],
             "note": (
-                "Measurement only. --dist=loadfile groups by file, so the "
-                "imbalance is a duration property of grouping rather than of any "
-                "single large file. This slice changes no distribution."
+                "Measurement only. --dist=loadfile never splits a file, so one "
+                "file can set the critical path; busy holds each worker's busy "
+                "time, the critical-path worker and its dominant file. This "
+                "slice changes no distribution."
             ),
         }
     )
+    _attach_busy(report, counts, junit, workers_path)
     return report
+
+
+def _attach_busy(
+    report: dict[str, Any],
+    counts: dict[str, int],
+    junit: _gate_timing.JUnitTimes,
+    workers_path: Path,
+) -> None:
+    """Fill ``busy`` from the per-worker evidence, and report what was wrong."""
+    load = _gate_timing.load_worker_evidence(workers_path)
+    report["warnings"].extend(load.warnings)
+    report["errors"].extend(load.errors)
+    if load.errors or not load.workers:
+        return
+    report["busy"] = _gate_timing.compute_busy(load.workers, junit)
+    for worker in load.workers:
+        recorded = counts.get(worker.worker)
+        if recorded is not None and recorded != len(worker.executed_nodeids):
+            report["warnings"].append(
+                f"{worker.worker}: the per-worker evidence executed "
+                f"{len(worker.executed_nodeids)} nodes but the collection artifact "
+                f"records {recorded}; the directory may belong to another run"
+            )
+
+
+def _critical_path_line(busy: dict[str, Any] | None) -> str:
+    if busy is None:
+        return "critical path: unavailable (no per-worker evidence for this gate)"
+    critical = busy["critical_path"]
+    where = (
+        f" at {critical['file']} ({critical['file_seconds']:.1f}s)"
+        if critical["file"] is not None
+        else ""
+    )
+    return (
+        f"critical path: {critical['worker']} busy={critical['busy_seconds']:.1f}s"
+        f"{where}; mean={busy['mean_seconds']:.1f}s "
+        f"min={busy['min_seconds']:.1f}s max={busy['max_seconds']:.1f}s "
+        f"source={busy['source']}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1681,7 +1743,10 @@ def main(argv: list[str] | None = None) -> int:
         "--gate-balance",
         nargs=2,
         metavar=("COLLECTION", "JUNIT"),
-        help="report per-worker counts and per-node durations for a shipped gate",
+        help=(
+            "report per-worker counts and busy time, the critical-path file and "
+            "per-node durations for a shipped gate"
+        ),
     )
     parser.add_argument("--map", metavar="PATH", help="test map to select against")
     parser.add_argument(
@@ -1720,6 +1785,8 @@ def main(argv: list[str] | None = None) -> int:
             for problem in report["errors"]:
                 print(f"  - {problem}", file=sys.stderr)
             return 1
+        for warning in report["warnings"]:
+            print(f"  - warning: {warning}", file=sys.stderr)
         print(
             "gate balance: "
             f"{report['collected_node_count']} collected, union_equal="
@@ -1727,6 +1794,7 @@ def main(argv: list[str] | None = None) -> int:
             f"min={report['worker_min']}, max={report['worker_max']}, "
             f"spread={report['worker_spread_ratio']}x"
         )
+        print(_critical_path_line(report["busy"]))
         return 0
 
     if args.check:

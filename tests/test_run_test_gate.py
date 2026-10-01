@@ -2816,3 +2816,376 @@ def test_wave_orchestrator_verify_fails_closed_on_invalid_plan_state(
 
     assert completed.returncode != 0
     assert expected_message.lower() in (completed.stdout + completed.stderr).lower()
+
+
+# ---------------------------------------------------------------------------
+# Report-only duration budget (P0.5 timing / P3.1): measurement, never authority
+# ---------------------------------------------------------------------------
+
+_BUDGET_LINE = "DURATION BUDGET (report-only):"
+_RECEIPT_KEYS = {
+    "schema_version",
+    "label",
+    "finished_at",
+    "status",
+    "tree",
+    "manifest",
+    "junit",
+    "collection",
+}
+_CLEAN_RECEIPT_STATUS = {
+    "preflight_exit_code": 0,
+    "preflight_only": False,
+    "pytest_exit_code": 0,
+    "tree_changed": False,
+    "wrapper_exit_code": 0,
+}
+_COLLECTION_ARTIFACT_KEYS = {
+    "schema_version",
+    "collection_count",
+    "collection_sha256",
+    "collected_nodeids",
+    "collected_files",
+    "executed_nodeids",
+    "worker_execution_counts",
+}
+
+
+def _commit_paths(repo: Path, *paths: str, message: str) -> None:
+    _git(repo, "add", *paths)
+    _git(
+        repo,
+        "-c",
+        "user.name=ProbOS Tests",
+        "-c",
+        "user.email=tests@probos.invalid",
+        "commit",
+        "-q",
+        "-m",
+        message,
+    )
+
+
+def _budget_console_lines(console: str) -> list[str]:
+    return [line for line in console.splitlines() if line.startswith(_BUDGET_LINE)]
+
+
+def _assert_budget_line_is_clean(
+    gate: ModuleType, console: str, manifest: dict[str, object], repo: Path
+) -> str:
+    lines = console.splitlines()
+    budget_lines = _budget_console_lines(console)
+    assert len(budget_lines) == 1, "exactly one budget line"
+    final = [index for index, line in enumerate(lines) if line.startswith("Gate exit=")]
+    assert len(final) == 1 and lines.index(budget_lines[0]) < final[0]
+    log_text = (repo / str(manifest["log_path"])).read_text(encoding="utf-8")
+    assert _BUDGET_LINE not in log_text, "the budget line is console-only"
+    assert gate._SUMMARY_RE.search(budget_lines[0]) is None
+    return budget_lines[0]
+
+
+def test_main_reports_a_duration_budget_without_changing_the_gate_outcome(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _make_gate_repo(tmp_path)
+    (repo / "tests" / "test_budget_probe.py").write_text(
+        "import time\n\n\n"
+        "def test_sleeps_past_the_lowered_budget():\n    time.sleep(0.9)\n\n\n"
+        "def test_is_quick():\n    assert True\n",
+        encoding="utf-8",
+    )
+    _commit_paths(repo, "tests/test_budget_probe.py", message="budget probe")
+    monkeypatch.setattr(gate, "_running_pytest_processes", lambda: [])
+    monkeypatch.setattr(
+        gate,
+        "_preflight_specs",
+        lambda _root: [gate.PhaseSpec("preflight", [sys.executable, "-c", "pass"])],
+    )
+    helper = gate._load_gate_timing()
+    monkeypatch.setattr(helper, "_DURATION_BUDGET_TEST_SECONDS", 0.5)
+    monkeypatch.setattr(helper, "_DURATION_BUDGET_FILE_SECONDS", 0.6)
+    receipt_path = repo / "logs" / "gates" / "budget.receipt.json"
+
+    exit_code = gate.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--workers",
+            "1",
+            "--label",
+            "budget",
+            "--receipt",
+            str(receipt_path),
+        ]
+    )
+    console = capsys.readouterr().out
+    gates_dir = repo / "logs" / "gates"
+    manifest = _only_manifest(repo)
+    manifest_path = next(
+        path
+        for path in gates_dir.glob("*.json")
+        if not path.name.endswith((".receipt.json", ".collection.json"))
+    )
+    worker_dirs = list(gates_dir.glob("*.collection-workers"))
+    assert len(worker_dirs) == 1 and (worker_dirs[0] / "gw0.json").is_file()
+    worker = json.loads((worker_dirs[0] / "gw0.json").read_text(encoding="utf-8"))
+    budget = manifest["duration_budget"]
+
+    # The gate outcome is exactly what it would be without a budget.
+    assert exit_code == 0
+    assert manifest["wrapper_exit_code"] == 0 and manifest["error"] == ""
+    assert str(manifest["summary"]).startswith("2 passed")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert set(receipt) == _RECEIPT_KEYS
+    assert receipt["status"] == _CLEAN_RECEIPT_STATUS
+    assert receipt["manifest"]["sha256"] == gate._sha256_file(manifest_path)
+    assert "duration_budget" not in receipt_path.read_text(encoding="utf-8")
+    collection = json.loads((repo / receipt["collection"]["path"]).read_text("utf-8"))
+    assert set(collection) == _COLLECTION_ARTIFACT_KEYS
+
+    # The measurement happened, and the breach it found is only reported.
+    assert worker["schema_version"] == 1 and worker["timing"]["version"] == 1
+    assert set(worker["timing"]["files"]) == {"tests/test_budget_probe.py"}
+    assert isinstance(budget, dict) and budget["error"] is None
+    assert budget["report_only"] is True and budget["busy_source"] == "timestamps"
+    assert budget["thresholds"]["test_seconds"] == 0.5
+    assert [item["id"] for item in budget["slow_tests"]["items"]] == [
+        "tests/test_budget_probe.py::test_sleeps_past_the_lowered_budget"
+    ]
+    assert budget["slow_files"]["count"] == 1
+    flagged = budget["slow_files"]["items"][0]
+    assert flagged["file"] == "tests/test_budget_probe.py"
+    assert flagged["over_file_seconds"] is True
+    assert budget["critical_path"]["worker"] == "gw0"
+    assert budget["critical_path"]["file"] == "tests/test_budget_probe.py"
+
+    line = _assert_budget_line_is_clean(gate, console, manifest, repo)
+    assert "1 test(s) over 0.5s" in line and "critical path gw0" in line
+
+    if shutil.which("pwsh") is not None:
+        parsed = subprocess.run(
+            [
+                "pwsh",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$m = Get-Content -Raw -LiteralPath "
+                f"'{manifest_path}' | ConvertFrom-Json -AsHashtable; "
+                "[string]$m.duration_budget.slow_tests.count",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert parsed.stdout.strip() == "1", parsed.stderr
+
+
+@pytest.mark.parametrize(
+    "failure", ["inner-raises", "not-strict-json", "helper-cannot-load"]
+)
+def test_main_duration_budget_failure_changes_nothing(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    repo = _make_gate_repo(tmp_path)
+    monkeypatch.setattr(gate, "_running_pytest_processes", lambda: [])
+    monkeypatch.setattr(
+        gate,
+        "_preflight_specs",
+        lambda _root: [gate.PhaseSpec("preflight", [sys.executable, "-c", "pass"])],
+    )
+
+    def full_command(**kwargs: object) -> list[str]:
+        junit = Path(str(kwargs["junit_path"]))
+        code = (
+            "from pathlib import Path; "
+            f"Path({str(junit)!r}).write_text("
+            "'<testsuites><testsuite tests=\"2\" failures=\"0\" errors=\"0\" "
+            "skipped=\"1\" time=\"0.02\"><testcase name=\"one\" />"
+            "<testcase name=\"two\"><skipped /></testcase>"
+            "</testsuite></testsuites>'); "
+            "print('1 passed, 1 skipped in 0.02s')"
+        )
+        return [sys.executable, "-c", code]
+
+    def collection_validation(
+        _directory: Path, artifact: Path, **_kwargs: object
+    ) -> object:
+        artifact.write_text("{}\n", encoding="utf-8")
+        return gate.CollectionTotals(nodes=2, workers=16, sha256="fixture")
+
+    monkeypatch.setattr(gate, "_build_full_command", full_command)
+    monkeypatch.setattr(gate, "_validate_collection_manifests", collection_validation)
+    helper = gate._load_gate_timing()
+    if failure == "inner-raises":
+
+        def explode(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("budget exploded")
+
+        monkeypatch.setattr(helper, "build_duration_budget", explode)
+        expected_error = "RuntimeError: budget exploded"
+    elif failure == "not-strict-json":
+        monkeypatch.setattr(
+            helper,
+            "build_duration_budget",
+            lambda *_a, **_k: {"version": 1, "seconds": float("nan")},
+        )
+        expected_error = "ValueError: "
+    else:
+
+        def cannot_load() -> ModuleType:
+            raise FileNotFoundError("gate timing helper vanished")
+
+        monkeypatch.setattr(gate, "_load_gate_timing", cannot_load)
+        expected_error = "FileNotFoundError: gate timing helper vanished"
+    receipt_path = repo / "logs" / "gates" / "isolated.receipt.json"
+
+    exit_code = gate.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--label",
+            "isolated",
+            "--receipt",
+            str(receipt_path),
+        ]
+    )
+    console = capsys.readouterr().out
+    manifest = _only_manifest(repo)
+
+    assert exit_code == 0 and manifest["wrapper_exit_code"] == 0
+    assert manifest["error"] == ""
+    assert manifest["summary"] == "1 passed, 1 skipped in 0.02s"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert set(receipt) == _RECEIPT_KEYS
+    assert receipt["status"] == _CLEAN_RECEIPT_STATUS
+    assert "duration_budget" not in receipt_path.read_text(encoding="utf-8")
+    budget = manifest["duration_budget"]
+    assert isinstance(budget, dict)
+    assert set(budget) == {"version", "report_only", "error"}
+    assert budget["version"] == 1 and budget["report_only"] is True
+    assert str(budget["error"]).startswith(expected_error)
+    line = _assert_budget_line_is_clean(gate, console, manifest, repo)
+    assert "unavailable" in line
+
+
+@pytest.mark.parametrize("mode", ["preflight-only", "no-junit-report"])
+def test_main_duration_budget_is_null_without_a_junit_report(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+) -> None:
+    repo = _make_gate_repo(tmp_path)
+    monkeypatch.setattr(gate, "_running_pytest_processes", lambda: [])
+    monkeypatch.setattr(
+        gate,
+        "_preflight_specs",
+        lambda _root: [gate.PhaseSpec("preflight", [sys.executable, "-c", "pass"])],
+    )
+    monkeypatch.setattr(
+        gate,
+        "_build_full_command",
+        lambda **_kwargs: [sys.executable, "-c", "print('1 passed in 0.01s')"],
+    )
+    arguments = ["--repo-root", str(repo), "--label", mode]
+    if mode == "preflight-only":
+        arguments.append("--preflight-only")
+
+    exit_code = gate.main(arguments)
+    console = capsys.readouterr().out
+    manifest = _only_manifest(repo)
+
+    assert manifest["junit_path"] is None, "premise: no JUnit report exists"
+    assert exit_code == (0 if mode == "preflight-only" else 5)
+    assert "duration_budget" in manifest and manifest["duration_budget"] is None
+    assert _budget_console_lines(console) == []
+    assert "Gate exit=" in console
+
+
+def test_gate_result_gains_one_trailing_optional_field(gate: ModuleType) -> None:
+    import dataclasses
+
+    fields = dataclasses.fields(gate.GateResult)
+
+    assert all(field.default is dataclasses.MISSING for field in fields[:-1])
+    assert fields[-1].name == "duration_budget"
+    assert fields[-1].default is None
+
+
+def test_gate_timing_loader_registers_before_exec_and_is_reused(
+    gate: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "_gate_timing", None)
+
+    first = gate._load_gate_timing()
+
+    assert sys.modules["_gate_timing"] is first
+    assert gate._load_gate_timing() is first
+    assert Path(first.__file__).resolve() == (
+        REPO_ROOT / "scripts" / "_gate_timing.py"
+    ).resolve()
+    # Building a dataclass needs the module to be registered while it executes.
+    assert first.JUnitTimes(0, 0, (), {}, {}).testcase_count == 0
+
+
+def test_a_helper_that_fails_to_import_is_contained_and_not_left_registered(
+    gate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "_gate_timing.py").write_text(
+        "raise RuntimeError('broken at import')\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(gate, "__file__", str(tmp_path / "run_test_gate.py"))
+    monkeypatch.setitem(sys.modules, "_gate_timing", None)
+
+    budget = gate._compute_duration_budget(tmp_path / "run.xml", tmp_path / "workers")
+
+    assert budget == {
+        "version": 1,
+        "report_only": True,
+        "error": "RuntimeError: broken at import",
+    }
+    assert sys.modules.get("_gate_timing") is None
+
+
+def test_duration_budget_line_is_one_summary_safe_line_and_never_raises(
+    gate: ModuleType,
+) -> None:
+    budget = {
+        "thresholds": {"test_seconds": 10.0, "file_seconds": 120.0, "mean_busy_share": 0.5},
+        "slow_tests": {"count": 2},
+        "slow_files": {"count": 3},
+        "critical_path": {
+            "worker": "gw3",
+            "busy_seconds": 906.44,
+            "file": "tests/error/test_failed_in_ci.py",
+            "file_seconds": 868.06,
+        },
+    }
+
+    line = gate._duration_budget_line(budget)
+
+    assert line == (
+        "DURATION BUDGET (report-only): 2 test(s) over 10s; 3 file(s) over 120s "
+        "or 50% of mean busy time; critical path gw3 906.4s at "
+        "tests/error/test_failed_in_ci.py (868.1s)\n"
+    )
+    assert gate._SUMMARY_RE.search(line) is None
+    assert gate._duration_budget_line({**budget, "critical_path": None}).endswith(
+        "critical path unavailable\n"
+    )
+    assert gate._duration_budget_line(
+        {"version": 1, "report_only": True, "error": "ValueError: in 5s"}
+    ) == "DURATION BUDGET (report-only): unavailable; see duration_budget.error in the manifest\n"
+    assert gate._duration_budget_line({**budget, "slow_tests": {}}) == (
+        "DURATION BUDGET (report-only): unavailable; see duration_budget in the manifest\n"
+    )

@@ -1061,6 +1061,412 @@ def test_gate_balance_against_the_live_shipped_gate(selector: ModuleType) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Balance measurement: per-worker busy time and the critical path (P0.5)
+# ---------------------------------------------------------------------------
+
+#: Every key ``gate_balance`` reported before P0.5; each must keep its meaning.
+PRE_P05_REPORT_KEYS = {
+    "schema_version",
+    "collection",
+    "junit",
+    "errors",
+    "collected_node_count",
+    "junit_testcase_count",
+    "junit_node_count",
+    "junit_unresolved_testcases",
+    "union_equal",
+    "only_in_collection",
+    "only_in_junit",
+    "only_in_collection_count",
+    "only_in_junit_count",
+    "duplicate_collected_nodes",
+    "duplicate_junit_nodes",
+    "worker_execution_counts",
+    "worker_count",
+    "worker_min",
+    "worker_max",
+    "worker_spread_ratio",
+    "worker_total",
+    "worker_total_matches_collection",
+    "total_duration_seconds",
+    "slowest_files",
+    "note",
+}
+
+#: file -> per-test seconds, and which worker ran it.
+BALANCE_FILES: dict[str, list[float]] = {
+    "tests/test_a.py": [10.0, 10.0, 10.0],
+    "tests/test_b.py": [5.0, 7.0],
+    "tests/test_c.py": [8.0],
+}
+BALANCE_ASSIGNMENT = {"gw0": ["tests/test_a.py"], "gw1": ["tests/test_b.py", "tests/test_c.py"]}
+
+
+def _balance_stamp(monotonic: float) -> dict[str, float]:
+    return {"monotonic": monotonic, "wall": 1_800_000_000.0 + monotonic}
+
+
+def _balance_timing(files: dict[str, tuple[float, int]]) -> dict[str, object]:
+    return {
+        "version": 1,
+        "events": {
+            "plugin_loaded": _balance_stamp(100.0),
+            "session_start": _balance_stamp(101.0),
+            "collection_finished": _balance_stamp(171.0),
+            "first_test_start": _balance_stamp(181.5),
+            "last_test_end": _balance_stamp(231.5),
+            "session_finish": _balance_stamp(232.0),
+        },
+        "files": {
+            name: {
+                "first_start": _balance_stamp(181.5),
+                "last_end": _balance_stamp(231.5),
+                "duration_seconds": seconds,
+                "node_count": count,
+            }
+            for name, (seconds, count) in files.items()
+        },
+    }
+
+
+def _balance_nodes(file: str) -> list[str]:
+    return [f"{file}::test_{index}" for index in range(len(BALANCE_FILES[file]))]
+
+
+def _write_balance_run(
+    tmp_path: Path,
+    *,
+    timing_seconds: dict[str, float] | None = None,
+    write_workers: bool = True,
+) -> tuple[Path, Path, Path]:
+    """A gate artifact trio named the way the wrapper names it.
+
+    ``timing_seconds`` maps a file to the duration its worker's timing block
+    claims; ``None`` writes workers with no timing block at all.
+    """
+    stem = "20260101T000000.000000Z-run-abc-p1-deadbeef"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cases = [
+        (file, file.removesuffix(".py").replace("/", "."), f"test_{index}", seconds)
+        for file, times in BALANCE_FILES.items()
+        for index, seconds in enumerate(times)
+    ]
+    nodes = [node for file in BALANCE_FILES for node in _balance_nodes(file)]
+    collection = tmp_path / f"{stem}.collection.json"
+    collection.write_text(
+        json.dumps(
+            {
+                "collected_nodeids": sorted(nodes),
+                "worker_execution_counts": {
+                    worker: sum(len(BALANCE_FILES[file]) for file in files)
+                    for worker, files in BALANCE_ASSIGNMENT.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    body = "".join(
+        f'<testcase classname="{classname}" name="{name}" file="{file}" time="{seconds}"/>'
+        for file, classname, name, seconds in cases
+    )
+    junit = tmp_path / f"{stem}.xml"
+    junit.write_text(
+        f'<?xml version="1.0"?><testsuites><testsuite name="pytest" '
+        f'tests="{len(cases)}">{body}</testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    workers_dir = tmp_path / f"{stem}.collection-workers"
+    if write_workers:
+        workers_dir.mkdir()
+        for worker, files in BALANCE_ASSIGNMENT.items():
+            payload: dict[str, object] = {
+                "schema_version": 1,
+                "worker_id": worker,
+                "exitstatus": 0,
+                "executed_nodeids": sorted(
+                    node for file in files for node in _balance_nodes(file)
+                ),
+            }
+            if timing_seconds is not None:
+                payload["timing"] = _balance_timing(
+                    {
+                        file: (timing_seconds[file], len(BALANCE_FILES[file]))
+                        for file in files
+                    }
+                )
+            (workers_dir / f"{worker}.json").write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+    return collection, junit, workers_dir
+
+
+def test_gate_balance_reports_busy_time_from_timestamps(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(
+        tmp_path,
+        timing_seconds={"tests/test_a.py": 31.0, "tests/test_b.py": 12.0, "tests/test_c.py": 8.0},
+    )
+    assert sorted(path.name for path in workers_dir.glob("gw*.json")) == [
+        "gw0.json",
+        "gw1.json",
+    ], "premise: both worker files exist beside the collection artifact"
+
+    report = selector.gate_balance(collection, junit)
+
+    assert report["errors"] == [] and report["warnings"] == []
+    assert report["workers_dir"] == workers_dir.as_posix()
+    busy = report["busy"]
+    assert busy["source"] == "timestamps"
+    first, second = busy["workers"]
+    assert (first["worker"], first["busy_seconds"], first["junit_busy_seconds"]) == (
+        "gw0",
+        31.0,
+        30.0,
+    )
+    assert first["busy_source"] == "timestamps"
+    assert (second["worker"], second["busy_seconds"], second["junit_busy_seconds"]) == (
+        "gw1",
+        20.0,
+        20.0,
+    )
+    assert (first["executed_count"], first["file_count"]) == (3, 1)
+    assert (second["executed_count"], second["file_count"]) == (3, 2)
+    assert (second["dominant_file"], second["dominant_file_seconds"]) == ("tests/test_b.py", 12.0)
+    assert first["collection_seconds"] == 70.0
+    assert first["start_wait_seconds"] == 10.5
+    assert first["active_span_seconds"] == 50.0
+    assert first["in_span_gap_seconds"] == 19.0
+    assert first["tail_seconds"] == 0.5
+    assert first["first_test_start_wall"] == 1_800_000_181.5
+    assert first["last_test_end_wall"] == 1_800_000_231.5
+    assert (busy["mean_seconds"], busy["max_seconds"], busy["min_seconds"]) == (
+        25.5,
+        31.0,
+        20.0,
+    )
+    assert busy["critical_path"] == {
+        "worker": "gw0",
+        "busy_seconds": 31.0,
+        "file": "tests/test_a.py",
+        "file_seconds": 31.0,
+    }
+    assert busy["unattributed_junit_seconds"] == 0.0
+
+
+def test_gate_balance_keeps_every_existing_key_and_value(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, _ = _write_balance_run(
+        tmp_path,
+        timing_seconds={"tests/test_a.py": 30.0, "tests/test_b.py": 12.0, "tests/test_c.py": 8.0},
+    )
+
+    report = selector.gate_balance(collection, junit)
+
+    assert PRE_P05_REPORT_KEYS <= set(report), "premise: no pre-P0.5 key vanished"
+    assert set(report) - PRE_P05_REPORT_KEYS == {"workers_dir", "warnings", "busy"}
+    assert report["union_equal"] is True
+    assert report["worker_execution_counts"] == {"gw0": 3, "gw1": 3}
+    assert (report["worker_min"], report["worker_max"]) == (3, 3)
+    assert report["worker_spread_ratio"] == 1.0
+    assert report["total_duration_seconds"] == 50.0
+    assert report["slowest_files"][0] == {"file": "tests/test_a.py", "seconds": 30.0}
+    assert report["junit_testcase_count"] == 6 and report["junit_node_count"] == 6
+
+
+def test_gate_balance_falls_back_to_junit_busy_time_without_a_timing_block(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=None)
+    assert all(
+        "timing" not in json.loads(path.read_text(encoding="utf-8"))
+        for path in workers_dir.glob("gw*.json")
+    ), "premise: the evidence carries no timing block"
+
+    report = selector.gate_balance(collection, junit)
+
+    assert report["errors"] == [] and report["warnings"] == []
+    busy = report["busy"]
+    assert busy["source"] == "junit"
+    assert [(w["worker"], w["busy_seconds"], w["busy_source"]) for w in busy["workers"]] == [
+        ("gw0", 30.0, "junit"),
+        ("gw1", 20.0, "junit"),
+    ]
+    assert busy["critical_path"] == {
+        "worker": "gw0",
+        "busy_seconds": 30.0,
+        "file": "tests/test_a.py",
+        "file_seconds": 30.0,
+    }
+    assert all(
+        entry[field] is None
+        for entry in busy["workers"]
+        for field in (
+            "collection_seconds",
+            "start_wait_seconds",
+            "active_span_seconds",
+            "in_span_gap_seconds",
+            "tail_seconds",
+            "first_test_start_wall",
+            "last_test_end_wall",
+        )
+    )
+
+
+def test_gate_balance_timestamps_and_junit_agree_on_the_same_run(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    exact = {"tests/test_a.py": 30.0, "tests/test_b.py": 12.0, "tests/test_c.py": 8.0}
+    with_timing = selector.gate_balance(*_write_balance_run(tmp_path / "t", timing_seconds=exact)[:2])
+    without = selector.gate_balance(*_write_balance_run(tmp_path / "j", timing_seconds=None)[:2])
+
+    assert with_timing["busy"]["source"] == "timestamps"
+    assert without["busy"]["source"] == "junit"
+    for stamped, derived in zip(with_timing["busy"]["workers"], without["busy"]["workers"]):
+        assert abs(stamped["busy_seconds"] - derived["busy_seconds"]) <= 0.001
+        assert stamped["dominant_file"] == derived["dominant_file"]
+    assert with_timing["busy"]["critical_path"] == without["busy"]["critical_path"]
+
+
+def test_gate_balance_without_per_worker_files_reports_no_busy_time_and_warns(
+    selector: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(
+        tmp_path, timing_seconds=None, write_workers=False
+    )
+    assert not workers_dir.exists(), "premise: an older gate kept no per-worker files"
+
+    report = selector.gate_balance(collection, junit)
+    code = selector.main(["--gate-balance", str(collection), str(junit)])
+    captured = capsys.readouterr()
+
+    assert report["busy"] is None and report["errors"] == []
+    assert len(report["warnings"]) == 1
+    assert "no per-worker evidence directory" in report["warnings"][0]
+    assert report["union_equal"] is True and report["worker_count"] == 2
+    assert code == 0
+    assert captured.out.splitlines()[-1].startswith("critical path: unavailable")
+    assert "warning: no per-worker evidence directory" in captured.err
+
+
+def test_gate_balance_with_an_invalid_worker_file_is_an_error(
+    selector: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=None)
+    assert selector.gate_balance(collection, junit)["errors"] == [], "premise: a valid control"
+    (workers_dir / "gw1.json").write_text("{not json", encoding="utf-8")
+
+    report = selector.gate_balance(collection, junit)
+    code = selector.main(["--gate-balance", str(collection), str(junit)])
+    captured = capsys.readouterr()
+
+    assert len(report["errors"]) == 1 and "gw1.json" in report["errors"][0]
+    assert report["busy"] is None
+    assert code == 1
+    assert "gw1.json" in captured.err and "gate balance:" not in captured.out
+
+
+def test_gate_balance_warns_when_the_evidence_belongs_to_another_run(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, _ = _write_balance_run(tmp_path, timing_seconds=None)
+    payload = json.loads(collection.read_text(encoding="utf-8"))
+    payload["worker_execution_counts"]["gw0"] = 4
+    collection.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = selector.gate_balance(collection, junit)
+
+    assert report["busy"] is not None
+    assert len(report["warnings"]) == 1
+    assert "gw0" in report["warnings"][0] and "another run" in report["warnings"][0]
+
+
+def test_gate_balance_honours_an_explicit_workers_dir(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, workers_dir = _write_balance_run(tmp_path, timing_seconds=None)
+    moved = tmp_path / "elsewhere"
+    workers_dir.rename(moved)
+    assert selector.gate_balance(collection, junit)["busy"] is None, "premise"
+
+    report = selector.gate_balance(collection, junit, workers_dir=moved)
+
+    assert report["workers_dir"] == moved.as_posix()
+    assert report["busy"]["critical_path"]["worker"] == "gw0"
+
+
+def test_gate_balance_cli_prints_the_balance_line_then_the_critical_path_line(
+    selector: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    collection, junit, _ = _write_balance_run(
+        tmp_path,
+        timing_seconds={"tests/test_a.py": 31.0, "tests/test_b.py": 12.0, "tests/test_c.py": 8.0},
+    )
+
+    code = selector.main(["--gate-balance", str(collection), str(junit)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert captured.out.splitlines() == [
+        "gate balance: 6 collected, union_equal=True, workers=2, min=3, max=3, spread=1.0x",
+        "critical path: gw0 busy=31.0s at tests/test_a.py (31.0s); "
+        "mean=25.5s min=20.0s max=31.0s source=timestamps",
+    ]
+
+
+def test_gate_balance_cli_works_as_a_script(tmp_path: Path) -> None:
+    """Script mode puts scripts/ first on sys.path; the sibling helper still loads."""
+    selector = _load_selector()
+    collection, junit, _ = _write_balance_run(tmp_path, timing_seconds=None)
+    assert selector.gate_balance(collection, junit)["busy"] is not None, "premise"
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--gate-balance", str(collection), str(junit)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines()[0].startswith("gate balance: 6 collected")
+    assert completed.stdout.splitlines()[1].startswith("critical path: gw0 busy=30.0s")
+
+
+def test_junit_node_id_is_re_exported_from_the_shared_timing_helper(
+    selector: ModuleType,
+) -> None:
+    helper = sys.modules["_gate_timing"]
+
+    assert selector._gate_timing is helper
+    assert selector.junit_node_id is helper.junit_node_id
+    assert Path(helper.junit_node_id.__code__.co_filename).name == "_gate_timing.py"
+    attributes = {
+        "file": "tests\\test_k.py",
+        "classname": "tests.test_k.TestK",
+        "name": "test_d[1]",
+    }
+    assert selector.junit_node_id(attributes) == "tests/test_k.py::TestK::test_d[1]"
+
+
+def test_the_stale_single_large_file_claim_is_gone_and_replaced_accurately(
+    selector: ModuleType, tmp_path: Path
+) -> None:
+    collection, junit, _ = _write_balance_run(tmp_path, timing_seconds=None)
+    note = selector.gate_balance(collection, junit)["note"]
+    source = SCRIPT.read_text(encoding="utf-8")
+    module_doc = " ".join((selector.__doc__ or "").split())
+    function_doc = " ".join((selector.gate_balance.__doc__ or "").split())
+
+    for text in (module_doc, function_doc, note, source):
+        assert "not of any single large file" not in text
+        assert "single large file" not in text
+    assert "never split across workers, so one file can set the critical path" in module_doc
+    assert "never split across workers, so one file can set the critical path" in function_doc
+    assert "never splits a file, so one file can set the critical path" in note
+
+
+# ---------------------------------------------------------------------------
 # Blast-radius patterns against the live tree
 # ---------------------------------------------------------------------------
 
