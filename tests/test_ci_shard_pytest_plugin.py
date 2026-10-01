@@ -235,7 +235,8 @@ def test_the_duration_scheduler_receives_the_shard_filtered_collection(
     line = "AD-1270f duration scheduler:"
 
     assert sharded_run.first.stdout.count(line) == 1
-    assert "LPT order over 2 files" in sharded_run.first.stdout
+    # The scheduler saw only this shard's 2 files: "heaviest K of N files first ...", N = 2.
+    assert "heaviest 2 of 2 files first" in sharded_run.first.stdout
     assert re.search(r"\b7 passed\b", sharded_run.first.stdout)
     assert line not in sharded_run.second.stdout
     assert re.search(r"\b4 passed\b.*\b1 skipped\b.*\b7 deselected\b.*\b1 xfailed\b", sharded_run.second.stdout)
