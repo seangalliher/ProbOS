@@ -260,6 +260,9 @@ async def _off_observation(
     assert config["federation"].pop("identity_keys_enabled") is False
     assert config["federation"].pop("identity_key_store") == "keyring"
     assert config["federation"].pop("identity_recovery_public_key") == ""
+    # AD-1197's two inert envelope-signing fields were added after this capture too.
+    assert config["federation"].pop("envelope_signing_enabled") is False
+    assert config["federation"].pop("envelope_policy") == "sign"
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

@@ -2760,6 +2760,8 @@ class ProbOSRuntime:
             attachment_resolver_fn=self._resolve_federated_attachments,
             relay_topics=relay_topics,
             nats_bus=self.nats_bus,
+            identity_key_binding=self.identity_key_binding,  # AD-1197
+            data_dir=self._data_dir,  # AD-1197
         )
         self.pool_scaler = org.pool_scaler
         self.federation_bridge = org.federation_bridge

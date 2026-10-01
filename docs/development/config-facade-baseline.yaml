@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1823
-  field_definitions: 1818
+  canonical_dump_leaves: 1825
+  field_definitions: 1820
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: a0d83d13982c5d2605585d8f5db16c1eefc6ae07a568236161a4fe9e58503840
+canonical_dump_sha256: 6d0998b38aa3ed6bea1c1754e27c16fcdec27306853d7e37afd7bdaba0ea32ae
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1842,7 +1842,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 814340748decd5795f1adb05bd4ad203869dd34e0cd1a26e3c56813a0b75a804
+    schema_sha256: 8defad110f6abe2a5ea23adbe491771f50d9a548296fa7a7dcc731c87d0d892a
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -1867,6 +1867,8 @@ models:
     - {default: 'False', name: identity_keys_enabled}
     - {default: '''keyring''', name: identity_key_store}
     - {default: '''''', name: identity_recovery_public_key}
+    - {default: 'False', name: envelope_signing_enabled}
+    - {default: '''sign''', name: envelope_policy}
   FederationDiscoveryConfig:
     qualname: FederationDiscoveryConfig
     bases:
@@ -3319,7 +3321,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f1cc6ef187aa3819203508bd694ae7494427a2c51bee79f3d495279c4b74f406
+    schema_sha256: 1092c5de1a711a13db2a028754015413f6c9f86d3dc9314bfad533b6f678302c
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

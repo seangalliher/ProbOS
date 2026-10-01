@@ -2387,6 +2387,14 @@ class FederationConfig(BaseModel):
     # AD-1196: the Captain's recovery PUBLIC key (base64 raw Ed25519, or empty).
     # Its private half stays off the vessel; inception commits this public half.
     identity_recovery_public_key: str = ""
+    # AD-1197: sign every federation envelope with the ship key and verify peers'
+    # envelopes with replay protection. Needs identity_keys_enabled. Default-OFF:
+    # off is byte-identical (no wrapper, no store, no "auth" member on the wire).
+    envelope_signing_enabled: bool = False
+    # AD-1197: "sign" signs when the key is active (unsigned otherwise, warned) and
+    # accepts unsigned envelopes only from peers never seen signing; "require"
+    # sends and accepts nothing unsigned.
+    envelope_policy: Literal["sign", "require"] = "sign"
 
     @field_validator("memory_access_policy")
     @classmethod
@@ -2420,6 +2428,13 @@ class FederationConfig(BaseModel):
 
         decode_public_key(v)  # ValueError: refused at parse time
         return v
+
+    @model_validator(mode="after")
+    def _validate_envelope_signing(self) -> "FederationConfig":
+        """AD-1197: envelopes are signed with the ship key, so signing needs the key binding."""
+        if self.envelope_signing_enabled and not self.identity_keys_enabled:  # AD-1197 signing needs the ship key
+            raise ValueError("federation.envelope_signing_enabled requires federation.identity_keys_enabled")
+        return self
 
 
 class SkillsMarketplaceConfig(BaseModel):

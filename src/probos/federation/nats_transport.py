@@ -289,13 +289,16 @@ class NATSFederationTransport:
 
     def _serialize(self, message: FederationMessage) -> dict[str, Any]:
         """Serialize a FederationMessage to a dict (NATSBus handles JSON encoding)."""
-        return {
+        data: dict[str, Any] = {
             "type": message.type,
             "source_node": message.source_node,
             "message_id": message.message_id,
             "payload": message.payload,
             "timestamp": message.timestamp,
         }
+        if message.auth is not None:  # AD-1197 the signed-envelope block; absent when unsigned
+            data["auth"] = message.auth
+        return data
 
     def _deserialize(self, data: dict[str, Any]) -> FederationMessage:
         """Deserialize a dict to a FederationMessage."""
@@ -305,4 +308,5 @@ class NATSFederationTransport:
             message_id=data.get("message_id", uuid.uuid4().hex),
             payload=data.get("payload", {}),
             timestamp=data.get("timestamp", 0.0),
+            auth={} if "auth" in data and data["auth"] is None else data.get("auth"),  # AD-1197 A-1 a present null stays present
         )
