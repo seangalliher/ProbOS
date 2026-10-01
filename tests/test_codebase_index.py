@@ -307,12 +307,25 @@ class TestStructuredQueries:
         results2 = index.find_callers("query")
         assert results1 == results2
 
-    def test_find_tests_for_panels(self, index: CodebaseIndex):
-        """find_tests_for('experience/panels.py') finds test_experience.py."""
-        tests = index.find_tests_for("experience/panels.py")
-        # The test file tree is from src/probos — test files aren't there,
-        # but the method should still work without crashing
-        assert isinstance(tests, list)
+    def test_find_tests_for_panels(self, tmp_path: Path):
+        """find_tests_for() matches test files by naming convention within the
+        indexed tree.
+
+        Unit-level: the production index is built over ``src/probos`` only,
+        which holds no test files, so in production this returns [] for every
+        file -- tracked in #1444. This test used to run against that tree and
+        assert only ``isinstance(tests, list)``, so it could not fail.
+        """
+        source_root = tmp_path / "src" / "probos"
+        (source_root / "experience").mkdir(parents=True)
+        (source_root / "tests").mkdir()
+        (source_root / "experience" / "panels.py").write_text('"""Panels."""\n', encoding="utf-8")
+        (source_root / "tests" / "test_panels.py").write_text('"""Tests."""\n', encoding="utf-8")
+        (source_root / "tests" / "test_other.py").write_text('"""Other."""\n', encoding="utf-8")
+        index = CodebaseIndex(source_root=source_root)
+        index.build()
+
+        assert index.find_tests_for("experience/panels.py") == ["tests/test_panels.py"]
 
     def test_find_tests_for_unknown(self, index: CodebaseIndex):
         """find_tests_for() returns [] for unknown file."""

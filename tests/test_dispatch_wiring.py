@@ -26,18 +26,23 @@ def _mock_runtime():
 
 
 class TestRuntimeWiring:
-    def test_runtime_has_build_queue_field(self) -> None:
-        """ProbOSRuntime defines build_queue attribute."""
-        from probos.runtime import ProbOSRuntime
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        # Check the attribute is declared (would be set in __init__)
-        assert hasattr(ProbOSRuntime, '__init__')
+    def test_runtime_has_build_queue_field(self, tmp_path) -> None:
+        """ProbOSRuntime defines build_queue; it stays empty until startup wires it.
 
-    def test_runtime_has_build_dispatcher_field(self) -> None:
-        """ProbOSRuntime defines build_dispatcher attribute."""
-        from probos.runtime import ProbOSRuntime
-        rt = ProbOSRuntime.__new__(ProbOSRuntime)
-        assert hasattr(ProbOSRuntime, '__init__')
+        This used to assert ``hasattr(ProbOSRuntime, '__init__')``, which is
+        true of every class and could not fail.
+        """
+        from probos.cognitive.llm_client import MockLLMClient
+
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        assert rt.build_queue is None
+
+    def test_runtime_has_build_dispatcher_field(self, tmp_path) -> None:
+        """ProbOSRuntime defines build_dispatcher; it stays empty until startup wires it."""
+        from probos.cognitive.llm_client import MockLLMClient
+
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        assert rt.build_dispatcher is None
 
     def test_on_build_complete_emits_event(self) -> None:
         """_on_build_complete fires build_queue_item event."""

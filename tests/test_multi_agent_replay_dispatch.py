@@ -580,7 +580,10 @@ class TestExecuteCompoundReplay:
 
     @pytest.mark.asyncio
     async def test_compound_replay_no_intent_bus(self):
-        rt = MagicMock(spec=[])  # No attributes at all
+        # A registry but no IntentBus, so only the IntentBus guard can degrade.
+        # Both of these tests used MagicMock(spec=[]) -- neither attribute --
+        # which left both green with either guard deleted.
+        rt = MagicMock(spec=["registry"])
         agent = _make_cognitive_agent(runtime=rt)
         proc = _make_compound_procedure()
 
@@ -590,9 +593,12 @@ class TestExecuteCompoundReplay:
 
     @pytest.mark.asyncio
     async def test_compound_replay_no_registry(self):
-        rt = MagicMock(spec=[])  # No intent_bus or registry
+        # An IntentBus but no registry, and only local steps: local steps never
+        # reach _resolve_step_agent (which repeats the registry check), so the
+        # top-level registry guard is the only thing that degrades this.
+        rt = MagicMock(spec=["intent_bus"])
         agent = _make_cognitive_agent(runtime=rt)
-        proc = _make_compound_procedure()
+        proc = _make_procedure()
 
         result = await agent._execute_compound_replay(proc, "fallback text")
         assert result["compound_dispatched"] is False
