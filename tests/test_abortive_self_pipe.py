@@ -37,11 +37,27 @@ both_loop_kinds = pytest.mark.parametrize("kind", ["proactor", "selector"])
 _HOOK = "_make_self_pipe"
 _TIME_WAIT = 11
 _ABORT_ON_CLOSE = struct.pack("HH", 1, 0)
+_GRACEFUL_CLOSE = struct.pack("HH", 0, 0)
 
 
 class _Built(NamedTuple):
     ends: tuple[socket.socket, socket.socket]
     ports: tuple[int, int]
+
+
+class _Spy:
+    """A real socket's stand-in whose ``setsockopt`` payloads are recorded, and refused for the payloads it is told to."""
+
+    def __init__(self, real: socket.socket, refuse: tuple[bytes, ...] = ()) -> None:
+        self.real = real
+        self.refuse = refuse
+        self.payloads: list[bytes] = []
+
+    def setsockopt(self, level: int, option: int, value: bytes) -> None:
+        self.payloads.append(value)
+        if value in self.refuse:
+            raise OSError("refused")
+        self.real.setsockopt(level, option, value)
 
 
 def _base_loop_class(kind: str) -> type:
@@ -121,6 +137,22 @@ def _time_wait_loopback_pairs() -> set[tuple[int, int]]:
         if state == _TIME_WAIT and laddr & 0xFF == 127 and raddr & 0xFF == 127:
             found.add((((lport & 0xFF) << 8) | (lport >> 8 & 0xFF), ((rport & 0xFF) << 8) | (rport >> 8 & 0xFF)))
     return found
+
+
+def _run_hook_against(first: _Spy, second: _Spy, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the patched selector ``_make_self_pipe`` against a stand-in loop whose self-pipe ends are the spies."""
+
+    def asyncio_hook(loop: types.SimpleNamespace) -> None:
+        loop._ssock, loop._csock = first, second
+
+    selector = _base_loop_class("selector")
+    monkeypatch.setattr(selector, _HOOK, asyncio_hook)
+    with shim.abortive_self_pipe():
+        getattr(selector, _HOOK)(types.SimpleNamespace())
+
+
+def _shim_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == shim.logger.name and r.levelno == logging.WARNING]
 
 
 def _loops_left_in_time_wait(kind: str, count: int, monkeypatch: pytest.MonkeyPatch) -> int:
@@ -250,6 +282,43 @@ def test_a_failed_linger_degrades_to_the_graceful_pair_with_a_warning(
         getattr(selector, _HOOK)(stand_in)  # the wrapper, run against a stand-in loop
     assert hasattr(stand_in, "_ssock") == (failure == "refused"), "the hook's own work must be left as it built it"
     assert any("SO_LINGER" in record.getMessage() for record in caplog.records)
+
+
+@windows_only
+def test_a_second_end_that_refuses_linger_leaves_both_ends_graceful_with_one_warning(
+    stock_loops: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    real_first, real_second = socket.socketpair()
+    first, second = _Spy(real_first), _Spy(real_second, refuse=(_ABORT_ON_CLOSE,))
+    try:
+        with caplog.at_level(logging.WARNING, logger=shim.logger.name):
+            _run_hook_against(first, second, monkeypatch)
+        assert first.payloads == [_ABORT_ON_CLOSE, _GRACEFUL_CLOSE], "premise: the first end was switched, then put back"
+        assert second.payloads == [_ABORT_ON_CLOSE], "only an end that was switched is put back"
+        assert [_linger(end)[0] for end in (real_first, real_second)] == [0, 0]
+        assert len(_shim_warnings(caplog)) == 1
+    finally:
+        real_first.close()
+        real_second.close()
+
+
+@windows_only
+def test_a_rollback_that_fails_is_logged_and_the_hook_still_returns(
+    stock_loops: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    real_first, real_second = socket.socketpair()
+    first = _Spy(real_first, refuse=(_GRACEFUL_CLOSE,))
+    second = _Spy(real_second, refuse=(_ABORT_ON_CLOSE,))
+    try:
+        with caplog.at_level(logging.WARNING, logger=shim.logger.name):
+            _run_hook_against(first, second, monkeypatch)
+        assert first.payloads == [_ABORT_ON_CLOSE, _GRACEFUL_CLOSE], "the put-back must still be attempted"
+        messages = _shim_warnings(caplog)
+        assert len(messages) == 2 and "restore" in messages[1], "the failed put-back must be reported, not hidden"
+        assert _linger(real_first) == (1, 0), "premise: the end that could not be put back really is still abortive"
+    finally:
+        real_first.close()
+        real_second.close()
 
 
 def test_install_off_windows_changes_nothing(stock_loops: None, monkeypatch: pytest.MonkeyPatch) -> None:
