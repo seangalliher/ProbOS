@@ -7,7 +7,13 @@ on:
     branches: [main]
 
 jobs:
-  python-tests:
+  # AD-1270f P2.7: the Python suite runs as three file-level shards, balanced longest
+  # first on the recorded per-file durations (see scripts/ci_shards.py), and the
+  # `python-tests` job below proves from per-worker evidence that every collected test
+  # executed exactly once across them. Checks: `python-tests-shard (1)` to `(3)` and
+  # `python-tests`. This is CI evidence, not release authority; the canonical local gate
+  # (scripts/run_test_gate.py) is.
+  python-tests-shard:
     runs-on: ubuntu-latest
     # BF-322: bumped 15 -> 30. Waves 175-180 added ~150 tests + heavier
     # fixture surface (perception pipeline, AD-742f WM persistence, AD-746
@@ -19,6 +25,13 @@ jobs:
     # reduced from -n 16 to -n auto (matched to the runner cores to kill the
     # oversubscription timing flakes), the full run needs more wall-clock.
     timeout-minutes: 45
+
+    strategy:
+      # Every shard runs to its end, so one red shard never hides another's failures.
+      fail-fast: false
+      matrix:
+        # Keep this list, --probos-shard-count below and `verify --shard-count` equal.
+        shard: [1, 2, 3]
 
     env:
       # BF-657: force the network-free local embedding fallback so ChromaDB
@@ -51,7 +64,60 @@ jobs:
         # 4-vCPU runner is 4x oversubscription -> asyncio teardown races
         # ("Event loop is closed") + timing-test flakes (bf304 single-flight,
         # ad1032 arousal decay). -n auto matches workers to cores.
-        run: uv run pytest tests/ -n auto --maxfail=10 -q --tb=short
+        # AD-1270f P2.7: each shard keeps --maxfail=10 as its own budget. A shard that
+        # stops early is red and leaves nodes unexecuted, which `python-tests` rejects
+        # separately, so --maxfail can never give a green `python-tests` with a missing node.
+        run: >-
+          uv run python -m pytest tests/ -n auto --maxfail=10 -q --tb=short
+          -p scripts._ci_shard_pytest_plugin
+          --probos-shard-index ${{ matrix.shard }}
+          --probos-shard-count 3
+          --probos-shard-evidence-dir "${{ runner.temp }}/ci-shard-evidence"
+
+      - name: Upload shard evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-shard-evidence-${{ matrix.shard }}
+          path: ${{ runner.temp }}/ci-shard-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  # The check name `python-tests` is kept. It passes only if every shard passed and the
+  # evidence proves each collected test executed exactly once: the shards' independent
+  # collections are identical, the assignment recomputed by scripts/ci_shards.py matches
+  # theirs (so no node is in two shards), and every node's execution count is 1.
+  python-tests:
+    needs: python-tests-shard
+    # always(): GitHub reports a job skipped because a dependency failed as Success, and a
+    # skipped job must never satisfy a required check.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Require every shard to succeed
+        if: ${{ needs.python-tests-shard.result != 'success' }}
+        run: |
+          echo "::error::python-tests-shard finished as ${{ needs.python-tests-shard.result }}, not success"
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download shard evidence
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ci-shard-evidence-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/ci-shard-evidence
+
+      - name: Verify every test ran exactly once across the shards
+        run: python scripts/ci_shards.py verify --evidence-root "${{ runner.temp }}/ci-shard-evidence" --shard-count 3
 
   ui-tests:
     runs-on: ubuntu-latest
