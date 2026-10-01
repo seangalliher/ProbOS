@@ -167,9 +167,14 @@ async def test_custom_factory_injected() -> None:
     with tempfile.TemporaryDirectory() as td:
         db_path = str(Path(td) / "events.db")
         log = EventLog(db_path=db_path, connection_factory=mock_factory)
-        await log.start()
-        mock_factory.connect.assert_called_once_with(db_path)
-        await log.stop()
+        try:
+            await log.start()
+            mock_factory.connect.assert_called_once_with(db_path)
+        finally:
+            # A regression that ignores the factory opens a real aiosqlite
+            # connection; stop it even when the assertion fails, or its
+            # non-daemon thread keeps the test process alive.
+            await log.stop()
 
 
 # ---------------------------------------------------------------------------
