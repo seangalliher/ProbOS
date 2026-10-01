@@ -3173,7 +3173,7 @@ Beyond the Builder role, Copilot's other capabilities can serve as federated ser
 
 **Trust Model for External AI Tools**
 
-- All external tools start with **probationary trust** — `Beta(1, 3)`, same as newly designed agents
+- All external tools start with **probationary trust** — `Beta(1, 3)`, same as newly designed agents *(BF-879 #1440: not as built. Newly designed agents started at the crew prior Beta(2, 2) until BF-879.)*
 - Trust builds per-tool based on task quality outcomes: did the code pass tests? Did review catch issues? Were fix retries needed?
 - External tool failures degrade trust, triggering fallback to internal capabilities or escalation to Captain
 - **Cost tracking** — external tools consume premium request quota. LLM Cost Tracker (Phase 33) attributes spending per-tool alongside per-agent

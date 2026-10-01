@@ -407,7 +407,7 @@ class TrustNetwork:
         cascade_before_detection = self._clone_cascade(cascade)
 
         emissions: list[tuple[str, dict[str, Any]]] = []
-        if not outcome.success and old_score <= cfg.hard_trust_floor:
+        if not outcome.success and self.absorbs_failure_at(old_score):
             event = TrustEvent(
                 timestamp=now,
                 agent_id=agent_id,
@@ -1077,6 +1077,14 @@ class TrustNetwork:
         """Reset the floor hit counter (called after dream cycles)."""
         self._require_sync_mutation_available()
         self._floor_hit_count = 0
+
+    def absorbs_failure_at(self, score: float) -> bool:
+        """Whether the hard trust floor (AD-558) absorbs a failure at this score.
+
+        An absorbed failure leaves the record unchanged, so a record at or
+        below the floor cannot show whether its agent has failed (BF-879).
+        """
+        return score <= self._dampening_config.hard_trust_floor
 
     # ------------------------------------------------------------------
     # SQLite persistence

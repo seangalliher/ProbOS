@@ -2473,13 +2473,41 @@ class ProbOSRuntime:
         agent_type: str,
         target_size: int | None = None,
         agent_ids: list[str] | None = None,
+        *,
+        trust_prior: tuple[float, float] | None = None,
         **spawn_kwargs: Any,
     ) -> ResourcePool:
-        """Create and start a resource pool."""
+        """Create and start a resource pool.
+
+        BF-879: ``trust_prior`` is the Beta(alpha, beta) prior every member of the
+        pool starts at: those it is born with, and any it spawns later on a refill
+        or a surge. It is written before AD-640's tiered initialisation, which never
+        overwrites a record, and it never replaces a record that already exists.
+        """
         # AD-411: Guard against duplicate pool names
         if name in self.pools:
             logger.warning("Pool '%s' already exists — skipping duplicate creation", name)
             return self.pools[name]
+
+        on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
+            self.onboarding.wire_agent
+            if getattr(self, "onboarding", None) is not None
+            else None
+        )
+        if trust_prior is not None:
+            wire_agent, (prior_alpha, prior_beta) = on_agent_spawned, trust_prior
+
+            async def born_at_prior(agent: Any) -> None:
+                if self.trust_network.get_record(agent.id) is None:
+                    self.trust_network.create_with_prior(agent.id, prior_alpha, prior_beta)
+                    logger.info(
+                        "BF-879: agent %s joins pool %s at its trust prior Beta(%.1f, %.1f)",
+                        agent.id, name, prior_alpha, prior_beta,
+                    )
+                if wire_agent is not None:
+                    await wire_agent(agent)
+
+            on_agent_spawned = born_at_prior
 
         pool = ResourcePool(
             name=name,
@@ -2489,11 +2517,7 @@ class ProbOSRuntime:
             config=self.config.pools,
             target_size=target_size,
             agent_ids=agent_ids,
-            on_agent_spawned=(
-                self.onboarding.wire_agent
-                if getattr(self, "onboarding", None) is not None
-                else None
-            ),
+            on_agent_spawned=on_agent_spawned,
             on_agent_removing=(
                 self.onboarding.unwire_agent
                 if getattr(self, "onboarding", None) is not None
@@ -2505,10 +2529,11 @@ class ProbOSRuntime:
         try:
             await pool.start()
 
-            # Wire newly spawned agents into the mesh
+            # Wire newly spawned agents into the mesh, through the same hook as a
+            # later spawn so the pool's trust prior reaches its first members too.
             for agent in self.registry.get_by_pool(name):
-                if self.onboarding:
-                    await self.onboarding.wire_agent(agent)
+                if on_agent_spawned is not None:
+                    await on_agent_spawned(agent)
                 # AD-889: commission crew agents at birth — walk Role → Skills → Tools.
                 if self.acm and is_crew_agent(agent, self.ontology):
                     try:
