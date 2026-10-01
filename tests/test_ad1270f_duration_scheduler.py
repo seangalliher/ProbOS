@@ -1,9 +1,11 @@
 """AD-1270f P1.4: the duration-ordered ``--dist=loadfile`` scheduler.
 
-These tests drive the *installed* xdist ``LoadFileScheduling`` (the stock class
-beside the subclass) with a fake config and fake worker nodes, so what they
-prove is what xdist would do: which unit it hands out first, that nothing is
-dropped or repeated, and that every step except the order stays xdist's.
+Most of these tests drive the *installed* xdist ``LoadFileScheduling`` (the stock class
+beside the subclass) with a fake config and fake worker nodes, so what they prove is
+what xdist would do: which unit it hands out first, that nothing is dropped or repeated,
+and that every step except the order stays xdist's. The last test runs a real
+``pytest -n 2 --dist=loadfile`` in a subprocess, because only that crosses the whole
+chain: pluggy, ``DSession``, real workers and real reports.
 """
 
 from __future__ import annotations
@@ -12,8 +14,12 @@ import importlib.util
 import inspect
 import json
 import logging
+import os
 import random
+import re
+import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -430,7 +436,7 @@ def test_an_error_before_the_first_assignment_still_clears_the_one_shot_flag() -
     assert run.config.lines == [], "the failed first distribution must not leave the order armed"
 
 
-# --- Reporting: exactly one line per loadfile session ----------------------------------
+# --- Reporting: one line per non-empty session whose workers agree; silence otherwise ---
 
 
 def _dead_nodes_run(*, with_terminal: bool = True) -> _Run:
@@ -682,6 +688,156 @@ def test_invalid_data_is_refused_and_the_stock_order_is_used(
     assert line.endswith("); using xdist's stock LoadFileScheduling order")
 
 
+@pytest.fixture
+def digit_limit() -> Iterator[int]:
+    """Python's default cap on int<->str conversion, restored afterwards, whatever the environment sets."""
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        yield 4300
+    finally:
+        sys.set_int_max_str_digits(previous)
+
+
+def _huge_integer_in(place: str, digits: int) -> str:
+    huge = "1" + "0" * digits
+    swaps = {
+        "a-file-seconds-value": ('"tests/test_a.py": 1.5', f'"tests/test_a.py": {huge}'),
+        "the-source-testcases-count": ('"testcases": 10', f'"testcases": {huge}'),
+        "the-mean": ('"mean_test_seconds": 0.5', f'"mean_test_seconds": {huge}'),
+        "the-schema-version": ('"schema_version": 1', f'"schema_version": {huge}'),
+    }
+    old, new = swaps[place]
+    text = json.dumps(_valid_payload())
+    assert old in text
+    return text.replace(old, new)
+
+
+@pytest.mark.parametrize(
+    "place",
+    ["a-file-seconds-value", "the-source-testcases-count", "the-mean", "the-schema-version"],
+)
+def test_an_integer_beyond_the_digit_limit_falls_back_to_the_stock_order(
+    tmp_path: Path, digit_limit: int, place: str
+) -> None:
+    """The parser raises a plain ValueError for it; that must not escape as an INTERNALERROR."""
+    path = tmp_path / "file_durations.json"
+    path.write_text(_huge_integer_in(place, digit_limit), encoding="utf-8")
+
+    with pytest.raises(DurationDataError, match="cannot be parsed"):
+        load_file_durations(path)
+    config = _Config()
+    assert make_duration_scheduler(config, _QUIET, durations_path=path) is None
+    assert config.lines == [
+        f"{REPORT_PREFIX} disabled (file_durations.json cannot be parsed "
+        "(Exceeds the limit (4300 digits) for integer string conversion)); "
+        "using xdist's stock LoadFileScheduling order"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raised", "reason"),
+    [
+        pytest.param(ValueError("first clause: detail\nsecond line"), "first clause", id="first-clause-only"),
+        pytest.param(ValueError(), "ValueError", id="no-message-names-the-type"),
+        pytest.param(ValueError("\nonly a second line"), "ValueError", id="blank-first-line-names-the-type"),
+    ],
+)
+def test_any_other_parser_value_error_is_bad_data_with_one_line_of_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raised: ValueError, reason: str
+) -> None:
+    path = tmp_path / "file_durations.json"
+    path.write_text(json.dumps(_valid_payload()), encoding="utf-8")
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise raised
+
+    monkeypatch.setattr(ds.json, "loads", refuse)
+    config = _Config()
+
+    assert make_duration_scheduler(config, _QUIET, durations_path=path) is None
+    assert config.lines == [
+        f"{REPORT_PREFIX} disabled (file_durations.json cannot be parsed ({reason})); "
+        "using xdist's stock LoadFileScheduling order"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("build", "reason"),
+    [
+        pytest.param(
+            _swap_first_file_seconds("NaN"), "non-finite JSON constant NaN", id="non-finite-constant"
+        ),
+        pytest.param(
+            lambda: '{"schema_version": 1, "schema_version": 1}',
+            "a JSON object repeats a key",
+            id="repeated-key",
+        ),
+    ],
+)
+def test_a_refusal_raised_by_a_parser_hook_keeps_its_own_reason(
+    tmp_path: Path, build: Callable[[], str], reason: str
+) -> None:
+    """Our hooks raise DurationDataError, itself a ValueError: the generic translation must not re-wrap it."""
+    path = tmp_path / "file_durations.json"
+    path.write_text(build(), encoding="utf-8")
+
+    with pytest.raises(DurationDataError) as refused:
+        load_file_durations(path)
+
+    assert str(refused.value) == reason
+
+
+def test_the_loader_applies_the_generators_key_rule_and_has_none_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rule = tmp_path / "gen_file_durations.py"
+    rule.write_text(
+        "def file_key_problem(key):\n"
+        "    return f'stub refuses {key}' if key == 'tests/test_b.py' else None\n",
+        encoding="utf-8",
+    )
+    path = tmp_path / "file_durations.json"
+    path.write_text(json.dumps(_valid_payload()), encoding="utf-8")
+    assert load_file_durations(path), "the real rule accepts this payload"
+    monkeypatch.setattr(ds, "_GENERATOR_PATH", rule)
+
+    with pytest.raises(DurationDataError, match="stub refuses tests/test_b.py"):
+        load_file_durations(path)
+    path.write_text(_with_file_key("/abs/test_a.py")(), encoding="utf-8")
+    assert dict(load_file_durations(path).files) == {"/abs/test_a.py": 1.0}, "no private copy of the rule"
+
+
+def test_the_key_rule_comes_from_the_real_generator_script() -> None:
+    assert ds._GENERATOR_PATH == REPO_ROOT / "scripts" / "gen_file_durations.py"
+    assert ds._GENERATOR_PATH.is_file()
+
+
+@pytest.mark.parametrize(
+    ("body", "failure"),
+    [
+        pytest.param(None, "FileNotFoundError", id="script-missing"),
+        pytest.param("def broken(:\n", "SyntaxError", id="script-does-not-compile"),
+        pytest.param("VALUE = 1\n", "AttributeError", id="script-has-no-rule"),
+        pytest.param("raise RuntimeError('boom')\n", "RuntimeError", id="script-fails-on-import"),
+    ],
+)
+def test_an_unloadable_key_rule_falls_back_to_the_stock_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None, failure: str
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    if body is not None:
+        script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(ds, "_GENERATOR_PATH", script)
+    config = _Config()
+
+    assert make_duration_scheduler(config, _QUIET) is None
+    assert config.lines == [
+        f"{REPORT_PREFIX} disabled (cannot load the key rule from gen_file_durations.py ({failure})); "
+        "using xdist's stock LoadFileScheduling order"
+    ]
+
+
 @pytest.mark.parametrize("name", ["schedule", "_assign_work_unit"])
 def test_missing_xdist_internals_return_none_and_print_one_disabled_line(
     monkeypatch: pytest.MonkeyPatch, name: str
@@ -899,3 +1055,130 @@ def test_a_subclass_that_drops_one_work_unit_is_rejected_by_the_wrapper_check(
     with pytest.raises(RuntimeError, match="execution does not match protected collection") as refused:
         _validate_with_the_wrapper(gate, tmp_path, run, executed)
     assert "tests/test_unit.py::test_0" in str(refused.value)
+
+
+# --- A real xdist run: the half the fake harness cannot show -----------------------------
+
+#: A throwaway project's conftest: the real hook and the real scheduler (only the durations
+#: path is redirected), a spy that notes each work unit as the controller hands it out, and
+#: an autouse fixture so every test records its own execution, independently of xdist.
+_REAL_RUN_CONFTEST = '''\
+import json
+import os
+import uuid
+from pathlib import Path
+
+import pytest
+
+from tests.fixtures.duration_scheduler import make_duration_scheduler
+
+DISPATCHED = []
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_make_scheduler(config, log):
+    scheduler = make_duration_scheduler(
+        config, log, durations_path=Path(os.environ["AD1270F_DURATIONS"])
+    )
+    if scheduler is not None:
+        assign = scheduler._assign_work_unit
+
+        def recording(node):
+            assign(node)
+            DISPATCHED.append(list(scheduler.assigned_work[node])[-1])
+
+        scheduler._assign_work_unit = recording
+    return scheduler
+
+
+def pytest_sessionfinish(session):
+    if DISPATCHED:
+        Path(os.environ["AD1270F_DISPATCHED"]).write_text(json.dumps(DISPATCHED), encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _record_execution(request):
+    (Path(os.environ["AD1270F_RAN"]) / (uuid.uuid4().hex + ".txt")).write_text(
+        request.node.nodeid, encoding="utf-8"
+    )
+'''
+_PARAMETER_IDS = ["a/b", "x::y", "plain", "with space", "q", "r", "s"]
+
+
+def _write_real_run_project(project: Path) -> list[str]:
+    """Four test files (7, 4, 3 and 2 tests, ``::`` and ``/`` in some ids); returns their node IDs."""
+    project.mkdir()
+    (project / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (project / "conftest.py").write_text(_REAL_RUN_CONFTEST, encoding="utf-8")
+    nodes: list[str] = []
+    for name, count in (("test_heavy.py", 2), ("test_mid.py", 4), ("test_unseen.py", 3)):
+        body = "".join(f"def test_{number}():\n    pass\n\n\n" for number in range(count))
+        (project / name).write_text(body, encoding="utf-8")
+        nodes += [f"{name}::test_{number}" for number in range(count)]
+    (project / "test_many.py").write_text(
+        "import pytest\n\n\n"
+        f"@pytest.mark.parametrize('value', {_PARAMETER_IDS!r})\n"
+        "def test_value(value):\n    pass\n",
+        encoding="utf-8",
+    )
+    nodes += [f"test_many.py::test_value[{value}]" for value in _PARAMETER_IDS]
+    return nodes
+
+
+def test_a_completed_real_xdist_run_executes_every_node_exactly_once_longest_file_first(
+    tmp_path: Path,
+) -> None:
+    """Real ``pytest -n 2 --dist=loadfile`` with the hook active (only the durations path is
+    redirected). The fake harness above cannot show that a real DSession, real workers and
+    real reports run each collected node once; this does, and it records the dispatch order
+    on the controller so the order effect is shown without depending on timing."""
+    project = tmp_path / "project"
+    nodes = _write_real_run_project(project)
+    durations = tmp_path / "file_durations.json"
+    payload = _valid_payload()
+    payload["source"].update(testcases=len(nodes), total_seconds=96.0)
+    payload["files"] = {"test_heavy.py": 90.0, "test_mid.py": 5.0, "test_many.py": 1.0}
+    durations.write_text(json.dumps(payload), encoding="utf-8")
+    ran, dispatched, junit = tmp_path / "ran", tmp_path / "dispatched.json", tmp_path / "junit.xml"
+    ran.mkdir()
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("PYTEST_", "PROBOS_GATE_"))
+    }
+    environment.update(
+        PYTHONPATH=os.pathsep.join(filter(None, [str(REPO_ROOT), environment.get("PYTHONPATH", "")])),
+        PYTHONDONTWRITEBYTECODE="1",
+        AD1270F_DURATIONS=str(durations),
+        AD1270F_RAN=str(ran),
+        AD1270F_DISPATCHED=str(dispatched),
+    )
+
+    run = subprocess.run(
+        [
+            sys.executable, "-m", "pytest", str(project), "-c", str(project / "pytest.ini"),
+            "--rootdir", str(project), "-q", "-n", "2", "--dist=loadfile",
+            "-p", "no:cacheprovider", "-p", "no:randomly", f"--junitxml={junit}",
+        ],
+        cwd=project, env=environment, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120,
+    )
+
+    output = run.stdout + run.stderr
+    assert run.returncode == 0, output
+    assert re.search(rf"\b{len(nodes)} passed\b", run.stdout), output
+    lines = [line for line in run.stdout.splitlines() if line.startswith(REPORT_PREFIX)]
+    assert lines == [
+        f"{REPORT_PREFIX} LPT order over 4 files (3 recorded, 1 estimated at 0.5000 s/test; "
+        f"test_unseen.py) from {DURATIONS_NAME}"
+    ]
+    assert json.loads(dispatched.read_text(encoding="utf-8")) == [
+        "test_heavy.py", "test_mid.py", "test_unseen.py", "test_many.py",
+    ], "longest recorded file first; xdist's own count order would start with test_many.py"
+    executed = sorted(path.read_text(encoding="utf-8") for path in ran.iterdir())
+    assert executed == sorted(nodes), "every collected node ran exactly once"
+    reported = [
+        (element.get("classname"), element.get("name"))
+        for element in ET.parse(junit).getroot().iter("testcase")
+    ]
+    assert len(reported) == len(nodes) == len(set(reported))

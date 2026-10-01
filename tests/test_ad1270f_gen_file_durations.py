@@ -1,9 +1,11 @@
 """AD-1270f P1.4: ``scripts/gen_file_durations.py`` writes the file the scheduler reads.
 
-The generator is standard-library only and cannot import the loader, so these tests
-pin the two against each other: whatever the generator writes, the scheduler's
+The generator is standard-library only and imports nothing from the tests; the
+scheduler's loader loads the generator's key rule from its path. These tests pin the
+two against each other: whatever the generator writes, the scheduler's
 ``load_file_durations`` must accept, and everything the generator cannot vouch for
-must make it exit 1 and leave ``--output`` exactly as it was.
+must make it exit 1 and leave ``--output`` exactly as it was. Node IDs are checked
+against pytest's own legacy-JUnit naming (``mangle_test_address``), not a copy of it.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from _pytest.junitxml import mangle_test_address
 
 from tests.fixtures import duration_scheduler as ds
 from tests.fixtures.duration_scheduler import DURATIONS_PATH, load_file_durations
@@ -36,6 +39,8 @@ _NODES = [
     "tests/test_alpha.py::test_one",
     "tests/test_alpha.py::TestA::test_two",
     "tests/test_alpha.py::TestA::test_param[x.y]",
+    "tests/test_alpha.py::TestA::test_param[a/b::c]",
+    "tests/test_alpha.py::TestA::TestInner::test_deep",
     "tests/test_beta.py::test_one",
     "tests/test_child.py::TestChild::test_inherited",
     "tests/sub/test_gamma.py::test_skipped",
@@ -44,6 +49,9 @@ _CASES: list[Case] = [
     ("tests.test_alpha", "test_one", 1.25, None, "tests\\test_alpha.py"),
     ("tests.test_alpha.TestA", "test_two", 2.5, None, "tests\\test_alpha.py"),
     ("tests.test_alpha.TestA", "test_param[x.y]", 0.31, None, "tests\\test_alpha.py"),
+    # A parametrize id with ``/`` and ``::`` stays in the raw name; the class chain is the classname.
+    ("tests.test_alpha.TestA", "test_param[a/b::c]", 0.5, None, "tests\\test_alpha.py"),
+    ("tests.test_alpha.TestA.TestInner", "test_deep", 0.26, None, "tests\\test_alpha.py"),
     ("tests.test_beta", "test_one", 4.0, None, "tests\\test_beta.py"),
     # Inherited: the ``file`` attribute names the module that *defines* the test.
     ("tests.test_child.TestChild", "test_inherited", 3.0, None, "tests\\test_base.py"),
@@ -51,11 +59,12 @@ _CASES: list[Case] = [
 ]
 _EXPECTED_FILES = {
     "tests/sub/test_gamma.py": 0.0,
-    "tests/test_alpha.py": 4.1,  # 1.25 + 2.5 + 0.31 = 4.06
+    "tests/test_alpha.py": 4.8,  # 1.25 + 2.5 + 0.31 + 0.5 + 0.26 = 4.82
     "tests/test_beta.py": 4.0,
     "tests/test_child.py": 3.0,
 }
-_TOTAL = 11.06
+_TOTAL = 11.82
+_COUNT = len(_CASES)
 
 
 @pytest.fixture(scope="module")
@@ -126,6 +135,12 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _case_for(node_id: str, seconds: float = 1.0) -> Case:
+    """The legacy-JUnit testcase pytest itself would write for ``node_id``."""
+    *classnames, name = mangle_test_address(node_id)
+    return (".".join(classnames), name, seconds, None, None)
+
+
 # --- What it writes -----------------------------------------------------------------
 
 
@@ -155,10 +170,10 @@ def test_the_source_block_names_the_artifacts_by_basename_and_hash(
         "collection": gate.collection.name,
         "junit_sha256": _sha256(gate.junit),
         "collection_sha256": _sha256(gate.collection),
-        "testcases": 6,
+        "testcases": _COUNT,
         "total_seconds": round(_TOTAL, 1),
     }
-    assert payload["mean_test_seconds"] == round(_TOTAL / 6, 4)
+    assert payload["mean_test_seconds"] == round(_TOTAL / _COUNT, 4)
 
 
 def test_the_longest_dotted_prefix_wins_and_a_name_prefix_is_not_a_package_prefix(
@@ -225,8 +240,8 @@ def test_the_output_is_lf_only_indented_two_sorted_and_rounded(gen: ModuleType, 
     assert b"\r" not in data and text.endswith("}\n")
     assert text == json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
     assert text.startswith('{\n  "files": {\n    "tests/sub/test_gamma.py": 0.0,\n')
-    assert '"mean_test_seconds": 1.8433,' in text
-    assert '"tests/test_alpha.py": 4.1,' in text
+    assert '"mean_test_seconds": 1.4775,' in text
+    assert '"tests/test_alpha.py": 4.8,' in text
 
 
 def test_the_scheduler_loader_accepts_what_the_generator_writes(
@@ -238,7 +253,7 @@ def test_the_scheduler_loader_accepts_what_the_generator_writes(
     loaded = load_file_durations(gate.output)
 
     assert dict(loaded.files) == _EXPECTED_FILES
-    assert loaded.mean_test_seconds == round(_TOTAL / 6, 4)
+    assert loaded.mean_test_seconds == round(_TOTAL / _COUNT, 4)
 
 
 def test_the_collection_defaults_to_the_sibling_and_an_explicit_one_is_honoured(
@@ -318,7 +333,33 @@ def _collection_payload(**overrides: Any) -> Callable[[Path], _Gate]:
     return _break(lambda gate: _write_collection(gate.collection, _NODES, **overrides))
 
 
+def _swapped(
+    classname: str, name: str, *, to_classname: str | None = None, to_name: str | None = None
+) -> list[Case]:
+    """``_CASES`` with one testcase renamed: the per-file counts stay equal."""
+    return [
+        (to_classname or c, to_name or n, s, child, file) if (c, n) == (classname, name) else (c, n, s, child, file)
+        for c, n, s, child, file in _CASES
+    ]
+
+
+def _with_invalid_path(path: str) -> Callable[[Path], _Gate]:
+    """A collection and a JUnit that agree exactly, except that the file path is not a valid key."""
+    node = f"{path}::test_t"
+    return _with_cases([_case_for(node)], nodes=[node])
+
+
 _ALL_ZERO: list[Case] = [(classname, name, 0.0, child, file) for classname, name, _, child, file in _CASES]
+_INVALID_FILE_PATHS = {
+    "empty": "",
+    "absolute": "/abs/test_a.py",
+    "drive": "C:/abs/test_a.py",
+    "backslash": "tests\\test_a.py",
+    "dotdot-segment": "tests/../test_a.py",
+    "dotdot-only": "..",
+    "unc": "//host/share/test_a.py",
+}
+_ONE_OFF = "1 missing, 1 unexpected, 0 repeated"
 
 _REFUSALS: list[tuple[str, Callable[[Path], _Gate], str]] = [
     ("failure-child", _with_child("failure"), "failed or errored"),
@@ -351,8 +392,49 @@ _REFUSALS: list[tuple[str, Callable[[Path], _Gate], str]] = [
         ),
         "share the dotted name 'tests.a.b'",
     ),
-    ("junit-has-fewer-testcases-than-nodes", _with_cases(_CASES[:-1]), "different testcase count"),
-    ("junit-has-more-testcases-than-nodes", _with_cases([*_CASES, _CASES[0]]), "different testcase count"),
+    (
+        "junit-lacks-a-collected-node",
+        _with_cases(_CASES[:-1]),
+        "1 missing, 0 unexpected, 0 repeated); first 1: "
+        "collected but not in the JUnit: tests/sub/test_gamma.py::test_skipped",
+    ),
+    (
+        "junit-repeats-a-node",
+        _with_cases([*_CASES, _CASES[0]]),
+        "0 missing, 0 unexpected, 1 repeated); first 1: "
+        "repeated in the JUnit: tests/test_alpha.py::test_one",
+    ),
+    (
+        "junit-has-an-uncollected-node",
+        _with_cases([*_CASES, ("tests.test_beta", "test_extra", 1.0, None, None)]),
+        "0 missing, 1 unexpected, 0 repeated); first 1: "
+        "in the JUnit but not collected: tests/test_beta.py::test_extra",
+    ),
+    # The counts per file stay equal, so only the node identities can tell these runs apart.
+    (
+        "same-counts-but-a-renamed-test",
+        _with_cases(_swapped("tests.test_beta", "test_one", to_name="test_renamed")),
+        _ONE_OFF,
+    ),
+    (
+        "same-counts-but-another-class-chain",
+        _with_cases(_swapped("tests.test_alpha.TestA", "test_two", to_classname="tests.test_alpha.TestB")),
+        _ONE_OFF,
+    ),
+    (
+        "same-counts-but-another-parametrize-id",
+        _with_cases(_swapped("tests.test_alpha.TestA", "test_param[x.y]", to_name="test_param[x_y]")),
+        _ONE_OFF,
+    ),
+    (
+        "same-counts-but-the-slash-id-lost-its-colons",
+        _with_cases(_swapped("tests.test_alpha.TestA", "test_param[a/b::c]", to_name="test_param[a/b:c]")),
+        _ONE_OFF,
+    ),
+    *[
+        (f"invalid-file-path-{label}", _with_invalid_path(path), "cannot be written as a key")
+        for label, path in _INVALID_FILE_PATHS.items()
+    ],
     ("all-time-is-zero", _with_cases(_ALL_ZERO), "records no time"),
     (
         "mean-rounds-to-zero",
@@ -447,6 +529,234 @@ def test_a_write_that_cannot_replace_the_output_exits_one_and_cleans_up(
     assert "refusing" in capsys.readouterr().err
     assert gate.output.is_dir() and list(gate.output.iterdir()) == []
     assert [path.name for path in gate.output.parent.iterdir()] == [gate.output.name]
+
+
+# --- Exact identity: the JUnit must describe the collected nodes, no more and no less ----
+
+
+_ORACLE_NODES = [
+    "tests/test_a.py::test_plain",
+    "tests/test_a.py::TestA::test_method",
+    "tests/test_a.py::TestA::TestInner::test_deep",
+    "tests/test_a.py::test_param[a/b]",
+    "tests/test_a.py::test_param[x::y]",
+    "tests/test_a.py::TestA::test_param[a/b::c]",
+    "tests/test_a.py::test_param[a[b]c.d]",
+    "tests/odd.dir/test_b.py::test_x",
+    "tests/sub/test_c.py::test_y[1-2]",
+]
+
+
+def test_node_ids_are_rebuilt_exactly_as_pytest_names_them_in_the_junit(
+    gen: ModuleType, tmp_path: Path
+) -> None:
+    gate = _Gate(tmp_path, cases=[_case_for(node) for node in _ORACLE_NODES], nodes=_ORACLE_NODES)
+    files = sorted({node.split("::", 1)[0] for node in _ORACLE_NODES})
+
+    testcases = gen.read_testcases(gate.junit, gen._dotted_index(files))
+
+    assert [testcase.node_id for testcase in testcases] == _ORACLE_NODES
+    assert [testcase.file for testcase in testcases] == [node.split("::", 1)[0] for node in _ORACLE_NODES]
+    assert gen.main(gate.argv()) == 0
+
+
+def test_a_same_counts_run_of_other_nodes_is_refused_naming_both_sides(
+    gen: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gate = _Gate(tmp_path, cases=_swapped("tests.test_beta", "test_one", to_name="test_renamed"))
+
+    assert gen.main(gate.argv()) == 1
+
+    error = capsys.readouterr().err
+    assert "collected but not in the JUnit: tests/test_beta.py::test_one" in error
+    assert "in the JUnit but not collected: tests/test_beta.py::test_renamed" in error
+    assert not gate.output.exists()
+
+
+def test_at_most_ten_mismatches_are_listed_but_all_are_counted(
+    gen: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    nodes = [f"tests/test_many.py::test_{number:02d}" for number in range(25)]
+    gate = _Gate(tmp_path, cases=[_case_for(node) for node in nodes[:2]], nodes=nodes)
+
+    assert gen.main(gate.argv()) == 1
+
+    error = capsys.readouterr().err
+    assert "(23 missing, 0 unexpected, 0 repeated); first 10: " in error
+    assert error.count("collected but not in the JUnit:") == 10
+
+
+def test_a_matching_junit_in_another_order_is_accepted(gen: ModuleType, tmp_path: Path) -> None:
+    shuffled = [_case_for(node) for node in _ORACLE_NODES]
+    random.Random(11).shuffle(shuffled)
+    gate = _Gate(tmp_path, cases=shuffled, nodes=_ORACLE_NODES)
+
+    assert gen.main(gate.argv()) == 0
+
+
+# --- One key rule, defined by the writer and applied by the reader -----------------------
+
+_VALID_KEYS = [
+    "tests/test_a.py",
+    "tests/sub/test_b.py",
+    "test_c.py",
+    "tests/odd.name/test_d.py",
+    "tests/a..b/test_e.py",
+]
+_INVALID_KEYS = [
+    "",
+    "/abs/test_a.py",
+    "C:/abs/test_a.py",
+    "C:test_a.py",
+    "//host/share/test_a.py",
+    "tests\\test_a.py",
+    "tests/../test_a.py",
+    "..",
+    "tests/test_a.py::test_one",
+]
+
+
+@pytest.mark.parametrize("key", _VALID_KEYS)
+def test_a_relative_test_path_is_a_valid_key(gen: ModuleType, key: str) -> None:
+    assert gen.file_key_problem(key) is None
+
+
+@pytest.mark.parametrize("key", _INVALID_KEYS)
+def test_every_other_key_has_a_stated_problem_and_the_loader_refuses_it_too(
+    gen: ModuleType, tmp_path: Path, key: str
+) -> None:
+    assert "relative test path" in (gen.file_key_problem(key) or "")
+    payload = {
+        "schema_version": 1,
+        "source": {
+            "junit": "run.xml",
+            "collection": "run.collection.json",
+            "junit_sha256": "a" * 64,
+            "collection_sha256": "b" * 64,
+            "testcases": 1,
+            "total_seconds": 1.0,
+        },
+        "mean_test_seconds": 1.0,
+        "files": {key: 1.0},
+    }
+    path = tmp_path / "file_durations.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ds.DurationDataError, match="relative test path"):
+        load_file_durations(path)
+
+
+def test_the_generator_asks_the_shared_rule_for_every_key_it_would_write(
+    gen: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = _Gate(tmp_path)
+    monkeypatch.setattr(
+        gen, "file_key_problem", lambda key: "stub says no" if key == "tests/test_beta.py" else None
+    )
+
+    assert gen.main(gate.argv()) == 1
+
+    assert "stub says no" in capsys.readouterr().err
+    assert not gate.output.exists()
+
+
+# --- Parser failures are refusals, not tracebacks ------------------------------------------
+
+
+@pytest.fixture
+def digit_limit() -> Iterator[int]:
+    """Python's default cap on int<->str conversion, restored afterwards, whatever the environment sets."""
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        yield 4300
+    finally:
+        sys.set_int_max_str_digits(previous)
+
+
+def _huge_integer_collection(gate: _Gate, digits: int) -> None:
+    gate.collection.write_text(
+        '{"schema_version": 1, "collected_nodeids": ["tests/test_beta.py::test_one"], "junk": '
+        + "1" + "0" * digits + "}",
+        encoding="utf-8",
+    )
+
+
+def test_an_integer_beyond_the_digit_limit_is_a_refusal_with_the_output_untouched(
+    gen: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], digit_limit: int
+) -> None:
+    gate = _Gate(tmp_path)
+    _huge_integer_collection(gate, digit_limit)
+    gate.output.parent.mkdir(parents=True)
+    gate.output.write_bytes(b"SENTINEL")
+
+    assert gen.main(gate.argv()) == 1
+
+    error = capsys.readouterr().err
+    assert "collection artifact is unreadable" in error and "Exceeds the limit" in error
+    assert gate.output.read_bytes() == b"SENTINEL"
+    assert [path.name for path in gate.output.parent.iterdir()] == [gate.output.name]
+
+
+def test_the_script_prints_a_refusal_not_a_traceback_for_a_huge_integer(tmp_path: Path) -> None:
+    gate = _Gate(tmp_path)
+    _huge_integer_collection(gate, 4300)
+
+    refused = subprocess.run(
+        [sys.executable, "-I", "-X", "int_max_str_digits=4300", str(SCRIPT), *gate.argv()],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    assert refused.returncode == 1
+    assert "refusing" in refused.stderr and "Traceback" not in refused.stderr
+    assert not gate.output.exists()
+
+
+def test_a_collection_nested_beyond_the_parsers_depth_is_a_refusal(
+    gen: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gate = _Gate(tmp_path)
+    gate.collection.write_text("[" * 100_000, encoding="utf-8")
+
+    assert gen.main(gate.argv()) == 1
+
+    assert "collection artifact is unreadable" in capsys.readouterr().err
+    assert not gate.output.exists()
+
+
+def test_a_collection_that_is_not_utf8_is_a_refusal(
+    gen: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gate = _Gate(tmp_path)
+    gate.collection.write_bytes(b"\xff\xfe{")
+
+    assert gen.main(gate.argv()) == 1
+
+    assert "collection artifact is unreadable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("raised", [ValueError("a parser limit nobody anticipated"), RecursionError("too deep")])
+def test_an_unexpected_parser_error_while_building_is_still_a_refusal_not_a_traceback(
+    gen: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    raised: Exception,
+) -> None:
+    gate = _Gate(tmp_path)
+
+    def surprise(junit: Path, collection: Path) -> dict[str, Any]:
+        raise raised
+
+    monkeypatch.setattr(gen, "build_payload", surprise)
+
+    assert gen.main(gate.argv()) == 1
+
+    assert str(raised) in capsys.readouterr().err
+    assert not gate.output.exists()
 
 
 # --- The generator against its neighbours --------------------------------------------

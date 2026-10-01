@@ -215,7 +215,10 @@ def pytest_xdist_make_scheduler(config, log):
     scheduler returned here wins and ``None`` leaves xdist's stock one in charge.
     ``optionalhook`` keeps this file loadable where xdist is not installed, and the
     import is lazy so runs that never distribute never load the scheduler. Order
-    only: see ``tests/fixtures/duration_scheduler.py``.
+    only: for a run that completes, every node still runs exactly once, as with
+    stock xdist; with ``--maxfail``/``-x`` the set of nodes run before the stop
+    depends on the order, as with any order change. The details are in
+    ``tests/fixtures/duration_scheduler.py``.
     """
     from tests.fixtures.duration_scheduler import make_duration_scheduler
 

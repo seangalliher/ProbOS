@@ -13,23 +13,34 @@ first ``_assign_work_unit()`` after xdist has built the whole work queue re-sort
 that queue in place -- same scope keys, same work-unit dicts, a stable sort so
 ties keep xdist's order -- and then calls xdist. Comparing the collections,
 shutting down surplus workers, the first unit per worker, the low-watermark
-top-ups, crash re-queueing and every later ``schedule()`` stay xdist code. Which
-nodes run and how often each runs is untouched; only *where* and *when* a file
-starts can move, so the canonical gate's collection-identity and exactly-once
-checks apply unchanged.
+top-ups, crash handling and every later ``schedule()`` stay xdist code.
+
+The guarantee is order only, and it is stated as narrowly as it holds. For a run
+that completes, every collected node runs exactly once, as with stock xdist, and
+the canonical gate's collection-identity and exactly-once checks judge that run
+unchanged. xdist's own crash handling is inherited as it is: it re-queues a
+crashed worker's unit, so the crashing node is retried. Under ``--maxfail`` or
+``-x`` (CI uses ``--maxfail=10``) the run stops early, and *which* nodes ran
+before the stop depends on the order, as it does for any order change; the
+scheduler stays enabled there.
 
 The scheduler is used only when every condition holds; otherwise the hook in
 ``tests/conftest.py`` returns ``None`` and xdist builds its stock scheduler:
 
 * ``--dist=loadfile`` with xdist's ``--loadscope-reorder`` still on (xdist's own
   ``--no-loadscope-reorder`` is the only opt-out);
-* the durations file loads and passes every check in ``load_file_durations``;
+* the durations file loads and passes every check in ``load_file_durations``,
+  including parser failures such as an integer over Python's digit limit, which
+  are a ``DurationDataError`` like any other bad data;
 * xdist's ``LoadFileScheduling`` still has ``schedule`` and ``_assign_work_unit``
   and starts with an ``OrderedDict`` work queue and no collection.
 
-Each ``loadfile`` session prints exactly one ``AD-1270f duration scheduler:`` line
-saying which of those happened, including ``order NOT applied`` if xdist's first
-distribution never reached ``_assign_work_unit``.
+A ``loadfile`` session whose workers collected the same non-empty set prints
+exactly one ``AD-1270f duration scheduler:`` line saying which of those happened,
+including ``order NOT applied`` if xdist's first distribution never reached
+``_assign_work_unit``. An empty collection, or collections that differ between
+workers, ends before any unit is handed out: an enabled scheduler then prints
+nothing (a disabled one has already printed its reason when it was built).
 
 Stated bounds. The override depends on private xdist 3.8 members, so
 ``test_ad1270f_duration_scheduler.py`` pins the major.minor version; an upgrade
@@ -42,14 +53,15 @@ ordered by the old figure until the file is regenerated.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import math
 import re
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -66,6 +78,7 @@ SCHEMA_VERSION = 1
 DURATIONS_PATH = Path(__file__).with_name("file_durations.json")
 DURATIONS_NAME = "tests/fixtures/file_durations.json"
 REPORT_PREFIX = "AD-1270f duration scheduler:"
+_GENERATOR_PATH = Path(__file__).resolve().parents[2] / "scripts" / "gen_file_durations.py"
 _STOCK_ORDER = "using xdist's stock LoadFileScheduling order"
 _MAX_REPORTED_NAMES = 5
 _TOP_LEVEL_KEYS = frozenset({"schema_version", "source", "mean_test_seconds", "files"})
@@ -137,19 +150,32 @@ def _check_source(source: object) -> None:
     _seconds(source["total_seconds"], "source.total_seconds")
 
 
-def _check_file_key(key: str) -> None:
-    pure = PureWindowsPath(key)
-    if (
-        not key
-        or "\\" in key
-        or "::" in key
-        or pure.drive
-        or pure.root
-        or ".." in key.split("/")
-    ):
+def _first_clause(exc: BaseException) -> str:
+    """A short single-line reason for a report: the message up to its first colon."""
+    lines = str(exc).splitlines()
+    return (lines[0].split(":", 1)[0] if lines else "") or type(exc).__name__
+
+
+def _file_key_rule() -> Callable[[str], str | None]:
+    """``file_key_problem`` from ``scripts/gen_file_durations.py``, the writer of the file.
+
+    What a ``files`` key may look like is defined once, by the writer, and applied
+    here to every key read, so the two cannot disagree. The script is loaded from its
+    path (it is standard-library only and has no import side effects). Any failure to
+    load the rule is bad data like any other: ``DurationDataError``, so the run falls
+    back to the stock order instead of failing.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("_ad1270f_file_key_rule", _GENERATOR_PATH)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"no loader for {_GENERATOR_PATH}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.file_key_problem
+    except Exception as exc:  # noqa: BLE001 -- anything the script does at import must degrade
         raise DurationDataError(
-            f"files key must be a relative test path with no '..', '::' or backslash: {key!r}"
-        )
+            f"cannot load the key rule from {_GENERATOR_PATH.name} ({type(exc).__name__})"
+        ) from exc
 
 
 def load_file_durations(path: Path = DURATIONS_PATH) -> FileDurations:
@@ -162,10 +188,16 @@ def load_file_durations(path: Path = DURATIONS_PATH) -> FileDurations:
         payload = json.loads(
             text, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicate_keys
         )
+    except DurationDataError:
+        raise  # a hook above refused the data; keep its reason (it is also a ValueError)
     except json.JSONDecodeError as exc:
         raise DurationDataError(f"{path.name} is not valid JSON ({exc.msg})") from exc
     except RecursionError:
         raise DurationDataError(f"{path.name} is nested too deeply") from None
+    except ValueError as exc:
+        # The parser's own limits, such as an integer over Python's digit cap, are plain
+        # ValueErrors: bad data like any other, so fall back instead of failing the run.
+        raise DurationDataError(f"{path.name} cannot be parsed ({_first_clause(exc)})") from exc
     if not isinstance(payload, dict) or set(payload) != _TOP_LEVEL_KEYS:
         raise DurationDataError(f"{path.name} must hold exactly " + ", ".join(sorted(_TOP_LEVEL_KEYS)))
     version = payload["schema_version"]
@@ -176,9 +208,12 @@ def load_file_durations(path: Path = DURATIONS_PATH) -> FileDurations:
     files = payload["files"]
     if not isinstance(files, dict) or not files:
         raise DurationDataError("files must be a non-empty object")
+    key_problem = _file_key_rule()
     checked: dict[str, float] = {}
     for key, value in files.items():
-        _check_file_key(key)
+        problem = key_problem(key)
+        if problem is not None:
+            raise DurationDataError(problem)
         checked[key] = _seconds(value, f"files[{key!r}]")
     return FileDurations(files=MappingProxyType(checked), mean_test_seconds=mean)
 
