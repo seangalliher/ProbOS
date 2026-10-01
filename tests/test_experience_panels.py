@@ -12,13 +12,13 @@ from rich.console import Console
 from probos.cognitive.llm_client import MockLLMClient
 from probos.experience import panels
 from probos.experience.renderer import ExecutionRenderer
-from probos.runtime import ProbOSRuntime
 
 from tests.fixtures.experience_shell import (  # noqa: F401 -- pytest fixtures and helper
     console,
     get_output,
     runtime,
 )
+from tests.fixtures.runtime_factory import started_runtime
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +213,10 @@ class TestRendererForceReflect:
 
     @pytest.fixture
     async def renderer_env(self, tmp_path):
-        llm = MockLLMClient()
-        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-        await rt.start()
-        con = Console(file=StringIO(), force_terminal=True, width=120)
-        renderer = ExecutionRenderer(con, rt, debug=False)
-        yield renderer, rt
-        await rt.stop()
+        async with started_runtime(tmp_path, fast_teardown=True) as rt:
+            con = Console(file=StringIO(), force_terminal=True, width=120)
+            renderer = ExecutionRenderer(con, rt, debug=False)
+            yield renderer, rt
 
     def test_force_reflect_for_builtin_requires_reflect(self, renderer_env):
         """Test 34: run_command intent forces dag.reflect even if LLM set false."""
@@ -330,12 +327,10 @@ class TestRendererSelfModIntegration:
     async def self_mod_env(self, tmp_path):
         """Runtime with self-mod enabled + renderer + captured console."""
         llm = MockLLMClient()
-        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-        await rt.start()
-        con = Console(file=StringIO(), force_terminal=True, width=120)
-        renderer = ExecutionRenderer(con, rt, debug=False)
-        yield llm, rt, renderer, con
-        await rt.stop()
+        async with started_runtime(tmp_path, llm=llm, fast_teardown=True) as rt:
+            con = Console(file=StringIO(), force_terminal=True, width=120)
+            renderer = ExecutionRenderer(con, rt, debug=False)
+            yield llm, rt, renderer, con
 
     @pytest.mark.asyncio
     async def test_self_mod_pipeline_exists(self, self_mod_env):

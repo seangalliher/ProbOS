@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1825
-  field_definitions: 1820
+  canonical_dump_leaves: 1827
+  field_definitions: 1822
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 6d0998b38aa3ed6bea1c1754e27c16fcdec27306853d7e37afd7bdaba0ea32ae
+canonical_dump_sha256: 2daada981773106394e5cff8a3fb0befca5b2139224bee9ac2d7875050dc8793
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2300,7 +2300,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 880831e50f03803db88703e2f3512645ab83491eefd7a8dd98526e2bd7df7d38
+    schema_sha256: 8feb6ee5deb6ce7a2ab044e27100a26bd87295b4cc1f980e846ca15c033ea15d
     fields:
     - {default: '''probos_episodes''', name: collection_name}
     - {default: '100000', name: max_episodes}
@@ -2319,6 +2319,8 @@ models:
     - {default: 'False', name: schema_version_tracking}
     - {default: 'False', name: oracle_match_reason_enabled}
     - {default: '30.0', name: shutdown_drain_timeout_s}
+    - {default: '1.0', name: shutdown_write_grace_s}
+    - {default: '2.0', name: shutdown_dispatch_grace_s}
     - {default: '64', name: hnsw_sync_threshold}
     - {default: '32', name: hnsw_batch_size}
     - {default: 'True', name: backup_enabled}
@@ -3321,7 +3323,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1092c5de1a711a13db2a028754015413f6c9f86d3dc9314bfad533b6f678302c
+    schema_sha256: 9f701794828eddf8e7cd81dc873565abfa94c61e99f6a2e435ed2550c815d194
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

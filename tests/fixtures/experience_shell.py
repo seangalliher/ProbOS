@@ -1,6 +1,16 @@
 """Shared fixtures for the split test_experience*.py modules.
 
 Moved verbatim from the original single test_experience.py.
+
+AD-1270f P1.2: the ``runtime`` fixture opts in to fast teardown (see
+tests/fixtures/runtime_factory.py), so its teardown stop skips the two fixed
+shutdown graces. That opt-in reaches every module that imports this ``runtime``
+(or ``shell``, which requests it). Those modules are pinned by
+FAST_TEARDOWN_EFFECTIVE_MODULES, so a new importer fails
+tests/test_ad1270f_shutdown_grace.py until it is reviewed; what ``stop()``
+leaves behind is not observed by any of their test bodies. A test that stops the
+runtime in its own body keeps production timing: the factory's teardown stop is
+then a BF-598 no-op.
 """
 
 from io import StringIO
@@ -8,19 +18,16 @@ from io import StringIO
 import pytest
 from rich.console import Console
 
-from probos.cognitive.llm_client import MockLLMClient
 from probos.experience.shell import ProbOSShell
-from probos.runtime import ProbOSRuntime
+
+from tests.fixtures.runtime_factory import started_runtime
 
 
 @pytest.fixture
 async def runtime(tmp_path):
     """Create a runtime with MockLLMClient, start it, yield, stop."""
-    llm = MockLLMClient()
-    rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-    await rt.start()
-    yield rt
-    await rt.stop()
+    async with started_runtime(tmp_path, fast_teardown=True) as rt:
+        yield rt
 
 
 @pytest.fixture

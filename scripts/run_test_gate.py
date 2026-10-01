@@ -7,6 +7,7 @@ import argparse
 import ast
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import locale
 import os
@@ -25,7 +26,8 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Iterator, Sequence, TextIO
+from types import ModuleType
+from typing import Any, BinaryIO, Iterator, Sequence, TextIO
 
 
 _BLOCKING_UNTRACKED_PREFIXES = (
@@ -100,6 +102,7 @@ _RELEASE_TEST_FILE_EXCLUSIONS = frozenset(
         "tests/ablation/test_sigma_harness_structural.py",
     }
 )
+_DURATION_BUDGET_ERROR_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -176,6 +179,9 @@ class GateResult:
     junit_totals: JUnitTotals | None
     collection_path: str | None
     collection_totals: CollectionTotals | None
+    # Report-only: the budget, or why there is none (see _compute_duration_budget).
+    duration_budget: dict[str, object] | None = None
+    duration_budget_skipped: str | None = None
 
 
 class GateLock:
@@ -1493,6 +1499,142 @@ def _write_manifest(path: Path, result: GateResult) -> None:
     )
 
 
+def _load_gate_timing() -> ModuleType:
+    """Load the sibling timing helper by path, once per process."""
+    name = "_gate_timing"
+    path = Path(__file__).resolve().with_name("_gate_timing.py")
+    cached = sys.modules.get(name)
+    cached_file = getattr(cached, "__file__", None)
+    if cached is not None and cached_file and Path(cached_file).resolve() == path:
+        return cached
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Gate timing helper cannot be loaded: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+def _safe_exception_text(exc: BaseException) -> str:
+    """``TypeName: text`` for any exception, however broken, capped in length.
+
+    ``str()`` of an exception runs arbitrary code, so it is guarded and a failure
+    reads ``<unprintable>``. Nothing here is swallowed except that: a
+    ``KeyboardInterrupt`` is an operator's Ctrl+C and always propagates.
+    """
+    try:
+        name = type(exc).__name__
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        name = "<unnamed>"
+    try:
+        text = str(exc)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        text = "<unprintable>"
+    return f"{name}: {text}"[:_DURATION_BUDGET_ERROR_LIMIT]
+
+
+def _compute_duration_budget(
+    junit_path: Path, collection_dir: Path, *, expected_workers: int
+) -> dict[str, object]:
+    """Report-only duration budget; every failure becomes an error record.
+
+    It runs only after collection validation succeeded, and reads only the
+    ``gw0..gw(N-1)`` files that validation just accepted. Anything it raises,
+    ``SystemExit`` and other ``BaseException`` subclasses included, becomes an
+    error record, so it cannot replace the gate's exit code or stop the receipt. A
+    ``KeyboardInterrupt`` is the one exception: it is re-raised, because an
+    operator's Ctrl+C is never advisory.
+
+    The work is linear in the validated evidence (one JUnit report and N small
+    JSON files). Measured at 0.14 to 0.29 s over seven runs on a synthetic gate of
+    37.9k tests and 16 workers, it can lengthen the wrapper's run by about that
+    much and cannot change its outcome. The manifest carries the budget, so the
+    receipt's manifest hash covers it like any other manifest field; the receipt's
+    own keys, status semantics and validation are unchanged. The round trip keeps
+    the manifest strict JSON for PowerShell's ``ConvertFrom-Json``.
+    """
+    try:
+        budget = _load_gate_timing().build_duration_budget(
+            junit_path,
+            collection_dir,
+            [f"gw{index}" for index in range(expected_workers)],
+        )
+        return json.loads(json.dumps(budget, allow_nan=False))
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # advisory work must not replace the gate's outcome
+        return {
+            "version": 1,
+            "report_only": True,
+            "error": _safe_exception_text(exc),
+        }
+
+
+def _duration_budget_outcome(
+    *,
+    preflight_only: bool,
+    junit_path: Path,
+    collection_dir: Path,
+    collection_totals: CollectionTotals | None,
+    expected_workers: int,
+) -> tuple[dict[str, object] | None, str | None]:
+    """``(budget, None)``, or ``(None, why there is no budget)``.
+
+    A budget is built only from evidence the wrapper has validated: a JUnit report
+    and a collection whose per-worker files passed ``_validate_collection_manifests``
+    (``collection_totals`` is set only when it returned). A gate that failed
+    earlier, or never ran pytest, has nothing validated to report on.
+    """
+    if preflight_only:
+        return None, "preflight-only run"
+    if not junit_path.exists():
+        return None, "pytest produced no JUnit report"
+    if collection_totals is None:
+        return None, "collection validation did not succeed"
+    return (
+        _compute_duration_budget(
+            junit_path, collection_dir, expected_workers=expected_workers
+        ),
+        None,
+    )
+
+
+def _duration_budget_line(budget: dict[str, Any]) -> str:
+    """The one console line for a duration budget; it never raises."""
+    prefix = "DURATION BUDGET (report-only): "
+    try:
+        if "slow_tests" not in budget:
+            return prefix + "unavailable; see duration_budget.error in the manifest\n"
+        limits = budget["thresholds"]
+        parts = [
+            f"{budget['slow_tests']['count']} test(s) over "
+            f"{limits['test_seconds']:g}s",
+            f"{budget['slow_files']['count']} file(s) over "
+            f"{limits['file_seconds']:g}s or "
+            f"{limits['mean_busy_share'] * 100:g}% of mean busy time",
+        ]
+        critical = budget["critical_path"]
+        if critical is None:
+            parts.append("critical path unavailable")
+        else:
+            where = f"critical path {critical['worker']} {critical['busy_seconds']:.1f}s"
+            if critical["file"] is not None:
+                where += f" at {critical['file']} ({critical['file_seconds']:.1f}s)"
+            parts.append(where)
+        return prefix + "; ".join(parts) + "\n"
+    except Exception:
+        return prefix + "unavailable; see duration_budget in the manifest\n"
+
+
 def _write_success_receipt(
     path: Path,
     *,
@@ -1873,6 +2015,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     wrapper_exit_code = 5
         finished_at = _utc_now()
         elapsed_seconds = round(time.monotonic() - started, 3)
+        # Advisory work comes after the gate's own clock stops, so it never counts
+        # towards the recorded gate time.
+        duration_budget, duration_budget_skipped = _duration_budget_outcome(
+            preflight_only=bool(args.preflight_only),
+            junit_path=junit_path,
+            collection_dir=collection_dir,
+            collection_totals=collection_totals,
+            expected_workers=args.workers,
+        )
         log_text = (
             log_path.read_text(encoding="utf-8", errors="replace")
             if log_path.exists()
@@ -1907,6 +2058,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 else None
             ),
             collection_totals=collection_totals,
+            duration_budget=duration_budget,
+            duration_budget_skipped=duration_budget_skipped,
         )
         _write_manifest(manifest_path, result)
         if receipt_path is not None and wrapper_exit_code == 0:
@@ -1934,6 +2087,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 )
                 _write_manifest(manifest_path, result)
                 _write_console(f"GATE ERROR: {receipt_error}\n")
+        if duration_budget is not None:
+            _write_console(_duration_budget_line(duration_budget))
         _write_console(
             f"Gate exit={wrapper_exit_code} preflight={preflight_exit_code} "
             f"pytest={pytest_exit_code} elapsed={elapsed_seconds:.1f}s "
