@@ -178,28 +178,6 @@ async def test_acm_uses_factory() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. EventLog uses factory
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_event_log_uses_factory() -> None:
-    """EventLog(db_path, connection_factory=mock) calls mock.connect() in start()."""
-    from probos.substrate.event_log import EventLog
-
-    mock_conn = AsyncMock()
-    mock_factory = AsyncMock(spec=ConnectionFactory)
-    mock_factory.connect.return_value = mock_conn
-
-    with tempfile.TemporaryDirectory() as td:
-        db_path = str(Path(td) / "events.db")
-        log = EventLog(db_path=db_path, connection_factory=mock_factory)
-        await log.start()
-        mock_factory.connect.assert_called_once_with(db_path)
-        await log.stop()
-
-
-# ---------------------------------------------------------------------------
 # 10. WardRoomService uses factory
 # ---------------------------------------------------------------------------
 

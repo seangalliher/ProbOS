@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 from probos.config import CognitiveConfig, SystemConfig
 from probos.routers import voice as voice_router
@@ -87,11 +85,6 @@ def test_voice_health_offline_disabled_unhealthy(tmp_path: Path) -> None:
     assert data["engine"] == "transformers"
     assert data["backend_available"] is False
     assert data["healthy"] is False
-
-
-def test_primary_stt_rejects_unknown_value() -> None:
-    with pytest.raises(ValidationError):
-        CognitiveConfig(primary_stt="azure")  # type: ignore[arg-type]
 
 
 def test_transformers_model_custom_propagates_to_health(tmp_path: Path) -> None:

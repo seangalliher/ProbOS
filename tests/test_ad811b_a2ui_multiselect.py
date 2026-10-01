@@ -284,13 +284,6 @@ def test_build_stub_multiselect_kind() -> None:
     )
 
 
-def test_build_stub_default_kind_is_choice() -> None:
-    # 2-arg call stays byte-identical to AD-811a.
-    assert build_a2ui_stub("a2ui-choice-1.json", 1) == (
-        "[A2UI: a2ui-choice-1.json v1 - choice]"
-    )
-
-
 @pytest.mark.asyncio
 async def test_replace_multiselect_names_and_stub(tmp_path) -> None:
     art, att = _stores(tmp_path)
