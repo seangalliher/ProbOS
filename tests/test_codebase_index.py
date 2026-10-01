@@ -307,12 +307,25 @@ class TestStructuredQueries:
         results2 = index.find_callers("query")
         assert results1 == results2
 
-    def test_find_tests_for_panels(self, index: CodebaseIndex):
-        """find_tests_for('experience/panels.py') finds test_experience.py."""
-        tests = index.find_tests_for("experience/panels.py")
-        # The test file tree is from src/probos — test files aren't there,
-        # but the method should still work without crashing
-        assert isinstance(tests, list)
+    def test_find_tests_for_panels(self, tmp_path: Path):
+        """find_tests_for() matches test files by naming convention within the
+        indexed tree.
+
+        Unit-level: the production index is built over ``src/probos`` only,
+        which holds no test files, so in production this returns [] for every
+        file -- tracked in #1444. This test used to run against that tree and
+        assert only ``isinstance(tests, list)``, so it could not fail.
+        """
+        source_root = tmp_path / "src" / "probos"
+        (source_root / "experience").mkdir(parents=True)
+        (source_root / "tests").mkdir()
+        (source_root / "experience" / "panels.py").write_text('"""Panels."""\n', encoding="utf-8")
+        (source_root / "tests" / "test_panels.py").write_text('"""Tests."""\n', encoding="utf-8")
+        (source_root / "tests" / "test_other.py").write_text('"""Other."""\n', encoding="utf-8")
+        index = CodebaseIndex(source_root=source_root)
+        index.build()
+
+        assert index.find_tests_for("experience/panels.py") == ["tests/test_panels.py"]
 
     def test_find_tests_for_unknown(self, index: CodebaseIndex):
         """find_tests_for() returns [] for unknown file."""
@@ -392,3 +405,95 @@ class TestImportGraph:
                 assert rel in importers, (
                     f"{rel} imports {imp} but {imp} doesn't list {rel} as importer"
                 )
+
+
+class TestScanRace:
+    """#1419 G-1b: a file that vanishes between listing and reading."""
+
+    def test_build_skips_a_file_that_vanishes_mid_scan(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        source_root = tmp_path / "src" / "probos"
+        source_root.mkdir(parents=True)
+        (source_root / "kept.py").write_text(
+            '"""Kept."""\n\nclass Kept:\n    pass\n', encoding="utf-8"
+        )
+        (source_root / "vanishing.py").write_text('"""Gone."""\n', encoding="utf-8")
+        analyze = CodebaseIndex._analyze_file
+        deleted: list[str] = []
+
+        def delete_then_analyze(self: CodebaseIndex, path: Path, rel: str) -> dict:
+            # Remove the file after the walk listed it and before it is read:
+            # the exact window a parallel writer hit in the canonical gate.
+            if path.name == "vanishing.py":
+                path.unlink()
+                deleted.append(rel)
+            return analyze(self, path, rel)
+
+        monkeypatch.setattr(CodebaseIndex, "_analyze_file", delete_then_analyze)
+        index = CodebaseIndex(source_root=source_root)
+
+        with caplog.at_level("WARNING", logger="probos.cognitive.codebase_index"):
+            index.build()
+
+        assert deleted == ["vanishing.py"], "the race was never exercised"
+        assert index._built is True
+        assert "kept.py" in index._file_tree
+        assert "vanishing.py" not in index._file_tree
+        assert "vanishing.py could not be read" in caplog.text
+
+    def test_build_still_propagates_a_non_io_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only an unreadable file is skipped; any other failure still raises."""
+        source_root = tmp_path / "src" / "probos"
+        source_root.mkdir(parents=True)
+        (source_root / "kept.py").write_text('"""Kept."""\n', encoding="utf-8")
+
+        def explode(self: CodebaseIndex, path: Path, rel: str) -> dict:
+            raise RuntimeError("not an I/O failure")
+
+        monkeypatch.setattr(CodebaseIndex, "_analyze_file", explode)
+
+        with pytest.raises(RuntimeError, match="not an I/O failure"):
+            CodebaseIndex(source_root=source_root).build()
+
+    def test_an_unreadable_config_source_drops_only_its_models(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The config-schema pass rereads config sources; it must degrade the
+        same way the file scan does rather than abort the boot."""
+        source_root = tmp_path / "src" / "probos"
+        (source_root / "config_models").mkdir(parents=True)
+        model = "from pydantic import BaseModel\n\nclass {name}(BaseModel):\n    x: int = 1\n"
+        (source_root / "config.py").write_text(model.format(name="FacadeConfig"), encoding="utf-8")
+        (source_root / "config_models" / "extra.py").write_text(
+            model.format(name="ExtraConfig"), encoding="utf-8"
+        )
+        unreadable = (source_root / "config.py").resolve()
+        read_text = Path.read_text
+        refused: list[Path] = []
+
+        def refuse_config(self: Path, *args: object, **kwargs: object) -> str:
+            if self.resolve() == unreadable:
+                refused.append(self)
+                raise PermissionError(13, "simulated: permission denied", str(self))
+            return read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", refuse_config)
+        index = CodebaseIndex(source_root=source_root)
+
+        with caplog.at_level("WARNING", logger="probos.cognitive.codebase_index"):
+            index.build()
+
+        assert len(refused) == 2, "both the file scan and the config pass must hit the refusal"
+        schema = index.get_config_schema()
+        assert "ExtraConfig" in schema
+        assert "FacadeConfig" not in schema
+        assert "Config schema: config.py could not be read" in caplog.text

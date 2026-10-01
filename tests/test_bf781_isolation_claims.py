@@ -97,20 +97,25 @@ class TestRunDoesNotClaimItNeverRaises:
         assert "BF-781" in source
 
     @pytest.mark.asyncio
-    async def test_the_behaviour_the_correction_describes(self) -> None:
+    async def test_the_behaviour_the_correction_describes(self, tmp_path) -> None:
         """The claim is about runtime behaviour, so pin the behaviour too.
 
         If ``run`` were ever changed to swallow cancellation, the corrected
         prose would become false in the other direction and only this would
         catch it.
+
+        The child only has to outlive the cancellation below. It used to sleep
+        30 s, and because the executor thread keeps running after cancellation
+        (the behaviour pinned here), event-loop teardown waited the whole 30 s
+        in every gate.
         """
         import asyncio
 
         from probos.execution.isolation import ExecutionRequest, SubprocessSandbox
 
-        sandbox = SubprocessSandbox()
+        sandbox = SubprocessSandbox(scratch_root=tmp_path / "scratch")
         request = ExecutionRequest(
-            code="import time; time.sleep(30)", timeout_seconds=30.0,
+            code="import time; time.sleep(2)", timeout_seconds=2.0,
         )
 
         task = asyncio.create_task(sandbox.run(request))

@@ -727,10 +727,20 @@ class TestWriteThroughAndBackfill:
 # DD-6 — semantic quality (real embeddings only)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(
-    not _real_embeddings_available(),
-    reason="DD-6: PROBOS_EMBEDDINGS=local uses a lexical EF; no synonym matching",
-)
+@pytest.fixture
+def real_embeddings_required() -> None:
+    """DD-6: skip unless a genuinely semantic embedding model is loaded.
+
+    A fixture rather than a module-level ``skipif``: the condition loads the
+    embedding model, and evaluating it at import time made every xdist worker
+    import sentence-transformers and torch during collection -- about 6 s per
+    worker, on the collection barrier every other test waits behind.
+    """
+    if not _real_embeddings_available():
+        pytest.skip("DD-6: PROBOS_EMBEDDINGS=local uses a lexical EF; no synonym matching")
+
+
+@pytest.mark.usefixtures("real_embeddings_required")
 class TestSemanticQuality:
     async def test_record_retrievable_without_lexical_overlap(
         self, records, layer,

@@ -145,16 +145,22 @@ class TestSingleton:
                 instructions=_DEFAULT_PERSONA + _ROLE_RULES,
             )
 
-    def test_counter_resets_on_stop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_counter_resets_on_stop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """stop() releases the singleton slot. This used to be "asserted" by
+        decrementing the counter by hand, which could not fail."""
+        from probos.cognitive.cognitive_agent import CognitiveAgent
+
+        async def _unwired(self: CognitiveAgent) -> None:
+            return None
+
+        monkeypatch.setattr(CognitiveAgent, "stop", _unwired)
         yeo = _make_yeo()
         assert YeomanAgent._live_instance_count == 1
-        # Manual decrement mirrors stop()'s finally-block accounting; the
-        # test fixture handles the full reset between tests.
-        YeomanAgent._live_instance_count = 0
+
+        await yeo.stop()
+
         assert YeomanAgent._live_instance_count == 0
-        # And re-construction would now succeed (covered by other tests
-        # via the autouse fixture).
-        assert yeo.id == "yeoman-001"
 
 
 # ---------------------------------------------------------------------------

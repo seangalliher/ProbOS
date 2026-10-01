@@ -6,10 +6,12 @@ assertion: each rule gets a case that makes it fire and a case that makes it
 stay silent, and the committed tree is asserted to produce zero errors with
 every rule simultaneously armed.
 
-Two of those injections are performed against the **real** ``src/probos/`` tree
-and restored byte-identically in a ``finally``, because a rule that only ever
-fires against a synthetic fixture has not been shown to fire against the shape
-it actually guards.
+Two of those injections are performed against a byte-identical private copy of
+the **real** tracked ``src/`` tree, because a rule that only ever fires against
+a synthetic fixture has not been shown to fire against the shape it actually
+guards. They are never performed against the tree under test itself: that tree
+is imported and indexed by every parallel xdist worker, and a file injected
+there fails an unrelated worker's runtime boot (#1419 G-1).
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import dataclasses
 import importlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import types
@@ -1274,61 +1277,118 @@ def test_every_error_message_names_the_command_that_fixes_it(
 
 
 # ---------------------------------------------------------------------------
-# Injection against the REAL tree, restored byte-identically
+# Injection against a private copy of the REAL tree
 # ---------------------------------------------------------------------------
 
 
-def test_the_real_tree_can_fail_declared_to_exists(checker: types.ModuleType) -> None:
-    """Rename a real declaration's owner symbol; the checker must reject it."""
-    target = _REAL_SRC / "probos" / "tools" / "storage_declarations.py"
-    original = target.read_bytes()
-    try:
-        target.write_bytes(
-            original.replace(b'owner_symbol="ActionApprovalStore"', b'owner_symbol="NoSuchStore"')
+def _private_copy_of_tracked_src(destination: Path) -> Path:
+    """Copy the tracked files under ``src/`` byte-for-byte into ``destination``.
+
+    Tracked files only, so the copy is the tree the canonical gate checks and
+    not whatever untracked scratch happens to sit in a working tree. The copy
+    is not a git checkout, so the checker takes its documented disk-walk
+    fallback -- which, over a tracked-only copy, walks exactly the tracked set.
+    """
+    copy_root = destination / "real-tree-copy"
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--", "src"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        check=False,
+    )
+    if listed.returncode == 0:
+        relative_paths = [
+            Path(name.decode("utf-8"))
+            for name in listed.stdout.split(b"\0")
+            if name
+        ]
+        (copy_root / "src").mkdir(parents=True, exist_ok=True)
+        for relative in relative_paths:
+            source = _REPO_ROOT / relative
+            if not source.is_file():
+                continue
+            target = copy_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+    else:
+        shutil.copytree(
+            _REAL_SRC,
+            copy_root / "src",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
-        assert target.read_bytes() != original, "injection did not change the file"
-        result = checker.check(baseline_path=_REAL_BASELINE, src_root=_REAL_SRC)
-        assert "declaration-owner-unresolved" in _rules_fired(result.errors), result.errors
-    finally:
-        target.write_bytes(original)
-    assert target.read_bytes() == original
-    restored = checker.check(baseline_path=_REAL_BASELINE, src_root=_REAL_SRC)
-    assert restored.errors == [], restored.errors
+    return copy_root / "src"
 
 
-def test_the_real_tree_can_fail_exists_to_declared(checker: types.ModuleType) -> None:
+def test_the_real_tree_can_fail_declared_to_exists(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
+    """Rename a real declaration's owner symbol; the checker must reject it."""
+    real_target = _REAL_SRC / "probos" / "tools" / "storage_declarations.py"
+    real_bytes = real_target.read_bytes()
+    src = _private_copy_of_tracked_src(tmp_path)
+    untouched = checker.check(baseline_path=_REAL_BASELINE, src_root=src)
+    assert untouched.errors == [], (
+        "the unmodified copy must pass exactly as the real tree does, or a "
+        f"failure after injection proves nothing: {untouched.errors}"
+    )
+    target = src / "probos" / "tools" / "storage_declarations.py"
+    original = target.read_bytes()
+    assert original == real_bytes, "the copy is not byte-identical to the real tree"
+    target.write_bytes(
+        original.replace(b'owner_symbol="ActionApprovalStore"', b'owner_symbol="NoSuchStore"')
+    )
+    assert target.read_bytes() != original, "injection did not change the file"
+    result = checker.check(baseline_path=_REAL_BASELINE, src_root=src)
+    assert "declaration-owner-unresolved" in _rules_fired(result.errors), result.errors
+    assert real_target.read_bytes() == real_bytes, "the tree under test was modified"
+
+
+def test_the_real_tree_can_fail_exists_to_declared(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
     """Add a real undeclared store module; the checker must reject it.
 
-    The file is created inside ``src/probos/`` and removed in ``finally``. It
-    is never staged, so ``git ls-files`` cannot see it -- which is why the
-    index is rebuilt with a disk-walk fallback for this one assertion.
+    The file is created inside the private copy, never inside the tree under
+    test: #1419 G-1 measured a parallel worker's ``CodebaseIndex.build()``
+    listing the injected file there and failing to read it once this test
+    removed it, which failed that worker's runtime boot. Its source is also
+    placed in the index explicitly, so the assertion does not depend on how
+    the index enumerated files.
     """
-    target = _REAL_SRC / "probos" / "_ad1256_injected_store.py"
+    real_target = _REAL_SRC / "probos" / "_ad1256_injected_store.py"
+    src = _private_copy_of_tracked_src(tmp_path)
+    document, _ = checker.load_baseline(_REAL_BASELINE)
+    assert document is not None
+    rows, _ = checker.baseline_rows(document, _REAL_BASELINE.name)
+
+    untouched_index = checker.build_symbol_index(src)
+    untouched_errors = checker.compare_to_baseline(
+        checker.detect_stores(untouched_index),
+        checker._declared_modules_for_baseline(src, untouched_index),
+        rows,
+        _REAL_BASELINE,
+    )
+    assert untouched_errors == [], (
+        "the unmodified copy must compare clean against the baseline, or the "
+        f"injection below would prove nothing: {untouched_errors}"
+    )
+
+    target = src / "probos" / "_ad1256_injected_store.py"
     assert not target.exists(), "injection target already exists"
-    try:
-        target.write_text(
-            '_SCHEMA = """CREATE TABLE IF NOT EXISTS injected_rows (id TEXT)"""\n',
-            encoding="utf-8",
-        )
-        source = target.read_text(encoding="utf-8")
-        assert checker.detect_tables(source) == ("injected_rows",), (
-            "the probe never detected its own injected schema, so a negative "
-            "result would prove nothing"
-        )
-        index = checker.build_symbol_index(_REAL_SRC)
-        index.sources["probos._ad1256_injected_store"] = source
-        detected = checker.detect_stores(index)
-        assert "probos._ad1256_injected_store" in detected
-        document, _ = checker.load_baseline(_REAL_BASELINE)
-        assert document is not None
-        rows, _ = checker.baseline_rows(document, _REAL_BASELINE.name)
-        declared = checker._declared_modules_for_baseline(_REAL_SRC, index)
-        errors = checker.compare_to_baseline(
-            detected, declared, rows, _REAL_BASELINE
-        )
-        assert "undeclared-store" in _rules_fired(errors), errors
-    finally:
-        target.unlink(missing_ok=True)
-    assert not target.exists()
-    restored = checker.check(baseline_path=_REAL_BASELINE, src_root=_REAL_SRC)
-    assert restored.errors == [], restored.errors
+    target.write_text(
+        '_SCHEMA = """CREATE TABLE IF NOT EXISTS injected_rows (id TEXT)"""\n',
+        encoding="utf-8",
+    )
+    source = target.read_text(encoding="utf-8")
+    assert checker.detect_tables(source) == ("injected_rows",), (
+        "the probe never detected its own injected schema, so a negative "
+        "result would prove nothing"
+    )
+    index = checker.build_symbol_index(src)
+    index.sources["probos._ad1256_injected_store"] = source
+    detected = checker.detect_stores(index)
+    assert "probos._ad1256_injected_store" in detected
+    declared = checker._declared_modules_for_baseline(src, index)
+    errors = checker.compare_to_baseline(detected, declared, rows, _REAL_BASELINE)
+    assert "undeclared-store" in _rules_fired(errors), errors
+    assert not real_target.exists(), "the tree under test was modified"
