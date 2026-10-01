@@ -827,7 +827,17 @@ class TestBackwardCompatibility:
         assert emit_fn.called
 
     def test_handler_protocol_unchanged(self):
-        """Handler protocol signature unchanged — handlers don't see parallelism."""
+        """Handler protocol signature unchanged — handlers don't see parallelism.
+
+        This used to assert ``hasattr(SubTaskHandler, '__call__')``, which is
+        true of every class; it now pins the call signature it describes.
+        """
+        import inspect
+
         from probos.cognitive.sub_task import SubTaskHandler
-        # Protocol should still be runtime_checkable with same signature
-        assert hasattr(SubTaskHandler, '__call__')
+
+        call = SubTaskHandler.__call__
+        assert inspect.iscoroutinefunction(call)
+        assert list(inspect.signature(call).parameters) == [
+            "self", "spec", "context", "prior_results",
+        ]

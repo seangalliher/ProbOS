@@ -296,9 +296,17 @@ class TestCognitiveZone:
         assert status["zone"] == "green"
 
     def test_get_zone_returns_current_zone(self):
-        """get_zone() returns current zone string."""
-        cb = _make_cb()
-        assert cb.get_zone("agent-1") == "green"
+        """get_zone() returns the agent's current zone, per agent.
+
+        Was a copy of test_new_agent_starts_green; it now moves one agent out
+        of GREEN and checks the zone follows while another agent stays put.
+        """
+        cb = _make_cb(velocity_threshold=10, amber_velocity_ratio=0.5)
+        _add_unique_events(cb, "agent-1", 6)
+        cb.check_and_trip("agent-1")
+
+        assert cb.get_zone("agent-1") == "amber"
+        assert cb.get_zone("agent-2") == "green"
 
 
 # ===== Part 2: SELF_MONITORING_CONCERN Event =====

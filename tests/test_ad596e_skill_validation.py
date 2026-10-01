@@ -100,8 +100,12 @@ SKILL_WITH_MULTIPLE_CALLSIGNS = textwrap.dedent("""\
 
 
 def test_validate_spec_valid_name():
-    """Valid skill (lowercase name, within limits) → no errors."""
-    entry = _make_entry(name="my-skill-2")
+    """Valid skill (plain lowercase name, within limits) → no errors.
+
+    Used ``"my-skill-2"``, the same input as the hyphens-and-digits test below,
+    so the plain-name case was never exercised.
+    """
+    entry = _make_entry(name="myskill")
     errors = _validate_spec(entry)
     assert errors == []
 
