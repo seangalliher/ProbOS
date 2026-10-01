@@ -16,7 +16,10 @@ shards' collections are identical, the assignment recomputed here reproduces the
 
 ``verify`` exits 0 when verified, 1 when the evidence is rejected (at most 20 node IDs
 per category, then one ``::error::`` line) and 2 on a usage error. Standard library
-only. The node-list digest uses the encoding of ``scripts/_gate_pytest_plugin.py``.
+only. The node-list digest uses the encoding of ``scripts/_gate_pytest_plugin.py``. What a
+durations ``files`` key may look like is defined once, by ``scripts/gen_file_durations.py``
+(``file_key_problem``): the durations loader here executes that rule, as the scheduler's
+loader (``tests/fixtures/duration_scheduler.py``) does.
 """
 
 from __future__ import annotations
@@ -28,11 +31,12 @@ import math
 import os
 import re
 import sys
+import types
 import uuid
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Any, NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +49,8 @@ MAX_REPORTED_NODES = 20
 MAX_WORKERS = 100_000
 PRIMARY_WORKER_IDS = frozenset({"gw0", "main"})
 
+_GENERATOR_PATH = REPO_ROOT / "scripts" / "gen_file_durations.py"
+_RULE_MODULE = "_ad1270f_p27_file_key_rule"
 _WORKER_FILE = re.compile(r"(?:main|gw[0-9]{1,6})\.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -91,20 +97,41 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return dict(pairs)
 
 
-def _check_file_key(key: str) -> None:
-    segments = key.split("/")
-    if (
-        not key.endswith(".py")
-        or "\\" in key
-        or "::" in key
-        or any(segment in {"", ".", ".."} for segment in segments)
-        or PureWindowsPath(key).drive
-        or any(ord(character) < 32 or ord(character) == 127 for character in key)
-    ):
-        raise ShardError(
-            f"files key must be a relative forward-slash .py path with no '..', '::' "
-            f"or empty segment: {key!r}"
-        )
+def _file_key_rule() -> Callable[[str], str | None]:
+    """``file_key_problem`` from ``scripts/gen_file_durations.py``, the writer of the file.
+
+    The writer defines what a ``files`` key may look like and the scheduler's loader applies
+    the same function, so the three cannot disagree. The script is executed here, not
+    imported: neither import form works from both entry points (``python scripts/ci_shards.py``
+    has ``scripts/`` on ``sys.path``, the plugin's ``scripts.ci_shards`` the repository root),
+    and an import would register a module and write ``scripts/__pycache__``. Its source is
+    compiled and run in a private namespace instead. Every way that can fail, ``SystemExit``
+    included, is a ``ShardError``: nothing the borrowed script does may end ``verify`` with
+    status 0. Only ``KeyboardInterrupt``, the operator's own, still propagates.
+    """
+    where = _GENERATOR_PATH.name
+    try:
+        namespace = types.ModuleType(_RULE_MODULE)
+        namespace.__file__ = str(_GENERATOR_PATH)
+        code = compile(_GENERATOR_PATH.read_bytes(), str(_GENERATOR_PATH), "exec", dont_inherit=True)
+        exec(code, namespace.__dict__)  # noqa: S102 -- this repository's own script, see above
+        rule = namespace.file_key_problem
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
+        raise ShardError(f"cannot load the key rule from {where} ({type(exc).__name__})") from exc
+    if not callable(rule):
+        raise ShardError(f"cannot load the key rule from {where} (file_key_problem is not callable)")
+
+    def checked(key: str) -> str | None:
+        try:
+            return rule(key)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            raise ShardError(f"the key rule failed on {key!r} ({type(exc).__name__})") from exc
+
+    return checked
 
 
 def _seconds_to_ms(value: object, where: str) -> int:
@@ -136,15 +163,21 @@ def _parse_durations(raw: bytes) -> dict[str, int]:
         raise ShardError(f"not valid JSON ({type(exc).__name__})") from exc
     if not isinstance(payload, dict):
         raise ShardError("must hold a JSON object")
+    # P2.7 contract AC1: only schema_version and files are read, so any other top-level key
+    # is ignored. The scheduler's loader is stricter there (it insists on exactly its four
+    # keys); the key rule and the value rules below are the same as its.
     version = payload.get("schema_version")
     if isinstance(version, bool) or not isinstance(version, int) or version != DURATIONS_SCHEMA_VERSION:
         raise ShardError(f"schema_version must be {DURATIONS_SCHEMA_VERSION}: {version!r}")
     files = payload.get("files")
     if not isinstance(files, dict):
         raise ShardError("files must be an object of seconds per test file")
+    key_problem = _file_key_rule()
     milliseconds: dict[str, int] = {}
     for key, seconds in files.items():
-        _check_file_key(key)
+        problem = key_problem(key)
+        if problem is not None:
+            raise ShardError(problem)
         milliseconds[key] = _seconds_to_ms(seconds, f"files[{key!r}]")
     return milliseconds
 
@@ -153,7 +186,9 @@ def read_durations(path: Path | str) -> DurationsFile:
     """Parse the P1.4 durations file into integer milliseconds, or raise ``ShardError``.
 
     Accepts ``{"schema_version": 1, "files": {"tests/test_x.py": <seconds>}}``; other
-    top-level keys are ignored. Seconds become ``max(1, round(seconds * 1000))``.
+    top-level keys are ignored (the scheduler's loader refuses them). Every ``files`` key
+    must pass the generator's ``file_key_problem``. Seconds must be finite, non-negative
+    and not bool, and become ``max(1, round(seconds * 1000))``.
     """
     location = Path(path)
     try:

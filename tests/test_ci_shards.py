@@ -144,12 +144,7 @@ _BAD_DURATIONS = {
     "drive key": (_doc({"C:/tests/a.py": 1}), "relative"),
     "backslash key": (_doc({"tests\\a.py": 1}), "relative"),
     "parent segment key": (_doc({"tests/../a.py": 1}), "relative"),
-    "empty segment key": (_doc({"tests//a.py": 1}), "relative"),
-    "dot segment key": (_doc({"./tests/a.py": 1}), "relative"),
-    "non-py key": (_doc({"tests/a.txt": 1}), "relative"),
     "node id key": (_doc({"tests/a.py::test_x": 1}), "relative"),
-    "directory key": (_doc({"tests/a.py/": 1}), "relative"),
-    "control character key": (_doc({"tests/a\u0001.py": 1}), "relative"),
     "negative seconds": (_doc({"tests/a.py": -1}), ">= 0"),
     "bool seconds": (_doc({"tests/a.py": True}), "not a number"),
     "string seconds": (_doc({"tests/a.py": "1"}), "not a number"),
@@ -191,6 +186,213 @@ def test_load_durations_rejects_json_nested_beyond_the_recursion_limit(
 
     with pytest.raises(cs.ShardError, match="not valid JSON"):
         cs.load_durations(path)
+
+
+# --- the files-key rule is the generator's, as in the scheduler's loader --------------
+
+
+@pytest.fixture(scope="module")
+def scheduler() -> ModuleType:
+    from tests.fixtures import duration_scheduler
+
+    return duration_scheduler
+
+
+def _committed_with_files(tmp_path: Path, files: dict[str, Any]) -> Path:
+    payload = json.loads(REAL_DURATIONS.read_text(encoding="utf-8"))
+    payload["files"] = files
+    return _durations_file(tmp_path, payload)
+
+
+def _judged(load: Any, error: type[Exception]) -> tuple[bool, str]:
+    try:
+        load()
+    except error as exc:
+        return False, str(exc)
+    return True, ""
+
+
+def test_both_loaders_read_the_committed_file_to_the_same_seconds(cs: ModuleType, scheduler: ModuleType) -> None:
+    committed = scheduler.load_file_durations(REAL_DURATIONS)
+
+    shard = cs.read_durations(REAL_DURATIONS).milliseconds
+
+    assert len(shard) > 1000
+    assert shard == {path: max(1, round(seconds * 1000)) for path, seconds in committed.files.items()}
+
+
+def test_the_parity_file_is_valid_for_both_loaders_apart_from_its_key(
+    cs: ModuleType, scheduler: ModuleType, tmp_path: Path
+) -> None:
+    path = _committed_with_files(tmp_path, {"tests/test_x.py": 1.5})
+
+    assert dict(scheduler.load_file_durations(path).files) == {"tests/test_x.py": 1.5}
+    assert cs.read_durations(path).milliseconds == {"tests/test_x.py": 1500}
+
+
+@pytest.mark.parametrize("key", ["tests/../test_x.py", "tests/test_x.py::test_y", "tests\\test_x.py"])
+def test_both_loaders_reject_an_escaping_or_node_id_key_with_the_generators_message(
+    cs: ModuleType, scheduler: ModuleType, tmp_path: Path, key: str
+) -> None:
+    path = _committed_with_files(tmp_path, {key: 1.5})
+
+    with pytest.raises(scheduler.DurationDataError, match="relative test path") as theirs:
+        scheduler.load_file_durations(path)
+    with pytest.raises(cs.ShardError, match="relative test path") as ours:
+        cs.read_durations(path)
+
+    assert str(theirs.value) in str(ours.value)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "tests/test_x.py", "tests/sub/test_x.py", "tests/test_x.txt", "tests//test_x.py", "./tests/test_x.py",
+        "", "tests/../test_x.py", "tests/test_x.py::test_y", "tests\\test_x.py", "/tests/test_x.py",
+        "C:/tests/test_x.py", "//host/share/test_x.py",
+    ],
+    ids=repr,
+)  # fmt: skip
+def test_both_loaders_judge_every_files_key_alike(
+    cs: ModuleType, scheduler: ModuleType, tmp_path: Path, key: str
+) -> None:
+    path = _committed_with_files(tmp_path, {key: 1.5})
+
+    ours = _judged(lambda: cs.read_durations(path), cs.ShardError)
+    theirs = _judged(lambda: scheduler.load_file_durations(path), scheduler.DurationDataError)
+
+    assert ours[0] == theirs[0], (key, ours, theirs)
+    assert theirs[1] in ours[1]
+
+
+def test_the_key_rule_is_the_generators_function_and_no_local_copy(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(
+        "def file_key_problem(key):\n    return 'stub says no' if key == 'tests/a.py' else None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+    refused = _durations_file(tmp_path, {"schema_version": 1, "files": {"tests/b.py": 1, "tests/a.py": 2}})
+    accepted = _durations_file(tmp_path, {"schema_version": 1, "files": {"tests/b.txt": 1}}, "ok.json")
+
+    with pytest.raises(cs.ShardError, match="stub says no"):
+        cs.read_durations(refused)
+    assert cs.read_durations(accepted).milliseconds == {"tests/b.txt": 1000}
+
+
+@pytest.mark.parametrize(
+    ("body", "failure"),
+    [
+        pytest.param(None, "FileNotFoundError", id="script-missing"),
+        pytest.param("def file_key_problem(key:\n", "SyntaxError", id="syntax-error"),
+        pytest.param("raise RuntimeError('boom')\n", "RuntimeError", id="raises-at-import"),
+        pytest.param("import sys\nsys.exit(0)\n", "SystemExit", id="exits-at-import"),
+        pytest.param("VALUE = 1\n", "AttributeError", id="rule-missing"),
+    ],
+)
+def test_a_key_rule_that_cannot_be_loaded_is_a_shard_error(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str | None, failure: str
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    if body is not None:
+        script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+    path = _durations_file(tmp_path, {"schema_version": 1, "files": {"tests/a.py": 1}})
+
+    with pytest.raises(cs.ShardError, match=rf"cannot load the key rule from gen_file_durations\.py \({failure}\)"):
+        cs.read_durations(path)
+
+
+def test_a_key_rule_that_is_not_callable_is_a_shard_error(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text("file_key_problem = 1\n", encoding="utf-8")
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+    path = _durations_file(tmp_path, {"schema_version": 1, "files": {}})
+
+    with pytest.raises(cs.ShardError, match=r"file_key_problem is not callable"):
+        cs.read_durations(path)
+
+
+@pytest.mark.parametrize(
+    ("body", "failure"),
+    [
+        ("def file_key_problem(key):\n    raise RuntimeError('boom')\n", "RuntimeError"),
+        ("def file_key_problem(key):\n    raise SystemExit(0)\n", "SystemExit"),
+        ("def file_key_problem(key):\n    return 1 / 0\n", "ZeroDivisionError"),
+    ],
+    ids=["raises", "exits", "divides-by-zero"],
+)
+def test_a_key_rule_that_fails_when_called_is_a_shard_error(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, failure: str
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+    path = _durations_file(tmp_path, {"schema_version": 1, "files": {"tests/a.py": 1}})
+
+    with pytest.raises(cs.ShardError, match=rf"the key rule failed on 'tests/a\.py' \({failure}\)"):
+        cs.read_durations(path)
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["raise KeyboardInterrupt\n", "def file_key_problem(key):\n    raise KeyboardInterrupt\n"],
+    ids=["at-import", "when-called"],
+)
+def test_a_keyboard_interrupt_from_the_key_rule_still_propagates(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+    path = _durations_file(tmp_path, {"schema_version": 1, "files": {"tests/a.py": 1}})
+
+    with pytest.raises(KeyboardInterrupt):
+        cs.read_durations(path)
+
+
+def test_a_key_rule_that_exits_zero_cannot_end_verify_with_status_zero(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = make_run(cs, tmp_path)
+    run.write()
+    script = tmp_path / "gen_file_durations.py"
+    script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", script)
+
+    code, out, err = _verify(cs, capsys, run, write=False)
+
+    assert (code, out) == (2, "")
+    assert "usage error" in err and "cannot load the key rule from gen_file_durations.py (SystemExit)" in err
+
+
+def test_loading_the_key_rule_writes_no_bytecode_and_registers_no_module(
+    cs: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    real = cs._GENERATOR_PATH
+    control, isolated = tmp_path / "control", tmp_path / "isolated"
+    for directory in (control, isolated):
+        directory.mkdir()
+        shutil.copy(real, directory / real.name)
+    # The premise: the ordinary import machinery does leave a bytecode cache beside a script,
+    # so an untouched directory below proves something.
+    spec = importlib.util.spec_from_file_location("_p27_control", control / real.name)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+    assert (control / "__pycache__").is_dir()
+    monkeypatch.setattr(cs, "_GENERATOR_PATH", isolated / real.name)
+
+    durations = cs.read_durations(REAL_DURATIONS)
+
+    assert len(durations.milliseconds) > 1000, "every committed key went through the loaded rule"
+    assert [path.name for path in isolated.rglob("*")] == [real.name]
+    assert not [name for name in sys.modules if name.startswith("_ad1270f_p27_file_key")]
 
 
 # --- node helpers ------------------------------------------------------------

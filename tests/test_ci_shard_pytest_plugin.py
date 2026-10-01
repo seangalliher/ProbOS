@@ -617,6 +617,25 @@ def test_configure_rejects_misconfiguration_with_a_usage_error(
     assert config.registered == []
 
 
+def test_configure_turns_a_key_rule_fault_into_a_usage_error(
+    plugin: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "durations.json").write_text(json.dumps(DURATIONS), encoding="utf-8")
+    monkeypatch.setattr(plugin.ci_shards, "_GENERATOR_PATH", tmp_path / "missing.py")
+    config = FakeConfig(
+        tmp_path,
+        probos_shard_index=1,
+        probos_shard_count=2,
+        probos_shard_evidence_dir="ev",
+        probos_shard_durations="durations.json",
+    )
+
+    with pytest.raises(pytest.UsageError, match=r"cannot load the key rule from missing\.py \(FileNotFoundError\)"):
+        plugin.pytest_configure(config)
+
+    assert config.registered == []
+
+
 def test_configure_uses_the_default_durations_file_under_the_rootpath(plugin: ModuleType, tmp_path: Path) -> None:
     fixtures = tmp_path / "tests" / "fixtures"
     fixtures.mkdir(parents=True)

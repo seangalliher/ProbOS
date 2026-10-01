@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 45
 
     strategy:
-      # Every shard runs to its end, so one red shard never hides another's failures.
+      # Every matrix shard job is allowed to run: one red shard does not cancel its siblings.
       fail-fast: false
       matrix:
         # Keep this list, --probos-shard-count below and `verify --shard-count` equal.
