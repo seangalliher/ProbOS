@@ -114,16 +114,32 @@ class TestThreads:
         assert thread.author_callsign == "Wesley"
         assert thread.channel_name == ch.name
 
-    async def test_list_threads_sorted_by_recent(self, ward_room):
-        """Create 3 threads, verify sorted by last_activity desc."""
+    async def test_list_threads_sorted_by_recent(self, ward_room, monkeypatch):
+        """Create 3 threads, verify sorted by last_activity desc.
+
+        The instants are controlled, not read from the OS clock: threads created
+        back to back can share a ``last_activity``, and the order of tied rows
+        then depends on which index SQLite happens to use for the sort.
+        """
+        first_instant = 1_800_000_000.0
+        clock = _ManualClock(first_instant)
+        monkeypatch.setattr(ward_room_threads, "time", clock)
+
         channels = await ward_room.list_channels()
         ch = channels[0]
         t1 = await ward_room.create_thread(ch.id, "a1", "First", "body")
+        clock.now += 60.0
         t2 = await ward_room.create_thread(ch.id, "a1", "Second", "body")
+        clock.now += 60.0
         t3 = await ward_room.create_thread(ch.id, "a1", "Third", "body")
         threads = await ward_room.list_threads(ch.id, sort="recent")
-        assert threads[0].title == "Third"
-        assert threads[2].title == "First"
+        # Premise: the controlled instants are what the stored rows carry.
+        assert {t.id: t.last_activity for t in threads} == {
+            t1.id: first_instant,
+            t2.id: first_instant + 60.0,
+            t3.id: first_instant + 120.0,
+        }
+        assert [t.id for t in threads] == [t3.id, t2.id, t1.id]
 
     async def test_list_threads_pinned_first(self, ward_room):
         """Pinned thread appears first regardless of sort."""
