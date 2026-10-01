@@ -860,16 +860,23 @@ class MemoryConfig(BaseModel):
     # unchanged and a config can only shorten a wait, never extend it. They stay
     # fixed waits rather than drains because the writers they cover expose no
     # in-flight signal to poll. Only the test runtime factory lowers them, for
-    # its own teardown stop (tests/fixtures/runtime_factory.py).
+    # its own teardown stop (tests/fixtures/runtime_factory.py). A before-
+    # validator at the end of this class admits only a plain int or float:
+    # pydantic's lax float coercion would turn a YAML or facade ``false`` into
+    # 0.0 and silently skip the wait.
     shutdown_write_grace_s: float = Field(
         default=1.0, ge=0.0, le=1.0, allow_inf_nan=False,
         description=(
-            "AD-435: seconds shutdown waits, before it quiesces anything, for "
-            "in-flight database writes to finish. The default of 1.0 is the "
-            "behaviour before this field existed and is also the maximum. The "
-            "wait is fixed, not adaptive, because the writers it covers share "
-            "no in-flight signal. Lowering it lets in-flight writes race "
-            "teardown; 0.0 skips the wait but still yields once."
+            "AD-435: seconds shutdown waits for in-flight database writes to "
+            "finish. It runs after crew scheduling, confab probe scheduling "
+            "and long-run admission have closed, and before the periodic "
+            "flush is cancelled and the remaining write-holding services are "
+            "quiesced. The default of 1.0 is the behaviour before this field "
+            "existed and is also the maximum. The wait is fixed, not "
+            "adaptive, because the writers it covers share no in-flight "
+            "signal. Lowering it lets in-flight writes race teardown; 0.0 "
+            "skips the wait but still yields once. Only an int or float is "
+            "accepted, not a boolean or a string."
         ),
     )
     shutdown_dispatch_grace_s: float = Field(
@@ -883,7 +890,8 @@ class MemoryConfig(BaseModel):
             "writers it covers share no in-flight signal. Lowering it lets "
             "in-flight writes race teardown: that is the #771 concurrent-write "
             "hazard, which can tear the ChromaDB index and end in AD-820 "
-            "consolidation_result=failed."
+            "consolidation_result=failed. Only an int or float is accepted, "
+            "not a boolean or a string."
         ),
     )
     # AD-821: ChromaDB HNSW per-collection sync threshold.
@@ -1105,6 +1113,26 @@ class MemoryConfig(BaseModel):
                 f"access_policy must be one of {sorted(valid)}; got {v!r}"
             )
         return v
+
+    @field_validator(
+        "shutdown_write_grace_s", "shutdown_dispatch_grace_s", mode="before",
+    )
+    @classmethod
+    def _validate_shutdown_grace_type(cls, value: Any) -> Any:
+        """AD-1270f: refuse pydantic's lax coercion of the two shutdown graces.
+
+        Without this, a YAML or facade ``false`` becomes 0.0 (the wait is
+        skipped), ``true`` becomes 1.0, and ``"0.5"`` or ``Decimal("0.5")``
+        becomes 0.5, and each is then persisted. Only a plain ``int`` or
+        ``float`` is accepted; the field's ge/le/allow_inf_nan bounds apply to
+        it. ``startup.shutdown._grace_seconds`` re-checks at the read site.
+        """
+        if type(value) not in (int, float):
+            raise ValueError(
+                "must be a plain number (int or float), not "
+                f"{type(value).__name__}"
+            )
+        return value
 
 
 class PeerConfig(BaseModel):

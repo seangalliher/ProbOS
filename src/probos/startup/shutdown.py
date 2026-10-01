@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 # AD-1270f (P1.2): the two fixed shutdown waits. They are also the maximums of
 # MemoryConfig.shutdown_write_grace_s / shutdown_dispatch_grace_s, so an
 # unreadable or out-of-range config always falls back to today's timing.
-SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435: before anything is quiesced
+# AD-435 runs after crew scheduling, confab probes and long runs have closed,
+# and before the periodic flush and the remaining write-holding services are
+# quiesced.
+SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435
 SHUTDOWN_DISPATCH_GRACE_S: float = 2.0  # BF-296 Phase A: after the bus closes
 
 
@@ -77,6 +80,10 @@ def _grace_seconds(runtime: Any, name: str, default: float) -> float:
     missing or unreadable config, a ``bool``, ``nan``, ``inf``, a negative and a
     value above ``default`` all return ``default``, so today's wait is the only
     fallback and a config can shorten it but never extend it. Never raises.
+
+    ``MemoryConfig`` already rejects a non-number when it is validated; this
+    read-site check is the second layer, for a mock, a value assigned after
+    validation and a process that started before the fields existed.
     """
     try:
         cfg = getattr(getattr(runtime, "config", None), "memory", None)

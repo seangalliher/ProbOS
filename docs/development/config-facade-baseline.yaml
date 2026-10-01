@@ -2298,7 +2298,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: c9989f62f000b84c3055df7ef6ff33e949c9622d37bfe9cbcd2682f1d4ac1ade
+    schema_sha256: 8feb6ee5deb6ce7a2ab044e27100a26bd87295b4cc1f980e846ca15c033ea15d
     fields:
     - {default: '''probos_episodes''', name: collection_name}
     - {default: '100000', name: max_episodes}
@@ -3321,7 +3321,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 8afc513b24da3536190d8e5aece800abf414c6f475621dfb33c6af6a06cb5642
+    schema_sha256: 45e22d970545dfe70c56f1ae2da646df0d9a553f60ba4d57b40cf9d36e78e510
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

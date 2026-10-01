@@ -4,10 +4,13 @@ Moved verbatim from the original single test_experience.py.
 
 AD-1270f P1.2: the ``runtime`` fixture opts in to fast teardown (see
 tests/fixtures/runtime_factory.py), so its teardown stop skips the two fixed
-shutdown graces. That opt-in covers every module that imports this ``runtime``
-fixture, so none of them may assert on what ``stop()`` leaves behind. A test
-that stops the runtime in its own body keeps production timing: the factory's
-teardown stop is then a BF-598 no-op.
+shutdown graces. That opt-in reaches every module that imports this ``runtime``
+(or ``shell``, which requests it). Those modules are pinned by
+FAST_TEARDOWN_EFFECTIVE_MODULES, so a new importer fails
+tests/test_ad1270f_shutdown_grace.py until it is reviewed; what ``stop()``
+leaves behind is not observed by any of their test bodies. A test that stops the
+runtime in its own body keeps production timing: the factory's teardown stop is
+then a BF-598 no-op.
 """
 
 from io import StringIO

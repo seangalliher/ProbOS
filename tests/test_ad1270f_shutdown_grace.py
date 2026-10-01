@@ -1,10 +1,18 @@
 """AD-1270f P1.2: bounded shutdown graces and the teardown-scoped fast stop.
 
-Production ``stop()`` waits 1 s (AD-435) and 2 s (BF-296 Phase A) before it
-quiesces anything. Those waits are now two bounded ``MemoryConfig`` fields whose
-defaults are today's waits and also their maximums. The shared runtime factory
+Production ``stop()`` waits 1 s (AD-435, before the periodic flush and the
+remaining write-holding services are quiesced) and 2 s (BF-296 Phase A, after
+the intent bus closes to new dispatches and before consolidation). Those
+waits are now two bounded ``MemoryConfig`` fields whose defaults are today's
+waits and also their maximums. The shared runtime factory
 (``tests/fixtures/runtime_factory.py``) can zero both for ITS OWN TEARDOWN stop
-only, and only in the files listed in ``FAST_TEARDOWN_OPT_IN_FILES``.
+only. Two guards pin who gets that: ``FAST_TEARDOWN_OPT_IN_FILES`` (files that
+ask for it) and ``FAST_TEARDOWN_EFFECTIVE_MODULES`` (test modules that receive
+it through a shared fixture).
+
+No opted-in test body observes what ``stop()`` leaves behind, with one
+intentional exception: this file. Its real-boot test (d) reads the persisted
+shutdown marker after a fast teardown, on purpose.
 
 The two real-boot tests are separate tests that each run to completion: two live
 runtimes in one process share the YeomanAgent singleton, so they must never
@@ -19,6 +27,7 @@ import inspect
 import json
 import logging
 import math
+import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -29,8 +38,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from probos.api import create_app
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import MemoryConfig, SystemConfig, load_config
 from probos.startup.shutdown import (
@@ -42,6 +54,7 @@ from probos.startup.shutdown import (
 )
 from tests.fixtures import runtime_factory
 from tests.fixtures.runtime_factory import (
+    FAST_TEARDOWN_EFFECTIVE_MODULES,
     FAST_TEARDOWN_OPT_IN_FILES,
     FAST_TEARDOWN_OVERRIDES,
     make_runtime,
@@ -129,6 +142,167 @@ def test_shipped_configs_load_with_todays_waits(name: str) -> None:
 
     assert memory.shutdown_write_grace_s == 1.0
     assert memory.shutdown_dispatch_grace_s == 2.0
+
+
+# ---------------------------------------------------------------------------
+# (a2) Coercion: the real config producers refuse a non-number
+#
+# Pydantic's lax float parsing turns a YAML or facade ``false`` into 0.0 (the
+# wait is skipped), ``true`` into 1.0 and "0.5" or Decimal("0.5") into 0.5, and
+# all of them were then persisted. MemoryConfig's before-validator admits only a
+# plain int or float. The producers below are the real ones: the model, the
+# project's YAML loader and the facade's POST handler.
+# ---------------------------------------------------------------------------
+
+_GRACE_FIELD_NAMES = [field for field, _, _ in _GRACE_FIELDS]
+_GRACE_DEFAULTS = {field: default for field, default, _ in _GRACE_FIELDS}
+
+_NON_NUMBERS = [
+    pytest.param(False, id="bool-false"),
+    pytest.param(True, id="bool-true"),
+    pytest.param("0.5", id="str"),
+    pytest.param(Decimal("0.5"), id="decimal"),
+    pytest.param(None, id="none"),
+    pytest.param([], id="list"),
+]
+
+_NUMBERS = [  # (field, value as written, value as stored)
+    pytest.param("shutdown_write_grace_s", 0, 0.0, id="write-int-zero"),
+    pytest.param("shutdown_write_grace_s", 1, 1.0, id="write-int-max"),
+    pytest.param("shutdown_write_grace_s", 0.5, 0.5, id="write-float"),
+    pytest.param("shutdown_dispatch_grace_s", 0, 0.0, id="dispatch-int-zero"),
+    pytest.param("shutdown_dispatch_grace_s", 2, 2.0, id="dispatch-int-max"),
+    pytest.param("shutdown_dispatch_grace_s", 1.5, 1.5, id="dispatch-float"),
+]
+
+
+@pytest.mark.parametrize("field", _GRACE_FIELD_NAMES)
+@pytest.mark.parametrize("value", _NON_NUMBERS)
+def test_system_config_refuses_a_non_number_grace_instead_of_coercing_it(
+    field: str, value: Any,
+) -> None:
+    with pytest.raises(ValidationError) as raised:
+        SystemConfig.model_validate({"memory": {field: value}})
+
+    first = raised.value.errors()[0]
+    assert first["loc"] == ("memory", field)
+    assert first["type"] == "value_error"
+    assert "plain number" in first["msg"]
+
+
+@pytest.mark.parametrize("field", _GRACE_FIELD_NAMES)
+@pytest.mark.parametrize("literal", ["false", "true", '"0.5"'])
+def test_system_config_json_refuses_a_non_number_grace(
+    field: str, literal: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        SystemConfig.model_validate_json(
+            f'{{"memory": {{"{field}": {literal}}}}}',
+        )
+
+
+@pytest.mark.parametrize(("field", "value", "stored"), _NUMBERS)
+def test_system_config_accepts_an_int_or_float_grace_and_stores_a_float(
+    field: str, value: float, stored: float,
+) -> None:
+    memory = SystemConfig.model_validate({"memory": {field: value}}).memory
+
+    assert getattr(memory, field) == stored
+    assert type(getattr(memory, field)) is float
+
+
+@pytest.mark.parametrize("field", _GRACE_FIELD_NAMES)
+@pytest.mark.parametrize("literal", ["false", "true", "yes", "off", "'0.5'", '"0.5"'])
+def test_load_config_refuses_a_yaml_non_number_grace(
+    tmp_path: Path, field: str, literal: str,
+) -> None:
+    text = f"memory:\n  {field}: {literal}\n"
+    path = tmp_path / "system.yaml"
+    path.write_text(text, encoding="utf-8")
+    # Premise: YAML itself reads the literal as a bool or a str, not a number.
+    assert type(yaml.safe_load(text)["memory"][field]) in (bool, str)
+
+    with pytest.raises(ValidationError) as raised:
+        load_config(path)
+
+    first = raised.value.errors()[0]
+    assert first["loc"] == ("memory", field)
+    assert "plain number" in first["msg"]
+
+
+@pytest.mark.parametrize(("field", "value", "stored"), _NUMBERS)
+def test_load_config_accepts_a_yaml_number_grace(
+    tmp_path: Path, field: str, value: float, stored: float,
+) -> None:
+    path = tmp_path / "system.yaml"
+    path.write_text(yaml.safe_dump({"memory": {field: value}}), encoding="utf-8")
+
+    assert getattr(load_config(path).memory, field) == stored
+
+
+def _facade_client(tmp_path: Path) -> tuple[TestClient, MagicMock]:
+    # The tests/test_ad741_config_api.py pattern: a real SystemConfig and a
+    # real config_path behind a MagicMock runtime. _data_dir is real too, so
+    # create_app does not mkdir a MagicMock path in the repo root (BF-326).
+    config_path = tmp_path / "system.yaml"
+    config_path.write_text(yaml.safe_dump({}), encoding="utf-8")
+    runtime = MagicMock()
+    runtime.config = SystemConfig()
+    runtime.config_path = str(config_path)
+    runtime._data_dir = tmp_path / "data"
+    runtime._start_time = 0.0
+    return TestClient(create_app(runtime)), runtime
+
+
+def _post_memory_patch(client: TestClient, memory_patch: dict[str, Any]) -> Any:
+    csrf = client.get("/api/config").json()["csrf_token"]
+    return client.post(
+        "/api/config",
+        json={"patch": {"memory": memory_patch}},
+        headers={"X-Probos-CSRF": csrf},
+    )
+
+
+@pytest.mark.parametrize("field", _GRACE_FIELD_NAMES)
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(False, id="bool-false"),
+        pytest.param(True, id="bool-true"),
+        pytest.param("0.5", id="str"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_facade_post_refuses_a_non_number_grace_with_422_and_persists_nothing(
+    tmp_path: Path, field: str, value: Any,
+) -> None:
+    client, runtime = _facade_client(tmp_path)
+
+    response = _post_memory_patch(client, {field: value})
+
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["error"] == "validation_failed"
+    first = body["errors"][0]
+    assert first["loc"] == ["memory", field]
+    assert first["type"] == "value_error"
+    assert "plain number" in first["msg"]
+    assert yaml.safe_load(Path(runtime.config_path).read_text(encoding="utf-8")) == {}
+    assert getattr(runtime.config.memory, field) == _GRACE_DEFAULTS[field]
+
+
+@pytest.mark.parametrize(("field", "value", "stored"), _NUMBERS)
+def test_facade_post_accepts_an_int_or_float_grace_and_persists_it(
+    tmp_path: Path, field: str, value: float, stored: float,
+) -> None:
+    client, runtime = _facade_client(tmp_path)
+
+    response = _post_memory_patch(client, {field: value})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    on_disk = yaml.safe_load(Path(runtime.config_path).read_text(encoding="utf-8"))
+    assert on_disk["memory"][field] == stored
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +580,12 @@ def _read_status(base: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _phase1_elapsed_seconds(status: dict[str, Any]) -> float:
+    match = re.fullmatch(r"phase1_elapsed=(\d+(?:\.\d+)?)s", str(status.get("note", "")))
+    assert match, f"the shutdown marker note has no phase1_elapsed: {status!r}"
+    return float(match.group(1))
+
+
 # ---------------------------------------------------------------------------
 # (c) Real boot: a stop in the test body keeps production timing
 # ---------------------------------------------------------------------------
@@ -440,12 +620,19 @@ async def test_stop_in_the_body_keeps_production_timing_and_teardown_is_a_noop(
 
 
 # ---------------------------------------------------------------------------
-# (d) Real boot: the fast teardown skips both waits and persists the same status
+# (d) Real boot: the fast teardown skips both waits and keeps the verdict
 # ---------------------------------------------------------------------------
 
-async def test_fast_teardown_zeroes_both_waits_and_persists_the_production_status(
+async def test_fast_teardown_zeroes_both_waits_and_keeps_status_and_consolidation_result(
     tmp_path: Path,
 ) -> None:
+    """The one intentional post-stop observer among the opted-in files.
+
+    It reads the shutdown marker after a fast teardown. The marker is NOT
+    identical to a production-timing stop's: ``status`` and
+    ``consolidation_result`` must match, while ``note`` records ``phase1_elapsed``,
+    which includes the BF-296 wait, so it drops by about that wait.
+    """
     production_config = SystemConfig()
     production_trace = _ShutdownTrace()
     with production_trace.installed():
@@ -472,8 +659,14 @@ async def test_fast_teardown_zeroes_both_waits_and_persists_the_production_statu
     assert fast.config is not fast_config  # stop() ran on the private copy
     assert fast_config.memory.shutdown_write_grace_s == 1.0
     assert fast_config.memory.shutdown_dispatch_grace_s == 2.0
+    # Must match: the persisted verdict.
     assert fast_status["status"] == production_status["status"]
     assert fast_status["consolidation_result"] == production_status["consolidation_result"]
+    # Must differ: phase 1 no longer contains the 2 s BF-296 wait.
+    production_elapsed = _phase1_elapsed_seconds(production_status)
+    fast_elapsed = _phase1_elapsed_seconds(fast_status)
+    assert production_elapsed >= SHUTDOWN_DISPATCH_GRACE_S
+    assert production_elapsed - fast_elapsed >= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -673,10 +866,19 @@ async def test_started_runtime_passes_fast_teardown_to_the_teardown_stop(
 
 
 # ---------------------------------------------------------------------------
-# (f) Opt-in guard
+# (f) Opt-in guards: who asks for fast teardown, and who receives it
+#
+# FAST_TEARDOWN_OPT_IN_FILES pins the call sites: files with a ``fast_teardown``
+# keyword that is not False. That is not the reach: a fixture such as
+# experience_shell.runtime gives fast teardown to every module that imports it,
+# with no keyword of its own. FAST_TEARDOWN_EFFECTIVE_MODULES pins those
+# recipients, so a new importer fails here until someone has checked that none
+# of its test bodies observe what stop() leaves behind.
 # ---------------------------------------------------------------------------
 
 _FACTORY_FILE = "tests/fixtures/runtime_factory.py"
+_SHARED_FIXTURE_FILE = "tests/fixtures/experience_shell.py"
+_SHARED_FIXTURE_NAME = "experience_shell"
 
 
 def _is_fast_teardown_opt_in(node: ast.AST) -> bool:
@@ -732,3 +934,231 @@ def test_fast_teardown_opt_in_files_are_exactly_the_allowlist() -> None:
     })
     assert all((_REPO_ROOT / name).is_file() for name in FAST_TEARDOWN_OPT_IN_FILES)
     assert _files_opting_in_to_fast_teardown() == set(FAST_TEARDOWN_OPT_IN_FILES)
+
+
+def _is_pytest_fixture(node: ast.AST) -> bool:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        if name == "fixture":
+            return True
+    return False
+
+
+def _asks_for_fast_teardown(node: ast.AST) -> bool:
+    return any(_is_fast_teardown_opt_in(child) for child in ast.walk(node))
+
+
+def _fast_teardown_fixtures_defined_in(tree: ast.AST) -> set[str]:
+    """Fixtures in ``tree`` whose own body asks for fast teardown."""
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if _is_pytest_fixture(node) and _asks_for_fast_teardown(node)
+    }
+
+
+def _shared_fast_teardown_fixture_names(tree: ast.AST) -> set[str]:
+    """Fixtures of the shared fixture module that give fast teardown.
+
+    Directly (their own body asks for it) or by requesting a fixture that does,
+    as ``shell`` requests ``runtime``.
+    """
+    fixtures = {
+        node.name: node for node in ast.walk(tree) if _is_pytest_fixture(node)
+    }
+    fast = {name for name, node in fixtures.items() if _asks_for_fast_teardown(node)}
+    grew = True
+    while grew:
+        grew = False
+        for name, node in fixtures.items():
+            requested = {
+                arg.arg
+                for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            }
+            if name not in fast and requested & fast:
+                fast.add(name)
+                grew = True
+    return fast
+
+
+def _imports_fast_teardown_fixture(tree: ast.AST, fast_names: set[str]) -> bool:
+    """True when ``tree`` brings a fast-teardown fixture in from the shared module.
+
+    A star import, a module import and a ``pytest_plugins`` registration bring in
+    every fixture, so they count too.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names = {alias.name for alias in node.names}
+            module = (node.module or "").rsplit(".", 1)[-1]
+            if module == _SHARED_FIXTURE_NAME and ("*" in names or names & fast_names):
+                return True
+            if _SHARED_FIXTURE_NAME in names:
+                return True
+        elif isinstance(node, ast.Import):
+            if any(
+                alias.name.rsplit(".", 1)[-1] == _SHARED_FIXTURE_NAME
+                for alias in node.names
+            ):
+                return True
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(
+                isinstance(target, ast.Name) and target.id == "pytest_plugins"
+                for target in targets
+            ) and any(
+                isinstance(child, ast.Constant)
+                and isinstance(child.value, str)
+                and child.value.rsplit(".", 1)[-1] == _SHARED_FIXTURE_NAME
+                for child in ast.walk(node)
+            ):
+                return True
+    return False
+
+
+def _modules_receiving_fast_teardown() -> set[str]:
+    """Test modules that import a fast-teardown fixture from the shared module, or define one.
+
+    The shared fixture module itself is the source and the factory is the
+    mechanism; both are pinned by FAST_TEARDOWN_OPT_IN_FILES instead.
+    """
+    shared = ast.parse((_REPO_ROOT / _SHARED_FIXTURE_FILE).read_text(encoding="utf-8"))
+    fast_names = _shared_fast_teardown_fixture_names(shared)
+    found: set[str] = set()
+    for path in sorted((_REPO_ROOT / "tests").rglob("*.py")):
+        relative = path.relative_to(_REPO_ROOT).as_posix()
+        if relative in (_FACTORY_FILE, _SHARED_FIXTURE_FILE):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if _SHARED_FIXTURE_NAME not in text and "fast_teardown" not in text:
+            continue
+        try:
+            tree = ast.parse(text, filename=relative)
+        except SyntaxError:
+            found.add(relative)  # cannot prove it does not receive fast teardown
+            continue
+        if _imports_fast_teardown_fixture(tree, fast_names) or (
+            _fast_teardown_fixtures_defined_in(tree)
+        ):
+            found.add(relative)
+    return found
+
+
+_FAST_FIXTURE_SOURCE = (
+    "import pytest\n"
+    "@pytest.fixture\n"
+    "async def {name}(tmp_path):\n"
+    "    async with started_runtime(tmp_path, fast_teardown={flag}) as rt:\n"
+    "        yield rt\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(_FAST_FIXTURE_SOURCE.format(name="f", flag="True"), {"f"}, id="true"),
+        pytest.param(_FAST_FIXTURE_SOURCE.format(name="f", flag="flag"), {"f"}, id="variable"),
+        pytest.param(_FAST_FIXTURE_SOURCE.format(name="f", flag="False"), set(), id="false"),
+        pytest.param(
+            "async def f(tmp_path):\n    started_runtime(tmp_path, fast_teardown=True)\n",
+            set(),
+            id="not-a-fixture",
+        ),
+        pytest.param(
+            "class C:\n"
+            "    @pytest.fixture\n"
+            "    def f(self):\n"
+            "        return started_runtime(fast_teardown=True)\n",
+            {"f"},
+            id="method-fixture",
+        ),
+        pytest.param(
+            "@pytest_asyncio.fixture(scope='function')\n"
+            "async def f():\n"
+            "    started_runtime(fast_teardown=True)\n",
+            {"f"},
+            id="called-decorator",
+        ),
+    ],
+)
+def test_definer_detector_flags_only_a_fixture_that_asks_for_fast_teardown(
+    source: str, expected: set[str],
+) -> None:
+    assert _fast_teardown_fixtures_defined_in(ast.parse(source)) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "from tests.fixtures.experience_shell import runtime", True, id="runtime",
+        ),
+        pytest.param(
+            "from tests.fixtures.experience_shell import console, shell, get_output",
+            True,
+            id="shell",
+        ),
+        pytest.param(
+            "from tests.fixtures.experience_shell import console, get_output",
+            False,
+            id="non-fast-names-only",
+        ),
+        pytest.param("from tests.fixtures.experience_shell import *", True, id="star"),
+        pytest.param("from tests.fixtures import experience_shell", True, id="package"),
+        pytest.param("import tests.fixtures.experience_shell", True, id="module"),
+        pytest.param("from .fixtures.experience_shell import runtime", True, id="relative"),
+        pytest.param(
+            "pytest_plugins = ['tests.fixtures.experience_shell']", True, id="plugins",
+        ),
+        pytest.param(
+            "MODULE = 'tests.fixtures.experience_shell'", False, id="bare-string",
+        ),
+        pytest.param("from tests.fixtures.other import runtime", False, id="other-module"),
+    ],
+)
+def test_importer_detector_flags_only_a_fast_teardown_fixture_import(
+    source: str, expected: bool,
+) -> None:
+    tree = ast.parse(source)
+
+    assert _imports_fast_teardown_fixture(tree, {"runtime", "shell"}) is expected
+
+
+def test_shared_fixture_names_follow_a_request_for_a_fast_fixture() -> None:
+    tree = ast.parse(
+        _FAST_FIXTURE_SOURCE.format(name="base", flag="True")
+        + "@pytest.fixture\ndef dependent(base):\n    pass\n"
+        + "@pytest.fixture\ndef unrelated():\n    pass\n"
+    )
+
+    assert _shared_fast_teardown_fixture_names(tree) == {"base", "dependent"}
+
+
+def test_shared_fixture_module_gives_fast_teardown_through_runtime_and_shell_only() -> None:
+    tree = ast.parse((_REPO_ROOT / _SHARED_FIXTURE_FILE).read_text(encoding="utf-8"))
+
+    assert _shared_fast_teardown_fixture_names(tree) == {"runtime", "shell"}
+
+
+def test_fast_teardown_effective_modules_are_exactly_the_pinned_set() -> None:
+    assert FAST_TEARDOWN_EFFECTIVE_MODULES == frozenset({
+        "tests/test_experience.py",
+        "tests/test_experience_commands.py",
+        "tests/test_experience_nl_memory.py",
+        "tests/test_experience_panels.py",
+    })
+    assert all((_REPO_ROOT / name).is_file() for name in FAST_TEARDOWN_EFFECTIVE_MODULES)
+
+    found = _modules_receiving_fast_teardown()
+
+    assert found == set(FAST_TEARDOWN_EFFECTIVE_MODULES), (
+        "The test modules that receive fast teardown through a shared fixture "
+        f"changed. New: {sorted(found - FAST_TEARDOWN_EFFECTIVE_MODULES)}; gone: "
+        f"{sorted(FAST_TEARDOWN_EFFECTIVE_MODULES - found)}. Check that no test "
+        "body in a new module observes what stop() leaves behind, then update "
+        "FAST_TEARDOWN_EFFECTIVE_MODULES in tests/fixtures/runtime_factory.py "
+        "and this test."
+    )
