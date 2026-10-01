@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import os
+import sys
 import pytest
 
 from pathlib import Path
@@ -118,6 +119,16 @@ def _ad682_clear_module_caches():
             standing_orders._build_personality_block.cache_clear()
         except AttributeError:
             pass
+    # The chat router caches one attachment store per runtime, keyed by
+    # id(runtime). Ids are recycled once a runtime is freed, so an entry a
+    # finished test left behind can answer a later test's new runtime with the
+    # wrong store -- measured in CI, where BF-666's resolver-failure test got a
+    # stale store and never saw its CancelledError. Cleared only if the module
+    # is already loaded: importing it here would change import order for every
+    # test.
+    chat_router = sys.modules.get("probos.routers.chat")
+    if chat_router is not None:
+        chat_router._ATTACHMENT_STORE_CACHE.clear()
     yield
 
 
