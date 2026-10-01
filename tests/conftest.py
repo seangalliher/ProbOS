@@ -86,6 +86,21 @@ def _ad682_chroma_path_sanity(_ad682_isolated_data_dir, worker_id):
         )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ad1270f_codebase_index_memo():
+    """AD-1270f P1.3: build the real CodebaseIndex once per worker process.
+
+    Every runtime boot re-parsed all of ``src/probos`` (about 2 s). The memo
+    serves later boots a deep copy of one real build, and still builds for real
+    for any other tree, any changed input, or any patched build step -- see
+    ``tests/fixtures/codebase_index_memo.py``.
+    """
+    from tests.fixtures.codebase_index_memo import install_codebase_index_memo
+
+    with install_codebase_index_memo():
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _ad682_clear_module_caches():
     """AD-682: Reset module-level caches that mutate during tests.
