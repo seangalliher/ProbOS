@@ -1,6 +1,6 @@
 # Test Suite Optimization Plan
 
-**Status:** Execution started 2026-09-30. Batch A (#1443) ships P0.2's #1419 G-1/G-1b, P0.3, P0.4, V2 and one V1 fix. Batch B ships P0.1 (the test_experience.py split) and the rest of V1. G-2 is deferred (see P0.2). Everything else below is still a proposal. Evidence snapshot taken 2026-09-30.
+**Status:** Execution started 2026-09-30. Batch A (#1443) ships P0.2's #1419 G-1/G-1b, P0.3, P0.4, V2 and one V1 fix. Batch B (#1445) ships P0.1 (the test_experience.py split) and the rest of V1. Batch C ships P1.3's test-side CodebaseIndex memo. G-2 is deferred (see P0.2). Everything else below is still a proposal. Evidence snapshot taken 2026-09-30.
 **Parent program:** AD-1270f "Fail-Broad Impact Selection and Balanced Full Gate" in the [Platform Maturity Program](platform-maturity-program.md) ([#1324](https://github.com/seangalliher/ProbOS/issues/1324)). The flake root causes in P0.2 are already recorded as G-1/G-2 in [#1419](https://github.com/seangalliher/ProbOS/issues/1419).
 **AD allocation:** None. Every item maps to an existing owner. If a production change is picked up and needs its own AD, allocate one with `scripts/ad_ceiling.py` at that point.
 **Scope:** The Python suite under `tests/`, run by the canonical gate ([run_test_gate.py](../../scripts/run_test_gate.py)) and by CI. The UI Vitest job is out of scope: it takes 4.9 minutes in CI and isn't the bottleneck.
@@ -393,6 +393,24 @@ Counting per failing test file (52 file-level failures), each file was compared 
 
 V1 and V2 are small enough to join Phase 0. V3–V6 fit alongside P1.1, since the factory migration touches the same files.
 
+## 10. Execution log
+
+Every row was measured on the reference host by a canonical gate, with a receipt bound to the commit.
+
+| Step | Change | Canonical gate (pytest phase) | Busiest worker vs mean | Notes |
+|---|---|---:|---:|---|
+| Baseline | `origin/main` before execution (`issue-1131-r2`) | 1,090.5 s | 925 s vs 566 s | `test_experience.py` on the busiest worker |
+| Batch A (#1443) | #1419 G-1/G-1b, P0.3, P0.4, V2, one V1 fix | 980.4 s | not analysed | Merged. G-2 deferred (see P0.2). |
+| Batch B (#1445) | P0.1 split, the other V1 fixes | 763.3 s (−30% vs baseline) | 653.5 s vs 575.3 s | Spread 548–654 s across 16 workers. Found #1444. |
+| Batch C | P1.3 test-side CodebaseIndex memo | see the Batch C PR | — | A/B on 20 runtime boots: 173.8 s → 123.0 s (about 2.5 s per boot) |
+
+**Not executed yet, and why:**
+- **P1.2 (shutdown grace):** the bounded drain needs the writers AD-435 protects enumerated first.
+- **P1.1 (shared runtime factory):** only needed once P1.2 is decided.
+- **P1.4 (duration-aware scheduler):** the next balance step.
+- **P0.5 (gate instrumentation):** release-authority code, so it gets its own reviewed change.
+- **P2 and P3:** the worker sweep needs dedicated machine time.
+- **V4–V7:** V5 and P3.4 still need decisions.
 ## Appendix: reproducing the evidence
 
 - **Per-worker busy time:** join the `executed_nodeids` in `<run>.collection-workers/gw*.json` with the JUnit `time` attributes of the same run. Map `file` + `classname` + `name` to node IDs the way `select_tests.junit_node_id` does.

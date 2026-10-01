@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import os
+import sys
 import pytest
 
 from pathlib import Path
@@ -86,6 +87,21 @@ def _ad682_chroma_path_sanity(_ad682_isolated_data_dir, worker_id):
         )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ad1270f_codebase_index_memo():
+    """AD-1270f P1.3: build the real CodebaseIndex once per worker process.
+
+    Every runtime boot re-parsed all of ``src/probos`` (about 2 s). The memo
+    serves later boots a deep copy of one real build, and still builds for real
+    for any other tree, any changed input, or any patched build step -- see
+    ``tests/fixtures/codebase_index_memo.py``.
+    """
+    from tests.fixtures.codebase_index_memo import install_codebase_index_memo
+
+    with install_codebase_index_memo():
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _ad682_clear_module_caches():
     """AD-682: Reset module-level caches that mutate during tests.
@@ -103,6 +119,16 @@ def _ad682_clear_module_caches():
             standing_orders._build_personality_block.cache_clear()
         except AttributeError:
             pass
+    # The chat router caches one attachment store per runtime, keyed by
+    # id(runtime). Ids are recycled once a runtime is freed, so an entry a
+    # finished test left behind can answer a later test's new runtime with the
+    # wrong store -- measured in CI, where BF-666's resolver-failure test got a
+    # stale store and never saw its CancelledError. Cleared only if the module
+    # is already loaded: importing it here would change import order for every
+    # test.
+    chat_router = sys.modules.get("probos.routers.chat")
+    if chat_router is not None:
+        chat_router._ATTACHMENT_STORE_CACHE.clear()
     yield
 
 
