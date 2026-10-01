@@ -349,6 +349,8 @@ Multi-node federation configuration.
 | `identity_keys_enabled` | `bool` | `False` | — |  |
 | `identity_key_store` | `Literal['keyring', 'plaintext_dev']` | `'keyring'` | — |  |
 | `identity_recovery_public_key` | `str` | `''` | — |  |
+| `envelope_signing_enabled` | `bool` | `False` | — |  |
+| `envelope_policy` | `Literal['sign', 'require']` | `'sign'` | — |  |
 
 ## `mcp_server`
 

@@ -293,6 +293,8 @@ class FederationTransport:
             "payload": message.payload,
             "timestamp": message.timestamp,
         }
+        if message.auth is not None:  # AD-1197 the signed-envelope block; absent when unsigned
+            data["auth"] = message.auth
         return json.dumps(data).encode()
 
     def _deserialize(self, data: bytes) -> FederationMessage:
@@ -304,4 +306,5 @@ class FederationTransport:
             message_id=obj.get("message_id", uuid.uuid4().hex),
             payload=obj.get("payload", {}),
             timestamp=obj.get("timestamp", 0.0),
+            auth={} if "auth" in obj and obj["auth"] is None else obj.get("auth"),  # AD-1197 A-1 a present null stays present
         )

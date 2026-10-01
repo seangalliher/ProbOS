@@ -1064,6 +1064,7 @@ class FederationMessage:
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     payload: dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
+    auth: dict[str, Any] | None = field(default=None, repr=False)  # AD-1197 signature block; None when unsigned
 
 
 @dataclass
