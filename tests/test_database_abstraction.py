@@ -120,21 +120,61 @@ def test_default_factory_singleton() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _FakeCursor:
+    """What aiosqlite's execute() returns: awaitable, or an async context manager, over no rows."""
+
+    def __await__(self):
+        yield from ()  # never suspends: `await conn.execute(...)` resolves at once
+        return self
+
+    async def __aenter__(self) -> _FakeCursor:
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        return None
+
+    def __aiter__(self) -> _FakeCursor:
+        return self
+
+    async def __anext__(self) -> Any:
+        raise StopAsyncIteration
+
+
+class _FakeConnection:
+    """The slice of a DatabaseConnection that EventLog.start() and stop() drive."""
+
+    def execute(self, sql: str, parameters: Any = ()) -> _FakeCursor:
+        return _FakeCursor()
+
+    async def executescript(self, sql_script: str) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_custom_factory_injected() -> None:
     """Mock ConnectionFactory injected into EventLog — start() uses it."""
     from probos.substrate.event_log import EventLog
 
-    mock_conn = AsyncMock()
     mock_factory = AsyncMock(spec=ConnectionFactory)
-    mock_factory.connect.return_value = mock_conn
+    mock_factory.connect.return_value = _FakeConnection()
 
     with tempfile.TemporaryDirectory() as td:
         db_path = str(Path(td) / "events.db")
         log = EventLog(db_path=db_path, connection_factory=mock_factory)
-        await log.start()
-        mock_factory.connect.assert_called_once_with(db_path)
-        await log.stop()
+        try:
+            await log.start()
+            mock_factory.connect.assert_called_once_with(db_path)
+        finally:
+            # A regression that ignores the factory opens a real aiosqlite
+            # connection; stop it even when the assertion fails, or its
+            # non-daemon thread keeps the test process alive.
+            await log.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -175,28 +215,6 @@ async def test_acm_uses_factory() -> None:
         await svc.start()
         mock_factory.connect.assert_called_once()
         await svc.stop()
-
-
-# ---------------------------------------------------------------------------
-# 9. EventLog uses factory
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_event_log_uses_factory() -> None:
-    """EventLog(db_path, connection_factory=mock) calls mock.connect() in start()."""
-    from probos.substrate.event_log import EventLog
-
-    mock_conn = AsyncMock()
-    mock_factory = AsyncMock(spec=ConnectionFactory)
-    mock_factory.connect.return_value = mock_conn
-
-    with tempfile.TemporaryDirectory() as td:
-        db_path = str(Path(td) / "events.db")
-        log = EventLog(db_path=db_path, connection_factory=mock_factory)
-        await log.start()
-        mock_factory.connect.assert_called_once_with(db_path)
-        await log.stop()
 
 
 # ---------------------------------------------------------------------------

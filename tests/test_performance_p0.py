@@ -1,6 +1,7 @@
 """Tests for AD-289 P0 performance optimizations."""
 
 import asyncio
+import math
 import random
 
 import pytest
@@ -155,20 +156,50 @@ class TestShapleyExplosionGuard:
         # Shapley efficiency: values should sum to ~1.0
         assert abs(sum(values.values()) - 1.0) < 0.1
 
-    def test_large_coalition_completes_quickly(self):
-        """20-agent coalition should complete in under 2 seconds (not factorial time)."""
-        import time
+    def test_large_coalition_work_is_sampled_not_factorial(self, monkeypatch):
+        """A 20-agent coalition does bounded sampled work, not n! work.
 
-        from probos.consensus.shapley import compute_shapley_values
+        Counts coalition-rule evaluations instead of timing them: the same
+        arithmetic took 0.01s on an idle machine and 2.66s on a loaded
+        16-worker gate, so wall clock measured the machine. The count cannot
+        move with load, and it separates the two paths by the whole factorial --
+        the sampled path evaluates the rule 2 x 20 x 1000 = 40,000 times, an
+        exact enumeration would need 2 x 20 x 20! (about 10^20).
 
-        votes = self._make_votes(20, all_approve=True)
+        The ceiling is the most work BF-850 already accepted on the synchronous
+        consensus path: the exact path at its own bound, 2 x 8 x 8! calls. It is
+        a literal, not read from ``MAX_EXACT_SHAPLEY``, so raising that bound
+        cannot raise the ceiling with it. The counting wrapper aborts as soon as
+        the ceiling is crossed, so a factorial regression fails in milliseconds
+        instead of hanging the gate.
+        """
+        from probos.consensus import shapley
 
-        start = time.monotonic()
-        values = compute_shapley_values(votes, approval_threshold=0.5)
-        elapsed = time.monotonic() - start
+        n = 20
+        ceiling = 2 * 8 * math.factorial(8)
+        evaluations = 0
+        real_clears_threshold = shapley._clears_threshold
 
-        assert elapsed < 2.0, f"Shapley took {elapsed:.1f}s for 20 agents (should be <2s)"
-        assert len(values) == 20
+        def counting_clears_threshold(*args, **kwargs):
+            nonlocal evaluations
+            evaluations += 1
+            if evaluations > ceiling:
+                raise AssertionError(
+                    f"coalition rule evaluated more than {ceiling} times at n={n}: "
+                    "the work is no longer bounded by sampling"
+                )
+            return real_clears_threshold(*args, **kwargs)
+
+        monkeypatch.setattr(shapley, "_clears_threshold", counting_clears_threshold)
+
+        values = shapley.compute_shapley_values(
+            self._make_votes(n, all_approve=True), approval_threshold=0.5,
+        )
+
+        # Premise: the hook saw at least one whole permutation, so a rename or
+        # inlining of the rule cannot turn the ceiling above into a vacuous pass.
+        assert evaluations >= 2 * n
+        assert len(values) == n
 
     def test_approximate_values_reasonable(self):
         """Approximate values should be similar to exact for a small coalition."""

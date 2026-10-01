@@ -162,12 +162,17 @@ def test_torn_write_nonzero_cur_still_flagged_after_bf600(tmp_path: Path) -> Non
     """BF-600: the cur==0 exemption must NOT mask a genuine torn write,
     which always has a NON-ZERO cur_element_count disagreeing with
     length.bin (the 2026-05-22 corruption signature).
+
+    Same shape as the exempt fresh store (length.bin and data_level0 at
+    allocation capacity) with cur_element_count 0 -> 1, so the exemption cannot
+    be keyed on anything but cur == 0.
     """
     _write_hnsw(
         tmp_path,
-        max_elements=131072,
-        cur_element_count=70779,
-        length_bin_entries=70966,
+        max_elements=100,
+        cur_element_count=1,
+        length_bin_entries=100,
+        data_level0_elements=100,
     )
     result = validate_hnsw_files(tmp_path)
     assert not result.ok

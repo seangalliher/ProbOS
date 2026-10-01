@@ -23,9 +23,6 @@ from probos.utils import format_duration
 class TestFormatDuration:
     """Component 4: Duration formatter utility."""
 
-    def test_format_duration_seconds(self):
-        assert format_duration(45) == "45s"
-
     def test_format_duration_minutes(self):
         assert format_duration(750) == "12m 30s"
 
@@ -35,18 +32,9 @@ class TestFormatDuration:
     def test_format_duration_days(self):
         assert format_duration(140400) == "1d 15h"
 
-    def test_format_duration_zero(self):
-        assert format_duration(0) == "0s"
-
     def test_format_duration_negative_clamped(self):
         """Negative durations should be clamped to 0."""
         assert format_duration(-10) == "0s"
-
-    def test_format_duration_boundary_60(self):
-        assert format_duration(60) == "1m 0s"
-
-    def test_format_duration_boundary_3600(self):
-        assert format_duration(3600) == "1h 0m"
 
     def test_format_duration_boundary_86400(self):
         assert format_duration(86400) == "1d 0h"

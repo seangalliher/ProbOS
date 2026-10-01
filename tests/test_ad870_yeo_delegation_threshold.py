@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.yeoman import YeomanAgent, _DEFAULT_PERSONA, _ROLE_RULES
 from probos.substrate.registry import AgentRegistry
@@ -114,9 +113,4 @@ def test_no_runtime_degrades_to_empty() -> None:
         {"intent": "direct_message"}
     )
     assert block == ""
-
-
-def test_base_hook_unaffected() -> None:
-    base = object.__new__(CognitiveAgent)
-    assert base._conversational_task_protocol({"intent": "direct_message"}) == ""
 

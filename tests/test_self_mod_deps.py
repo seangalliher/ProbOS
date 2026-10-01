@@ -149,10 +149,24 @@ class TestPipelineBackwardCompat:
         pipeline = _make_pipeline()
         assert pipeline._dependency_resolver is None
 
-    def test_existing_tests_still_pass(self):
+    @pytest.mark.asyncio
+    async def test_pipeline_without_resolver_skips_dependency_resolution(self):
         """Pipeline without resolver skips dependency resolution."""
-        pipeline = _make_pipeline()
-        assert pipeline._dependency_resolver is None
+        event_log = MagicMock(spec=EventLog)
+        event_log.log = AsyncMock()
+        pipeline = _make_pipeline(event_log=event_log)
+        pipeline._designer.design_agent = AsyncMock(return_value=VALID_AGENT_SOURCE)
+
+        record = await pipeline.handle_unhandled_intent(
+            intent_name="count_words",
+            intent_description="Count words",
+            parameters={"text": "hello"},
+        )
+
+        assert record is not None
+        assert record.status == "active"
+        events = [c.kwargs.get("event") for c in event_log.log.call_args_list]
+        assert not any(str(e).startswith("dependency_") for e in events)
 
 
 # ---------------------------------------------------------------------------
@@ -166,18 +180,35 @@ class TestPipelineDependencyResolution:
     @pytest.mark.asyncio
     async def test_resolver_called_after_validator(self):
         """Pipeline calls resolve() after CodeValidator."""
+        calls: list[str] = []
+
+        def resolve(source_code):
+            calls.append("resolve")
+            return DependencyResult(success=True)
+
         resolver = MagicMock(spec=DependencyResolver)
         resolver.detect_missing = MagicMock(return_value=[])
-        resolver.resolve = AsyncMock(return_value=DependencyResult(success=True))
+        resolver.resolve = AsyncMock(side_effect=resolve)
         pipeline = _make_pipeline(dependency_resolver=resolver)
         pipeline._designer.design_agent = AsyncMock(return_value=VALID_AGENT_SOURCE)
+
+        real_validate = pipeline._validator.validate
+
+        def validate(source_code):
+            calls.append("validate")
+            return real_validate(source_code)
+
+        pipeline._validator.validate = validate
 
         await pipeline.handle_unhandled_intent(
             intent_name="count_words",
             intent_description="Count words",
             parameters={"text": "hello"},
         )
+
         resolver.resolve.assert_called_once()
+        assert "validate" in calls, f"validator step never ran: {calls}"
+        assert calls.index("validate") < calls.index("resolve"), calls
 
     @pytest.mark.asyncio
     async def test_pipeline_aborts_on_declined(self):
@@ -228,12 +259,14 @@ class TestPipelineDependencyResolution:
         pipeline = _make_pipeline(dependency_resolver=resolver)
         pipeline._designer.design_agent = AsyncMock(return_value=VALID_AGENT_SOURCE)
 
-        await pipeline.handle_unhandled_intent(
+        record = await pipeline.handle_unhandled_intent(
             intent_name="count_words",
             intent_description="Count words",
             parameters={"text": "hello"},
         )
-        resolver.resolve.assert_called_once()
+
+        assert record is not None
+        assert record.status == "active"
 
 
 # ---------------------------------------------------------------------------

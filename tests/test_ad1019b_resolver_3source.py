@@ -211,12 +211,19 @@ def test_dept_whitelisted_agent_blacklisted() -> None:
     is restricted (e.g., probationary trust).
     """
     agent_grants = [_tool_grant("weather", "get_forecast", is_restriction=True)]
-    dept_grants = [_tool_grant("weather", "get_forecast", is_restriction=False)]
+    dept_grants = [_server_grant("weather", is_restriction=False)]
     enabled, source = resolve_mcp_access(
         agent_grants, "weather", "get_forecast", department_grants=dept_grants
     )
     assert enabled is False
     assert source == "tool"
+    # ... while the department's server-wide grant still covers the rest of
+    # the weather tools for that agent.
+    enabled2, source2 = resolve_mcp_access(
+        agent_grants, "weather", "get_alerts", department_grants=dept_grants
+    )
+    assert enabled2 is True
+    assert source2 == "department"
 
 
 def test_no_agent_no_dept_fallback_to_default() -> None:

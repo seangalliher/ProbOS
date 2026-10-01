@@ -86,15 +86,8 @@ _FORM_JSON = (
 # 1. escalation-subset membership + order (the one functional change)          #
 # --------------------------------------------------------------------------- #
 
-def test_step_4k_in_escalation_steps_positioned() -> None:
-    # AD-811c: step_4k now runs on the group fan-out path, between 4f and 4g.
-    pipe = DmReplyPipeline(_ctx())
-    esc_names = [s.__name__ for s in pipe._escalation_steps()]
-    assert "step_4k_extract_a2ui" in esc_names
-    i = esc_names.index("step_4k_extract_a2ui")
-    assert esc_names[i - 1] == "step_4f_extract_artifacts"
-    assert esc_names[i + 1] == "step_4g_create_task_parse"
-
+# The group-path position (4f -> 4k -> 4g) is pinned in test_ad811a_a2ui_choice.py
+# (test_a2ui_step_in_escalation_steps_after_artifacts).
 
 def test_step_4k_still_in_full_steps() -> None:
     # 1:1 path unchanged: step_4k stays registered in _full_steps after 4f.
