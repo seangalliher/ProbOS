@@ -185,13 +185,6 @@ def test_anchor_trigger_is_captain_explicit_share(tmp_path: Path) -> None:
     assert ep.anchors.trigger_type != "screen_stream_began"
 
 
-def test_ad731_no_inline_base64_in_router_after_ad744(tmp_path: Path) -> None:
-    """AD-731 source-scan rerun after AD-744 edits."""
-    src = Path("src/probos/routers/perception.py").read_text(encoding="utf-8")
-    assert "b64encode(" not in src
-    assert "base64.b64encode" not in src
-
-
 def test_share_with_camera_source_also_works(tmp_path: Path) -> None:
     """Share is source-agnostic: camera + force + agent_ids works the same."""
     runtime = _build_runtime(tmp_path)

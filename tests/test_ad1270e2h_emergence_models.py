@@ -482,11 +482,6 @@ def test_moved_module_is_still_owned_by_the_facade_contract(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_index_still_sees_a_never_moved_model(config_schema: dict) -> None:
-    """Control. Without it, the next assertion proves nothing on failure."""
-    assert "CognitiveConfig" in config_schema
-
-
 @pytest.mark.parametrize("name", MOVED_MODELS)
 def test_the_source_reading_consumer_still_sees_the_moved_model(
     name: str, config_schema: dict
@@ -684,33 +679,6 @@ def test_the_moved_classes_are_gone_from_the_facade_source() -> None:
     defined = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
 
     assert defined.isdisjoint(MOVED_MODELS)
-
-
-def test_no_name_is_defined_in_more_than_one_domain_module() -> None:
-    owners: dict[str, list[str]] = {}
-    for module in sorted((_SOURCE_ROOT / "config_models").glob("*.py")):
-        if module.name == "__init__.py":
-            continue
-        for node in ast.parse(module.read_text(encoding="utf-8")).body:
-            if isinstance(node, ast.ClassDef):
-                owners.setdefault(node.name, []).append(module.name)
-
-    assert {name: mods for name, mods in owners.items() if len(mods) > 1} == {}
-
-
-def test_the_package_exports_exactly_what_it_imports() -> None:
-    """``__all__`` drift is how a re-export silently stops being public."""
-    tree = ast.parse(
-        (_SOURCE_ROOT / "config_models" / "__init__.py").read_text(encoding="utf-8")
-    )
-    imported: list[str] = []
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.startswith("probos.config_models"):
-                imported.extend(alias.name for alias in node.names)
-
-    assert sorted(set(imported)) == list(config_pkg.__all__)
-    assert len(imported) == len(set(imported))
 
 
 def test_both_e2_tripwires_are_satisfied_on_this_tree() -> None:

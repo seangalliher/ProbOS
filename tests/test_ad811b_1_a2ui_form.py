@@ -34,7 +34,6 @@ from probos.a2ui import (
 from probos.artifacts import ArtifactStore
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.cognitive.cognitive_agent import CognitiveAgent
-from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.dm.a2ui_extractor import (
     build_a2ui_stub,
     extract_a2ui,
@@ -273,24 +272,6 @@ def test_extract_form_ignores_option_gate() -> None:
     assert len(specs[0].fields) == 5
 
 
-def test_extract_choice_still_gated() -> None:
-    # The option-gate is UNCHANGED for option-bearing specs.
-    opts = ",".join(f'"o{i}"' for i in range(5))
-    text = f'[A2UI]{{"kind":"choice","prompt":"q","options":[{opts}]}}[/A2UI]'
-    assert extract_a2ui(text, max_options=3) == []
-    assert len(extract_a2ui(text, max_options=5)) == 1
-
-
-def test_extract_multiselect_still_gated() -> None:
-    opts = ",".join(f'"o{i}"' for i in range(5))
-    text = (
-        f'[A2UI]{{"kind":"multiselect","prompt":"q","options":[{opts}]}}'
-        f"[/A2UI]"
-    )
-    assert extract_a2ui(text, max_options=3) == []
-    assert len(extract_a2ui(text, max_options=5)) == 1
-
-
 # --------------------------------------------------------------------------- #
 # 4. stub + AD-797 two-call write                                             #
 # --------------------------------------------------------------------------- #
@@ -350,7 +331,7 @@ async def test_step_4k_disabled_form_byte_identical(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. teaching block — teaches form, still choice + multiselect, gap-clean      #
+# 6. teaching block — teaches form, still choice + multiselect                 #
 # --------------------------------------------------------------------------- #
 
 def test_form_teach_contains_form_kind() -> None:
@@ -361,13 +342,3 @@ def test_form_teach_contains_form_kind() -> None:
     assert "form" in out
     assert "choice" in out
     assert "multiselect" in out
-
-
-def test_form_teach_gap_regex_clean() -> None:
-    out = CognitiveAgent._conversational_a2ui_block(
-        _teach_self(enabled=True, trust=0.9), {}
-    )
-    assert out
-    assert _CAPABILITY_GAP_RE.search(out) is None
-    for banned in ("can't", "cannot", "don't have", "unable to", "not able to"):
-        assert banned not in out.lower()

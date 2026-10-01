@@ -179,12 +179,12 @@ def _mutate_manifest(tmp_path: Path, mutate) -> Path:
     return path
 
 
-def _check_with(manifest: Path):
+def _check_with(manifest: Path, conftest: Path = _REPO_ROOT / "tests" / "conftest.py"):
     return checker.check(
         manifest_path=manifest,
         profile_dir=DEFAULT_PROFILE_DIR,
         repo_root=_REPO_ROOT,
-        conftest=_REPO_ROOT / "tests" / "conftest.py",
+        conftest=conftest,
         config_module=_REPO_ROOT / "src" / "probos" / "config.py",
     )
 
@@ -1083,6 +1083,17 @@ def test_the_hugging_face_divergence_claims_no_config_path() -> None:
     assert row["config_path"] is None
 
 
+def test_the_overlay_divergence_is_first_party_and_claims_no_config_path() -> None:
+    document = yaml.safe_load(DEFAULT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    row = next(
+        item
+        for item in document["ci_divergences"]
+        if item["env_var"] == "PROBOS_DISABLE_OVERLAY"
+    )
+    assert row["mechanism"] == "first-party-env"
+    assert row["config_path"] is None
+
+
 def test_an_undeclared_environment_dependent_default_fails(tmp_path: Path) -> None:
     before = DEFAULT_MANIFEST_PATH.read_bytes()
 
@@ -1118,6 +1129,31 @@ def test_a_stale_conftest_declaration_fails(tmp_path: Path) -> None:
         _assert_committed_manifest_untouched(before)
 
 
+@pytest.mark.parametrize(
+    "env_var", ["PROBOS_NATS_ENABLED", "HF_HUB_OFFLINE", "PROBOS_DISABLE_OVERLAY"]
+)
+def test_a_declared_conftest_default_that_disappears_fails(
+    tmp_path: Path, env_var: str
+) -> None:
+    real = _REPO_ROOT / "tests" / "conftest.py"
+    source = real.read_text(encoding="utf-8")
+    value = checker._conftest_setdefaults(real)[env_var]
+    anchor = f'os.environ.setdefault("{env_var}", "{value}")'
+    assert source.count(anchor) == 1  # premise: the mutation below cannot be inert
+
+    conftest_copy = tmp_path / "conftest.py"
+    conftest_copy.write_text(source, encoding="utf-8")
+    assert _check_with(DEFAULT_MANIFEST_PATH, conftest_copy).errors == []  # premise: green
+
+    conftest_copy.write_text(source.replace(anchor, "pass"), encoding="utf-8")
+    errors = _check_with(DEFAULT_MANIFEST_PATH, conftest_copy).errors
+
+    assert errors == [
+        f"divergence {env_var}: declared as set by tests/conftest.py, "
+        "but no os.environ.setdefault for it survives there"
+    ]
+
+
 def test_a_wrong_mechanism_fails(tmp_path: Path) -> None:
     before = DEFAULT_MANIFEST_PATH.read_bytes()
 
@@ -1129,6 +1165,33 @@ def test_a_wrong_mechanism_fails(tmp_path: Path) -> None:
     try:
         errors = _check_with(_mutate_manifest(tmp_path, mutate)).errors
         assert any("but it is read from a model-validator" in error for error in errors)
+    finally:
+        _assert_committed_manifest_untouched(before)
+
+
+@pytest.mark.parametrize(
+    ("env_var", "mechanism"),
+    [
+        ("HF_HUB_OFFLINE", "third-party-env"),
+        ("PROBOS_DISABLE_OVERLAY", "first-party-env"),
+    ],
+)
+def test_an_env_outside_systemconfig_naming_a_config_path_fails(
+    tmp_path: Path, env_var: str, mechanism: str
+) -> None:
+    before = DEFAULT_MANIFEST_PATH.read_bytes()
+
+    def mutate(document: dict[str, Any]) -> None:
+        for row in document["ci_divergences"]:
+            if row["env_var"] == env_var:
+                row["config_path"] = "cognitive.llm_base_url"
+
+    try:
+        errors = _check_with(_mutate_manifest(tmp_path, mutate)).errors
+        assert errors == [
+            f"divergence {env_var}: a {mechanism} mechanism is outside "
+            "SystemConfig, so config_path must be null"
+        ]
     finally:
         _assert_committed_manifest_untouched(before)
 

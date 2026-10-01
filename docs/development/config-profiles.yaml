@@ -538,6 +538,28 @@ ci_divergences:
     boot with the variable unset contacted the HF Hub; the same boot inside the suite does
     not.'
   side_effect: null
+- id: extension-overlay-disabled-in-tests
+  mechanism: first-party-env
+  env_var: PROBOS_DISABLE_OVERLAY
+  set_by: tests/conftest.py
+  set_to: '1'
+  config_path: null
+  production_resolution: src/probos/extensions/overlay.py:99 reads this variable inside discover_extensions(),
+    which startup/finalize.py calls at every runtime boot. Unset (or 0, false, no, empty),
+    production discovers every installed probos.extensions entry point and runs its finalize
+    hooks, so a vessel with an extension installed resolves ON while the suite resolves OFF.
+  rationale: 'Local/CI parity (AD-1270f P2.6). CI installs no probos.extensions entry point,
+    but a developer venv can, so the same canonical gate booted a different runtime locally
+    than in CI. Measured 2026-10-01 on tests/test_runtime.py plus tests/test_experience.py::TestShellCommands:
+    with the variable unset, all 40 runtime boots in those 42 tests ran 6 finalize hooks from
+    an installed extension; under the conftest default none did. Like the NATS row, this divergence
+    is declared rather than removed: the row exists so that deleting the default fails the
+    checker (declared->real).'
+  side_effect: 'The three discovery tests in tests/test_ad697_extensions.py opt back in with
+    monkeypatch.delenv. A whole run opts in with PROBOS_DISABLE_OVERLAY=0, because setdefault
+    keeps an explicit value. Only the declared->real check covers this row: nothing reads
+    the variable through SystemConfig, so the real->declared scan cannot see an undeclared
+    one.'
 unclassified_flags:
 - agentic_dispatch.crew_compaction_enabled
 - agentic_dispatch.crew_loop_until_done_enabled

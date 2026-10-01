@@ -23,7 +23,8 @@ Gates, all of which fail the build:
    evaluations appear in ``--json`` so the property is visible, not implied.
 6. **CI divergences, both directions** -- declared->real over
    ``tests/conftest.py``, and real->declared over the environment reads in
-   ``src/probos/config.py``.
+   ``src/probos/config.py``. A ``third-party-env`` or ``first-party-env`` row
+   sits outside ``SystemConfig``, so only the declared->real direction pins it.
 7. **The smoke still exists and still runs** -- the manifest's
    ``smoke_test_node_id`` is resolved by AST and asserted to carry no
    skip/skipif/xfail marker. A skipped smoke is a non-passing smoke.
@@ -102,8 +103,18 @@ SUPPORTED_ADMISSIBLE_KINDS: frozenset[str] = frozenset(
     {"product-feature", "security-control"}
 )
 
+#: How an environment variable makes the suite resolve differently from production.
+#: ``config-field-validator`` and ``model-validator``: the config package reads it while
+#: building a default, so it can move ``SystemConfig()``. ``third-party-env``: a library
+#: ProbOS imports reads it. ``first-party-env``: ProbOS code reads it directly via
+#: ``os.environ``, outside ``SystemConfig``. No profile can control either of the last two.
 VALID_MECHANISMS: frozenset[str] = frozenset(
-    {"config-field-validator", "model-validator", "third-party-env"}
+    {"config-field-validator", "first-party-env", "model-validator", "third-party-env"}
+)
+
+#: Mechanisms outside ``SystemConfig``, which therefore cannot name a ``config_path``.
+OUTSIDE_SYSTEMCONFIG_MECHANISMS: frozenset[str] = frozenset(
+    {"first-party-env", "third-party-env"}
 )
 
 #: The tracked configs a declared rule must not break.
@@ -540,9 +551,9 @@ def _check_divergences(
             if not str(row.get(key) or "").strip():
                 errors.append(f"divergence {env_var}: {key} is blank")
         config_path = row.get("config_path")
-        if mechanism == "third-party-env" and config_path is not None:
+        if mechanism in OUTSIDE_SYSTEMCONFIG_MECHANISMS and config_path is not None:
             errors.append(
-                f"divergence {env_var}: a third-party-env mechanism is outside "
+                f"divergence {env_var}: a {mechanism} mechanism is outside "
                 "SystemConfig, so config_path must be null"
             )
         if isinstance(config_path, str) and config_path:

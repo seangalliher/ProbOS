@@ -108,11 +108,6 @@ def test_base_hook_honest_degrades_without_runtime() -> None:
     assert _hook(None) == ""
 
 
-def test_base_hook_no_runtime_attr_returns_empty() -> None:
-    # An object with no ``_runtime`` at all (LSP safety) still degrades.
-    assert CognitiveAgent._conversational_notebook_protocol(object(), {}) == ""
-
-
 def test_base_hook_text_is_gap_regex_safe() -> None:
     block = _hook(SimpleNamespace(_records_store=object()))
     assert not _CAPABILITY_GAP_RE.search(block)

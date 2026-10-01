@@ -18,6 +18,12 @@ def _reset_registry():
     ext.reset_for_tests()
 
 
+@pytest.fixture
+def overlay_discovery_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt in to discovery: tests/conftest.py sets PROBOS_DISABLE_OVERLAY=1 for the whole suite."""
+    monkeypatch.delenv("PROBOS_DISABLE_OVERLAY", raising=False)
+
+
 def test_register_finalize_hook_records_name_and_provider() -> None:
     def hook(_runtime: Any, _config: Any) -> None:
         return None
@@ -84,6 +90,7 @@ def test_register_without_provider_does_not_count_as_commercial() -> None:
     assert ext.is_commercial_loaded() is False
 
 
+@pytest.mark.usefixtures("overlay_discovery_enabled")
 def test_discover_extensions_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
@@ -108,6 +115,7 @@ def test_discover_extensions_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> N
     assert ext.loaded_providers() == ("stub",)
 
 
+@pytest.mark.usefixtures("overlay_discovery_enabled")
 def test_discover_extensions_swallows_broken_entry_point(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -141,14 +149,18 @@ def test_discover_extensions_swallows_broken_entry_point(
     assert any("broken" in rec.getMessage() for rec in caplog.records)
 
 
+@pytest.mark.usefixtures("overlay_discovery_enabled")
 def test_discover_extensions_swallows_register_error(
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    calls: list[str] = []
+
     class _RaisingEP:
         name = "raises-on-call"
 
         def load(self):
             def _bad_register():
+                calls.append("called")
                 raise RuntimeError("registration boom")
             return _bad_register
 
@@ -158,6 +170,7 @@ def test_discover_extensions_swallows_register_error(
     monkeypatch.setattr(ext.importlib.metadata, "entry_points", _fake_entry_points)
     # Must not raise
     ext.discover_extensions()
+    assert calls == ["called"]  # premise: discovery ran, so the False below is not a bypass
     assert ext.is_commercial_loaded() is False
 
 
