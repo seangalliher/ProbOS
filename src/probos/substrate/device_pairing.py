@@ -85,3 +85,33 @@ def verify_signature(public_key_b64: str, challenge: str, signature_b64: str) ->
         return True
     except InvalidSignature:
         return False
+
+
+_RAW_PRIVATE_KEY_LEN = 32
+
+
+def encode_private_key(private_key: Ed25519PrivateKey) -> str:
+    """AD-1196: standard base64 of the 32-byte raw private key (the key-store format)."""
+    raw = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def decode_private_key(private_key_b64: str) -> Ed25519PrivateKey:
+    """AD-1196: decode a base64 raw private key.
+
+    Raises ``ValueError`` on malformed input or a wrong length. The message never
+    contains the input: it is secret material.
+    """
+    try:
+        raw = base64.b64decode(private_key_b64, validate=True)
+    except (ValueError, TypeError):  # binascii.Error subclasses ValueError
+        raise ValueError("invalid base64 private key") from None
+    if len(raw) != _RAW_PRIVATE_KEY_LEN:
+        raise ValueError(
+            f"Ed25519 private key must be {_RAW_PRIVATE_KEY_LEN} bytes, got {len(raw)}"
+        )
+    return Ed25519PrivateKey.from_private_bytes(raw)

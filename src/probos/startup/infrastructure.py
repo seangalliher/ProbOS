@@ -65,7 +65,14 @@ async def boot_infrastructure(
     # --- Sovereign Agent Identity (AD-441) ---
     from probos.identity import AgentIdentityRegistry
 
-    identity_registry = AgentIdentityRegistry(data_dir=data_dir)
+    # AD-1196: the ship DID's key binding, built only when armed (off is byte-identical).
+    identity_key_binding = None
+    if config.federation.identity_keys_enabled:
+        from probos.identity_key_binding import build_identity_key_binding
+
+        identity_key_binding = build_identity_key_binding(config.federation, data_dir)
+
+    identity_registry = AgentIdentityRegistry(data_dir=data_dir, key_binding=identity_key_binding)
     await identity_registry.start()
     logger.info("identity registry started")
 
@@ -73,4 +80,5 @@ async def boot_infrastructure(
     return InfrastructureResult(
         identity_registry=identity_registry,
         event_prune_task=event_prune_task,
+        identity_key_binding=identity_key_binding,
     )

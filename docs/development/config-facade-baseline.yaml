@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1820
-  field_definitions: 1815
+  canonical_dump_leaves: 1823
+  field_definitions: 1818
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: afac56b60f86c03dc0db094a90f9181366ffb7a60b9d3f5599c64aeb13dd6b96
+canonical_dump_sha256: a0d83d13982c5d2605585d8f5db16c1eefc6ae07a568236161a4fe9e58503840
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1842,7 +1842,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 3eb99808ca770de00db442f53baae34bb4d48802f63f83fdbdf816cacb2d7ad9
+    schema_sha256: 814340748decd5795f1adb05bd4ad203869dd34e0cd1a26e3c56813a0b75a804
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -1864,6 +1864,9 @@ models:
     - {default: '''shared_trust''', name: memory_access_policy}
     - {default: '0.5', name: shared_trust_min_score}
     - {default: '3', name: dp_min_cohort_size}
+    - {default: 'False', name: identity_keys_enabled}
+    - {default: '''keyring''', name: identity_key_store}
+    - {default: '''''', name: identity_recovery_public_key}
   FederationDiscoveryConfig:
     qualname: FederationDiscoveryConfig
     bases:
@@ -3316,7 +3319,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 5993f0e5d9a7898894aa1a254ffe227b70252204f97e62e8207aa62f44302042
+    schema_sha256: f1cc6ef187aa3819203508bd694ae7494427a2c51bee79f3d495279c4b74f406
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -346,6 +346,9 @@ Multi-node federation configuration.
 | `memory_access_policy` | `str` | `'shared_trust'` | — |  |
 | `shared_trust_min_score` | `float` | `0.5` | ≥ 0.0, ≤ 1.0 |  |
 | `dp_min_cohort_size` | `int` | `3` | ≥ 1 |  |
+| `identity_keys_enabled` | `bool` | `False` | — |  |
+| `identity_key_store` | `Literal['keyring', 'plaintext_dev']` | `'keyring'` | — |  |
+| `identity_recovery_public_key` | `str` | `''` | — |  |
 
 ## `mcp_server`
 

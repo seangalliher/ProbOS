@@ -186,6 +186,7 @@ if TYPE_CHECKING:
     from probos.federation.mcp_server import FederationMCPServer
     from probos.federation.a2a.server import FederationA2AServer
     from probos.identity import AgentIdentityRegistry
+    from probos.identity_key_binding import IdentityKeyBinding  # AD-1196
     from probos.infrastructure.backup import BackupResult, BackupService
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.store import KnowledgeStore
@@ -496,6 +497,7 @@ class ProbOSRuntime:
     acm: AgentCapitalService | None
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
+    identity_key_binding: IdentityKeyBinding | None  # AD-1196
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
     federation_telemetry_relay: "FederationTelemetryRelay | None"
@@ -1148,6 +1150,7 @@ class ProbOSRuntime:
 
         # --- Sovereign Agent Identity (AD-441) ---
         self.identity_registry: AgentIdentityRegistry | None = None
+        self.identity_key_binding: IdentityKeyBinding | None = None  # AD-1196
 
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
@@ -2678,6 +2681,7 @@ class ProbOSRuntime:
             background_register=self._background_tasks.add,
         )
         self.identity_registry = infra.identity_registry
+        self.identity_key_binding = infra.identity_key_binding  # AD-1196
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
         self.durable_events.bind_loop(self._dispatch_loop)
 
