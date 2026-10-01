@@ -855,6 +855,37 @@ class MemoryConfig(BaseModel):
             "before falling through to AD-824 cancel sweep."
         ),
     )
+    # AD-1270f (P1.2): the two fixed shutdown waits, as bounded fields. Each
+    # default is today's wait AND its maximum, so production timing is
+    # unchanged and a config can only shorten a wait, never extend it. They stay
+    # fixed waits rather than drains because the writers they cover expose no
+    # in-flight signal to poll. Only the test runtime factory lowers them, for
+    # its own teardown stop (tests/fixtures/runtime_factory.py).
+    shutdown_write_grace_s: float = Field(
+        default=1.0, ge=0.0, le=1.0, allow_inf_nan=False,
+        description=(
+            "AD-435: seconds shutdown waits, before it quiesces anything, for "
+            "in-flight database writes to finish. The default of 1.0 is the "
+            "behaviour before this field existed and is also the maximum. The "
+            "wait is fixed, not adaptive, because the writers it covers share "
+            "no in-flight signal. Lowering it lets in-flight writes race "
+            "teardown; 0.0 skips the wait but still yields once."
+        ),
+    )
+    shutdown_dispatch_grace_s: float = Field(
+        default=2.0, ge=0.0, le=2.0, allow_inf_nan=False,
+        description=(
+            "BF-296 Phase A: seconds shutdown waits, after it closes the "
+            "intent bus to new dispatches and before consolidation starts, for "
+            "already-admitted handlers and queue items to finish their writes. "
+            "The default of 2.0 is the behaviour before this field existed and "
+            "is also the maximum. The wait is fixed, not adaptive, because the "
+            "writers it covers share no in-flight signal. Lowering it lets "
+            "in-flight writes race teardown: that is the #771 concurrent-write "
+            "hazard, which can tear the ChromaDB index and end in AD-820 "
+            "consolidation_result=failed."
+        ),
+    )
     # AD-821: ChromaDB HNSW per-collection sync threshold.
     # Chroma's default is 1000 records before the HNSW index flushes to disk;
     # if the process dies before that window flushes, the unsynced batch is

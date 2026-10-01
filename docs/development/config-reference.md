@@ -182,6 +182,8 @@ Episodic memory configuration.
 | `schema_version_tracking` | `bool` | `False` | — |  |
 | `oracle_match_reason_enabled` | `bool` | `False` | — |  |
 | `shutdown_drain_timeout_s` | `float` | `30.0` | ≥ 1.0, ≤ 300.0 | AD-825: max seconds to wait for write-holding tasks (dreaming, consolidation, episodic backup) to finish current operation before falling through to AD-824 cancel sweep. |
+| `shutdown_write_grace_s` | `float` | `1.0` | ≥ 0.0, ≤ 1.0 | AD-435: seconds shutdown waits, before it quiesces anything, for in-flight database writes to finish. The default of 1.0 is the behaviour before this field existed and is also the maximum. The wait is fixed, not adaptive, because the writers it covers share no in-flight signal. Lowering it lets in-flight writes race teardown; 0.0 skips the wait but still yields once. |
+| `shutdown_dispatch_grace_s` | `float` | `2.0` | ≥ 0.0, ≤ 2.0 | BF-296 Phase A: seconds shutdown waits, after it closes the intent bus to new dispatches and before consolidation starts, for already-admitted handlers and queue items to finish their writes. The default of 2.0 is the behaviour before this field existed and is also the maximum. The wait is fixed, not adaptive, because the writers it covers share no in-flight signal. Lowering it lets in-flight writes race teardown: that is the #771 concurrent-write hazard, which can tear the ChromaDB index and end in AD-820 consolidation_result=failed. |
 | `hnsw_sync_threshold` | `int` | `64` | ≥ 4, ≤ 10000 |  |
 | `hnsw_batch_size` | `int` | `32` | ≥ 1, ≤ 10000 |  |
 | `backup_enabled` | `bool` | `True` | — |  |

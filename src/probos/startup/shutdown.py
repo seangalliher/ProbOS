@@ -10,6 +10,7 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
+
+# AD-1270f (P1.2): the two fixed shutdown waits. They are also the maximums of
+# MemoryConfig.shutdown_write_grace_s / shutdown_dispatch_grace_s, so an
+# unreadable or out-of-range config always falls back to today's timing.
+SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435: before anything is quiesced
+SHUTDOWN_DISPATCH_GRACE_S: float = 2.0  # BF-296 Phase A: after the bus closes
 
 
 async def _close_crew_session_delivery(runtime: Any) -> None:
@@ -59,6 +66,35 @@ def _memory_field(runtime: Any, name: str, default: float) -> float:
     if cfg is None:
         return default
     return float(getattr(cfg, name, default))
+
+
+def _grace_seconds(runtime: Any, name: str, default: float) -> float:
+    """AD-1270f: strictly read a shutdown grace, in seconds, from MemoryConfig.
+
+    Deliberately not ``_memory_field``: its ``float()`` conversion turns a mock
+    config's 2.0 s grace into 1.0 s (``float(MagicMock()) == 1.0``). Only a
+    plain, finite ``int`` or ``float`` inside ``[0, default]`` is honoured. A
+    missing or unreadable config, a ``bool``, ``nan``, ``inf``, a negative and a
+    value above ``default`` all return ``default``, so today's wait is the only
+    fallback and a config can shorten it but never extend it. Never raises.
+    """
+    try:
+        cfg = getattr(getattr(runtime, "config", None), "memory", None)
+        value = getattr(cfg, name, default)
+    except Exception:
+        logger.debug(
+            "AD-1270f: memory.%s could not be read; using the %gs default",
+            name, default, exc_info=True,
+        )
+        return default
+    if type(value) in (int, float) and 0.0 <= value <= default and math.isfinite(value):
+        return float(value)
+    logger.debug(
+        "AD-1270f: memory.%s (%s) is not a finite number in [0, %g]; using the "
+        "%gs default",
+        name, type(value).__name__, default, default,
+    )
+    return default
 
 
 def _security_field(runtime: Any, name: str, default: float) -> float:
@@ -420,9 +456,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         except Exception:
             pass  # Shutdown cleanup — don't block shutdown
 
-    # AD-435: Grace period for in-flight DB writes to complete
-    logger.info("Shutdown grace period (1s)...")
-    await asyncio.sleep(1)
+    # AD-435: Grace period for in-flight DB writes to complete.
+    # AD-1270f: MemoryConfig.shutdown_write_grace_s; its default (1.0) is also its
+    # maximum, so production timing is unchanged.
+    _write_grace = _grace_seconds(
+        runtime, "shutdown_write_grace_s", SHUTDOWN_WRITE_GRACE_S,
+    )
+    logger.info("Shutdown grace period (%gs)...", _write_grace)
+    await asyncio.sleep(_write_grace)
 
     # Cancel periodic flush — BF-099: await cancellation before trust writes
     if hasattr(runtime, '_flush_task'):
@@ -467,11 +508,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             intent_bus.close_to_new_dispatches()
             # Brief grace so already-fanned-out broadcast() handlers and
             # in-flight cognitive queue items finish their writes before
-            # consolidation starts.
-            await asyncio.sleep(2.0)
+            # consolidation starts. AD-1270f: MemoryConfig.shutdown_dispatch_grace_s;
+            # its default (2.0) is also its maximum, so production timing is unchanged.
+            _dispatch_grace = _grace_seconds(
+                runtime, "shutdown_dispatch_grace_s", SHUTDOWN_DISPATCH_GRACE_S,
+            )
+            await asyncio.sleep(_dispatch_grace)
             logger.info(
                 "BF-296 Phase A: intent dispatch closed; "
-                "2s grace for in-flight handlers complete"
+                "%gs grace for in-flight handlers complete",
+                _dispatch_grace,
             )
     except Exception:
         logger.warning(
