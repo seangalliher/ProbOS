@@ -3,18 +3,20 @@
 ``scripts/phantom_api_ast_helper.py`` parses every ``*.py`` under ``src/probos``
 three times per invocation (``build_index``, ``build_class_method_index`` and
 ``build_class_field_index``), and the kwargs tests paid that in a fresh interpreter
-for each of ten calls. Here the helper is loaded once as a private module and
-``main()`` runs against a swapped ``sys.stdin``, with ``sys.stdout`` and
-``sys.stderr`` captured, so the helper's own module-level caches (keyed by resolved
-path only, never by content) stay warm for the next call. ``main()``'s argument
-parsing, stdin read, aggregation, JSON output and exit status stay under test; only
-the process boundary goes.
+for each of ten calls. Here the helper source is read once, digested, and compiled
+from those same bytes into a private module namespace. ``main()`` then runs against a
+swapped ``sys.stdin``, with ``sys.stdout`` and ``sys.stderr`` captured, so the helper's
+own module-level caches (keyed by resolved path only, never by content) stay warm for
+the next call. ``main()``'s argument parsing, stdin read, aggregation, JSON output and
+exit status stay under test; only the process boundary goes. An exit follows
+``sys.exit``: None is status 0, an int is itself, and anything else is status 1 with
+``str(code)`` and a newline written to the captured stderr, as CPython does.
 
 The held module, and with it every parse it cached, is served again only while both
 of these equal the values recorded when it was cached. Otherwise a fresh instance is
-loaded, and a fresh instance has empty caches:
+compiled and executed, and a fresh instance has empty caches:
 
-* the content digest of the helper file;
+* the content digest of the helper source;
 * ``tree_fingerprint(src_root)``: the relative path and content digest of every
   ``*.py`` under the source root. That is everything the helper reads: three
   ``rglob`` builders, plus ``runtime.py`` and ``startup/finalize.py`` which sit under
@@ -22,13 +24,22 @@ loaded, and a fresh instance has empty caches:
 
 A cold run is cached only if those inputs are identical before and after it, so an
 edit made while the helper was parsing cannot seed the cache. Any exception other than
-``SystemExit`` discards the instance. The private module is never registered in
-``sys.modules``, ``sys.path`` is untouched, and the helper's private ``_*_CACHE``
-globals are never read, cleared or patched, so it cannot share state with the copy
-that other phantom tests import.
+``SystemExit`` discards the instance. The code that runs is the code that was digested:
+it is compiled from the bytes read for the digest and not imported, so no ``__pycache__``
+entry is read or written (a stale one could otherwise run old code under a new digest),
+the module is never registered in ``sys.modules``, ``sys.path`` is untouched, and the
+helper's private ``_*_CACHE`` globals are never read, cleared or patched. It cannot share
+state with the copy that other phantom tests import.
 
 Stated limits:
 
+* There is no per-call time limit. A subprocess call is cut off by
+  ``subprocess.run(timeout=...)``, but an in-process call cannot be preempted safely: a
+  thread that swaps the process-wide standard streams cannot be cancelled. A hung call
+  is guarded only by the suite-wide pytest-timeout (180 s). On Windows that timeout
+  terminates the xdist worker, and the canonical gate's exactly-once check turns that
+  into a red gate, never a false green. Test 1 of the kwargs file keeps a real
+  subprocess, with its own 60 s guard.
 * The instance shares the interpreter with the tests. A test that patched ``ast``,
   ``json``, ``re`` or ``pathlib`` while a run is in flight could change its result, as
   a fresh subprocess could not be affected. The fixture that owns an instance should be
@@ -37,17 +48,12 @@ Stated limits:
   here. A real subprocess test must keep covering it.
 * The key covers what the helper reads today. If the helper starts reading another
   file, ``tree_fingerprint`` must be extended to include it.
-* The helper source goes through Python's normal source loader, which can reuse a
-  ``__pycache__`` entry whose recorded size and whole-second mtime match. An edit that
-  keeps both can therefore run the old code although its digest changed. A script run
-  in a subprocess never uses bytecode.
 * Not thread-safe: ``run`` swaps the process-wide standard streams.
 """
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import io
 import sys
 import types
@@ -70,27 +76,28 @@ class HelperRun:
     stderr: str
 
 
-def _digest(path: Path) -> bytes:
-    return hashlib.blake2b(path.read_bytes(), digest_size=16).digest()
+def _digest(data: bytes) -> bytes:
+    return hashlib.blake2b(data, digest_size=16).digest()
 
 
 def tree_fingerprint(root: Path) -> tuple[tuple[str, bytes], ...] | None:
     """(relative POSIX path, content digest) for every ``*.py`` under ``root``, or None if one is unreadable."""
     try:
         return tuple(
-            (path.relative_to(root).as_posix(), _digest(path))
+            (path.relative_to(root).as_posix(), _digest(path.read_bytes()))
             for path in sorted(root.rglob("*.py"))
         )
     except OSError:
         return None
 
 
-def _exit_status(code: object) -> int:
-    """The process status ``sys.exit(code)`` would produce."""
+def _exit_status(code: object, stderr: io.StringIO) -> int:
+    """The status ``sys.exit(code)`` ends a process with. A code that is not an int is printed to ``stderr``."""
     if code is None:
         return 0
     if isinstance(code, int):
         return int(code)
+    stderr.write(str(code) + "\n")
     return 1
 
 
@@ -108,21 +115,25 @@ class InProcessPhantomHelper:
 
     def run(self, body: str) -> HelperRun:
         """Run the helper as ``python <helper> --src-root <src_root>`` would with ``body`` on stdin."""
-        inputs = self._inputs()
+        try:
+            source, inputs = self._read_inputs()
+        except OSError:
+            self.release()
+            raise
         held = self._module
         if held is not None and inputs is not None and inputs == self._cached_inputs:
             module, warm = held, True
             self.warm_runs += 1
         else:
             self.release()
-            module, warm = self._load(), False
+            module, warm = self._load(source), False
             self.cold_runs += 1
         try:
             result = self._invoke(module, body)
         except BaseException:
             self.release()
             raise
-        if not warm and inputs is not None and self._inputs() == inputs:
+        if not warm and inputs is not None and self._unchanged_since(inputs):
             self._module, self._cached_inputs = module, inputs
         return result
 
@@ -131,20 +142,23 @@ class InProcessPhantomHelper:
         self._module = None
         self._cached_inputs = None
 
-    def _inputs(self) -> _Inputs | None:
-        try:
-            helper = _digest(self._helper_path)
-        except OSError:
-            return None
+    def _read_inputs(self) -> tuple[bytes, _Inputs | None]:
+        """The helper source, and the key it forms with the tree. The key is None when the tree is unreadable."""
+        source = self._helper_path.read_bytes()
         tree = tree_fingerprint(self._src_root)
-        return None if tree is None else (helper, tree)
+        return source, None if tree is None else (_digest(source), tree)
 
-    def _load(self) -> types.ModuleType:
-        spec = importlib.util.spec_from_file_location(_PRIVATE_MODULE_NAME, self._helper_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"cannot load the phantom helper from {self._helper_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+    def _unchanged_since(self, inputs: _Inputs) -> bool:
+        try:
+            return self._read_inputs()[1] == inputs
+        except OSError:
+            return False
+
+    def _load(self, source: bytes) -> types.ModuleType:
+        module = types.ModuleType(_PRIVATE_MODULE_NAME)
+        module.__file__ = str(self._helper_path)
+        code = compile(source, str(self._helper_path), "exec", dont_inherit=True)
+        exec(code, module.__dict__)  # noqa: S102 -- this repository's own helper script, see the module docstring
         self.module_loads += 1
         return module
 
@@ -154,9 +168,9 @@ class InProcessPhantomHelper:
         sys.stdin, sys.stdout, sys.stderr = io.StringIO(body), stdout, stderr
         try:
             try:
-                status = _exit_status(module.main(["--src-root", str(self._src_root)]))
+                status = _exit_status(module.main(["--src-root", str(self._src_root)]), stderr)
             except SystemExit as exit_request:
-                status = _exit_status(exit_request.code)
+                status = _exit_status(exit_request.code, stderr)
         finally:
             sys.stdin, sys.stdout, sys.stderr = saved
         return HelperRun(status, stdout.getvalue(), stderr.getvalue())

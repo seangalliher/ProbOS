@@ -44,6 +44,11 @@ def _run_helper_cli(body: str) -> dict:
     return json.loads(proc.stdout)
 
 
+# Timeouts differ between the two transports. Test 1 (_run_helper_cli) keeps its 60 s
+# subprocess guard and the wrapper tests their 120 s. An in-process call has no per-call
+# limit: only the suite-wide pytest-timeout (180 s) guards it. On Windows that timeout
+# terminates the xdist worker, and the canonical gate's exactly-once check turns that
+# into a red gate, never a false green.
 @pytest.fixture(scope="module")
 def in_process_helper() -> Iterator[InProcessPhantomHelper]:
     """One in-process helper for the module, so src/probos is parsed once, not per call."""
