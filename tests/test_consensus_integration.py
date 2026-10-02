@@ -142,14 +142,24 @@ class TestRuntimeConsensus:
         finally:
             runtime.trust_network.record_outcome = original
 
-        assert result["verifications"]
+        assert result["consensus"].outcome == ConsensusOutcome.APPROVED
+        verifications = result["verifications"]
+        red_team_ids = {agent.id for agent in runtime.red_team_agents}
+        read_agent_ids = {r.agent_id for r in result["results"] if r.success}
+        assert len(read_agent_ids) == 3 and len(red_team_ids) == 2
+        assert len(verifications) == 6
+        assert all(v.verified is True for v in verifications)
+        assert {(v.verifier_id, v.target_agent_id) for v in verifications} == {
+            (verifier, target) for verifier in red_team_ids for target in read_agent_ids
+        }
         from probos.mesh.routing import REL_AGENT
-        assert any(
-            key[2] == REL_AGENT
-            for key in runtime.hebbian_router.all_weights_typed()
+        weights = runtime.hebbian_router.all_weights_typed()
+        assert all(
+            weights.get((v.verifier_id, v.target_agent_id, REL_AGENT), 0.0) > 0.0
+            for v in verifications
         )
         events = await runtime.event_log.query(category="consensus")
-        assert any(event["event"] == "verification_complete" for event in events)
+        assert sum(1 for event in events if event["event"] == "verification_complete") == 6
 
     @pytest.mark.asyncio
     async def test_other_trust_runtime_error_uses_verification_boundary(

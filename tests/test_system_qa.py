@@ -1274,12 +1274,16 @@ class TestRegressionInvariants:
     async def test_existing_selfmod_flow_unchanged(self, tmp_path):
         """Self-mod pipeline integration is unmodified."""
         from probos.runtime import ProbOSRuntime
+        from probos.cognitive.behavioral_monitor import BehavioralMonitor
         from probos.cognitive.llm_client import MockLLMClient
+        from probos.cognitive.self_mod import SelfModificationPipeline
 
         rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
         await rt.start()
-        # Self-mod pipeline should still be created
-        assert rt.self_mod_pipeline is not None
+        # Self-mod pipeline should still be created, over the runtime's own monitor
+        assert type(rt.self_mod_pipeline) is SelfModificationPipeline
+        assert type(rt.behavioral_monitor) is BehavioralMonitor
+        assert rt.self_mod_pipeline._monitor is rt.behavioral_monitor
         await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio

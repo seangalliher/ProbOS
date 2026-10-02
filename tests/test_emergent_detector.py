@@ -702,8 +702,10 @@ class TestRuntimeIntegration:
     async def test_runtime_creates_detector(self, runtime, tmp_path) -> None:
         await runtime.start()
         try:
-            assert runtime._emergent_detector is not None
-            assert isinstance(runtime._emergent_detector, EmergentDetector)
+            detector = runtime._emergent_detector
+            assert type(detector) is EmergentDetector
+            assert detector._router is runtime.hebbian_router
+            assert detector._trust is runtime.trust_network
         finally:
             await stop_runtime(runtime, fast_teardown=True)
 
@@ -727,15 +729,31 @@ class TestRuntimeIntegration:
             await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
-    async def test_post_dream_analysis_wired(self, runtime, tmp_path) -> None:
-        """If dream scheduler exists, post_dream_fn should be set."""
+    async def test_post_dream_analysis_wired(self, runtime, tmp_path, monkeypatch) -> None:
+        """With episodic memory the scheduler's post-dream handler runs the detector."""
+        from probos.cognitive.dreaming import DreamScheduler
         from probos.cognitive.episodic_mock import MockEpisodicMemory
 
         runtime.episodic_memory = MockEpisodicMemory()
         await runtime.start()
         try:
-            if runtime.dream_scheduler:
-                assert runtime.dream_scheduler._post_dream_fn is not None
+            assert type(runtime.dream_scheduler) is DreamScheduler
+            handler = runtime.dream_scheduler._post_dream_fn
+            # startup/finalize.py rewires the scheduler to the adapter's handler last
+            assert handler == runtime.dream_adapter.on_post_dream
+            detector = runtime._emergent_detector
+            analyses = []
+            analyze = detector.analyze
+
+            def spy(*args, **kwargs):
+                analyses.append(kwargs)
+                return analyze(*args, **kwargs)
+
+            monkeypatch.setattr(detector, "analyze", spy)
+            report = DreamReport()
+            handler(report)
+            assert len(analyses) == 1
+            assert analyses[0]["dream_report"] is report
         finally:
             await stop_runtime(runtime, fast_teardown=True)
 

@@ -917,11 +917,20 @@ class TestRuntimeSelfMod:
     @pytest.mark.asyncio
     async def test_runtime_creates_pipeline_when_enabled(self, _runtime_env):
         """Test 39: Runtime creates pipeline when self_mod.enabled=True."""
+        from probos.cognitive.behavioral_monitor import BehavioralMonitor
+        from probos.cognitive.self_mod import SelfModificationPipeline
+
         rt = _runtime_env
         await rt.start()
         try:
-            assert rt.self_mod_pipeline is not None
-            assert rt.behavioral_monitor is not None
+            pipeline = rt.self_mod_pipeline
+            assert type(pipeline) is SelfModificationPipeline
+            assert type(rt.behavioral_monitor) is BehavioralMonitor
+            # startup builds the pipeline over the runtime's own monitor and config
+            assert pipeline._monitor is rt.behavioral_monitor
+            assert pipeline._config is rt.config.self_mod
+            assert rt.pools["skills"].current_size == 2
+            assert [a.agent_type for a in rt.registry.get_by_pool("skills")] == ["skill_agent"] * 2
         finally:
             await stop_runtime(rt, fast_teardown=True)
 

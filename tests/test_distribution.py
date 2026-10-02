@@ -887,34 +887,42 @@ class TestUtilityRuntimeIntegration:
     @pytest.mark.asyncio
     async def test_all_utility_pools_created(self, runtime):
         """All 10 utility pool types are created at boot."""
-        pool_names = set(runtime.pools.keys())
-        assert self.UTILITY_POOLS.issubset(pool_names), (
-            f"Missing utility pools: {self.UTILITY_POOLS - pool_names}"
-        )
+        missing = self.UTILITY_POOLS - set(runtime.pools)
+        assert missing == set(), f"Missing utility pools: {missing}"
+        for pool_name in sorted(self.UTILITY_POOLS):
+            pool = runtime.pools[pool_name]
+            assert pool.agent_type == pool_name
+            assert pool.current_size == 2
+            agents = runtime.registry.get_by_pool(pool_name)
+            assert [agent.agent_type for agent in agents] == [pool_name] * 2
 
     @pytest.mark.asyncio
     async def test_utility_agents_have_llm_client(self, runtime):
         """Utility agents have llm_client reference set."""
+        checked = 0
         for pool_name in self.UTILITY_POOLS:
             pool = runtime.pools[pool_name]
             for agent_id in pool._agent_ids:
                 agent = runtime.registry.get(agent_id)
-                assert agent is not None
-                assert agent._llm_client is not None, (
-                    f"Agent {agent_id} in pool {pool_name} has no llm_client"
+                assert agent._llm_client is runtime.llm_client, (
+                    f"Agent {agent_id} in pool {pool_name} has a different llm_client"
                 )
+                checked += 1
+        assert checked == len(self.UTILITY_POOLS) * 2
 
     @pytest.mark.asyncio
     async def test_utility_agents_have_runtime(self, runtime):
         """Utility agents have runtime reference set."""
+        checked = 0
         for pool_name in self.UTILITY_POOLS:
             pool = runtime.pools[pool_name]
             for agent_id in pool._agent_ids:
                 agent = runtime.registry.get(agent_id)
-                assert agent is not None
-                assert agent._runtime is not None, (
-                    f"Agent {agent_id} in pool {pool_name} has no runtime"
+                assert agent._runtime is runtime, (
+                    f"Agent {agent_id} in pool {pool_name} has a different runtime"
                 )
+                checked += 1
+        assert checked == len(self.UTILITY_POOLS) * 2
 
     @pytest.mark.asyncio
     async def test_intent_descriptors_include_utility(self, runtime):
@@ -978,10 +986,11 @@ class TestProbOSInit:
         with patch("builtins.input", return_value=""):
             _cmd_init(args)
 
-        assert home.exists()
-        assert (home / "config.yaml").exists()
+        assert home.is_dir()
+        assert (home / "config.yaml").is_file()
         assert (home / "data").is_dir()
         assert (home / "notes").is_dir()
+        assert sorted(entry.name for entry in home.iterdir()) == ["config.yaml", "data", "notes"]
 
     def test_init_creates_valid_yaml(self, tmp_path):
         """probos init creates a parseable YAML config."""

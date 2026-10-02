@@ -646,8 +646,12 @@ class TestRuntimeEscalation:
     @pytest.mark.asyncio
     async def test_runtime_creates_escalation_manager(self, runtime):
         """23. Runtime has escalation_manager after start."""
-        assert runtime.escalation_manager is not None
-        assert isinstance(runtime.escalation_manager, EscalationManager)
+        manager = runtime.escalation_manager
+        assert type(manager) is EscalationManager
+        assert manager.runtime is runtime
+        assert manager.llm_client is runtime.llm_client
+        assert manager.max_retries == 2
+        assert runtime.dag_executor.escalation_manager is manager
 
     @pytest.mark.asyncio
     async def test_runtime_status_includes_escalation(self, runtime):

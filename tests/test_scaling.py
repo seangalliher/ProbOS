@@ -684,7 +684,11 @@ class TestRuntimeScaling:
         cfg = SystemConfig()
         cfg.scaling.enabled = True
         async with started_runtime(tmp_path, config=cfg, fast_teardown=True) as rt:
-            assert rt.pool_scaler is not None
+            scaler = rt.pool_scaler
+            assert type(scaler) is PoolScaler
+            assert scaler.pools is rt.pools
+            assert scaler.intent_bus is rt.intent_bus
+            assert rt.escalation_manager._surge_fn == scaler.request_surge
 
     @pytest.mark.asyncio
     async def test_runtime_no_scaler_when_disabled(self, tmp_path):

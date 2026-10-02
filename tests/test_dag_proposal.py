@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
@@ -71,8 +70,14 @@ class TestRuntimePropose:
         """propose() returns a TaskDAG."""
         rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
-        dag = await rt.propose("read the file /tmp/test.txt")
-        assert isinstance(dag, TaskDAG)
+        text = "read the file /tmp/test.txt"
+        dag = await rt.propose(text)
+        assert type(dag) is TaskDAG
+        assert dag.source_text == text
+        assert [(node.intent, node.params, node.status) for node in dag.nodes] == [
+            ("read_file", {"path": "/tmp/test.txt"}, "pending"),
+        ]
+        assert rt._pending_proposal is dag
         await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
@@ -250,12 +255,24 @@ class TestProcessNaturalLanguagePreserved:
         await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
-    async def test_execute_dag_shared(self, config, llm, tmp_path):
+    async def test_execute_dag_shared(self, config, llm, tmp_path, monkeypatch):
         """_execute_dag() is used by both process_natural_language() and execute_proposal()."""
         rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
-        assert hasattr(rt, '_execute_dag')
-        assert asyncio.iscoroutinefunction(rt._execute_dag)
+        executed = []
+        execute_dag = rt._execute_dag
+
+        async def spy(dag, *args, **kwargs):
+            executed.append(dag)
+            return await execute_dag(dag, *args, **kwargs)
+
+        monkeypatch.setattr(rt, "_execute_dag", spy)
+        await rt.process_natural_language("read the file /tmp/test.txt")
+        assert len(executed) == 1
+        proposed = await rt.propose("read the file /tmp/test.txt")
+        await rt.execute_proposal()
+        assert len(executed) == 2
+        assert executed[1] is proposed
         await stop_runtime(rt, fast_teardown=True)
 
 

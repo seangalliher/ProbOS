@@ -499,7 +499,10 @@ class TestRuntimeIntegration:
         (tmp_path / "data" / "episodic").mkdir(parents=True, exist_ok=True)
         await runtime.start()
         try:
-            assert runtime._semantic_layer is not None
+            layer = runtime._semantic_layer
+            assert type(layer) is SemanticKnowledgeLayer
+            assert set(layer.stats()) == set(SemanticKnowledgeLayer.COLLECTIONS)
+            assert layer._db_path == tmp_path / "data" / "episodic" / "semantic"
         finally:
             await stop_runtime(runtime, fast_teardown=True)
 
