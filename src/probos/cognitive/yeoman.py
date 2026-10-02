@@ -162,6 +162,8 @@ class YeomanAgent(CognitiveAgent):
         kwargs.setdefault("pool", "yeoman")
         super().__init__(**kwargs)
         YeomanAgent._live_instance_count += 1
+        # BF-882: this instance owns one slot of the singleton; released once, by stop().
+        self._holds_singleton_slot: bool = True
 
         # Wired by initialize() once runtime infrastructure is available.
         self._captain_card: CaptainCard | None = None
@@ -192,6 +194,21 @@ class YeomanAgent(CognitiveAgent):
             if not task.done():
                 task.cancel()
         await super().stop()
+        self._release_singleton_slot()
+
+    def _release_singleton_slot(self) -> None:
+        """Free this instance's slot of the AD-766 singleton, once (BF-882).
+
+        Called only after ``super().stop()`` has returned, so a slot is never free while
+        its agent still runs and there are never two live Yeomans. The flag makes a second
+        ``stop()`` (a forced quiescence after a pool stop, a retried teardown) a no-op: a
+        stale instance must not free the slot a live successor now holds. An instance
+        built without ``__init__`` (a test double that raised the counter by hand) has no
+        flag and still releases, as before.
+        """
+        if not getattr(self, "_holds_singleton_slot", True):
+            return
+        self._holds_singleton_slot = False
         YeomanAgent._live_instance_count = max(
             0, YeomanAgent._live_instance_count - 1,
         )

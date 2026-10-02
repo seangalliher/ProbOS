@@ -24,6 +24,7 @@ reached the phase it claims to cover proves nothing.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import sqlite3
 import threading
@@ -215,7 +216,13 @@ class SqliteTracker:
         return sorted({Path(path).name for _, path in self._records})
 
     def open_connections(self) -> list[str]:
-        """Database file names of the recorded connections that are still open."""
+        """Database file names of the recorded connections that are still open.
+
+        Collects first: a connection that is only unreachable garbage in a reference cycle
+        has not been closed yet, but nothing can use it and it holds nothing a later
+        collection will not release. Open means reachable and not closed.
+        """
+        gc.collect()
         still_open: list[str] = []
         for reference, path in self._records:
             connection = reference()
@@ -260,14 +267,12 @@ class LifecycleBaseline:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + settle_s
         while True:
-            found = {
-                "tasks": _pending_tasks(self.tasks),
-                "threads": nondaemon_threads_since(self.threads),
-                "connections": self.tracker.open_connections(),
-            }
-            if not (found["tasks"] or found["threads"]) or loop.time() >= deadline:
-                return found
+            tasks = _pending_tasks(self.tasks)
+            threads = nondaemon_threads_since(self.threads)
+            if not (tasks or threads) or loop.time() >= deadline:
+                break
             await asyncio.sleep(0.02)
+        return {"tasks": tasks, "threads": threads, "connections": self.tracker.open_connections()}
 
 
 NOTHING_LEFT: dict[str, list[str]] = {"tasks": [], "threads": [], "connections": []}

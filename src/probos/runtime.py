@@ -118,6 +118,7 @@ from probos.mesh.gossip import GossipProtocol
 from probos.mesh.intent import IntentBus
 from probos.mesh.routing import HebbianRouter
 from probos.mesh.signal import SignalManager
+from probos.startup.rollback import rollback_on_failed_start
 from probos.substrate.durable_events import DurableEventRouter, DurableEventStats
 from probos.substrate.event_log import EventLog
 from probos.substrate.heartbeat import HeartbeatAgent
@@ -1477,6 +1478,9 @@ class ProbOSRuntime:
         # or a retried stop() returns early instead of re-running teardown and
         # downgrading the clean AD-820 marker. Separate from _started (BF-137).
         self._shutdown_started: bool = False
+        # BF-882: set True by the rollback of a start() that failed or was cancelled
+        # (startup/rollback.py). Such a runtime cannot start again.
+        self._start_failed: bool = False
         self._stasis_duration: float = 0.0
         self._previous_session: dict | None = None
 
@@ -2601,6 +2605,7 @@ class ProbOSRuntime:
 
         logger.info("Spawned %d red team agents", count)
 
+    @rollback_on_failed_start
     async def start(self) -> None:
         """Boot ProbOS: start mesh services, consensus layer, create default pools."""
         if self._started:

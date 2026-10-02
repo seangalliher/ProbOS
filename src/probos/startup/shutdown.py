@@ -7,11 +7,13 @@ services, persistence of knowledge artifacts, and session record writing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
 import math
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
@@ -397,6 +399,57 @@ async def _stop_held_start_service(
             setattr(runtime, start_task_attr, None)
 
 
+@contextlib.contextmanager
+def _degrade_in_rollback(rollback: bool, label: str) -> Iterator[None]:
+    """BF-882 (#1419): log-and-degrade the stop inside the block, but only in a rollback.
+
+    A normal shutdown keeps today's behaviour: a failing stop propagates, unchanged. A
+    rollback runs after a ``start()`` that raised halfway, so a component that never
+    finished starting can raise from ``stop()``; that must not leave the infrastructure
+    stores below it open, because their non-daemon aiosqlite workers keep the interpreter
+    from exiting. ``CancelledError`` is not an ``Exception`` and always propagates.
+    """
+    try:
+        yield
+    except Exception:
+        if not rollback:
+            raise
+        logger.warning(
+            "BF-882: %s failed to stop during the startup rollback; it may stay open until "
+            "the process exits. The rollback continues with the components after it.",
+            label,
+            exc_info=True,
+        )
+
+
+async def _quiesce_surviving_agents(runtime: Any) -> None:
+    """BF-882 (#1419): stop every agent a failed pool stop left running. Rollback only.
+
+    ``ResourcePool`` unwires an agent from the mesh before it stops it and keeps
+    ownership when the unwire fails, so such an agent (the singleton YeomanAgent among
+    them) survives ``_stop_pools_and_drain_intent_bus`` still running and still holding
+    whatever it holds. A rollback has no later retry, so each is stopped here, and only
+    then can its own ``stop()`` release what only it can (the Yeoman slot is freed after
+    the agent has stopped, never before). The ownership policy is unchanged: nothing is
+    unregistered and the pool is retained. A failing stop is logged and the next agent
+    is still stopped.
+    """
+    for agent in list(runtime.registry.all()):
+        if not getattr(agent, "is_alive", False):
+            continue
+        try:
+            await agent.stop()
+        except Exception:
+            logger.warning(
+                "BF-882: agent %s (%s) could not be stopped during the startup rollback; "
+                "what it holds stays held until the process exits. The rollback continues "
+                "with the remaining agents.",
+                getattr(agent, "id", "?"),
+                getattr(agent, "agent_type", "?"),
+                exc_info=True,
+            )
+
+
 async def _stop_pools_and_drain_intent_bus(
     runtime: Any,
 ) -> asyncio.CancelledError | None:
@@ -440,8 +493,22 @@ async def _stop_pools_and_drain_intent_bus(
     return deferred_cancellation
 
 
-async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
-    """Graceful shutdown of all pools, mesh services, and persistence."""
+async def shutdown(
+    runtime: ProbOSRuntime, reason: str = "", *, rollback: bool = False,
+) -> None:
+    """Graceful shutdown of all pools, mesh services, and persistence.
+
+    ``rollback=True`` (BF-882, #1419) is the teardown of a ``start()`` that failed or was
+    cancelled (``startup/rollback.py``). It releases everything the partial boot started,
+    in this same order, and persists nothing: no session consolidation, no AD-820
+    integrity marker, no knowledge-store or working-memory write, no "Entering Stasis"
+    post, no proactive-cooldown write and no Night Orders expiry, because none of those is
+    a release and a boot that never completed has no session to record. Everything else
+    runs: both waits, the BF-296 and BF-602 quiesce, the AD-824/825 sweeps, the AD-1278
+    flush and drain, the event-log rows and the LLM close. The BF-598 and ``_started``
+    guards are bypassed, because the runtime a rollback tears down is by definition one
+    ``stop()`` would skip. ``rollback=False`` (the default) is the unchanged shutdown.
+    """
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
     # SIGTERM during Windows sleep/wake, or a retried stop()) must NOT re-run
     # teardown. The first invocation already consolidated and wrote the AD-820
@@ -449,7 +516,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # skips consolidation, and would DOWNGRADE the clean marker to partial —
     # the root cause of the recurring boot refusal. Use getattr-with-default so
     # a process that started before this field existed still degrades safely.
-    if getattr(runtime, "_shutdown_started", False):
+    if getattr(runtime, "_shutdown_started", False) and not rollback:
         logger.info(
             "BF-598: shutdown() re-entered (reason=%r); first invocation already "
             "ran — skipping teardown and preserving the AD-820 marker.",
@@ -522,18 +589,26 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if isinstance(long_runs, LongRunService):
         await long_runs.wait_settled(LONG_RUN_SETTLE_SECONDS)
 
-    if not runtime._started:
+    if not runtime._started and not rollback:
         return
 
-    logger.info("ProbOS shutting down...")
+    if rollback:
+        logger.info(
+            "BF-882: rolling back a failed start (reason=%r); stopping everything the "
+            "partial boot started. Nothing is persisted and no shutdown marker is written.",
+            reason,
+        )
+    else:
+        logger.info("ProbOS shutting down...")
 
     try:
         await runtime.event_log.log(category="system", event="stopping")
     except (asyncio.CancelledError, Exception):
         pass  # event log may be unavailable during shutdown
 
-    # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol)
-    if runtime.ward_room and runtime.ward_room.is_started:
+    # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol). Not in a
+    # rollback (BF-882): a boot that never completed has no session to put into stasis.
+    if not rollback and runtime.ward_room and runtime.ward_room.is_started:
         try:
             all_hands = await runtime.ward_room.get_channel_by_name("All Hands")
             if all_hands:
@@ -691,7 +766,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # updates (micro-dream Hebbian replay + prune + trust) and makes no
     # episodic-collection writes, so it finishes well under budget; the
     # deferred idle-time steps re-run on the next dream cycle.
-    if runtime.dream_scheduler and runtime.episodic_memory:
+    if rollback:
+        # BF-882: a boot that never completed has no session to consolidate, and the
+        # AD-820 marker below describes that consolidation, so neither runs.
+        logger.info(
+            "BF-882: startup rollback skips session consolidation and the AD-820 "
+            "integrity marker."
+        )
+    elif runtime.dream_scheduler and runtime.episodic_memory:
         logger.info(
             "Consolidating session memories (lean, budget=%.0fs)...",
             _shutdown_consolidation_timeout,
@@ -803,16 +885,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # consolidation — this is the critical operation that caused hash mismatches
     # when it was positioned after ~25 service stops.
     if runtime.episodic_memory:
-        await runtime.episodic_memory.stop()
+        with _degrade_in_rollback(rollback, "episodic memory"):
+            await runtime.episodic_memory.stop()
 
     # AD-455: stop red team campaign loop
     if hasattr(runtime, "red_team_lead") and runtime.red_team_lead is not None:
-        await runtime.red_team_lead.stop()
+        with _degrade_in_rollback(rollback, "red team lead"):
+            await runtime.red_team_lead.stop()
 
     # AD-541f: Stop eviction audit log (companion to episodic memory)
     _eviction_audit = getattr(runtime, "_eviction_audit", None)
     if _eviction_audit is not None:
-        await _eviction_audit.stop()
+        with _degrade_in_rollback(rollback, "eviction audit log"):
+            await _eviction_audit.stop()
         runtime._eviction_audit = None
 
     _phase1_elapsed = _time.monotonic() - _phase1_start
@@ -893,7 +978,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             read_shutdown_status,
         )
         _data_dir = getattr(runtime, "_data_dir", None)
-        if _data_dir is not None:
+        if _data_dir is not None and not rollback:
             if _consolidation_result == "full":
                 mark_clean_shutdown(
                     _data_dir,
@@ -1019,8 +1104,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Stop Proactive Cognitive Loop (Phase 28b)
     if runtime.proactive_loop:
-        # AD-415: Persist proactive cooldown overrides before stopping
-        if runtime._knowledge_store and runtime.proactive_loop._agent_cooldowns:
+        # AD-415: Persist proactive cooldown overrides before stopping (not in a rollback)
+        if not rollback and runtime._knowledge_store and runtime.proactive_loop._agent_cooldowns:
             try:
                 await runtime._knowledge_store.store_cooldowns(runtime.proactive_loop._agent_cooldowns.copy())
             except Exception:
@@ -1032,7 +1117,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     if hasattr(runtime, 'watch_manager') and runtime.watch_manager:
         await runtime.watch_manager.stop()
         runtime.watch_manager = None
-    if hasattr(runtime, '_night_orders_mgr') and runtime._night_orders_mgr:
+    if not rollback and hasattr(runtime, '_night_orders_mgr') and runtime._night_orders_mgr:
         if runtime._night_orders_mgr.active:
             runtime._night_orders_mgr.expire()
 
@@ -1321,7 +1406,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Stop red team agents
     for agent in runtime.red_team_agents:
-        await agent.stop()
+        with _degrade_in_rollback(rollback, f"red team agent {agent.id}"):
+            await agent.stop()
         await runtime.registry.unregister(agent.id)
     runtime.red_team_agents.clear()
 
@@ -1353,10 +1439,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
-    # AD-573: Freeze all agent working memory before pools stop
-    if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+    # AD-573: Freeze all agent working memory before pools stop (not in a rollback: a boot
+    # that never completed has no session state to freeze, BF-882)
+    if not rollback and hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+        # BF-127 / BF-882: is_crew_agent is the module-level import. A function-local
+        # re-import here made the name local to all of shutdown(), so the session record
+        # above raised UnboundLocalError (logged at debug) whenever the registry had agents.
         try:
-            from probos.crew_utils import is_crew_agent  # BF-127
             states: dict = {}
             for agent in runtime.registry.all():
                 # BF-127: Only persist working memory for sovereign crew agents
@@ -1378,8 +1467,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         runtime
     )
 
+    # BF-882: a pool that could not unwire an agent keeps it, running. A rollback has no
+    # later retry, so stop what is still alive before the transport below is torn down.
+    if rollback:
+        await _quiesce_surviving_agents(runtime)
+
     # Persist knowledge store artifacts before stopping services
-    if runtime._knowledge_store:
+    # (not in a rollback: BF-882 persists nothing a completed session would)
+    if runtime._knowledge_store and not rollback:
         try:
             # Persist agent manifest (Phase 14c)
             await runtime._knowledge_store.store_manifest(runtime._build_manifest())
@@ -1403,10 +1498,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
     # Stop mesh and consensus services
-    await runtime.gossip.stop()
-    await runtime.signal_manager.stop()
-    await runtime.hebbian_router.stop()
-    await runtime.trust_network.stop()
+    with _degrade_in_rollback(rollback, "gossip protocol"):
+        await runtime.gossip.stop()
+    with _degrade_in_rollback(rollback, "signal manager"):
+        await runtime.signal_manager.stop()
+    with _degrade_in_rollback(rollback, "Hebbian router"):
+        await runtime.hebbian_router.stop()
+    with _degrade_in_rollback(rollback, "trust network"):
+        await runtime.trust_network.stop()
 
     # AD-637: Stop NATS event bus
     if getattr(runtime, 'nats_bus', None):
@@ -1462,7 +1561,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):
         pass
-    await runtime.event_log.stop()
+    with _degrade_in_rollback(rollback, "event log"):
+        await runtime.event_log.stop()
 
     # BF-663: one-shot confab probes use the LLM but are not part of the generic
     # background registry. The production close seam drains the now-stable
@@ -1498,6 +1598,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await _drain_audit_log(runtime)
 
     runtime._started = False
-    logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)
+    if rollback:
+        logger.info(
+            "BF-882: startup rollback complete. Final agent count: %d",
+            runtime.registry.count,
+        )
+    else:
+        logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)
     if deferred_shutdown_cancellation is not None:
         raise deferred_shutdown_cancellation
