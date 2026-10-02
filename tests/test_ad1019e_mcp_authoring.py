@@ -24,6 +24,7 @@ Run: d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1019e_mcp_authoring.py -q -
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -106,6 +107,23 @@ def _config(*, management_enabled: bool = True) -> SystemConfig:
     )
 
 
+_STARTED_STORES: list[Any] = []
+
+
+@pytest.fixture(autouse=True)
+async def _stop_started_stores() -> AsyncIterator[None]:
+    """Stop every store ``_make`` started: each aiosqlite store owns a worker thread and open files."""
+    yield
+    while _STARTED_STORES:
+        await _STARTED_STORES.pop().stop()
+
+
+async def _start(store: Any) -> Any:
+    await store.start()
+    _STARTED_STORES.append(store)
+    return store
+
+
 async def _make(
     tmp_path: Any,
     *,
@@ -117,20 +135,16 @@ async def _make(
     Returns ``(client, server_id, runtime)``. The TestClient mounts BOTH the
     mcp_servers and mcp_departments routers (test 8 spans both surfaces).
     """
-    server_store = McpServerStore(db_path=str(tmp_path / "srv.db"))
-    await server_store.start()
+    server_store = await _start(McpServerStore(db_path=str(tmp_path / "srv.db")))
     record = await server_store.create(
         McpServerRecord(name="echo", type="http", url="https://echo.test/mcp")
     )
 
-    risk_store = McpToolRiskStore(db_path=str(tmp_path / "risk.db"))
-    await risk_store.start()
+    risk_store = await _start(McpToolRiskStore(db_path=str(tmp_path / "risk.db")))
 
-    dept_store = DepartmentToolGrantStore(db_path=str(tmp_path / "dept.db"))
-    await dept_store.start()
+    dept_store = await _start(DepartmentToolGrantStore(db_path=str(tmp_path / "dept.db")))
 
-    perms = ToolPermissionStore(db_path=str(tmp_path / "perm.db"))
-    await perms.start()
+    perms = await _start(ToolPermissionStore(db_path=str(tmp_path / "perm.db")))
 
     runtime = _Runtime(
         config=_config(management_enabled=management_enabled),
