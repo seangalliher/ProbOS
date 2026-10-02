@@ -20,7 +20,8 @@ see it before any "nothing is left" assertion is trusted.
 it saw when it fired, so a test can assert its own premise: a rollback test that never
 reached the phase it claims to cover proves nothing. ``break_stop`` makes a component's
 ``stop()`` raise, after it ran or before it did (``when=``), to prove a rollback goes on
-past a teardown step that fails and then releases what that component still holds.
+past a teardown step that fails and then releases what that component still holds without
+asking it again (``when="unkillable"`` makes any second call hang the process, to prove it).
 """
 
 from __future__ import annotations
@@ -416,11 +417,13 @@ def direct_connection_attributes(component: Any) -> list[str]:
 class BrokenStop:
     """One component whose ``stop()`` was made to raise, and what happened to it.
 
-    ``calls`` counts every call: the failed step and, in a rollback, its one retry.
-    ``cleaned_up`` counts the calls on which the component's real ``stop()`` ran to
-    completion before the error was raised (always 0 for ``when="before"``).
-    ``connections`` are the attributes that held a sqlite connection when the break was
-    installed, which is the premise for a test of what happens to those connections.
+    ``calls`` counts every call. A rollback makes one, the step: it never asks a stop() that
+    failed again. ``cleaned_up`` counts the calls on which the component's real ``stop()`` ran
+    to completion before the error was raised (always 0 for ``when="before"`` and
+    ``"unkillable"``). ``cancellations_ignored`` counts the cancellations an ``"unkillable"``
+    stop swallowed (0 unless something called it again). ``connections`` are the attributes
+    that held a sqlite connection when the break was installed, which is the premise for a
+    test of what happens to those connections.
     """
 
     attribute: str
@@ -428,6 +431,7 @@ class BrokenStop:
     when: str = "after"
     calls: int = 0
     cleaned_up: int = 0
+    cancellations_ignored: int = 0
     connections: list[str] = field(default_factory=list)
 
 
@@ -446,13 +450,17 @@ def break_stop(
     real ``stop()`` never runs, so whatever it holds (its connections and their worker
     threads) stays open unless the rollback closes it. A test that only ever breaks a stop
     ``"after"`` cannot see that: it makes zero leftovers a foregone conclusion.
+    ``when="unkillable"``: as ``"before"`` for the first call, and any LATER call ignores
+    every cancellation, forever. A rollback that asked it again would leave a task nothing can
+    end, which ``asyncio.run`` cancels and awaits when it shuts the loop down: the process
+    would never exit. Only a test in a process of its own may use it.
 
     Raises ``AssertionError`` if the component does not exist yet: a break that was not
     installed proves nothing, so the setup fails loudly instead of the test passing. Meant
     for ``inject_start_failure``'s ``on_fire``, when the phase's components exist.
     """
-    if when not in ("after", "before"):
-        raise ValueError(f"when must be 'after' or 'before', not {when!r}")
+    if when not in ("after", "before", "unkillable"):
+        raise ValueError(f"when must be 'after', 'before' or 'unkillable', not {when!r}")
     service = getattr(runtime, attribute, None)
     assert service is not None, f"runtime.{attribute} does not exist at this phase; nothing to break"
     original = service.stop
@@ -465,6 +473,12 @@ def break_stop(
 
     async def stop(*args: Any, **kwargs: Any) -> Any:
         broken.calls += 1
+        if when == "unkillable" and broken.calls > 1:
+            while True:
+                try:
+                    await asyncio.sleep(3600)
+                except asyncio.CancelledError:
+                    broken.cancellations_ignored += 1
         if when == "after":
             await original(*args, **kwargs)
             broken.cleaned_up += 1

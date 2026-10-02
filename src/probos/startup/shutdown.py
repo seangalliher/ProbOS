@@ -34,16 +34,21 @@ logger = logging.getLogger(__name__)
 SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435
 SHUTDOWN_DISPATCH_GRACE_S: float = 2.0  # BF-296 Phase A: after the bus closes
 
-# BF-882: the bound on one last-resort action of a startup rollback, a retried stop() or the
-# close of one aiosqlite connection. A rollback has to end so that the start() error can reach
-# its caller. It is not a tuning knob: it only has to be longer than a healthy stop and shorter
-# than a hang. An action that is not done by then is cancelled and abandoned, never awaited
-# (``_RollbackSteps._bounded``).
+# BF-882: the bound on the last-resort close of one aiosqlite connection by a startup rollback.
+# A rollback has to end so that the start() error can reach its caller, and a close waits
+# behind the statement in flight on the connection's worker thread, which can run for as long
+# as it likes. It is not a tuning knob: it only has to be longer than a healthy close and
+# shorter than a hang. A close that is not done by then is cancelled and abandoned, never
+# awaited (``_RollbackSteps._bounded``).
 _LAST_RESORT_SECONDS: float = 5.0
 
-# BF-882: the last-resort actions the rollback abandoned. The event loop holds a task only
+# BF-882: the last-resort closes the rollback abandoned. The event loop holds a task only
 # weakly, and an abandoned aiosqlite close still has a ``finally`` to run (it stops the worker
-# thread once the statement it was queued behind has finished), so each is held here until it ends.
+# thread once the statement it was queued behind has finished), so each is held here until it
+# ends. Each ends at once when the loop shuts down: ``asyncio.run`` cancels and awaits every
+# pending task, and a close awaits a plain future, so that cancellation interrupts it. Nothing
+# else is ever abandoned: a coroutine that ignores cancellation here would keep the loop, and
+# so the interpreter, from ending, which is why a stop() that failed is never called again.
 _abandoned_tasks: set[asyncio.Task[Any]] = set()
 
 
@@ -297,8 +302,8 @@ async def _stop_runtime_sqlite_sidecars(
 
     A service whose ``stop()`` raises is logged and the rest are still closed. The runtime
     drops its reference to every one of them either way, so ``on_failure(label, service)``
-    is how a startup rollback (BF-882) keeps a failed one to retry and close; it is None
-    in a normal stop, which behaves as it always did.
+    is how a startup rollback (BF-882) keeps a failed one, so that the connections it holds
+    can be closed from outside; it is None in a normal stop, which behaves as it always did.
     """
     services = (
         ("capability_request_store", "capability request store"),
@@ -437,22 +442,22 @@ def _direct_connections(
 
     One level, no deeper. A deliberate failure-path exception to the rule that nothing reads
     another object's private attributes (Open/Closed, Law of Demeter). Only a startup
-    rollback uses it, for a component whose ``stop()`` has failed (twice, after the retry) and
-    so can no longer be asked to release what it holds. An aiosqlite connection's worker
-    thread is non-daemon: left open it keeps the interpreter from exiting and holds the
-    database file (a lock, on Windows), so the rollback closes it through its own public
-    ``close()``, which aiosqlite runs on that worker thread after any statement in flight. A
-    raw ``sqlite3.Connection`` is only reported: it has no thread, and closing it from the
-    event-loop thread while a statement runs on another thread crashed the interpreter (an
-    access violation), so it is never closed here. Nothing is traversed: a connection held
-    deeper than one attribute level (inside another object, a list or a dict) is not found,
-    and neither is any resource that is not a sqlite connection, or a component that has no
-    ``__dict__``.
+    rollback uses it, for a component whose ``stop()`` has failed and is never asked again
+    (see ``_RollbackSteps``), so what it holds can only be released from outside. An aiosqlite
+    connection's worker thread is non-daemon: left open it keeps the interpreter from exiting
+    and holds the database file (a lock, on Windows), so the rollback closes it through its
+    own public ``close()``, which aiosqlite runs on that worker thread after any statement in
+    flight. A raw ``sqlite3.Connection`` is only reported: it has no thread, and closing it
+    from the event-loop thread while a statement runs on another thread crashed the
+    interpreter (an access violation), so it is never closed here. Nothing is traversed: a
+    connection held deeper than one attribute level (inside another object, a list or a dict)
+    is not found, and neither is any resource that is not a sqlite connection, or a component
+    that has no ``__dict__``.
     """
     import aiosqlite  # here, not at module level: only a failed rollback needs it
 
     # Deliberate failure-path exception to the no-private-attribute rule: this component's
-    # own stop() has failed twice, so what it holds is read off it instead of asked for.
+    # own stop() has failed, so what it holds is read off it instead of asked for.
     try:
         attributes = list(vars(component).items())
     except TypeError:  # no ``__dict__`` (a ``__slots__`` class): nothing to scan
@@ -486,12 +491,15 @@ def _reap_abandoned(task: asyncio.Task[Any]) -> None:
 
 
 def _abandon_last_resort(task: asyncio.Task[Any], what: str, reason: str) -> None:
-    """Give up on a last-resort action: ask it to cancel, do not wait for it, keep it alive.
+    """Give up on a last-resort close: ask it to cancel, do not wait for it, keep it alive.
 
-    The cancellation is requested and never awaited, because a coroutine that suppresses
-    ``CancelledError`` (or whose ``finally`` blocks, as an aiosqlite ``close()`` queued
-    behind a running statement does) would otherwise hold the whole rollback. The task stays
-    in ``_abandoned_tasks`` until it ends, so the loop's weak reference is not all that holds it.
+    The cancellation is requested and never awaited, because the ``finally`` of an aiosqlite
+    ``close()`` queued behind a running statement blocks until that statement ends, which
+    would otherwise hold the whole rollback. The task stays in ``_abandoned_tasks`` until it
+    ends, so the loop's weak reference is not all that holds it. It is cooperative: it awaits
+    a plain future, so a second cancellation, which is what ``asyncio.run`` sends every
+    pending task when the loop shuts down, ends it at once. Only a caller that has let this
+    cancellation be delivered first can rely on that (see ``_RollbackSteps._bounded``).
     """
     if task.done():
         _reap_abandoned(task)
@@ -519,25 +527,28 @@ class _RollbackSteps:
     running, because their non-daemon aiosqlite workers keep the interpreter from exiting
     and a Yeoman that never stops keeps the AD-766 slot.
 
-    The component of a failed step is kept on a list this object owns. ``shutdown()`` drops
-    the runtime's own reference to a component whether or not its stop succeeded, which
-    would leave nobody able to release one that failed. After the last step,
-    ``settle_failed`` retries each one's stop once (a transient failure may clear). For a
-    component that still cannot stop it closes the aiosqlite connections the component holds
-    directly as attributes, as a last resort, so their non-daemon worker threads cannot keep
-    the process alive. Each retry and each close runs as a task of its own for at most
-    ``_LAST_RESORT_SECONDS`` and is abandoned, not awaited, when that is up (``_bounded``), so
-    no component can hold the rollback.
+    The component of a failed step is kept on a list this object owns, once per component.
+    ``shutdown()`` drops the runtime's own reference to a component whether or not its stop
+    succeeded, which would leave nobody able to release one that failed. A stop() that failed
+    is untrusted and is never called again: it can hang, and one that ignores cancellation
+    can never be ended, which keeps ``asyncio.run`` (it cancels and awaits every pending task
+    when it shuts the loop down) and so the interpreter from ending. What the component
+    holds is released from outside instead. After the last step, ``settle_failed`` closes the
+    aiosqlite connections the component holds directly as attributes, so their non-daemon
+    worker threads cannot keep the process alive. Each close runs as a task of its own for at
+    most ``_LAST_RESORT_SECONDS`` and is abandoned, not awaited, when that is up
+    (``_bounded``), so no component can hold the rollback.
 
-    Residual, by design: a component whose ``stop()`` fails twice and which holds its
-    connection deeper than one attribute level (inside another object, a list or a dict), or
-    a resource that is not an aiosqlite connection (a thread, a task, a file), is not
-    released, and a non-daemon thread among it can still keep the process alive. A raw
-    ``sqlite3.Connection`` held directly by such a component is reported and left open: closing
-    it from the event-loop thread while a statement runs on another thread crashed the
-    interpreter. It has no worker thread, so it cannot keep the process alive; its file stays
-    held until the connection is collected or the process exits. An abandoned retry or close
-    keeps running until it ends. Each such component is named in a warning.
+    Residual, by design: a component whose ``stop()`` fails is not retried, and only its
+    directly held aiosqlite connections are closed. One that holds its connection deeper than
+    one attribute level (inside another object, a list or a dict), or a resource that is not an
+    aiosqlite connection (a thread, a task, a file), is not released, and a non-daemon thread
+    among it can still keep the process alive. A raw ``sqlite3.Connection`` held directly by
+    such a component is reported and left open: closing it from the event-loop thread while a
+    statement runs on another thread crashed the interpreter. It has no worker thread, so it
+    cannot keep the process alive; its file stays held until the connection is collected or
+    the process exits. An abandoned close keeps running until its statement ends. Each such
+    component is named in a warning.
 
     Cancellation follows the BF-881 rule. The cancel count of the running task is taken
     when the teardown begins. A ``CancelledError`` while that count is unchanged is not a
@@ -553,45 +564,41 @@ class _RollbackSteps:
         self._cancelling_at_entry = (
             self._task.cancelling() if self._task is not None else 0
         )
-        # (step, component, method) of each step that failed, in the order they failed.
-        self._failed: list[tuple[str, Any, str]] = []
+        # (step, component) of each step that failed, once per component, in the order they failed.
+        self._failed: list[tuple[str, Any]] = []
 
     def __call__(
-        self, step: str, component: Any = None, *, method: str = "stop",
+        self, step: str, component: Any = None,
     ) -> contextlib.AbstractContextManager[None]:
         if not self._rollback:
             return contextlib.nullcontext()
-        return self._best_effort(step, component, method)
+        return self._best_effort(step, component)
 
-    def keep_failed(self, step: str, component: Any, *, method: str = "stop") -> None:
+    def keep_failed(self, step: str, component: Any) -> None:
         """Keep a component whose failed stop the caller logged and swallowed itself."""
         if self._rollback:
-            self._remember(step, component, method)
+            self._remember(step, component)
 
     def failure_sink(
-        self, *, method: str = "stop",
+        self, *, action: str = "stop",
     ) -> Callable[[str, Any], None] | None:
         """The callback for a helper that logs and swallows a failed stop itself.
 
-        None outside a rollback, so the helper then behaves exactly as it always did.
+        ``action`` is the verb of the step's name (``"<label> <action>"``). None outside a
+        rollback, so the helper then behaves exactly as it always did.
         """
         if not self._rollback:
             return None
 
         def keep(label: str, component: Any) -> None:
-            self._remember(f"{label} {method}", component, method)
+            self._remember(f"{label} {action}", component)
 
         return keep
 
-    def _remember(self, step: str, component: Any, method: str) -> None:
-        if component is None:
+    def _remember(self, step: str, component: Any) -> None:
+        if component is None or any(kept is component for _, kept in self._failed):
             return
-        if any(
-            kept is component and kept_method == method
-            for _, kept, kept_method in self._failed
-        ):
-            return
-        self._failed.append((step, component, method))
+        self._failed.append((step, component))
 
     def _outer_cancel_arrived(self) -> bool:
         return (
@@ -601,14 +608,14 @@ class _RollbackSteps:
 
     @contextlib.contextmanager
     def _best_effort(
-        self, step: str, component: Any = None, method: str = "stop",
+        self, step: str, component: Any = None,
     ) -> Iterator[None]:
         try:
             yield
         except asyncio.CancelledError:
             if self._outer_cancel_arrived():
                 raise
-            self._remember(step, component, method)
+            self._remember(step, component)
             logger.warning(
                 "BF-882: startup rollback step %r ended in a CancelledError nobody asked "
                 "this task for; it may not have released everything. The rollback "
@@ -617,7 +624,7 @@ class _RollbackSteps:
                 exc_info=True,
             )
         except Exception as error:
-            self._remember(step, component, method)
+            self._remember(step, component)
             logger.warning(
                 "BF-882: startup rollback step %r raised %s: %s; it may not have "
                 "released everything. The rollback continues with the next step.",
@@ -628,22 +635,16 @@ class _RollbackSteps:
             )
 
     async def settle_failed(self) -> None:
-        """After the last step: retry each failed component's stop once, then close its connections.
+        """After the last step: close the aiosqlite connections each failed component holds directly.
 
-        A component that stops on the retry is done. One that fails again has the aiosqlite
-        connections it holds directly closed, each close logged by component, step and
-        attribute, and a raw sqlite3 connection reported and left open. Every retry and every
-        close is bounded and abandoned if it is not done in time. Only the caller's own
-        cancellation escapes this.
+        A component whose stop() failed is never asked again (see the class docstring); what
+        it holds is released from outside. Each aiosqlite connection it holds directly is
+        closed, the close bounded, abandoned if it is not done in time, and logged by
+        component, step and attribute; a raw sqlite3 connection is reported and left open.
+        Only the caller's own cancellation escapes this.
         """
         failed, self._failed = self._failed, []
-        scanned: list[Any] = []
-        for step, component, method in failed:
-            if await self._retry(step, component, method):
-                continue
-            if any(component is seen for seen in scanned):
-                continue  # already closed once for an earlier failed step of the same component
-            scanned.append(component)
+        for step, component in failed:
             await self._close_direct_connections(step, component)
 
     async def _bounded(self, awaitable: Awaitable[Any], what: str) -> bool:
@@ -651,13 +652,18 @@ class _RollbackSteps:
 
         It runs as a task of its own and is waited for with ``asyncio.wait``, which stops
         waiting when the time is up and never waits for the task to finish cancelling.
-        ``asyncio.wait_for`` does wait for that, so a coroutine that suppresses
-        ``CancelledError`` (or has a blocking ``finally``) held the whole rollback with it:
-        the audit drain and ``_started = False`` never ran. When the time is up the task is
-        cancelled but not awaited, kept in ``_abandoned_tasks`` until it ends, and named in a
-        warning. A task that finished gives its own outcome here: its exception, or
-        ``CancelledError`` if it ended cancelled by itself. A ``CancelledError`` from the wait
-        itself is the caller's own cancellation: the task is abandoned and it propagates.
+        ``asyncio.wait_for`` does wait for that, and the ``finally`` of an aiosqlite close
+        queued behind a running statement blocks until the statement ends, so the whole
+        rollback (the audit drain, ``_started = False``) waited as long as the statement ran.
+        When the time is up the task is cancelled but not awaited, kept in ``_abandoned_tasks``
+        until it ends, and named in a warning. A task that finished gives its own outcome
+        here: its exception, or ``CancelledError`` if it ended cancelled by itself. A
+        ``CancelledError`` from the wait itself is the caller's own cancellation: the task is
+        abandoned and it propagates.
+
+        Only for an awaitable that honours cancellation: the abandoned task outlives the
+        rollback, and ``asyncio.run`` cancels and awaits every pending task when it shuts the
+        loop down, so one that ignored it would keep the interpreter from exiting.
         """
         task = asyncio.create_task(_await_it(awaitable), name=f"bf882-last-resort {what}")
         try:
@@ -667,41 +673,12 @@ class _RollbackSteps:
             raise
         if not task.done():
             _abandon_last_resort(task, what, f"it did not finish within {_LAST_RESORT_SECONDS:g}s")
+            # One loop iteration so the cancellation just requested is DELIVERED now: two that
+            # arrive before the task runs are folded into one, and the close would then block in
+            # its finally, which the cancellation the loop's shutdown sends could no longer end.
+            await asyncio.sleep(0)
             return False
         task.result()
-        return True
-
-    async def _retry(self, step: str, component: Any, method: str) -> bool:
-        name = type(component).__name__
-        try:
-            outcome = getattr(component, method)()
-            if inspect.isawaitable(outcome) and not await self._bounded(
-                outcome, f"the retry of rollback step {step!r} ({name}.{method}())",
-            ):
-                return False  # abandoned: the warning is logged; the component is still failed
-        except asyncio.CancelledError:
-            if self._outer_cancel_arrived():
-                raise
-            logger.warning(
-                "BF-882: the retry of rollback step %r (%s.%s()) ended in a CancelledError "
-                "nobody asked this task for, so the component is treated as still failed.",
-                step, name, method,
-                exc_info=True,
-            )
-            return False
-        except Exception as error:
-            logger.warning(
-                "BF-882: the retry of rollback step %r (%s.%s()) raised %s: %s; the "
-                "component cannot stop, so what it holds is closed directly where possible.",
-                step, name, method, type(error).__name__, error,
-                exc_info=True,
-            )
-            return False
-        logger.info(
-            "BF-882: rollback step %r failed once and succeeded when it was retried at the "
-            "end of the rollback.",
-            step,
-        )
         return True
 
     async def close_if_left_open(self, step: str, component: Any) -> None:
@@ -718,7 +695,7 @@ class _RollbackSteps:
             )
 
     async def _close_direct_connections(
-        self, step: str, component: Any, *, why: str = "failed twice", quiet: bool = False,
+        self, step: str, component: Any, *, why: str = "failed", quiet: bool = False,
     ) -> None:
         name = type(component).__name__
         closable, raw = _direct_connections(component)
@@ -768,8 +745,9 @@ async def _quiesce_surviving_agents(runtime: Any, steps: _RollbackSteps) -> None
     then can its own ``stop()`` release what only it can (the Yeoman slot is freed after
     the agent has stopped, never before). The ownership policy is unchanged: nothing is
     unregistered and the pool is retained. A failing stop is logged, the next agent is
-    still stopped, and the agent is retried once at the end of the rollback with every
-    other component whose stop failed.
+    still stopped, and the agent is kept with every other component whose stop failed, so
+    that the aiosqlite connections it holds directly are closed at the end of the rollback.
+    It is not asked to stop again.
     """
     for agent in list(runtime.registry.all()):
         if not getattr(agent, "is_alive", False):
@@ -844,20 +822,23 @@ async def shutdown(
     (``_RollbackSteps``): one that raises is logged by name and the rollback goes on,
     because a half-built component may not be able to stop and must not leave every later
     store, pool and agent running. The component of a failed step is kept (this function
-    drops the runtime's own reference to every component, stopped or not), retried once
-    after the last step, and, if it still cannot stop, has the aiosqlite connections it
-    holds directly as attributes closed as a last resort, so that their non-daemon worker
-    threads cannot keep the process alive. The retry and each close run as tasks of their
-    own, bounded and abandoned (not awaited) when the time is up, so none can hold the
-    rollback. Residual: a component that cannot stop AND holds its connection deeper than
-    one attribute level, or a resource that is not an aiosqlite connection, can still keep
-    the process alive (a non-daemon thread among it); a raw ``sqlite3.Connection`` it holds
-    is reported and left open (closing one from the loop thread while a statement runs on
-    another thread crashed the interpreter; it has no thread, so it only holds its file
-    until it is collected or the process exits). Each is named in a warning. The
-    BF-598 and ``_started`` guards are bypassed, because the runtime a rollback tears down
-    is by definition one ``stop()`` would skip. ``rollback=False`` (the default) is the
-    unchanged shutdown.
+    drops the runtime's own reference to every component, stopped or not) and, at the end
+    of the rollback, has the aiosqlite connections it holds directly as attributes closed as
+    a last resort, so that their non-daemon worker threads cannot keep the process alive. A
+    stop() that failed is never called again: it is untrusted, and one that ignores
+    cancellation can never be ended, which keeps ``asyncio.run`` (it cancels and awaits every
+    pending task when it shuts the loop down) and so the interpreter from ending. Each close
+    runs as a task of its own, bounded and abandoned (not awaited) when the time is up, so
+    none can hold the rollback. Residual: a component whose stop() fails is not retried, and
+    only its directly held aiosqlite connections are closed. One that also holds its
+    connection deeper than one attribute level, or a resource that is not an aiosqlite
+    connection, can still keep the process alive (a non-daemon thread among it); a raw
+    ``sqlite3.Connection`` it holds is reported and left open (closing one from the loop
+    thread while a statement runs on another thread crashed the interpreter; it has no
+    thread, so it only holds its file until it is collected or the process exits). Each is
+    named in a warning. The BF-598 and ``_started`` guards are bypassed, because the
+    runtime a rollback tears down is by definition one ``stop()`` would skip.
+    ``rollback=False`` (the default) is the unchanged shutdown.
     """
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
     # SIGTERM during Windows sleep/wake, or a retried stop()) must NOT re-run
@@ -1666,7 +1647,6 @@ async def shutdown(
         with steps(
             "crew session delivery close",
             getattr(runtime, "crew_session_delivery_service", None),
-            method="close",
         ):
             await _close_crew_session_delivery(runtime)
         with steps("workforce store stop", runtime.work_item_store):
@@ -1690,14 +1670,14 @@ async def shutdown(
     _close_sync_store(
         getattr(runtime, "service_profiles", None),
         "AD-382 ServiceProfileStore",
-        on_failure=steps.failure_sink(method="close"),
+        on_failure=steps.failure_sink(action="close"),
     )
     runtime.service_profiles = None
 
     # Disconnect directive store (AD-386)
     if runtime.directive_store:
         set_directive_store(None)
-        with steps("directive store close", runtime.directive_store, method="close"):
+        with steps("directive store close", runtime.directive_store):
             runtime.directive_store.close()
         runtime.directive_store = None
 
@@ -1710,7 +1690,7 @@ async def shutdown(
 
     # Stop Ward Room (AD-407)
     if runtime.ward_room:
-        with steps("ward room prune loop stop", runtime.ward_room, method="stop_prune_loop"):
+        with steps("ward room prune loop stop", runtime.ward_room):
             await runtime.ward_room.stop_prune_loop()
         with steps("ward room stop", runtime.ward_room):
             await runtime.ward_room.stop()
@@ -1997,9 +1977,7 @@ async def shutdown(
                 "and the OS will reclaim the connection if needed: %s",
                 e,
             )
-            steps.keep_failed(
-                "ship's archive store close", runtime._archive_store, method="close",
-            )
+            steps.keep_failed("ship's archive store close", runtime._archive_store)
 
     # BF-881 (#1452): two more synchronous SQLite handles with a close() nothing called.
     # SemanticStore (AD-750) is dropped after the close; ProfileStore keeps its attribute,
@@ -2008,12 +1986,12 @@ async def shutdown(
     if _semantic_store is not None:
         _close_sync_store(
             _semantic_store, "AD-750 SemanticStore",
-            on_failure=steps.failure_sink(method="close"),
+            on_failure=steps.failure_sink(action="close"),
         )
         runtime._semantic_store = None
     _close_sync_store(
         getattr(runtime, "profile_store", None), "crew ProfileStore",
-        on_failure=steps.failure_sink(method="close"),
+        on_failure=steps.failure_sink(action="close"),
     )
 
     # AD-1195: flush queued durable rows while the EventLog is still open, so
@@ -2062,10 +2040,11 @@ async def shutdown(
                 await runtime._semantic_layer.stop()
             runtime._semantic_layer = None
         # BF-882: the last step of a rollback. Every component whose stop failed was kept
-        # (the runtime's own reference to it is gone by now), so retry each once and close
-        # the aiosqlite connections it holds directly if it still cannot stop, every action
-        # bounded and abandoned if it is not done in time. Above the audit drain, which
-        # stays the last point at which anything can append.
+        # (the runtime's own reference to it is gone by now), so close the aiosqlite
+        # connections it holds directly, each close bounded and abandoned if it is not done
+        # in time. A failed stop() is never called again: it is untrusted, and one that
+        # ignores cancellation would keep the loop, and so the interpreter, from ending.
+        # Above the audit drain, which stays the last point at which anything can append.
         if rollback:
             await steps.settle_failed()
     finally:

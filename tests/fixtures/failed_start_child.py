@@ -14,13 +14,18 @@ a clean exit is exit code 0 with an empty dump. Before BF-882, 13 of 15 failed-s
 children hung this way.
 
 ``PROBOS_LIFECYCLE_BREAK_STEPS`` (comma-separated runtime attributes, each optionally
-``attribute=before``) makes each named component's ``stop()`` raise at the moment the
-injected failure fires, so the rollback has to go on past a teardown step that fails. The
-default raises AFTER the component's real ``stop()`` ran (it has cleaned up); ``=before``
-raises at once, so the component keeps its connections open and only the rollback's
-last-resort close can release them. The attributes must exist at the phase under test; the
-report lists how often each broken ``stop()`` was called, how often it really ran, and the
-BF-882 warnings the rollback logged.
+``attribute=before`` or ``attribute=unkillable``) makes each named component's ``stop()``
+raise at the moment the injected failure fires, so the rollback has to go on past a teardown
+step that fails. The default raises AFTER the component's real ``stop()`` ran (it has cleaned
+up); ``=before`` raises at once, so the component keeps its connections open and only the
+rollback's last-resort close can release them; ``=unkillable`` raises at once too, and any
+LATER call ignores every cancellation forever, so a rollback that asked the component to stop
+again would leave a task that ``asyncio.Runner`` cancels and awaits when it shuts the loop
+down, and this process would never exit: the watchdog around each loop shutdown (30 s) dumps
+every stack and ends it with exit code 1. The attributes must exist at the phase under test;
+the report lists how often each broken ``stop()`` was called, how often it really ran, how
+many cancellations it ignored, and the BF-882 warnings the rollback logged. ``main_done_at``
+is when ``main`` finished, so the parent can measure how long the process took to exit.
 
 Exit code 3: probos was imported from somewhere other than ``PROBOS_LIFECYCLE_EXPECT_SRC``.
 
@@ -37,6 +42,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +68,9 @@ def _parse_break_steps(raw: str) -> list[tuple[str, str]]:
 
 
 _BREAK_STEPS = _parse_break_steps(os.environ.get("PROBOS_LIFECYCLE_BREAK_STEPS", ""))
-_WATCHDOG_SECONDS = 30
+_WATCHDOG_SECONDS = 30  # after main returns
+_SHUTDOWN_WATCHDOG_SECONDS = 30  # one loop shutting down, which is milliseconds when nothing resists
+_dump_file: Any = None  # the faulthandler timers need their file kept open
 
 
 def _probos_comes_from_the_expected_source() -> bool:
@@ -129,6 +137,9 @@ async def _failed_start(base: Path, phase: str) -> dict[str, Any]:
         report["yeoman_after"] = YeomanAgent._live_instance_count
         report["broken_stop_calls"] = {broken.attribute: broken.calls for broken in broken_stops}
         report["broken_stop_cleanups"] = {broken.attribute: broken.cleaned_up for broken in broken_stops}
+        report["broken_stop_cancellations_ignored"] = {
+            broken.attribute: broken.cancellations_ignored for broken in broken_stops
+        }
         report["broken_stop_connections"] = {broken.attribute: broken.connections for broken in broken_stops}
         report["rollback_warnings"] = rollback_warnings
     except Exception as error:  # noqa: BLE001 -- the parent reads the report, whatever happened
@@ -154,9 +165,24 @@ async def _boot_and_stop(base: Path) -> dict[str, Any]:
     return report
 
 
+def _dump() -> Any:
+    global _dump_file
+    if _dump_file is None:
+        _dump_file = open(_HANG_DUMP, "w") if _HANG_DUMP else sys.stderr
+    return _dump_file
+
+
 def _in_its_own_loop(coroutine_function: Any, *args: Any) -> Any:
-    with asyncio.Runner() as runner:
+    runner = asyncio.Runner()
+    try:
         return runner.run(coroutine_function(*args))
+    finally:
+        # Closing a runner cancels and awaits every task still pending, and one that ignores
+        # cancellation keeps it from ever returning: cut that short with a dump of every stack
+        # instead of waiting for the parent's timeout.
+        faulthandler.dump_traceback_later(_SHUTDOWN_WATCHDOG_SECONDS, exit=True, file=_dump())
+        runner.close()
+        faulthandler.cancel_dump_traceback_later()
 
 
 def main() -> int:
@@ -174,9 +200,10 @@ def main() -> int:
             _in_its_own_loop(_failed_start, base / phase, phase) for phase in phases
         ]
         report["boot"] = _in_its_own_loop(_boot_and_stop, base / "boot")
+    report["main_done_at"] = time.time()
     print("REPORT " + json.dumps(report), flush=True)
     print("MAIN_DONE", flush=True)
-    dump = open(_HANG_DUMP, "w") if _HANG_DUMP else sys.stderr
+    dump = _dump()
     faulthandler.dump_traceback_later(_WATCHDOG_SECONDS, exit=True, file=dump)
     return 0
 

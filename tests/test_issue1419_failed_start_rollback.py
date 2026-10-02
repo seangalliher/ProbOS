@@ -21,30 +21,41 @@ standing-orders globals are cleared after the pools stop and the IntentBus drain
 before an admitted dispatch has finished composing its prompt.
 
 A fourth property was added after the re-review: a component whose stop() fails is kept (the
-runtime drops its reference to every component, stopped or not), retried once after the last
-step and, if it still cannot stop, has the aiosqlite connections it holds directly as
-attributes closed, so that its non-daemon worker thread cannot keep the interpreter alive.
-The regressions break a stop BEFORE any cleanup as well as after it: a break that cleans up
-first makes "nothing is left" a foregone conclusion and could not see this.
+runtime drops its reference to every component, stopped or not) and, at the end of the
+rollback, has the aiosqlite connections it holds directly as attributes closed, so that its
+non-daemon worker thread cannot keep the interpreter alive. The regressions break a stop
+BEFORE any cleanup as well as after it: a break that cleans up first makes "nothing is left"
+a foregone conclusion and could not see this.
 
 A fifth was added after the third review, which found the last resort itself unsafe. Its
 bound was not real: ``asyncio.wait_for`` waits for the cancelled coroutine to finish
-cancelling, so a stop() that suppressed ``CancelledError`` (or a close queued behind a long
-statement) held the whole rollback, and the audit drain and ``_started = False`` never ran.
-Each retry and each close now runs as a task of its own under ``asyncio.wait``; when the time
-is up the task is cancelled but NOT awaited, kept alive in ``_abandoned_tasks`` until it ends,
-and named in a warning. And it closed a raw ``sqlite3.Connection`` from the event-loop thread:
-with a statement running on another thread that crashed the interpreter (a Windows access
-violation, exit code -1073741819). Only aiosqlite connections are closed now, through their
-own async close, which aiosqlite runs on the connection's worker thread after any statement in
-flight; a raw sqlite3 connection is reported in a warning and left open.
+cancelling, so a close queued behind a long statement held the whole rollback, and the audit
+drain and ``_started = False`` never ran. Each close now runs as a task of its own under
+``asyncio.wait``; when the time is up the task is cancelled but NOT awaited, kept alive in
+``_abandoned_tasks`` until it ends, and named in a warning. And it closed a raw
+``sqlite3.Connection`` from the event-loop thread: with a statement running on another
+thread that crashed the interpreter (a Windows access violation, exit code -1073741819).
+Only aiosqlite connections are closed now, through their own async close, which aiosqlite
+runs on the connection's worker thread after any statement in flight; a raw sqlite3
+connection is reported in a warning and left open.
 
-Residual: a component whose stop() fails twice AND which holds its connection deeper than one
-attribute level, or a resource that is not an aiosqlite connection, can still keep the process
-alive (a non-daemon thread among it); a raw sqlite3 connection it holds is left open, which
-only holds its file until the connection is collected or the process exits (it has no
-thread); an abandoned action keeps running until it ends. The rollback names each in a
-warning.
+A sixth was added after the fourth review: the retry is gone. The third commit retried a
+failed stop() once, and under ``asyncio.run()`` a retried stop() that ignores cancellation
+left an abandoned task that loop shutdown cancels and awaits forever: ``shutdown()`` was
+bounded but the INTERPRETER was not (a child process printed ``MAIN_DONE`` and never exited).
+The case that hid it released the stop in its own ``finally``. A stop() that already failed is
+untrusted and is never called again; only the aiosqlite close is ever abandoned, and it is
+cooperative (it awaits a plain future, so the cancellation ``asyncio.run`` sends ends it at
+once, which a child process whose worker is held by a long statement shows). Nothing here is
+released by the test that started it: a case that needs a release to finish is a case that
+hides a hang.
+
+Residual: a component whose stop() fails is not retried, and only its directly held aiosqlite
+connections are closed. One that also holds its connection deeper than one attribute level, or
+a resource that is not an aiosqlite connection, can still keep the process alive (a
+non-daemon thread among it); a raw sqlite3 connection it holds is left open, which only holds
+its file until the connection is collected or the process exits (it has no thread); an
+abandoned close keeps running until its statement ends. The rollback names each in a warning.
 """
 
 from __future__ import annotations
@@ -105,7 +116,7 @@ _SHUTDOWN_LOGGER = "probos.startup.shutdown"
 _START_FAILED = "BF-882: start() already failed and was rolled back; construct a new ProbOSRuntime"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CHILD = _REPO_ROOT / "tests" / "fixtures" / "failed_start_child.py"
-_RAW_SQLITE_CHILD = _REPO_ROOT / "tests" / "fixtures" / "raw_sqlite_rollback_child.py"
+_ROLLBACK_CHILD = _REPO_ROOT / "tests" / "fixtures" / "rollback_child.py"
 
 
 @pytest.fixture(autouse=True)
@@ -645,11 +656,10 @@ async def test_a_rollback_logs_a_failing_stop_and_still_closes_everything_after_
         and "refused to stop" in repr(r.exc_info)
     ]
     assert len(warned) == 1, "the failing stop was not logged exactly once at its step, with its traceback"
-    assert runtime.calls.count(f"{failing}.stop") == 2  # attempted, then retried once (it keeps raising)
+    assert runtime.calls.count(f"{failing}.stop") == 1  # attempted once, and never again
     for later in ("gossip", "signal_manager", "hebbian_router", "trust_network", "event_log"):
         assert f"{later}.stop" in runtime.calls, f"{later} was never stopped after {failing} failed"
-    # the retry is the last thing the rollback does, after the LLM close that ends the steps
-    assert runtime.calls[-2:] == ["llm_client.close", f"{failing}.stop"]
+    assert runtime.calls[-1] == "llm_client.close"  # nothing is asked of the failed component after the steps
     assert runtime._started is False
 
 
@@ -702,8 +712,8 @@ async def test_a_rollback_stops_every_agent_a_failed_pool_stop_left_alive(
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
     stops = [call for call in runtime.calls if call.endswith(".stop") and call.split(".")[0] in {"survivor", "stopped", "stubborn", "last"}]
-    # alive ones only, one failure does not stop the rest, and the one that failed is retried once at the end
-    assert stops == ["survivor.stop", "stubborn.stop", "last.stop", "stubborn.stop"]
+    # alive ones only, one failure does not stop the rest, and the one that failed is not stopped again
+    assert stops == ["survivor.stop", "stubborn.stop", "last.stop"]
     assert runtime.calls.index("pool.p.stop") < runtime.calls.index("survivor.stop") < runtime.calls.index("gossip.stop")
     assert any("stubborn" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
     assert runtime.registry.count == 4  # the pool ownership policy is unchanged: nothing is unregistered
@@ -1191,9 +1201,10 @@ _OTHER_STEPS: tuple[str, ...] = (
 )
 _ALL_STEPS: tuple[str, ...] = tuple(label for _, label in _STOPPED_COMPONENTS) + _OTHER_STEPS
 
-# The steps that do not hold a component, so nothing is kept for a retry when they fail: gates
-# and cancels, module-level helpers, the sidecar helper (which keeps its own failures), the
-# two statements that guard themselves, and the unregister that follows a red team agent's stop.
+# The steps that do not hold a component, so nothing is kept for the last-resort close when they
+# fail: gates and cancels, module-level helpers, the sidecar helper (which keeps its own
+# failures), the two statements that guard themselves, and the unregister that follows a red
+# team agent's stop.
 _STEPS_WITHOUT_A_COMPONENT: frozenset[str] = frozenset({
     "crew scheduling close",
     "confab probe scheduling close",
@@ -1211,30 +1222,6 @@ _STEPS_WITHOUT_A_COMPONENT: frozenset[str] = frozenset({
     "LLM client close",
     "AD-1278 audit drain",
 })
-
-# The call a step's component records when the rollback retries it at the end. It is the same
-# call the step itself makes, so a retried component shows up twice in ``calls``.
-_RETRY_CALL: dict[str, str] = {
-    **{label: f"{attribute}.stop" for attribute, label in _STOPPED_COMPONENTS},
-    "crew orchestrator stop": "crew.stop",
-    "crew session delivery close": "crew_session_delivery.close",
-    "directive store close": "directive_store.close",
-    "ward room prune loop stop": "ward_room.stop_prune_loop",
-    "ward room stop": "ward_room.stop",
-    "red team agent red-1 stop": "red_team_agent.stop",
-    "event log stop": "event_log.stop",
-}
-
-
-def _calls_with_retries(unbroken: list[str], failing: list[str]) -> list[str]:
-    """The calls of an unbroken rollback, plus the retry of each failing step's component.
-
-    The retries come after the last step and before the final audit drain, in the order the
-    steps first failed, which is the order of their own calls in an unbroken run.
-    """
-    assert unbroken[-1] == "audit.drain", unbroken[-3:]
-    retried = {_RETRY_CALL[label] for label in failing if label in _RETRY_CALL}
-    return unbroken[:-1] + [call for call in unbroken if call in retried] + unbroken[-1:]
 
 
 def _sync_hook(calls: list[str], name: str, error: BaseException | None) -> Any:
@@ -1369,7 +1356,7 @@ def _stocked_runtime(
 
 
 def _named_step_warnings(caplog: pytest.LogCaptureFixture, label: str) -> list[logging.LogRecord]:
-    """The warnings of the FIRST failure of a step (the retry and the last resort log their own)."""
+    """The warnings of the failure of a step (the last resort logs its own, with the step's name in it)."""
     return [
         record for record in caplog.records
         if record.levelno == logging.WARNING
@@ -1408,19 +1395,20 @@ def test_every_guarded_step_in_shutdown_has_a_case_in_this_file() -> None:
 
 def test_every_step_that_stops_a_component_hands_that_component_to_the_guard() -> None:
     """The runtime drops its reference to a component whether or not its stop worked, so a step that
-    does not pass the component to the guard leaves nobody to retry it or close what it holds when
-    its stop fails: the defect re-review found with ACM. The component passed must be the object whose
-    method the step calls, and ``method`` must name the method it calls."""
+    does not pass the component to the guard leaves nobody to close what it holds when its stop
+    fails: the defect re-review found with ACM. The component passed must be the object whose method
+    the step calls. A failed stop is never called again, so the guard takes nothing else (no
+    ``method=``, which only a retry needed)."""
     special_components = {
         "crew orchestrator stop": "crew_orchestrator",  # the step awaits ``crew_stop``, its bound stop
         "crew session delivery close": "getattr(runtime, 'crew_session_delivery_service', None)",
     }
     for label, (node, call) in _guarded_steps().items():
+        assert not call.keywords, (label, ast.unparse(call))
         passes_a_component = len(call.args) >= 2
         assert passes_a_component == (label not in _STEPS_WITHOUT_A_COMPONENT), label
         if not passes_a_component:
             continue
-        method = next((kw.value.value for kw in call.keywords if kw.arg == "method"), "stop")
         component = ast.unparse(call.args[1])
         if label in special_components:
             assert component == special_components[label], label
@@ -1429,11 +1417,10 @@ def test_every_step_that_stops_a_component_hands_that_component_to_the_guard() -
         assert isinstance(statement, ast.Expr), label
         called = statement.value.value if isinstance(statement.value, ast.Await) else statement.value
         assert isinstance(called, ast.Call) and isinstance(called.func, ast.Attribute), label
-        assert called.func.attr == method, (label, called.func.attr, method)
         assert ast.unparse(called.func.value) == component, (label, ast.unparse(called.func.value), component)
 
 
-def test_every_failure_a_helper_swallows_is_kept_for_the_retry() -> None:
+def test_every_failure_a_helper_swallows_is_kept_for_the_last_resort() -> None:
     """The sidecar helper, the two synchronous-close calls and three inline try/excepts log and
     swallow their own failures, and drop (or never again touch) the component afterwards. Each must
     hand the failure to the rollback, or its connection is not closed when its stop failed."""
@@ -1474,7 +1461,7 @@ async def test_a_rollback_goes_on_past_a_teardown_step_that_raises(
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert runtime.calls == _calls_with_retries(control.calls, [label])  # nothing skipped; the component retried
+    assert runtime.calls == control.calls  # nothing skipped, and the failed component is not asked again
     named = _named_step_warnings(caplog, label)
     assert len(named) == 1, f"{label!r} was not logged exactly once"
     assert named[0].exc_info is not None and named[0].exc_info[1] is errors[label]
@@ -1504,7 +1491,7 @@ async def test_a_rollback_in_which_every_step_raises_still_runs_every_step(
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert runtime.calls == _calls_with_retries(control.calls, list(_ALL_STEPS))
+    assert runtime.calls == control.calls
     for label in _ALL_STEPS:
         assert len(_named_step_warnings(caplog, label)) == 1, label
     assert runtime._started is False
@@ -1524,7 +1511,7 @@ async def test_a_cancelled_error_nobody_asked_for_in_a_rollback_step_is_logged_a
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert runtime.calls == _calls_with_retries(control.calls, ["ACM stop"])
+    assert runtime.calls == control.calls
     assert len(_named_step_warnings(caplog, "ACM stop")) == 1
     assert runtime._started is False
 
@@ -1553,7 +1540,7 @@ async def test_a_task_already_cancelled_before_the_rollback_still_gets_the_rest_
     await asyncio.wait_for(task, timeout=10)
 
     assert task.cancelling() == 1  # the premise: this is the count a naive ``== 0`` check would trip on
-    assert runtime.calls == _calls_with_retries(control.calls, ["ACM stop"])
+    assert runtime.calls == control.calls
 
 
 async def test_a_cancellation_that_arrives_during_a_rollback_step_ends_the_rollback(
@@ -1625,26 +1612,32 @@ async def test_a_rollback_whose_flush_task_cannot_be_cancelled_does_not_wait_for
 
 
 # ---------------------------------------------------------------------------
-# A component whose stop() fails is kept, retried once, and has its aiosqlite connections closed
+# A component whose stop() fails is kept, never asked again, and has its aiosqlite connections closed
 # ---------------------------------------------------------------------------
 #
 # Re-review of the second BF-882 commit: the rollback went on past a failed stop, but shutdown()
 # then dropped the runtime's reference to the component, so nothing could release what it held.
 # With a stop that raised BEFORE any cleanup, ACM kept its aiosqlite worker thread, acm.db stayed
 # locked and the process did not exit. The component of a failed step is now kept on a list the
-# rollback owns; after the last step each is retried once, and one that still cannot stop has the
-# aiosqlite connections it holds directly as attributes closed.
+# rollback owns and has the aiosqlite connections it holds directly as attributes closed.
 #
 # Re-review of the third commit: that last resort was itself unsafe. Its bound used wait_for, which
-# waits for the cancelled coroutine to finish cancelling, so a stop() that suppressed CancelledError
-# held the rollback forever; and it closed raw sqlite3 connections from the loop thread, which
-# crashed the interpreter while a statement ran on another thread. Each retry and close is now a
-# task under asyncio.wait, abandoned (cancelled, not awaited, kept in _abandoned_tasks) when the
-# bound is up, and a raw sqlite3 connection is reported and never closed.
+# waits for the cancelled coroutine to finish cancelling, so a close queued behind a long statement
+# held the rollback; and it closed raw sqlite3 connections from the loop thread, which crashed the
+# interpreter while a statement ran on another thread. Each close is now a task under asyncio.wait,
+# abandoned (cancelled, not awaited, kept in _abandoned_tasks) when the bound is up, and a raw
+# sqlite3 connection is reported and never closed.
 #
-# Residual: a connection held deeper than one attribute level, or a resource that is not an
-# aiosqlite connection, is not released; a raw sqlite3 connection is left open (it has no thread,
-# so it only holds its file until it is collected or the process exits).
+# Re-review of the fourth commit: the retry of a failed stop() was still unsafe. A retried stop()
+# that ignores cancellation left an abandoned task that asyncio.run cancels and awaits forever when
+# it shuts the loop down: shutdown() was bounded and the interpreter was not. The case that was meant
+# to prove otherwise released the stop in its own finally, which is exactly what hid it. A failed
+# stop() is never called again now. Nothing below is released by the test that started it.
+#
+# Residual: a component whose stop() fails is not retried and only its directly held aiosqlite
+# connections are closed. A connection held deeper than one attribute level, or a resource that is
+# not an aiosqlite connection, is not released; a raw sqlite3 connection is left open (it has no
+# thread, so it only holds its file until it is collected or the process exits).
 
 class _FailsToStop:
     """A component whose stop() raises for its first ``fail_times`` calls and holds what it is given."""
@@ -1661,47 +1654,71 @@ class _FailsToStop:
             raise RuntimeError(f"stop refused ({self.stops})")
 
 
-class _SuppressesCancellation(_FailsToStop):
-    """Fails its first ``fail_times`` stops, then ignores every cancellation until ``release`` is set.
+class _CancelsItself(_FailsToStop):
+    """A component whose stop() ends in a CancelledError of its own, as AD-477's does by contract."""
 
-    Built inside a running loop: the event is created here. ``fail_late`` makes the stop that was
-    released raise instead of returning, so an abandoned action can be seen to end in an error.
+    async def stop(self) -> None:
+        self.stops += 1
+        raise asyncio.CancelledError()
+
+
+class _UnkillableWhenAskedAgain(_FailsToStop):
+    """Fails its first stop; asked again, it ignores every cancellation until a deadline of its own.
+
+    The deadline belongs to the double and not to the test: it only keeps a regression that asks
+    again from hanging the suite. A correct rollback never gets that far (``stops`` stays 1), and
+    a case using this releases nothing.
     """
 
-    def __init__(self, *, fail_times: int = 1, fail_late: bool = False, **held: Any) -> None:
-        super().__init__(fail_times=fail_times, **held)
-        self.release = asyncio.Event()
+    def __init__(self, *, ignores_for: float = 3.0, **held: Any) -> None:
+        super().__init__(fail_times=1, **held)
+        self._ignores_for = ignores_for
         self.cancellations_ignored = 0
-        self._fail_late = fail_late
 
     async def stop(self) -> None:
         self.stops += 1
         if self.stops <= self.fail_times:
             raise RuntimeError(f"stop refused ({self.stops})")
-        while not self.release.is_set():
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._ignores_for
+        while loop.time() < deadline:
             try:
-                await self.release.wait()
+                await asyncio.sleep(deadline - loop.time())
             except asyncio.CancelledError:
                 self.cancellations_ignored += 1
-        if self._fail_late:
-            raise RuntimeError("failed late, after it was abandoned")
 
 
-class _StubbornClose(aiosqlite.Connection):
-    """An aiosqlite connection whose close() ignores cancellation until ``release`` is set, then closes for real."""
+class _HungClose(aiosqlite.Connection):
+    """An aiosqlite connection whose close() never returns by itself but honours cancellation."""
+
+    close_cancelled = False
 
     def __init__(self, connector: Any, iter_chunk_size: int) -> None:
         super().__init__(connector, iter_chunk_size)
-        self.release = asyncio.Event()
-        self.cancellations_ignored = 0
+        self.close_started = asyncio.Event()
 
     async def close(self) -> None:
-        while not self.release.is_set():
-            try:
-                await self.release.wait()
-            except asyncio.CancelledError:
-                self.cancellations_ignored += 1
-        await super().close()
+        self.close_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.close_cancelled = True
+            raise
+
+
+class _ClosesSlowlyThenFails(aiosqlite.Connection):
+    """An aiosqlite connection whose close() ignores one cancellation, runs on a moment, then raises.
+
+    It ends by itself, so nothing releases it: it is the abandoned close that fails later.
+    """
+
+    async def close(self) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            pass  # the cancellation requested at the bound is ignored, once
+        await asyncio.sleep(0.3)
+        raise RuntimeError("failed late, after it was abandoned")
 
 
 class _CountsCloses(sqlite3.Connection):
@@ -1772,7 +1789,7 @@ def _raw_left_open_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 def _abandoned_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """The warnings that name a last-resort action the rollback gave up waiting for."""
+    """The warnings that name a last-resort close the rollback gave up waiting for."""
     return [
         record.getMessage() for record in caplog.records
         if record.levelno == logging.WARNING and record.getMessage().startswith("BF-882: ")
@@ -1781,14 +1798,17 @@ def _abandoned_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 async def _let_abandoned_tasks_finish(*, timeout: float = 10.0) -> None:
-    """Wait for the actions a test abandoned (after the test released them) and for their done-callbacks."""
+    """Wait for the closes a test saw abandoned to end by themselves, and for their done-callbacks.
+
+    Nothing is released here: an abandoned close ends when the statement it waited behind ends,
+    or when it is cancelled, and a test that needs more than that to finish is hiding a hang."""
     pending = [task for task in shutdown_module._abandoned_tasks if not task.done()]
     if pending:
         await asyncio.wait(pending, timeout=timeout)
     await asyncio.sleep(0)  # a done-callback runs on the iteration after its task ends
 
 
-async def test_a_component_whose_stop_fails_twice_has_its_aiosqlite_connection_closed_and_a_raw_one_left_open(
+async def test_a_component_whose_stop_fails_has_its_aiosqlite_connection_closed_and_a_raw_one_left_open(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     before = threads_now()
@@ -1805,7 +1825,7 @@ async def test_a_component_whose_stop_fails_twice_has_its_aiosqlite_connection_c
             await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
         assert runtime.acm is None  # the runtime let go of it, as it always does...
-        assert component.stops == 2  # ...after the step and its one retry
+        assert component.stops == 1  # ...after the step, and it was never asked again
         assert await _is_closed(aio)
         assert await _worker_threads_left(before) == []
         closes = _last_resort_messages(caplog)  # the aiosqlite close names the component, the step and the attribute
@@ -1818,29 +1838,52 @@ async def test_a_component_whose_stop_fails_twice_has_its_aiosqlite_connection_c
         sqlite3.Connection.close(plain)
 
 
-async def test_a_component_that_stops_when_retried_is_not_closed_from_under_itself(
+async def test_a_cancelled_error_nobody_asked_for_in_a_stop_keeps_the_component_and_its_aiosqlite_connection_is_closed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The rollback goes on past that CancelledError (BF-881), and the component is a failed one
+    like any other: it is kept, so what it holds is closed from outside."""
+    before = threads_now()
     runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
     aio = await aiosqlite.connect(tmp_path / "a.db")
-    component = _FailsToStop(fail_times=1, _db=aio)  # a transient failure
+    component = _CancelsItself(_db=aio)
     runtime.acm = component
-    try:
-        with caplog.at_level(logging.INFO, logger=_SHUTDOWN_LOGGER):
-            await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
+    assert not await _is_closed(aio)  # the premise: it is open until the rollback closes it
 
-        assert component.stops == 2
-        assert not await _is_closed(aio)  # the retry succeeded: nothing is closed behind its back
-        assert _last_resort_messages(caplog) == []
-        assert any(
-            record.levelno == logging.INFO and "'ACM stop' failed once and succeeded when it was retried"
-            in record.getMessage() for record in caplog.records
-        )
-    finally:
-        await aio.close()
+    with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
+        await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
+
+    assert component.stops == 1
+    assert await _is_closed(aio)
+    assert await _worker_threads_left(before) == []
+    (closed,) = _last_resort_messages(caplog)
+    assert "_CancelsItself._db " in closed and "'ACM stop'" in closed, closed
 
 
-async def test_a_rollback_with_no_failed_step_retries_and_closes_nothing(
+async def test_a_stop_that_failed_is_not_asked_again_even_if_a_second_call_would_succeed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transient failure used to be given a second chance, and a component that took it was left
+    alone. A stop() that failed is untrusted and is not asked again (the second call is what could
+    hang the interpreter), so what the component holds is closed from outside whatever a second
+    call would have done."""
+    before = threads_now()
+    runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
+    aio = await aiosqlite.connect(tmp_path / "a.db")
+    component = _FailsToStop(fail_times=1, _db=aio)  # fails once; a second call would work
+    runtime.acm = component
+
+    with caplog.at_level(logging.INFO, logger=_SHUTDOWN_LOGGER):
+        await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
+
+    assert component.stops == 1
+    assert await _is_closed(aio)
+    assert await _worker_threads_left(before) == []
+    assert len(_last_resort_messages(caplog)) == 1
+    assert not [r for r in caplog.records if "retried" in r.getMessage() or "retry" in r.getMessage()]
+
+
+async def test_a_rollback_with_no_failed_step_asks_each_component_once_and_closes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     runtime, _ = _stocked_runtime(tmp_path, monkeypatch, rollback=True)
@@ -1848,8 +1891,8 @@ async def test_a_rollback_with_no_failed_step_retries_and_closes_nothing(
     with caplog.at_level(logging.INFO, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert all(runtime.calls.count(call) == 1 for call in set(_RETRY_CALL.values())), runtime.calls
-    assert not [r for r in caplog.records if "retry" in r.getMessage() or "last-resort" in r.getMessage()]
+    assert all(runtime.calls.count(f"{attribute}.stop") == 1 for attribute, _ in _STOPPED_COMPONENTS), runtime.calls
+    assert not [r for r in caplog.records if "last-resort" in r.getMessage()]
 
 
 async def test_the_residual_a_connection_held_deeper_than_one_attribute_is_not_closed_and_is_named(
@@ -1868,7 +1911,7 @@ async def test_the_residual_a_connection_held_deeper_than_one_attribute_is_not_c
         assert await _worker_threads_left(before, settle_s=0) != []  # still alive: that is the residual
         assert _last_resort_messages(caplog) == []
         assert any(
-            "'ACM stop' failed twice and _FailsToStop holds no aiosqlite connection as a direct attribute"
+            "'ACM stop' failed and _FailsToStop holds no aiosqlite connection as a direct attribute"
             in record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
         )
     finally:
@@ -1898,9 +1941,9 @@ async def test_a_component_without_a_dict_cannot_be_scanned_and_is_named(
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert component.stops == 2  # the step and its one retry
+    assert component.stops == 1  # the step, and never again
     assert any(
-        "'ACM stop' failed twice and _Slotted holds no aiosqlite connection as a direct attribute"
+        "'ACM stop' failed and _Slotted holds no aiosqlite connection as a direct attribute"
         in record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
     )
 
@@ -1934,49 +1977,11 @@ async def test_a_last_resort_close_that_raises_is_logged_and_the_next_connection
         await aiosqlite.Connection.close(refused)
 
 
-async def test_a_retry_that_hangs_is_bounded_and_the_connection_is_still_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
-) -> None:
-    monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", 0.2)
-    before = threads_now()
-
-    class _HangsOnRetry(_FailsToStop):
-        async def stop(self) -> None:
-            self.stops += 1
-            if self.stops == 1:
-                raise RuntimeError("first stop refused")
-            await asyncio.Event().wait()
-
-    runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
-    aio = await aiosqlite.connect(tmp_path / "a.db")
-    runtime.acm = _HangsOnRetry(_db=aio)
-
-    with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
-        await asyncio.wait_for(
-            shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True),  # type: ignore[arg-type]
-            timeout=10,
-        )
-
-    assert await _is_closed(aio)
-    assert await _worker_threads_left(before) == []
-    assert any(
-        "the retry of rollback step 'ACM stop' (_HangsOnRetry.stop()) was abandoned: it did not finish within 0.2s"
-        in message for message in _abandoned_messages(caplog)
-    ), _abandoned_messages(caplog)
-    await _let_abandoned_tasks_finish()
-    assert shutdown_module._abandoned_tasks == set()  # the cancelled retry ended and let go of itself
-
-
 async def test_a_close_that_hangs_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", 0.2)
     before = threads_now()
-
-    class _HungClose(aiosqlite.Connection):
-        async def close(self) -> None:
-            await asyncio.Event().wait()
-
     runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
     hung = await _HungClose(lambda: sqlite3.connect(str(tmp_path / "hung.db")), 64)
     runtime.acm = _FailsToStop(_db=hung)
@@ -1992,132 +1997,77 @@ async def test_a_close_that_hangs_is_bounded(
             in message for message in _abandoned_messages(caplog)
         ), _abandoned_messages(caplog)
         assert runtime._started is False
+        await _let_abandoned_tasks_finish()
+        assert hung.close_cancelled  # the abandoned close honoured the cancellation, by itself
+        assert shutdown_module._abandoned_tasks == set()
     finally:
-        await aiosqlite.Connection.close(hung)
-    await _let_abandoned_tasks_finish()
+        await aiosqlite.Connection.close(hung)  # the real connection, so its worker thread ends: not the hung close
     assert await _worker_threads_left(before) == []
-    assert shutdown_module._abandoned_tasks == set()
 
 
-async def test_a_cancellation_that_arrives_during_the_retry_ends_the_rollback(tmp_path: Path) -> None:
+async def test_a_cancellation_that_arrives_during_the_last_resort_close_ends_the_rollback(
+    tmp_path: Path,
+) -> None:
     runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
-    retrying = asyncio.Event()
-    aio = await aiosqlite.connect(tmp_path / "a.db")
-
-    class _BlocksOnRetry(_FailsToStop):
-        retry_cancelled = False
-
-        async def stop(self) -> None:
-            self.stops += 1
-            if self.stops == 1:
-                raise RuntimeError("first stop refused")
-            retrying.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                self.retry_cancelled = True
-                raise
-
-    component = _BlocksOnRetry(_db=aio)
-    runtime.acm = component
+    hung = await _HungClose(lambda: sqlite3.connect(str(tmp_path / "hung.db")), 64)
+    runtime.acm = _FailsToStop(_db=hung)
     try:
         task = asyncio.create_task(shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True))  # type: ignore[arg-type]
-        await asyncio.wait_for(retrying.wait(), timeout=10)
+        await asyncio.wait_for(hung.close_started.wait(), timeout=10)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=10)
 
-        assert task.cancelled()  # the caller's cancellation is not turned into a failed retry
+        assert task.cancelled()  # the caller's cancellation is not turned into a failed close
         await _let_abandoned_tasks_finish()
-        assert component.retry_cancelled  # and the retry did not outlive the rollback: it was cancelled with it
+        assert hung.close_cancelled  # and the close did not outlive the rollback: it was cancelled with it
         assert shutdown_module._abandoned_tasks == set()
     finally:
-        await aio.close()
+        await aiosqlite.Connection.close(hung)
 
 
 # ---------------------------------------------------------------------------
 # The last resort is bounded for real, and never closes a raw sqlite3 connection
 # ---------------------------------------------------------------------------
 
-async def test_a_retried_stop_that_suppresses_cancellation_cannot_hold_the_rollback(
+async def test_a_stop_that_failed_is_never_asked_again_so_one_that_would_ignore_cancellation_holds_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The third review's reproducer. With ``wait_for`` as the bound, a retried stop() that ignores
-    cancellation held ``settle_failed`` for as long as it ignored it, so the audit drain and
-    ``_started = False`` never ran. The rollback is a task waited for with ``asyncio.wait``, so a
-    failed bound ends this test in an assertion instead of hanging it."""
-    bound = 0.2
-    monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", bound)
+    """The fourth review's reproducer, in process. A retried stop() that ignored cancellation became an
+    abandoned task that ``asyncio.run`` cancels and awaits forever when it shuts the loop down: the
+    rollback was bounded and the interpreter was not (the child-process cases below show it end to end).
+    The retry is gone, so such a stop() is called once, fails, and is never called again.
+
+    Nothing is released here. The double stops ignoring cancellation by itself after a deadline of its
+    own, which only keeps a regression from hanging the suite, and the rollback is a task waited for with
+    ``asyncio.wait`` (``wait_for`` cannot cancel a stop that ignores it), so a regression ends in an
+    assertion."""
     runtime, _ = _stocked_runtime(tmp_path, monkeypatch, rollback=True)
     runtime._started = True  # a failed start can leave it True (finalize sets it early); the rollback must end it
-    stubborn = _SuppressesCancellation()
-    runtime.acm = stubborn
+    component = _UnkillableWhenAskedAgain()
+    runtime.acm = component
     abandoned_before = set(shutdown_module._abandoned_tasks)
     rollback = asyncio.create_task(
         shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True),  # type: ignore[arg-type]
     )
     started = time.monotonic()
-    try:
-        with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
-            done, _ = await asyncio.wait({rollback}, timeout=bound * 50)
-        elapsed = time.monotonic() - started
-        assert done, f"the rollback was still running {bound * 50:.0f}s in: the bound did not hold"
-        await rollback  # anything it raised surfaces here
-        assert elapsed < bound * 10, f"{elapsed:.2f}s is not a small multiple of the {bound}s bound"
-        assert "audit.drain" in runtime.calls  # the final audit drain still ran...
-        assert runtime._started is False  # ...and so did the end of the rollback
-        assert stubborn.stops == 2  # the step and its one retry
-        (abandoned,) = set(shutdown_module._abandoned_tasks) - abandoned_before  # held, not garbage collected
-        await asyncio.sleep(0)  # let the cancellation that was requested reach it
-        assert stubborn.cancellations_ignored >= 1  # the premise: it was asked to cancel, and ignored it
-        assert not abandoned.done()  # abandoned, not awaited: it is still running
-        reported = _abandoned_messages(caplog)
-        assert len(reported) == 1, reported
-        assert "'ACM stop'" in reported[0] and "_SuppressesCancellation.stop()" in reported[0], reported
-    finally:
-        stubborn.release.set()
-        await asyncio.wait({rollback}, timeout=10)
-        await _let_abandoned_tasks_finish()
-    assert shutdown_module._abandoned_tasks == set()  # it ended once released, and let go of itself
 
+    with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
+        done, _ = await asyncio.wait({rollback}, timeout=20)
+    elapsed = time.monotonic() - started
 
-async def test_a_last_resort_close_that_suppresses_cancellation_cannot_hold_the_rollback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The same bound, applied to the aiosqlite close: a close that ignores cancellation is abandoned,
-    and closes by itself (on the connection's own worker thread) once it is let go."""
-    bound = 0.2
-    monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", bound)
-    before = threads_now()
-    runtime, _ = _stocked_runtime(tmp_path, monkeypatch, rollback=True)
-    runtime._started = True
-    stubborn = await _StubbornClose(lambda: sqlite3.connect(str(tmp_path / "stubborn.db")), 64)
-    runtime.acm = _FailsToStop(_db=stubborn)
-    rollback = asyncio.create_task(
-        shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True),  # type: ignore[arg-type]
+    assert done, "the rollback was still running 20s in"
+    await rollback  # anything it raised surfaces here
+    assert component.stops == 1, "a stop() that failed was asked again"  # asked once, and never again
+    assert elapsed < 2, f"{elapsed:.2f}s: the rollback waited for something"
+    assert component.cancellations_ignored == 0  # so nothing was ever left running to ignore a cancellation
+    assert set(shutdown_module._abandoned_tasks) == abandoned_before  # and nothing was abandoned
+    assert "audit.drain" in runtime.calls and runtime._started is False  # the end of the rollback ran
+    assert any(  # and the component is reported by name
+        "'ACM stop' failed and _UnkillableWhenAskedAgain holds no aiosqlite connection as a direct attribute"
+        in record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
     )
-    started = time.monotonic()
-    try:
-        with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
-            done, _ = await asyncio.wait({rollback}, timeout=bound * 50)
-        elapsed = time.monotonic() - started
-        assert done, f"the rollback was still running {bound * 50:.0f}s in: the bound did not hold"
-        await rollback
-        assert elapsed < bound * 10, f"{elapsed:.2f}s is not a small multiple of the {bound}s bound"
-        assert "audit.drain" in runtime.calls and runtime._started is False
-        await asyncio.sleep(0)
-        assert stubborn.cancellations_ignored >= 1  # the premise: it was asked to cancel, and ignored it
-        reported = _abandoned_messages(caplog)
-        assert len(reported) == 1, reported
-        assert "last-resort close of _FailsToStop._db (after step 'ACM stop')" in reported[0], reported
-    finally:
-        stubborn.release.set()  # now the close really closes
-        await asyncio.wait({rollback}, timeout=10)
-        await _let_abandoned_tasks_finish()
-    assert await _worker_threads_left(before) == []
-    assert await _is_closed(stubborn)
-    assert shutdown_module._abandoned_tasks == set()
 
 
 async def test_an_aiosqlite_connection_with_a_long_statement_running_is_closed_safely_and_the_rollback_is_bounded(
@@ -2126,7 +2076,12 @@ async def test_an_aiosqlite_connection_with_a_long_statement_running_is_closed_s
     """aiosqlite runs a close on the connection's own worker thread, after the statement in flight, so
     it is safe and it waits. The old bound waited for the cancelled close to finish its ``finally``
     (which stops the thread), so a long statement held the rollback for as long as it ran. Now the
-    close is abandoned when the bound is up and completes by itself behind the statement."""
+    close is abandoned when the bound is up and completes by itself behind the statement.
+
+    The abandoned close is also what ``asyncio.run`` meets when it shuts the loop down: it cancels
+    and awaits every pending task. A close awaits a plain future, so that cancellation ends it at
+    once, while the statement is still running; the rollback does not need the statement to end for
+    the loop to. Nothing is released by this test: the statement ends by itself."""
     monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", 0.3)
     statement_seconds = 3.0
     before = threads_now()
@@ -2159,36 +2114,86 @@ async def test_an_aiosqlite_connection_with_a_long_statement_running_is_closed_s
             "last-resort close of _FailsToStop._db (after step 'ACM stop') was abandoned" in message
             for message in _abandoned_messages(caplog)
         ), _abandoned_messages(caplog)
+
+        # what asyncio.run does to every pending task when it shuts the loop down
+        abandoned = list(shutdown_module._abandoned_tasks)
+        assert len(abandoned) == 1  # the premise: a close was abandoned and is still pending
+        for task in abandoned:
+            task.cancel()
+        _, held_up = await asyncio.wait(abandoned, timeout=1.0)
+        assert not held_up, "the abandoned close held up loop shutdown"
+        assert not statement.done()  # and it ended while the statement was still running
     finally:
-        await asyncio.wait_for(statement, timeout=30)  # the statement ends; the abandoned close runs behind it
+        await asyncio.wait_for(statement, timeout=30)  # the statement ends by itself; the queued close runs behind it
         await _let_abandoned_tasks_finish(timeout=30)
     assert await _worker_threads_left(before, settle_s=10) == []  # nothing crashed and the worker is gone
     assert await _is_closed(db)
     assert shutdown_module._abandoned_tasks == set()
 
 
-async def test_an_abandoned_action_that_fails_later_is_reported_and_its_error_is_retrieved(
+async def test_an_abandoned_close_ends_when_cancelled_again_even_if_nothing_ran_in_between(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """asyncio folds two cancellations that reach a task before it has run into one, and a close that
+    has seen only one stays blocked in its ``finally`` until its statement ends. ``_bounded`` therefore
+    lets the first cancellation be delivered before it returns, so the one a loop shutdown sends next,
+    with nothing in between, is the second and ends the close. Nothing is released by this test."""
+    monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", 0.2)
+    statement_seconds = 3.0
+    before = threads_now()
+    running = threading.Event()
+
+    def slow(seconds: float) -> int:
+        running.set()
+        time.sleep(seconds)
+        return 1
+
+    db = await aiosqlite.connect(tmp_path / "long.db")
+    await db.create_function("slow", 1, slow)
+
+    async def long_statement() -> Any:
+        return await db.execute("select slow(?)", (statement_seconds,))
+
+    statement = asyncio.create_task(long_statement())
+    assert await asyncio.to_thread(running.wait, 10), "the premise failed: the long statement never started"
+    steps = shutdown_module._RollbackSteps(True)
+    try:
+        assert await steps._bounded(db.close(), "the close under test") is False  # abandoned
+        (abandoned,) = shutdown_module._abandoned_tasks
+        abandoned.cancel()  # no await since _bounded returned: a loop shutdown right after the rollback
+        _, held_up = await asyncio.wait({abandoned}, timeout=1.0)
+        assert not held_up, "the second cancellation was folded into the first: the close is stuck behind its statement"
+        assert not statement.done()  # it ended while the statement was still running
+    finally:
+        await asyncio.wait_for(statement, timeout=30)
+        await _let_abandoned_tasks_finish(timeout=30)
+    assert await _worker_threads_left(before, settle_s=10) == []
+    assert shutdown_module._abandoned_tasks == set()
+
+
+async def test_an_abandoned_close_that_fails_later_is_reported_and_its_error_is_retrieved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """A close that outlives the bound and then fails ends in an error nobody awaits: the done-callback
+    reads it and names it. The double ends by itself (it ignores one cancellation and raises 0.3 s
+    later), so nothing here is released."""
     monkeypatch.setattr(shutdown_module, "_LAST_RESORT_SECONDS", 0.1)
+    before = threads_now()
     runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
-    stubborn = _SuppressesCancellation(fail_late=True)
-    runtime.acm = stubborn
+    failing = await _ClosesSlowlyThenFails(lambda: sqlite3.connect(str(tmp_path / "late.db")), 64)
+    runtime.acm = _FailsToStop(_db=failing)
     abandoned_before = set(shutdown_module._abandoned_tasks)
-    rollback = asyncio.create_task(
-        shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True),  # type: ignore[arg-type]
-    )
 
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         try:
-            done, _ = await asyncio.wait({rollback}, timeout=10)  # not wait_for: it cannot cancel a stop that ignores it
-            assert done, "the rollback was still running 10s in: the bound did not hold"
-            await rollback
+            await asyncio.wait_for(
+                shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True),  # type: ignore[arg-type]
+                timeout=10,
+            )
             assert len(set(shutdown_module._abandoned_tasks) - abandoned_before) == 1
+            await _let_abandoned_tasks_finish(timeout=10)  # it ends by itself, in an error
         finally:
-            stubborn.release.set()
-            await asyncio.wait({rollback}, timeout=10)
-            await _let_abandoned_tasks_finish()
+            await aiosqlite.Connection.close(failing)  # the real connection, so its worker thread ends
 
     late = [
         record.getMessage() for record in caplog.records
@@ -2197,6 +2202,7 @@ async def test_an_abandoned_action_that_fails_later_is_reported_and_its_error_is
     assert len(late) == 1, late
     assert "'ACM stop'" in late[0] and "ended later with RuntimeError: failed late, after it was abandoned" in late[0]
     assert shutdown_module._abandoned_tasks == set()
+    assert await _worker_threads_left(before) == []
     # An error nobody retrieves is logged by asyncio when its task is collected: the done-callback read it.
     with caplog.at_level(logging.ERROR, logger="asyncio"):
         gc.collect()
@@ -2213,7 +2219,7 @@ async def test_abandoning_a_task_that_already_ended_only_reads_its_outcome(
     await asyncio.wait({task})
 
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
-        shutdown_module._abandon_last_resort(task, "the retry of X", "the rollback itself was cancelled")
+        shutdown_module._abandon_last_resort(task, "the close of X", "the rollback itself was cancelled")
 
     assert task not in shutdown_module._abandoned_tasks and _abandoned_messages(caplog) == []  # nothing was abandoned
     assert any("ended later with RuntimeError: it ended on its own" in record.getMessage() for record in caplog.records)
@@ -2250,7 +2256,7 @@ _SWALLOWED_FAILURES = (
 
 
 @pytest.mark.parametrize(("attribute", "method", "held", "is_aiosqlite"), _SWALLOWED_FAILURES)
-async def test_a_failure_a_helper_swallows_is_kept_and_retried_and_an_aiosqlite_connection_closed(
+async def test_a_failure_a_helper_swallows_is_kept_and_an_aiosqlite_connection_closed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, attribute: str, method: str, held: str, is_aiosqlite: bool,
 ) -> None:
     """These sites log and swallow their own failures, and the runtime drops (or never touches again)
@@ -2258,7 +2264,8 @@ async def test_a_failure_a_helper_swallows_is_kept_and_retried_and_an_aiosqlite_
 
     The stores that close synchronously hold a raw sqlite3 connection. It has no worker thread and the
     rollback never closes it (closing one from the loop thread while a statement runs elsewhere crashes
-    the interpreter), but the hand-over still retries the store and names the connection it left open."""
+    the interpreter), but the hand-over still keeps the store and names the connection it left open.
+    A failed stop or close is not asked again."""
     before = threads_now()
     runtime = BareRuntime(tmp_path / "data", config=_no_waits(), started=False)
     connection = (
@@ -2279,7 +2286,7 @@ async def test_a_failure_a_helper_swallows_is_kept_and_retried_and_an_aiosqlite_
             await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
         calls = component.stops if method == "stop" else component.closes
-        assert calls == 2, f"{attribute}: the failed {method}() and its one retry"
+        assert calls == 1, f"{attribute}: the failed {method}() was asked again"
         assert await _worker_threads_left(before) == []
         if is_aiosqlite:
             assert await _is_closed(connection), f"{attribute}: its connection was left open"
@@ -2321,7 +2328,7 @@ async def test_a_component_that_failed_in_two_steps_is_closed_once(
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
-    assert component.stops == 4  # each of the two steps and its retry
+    assert component.stops == 2  # each of the two steps, once; neither is asked again
     assert await _is_closed(aio)
     assert len(_last_resort_messages(caplog)) == 1
 
@@ -2371,7 +2378,7 @@ async def test_an_audit_log_persistence_that_stopped_costs_the_rollback_nothing(
         await shutdown_module.shutdown(runtime, reason="startup_failed", rollback=True)  # type: ignore[arg-type]
 
     assert await _is_closed(aio)
-    assert not [r for r in caplog.records if "last-resort" in r.getMessage() or "retry" in r.getMessage()]
+    assert not [r for r in caplog.records if "last-resort" in r.getMessage()]
 
 
 _BREAKABLE_AT_THE_STARTED_ROW = ("acm", "ward_room", "pool_scaler", "task_scheduler")
@@ -2397,8 +2404,8 @@ async def test_a_real_boot_that_fails_late_is_fully_rolled_back_even_when_one_st
             on_fire=lambda failing_runtime: broken.append(break_stop(failing_runtime, attribute)),
         )
 
-    # the premise: the broken stop was reached for the step and for its one retry, and had cleaned up both times
-    assert [(stop.calls, stop.cleaned_up) for stop in broken] == [(2, 2)]
+    # the premise: the broken stop was reached once, for the step, and had cleaned up; it is never asked again
+    assert [(stop.calls, stop.cleaned_up) for stop in broken] == [(1, 1)]
     assert any(
         record.levelno == logging.WARNING and record.exc_info and record.exc_info[1] is broken[0].error
         for record in caplog.records
@@ -2454,15 +2461,16 @@ async def test_a_real_boot_whose_stop_raises_before_it_cleans_up_still_has_its_c
     """The re-review's reproducer. A stop that raises immediately never closes the component's
     connection. The rollback went on, but the runtime dropped its reference, so the aiosqlite worker
     thread stayed alive, the database stayed locked and the process did not exit. The rollback now
-    keeps the component, retries it once, and closes the connection it holds as a last resort.
+    keeps the component and closes the connection it holds as a last resort, without asking the
+    component to stop again.
 
     The earlier cases broke the stop AFTER its real cleanup, which made zero leftovers a foregone
     conclusion; here the real stop never runs, so only the last resort can release the connection.
 
-    Residual, stated: a component whose stop() fails AND which holds its connection deeper than one
-    attribute level (or holds a resource that is not a sqlite connection) can still keep the process
-    alive; the rollback names it in a warning (pinned by the residual case above). The four components
-    here hold their connection directly, as ``_db``."""
+    Residual, stated: a component whose stop() fails is not retried, and a component that also holds its
+    connection deeper than one attribute level (or holds a resource that is not an aiosqlite connection)
+    can still keep the process alive; the rollback names it in a warning (pinned by the residual case
+    above). The four components here hold their connection directly, as ``_db``."""
     broken: list[BrokenStop] = []
 
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):
@@ -2478,7 +2486,7 @@ async def test_a_real_boot_whose_stop_raises_before_it_cleans_up_still_has_its_c
     assert stop.connections == ["_db"]  # the premise: it held its connection directly when it failed
     leftovers = await _assert_rolled_back_and_nothing_can_keep_the_process_alive(runtime, baseline)
     _assert_the_file_is_unlocked(runtime._data_dir / database)
-    assert stop.calls == 2  # the step and its one retry
+    assert stop.calls == 1  # the step, and never again
     assert any(
         message.startswith(f"BF-882: last-resort close of {component}._db ") and f"'{step}'" in message
         for message in _last_resort_messages(caplog)
@@ -2516,7 +2524,7 @@ async def test_a_real_boot_is_rolled_back_when_every_component_that_can_stop_rai
         assert any(stop.connections for stop in broken)  # and several held a connection directly
         await _assert_rolled_back_and_nothing_can_keep_the_process_alive(runtime, baseline)
     assert {stop.attribute: stop.calls for stop in broken} == {
-        attribute: 2 for attribute in _EVERY_BREAKABLE_COMPONENT  # each step, and its one retry
+        attribute: 1 for attribute in _EVERY_BREAKABLE_COMPONENT  # each step once, never asked again
     }
 
 
@@ -2775,12 +2783,18 @@ def run_failed_start_child(tmp_path: Path) -> Any:
             [sys.executable, str(child)],
             cwd=work, env=environment, capture_output=True, text=True, timeout=540,
         )
+        exited_at = time.time()
 
-        assert completed.returncode == 0, (completed.returncode, completed.stdout[-3000:], completed.stderr[-3000:])
+        assert completed.returncode == 0, (
+            completed.returncode, completed.stdout[-3000:], completed.stderr[-3000:],
+            hang_dump.read_text(encoding="utf-8")[:3000] if hang_dump.exists() else "",
+        )
         assert "MAIN_DONE" in completed.stdout
         assert not hang_dump.exists() or hang_dump.read_text(encoding="utf-8") == "", hang_dump.read_text(encoding="utf-8")[:3000]
         report_line = next(line for line in completed.stdout.splitlines() if line.startswith("REPORT "))
-        return json.loads(report_line.removeprefix("REPORT "))
+        report = json.loads(report_line.removeprefix("REPORT "))
+        report["parent_saw_exit_at"] = exited_at  # with the child's ``main_done_at``: how long the process took to end
+        return report
 
     return run
 
@@ -2827,8 +2841,8 @@ def test_a_process_whose_rollback_met_failing_stops_still_exits_by_itself_and_bo
     assert "error" not in finalize, finalize
     assert finalize["start_raised"] == "INJECTED start failure at finalize_started_event"
     assert finalize["facts"]["yeoman_count"] == baseline + 1  # the premise: the slot was held when it failed
-    assert finalize["broken_stop_calls"] == {"acm": 2, "ward_room": 2, "pool_scaler": 2}  # each step and its retry
-    assert finalize["broken_stop_cleanups"] == {"acm": 2, "ward_room": 2, "pool_scaler": 2}  # all cleaned up first
+    assert finalize["broken_stop_calls"] == {"acm": 1, "ward_room": 1, "pool_scaler": 1}  # each asked once, never again
+    assert finalize["broken_stop_cleanups"] == {"acm": 1, "ward_room": 1, "pool_scaler": 1}  # all cleaned up first
     assert finalize["started_after"] is False
     assert finalize["pools_after"] == 0 and finalize["registry_after"] == 0
     assert finalize["yeoman_after"] == baseline
@@ -2847,9 +2861,10 @@ def test_a_process_whose_rollback_met_stops_that_fail_before_cleaning_up_still_e
     faulthandler watchdog dumps them and exits 1. The runtime also drops its reference to both,
     which is what left nobody able to close them.
 
-    Residual, stated: a component that holds a connection deeper than one attribute level, or a
-    resource that is not a sqlite connection, would still keep a process alive; each is named in a
-    warning. ACM and the identity registry hold theirs directly (``_db``)."""
+    Residual, stated: a component whose stop() fails is not retried, and one that holds a connection
+    deeper than one attribute level, or a resource that is not an aiosqlite connection, would still keep
+    a process alive; each is named in a warning. ACM and the identity registry hold theirs directly
+    (``_db``)."""
     report = run_failed_start_child(
         PROBOS_LIFECYCLE_PHASES="finalize_started_event",
         PROBOS_LIFECYCLE_BREAK_STEPS="acm=before,identity_registry=before",
@@ -2860,7 +2875,7 @@ def test_a_process_whose_rollback_met_stops_that_fail_before_cleaning_up_still_e
     assert "error" not in finalize, finalize
     assert finalize["start_raised"] == "INJECTED start failure at finalize_started_event"
     assert finalize["facts"]["yeoman_count"] == baseline + 1  # the premise: the slot was held when it failed
-    assert finalize["broken_stop_calls"] == {"acm": 2, "identity_registry": 2}  # each step and its retry
+    assert finalize["broken_stop_calls"] == {"acm": 1, "identity_registry": 1}  # each asked once, never again
     assert finalize["broken_stop_cleanups"] == {"acm": 0, "identity_registry": 0}  # the real stop never ran
     assert finalize["broken_stop_connections"] == {"acm": ["_db"], "identity_registry": ["_db"]}  # the premise
     assert finalize["started_after"] is False
@@ -2889,13 +2904,86 @@ def test_a_raw_sqlite3_connection_with_a_statement_running_is_left_alone_and_doe
 
     Residual, stated: the raw connection stays open (it has no worker thread, so it only holds its
     file until it is collected or the process exits)."""
-    report = run_failed_start_child(child=_RAW_SQLITE_CHILD, PROBOS_RAW_STATEMENT_SECONDS="2")
+    report = run_failed_start_child(
+        child=_ROLLBACK_CHILD,
+        PROBOS_ROLLBACK_SCENARIO="raw_sqlite",
+        PROBOS_ROLLBACK_STATEMENT_SECONDS="2",
+    )
 
     assert report["statement_was_running"] is True  # the premise: a statement was in flight...
     assert report["statement_still_running_at_return"] is True  # ...when the rollback ended: it ran during it
     assert report["rollback_returned"] is True
-    assert report["component_stops"] == 2  # the step and its one retry
+    assert report["component_stops"] == 1  # the step, and never again
     assert report["statement_outcome"] == [[1]]  # the statement finished normally
     assert report["connection_usable_after"] is True  # on a connection nobody closed
     assert len(report["raw_warnings"]) == 1, report["raw_warnings"]
     assert "_FailsToStop._conn " in report["raw_warnings"][0] and "'ACM stop'" in report["raw_warnings"][0]
+
+
+@pytest.mark.timeout(600)
+def test_a_process_whose_failed_start_met_a_stop_that_cannot_be_asked_again_exits_by_itself(
+    run_failed_start_child: Any,
+) -> None:
+    """The fourth review's reproducer, in a process of its own and with nothing released. A real boot
+    fails at the ``started`` row and ACM's stop() raises at once; if it is ever called again it ignores
+    every cancellation, forever. The third commit called it again (a retry), abandoned that task at the
+    bound, and ``asyncio.Runner`` (what ``asyncio.run`` uses) cancels and awaits every pending task when it
+    shuts the loop down: the child printed ``MAIN_DONE`` and never exited, and its watchdog killed it.
+    The rollback now asks ACM once. It closes ACM's connection from outside and the process ends.
+
+    The watchdog around each loop shutdown (30 s, in the child) is the bound; the process must end
+    well inside it, and then within seconds of ``main`` returning."""
+    report = run_failed_start_child(
+        PROBOS_LIFECYCLE_PHASES="finalize_started_event",
+        PROBOS_LIFECYCLE_BREAK_STEPS="acm=unkillable",
+    )
+
+    (finalize,) = report["failures"]
+    baseline = report["baseline_yeoman"]
+    assert "error" not in finalize, finalize
+    assert finalize["start_raised"] == "INJECTED start failure at finalize_started_event"
+    assert finalize["facts"]["yeoman_count"] == baseline + 1  # the premise: the slot was held when it failed
+    assert finalize["broken_stop_connections"] == {"acm": ["_db"]}  # the premise: ACM held its connection directly
+    assert finalize["broken_stop_cleanups"] == {"acm": 0}  # and its real stop never ran, so only the last resort can close it
+    assert finalize["broken_stop_calls"] == {"acm": 1}  # asked once, and never again
+    assert finalize["broken_stop_cancellations_ignored"] == {"acm": 0}  # so nothing was left running to ignore one
+    assert finalize["started_after"] is False
+    assert finalize["pools_after"] == 0 and finalize["registry_after"] == 0
+    assert finalize["yeoman_after"] == baseline
+    closed = [warning for warning in finalize["rollback_warnings"] if warning.startswith("BF-882: last-resort close of")]
+    assert any("AgentCapitalService._db " in warning and "'ACM stop'" in warning for warning in closed), closed
+    assert not [warning for warning in finalize["rollback_warnings"] if " was abandoned: " in warning]
+    assert report["boot"] == {
+        "started": True, "yeoman_during": baseline + 1, "stopped": True, "yeoman_after": baseline,
+    }
+    assert report["parent_saw_exit_at"] - report["main_done_at"] < 10  # it ended by itself, promptly
+
+
+@pytest.mark.timeout(300)
+def test_an_abandoned_aiosqlite_close_does_not_keep_the_loop_or_the_process_from_ending(
+    run_failed_start_child: Any,
+) -> None:
+    """The close that IS abandoned, in a process of its own and with nothing released. A failed component
+    holds an aiosqlite connection whose worker thread a 3 s statement is holding, so the rollback's close
+    of it is queued behind the statement, outlives the 0.3 s bound and is abandoned. ``main`` then returns
+    with that close and the statement still pending and ``asyncio.run`` shuts the loop down by cancelling
+    and awaiting every pending task. A close awaits a plain future, so the cancellation ends it at once:
+    the loop closes with more than a second of the statement still to run, and the process ends when the
+    statement does (the worker thread, which aiosqlite logs an error from once the loop is closed, dies).
+    A task that ignored cancellation here would keep the loop, and so the process, from ending."""
+    seconds = 3
+    report = run_failed_start_child(
+        child=_ROLLBACK_CHILD,
+        PROBOS_ROLLBACK_SCENARIO="abandoned_close",
+        PROBOS_ROLLBACK_STATEMENT_SECONDS=str(seconds),
+    )
+
+    assert report["statement_was_running"] is True  # the premise: a statement was holding the worker...
+    assert report["statement_done_at_return"] is False  # ...when the rollback ended
+    assert report["close_abandoned"] is True  # the premise: the close was abandoned...
+    assert report["abandoned_tasks_at_return"] == 1  # ...and was still pending when main returned
+    assert report["component_stops"] == 1  # the step, and never again
+    statement_ends_at = report["statement_started_at"] + seconds
+    assert report["loop_closed_at"] - report["rollback_returned_at"] < 1.5  # asyncio.run did not wait for the close
+    assert report["loop_closed_at"] < statement_ends_at - 1  # the loop closed with the statement still running
+    assert report["parent_saw_exit_at"] - statement_ends_at < 10  # and the process ended when the statement did
