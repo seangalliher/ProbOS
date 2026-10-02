@@ -39,9 +39,13 @@ def _live_timers_after_six_tests(tmp_path: Path, *extra: str) -> int:
     (tmp_path / "test_nested.py").write_text(_NESTED_TESTS, encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_XDIST", "PYTEST_CURRENT"))}
     env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT), env.get("PYTHONPATH", "")])
+    # Force pytest-timeout's thread method: it is the only method on Windows and the one that keeps a
+    # finished threading.Timer on the item. Linux defaults to the signal method, which creates no Timer,
+    # so without this the control below would measure nothing there (CI shard failure, 2026-10-02).
     completed = subprocess.run(
         [sys.executable, "-m", "pytest", "test_nested.py", "-q", "-s", "-n", "0", "-p", "no:cacheprovider",
-         "-p", "no:randomly", "-o", "addopts=", "-o", "timeout=60", "--rootdir", str(tmp_path), *extra],
+         "-p", "no:randomly", "-o", "addopts=", "-o", "timeout=60", "-o", "timeout_method=thread",
+         "--rootdir", str(tmp_path), *extra],
         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120, check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
