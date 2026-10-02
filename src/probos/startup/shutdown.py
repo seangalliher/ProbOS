@@ -303,6 +303,100 @@ async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
             setattr(runtime, attribute, None)
 
 
+def _close_sync_store(store: Any, label: str) -> None:
+    """BF-881 (#1452): close a SQLite store opened synchronously; log-and-degrade.
+
+    ``ProfileStore`` (``ProbOSRuntime.__init__``), ``ServiceProfileStore`` and
+    ``SemanticStore`` each had a ``close()`` that nothing called, so their handles
+    stayed open (a held file on Windows) until a garbage collection. A failing close
+    must not stop the rest of the teardown.
+    """
+    if store is None:
+        return
+    try:
+        store.close()
+    except Exception:
+        logger.warning(
+            "BF-881: %s failed to close during shutdown; its SQLite handle stays open "
+            "until the store is collected. Shutdown continues.",
+            label,
+            exc_info=True,
+        )
+
+
+async def _stop_held_start_service(
+    runtime: Any,
+    *,
+    service_attr: str,
+    start_task_attr: str | None,
+    label: str,
+) -> None:
+    """BF-881 (#1452): stop a service nothing stopped, and the task that started it.
+
+    The AD-641a bridge and the AD-477 Captain's Log and Plan of the Day each have a
+    ``stop()`` that no shutdown step called, and the AD-733c-5 repoint dropped the only
+    reference to the AD-733c-2 ship-level perception controller, so five loops outlived
+    ``stop()``. A pending start task is cancelled first, so a service that has not begun
+    never does. ``stop()`` is awaited only when it is a coroutine function, which skips a
+    ``MagicMock`` runtime double (BF-254).
+
+    AD-477's ``stop()`` cancels its loop and awaits it, so the loop's own
+    ``CancelledError`` propagates out of ``stop()`` by contract. That one is swallowed. A
+    cancellation that arrives while this runs is not: the running task's cancel count is
+    compared with its count at entry, because ``stop()`` is typically awaited from a task
+    that was already cancelled (BF-303: the operator's Ctrl+C), whose count is above zero
+    for the whole teardown. Any other failure is logged and shutdown continues. Both
+    attributes are cleared either way.
+    """
+    service = getattr(runtime, service_attr, None)
+    start_task = getattr(runtime, start_task_attr, None) if start_task_attr else None
+    stop = getattr(service, "stop", None)
+    start_pending = isinstance(start_task, asyncio.Task) and not start_task.done()
+    stop_awaitable = inspect.iscoroutinefunction(stop)
+    if not (start_pending or stop_awaitable):
+        return
+
+    current = asyncio.current_task()
+    cancelling_at_entry = current.cancelling() if current is not None else 0
+
+    def _outer_cancel_arrived() -> bool:
+        return current is not None and current.cancelling() > cancelling_at_entry
+
+    try:
+        if start_pending:
+            start_task.cancel()
+            try:
+                await start_task
+            except asyncio.CancelledError:
+                if _outer_cancel_arrived():
+                    raise
+            except Exception:
+                logger.warning(
+                    "BF-881: the %s start task failed while it was cancelled for "
+                    "shutdown; stop() is still attempted",
+                    label,
+                    exc_info=True,
+                )
+        if stop_awaitable:
+            try:
+                await stop()
+            except asyncio.CancelledError:
+                if _outer_cancel_arrived():
+                    raise
+            except Exception:
+                logger.warning(
+                    "BF-881: %s.stop() failed during shutdown; its background loop may "
+                    "run until the event loop closes. Shutdown continues.",
+                    label,
+                    exc_info=True,
+                )
+    finally:
+        if service is not None:
+            setattr(runtime, service_attr, None)
+        if start_task is not None and start_task_attr:
+            setattr(runtime, start_task_attr, None)
+
+
 async def _stop_pools_and_drain_intent_bus(
     runtime: Any,
 ) -> asyncio.CancelledError | None:
@@ -905,6 +999,24 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
         runtime.conversation_pacing_scheduler = None
 
+    # BF-881 (#1452): the AD-641a bridge and the AD-477 Captain's Log and Plan of the
+    # Day each have a stop() that no step here called, so their loops (and a start task
+    # that had not run yet) outlived the runtime.
+    for _service_attr, _start_task_attr, _service_label in (
+        ("observability_bridge", "observability_bridge_start_task",
+         "AD-641a ObservabilityBridge"),
+        ("captains_log_service", "captains_log_start_task",
+         "AD-477 CaptainsLogService"),
+        ("plan_of_day_service", "plan_of_day_start_task",
+         "AD-477 PlanOfDayService"),
+    ):
+        await _stop_held_start_service(
+            runtime,
+            service_attr=_service_attr,
+            start_task_attr=_start_task_attr,
+            label=_service_label,
+        )
+
     # Stop Proactive Cognitive Loop (Phase 28b)
     if runtime.proactive_loop:
         # AD-415: Persist proactive cooldown overrides before stopping
@@ -947,6 +1059,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     _aid, exc_info=True,
                 )
         runtime.perception_engagement_registry = None
+
+    # BF-881 (#1452): the AD-733c-5 repoint above replaces the singleton the block before
+    # it stopped, so the ship-level AD-733c-2 controller (kept on this attribute by
+    # finalize) had no other owner and its idle watchdog outlived the runtime.
+    await _stop_held_start_service(
+        runtime,
+        service_attr="perception_default_controller",
+        start_task_attr=None,
+        label="AD-733c-2 ship-level perception controller",
+    )
 
     # AD-706b: Stop browser recording reaper (background retention sweeper)
     if hasattr(runtime, 'recording_reaper') and runtime.recording_reaper is not None:
@@ -1054,6 +1176,9 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     from probos.cognitive.standing_orders import set_directive_store
 
     HttpFetchAgent.set_profile_store(None)
+    # BF-881 (#1452): HttpFetchAgent was disconnected above and reads the store only in
+    # synchronous code, so nothing can reach the store once it is closed.
+    _close_sync_store(getattr(runtime, "service_profiles", None), "AD-382 ServiceProfileStore")
     runtime.service_profiles = None
 
     # Disconnect directive store (AD-386)
@@ -1065,6 +1190,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # AD-596b: Disconnect cognitive skill catalog from standing orders
     from probos.cognitive.standing_orders import set_skill_catalog
     set_skill_catalog(None)
+
+    # BF-881 (#1452): these three module globals (single-runtime state, like the two
+    # above) were never cleared. ``_billet_registry`` reaches the runtime through
+    # ``BilletRegistry._emit_event_fn``, so the whole stopped runtime stayed alive until
+    # the next one overwrote it. Cleared unconditionally, as set_skill_catalog is.
+    from probos.cognitive.standing_orders import (
+        set_billet_registry,
+        set_step_router,
+        set_task_context,
+    )
+    set_billet_registry(None)
+    set_step_router(None)
+    set_task_context(None)
 
     # AD-596c: Clear skill bridge reference (stateless, no teardown needed)
     runtime.skill_bridge = None
@@ -1297,6 +1435,15 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 "and the OS will reclaim the connection if needed: %s",
                 e,
             )
+
+    # BF-881 (#1452): two more synchronous SQLite handles with a close() nothing called.
+    # SemanticStore (AD-750) is dropped after the close; ProfileStore keeps its attribute,
+    # because close() is idempotent and a closed store's _persist does nothing.
+    _semantic_store = getattr(runtime, "_semantic_store", None)
+    if _semantic_store is not None:
+        _close_sync_store(_semantic_store, "AD-750 SemanticStore")
+        runtime._semantic_store = None
+    _close_sync_store(getattr(runtime, "profile_store", None), "crew ProfileStore")
 
     # AD-1195: flush queued durable rows while the EventLog is still open, so
     # they land before the stopped row. A runtime double whose attribute is

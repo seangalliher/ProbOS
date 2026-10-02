@@ -10130,3 +10130,32 @@ Measured at `cf13eb4f` through the real pipeline and registration: (2.0, 2.0) as
 - On a Windows host without the symlink privilege, such as this one, the 2 symlink cases skip, so the link-file checks are exercised only where symlinks can be made (the Ubuntu CI). The file-junction case needs Windows junctions and skips elsewhere, including the Ubuntu CI; the cannot-be-read case reaches the same read guard on any host.
 
 **Ownership and rollback:** A Git revert needs no migration. No column, config key, event, tool or tool schema is added or changed. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
+
+### BF-881 OPEN -- A normal stop() releases the loops, stores and globals it left behind
+
+**Date:** 2026-10-02. **Existing issue:** #1452 item 5. **Decision:** Execute the Architect's build contract `runtime-lifecycle-cleanup`, option `two-slice-shutdown-reuse-rollback`, slice A. The coordinator allocated BF-881 after checking the BF ceiling (BF-880: git subjects on all refs, PR titles, issue titles and the tracked docs). Slice B (BF-882, #1419 G-2) builds on this slice.
+
+**The defect.** Measured on `bc7b9bc4` with a real boot (every loop and store below turned on, `archive.db_path`, the data directory and the working directory under a temporary path), stopped at production timing:
+- Five loops outlive `stop()`. `ObservabilityBridge._publish_loop` (AD-641a) and the AD-477 `CaptainsLogService._run_loop` and `PlanOfDayService._run_loop` each have a `stop()` that no step of `shutdown()` called. The AD-485 DM archive loop was started with `asyncio.get_event_loop().create_task(...)` and no handle, so nothing could cancel it. The AD-733c-5 repoint replaces `runtime.perception_mode_controller` with a per-agent controller and drops the only reference to the AD-733c-2 ship-level controller, so its idle watchdog was never stopped.
+- Three SQLite handles stay open: `ProfileStore` (opened in `ProbOSRuntime.__init__`), `ServiceProfileStore` and `SemanticStore` each have a `close()` that nothing called. Their `close()` ran 0 times.
+- `standing_orders._billet_registry`, `_step_router` and `_task_context` are module globals that nothing cleared. `_billet_registry` reaches the runtime through `BilletRegistry._emit_event_fn`, so the whole stopped runtime stayed reachable until the next runtime overwrote the global.
+
+**What changes.**
+- `startup/shutdown.py`, Phase 2 only. `_stop_held_start_service(runtime, *, service_attr, start_task_attr, label)` cancels and awaits a pending start task, then awaits `stop()` only when it is a coroutine function (a `MagicMock` runtime is skipped, BF-254), logs any other failure as a warning and clears both attributes. It runs after the AD-743 block for the bridge, the Captain's Log and the Plan of the Day, and after the AD-733c-5 block for `perception_default_controller`. `ServiceProfileStore` is closed after `HttpFetchAgent.set_profile_store(None)`. `set_billet_registry`, `set_step_router` and `set_task_context` are called with `None` beside `set_skill_catalog(None)`. After the AD-524 archive close, `_semantic_store` is closed and cleared, and `profile_store` is closed with its attribute kept: `close()` is idempotent and a closed store's `_persist` does nothing. Every close is log-and-degrade.
+- `startup/finalize.py`: `runtime.perception_default_controller = _controller`, after the AD-733c-2 wiring. Its idle watchdog runs during the session exactly as before.
+- `startup/communication.py`: the DM archive loop is created with `asyncio.create_task(..., name="ward-room-dm-archive-loop")` and registered through `background_register`, as the journal prune task is, so the AD-824 sweep cancels it.
+- Unchanged: the order and timing of the normal stop, the AD-820 marker, BF-598, AD-824/825, BF-296/602 and AD-1278 behaviour, and `naval/*.py`, whose `stop()` still re-raises its own loop's cancellation.
+
+**A deliberate refinement of the contract's wording.** The contract swallows a `CancelledError` only while `current_task().cancelling() == 0`. AD-477's `stop()` re-raises its own loop's cancellation, so the helper has to swallow that one. But `stop()` is typically awaited from a task the operator's Ctrl+C has already cancelled (BF-303), and that task's cancel count stays above zero for the whole teardown. A comparison with zero re-raises at the first AD-477 stop and skips every step after it. The helper compares the count with its value at entry, so a cancellation that arrives while it runs is still re-raised; entering with 0 behaves as the contract describes. 2 cases pin it, and the compare-with-zero mutant is killed.
+
+**Measured evidence.**
+- 18 new cases in `tests/test_issue1452_stop_leftovers.py`, with the shared detectors in `tests/fixtures/runtime_lifecycle.py`. 13 fail at `bc7b9bc4`; the 5 that pass are the detector and config controls. Before: 5 tasks left running, 3 connections open, each `close()` run 0 times, the 3 globals still set. After: 0 tasks, 0 open connections, each `close()` run once, the 3 globals `None`, and the stopped runtime is freed by `gc.collect()`. The stop already left no non-daemon thread, and still does not.
+- The detectors are shown to discriminate: a planted task, a parked non-daemon thread, a loop-thread `sqlite3` connection and an aiosqlite worker are each reported, and each goes silent once released. A `sqlite3.Connection` cannot be weakly referenced, so the tracker passes a trivial subclass as the connection factory.
+- The 6 `ProbOSRuntime.start` source-contract files (334), the 21 shutdown consumers (1,549) and the 38 consumer files (1,278) pass with the counts they had at `bc7b9bc4`.
+
+**Honest limits.**
+- A runtime that is never stopped still leaks everything it started. The contract excludes it.
+- The three globals are cleared unconditionally, as `set_skill_catalog(None)` is, so stopping one runtime also clears them for a second runtime alive in the same process. `standing_orders` documents them as single-runtime state.
+- These leftovers are not the cause of the suite slowdown (flat over 10 boot/stop cycles) or of the CI hang (xdist terminates a stuck worker after 10 s).
+
+**Ownership and rollback:** A Git revert needs no migration. No column, config key, event, tool or tool schema is added or changed. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.

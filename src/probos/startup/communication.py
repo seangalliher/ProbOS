@@ -505,7 +505,14 @@ async def init_communication(
                 except Exception as e:
                     logger.debug("DM archival failed: %s", e)
 
-        asyncio.get_event_loop().create_task(_dm_archive_loop())
+        # BF-881 (#1452): hold the task and register it as the journal task below is, so
+        # the AD-824 sweep cancels it at shutdown; it was fire-and-forget and outlived
+        # the runtime.
+        _dm_archive_task = asyncio.create_task(
+            _dm_archive_loop(), name="ward-room-dm-archive-loop"
+        )
+        if background_register is not None:
+            background_register(_dm_archive_task)
 
     # --- Assignment Service (AD-408) ---
     assignment_service = None
