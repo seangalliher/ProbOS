@@ -18,7 +18,8 @@ see it before any "nothing is left" assertion is trusted.
 
 ``inject_start_failure`` makes ONE startup step raise (or block) and records the facts
 it saw when it fired, so a test can assert its own premise: a rollback test that never
-reached the phase it claims to cover proves nothing.
+reached the phase it claims to cover proves nothing. ``break_stop`` makes a component's
+``stop()`` raise after it ran, to prove a rollback goes on past a teardown step that fails.
 """
 
 from __future__ import annotations
@@ -393,6 +394,42 @@ def inject_start_failure(
 
         monkeypatch.setattr(runtime.event_log, "log", log)
     return failure
+
+
+@dataclass
+class BrokenStop:
+    """One component whose ``stop()`` was made to raise, and how often it was called."""
+
+    attribute: str
+    error: BaseException
+    calls: int = 0
+
+
+def break_stop(
+    runtime: Any, attribute: str, *, error: BaseException | None = None,
+) -> BrokenStop:
+    """Make ``runtime.<attribute>.stop()`` run to completion and then raise.
+
+    The component really stops first, so what a test finds left behind afterwards is what
+    the teardown did not reach once this step failed, not what the broken component itself
+    held. Raises ``AssertionError`` if the component does not exist yet: a break that was
+    not installed proves nothing, so the setup fails loudly instead of the test passing.
+    Meant for ``inject_start_failure``'s ``on_fire``, when the phase's components exist.
+    """
+    service = getattr(runtime, attribute, None)
+    assert service is not None, f"runtime.{attribute} does not exist at this phase; nothing to break"
+    original = service.stop
+    broken = BrokenStop(
+        attribute, error if error is not None else RuntimeError(f"INJECTED {attribute}.stop() failure"),
+    )
+
+    async def stop(*args: Any, **kwargs: Any) -> Any:
+        broken.calls += 1
+        await original(*args, **kwargs)
+        raise broken.error
+
+    service.stop = stop
+    return broken
 
 
 # ------------------------------------------------------------------- runtime double

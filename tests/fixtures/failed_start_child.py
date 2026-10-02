@@ -13,6 +13,11 @@ watchdog dumps every stack into ``PROBOS_LIFECYCLE_HANGDUMP`` and ``_exit``s wit
 a clean exit is exit code 0 with an empty dump. Before BF-882, 13 of 15 failed-start
 children hung this way.
 
+``PROBOS_LIFECYCLE_BREAK_STEPS`` (comma-separated runtime attributes) makes each named
+component's ``stop()`` run and then raise at the moment the injected failure fires, so the
+rollback has to go on past a teardown step that fails. The attributes must exist at the
+phase under test; the report lists how often each broken ``stop()`` was called.
+
 Exit code 3: probos was imported from somewhere other than ``PROBOS_LIFECYCLE_EXPECT_SRC``.
 
 This module is import-safe: the checks and side effects run only when it is run as a
@@ -39,6 +44,11 @@ for _key, _value in (
 
 _EXPECTED_SRC = os.environ.get("PROBOS_LIFECYCLE_EXPECT_SRC", "")
 _HANG_DUMP = os.environ.get("PROBOS_LIFECYCLE_HANGDUMP", "")
+_BREAK_STEPS = [
+    attribute.strip()
+    for attribute in os.environ.get("PROBOS_LIFECYCLE_BREAK_STEPS", "").split(",")
+    if attribute.strip()
+]
 _WATCHDOG_SECONDS = 30
 
 
@@ -61,7 +71,9 @@ from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe  # noqa
 from tests.fixtures.codebase_index_memo import install_codebase_index_memo  # noqa: E402
 from tests.fixtures.runtime_factory import make_runtime  # noqa: E402
 from tests.fixtures.runtime_lifecycle import (  # noqa: E402
+    BrokenStop,
     InjectedStartFailure,
+    break_stop,
     inject_start_failure,
     lifecycle_config,
 )
@@ -71,8 +83,15 @@ async def _failed_start(base: Path, phase: str) -> dict[str, Any]:
     runtime = make_runtime(base, config=lifecycle_config(base, zero_grace=True))
     patches = pytest.MonkeyPatch()
     report: dict[str, Any] = {"phase": phase}
+    broken_stops: list[BrokenStop] = []
+
+    def break_the_requested_steps(failing_runtime: Any) -> None:
+        broken_stops.extend(break_stop(failing_runtime, attribute) for attribute in _BREAK_STEPS)
+
     try:
-        failure = inject_start_failure(patches, runtime, phase)
+        failure = inject_start_failure(
+            patches, runtime, phase, on_fire=break_the_requested_steps if _BREAK_STEPS else None,
+        )
         try:
             await runtime.start()
             report["start_raised"] = None
@@ -83,6 +102,7 @@ async def _failed_start(base: Path, phase: str) -> dict[str, Any]:
         report["pools_after"] = len(runtime.pools)
         report["registry_after"] = runtime.registry.count
         report["yeoman_after"] = YeomanAgent._live_instance_count
+        report["broken_stop_calls"] = {broken.attribute: broken.calls for broken in broken_stops}
     except Exception as error:  # noqa: BLE001 -- the parent reads the report, whatever happened
         report["error"] = f"{type(error).__name__}: {error}"
     finally:
