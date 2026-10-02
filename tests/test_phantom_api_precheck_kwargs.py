@@ -1,8 +1,11 @@
 """Tests for AD-685 phantom-API pre-check kwarg validation.
 
 Covers:
-- Python AST helper directly (tests #1-6)
-- PowerShell wrapper integration (tests #7-9)
+- Python AST helper directly (tests #1-6). Test #1 runs the helper CLI in a real
+  subprocess: the process entry point and its stdin/stdout contract. Tests #2-6 run
+  the helper's real main() in-process through tests/fixtures/phantom_helper_memo.py,
+  which keeps the helper's parse of src/probos between calls.
+- PowerShell wrapper integration (tests #7-9), real pwsh processes
 """
 from __future__ import annotations
 
@@ -10,9 +13,12 @@ import json
 import subprocess
 import sys
 import textwrap
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from tests.fixtures.phantom_helper_memo import InProcessPhantomHelper
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HELPER = REPO_ROOT / "scripts" / "phantom_api_ast_helper.py"
@@ -23,7 +29,8 @@ SRC_ROOT = REPO_ROOT / "src" / "probos"
 PYTHON_EXE = Path(sys.executable)
 
 
-def _run_helper(body: str) -> dict:
+# Real CLI: a fresh interpreter, launched the way scripts/phantom-api-precheck.ps1 launches it.
+def _run_helper_cli(body: str) -> dict:
     """Invoke the Python AST helper and return its parsed JSON output."""
     proc = subprocess.run(
         [str(PYTHON_EXE), str(HELPER), "--src-root", str(SRC_ROOT)],
@@ -35,6 +42,28 @@ def _run_helper(body: str) -> dict:
     )
     assert proc.returncode == 0, f"Helper failed: {proc.stderr}"
     return json.loads(proc.stdout)
+
+
+# Timeouts differ between the two transports. Test 1 (_run_helper_cli) keeps its 60 s
+# subprocess guard and the wrapper tests their 120 s. An in-process call has no per-call
+# limit: only the suite-wide pytest-timeout (180 s) guards it. On Windows that timeout
+# terminates the xdist worker, and the canonical gate's exactly-once check turns that
+# into a red gate, never a false green.
+@pytest.fixture(scope="module")
+def in_process_helper() -> Iterator[InProcessPhantomHelper]:
+    """One in-process helper for the module, so src/probos is parsed once, not per call."""
+    helper = InProcessPhantomHelper(SRC_ROOT, helper_path=HELPER)
+    try:
+        yield helper
+    finally:
+        helper.release()
+
+
+def _run_helper_in_process(helper: InProcessPhantomHelper, body: str) -> dict:
+    """Run the helper's main() in-process and return its parsed JSON output."""
+    result = helper.run(body)
+    assert result.returncode == 0, f"Helper failed: {result.stderr}"
+    return json.loads(result.stdout)
 
 
 def _run_wrapper(prompt_path: Path) -> subprocess.CompletedProcess:
@@ -56,7 +85,8 @@ def _run_wrapper(prompt_path: Path) -> subprocess.CompletedProcess:
     )
 
 
-# Test 1: clean prompt produces no phantoms.
+# Test 1: clean prompt produces no phantoms. Stays a real subprocess: it pins the CLI
+# contract (process entry point, stdin, stdout JSON, exit status).
 def test_helper_runs_on_clean_prompt_returns_empty_phantoms() -> None:
     body = textwrap.dedent(
         """\
@@ -67,7 +97,7 @@ def test_helper_runs_on_clean_prompt_returns_empty_phantoms() -> None:
         ```
         """
     )
-    out = _run_helper(body)
+    out = _run_helper_cli(body)
     # AD-685b: helper now also emits an `unresolved` list (empty when no
     # call sites trigger conservative skips). `phantoms` stays empty on a
     # clean prompt.
@@ -76,7 +106,9 @@ def test_helper_runs_on_clean_prompt_returns_empty_phantoms() -> None:
 
 
 # Test 2: Wave 9B regression — `event_log.query(event_type=...)` flagged.
-def test_helper_catches_event_log_query_event_type_kwarg_mismatch() -> None:
+def test_helper_catches_event_log_query_event_type_kwarg_mismatch(
+    in_process_helper: InProcessPhantomHelper,
+) -> None:
     body = textwrap.dedent(
         """\
         ```python
@@ -84,7 +116,7 @@ def test_helper_catches_event_log_query_event_type_kwarg_mismatch() -> None:
         ```
         """
     )
-    out = _run_helper(body)
+    out = _run_helper_in_process(in_process_helper, body)
     methods = {p["method"] for p in out["phantoms"]}
     kwargs = {p["kwarg"] for p in out["phantoms"]}
     assert "query" in methods
@@ -95,7 +127,9 @@ def test_helper_catches_event_log_query_event_type_kwarg_mismatch() -> None:
 # (Symbol check on PowerShell side handles get_pending; helper covers the
 # kwarg-shape variant that would have slipped past — list_work_items with
 # a wrong kwarg.)
-def test_helper_catches_work_item_store_get_pending() -> None:
+def test_helper_catches_work_item_store_get_pending(
+    in_process_helper: InProcessPhantomHelper,
+) -> None:
     body = textwrap.dedent(
         """\
         ```python
@@ -103,7 +137,7 @@ def test_helper_catches_work_item_store_get_pending() -> None:
         ```
         """
     )
-    out = _run_helper(body)
+    out = _run_helper_in_process(in_process_helper, body)
     methods = {p["method"] for p in out["phantoms"]}
     kwargs = {p["kwarg"] for p in out["phantoms"]}
     assert "list_work_items" in methods
@@ -112,7 +146,9 @@ def test_helper_catches_work_item_store_get_pending() -> None:
 
 # Test 4: kwargs in non-Python fenced blocks are skipped (pwsh, bash, sh,
 # text, bare). Only ```python and ```py are scanned.
-def test_helper_skips_kwargs_in_non_python_fenced_blocks() -> None:
+def test_helper_skips_kwargs_in_non_python_fenced_blocks(
+    in_process_helper: InProcessPhantomHelper,
+) -> None:
     fence_tags = ["pwsh", "bash", "sh", "text", ""]  # last = bare fence
     for tag in fence_tags:
         body = (
@@ -127,7 +163,7 @@ def test_helper_skips_kwargs_in_non_python_fenced_blocks() -> None:
         # Here verify helper logic: when given a body with the call site,
         # it DOES find the phantom — confirming the wrapper's pre-filter
         # is what suppresses fences, not the helper.
-        out = _run_helper(body)
+        out = _run_helper_in_process(in_process_helper, body)
         # Helper alone, on un-prefiltered input, finds the call. The
         # wrapper's pre-filter suppression is verified separately in
         # test_powershell_wrapper_shared_prefilter_suppresses_prose_table_phantom.
@@ -142,22 +178,26 @@ def test_helper_skips_kwargs_in_non_python_fenced_blocks() -> None:
         '                                          \n'
         "   \n"
     )
-    out = _run_helper(masked_body)
+    out = _run_helper_in_process(in_process_helper, masked_body)
     assert out["phantoms"] == []
 
 
 # Test 5: kwargs in `## Revision` sections are skipped (audit trail).
-def test_helper_skips_kwargs_in_revision_section() -> None:
+def test_helper_skips_kwargs_in_revision_section(
+    in_process_helper: InProcessPhantomHelper,
+) -> None:
     # Helper trusts pre-filtered input — wrapper masks Revision sections.
     # Verify the masked-body input produces no phantoms.
     masked_body = "         \n         \n         \n"
-    out = _run_helper(masked_body)
+    out = _run_helper_in_process(in_process_helper, masked_body)
     assert out["phantoms"] == []
 
 
 # Test 6: kwarg accepted if ANY same-named definition matches (limitation
 # documented; receiver-class resolution deferred to AD-685c/d).
-def test_helper_accepts_kwarg_matching_any_definition() -> None:
+def test_helper_accepts_kwarg_matching_any_definition(
+    in_process_helper: InProcessPhantomHelper,
+) -> None:
     # `query` exists in multiple modules with different signatures. The
     # helper accepts a kwarg if any candidate signature has that param.
     # `event_log.query` accepts `category`; helper should NOT flag it even
@@ -169,7 +209,7 @@ def test_helper_accepts_kwarg_matching_any_definition() -> None:
         ```
         """
     )
-    out = _run_helper(body)
+    out = _run_helper_in_process(in_process_helper, body)
     # `category` is in event_log.query's signature — should not be flagged.
     flagged_kwargs = {p["kwarg"] for p in out["phantoms"]}
     assert "category" not in flagged_kwargs
