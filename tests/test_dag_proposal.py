@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
@@ -10,8 +9,9 @@ import pytest
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import SystemConfig, SelfModConfig
 from probos.experience.panels import render_dag_proposal
-from probos.runtime import ProbOSRuntime
 from probos.types import TaskDAG, TaskNode
+
+from tests.fixtures.runtime_factory import make_runtime, started_runtime, stop_runtime
 
 from rich.panel import Panel
 
@@ -68,55 +68,61 @@ class TestRuntimePropose:
     @pytest.mark.asyncio
     async def test_propose_returns_task_dag(self, config, llm, tmp_path):
         """propose() returns a TaskDAG."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
-        dag = await rt.propose("read the file /tmp/test.txt")
-        assert isinstance(dag, TaskDAG)
-        await rt.stop()
+        text = "read the file /tmp/test.txt"
+        dag = await rt.propose(text)
+        assert type(dag) is TaskDAG
+        assert dag.source_text == text
+        assert [(node.intent, node.params, node.status) for node in dag.nodes] == [
+            ("read_file", {"path": "/tmp/test.txt"}, "pending"),
+        ]
+        assert rt._pending_proposal is dag
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_propose_stores_pending_proposal(self, config, llm, tmp_path):
         """propose() stores the DAG as _pending_proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             assert rt._pending_proposal is dag
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_propose_conversational_no_pending(self, config, llm, tmp_path):
         """propose() with conversational response does not create pending proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("hello")
         # Greeting should produce a conversational response with no nodes
         if dag.response and not dag.nodes:
             assert rt._pending_proposal is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_propose_replaces_existing(self, config, llm, tmp_path):
         """propose() replaces an existing pending proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag1 = await rt.propose("read the file /tmp/a.txt")
         dag2 = await rt.propose("read the file /tmp/b.txt")
         if dag2.nodes:
             assert rt._pending_proposal is dag2
             assert rt._pending_proposal is not dag1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_propose_does_not_execute(self, config, llm, tmp_path):
         """propose() does not execute the DAG — nodes remain pending."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             for node in dag.nodes:
                 assert node.status == "pending"
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestRuntimeExecuteProposal:
@@ -135,27 +141,27 @@ class TestRuntimeExecuteProposal:
     @pytest.mark.asyncio
     async def test_execute_proposal_returns_none_when_empty(self, config, llm, tmp_path):
         """execute_proposal() returns None when no pending proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         result = await rt.execute_proposal()
         assert result is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_execute_proposal_clears_pending(self, config, llm, tmp_path):
         """execute_proposal() clears _pending_proposal after execution."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             await rt.execute_proposal()
             assert rt._pending_proposal is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_execute_proposal_returns_result(self, config, llm, tmp_path):
         """execute_proposal() returns execution result dict."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
@@ -164,18 +170,18 @@ class TestRuntimeExecuteProposal:
             assert "dag" in result
             assert "results" in result
             assert "complete" in result
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_execute_proposal_stores_introspection(self, config, llm, tmp_path):
         """execute_proposal() stores execution result for introspection."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             result = await rt.execute_proposal()
             assert rt._last_execution is result
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestRuntimeRejectProposal:
@@ -194,23 +200,23 @@ class TestRuntimeRejectProposal:
     @pytest.mark.asyncio
     async def test_reject_clears_pending(self, config, llm, tmp_path):
         """reject_proposal() clears _pending_proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             result = await rt.reject_proposal()
             assert result is True
             assert rt._pending_proposal is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_reject_returns_false_when_empty(self, config, llm, tmp_path):
         """reject_proposal() returns False when no pending proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         result = await rt.reject_proposal()
         assert result is False
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestProcessNaturalLanguagePreserved:
@@ -229,33 +235,45 @@ class TestProcessNaturalLanguagePreserved:
     @pytest.mark.asyncio
     async def test_pnl_still_works(self, config, llm, tmp_path):
         """process_natural_language() still works identically after refactor."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         result = await rt.process_natural_language("read the file /tmp/test.txt")
         assert isinstance(result, dict)
         assert "dag" in result
         assert "results" in result
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_pnl_conversational(self, config, llm, tmp_path):
         """process_natural_language() handles conversational input."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         result = await rt.process_natural_language("hello")
         assert isinstance(result, dict)
         # Should have response or node_count
         assert "node_count" in result or "response" in result
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
-    async def test_execute_dag_shared(self, config, llm, tmp_path):
+    async def test_execute_dag_shared(self, config, llm, tmp_path, monkeypatch):
         """_execute_dag() is used by both process_natural_language() and execute_proposal()."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
-        assert hasattr(rt, '_execute_dag')
-        assert asyncio.iscoroutinefunction(rt._execute_dag)
-        await rt.stop()
+        executed = []
+        execute_dag = rt._execute_dag
+
+        async def spy(dag, *args, **kwargs):
+            executed.append(dag)
+            return await execute_dag(dag, *args, **kwargs)
+
+        monkeypatch.setattr(rt, "_execute_dag", spy)
+        await rt.process_natural_language("read the file /tmp/test.txt")
+        assert len(executed) == 1
+        proposed = await rt.propose("read the file /tmp/test.txt")
+        await rt.execute_proposal()
+        assert len(executed) == 2
+        assert executed[1] is proposed
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===========================================================================
@@ -279,48 +297,48 @@ class TestRemoveProposalNode:
     @pytest.mark.asyncio
     async def test_remove_by_index(self, config, llm, tmp_path):
         """remove_proposal_node() removes node by index."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag("read_file", "write_file")
         removed = await rt.remove_proposal_node(0)
         assert removed is not None
         assert removed.intent == "read_file"
         assert len(rt._pending_proposal.nodes) == 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_returns_task_node(self, config, llm, tmp_path):
         """remove_proposal_node() returns the removed TaskNode."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag("read_file")
         removed = await rt.remove_proposal_node(0)
         assert isinstance(removed, TaskNode)
         assert removed.intent == "read_file"
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_invalid_index(self, config, llm, tmp_path):
         """remove_proposal_node() returns None for invalid index."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag("read_file")
         assert await rt.remove_proposal_node(5) is None
         assert await rt.remove_proposal_node(-1) is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_no_pending(self, config, llm, tmp_path):
         """remove_proposal_node() returns None when no pending proposal."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         assert await rt.remove_proposal_node(0) is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_cleans_deps(self, config, llm, tmp_path):
         """Removing a node cleans up dependency references."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag_with_deps()
         # Remove t1 (index 0) — t2 depends on it
@@ -330,12 +348,12 @@ class TestRemoveProposalNode:
         remaining = rt._pending_proposal.nodes
         t2_node = next(n for n in remaining if n.id == "t2")
         assert "t1" not in t2_node.depends_on
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_dependent_node_updates_dependents(self, config, llm, tmp_path):
         """Removing a middle node updates downstream depends_on."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag_with_deps()
         # Remove t2 (index 1) — t3 depends on t2
@@ -345,17 +363,17 @@ class TestRemoveProposalNode:
         assert len(remaining) == 2
         t3_node = next(n for n in remaining if n.id == "t3")
         assert "t2" not in t3_node.depends_on
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_remove_last_node_leaves_empty(self, config, llm, tmp_path):
         """Removing the last node leaves an empty nodes list."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag("read_file")
         await rt.remove_proposal_node(0)
         assert rt._pending_proposal.nodes == []
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===========================================================================
@@ -432,19 +450,19 @@ class TestProposalEventLog:
     @pytest.mark.asyncio
     async def test_proposal_created_event(self, config, llm, tmp_path):
         """proposal_created event logged on propose()."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
             events = await rt.event_log.query(category="cognitive", limit=10)
             proposal_events = [e for e in events if e["event"] == "proposal_created"]
             assert len(proposal_events) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_proposal_approved_event(self, config, llm, tmp_path):
         """proposal_approved event logged on execute_proposal()."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
@@ -452,12 +470,12 @@ class TestProposalEventLog:
             events = await rt.event_log.query(category="cognitive", limit=20)
             approved_events = [e for e in events if e["event"] == "proposal_approved"]
             assert len(approved_events) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_proposal_rejected_event(self, config, llm, tmp_path):
         """proposal_rejected event logged on reject_proposal()."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
@@ -465,19 +483,19 @@ class TestProposalEventLog:
             events = await rt.event_log.query(category="cognitive", limit=10)
             rejected_events = [e for e in events if e["event"] == "proposal_rejected"]
             assert len(rejected_events) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_proposal_node_removed_event(self, config, llm, tmp_path):
         """proposal_node_removed event logged on remove_proposal_node()."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         rt._pending_proposal = _make_dag("read_file", "write_file")
         await rt.remove_proposal_node(0)
         events = await rt.event_log.query(category="cognitive", limit=10)
         removed_events = [e for e in events if e["event"] == "proposal_node_removed"]
         assert len(removed_events) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===========================================================================
@@ -501,7 +519,7 @@ class TestProposalWorkflowIntegration:
     @pytest.mark.asyncio
     async def test_execute_proposal_stores_in_cache(self, config, llm, tmp_path):
         """execute_proposal() stores successful workflow in cache."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         dag = await rt.propose("read the file /tmp/test.txt")
         if dag.nodes:
@@ -509,12 +527,12 @@ class TestProposalWorkflowIntegration:
             # If all nodes completed, it should be cached
             if result and all(n.status == "completed" for n in result["dag"].nodes):
                 assert rt.workflow_cache.size > 0
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_execute_proposal_runs_reflect(self, config, llm, tmp_path):
         """execute_proposal() runs reflect step when dag.reflect=True."""
-        rt = ProbOSRuntime(config=config, llm_client=llm, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, llm=llm, config=config)
         await rt.start()
         # Manually set a proposal with reflect=True
         dag = _make_dag("read_file", reflect=True)
@@ -525,7 +543,7 @@ class TestProposalWorkflowIntegration:
             # Reflect would have been attempted (may succeed or fail)
             # The key test is that _execute_dag was called
             assert "dag" in result
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===========================================================================
@@ -539,10 +557,8 @@ class TestShellPlanCommands:
     @pytest.fixture
     async def runtime(self, tmp_path):
         llm = MockLLMClient()
-        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-        await rt.start()
-        yield rt
-        await rt.stop()
+        async with started_runtime(tmp_path, llm=llm, fast_teardown=True) as rt:
+            yield rt
 
     @pytest.fixture
     def console(self):

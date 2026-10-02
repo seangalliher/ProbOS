@@ -9,6 +9,8 @@ import pytest
 from probos.config import SelfModConfig, SystemConfig, load_config
 from probos.cognitive.code_validator import CodeValidator
 
+from tests.fixtures.runtime_factory import make_runtime, started_runtime, stop_runtime
+
 
 # ---------------------------------------------------------------------------
 # Valid agent source code — used across multiple test classes
@@ -893,37 +895,44 @@ class TestRuntimeSelfMod:
     def _runtime_env(self, tmp_path):
         """Create a ProbOSRuntime with self_mod enabled."""
         from probos.config import SystemConfig, SelfModConfig
-        from probos.runtime import ProbOSRuntime
         config = SystemConfig(
             self_mod=SelfModConfig(
                 enabled=True,
                 require_user_approval=False,
             ),
         )
-        rt = ProbOSRuntime(config=config, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, config=config)
         return rt
 
     @pytest.fixture
     def _runtime_disabled(self, tmp_path):
         """Create a ProbOSRuntime with self_mod disabled."""
         from probos.config import SystemConfig, SelfModConfig
-        from probos.runtime import ProbOSRuntime
         config = SystemConfig(
             self_mod=SelfModConfig(enabled=False),
         )
-        rt = ProbOSRuntime(config=config, data_dir=tmp_path)
+        rt = make_runtime(tmp_path, config=config)
         return rt
 
     @pytest.mark.asyncio
     async def test_runtime_creates_pipeline_when_enabled(self, _runtime_env):
         """Test 39: Runtime creates pipeline when self_mod.enabled=True."""
+        from probos.cognitive.behavioral_monitor import BehavioralMonitor
+        from probos.cognitive.self_mod import SelfModificationPipeline
+
         rt = _runtime_env
         await rt.start()
         try:
-            assert rt.self_mod_pipeline is not None
-            assert rt.behavioral_monitor is not None
+            pipeline = rt.self_mod_pipeline
+            assert type(pipeline) is SelfModificationPipeline
+            assert type(rt.behavioral_monitor) is BehavioralMonitor
+            # startup builds the pipeline over the runtime's own monitor and config
+            assert pipeline._monitor is rt.behavioral_monitor
+            assert pipeline._config is rt.config.self_mod
+            assert rt.pools["skills"].current_size == 2
+            assert [a.agent_type for a in rt.registry.get_by_pool("skills")] == ["skill_agent"] * 2
         finally:
-            await rt.stop()
+            await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_runtime_no_pipeline_when_disabled(self, _runtime_disabled):
@@ -934,7 +943,7 @@ class TestRuntimeSelfMod:
             assert rt.self_mod_pipeline is None
             assert rt.behavioral_monitor is None
         finally:
-            await rt.stop()
+            await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_status_includes_self_mod(self, _runtime_env):
@@ -946,7 +955,7 @@ class TestRuntimeSelfMod:
             assert "self_mod" in status
             assert "designed_agents" in status["self_mod"]
         finally:
-            await rt.stop()
+            await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_extract_unhandled_intent(self, _runtime_env):
@@ -959,7 +968,7 @@ class TestRuntimeSelfMod:
             assert "name" in meta
             assert "description" in meta
         finally:
-            await rt.stop()
+            await stop_runtime(rt, fast_teardown=True)
 
 
 # ---------------------------------------------------------------------------
@@ -996,22 +1005,17 @@ class TestDesignedPanels:
     async def test_designed_command(self, tmp_path):
         """Test 44: /designed command renders panel (or 'not enabled')."""
         from probos.config import SystemConfig, SelfModConfig
-        from probos.runtime import ProbOSRuntime
         from probos.experience.shell import ProbOSShell
         from rich.console import Console
         from io import StringIO
 
         # Test with self_mod disabled
         config = SystemConfig(self_mod=SelfModConfig(enabled=False))
-        rt = ProbOSRuntime(config=config, data_dir=tmp_path)
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=config, fast_teardown=True) as rt:
             output = StringIO()
             shell = ProbOSShell(rt, console=Console(file=output, force_terminal=True))
             await shell.execute_command("/designed")
             assert "not enabled" in output.getvalue().lower() or "Self-modification" in output.getvalue()
-        finally:
-            await rt.stop()
 
 
 # ---------------------------------------------------------------------------
