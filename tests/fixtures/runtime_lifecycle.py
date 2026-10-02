@@ -19,7 +19,8 @@ see it before any "nothing is left" assertion is trusted.
 ``inject_start_failure`` makes ONE startup step raise (or block) and records the facts
 it saw when it fired, so a test can assert its own premise: a rollback test that never
 reached the phase it claims to cover proves nothing. ``break_stop`` makes a component's
-``stop()`` raise after it ran, to prove a rollback goes on past a teardown step that fails.
+``stop()`` raise, after it ran or before it did (``when=``), to prove a rollback goes on
+past a teardown step that fails and then releases what that component still holds.
 """
 
 from __future__ import annotations
@@ -396,36 +397,77 @@ def inject_start_failure(
     return failure
 
 
+def direct_connection_attributes(component: Any) -> list[str]:
+    """The attributes of ``component`` that hold an aiosqlite or sqlite3 connection, one level deep.
+
+    A test-side probe, written independently of the production last-resort scan so that the
+    premise "this component held its connection directly when its stop failed" is not
+    checked by the code it is meant to test.
+    """
+    import aiosqlite
+
+    return sorted(
+        name for name, value in vars(component).items()
+        if isinstance(value, (aiosqlite.Connection, sqlite3.Connection))
+    )
+
+
 @dataclass
 class BrokenStop:
-    """One component whose ``stop()`` was made to raise, and how often it was called."""
+    """One component whose ``stop()`` was made to raise, and what happened to it.
+
+    ``calls`` counts every call: the failed step and, in a rollback, its one retry.
+    ``cleaned_up`` counts the calls on which the component's real ``stop()`` ran to
+    completion before the error was raised (always 0 for ``when="before"``).
+    ``connections`` are the attributes that held a sqlite connection when the break was
+    installed, which is the premise for a test of what happens to those connections.
+    """
 
     attribute: str
     error: BaseException
+    when: str = "after"
     calls: int = 0
+    cleaned_up: int = 0
+    connections: list[str] = field(default_factory=list)
 
 
 def break_stop(
-    runtime: Any, attribute: str, *, error: BaseException | None = None,
+    runtime: Any,
+    attribute: str,
+    *,
+    error: BaseException | None = None,
+    when: str = "after",
 ) -> BrokenStop:
-    """Make ``runtime.<attribute>.stop()`` run to completion and then raise.
+    """Make ``runtime.<attribute>.stop()`` raise, after or before it has cleaned up.
 
-    The component really stops first, so what a test finds left behind afterwards is what
-    the teardown did not reach once this step failed, not what the broken component itself
-    held. Raises ``AssertionError`` if the component does not exist yet: a break that was
-    not installed proves nothing, so the setup fails loudly instead of the test passing.
-    Meant for ``inject_start_failure``'s ``on_fire``, when the phase's components exist.
+    ``when="after"``: the component really stops first, so what a test finds left behind
+    afterwards is what the teardown did not reach once this step failed, not what the broken
+    component itself held. ``when="before"``: the error is raised at once and the component's
+    real ``stop()`` never runs, so whatever it holds (its connections and their worker
+    threads) stays open unless the rollback closes it. A test that only ever breaks a stop
+    ``"after"`` cannot see that: it makes zero leftovers a foregone conclusion.
+
+    Raises ``AssertionError`` if the component does not exist yet: a break that was not
+    installed proves nothing, so the setup fails loudly instead of the test passing. Meant
+    for ``inject_start_failure``'s ``on_fire``, when the phase's components exist.
     """
+    if when not in ("after", "before"):
+        raise ValueError(f"when must be 'after' or 'before', not {when!r}")
     service = getattr(runtime, attribute, None)
     assert service is not None, f"runtime.{attribute} does not exist at this phase; nothing to break"
     original = service.stop
     broken = BrokenStop(
-        attribute, error if error is not None else RuntimeError(f"INJECTED {attribute}.stop() failure"),
+        attribute,
+        error if error is not None else RuntimeError(f"INJECTED {attribute}.stop() failure"),
+        when=when,
+        connections=direct_connection_attributes(service),
     )
 
     async def stop(*args: Any, **kwargs: Any) -> Any:
         broken.calls += 1
-        await original(*args, **kwargs)
+        if when == "after":
+            await original(*args, **kwargs)
+            broken.cleaned_up += 1
         raise broken.error
 
     service.stop = stop

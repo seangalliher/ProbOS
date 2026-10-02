@@ -12,8 +12,9 @@ import inspect
 import json
 import logging
 import math
+import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 # quiesced.
 SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435
 SHUTDOWN_DISPATCH_GRACE_S: float = 2.0  # BF-296 Phase A: after the bus closes
+
+# BF-882: the bound on one last-resort action of a startup rollback, a retried stop() or the
+# close of one connection. A rollback has to end so that the start() error can reach its
+# caller, and a connection's close waits on its worker thread. It is not a tuning knob: it
+# only has to be longer than a healthy stop and shorter than a hang.
+_LAST_RESORT_SECONDS: float = 5.0
 
 
 async def _close_crew_session_delivery(runtime: Any) -> None:
@@ -276,8 +283,17 @@ async def _close_llm_client_after_confab_probes(runtime: Any) -> None:
     await runtime.llm_client.close()
 
 
-async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
-    """Close runtime-owned SQLite services without another lifecycle owner."""
+async def _stop_runtime_sqlite_sidecars(
+    runtime: Any,
+    on_failure: Callable[[str, Any], None] | None = None,
+) -> None:
+    """Close runtime-owned SQLite services without another lifecycle owner.
+
+    A service whose ``stop()`` raises is logged and the rest are still closed. The runtime
+    drops its reference to every one of them either way, so ``on_failure(label, service)``
+    is how a startup rollback (BF-882) keeps a failed one to retry and close; it is None
+    in a normal stop, which behaves as it always did.
+    """
     services = (
         ("capability_request_store", "capability request store"),
         ("fault_report_store", "fault report store"),  # AD-1169
@@ -301,17 +317,24 @@ async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
                 label,
                 exc_info=True,
             )
+            if on_failure is not None:
+                on_failure(label, service)
         finally:
             setattr(runtime, attribute, None)
 
 
-def _close_sync_store(store: Any, label: str) -> None:
+def _close_sync_store(
+    store: Any,
+    label: str,
+    on_failure: Callable[[str, Any], None] | None = None,
+) -> None:
     """BF-881 (#1452): close a SQLite store opened synchronously; log-and-degrade.
 
     ``ProfileStore`` (``ProbOSRuntime.__init__``), ``ServiceProfileStore`` and
     ``SemanticStore`` each had a ``close()`` that nothing called, so their handles
     stayed open (a held file on Windows) until a garbage collection. A failing close
-    must not stop the rest of the teardown.
+    must not stop the rest of the teardown. ``on_failure(label, store)`` is how a startup
+    rollback (BF-882) keeps a store whose close failed; it is None in a normal stop.
     """
     if store is None:
         return
@@ -324,6 +347,8 @@ def _close_sync_store(store: Any, label: str) -> None:
             label,
             exc_info=True,
         )
+        if on_failure is not None:
+            on_failure(label, store)
 
 
 async def _stop_held_start_service(
@@ -399,17 +424,68 @@ async def _stop_held_start_service(
             setattr(runtime, start_task_attr, None)
 
 
+def _direct_connections(component: Any) -> list[tuple[str, Any]]:
+    """The sqlite connections ``component`` holds as plain attributes: one level, no deeper.
+
+    A deliberate failure-path exception to the rule that nothing reads another object's
+    private attributes (Open/Closed, Law of Demeter). Only a startup rollback uses it, for a
+    component whose ``stop()`` has failed (twice, after the retry) and so can no longer be
+    asked to release what it holds. A connection's worker thread is non-daemon: left open it
+    keeps the interpreter from exiting and holds the database file (a lock, on Windows). What
+    is found is closed through the connection's own public ``close()``. Nothing is traversed:
+    a connection held deeper than one attribute level (inside another object, a list or a
+    dict) is not found, and neither is any resource that is not a sqlite connection or a
+    component that has no ``__dict__``.
+    """
+    import aiosqlite  # here, not at module level: only a failed rollback needs it
+
+    # Deliberate failure-path exception to the no-private-attribute rule: this component's
+    # own stop() has failed twice, so what it holds is read off it instead of asked for.
+    try:
+        attributes = list(vars(component).items())
+    except TypeError:  # no ``__dict__`` (a ``__slots__`` class): nothing to scan
+        return []
+    return [
+        (name, value)
+        for name, value in attributes
+        if isinstance(value, (aiosqlite.Connection, sqlite3.Connection))
+    ]
+
+
+async def _close_connection(connection: Any) -> None:
+    """Close one sqlite connection through its public ``close()``, whichever kind it is.
+
+    ``aiosqlite.Connection.close()`` is a coroutine and ``sqlite3.Connection.close()`` is not.
+    """
+    closing = connection.close()
+    if inspect.isawaitable(closing):
+        await asyncio.wait_for(closing, timeout=_LAST_RESORT_SECONDS)
+
+
 class _RollbackSteps:
     """BF-882 (#1419): ``shutdown()``'s steps, best-effort in a rollback, transparent otherwise.
 
-    ``with steps("name"):`` around one teardown step does nothing at all when ``rollback``
-    is False, so a normal stop is the function it was: a failing step propagates, with the
-    same traceback and the same log lines. In a rollback a step that raises is logged,
-    naming the step and the exception, and the rollback goes on to the next one. A rollback
-    tears down a boot that failed halfway, so any component may be half built; one that
-    cannot stop must not leave every later store, pool and agent running, because their
-    non-daemon aiosqlite workers keep the interpreter from exiting and a Yeoman that never
-    stops keeps the AD-766 slot.
+    ``with steps("name", component):`` around one teardown step does nothing at all when
+    ``rollback`` is False, so a normal stop is the function it was: a failing step
+    propagates, with the same traceback and the same log lines. In a rollback a step that
+    raises is logged, naming the step and the exception, and the rollback goes on to the
+    next one. A rollback tears down a boot that failed halfway, so any component may be
+    half built; one that cannot stop must not leave every later store, pool and agent
+    running, because their non-daemon aiosqlite workers keep the interpreter from exiting
+    and a Yeoman that never stops keeps the AD-766 slot.
+
+    The component of a failed step is kept on a list this object owns. ``shutdown()`` drops
+    the runtime's own reference to a component whether or not its stop succeeded, which
+    would leave nobody able to release one that failed. After the last step,
+    ``settle_failed`` retries each one's stop once (a transient failure may clear). For a
+    component that still cannot stop it closes the sqlite connections the component holds
+    directly as attributes, as a last resort, so their worker threads cannot keep the
+    process alive.
+
+    Residual, by design: a component whose ``stop()`` fails twice and which holds its
+    connection deeper than one attribute level (inside another object, a list or a dict), or
+    a resource that is not a sqlite connection (a thread, a task, a file), is not released
+    and can still keep the process alive. Each such component is named in a warning.
 
     Cancellation follows the BF-881 rule. The cancel count of the running task is taken
     when the teardown begins. A ``CancelledError`` while that count is unchanged is not a
@@ -425,11 +501,45 @@ class _RollbackSteps:
         self._cancelling_at_entry = (
             self._task.cancelling() if self._task is not None else 0
         )
+        # (step, component, method) of each step that failed, in the order they failed.
+        self._failed: list[tuple[str, Any, str]] = []
 
-    def __call__(self, step: str) -> contextlib.AbstractContextManager[None]:
+    def __call__(
+        self, step: str, component: Any = None, *, method: str = "stop",
+    ) -> contextlib.AbstractContextManager[None]:
         if not self._rollback:
             return contextlib.nullcontext()
-        return self._best_effort(step)
+        return self._best_effort(step, component, method)
+
+    def keep_failed(self, step: str, component: Any, *, method: str = "stop") -> None:
+        """Keep a component whose failed stop the caller logged and swallowed itself."""
+        if self._rollback:
+            self._remember(step, component, method)
+
+    def failure_sink(
+        self, *, method: str = "stop",
+    ) -> Callable[[str, Any], None] | None:
+        """The callback for a helper that logs and swallows a failed stop itself.
+
+        None outside a rollback, so the helper then behaves exactly as it always did.
+        """
+        if not self._rollback:
+            return None
+
+        def keep(label: str, component: Any) -> None:
+            self._remember(f"{label} {method}", component, method)
+
+        return keep
+
+    def _remember(self, step: str, component: Any, method: str) -> None:
+        if component is None:
+            return
+        if any(
+            kept is component and kept_method == method
+            for _, kept, kept_method in self._failed
+        ):
+            return
+        self._failed.append((step, component, method))
 
     def _outer_cancel_arrived(self) -> bool:
         return (
@@ -438,12 +548,15 @@ class _RollbackSteps:
         )
 
     @contextlib.contextmanager
-    def _best_effort(self, step: str) -> Iterator[None]:
+    def _best_effort(
+        self, step: str, component: Any = None, method: str = "stop",
+    ) -> Iterator[None]:
         try:
             yield
         except asyncio.CancelledError:
             if self._outer_cancel_arrived():
                 raise
+            self._remember(step, component, method)
             logger.warning(
                 "BF-882: startup rollback step %r ended in a CancelledError nobody asked "
                 "this task for; it may not have released everything. The rollback "
@@ -452,6 +565,7 @@ class _RollbackSteps:
                 exc_info=True,
             )
         except Exception as error:
+            self._remember(step, component, method)
             logger.warning(
                 "BF-882: startup rollback step %r raised %s: %s; it may not have "
                 "released everything. The rollback continues with the next step.",
@@ -460,6 +574,96 @@ class _RollbackSteps:
                 error,
                 exc_info=True,
             )
+
+    async def settle_failed(self) -> None:
+        """After the last step: retry each failed component's stop once, then close its connections.
+
+        A component that stops on the retry is done. One that fails again has the sqlite
+        connections it holds directly closed, each close guarded and logged by component,
+        step and attribute. Only the caller's own cancellation escapes this.
+        """
+        failed, self._failed = self._failed, []
+        scanned: list[Any] = []
+        for step, component, method in failed:
+            if await self._retry(step, component, method):
+                continue
+            if any(component is seen for seen in scanned):
+                continue  # already closed once for an earlier failed step of the same component
+            scanned.append(component)
+            await self._close_direct_connections(step, component)
+
+    async def _retry(self, step: str, component: Any, method: str) -> bool:
+        name = type(component).__name__
+        try:
+            outcome = getattr(component, method)()
+            if inspect.isawaitable(outcome):
+                await asyncio.wait_for(outcome, timeout=_LAST_RESORT_SECONDS)
+        except asyncio.CancelledError:
+            if self._outer_cancel_arrived():
+                raise
+            logger.warning(
+                "BF-882: the retry of rollback step %r (%s.%s()) ended in a CancelledError "
+                "nobody asked this task for, so the component is treated as still failed.",
+                step, name, method,
+                exc_info=True,
+            )
+            return False
+        except Exception as error:
+            logger.warning(
+                "BF-882: the retry of rollback step %r (%s.%s()) raised %s: %s; the "
+                "component cannot stop, so what it holds is closed directly where possible.",
+                step, name, method, type(error).__name__, error,
+                exc_info=True,
+            )
+            return False
+        logger.info(
+            "BF-882: rollback step %r failed once and succeeded when it was retried at the "
+            "end of the rollback.",
+            step,
+        )
+        return True
+
+    async def close_if_left_open(self, step: str, component: Any) -> None:
+        """Close any sqlite connection ``component`` still holds directly, silently if it holds none.
+
+        For a component whose stop is made inside a helper that swallows the failure and then
+        drops the runtime's reference, at a call site that cannot hand the failure over (the
+        audit log's persistence, whose call AD-1278 pins). Capture the component before the helper
+        runs and call this after it: a component that stopped holds no connection and costs nothing.
+        """
+        if self._rollback and component is not None:
+            await self._close_direct_connections(
+                step, component, why="left its connection open", quiet=True,
+            )
+
+    async def _close_direct_connections(
+        self, step: str, component: Any, *, why: str = "failed twice", quiet: bool = False,
+    ) -> None:
+        name = type(component).__name__
+        connections = _direct_connections(component)
+        if not connections:
+            if not quiet:
+                logger.warning(
+                    "BF-882: rollback step %r %s and %s holds no sqlite connection as "
+                    "a direct attribute to close. Anything else it holds (a connection deeper "
+                    "than one attribute level, a thread, a task, another resource) stays held "
+                    "until the process exits, and a non-daemon worker thread among it can "
+                    "keep the process from exiting.",
+                    step, why, name,
+                )
+            return
+        for attribute, connection in connections:
+            logger.warning(
+                "BF-882: last-resort close of %s.%s (%s.%s): rollback step %r %s, so its "
+                "connection is closed directly instead of being left open with its worker "
+                "thread.",
+                name, attribute, type(connection).__module__, type(connection).__name__,
+                step, why,
+            )
+            with self._best_effort(
+                f"last-resort close of {name}.{attribute} (after step {step!r})"
+            ):
+                await _close_connection(connection)
 
 
 async def _quiesce_surviving_agents(runtime: Any, steps: _RollbackSteps) -> None:
@@ -471,15 +675,17 @@ async def _quiesce_surviving_agents(runtime: Any, steps: _RollbackSteps) -> None
     whatever it holds. A rollback has no later retry, so each is stopped here, and only
     then can its own ``stop()`` release what only it can (the Yeoman slot is freed after
     the agent has stopped, never before). The ownership policy is unchanged: nothing is
-    unregistered and the pool is retained. A failing stop is logged and the next agent
-    is still stopped.
+    unregistered and the pool is retained. A failing stop is logged, the next agent is
+    still stopped, and the agent is retried once at the end of the rollback with every
+    other component whose stop failed.
     """
     for agent in list(runtime.registry.all()):
         if not getattr(agent, "is_alive", False):
             continue
         with steps(
             f"force-stop agent {getattr(agent, 'id', '?')} "
-            f"({getattr(agent, 'agent_type', '?')})"
+            f"({getattr(agent, 'agent_type', '?')})",
+            agent,
         ):
             await agent.stop()
 
@@ -545,9 +751,16 @@ async def shutdown(
     flush and drain, the event-log rows and the LLM close. Every step is best-effort
     (``_RollbackSteps``): one that raises is logged by name and the rollback goes on,
     because a half-built component may not be able to stop and must not leave every later
-    store, pool and agent running. The BF-598 and ``_started`` guards are bypassed,
-    because the runtime a rollback tears down is by definition one ``stop()`` would skip.
-    ``rollback=False`` (the default) is the unchanged shutdown.
+    store, pool and agent running. The component of a failed step is kept (this function
+    drops the runtime's own reference to every component, stopped or not), retried once
+    after the last step, and, if it still cannot stop, has the sqlite connections it holds
+    directly as attributes closed as a last resort, so that their non-daemon worker
+    threads cannot keep the process alive. Residual: a component that cannot stop AND
+    holds its connection deeper than one attribute level (or holds a resource that is not a
+    sqlite connection) can still keep the process alive; it is named in a warning. The
+    BF-598 and ``_started`` guards are bypassed, because the runtime a rollback tears down
+    is by definition one ``stop()`` would skip. ``rollback=False`` (the default) is the
+    unchanged shutdown.
     """
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
     # SIGTERM during Windows sleep/wake, or a retried stop()) must NOT re-run
@@ -644,7 +857,7 @@ async def shutdown(
         logger.debug("AD-502: Session record persistence failed: %s", e)
 
     if crew_stop is not None and asyncio.iscoroutinefunction(crew_stop):
-        with steps("crew orchestrator stop"):
+        with steps("crew orchestrator stop", crew_orchestrator):
             await crew_stop()
 
     # AD-1246: bounded, and returns without suspending when no tracked run is in flight.
@@ -954,18 +1167,18 @@ async def shutdown(
     # consolidation — this is the critical operation that caused hash mismatches
     # when it was positioned after ~25 service stops.
     if runtime.episodic_memory:
-        with steps("episodic memory stop"):
+        with steps("episodic memory stop", runtime.episodic_memory):
             await runtime.episodic_memory.stop()
 
     # AD-455: stop red team campaign loop
     if hasattr(runtime, "red_team_lead") and runtime.red_team_lead is not None:
-        with steps("red team lead stop"):
+        with steps("red team lead stop", runtime.red_team_lead):
             await runtime.red_team_lead.stop()
 
     # AD-541f: Stop eviction audit log (companion to episodic memory)
     _eviction_audit = getattr(runtime, "_eviction_audit", None)
     if _eviction_audit is not None:
-        with steps("eviction audit log stop"):
+        with steps("eviction audit log stop", _eviction_audit):
             await _eviction_audit.stop()
         runtime._eviction_audit = None
 
@@ -1096,43 +1309,43 @@ async def shutdown(
     # opened during startup but had no shutdown owner. Their non-daemon
     # aiosqlite workers kept pytest alive after all assertions completed.
     with steps("runtime SQLite sidecars stop"):
-        await _stop_runtime_sqlite_sidecars(runtime)
+        await _stop_runtime_sqlite_sidecars(runtime, on_failure=steps.failure_sink())
 
     # Stop ACM (AD-427)
     if runtime.acm:
-        with steps("ACM stop"):
+        with steps("ACM stop", runtime.acm):
             await runtime.acm.stop()
         runtime.acm = None
 
     # Stop Visiting Officer registry (AD-701)
     vo_registry = getattr(runtime, "visiting_officers", None)
     if vo_registry is not None:
-        with steps("visiting officer registry stop"):
+        with steps("visiting officer registry stop", vo_registry):
             await vo_registry.stop()
         runtime.visiting_officers = None
 
     # Stop Workflow Cron scheduler (AD-707)
     wfc = getattr(runtime, "workflow_cron", None)
     if wfc is not None:
-        with steps("workflow cron stop"):
+        with steps("workflow cron stop", wfc):
             await wfc.stop()
         runtime.workflow_cron = None
 
     # Stop Identity Registry (AD-441)
     if runtime.identity_registry:
-        with steps("identity registry stop"):
+        with steps("identity registry stop", runtime.identity_registry):
             await runtime.identity_registry.stop()
         runtime.identity_registry = None
 
     # Stop SIF (AD-370)
     if runtime.sif:
-        with steps("SIF stop"):
+        with steps("SIF stop", runtime.sif):
             await runtime.sif.stop()
         runtime.sif = None
 
     # Stop InitiativeEngine (AD-381)
     if runtime.initiative:
-        with steps("initiative engine stop"):
+        with steps("initiative engine stop", runtime.initiative):
             await runtime.initiative.stop()
         runtime.initiative = None
 
@@ -1213,13 +1426,13 @@ async def shutdown(
                 await runtime._knowledge_store.store_cooldowns(runtime.proactive_loop._agent_cooldowns.copy())
             except Exception:
                 logger.warning("Failed to persist proactive cooldowns", exc_info=True)
-        with steps("proactive loop stop"):
+        with steps("proactive loop stop", runtime.proactive_loop):
             await runtime.proactive_loop.stop()
         runtime.proactive_loop = None
 
     # AD-471: Stop watch manager and expire Night Orders
     if hasattr(runtime, 'watch_manager') and runtime.watch_manager:
-        with steps("watch manager stop"):
+        with steps("watch manager stop", runtime.watch_manager):
             await runtime.watch_manager.stop()
         runtime.watch_manager = None
     if not rollback and hasattr(runtime, '_night_orders_mgr') and runtime._night_orders_mgr:
@@ -1327,6 +1540,7 @@ async def shutdown(
             await runtime.schema_version_store.stop()
         except Exception:
             logger.warning("AD-818: schema_version_store.stop() failed", exc_info=True)
+            steps.keep_failed("schema version store stop", runtime.schema_version_store)
 
     # AD-751: Stop desktop UX surface (tray, hotkey, autostart, notifications)
     if hasattr(runtime, 'hotkey_listener') and runtime.hotkey_listener is not None:
@@ -1346,21 +1560,25 @@ async def shutdown(
 
     # Stop Persistent Task Store (Phase 25a)
     if runtime.persistent_task_store:
-        with steps("persistent task store stop"):
+        with steps("persistent task store stop", runtime.persistent_task_store):
             await runtime.persistent_task_store.stop()
         runtime.persistent_task_store = None
 
     # Stop Workforce Scheduling Engine (AD-496)
     if runtime.work_item_store:
-        with steps("crew session delivery close"):
+        with steps(
+            "crew session delivery close",
+            getattr(runtime, "crew_session_delivery_service", None),
+            method="close",
+        ):
             await _close_crew_session_delivery(runtime)
-        with steps("workforce store stop"):
+        with steps("workforce store stop", runtime.work_item_store):
             await runtime.work_item_store.stop()
         runtime.work_item_store = None
 
     # Stop build dispatcher (AD-375)
     if runtime.build_dispatcher:
-        with steps("build dispatcher stop"):
+        with steps("build dispatcher stop", runtime.build_dispatcher):
             await runtime.build_dispatcher.stop()
         runtime.build_dispatcher = None
         runtime.build_queue = None
@@ -1372,13 +1590,17 @@ async def shutdown(
     HttpFetchAgent.set_profile_store(None)
     # BF-881 (#1452): HttpFetchAgent was disconnected above and reads the store only in
     # synchronous code, so nothing can reach the store once it is closed.
-    _close_sync_store(getattr(runtime, "service_profiles", None), "AD-382 ServiceProfileStore")
+    _close_sync_store(
+        getattr(runtime, "service_profiles", None),
+        "AD-382 ServiceProfileStore",
+        on_failure=steps.failure_sink(method="close"),
+    )
     runtime.service_profiles = None
 
     # Disconnect directive store (AD-386)
     if runtime.directive_store:
         set_directive_store(None)
-        with steps("directive store close"):
+        with steps("directive store close", runtime.directive_store, method="close"):
             runtime.directive_store.close()
         runtime.directive_store = None
 
@@ -1391,33 +1613,33 @@ async def shutdown(
 
     # Stop Ward Room (AD-407)
     if runtime.ward_room:
-        with steps("ward room prune loop stop"):
+        with steps("ward room prune loop stop", runtime.ward_room, method="stop_prune_loop"):
             await runtime.ward_room.stop_prune_loop()
-        with steps("ward room stop"):
+        with steps("ward room stop", runtime.ward_room):
             await runtime.ward_room.stop()
         runtime.ward_room = None
 
     # Stop Cognitive Journal (AD-431)
     if runtime.cognitive_journal:
-        with steps("cognitive journal stop"):
+        with steps("cognitive journal stop", runtime.cognitive_journal):
             await runtime.cognitive_journal.stop()
         runtime.cognitive_journal = None
 
     # AD-622: Clearance grant store
     if hasattr(runtime, 'clearance_grant_store') and runtime.clearance_grant_store:
-        with steps("clearance grant store stop"):
+        with steps("clearance grant store stop", runtime.clearance_grant_store):
             await runtime.clearance_grant_store.stop()
         runtime.clearance_grant_store = None
 
     # AD-904: Clinical notes store
     if hasattr(runtime, 'clinical_notes_store') and runtime.clinical_notes_store:
-        with steps("clinical notes store stop"):
+        with steps("clinical notes store stop", runtime.clinical_notes_store):
             await runtime.clinical_notes_store.stop()
         runtime.clinical_notes_store = None
 
     # AD-423b: Tool permission store
     if hasattr(runtime, 'tool_permission_store') and runtime.tool_permission_store:
-        with steps("tool permission store stop"):
+        with steps("tool permission store stop", runtime.tool_permission_store):
             await runtime.tool_permission_store.stop()
         runtime.tool_permission_store = None
 
@@ -1429,104 +1651,104 @@ async def shutdown(
 
     # AD-983b: Skill grant store (per-agent cognitive-skill grants)
     if getattr(runtime, 'skill_grant_store', None):
-        with steps("skill grant store stop"):
+        with steps("skill grant store stop", runtime.skill_grant_store):
             await runtime.skill_grant_store.stop()
         runtime.skill_grant_store = None
 
     # AD-1005/AD-1007: Intent grant store (per-agent mesh-capability grants)
     if getattr(runtime, 'intent_grant_store', None):
-        with steps("intent grant store stop"):
+        with steps("intent grant store stop", runtime.intent_grant_store):
             await runtime.intent_grant_store.stop()
         runtime.intent_grant_store = None
         runtime.hook_bus = None  # AD-1012
 
     # AD-1154: Action approval store (standing, TTL-bounded action approvals)
     if getattr(runtime, 'action_approval_store', None):
-        with steps("action approval store stop"):
+        with steps("action approval store stop", runtime.action_approval_store):
             await runtime.action_approval_store.stop()
         runtime.action_approval_store = None
 
     # AD-1015: MCP server registration store (runtime-mutable MCP registrations)
     if getattr(runtime, 'mcp_server_store', None):
-        with steps("MCP server store stop"):
+        with steps("MCP server store stop", runtime.mcp_server_store):
             await runtime.mcp_server_store.stop()
         runtime.mcp_server_store = None
 
     # AD-1019b: department-tier grant + tool-risk stores
     if getattr(runtime, 'department_tool_grant_store', None):
-        with steps("department tool grant store stop"):
+        with steps("department tool grant store stop", runtime.department_tool_grant_store):
             await runtime.department_tool_grant_store.stop()
         runtime.department_tool_grant_store = None
     if getattr(runtime, 'mcp_tool_risk_store', None):
-        with steps("MCP tool risk store stop"):
+        with steps("MCP tool risk store stop", runtime.mcp_tool_risk_store):
             await runtime.mcp_tool_risk_store.stop()
         runtime.mcp_tool_risk_store = None
 
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
-        with steps("counselor profile store stop"):
+        with steps("counselor profile store stop", runtime._counselor_profile_store):
             await runtime._counselor_profile_store.stop()
         runtime._counselor_profile_store = None
 
     # Stop Procedure Store (AD-533)
     if runtime._procedure_store:
-        with steps("procedure store stop"):
+        with steps("procedure store stop", runtime._procedure_store):
             await runtime._procedure_store.stop()
         runtime._procedure_store = None
 
     # Stop Drift Scheduler (AD-566c) — before qualification store
     drift_sched = getattr(runtime, "_drift_scheduler", None)
     if drift_sched is not None:
-        with steps("drift scheduler stop"):
+        with steps("drift scheduler stop", drift_sched):
             await drift_sched.stop()
         runtime._drift_scheduler = None
 
     # Stop Qualification Store (AD-566a)
     qual_store = getattr(runtime, "_qualification_store", None)
     if qual_store is not None:
-        with steps("qualification store stop"):
+        with steps("qualification store stop", qual_store):
             await qual_store.stop()
         runtime._qualification_store = None
         runtime._qualification_harness = None
 
     # Stop Retrieval Practice Engine (AD-541c)
     if hasattr(runtime, '_retrieval_practice_engine') and runtime._retrieval_practice_engine:
-        with steps("retrieval practice engine stop"):
+        with steps("retrieval practice engine stop", runtime._retrieval_practice_engine):
             await runtime._retrieval_practice_engine.stop()
         runtime._retrieval_practice_engine = None
 
     # Stop Activation Tracker (AD-567d)
     _activation_tracker = getattr(runtime, "_activation_tracker", None)
     if _activation_tracker is not None:
-        with steps("activation tracker stop"):
+        with steps("activation tracker stop", _activation_tracker):
             await _activation_tracker.stop()
         runtime._activation_tracker = None
 
     # Stop Cognitive Skill Catalog (AD-596a)
     if runtime.cognitive_skill_catalog:
-        with steps("cognitive skill catalog stop"):
+        with steps("cognitive skill catalog stop", runtime.cognitive_skill_catalog):
             await runtime.cognitive_skill_catalog.stop()
         runtime.cognitive_skill_catalog = None
 
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:
-        with steps("skill service stop"):
+        with steps("skill service stop", runtime.skill_service):
             await runtime.skill_service.stop()
         runtime.skill_service = None
     if runtime.skill_registry:
-        with steps("skill registry stop"):
+        with steps("skill registry stop", runtime.skill_registry):
             await runtime.skill_registry.stop()
         runtime.skill_registry = None
 
     # Stop Assignment Service (AD-408)
     if runtime.assignment_service:
-        with steps("assignment service stop"):
+        with steps("assignment service stop", runtime.assignment_service):
             await runtime.assignment_service.stop()
         runtime.assignment_service = None
 
     # Stop red team agents
     for agent in runtime.red_team_agents:
-        with steps(f"red team agent {agent.id} stop"):
+        with steps(f"red team agent {agent.id} stop", agent):
             await agent.stop()
         with steps(f"red team agent {agent.id} unregister"):
             await runtime.registry.unregister(agent.id)
@@ -1534,7 +1756,7 @@ async def shutdown(
 
     # Stop pool scaler before stopping pools
     if runtime.pool_scaler:
-        with steps("pool scaler stop"):
+        with steps("pool scaler stop", runtime.pool_scaler):
             await runtime.pool_scaler.stop()
         runtime.pool_scaler = None
 
@@ -1545,11 +1767,11 @@ async def shutdown(
         None,
     )
     if federation_telemetry_relay:
-        with steps("federation telemetry relay stop"):
+        with steps("federation telemetry relay stop", federation_telemetry_relay):
             await federation_telemetry_relay.stop()
         runtime.federation_telemetry_relay = None
     if runtime.federation_bridge:
-        with steps("federation bridge stop"):
+        with steps("federation bridge stop", runtime.federation_bridge):
             await runtime.federation_bridge.stop()
         runtime.federation_bridge = None
     remote_avatar_telemetry_cache = getattr(
@@ -1561,7 +1783,7 @@ async def shutdown(
         with steps("remote avatar telemetry cache clear"):
             remote_avatar_telemetry_cache.clear()
     if runtime._federation_transport:
-        with steps("federation transport stop"):
+        with steps("federation transport stop", runtime._federation_transport):
             await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
@@ -1642,13 +1864,13 @@ async def shutdown(
             logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
     # Stop mesh and consensus services
-    with steps("gossip protocol stop"):
+    with steps("gossip protocol stop", runtime.gossip):
         await runtime.gossip.stop()
-    with steps("signal manager stop"):
+    with steps("signal manager stop", runtime.signal_manager):
         await runtime.signal_manager.stop()
-    with steps("Hebbian router stop"):
+    with steps("Hebbian router stop", runtime.hebbian_router):
         await runtime.hebbian_router.stop()
-    with steps("trust network stop"):
+    with steps("trust network stop", runtime.trust_network):
         await runtime.trust_network.stop()
 
     # AD-637: Stop NATS event bus
@@ -1665,7 +1887,7 @@ async def shutdown(
         try:
             await runtime.working_memory_store.stop()
         except Exception:
-            pass
+            steps.keep_failed("working memory store stop", runtime.working_memory_store)
 
     # AD-524: Close Ship's Archive store
     if getattr(runtime, "_archive_store", None):
@@ -1678,15 +1900,24 @@ async def shutdown(
                 "and the OS will reclaim the connection if needed: %s",
                 e,
             )
+            steps.keep_failed(
+                "ship's archive store close", runtime._archive_store, method="close",
+            )
 
     # BF-881 (#1452): two more synchronous SQLite handles with a close() nothing called.
     # SemanticStore (AD-750) is dropped after the close; ProfileStore keeps its attribute,
     # because close() is idempotent and a closed store's _persist does nothing.
     _semantic_store = getattr(runtime, "_semantic_store", None)
     if _semantic_store is not None:
-        _close_sync_store(_semantic_store, "AD-750 SemanticStore")
+        _close_sync_store(
+            _semantic_store, "AD-750 SemanticStore",
+            on_failure=steps.failure_sink(method="close"),
+        )
         runtime._semantic_store = None
-    _close_sync_store(getattr(runtime, "profile_store", None), "crew ProfileStore")
+    _close_sync_store(
+        getattr(runtime, "profile_store", None), "crew ProfileStore",
+        on_failure=steps.failure_sink(method="close"),
+    )
 
     # AD-1195: flush queued durable rows while the EventLog is still open, so
     # they land before the stopped row. A runtime double whose attribute is
@@ -1705,7 +1936,7 @@ async def shutdown(
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):
         pass
-    with steps("event log stop"):
+    with steps("event log stop", runtime.event_log):
         await runtime.event_log.stop()
 
     # BF-663: one-shot confab probes use the LLM but are not part of the generic
@@ -1717,22 +1948,28 @@ async def shutdown(
 
     # Stop dreaming scheduler
     if runtime.dream_scheduler:
-        with steps("dream scheduler stop"):
+        with steps("dream scheduler stop", runtime.dream_scheduler):
             await runtime.dream_scheduler.stop()
         runtime.dream_scheduler = None
 
     # Stop task scheduler (AD-282)
     if runtime.task_scheduler:
-        with steps("task scheduler stop"):
+        with steps("task scheduler stop", runtime.task_scheduler):
             await runtime.task_scheduler.stop()
         runtime.task_scheduler = None
 
     try:
         # Stop semantic knowledge layer (AD-243)
         if runtime._semantic_layer:
-            with steps("semantic knowledge layer stop"):
+            with steps("semantic knowledge layer stop", runtime._semantic_layer):
                 await runtime._semantic_layer.stop()
             runtime._semantic_layer = None
+        # BF-882: the last step of a rollback. Every component whose stop failed was kept
+        # (the runtime's own reference to it is gone by now), so retry each once and close
+        # the sqlite connections it holds directly if it still cannot stop. Above the
+        # audit drain, which stays the last point at which anything can append.
+        if rollback:
+            await steps.settle_failed()
     finally:
         # AD-1278 phase 2: the authoritative drain. Here rather than with the
         # other stores because `drain()` closes registration, and this is the
@@ -1743,8 +1980,14 @@ async def shutdown(
         # In a `finally` because review reproduced the skip: a raising
         # `_semantic_layer.stop()` gave `drain_called=False`, losing the tail on
         # exactly the failure path an investigator most wants the record for.
+        #
+        # BF-882: the drain also stops the audit log's persistence, logs a failure to do
+        # so and drops the runtime's reference, at a call site AD-1278 pins. In a rollback
+        # the persistence is captured first and closed afterwards if it was left open.
+        audit_persistence = getattr(runtime, "audit_log_persistence", None) if rollback else None
         with steps("AD-1278 audit drain"):
             await _drain_audit_log(runtime)
+        await steps.close_if_left_open("AD-456d audit log persistence stop", audit_persistence)
 
     runtime._started = False
     if rollback:

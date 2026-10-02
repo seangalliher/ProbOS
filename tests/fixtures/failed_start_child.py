@@ -13,10 +13,14 @@ watchdog dumps every stack into ``PROBOS_LIFECYCLE_HANGDUMP`` and ``_exit``s wit
 a clean exit is exit code 0 with an empty dump. Before BF-882, 13 of 15 failed-start
 children hung this way.
 
-``PROBOS_LIFECYCLE_BREAK_STEPS`` (comma-separated runtime attributes) makes each named
-component's ``stop()`` run and then raise at the moment the injected failure fires, so the
-rollback has to go on past a teardown step that fails. The attributes must exist at the
-phase under test; the report lists how often each broken ``stop()`` was called.
+``PROBOS_LIFECYCLE_BREAK_STEPS`` (comma-separated runtime attributes, each optionally
+``attribute=before``) makes each named component's ``stop()`` raise at the moment the
+injected failure fires, so the rollback has to go on past a teardown step that fails. The
+default raises AFTER the component's real ``stop()`` ran (it has cleaned up); ``=before``
+raises at once, so the component keeps its connections open and only the rollback's
+last-resort close can release them. The attributes must exist at the phase under test; the
+report lists how often each broken ``stop()`` was called, how often it really ran, and the
+BF-882 warnings the rollback logged.
 
 Exit code 3: probos was imported from somewhere other than ``PROBOS_LIFECYCLE_EXPECT_SRC``.
 
@@ -30,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import faulthandler
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -44,11 +49,19 @@ for _key, _value in (
 
 _EXPECTED_SRC = os.environ.get("PROBOS_LIFECYCLE_EXPECT_SRC", "")
 _HANG_DUMP = os.environ.get("PROBOS_LIFECYCLE_HANGDUMP", "")
-_BREAK_STEPS = [
-    attribute.strip()
-    for attribute in os.environ.get("PROBOS_LIFECYCLE_BREAK_STEPS", "").split(",")
-    if attribute.strip()
-]
+
+
+def _parse_break_steps(raw: str) -> list[tuple[str, str]]:
+    """``"acm,ward_room=before"`` -> ``[("acm", "after"), ("ward_room", "before")]``."""
+    steps: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        attribute, _, when = item.strip().partition("=")
+        if attribute.strip():
+            steps.append((attribute.strip(), when.strip() or "after"))
+    return steps
+
+
+_BREAK_STEPS = _parse_break_steps(os.environ.get("PROBOS_LIFECYCLE_BREAK_STEPS", ""))
 _WATCHDOG_SECONDS = 30
 
 
@@ -84,9 +97,21 @@ async def _failed_start(base: Path, phase: str) -> dict[str, Any]:
     patches = pytest.MonkeyPatch()
     report: dict[str, Any] = {"phase": phase}
     broken_stops: list[BrokenStop] = []
+    rollback_warnings: list[str] = []
+
+    class _CollectWarnings(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.levelno >= logging.WARNING and record.getMessage().startswith("BF-882"):
+                rollback_warnings.append(record.getMessage()[:400])
+
+    shutdown_logger = logging.getLogger("probos.startup.shutdown")
+    collector = _CollectWarnings(level=logging.WARNING)
+    shutdown_logger.addHandler(collector)
 
     def break_the_requested_steps(failing_runtime: Any) -> None:
-        broken_stops.extend(break_stop(failing_runtime, attribute) for attribute in _BREAK_STEPS)
+        broken_stops.extend(
+            break_stop(failing_runtime, attribute, when=when) for attribute, when in _BREAK_STEPS
+        )
 
     try:
         failure = inject_start_failure(
@@ -103,9 +128,13 @@ async def _failed_start(base: Path, phase: str) -> dict[str, Any]:
         report["registry_after"] = runtime.registry.count
         report["yeoman_after"] = YeomanAgent._live_instance_count
         report["broken_stop_calls"] = {broken.attribute: broken.calls for broken in broken_stops}
+        report["broken_stop_cleanups"] = {broken.attribute: broken.cleaned_up for broken in broken_stops}
+        report["broken_stop_connections"] = {broken.attribute: broken.connections for broken in broken_stops}
+        report["rollback_warnings"] = rollback_warnings
     except Exception as error:  # noqa: BLE001 -- the parent reads the report, whatever happened
         report["error"] = f"{type(error).__name__}: {error}"
     finally:
+        shutdown_logger.removeHandler(collector)
         patches.undo()
     return report
 
