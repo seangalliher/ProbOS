@@ -13,7 +13,8 @@ and nothing is cached:
 * the index is over the real package tree -- a test's ``tmp_path`` tree always
   builds for real;
 * every input the build reads -- each ``*.py`` under the root and the project
-  documents -- has the same content digest as when the snapshot was taken;
+  documents by content digest, and the names of the suite's ``tests/test_*.py``
+  files -- is unchanged since the snapshot was taken;
 * nothing ``build()`` can consult has been replaced or changed: every attribute
   of ``CodebaseIndex`` (methods, helpers, constants) by identity; every global
   of its module by identity, with container globals such as ``_KEY_CLASSES``
@@ -57,7 +58,10 @@ def _digest(path: Path) -> bytes:
 
 
 def build_inputs_fingerprint(source_root: Path) -> tuple[tuple[str, bytes], ...] | None:
-    """(path, content digest) for every input ``build()`` reads, or None if unreadable."""
+    """(path, content digest) for every input ``build()`` reads, or None if unreadable.
+
+    A test file contributes its name with an empty digest: its name is all ``build()`` reads.
+    """
     try:
         entries = [
             (path.relative_to(source_root).as_posix(), _digest(path))
@@ -68,6 +72,7 @@ def build_inputs_fingerprint(source_root: Path) -> tuple[tuple[str, bytes], ...]
             document = project_root / relative
             if document.is_file():
                 entries.append((f"docs:{relative}", _digest(document)))
+        entries.extend((relative, b"") for relative in _codebase_index._list_test_files(project_root))
     except OSError:
         return None
     return tuple(entries)
