@@ -23,6 +23,8 @@ from probos.types import (
     TaskNode,
 )
 
+from tests.fixtures.runtime_factory import started_runtime, stop_runtime
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -638,12 +640,8 @@ class TestRuntimeEscalation:
 
     @pytest.fixture
     async def runtime(self, tmp_path):
-        from probos.runtime import ProbOSRuntime
-
-        rt = ProbOSRuntime(data_dir=tmp_path)
-        await rt.start()
-        yield rt
-        await rt.stop()
+        async with started_runtime(tmp_path, fast_teardown=True) as rt:
+            yield rt
 
     @pytest.mark.asyncio
     async def test_runtime_creates_escalation_manager(self, runtime):
@@ -698,7 +696,7 @@ class TestRuntimeEscalation:
             assert result["completed_count"] == 1
             assert mem.store.called
         finally:
-            await rt.stop()
+            await stop_runtime(rt, fast_teardown=True)
 
 
 # ---------------------------------------------------------------------------

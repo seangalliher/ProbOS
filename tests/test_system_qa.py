@@ -17,6 +17,8 @@ from probos.config import QAConfig, SystemConfig
 from probos.substrate.agent import BaseAgent
 from probos.types import IntentDescriptor, IntentMessage, IntentResult, QAReport
 
+from tests.fixtures.runtime_factory import stop_runtime
+
 
 # ===================================================================
 # Helpers: mock agents for integration tests
@@ -564,7 +566,7 @@ class TestTrustIntegration:
 
         score_after = rt.trust_network.get_score(agent.id)
         assert score_after > score_before
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_trust_updated_on_qa_fail(self, tmp_path):
@@ -589,7 +591,7 @@ class TestTrustIntegration:
 
         score_after = rt.trust_network.get_score(agent.id)
         assert score_after < score_before
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_busy_trust_preserves_qa_report_episode_and_policy(self, tmp_path):
@@ -621,7 +623,7 @@ class TestTrustIntegration:
         assert rt._qa_reports["count_words"] is report
         episodes = await memory.recent(k=10)
         assert any("[SystemQA]" in episode.user_input for episode in episodes)
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_other_trust_runtime_error_uses_qa_boundary(self, tmp_path):
@@ -647,7 +649,7 @@ class TestTrustIntegration:
         assert "count_words" in rt._qa_reports
         events = await rt.event_log.query(category="qa")
         assert any(event["event"] == "qa_error" for event in events)
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_trust_weight_asymmetry(self, tmp_path):
@@ -682,7 +684,7 @@ class TestTrustIntegration:
 
         # Passing should be higher trust than failing
         assert score_pass > score_fail
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestEpisodicMemoryIntegration:
@@ -715,7 +717,7 @@ class TestEpisodicMemoryIntegration:
         episodes = await mem.recent(k=10)
         qa_episodes = [e for e in episodes if "[SystemQA]" in e.user_input]
         assert len(qa_episodes) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_episodic_memory_content(self, tmp_path):
@@ -748,7 +750,7 @@ class TestEpisodicMemoryIntegration:
         assert len(qa_ep.outcomes) == 5
         assert "QA" in qa_ep.reflection
         assert agent.id in qa_ep.agent_ids
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestEventLogIntegration:
@@ -776,7 +778,7 @@ class TestEventLogIntegration:
         events = await rt.event_log.query(category="qa", limit=20)
         started = [e for e in events if e["event"] == "smoke_test_started"]
         assert len(started) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_event_log_passed(self, tmp_path):
@@ -800,7 +802,7 @@ class TestEventLogIntegration:
         events = await rt.event_log.query(category="qa", limit=20)
         passed = [e for e in events if e["event"] == "smoke_test_passed"]
         assert len(passed) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_event_log_failed(self, tmp_path):
@@ -824,7 +826,7 @@ class TestEventLogIntegration:
         events = await rt.event_log.query(category="qa", limit=20)
         failed = [e for e in events if e["event"] == "smoke_test_failed"]
         assert len(failed) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_flag_on_failure(self, tmp_path):
@@ -849,7 +851,7 @@ class TestEventLogIntegration:
         events = await rt.event_log.query(category="qa", limit=20)
         flagged = [e for e in events if e["event"] == "agent_flagged"]
         assert len(flagged) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_no_flag_when_disabled(self, tmp_path):
@@ -874,7 +876,7 @@ class TestEventLogIntegration:
         events = await rt.event_log.query(category="qa", limit=20)
         flagged = [e for e in events if e["event"] == "agent_flagged"]
         assert len(flagged) == 0
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestAutoRemove:
@@ -903,7 +905,7 @@ class TestAutoRemove:
         events = await rt.event_log.query(category="qa", limit=20)
         removed = [e for e in events if e["event"] == "agent_removed"]
         assert len(removed) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_no_remove_on_partial_fail(self, tmp_path):
@@ -929,7 +931,7 @@ class TestAutoRemove:
         events = await rt.event_log.query(category="qa", limit=20)
         removed = [e for e in events if e["event"] == "agent_removed"]
         assert len(removed) == 0  # Not total fail — no removal
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_no_remove_when_disabled(self, tmp_path):
@@ -954,7 +956,7 @@ class TestAutoRemove:
         events = await rt.event_log.query(category="qa", limit=20)
         removed = [e for e in events if e["event"] == "agent_removed"]
         assert len(removed) == 0
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestQAReportStore:
@@ -980,7 +982,7 @@ class TestQAReportStore:
 
         assert "count_words" in rt._qa_reports
         assert rt._qa_reports["count_words"].verdict == "passed"
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_report_overwritten_on_rerun(self, tmp_path):
@@ -1004,7 +1006,7 @@ class TestQAReportStore:
         await rt._run_qa_for_designed_agent(record)
         second_ts = rt._qa_reports["count_words"].timestamp
         assert second_ts >= first_ts
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 class TestQADisabled:
@@ -1026,7 +1028,7 @@ class TestQADisabled:
         result = await rt._run_qa_for_designed_agent(record)
         assert result is None
         assert len(rt._qa_reports) == 0
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_without_selfmod_skips(self, tmp_path):
@@ -1041,7 +1043,7 @@ class TestQADisabled:
         )
         await rt.start()
         assert rt._system_qa is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===================================================================
@@ -1079,7 +1081,7 @@ class TestErrorContainment:
         events = await rt.event_log.query(category="qa", limit=20)
         errors = [e for e in events if e["event"] == "qa_error"]
         assert len(errors) >= 1
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_task_exception_no_crash(self, tmp_path):
@@ -1104,7 +1106,7 @@ class TestErrorContainment:
         # Should not raise
         result = await rt._run_qa_for_designed_agent(record)
         assert result is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_empty_pool_no_crash(self, tmp_path):
@@ -1124,7 +1126,7 @@ class TestErrorContainment:
         result = await rt._run_qa_for_designed_agent(record)
         # Should complete with error verdict or None, not crash
         assert result is None or result.verdict == "error"
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_missing_pool_no_crash(self, tmp_path):
@@ -1141,7 +1143,7 @@ class TestErrorContainment:
         record = _make_record(pool_name="nonexistent_pool")
         result = await rt._run_qa_for_designed_agent(record)
         assert result is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===================================================================
@@ -1176,7 +1178,7 @@ class TestRoutingExclusion:
         descriptors = rt._collect_intent_descriptors()
         descriptor_names = [d.name for d in descriptors]
         assert "smoke_test_agent" not in descriptor_names
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_pool_excluded_from_scaler(self, tmp_path):
@@ -1189,7 +1191,7 @@ class TestRoutingExclusion:
 
         if rt.pool_scaler:
             assert "system_qa" in rt.pool_scaler.excluded_pools
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_pool_created_at_boot(self, tmp_path):
@@ -1208,7 +1210,7 @@ class TestRoutingExclusion:
         pool = rt.pools["system_qa"]
         assert pool.current_size == 1
         assert rt._system_qa is not None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_pool_not_created_when_disabled(self, tmp_path):
@@ -1223,7 +1225,7 @@ class TestRoutingExclusion:
         await rt.start()
         assert "system_qa" not in rt.pools
         assert rt._system_qa is None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===================================================================
@@ -1250,7 +1252,7 @@ class TestRegressionInvariants:
         assert "qa" in status
         assert status["qa"]["enabled"] is True
         assert status["qa"]["report_count"] == 0
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_runtime_status_without_qa(self, tmp_path):
@@ -1266,7 +1268,7 @@ class TestRegressionInvariants:
         status = rt.status()
         assert "qa" in status
         assert status["qa"]["enabled"] is False
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_existing_selfmod_flow_unchanged(self, tmp_path):
@@ -1278,7 +1280,7 @@ class TestRegressionInvariants:
         await rt.start()
         # Self-mod pipeline should still be created
         assert rt.self_mod_pipeline is not None
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_existing_shell_commands_unchanged(self, tmp_path):
@@ -1294,7 +1296,7 @@ class TestRegressionInvariants:
         assert "/status" in shell.COMMANDS
         assert "/agents" in shell.COMMANDS
         assert "/help" in shell.COMMANDS
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
 
 # ===================================================================
@@ -1427,7 +1429,7 @@ class TestQAShellCommand:
         await shell._cmd_qa("")
         output = buf.getvalue()
         assert "test_agent" in output
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_qa_shell_with_agent_type(self, tmp_path):
@@ -1466,7 +1468,7 @@ class TestQAShellCommand:
         output = buf.getvalue()
         assert "weather_agent" in output
         assert "get_weather" in output
-        await rt.stop()
+        await stop_runtime(rt, fast_teardown=True)
 
     def test_qa_shell_help_includes_qa(self):
         """/help output includes /qa command."""

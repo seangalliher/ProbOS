@@ -8,14 +8,14 @@ from probos.config import SystemConfig
 from probos.runtime import ProbOSRuntime
 from probos.types import AgentState, HandlerLatencyClass
 
+from tests.fixtures.runtime_factory import started_runtime
+
 
 @pytest.fixture
 async def runtime(tmp_path):
     """Create a runtime with temp data dir, start it, yield, stop."""
-    rt = ProbOSRuntime(data_dir=tmp_path / "data")
-    await rt.start()
-    yield rt
-    await rt.stop()
+    async with started_runtime(tmp_path, fast_teardown=True) as rt:
+        yield rt
 
 
 class TestRuntimeSubstrate:

@@ -25,6 +25,8 @@ from probos.mesh.routing import HebbianRouter, REL_INTENT, REL_SOCIAL
 from probos.runtime import ProbOSRuntime
 from probos.types import DreamReport, IntentMessage, LLMRequest
 
+from tests.fixtures.runtime_factory import make_runtime, started_runtime, stop_runtime
+
 
 # ---------------------------------------------------------------------------
 # Stubs / helpers
@@ -662,7 +664,6 @@ class TestSummaryAndSnapshot:
 class TestRuntimeIntegration:
     @pytest.fixture
     def runtime(self, tmp_path):
-        from probos.runtime import ProbOSRuntime
         from probos.config import load_config
 
         config_path = tmp_path / "system.yaml"
@@ -694,7 +695,7 @@ class TestRuntimeIntegration:
             "  trust_boost: 0.1\n  trust_penalty: 0.05\n  pre_warm_top_k: 5\n"
         )
         config = load_config(str(config_path))
-        rt = ProbOSRuntime(config=config, data_dir=str(tmp_path / "data"))
+        rt = make_runtime(tmp_path, config=config)
         return rt
 
     @pytest.mark.asyncio
@@ -704,7 +705,7 @@ class TestRuntimeIntegration:
             assert runtime._emergent_detector is not None
             assert isinstance(runtime._emergent_detector, EmergentDetector)
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_status_includes_emergent(self, runtime, tmp_path) -> None:
@@ -714,7 +715,7 @@ class TestRuntimeIntegration:
             assert "emergent" in status
             assert "tc_n" in status["emergent"]
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_detector_without_episodic_tc_n_zero(self, runtime, tmp_path) -> None:
@@ -723,7 +724,7 @@ class TestRuntimeIntegration:
             tc = runtime._emergent_detector.compute_tc_n()
             assert tc == 0.0  # No episodic memory
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_post_dream_analysis_wired(self, runtime, tmp_path) -> None:
@@ -736,7 +737,7 @@ class TestRuntimeIntegration:
             if runtime.dream_scheduler:
                 assert runtime.dream_scheduler._post_dream_fn is not None
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
 
 # ===========================================================================
@@ -809,7 +810,6 @@ class TestShellAndPanel:
     @pytest.mark.asyncio
     async def test_anomalies_command(self, tmp_path) -> None:
         from probos.config import load_config
-        from probos.runtime import ProbOSRuntime
 
         config_path = tmp_path / "system.yaml"
         config_path.write_text(
@@ -840,17 +840,13 @@ class TestShellAndPanel:
             "  trust_boost: 0.1\n  trust_penalty: 0.05\n  pre_warm_top_k: 5\n"
         )
         config = load_config(str(config_path))
-        rt = ProbOSRuntime(config=config, data_dir=str(tmp_path / "data"))
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=config, fast_teardown=True) as rt:
             buf = StringIO()
             console = Console(file=buf, width=120, force_terminal=True)
             shell = ProbOSShell(rt, console=console)
             await shell.execute_command("/anomalies")
             output = buf.getvalue()
             assert "Emergent Behavior" in output or "operating normally" in output
-        finally:
-            await rt.stop()
 
     def test_help_includes_anomalies(self) -> None:
         assert "/anomalies" in ProbOSShell.COMMANDS

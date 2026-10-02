@@ -5,18 +5,29 @@ the per-file fixtures used: ``data_dir=tmp_path / "data"``, a ``MockLLMClient``
 unless one is given, and the default config unless one is given.
 
 ``stop_runtime(..., fast_teardown=True)`` removes the two fixed shutdown waits
-(AD-435, 1 s; BF-296 Phase A, 2 s) from the TEARDOWN stop only. Those waits
-protect in-flight writes, so a stop that a test body runs keeps production
-timing: BF-598 turns every stop after the first into a no-op, so the fast path
-also does nothing for a runtime a test body has already stopped.
+(AD-435, 1 s; BF-296 Phase A, 2 s) from a runtime's FINAL stop only. Those waits
+protect in-flight writes, so every other stop keeps production timing: a stop a
+test body runs to observe or exercise (lifecycle, shutdown, persistence,
+warm-boot and concurrency tests) and any stop that something follows. BF-598
+turns every stop after the first into a no-op, so the fast path also does
+nothing for a runtime a test body has already stopped.
 
-Fast teardown is opt-in and pinned twice by tests/test_ad1270f_shutdown_grace.py:
-``FAST_TEARDOWN_OPT_IN_FILES`` lists the files that ask for it, and
-``FAST_TEARDOWN_EFFECTIVE_MODULES`` lists the test modules that receive it
-through a shared fixture. What stop() leaves behind is not observed by any
-opted-in test body; the guards pin that set. The one intentional exception is
-tests/test_ad1270f_shutdown_grace.py, which reads the persisted shutdown marker
-after a fast teardown on purpose.
+A final stop has four shapes, and only these may ask for fast teardown:
+(a) a yield fixture, as ``async with started_runtime(..., fast_teardown=True)``
+around the yield; (b) a test whose body is wholly inside that ``async with``;
+(c) a test that starts its runtime and ends with ``try: ... finally: await
+stop_runtime(rt, fast_teardown=True)``; (d) a final top-level ``await
+stop_runtime(rt, fast_teardown=True)``.
+
+Fast teardown is opt-in and pinned three ways by
+tests/test_ad1270f_shutdown_grace.py: ``FAST_TEARDOWN_OPT_IN_FILES`` lists the
+files that ask for it; ``FAST_TEARDOWN_EFFECTIVE_MODULES`` lists the test modules
+that receive it through a fixture they define or import, from tests/fixtures/ or
+from any other test module (any test module may be a fixture source); and a
+final-action guard checks that every request is the last action of its fixture
+or test. So no opted-in test body observes what stop() leaves behind. The one
+intentional exception is tests/test_ad1270f_shutdown_grace.py, which reads the
+persisted shutdown marker after a fast teardown on purpose.
 """
 
 from __future__ import annotations
@@ -38,26 +49,43 @@ FAST_TEARDOWN_OVERRIDES: Mapping[str, float] = MappingProxyType({
 
 # Files that ask for fast teardown: they contain a ``fast_teardown`` keyword that
 # is not False. tests/test_ad1270f_shutdown_grace.py pins this set against an AST
-# scan of every test file. P1.1 extends it file by file, and only for files whose
-# test bodies do not observe what shutdown leaves behind. The one intentional
-# observer is tests/test_ad1270f_shutdown_grace.py itself.
+# scan of every test file. P1.1 extends it file by file, and only for runtimes
+# whose final stop is the last thing a fixture or test does; the final-action
+# guard in the same test checks that. The one intentional post-stop observer is
+# tests/test_ad1270f_shutdown_grace.py itself.
 FAST_TEARDOWN_OPT_IN_FILES: frozenset[str] = frozenset({
     "tests/fixtures/experience_shell.py",
     "tests/test_experience_panels.py",
     "tests/test_ad1270f_shutdown_grace.py",
+    "tests/test_runtime.py",
+    "tests/test_consensus_integration.py",
+    "tests/test_distribution.py",
+    "tests/test_dag_proposal.py",
+    "tests/test_system_qa.py",
+    "tests/test_escalation.py",
+    "tests/test_self_mod.py",
+    "tests/test_emergent_detector.py",
+    "tests/test_semantic_knowledge.py",
+    "tests/test_scaling.py",
 })
 
-# Test modules that RECEIVE fast teardown through a shared fixture, with no
-# keyword of their own: they import a fast-teardown fixture from
-# tests/fixtures/experience_shell.py (``runtime``, and ``shell``, which requests
-# it) or define one. The same test pins this set with an AST scan, so a new
-# importer fails until it has been reviewed and added here. The fixture module
-# itself is the source and is pinned by FAST_TEARDOWN_OPT_IN_FILES.
+# Test modules that RECEIVE fast teardown through a fixture: they define a
+# fast-teardown fixture (a class fixture counts) or import one from a fixture
+# source, which is tests/fixtures/experience_shell.py (``runtime``, and ``shell``,
+# which requests it) or any other test module. The same test pins this set with
+# an AST scan, so a new recipient fails until it has been reviewed and added
+# here. A fixture-only module under tests/fixtures/ is a source, not a recipient:
+# FAST_TEARDOWN_OPT_IN_FILES pins it.
 FAST_TEARDOWN_EFFECTIVE_MODULES: frozenset[str] = frozenset({
     "tests/test_experience.py",
     "tests/test_experience_commands.py",
     "tests/test_experience_nl_memory.py",
     "tests/test_experience_panels.py",
+    "tests/test_runtime.py",
+    "tests/test_consensus_integration.py",
+    "tests/test_distribution.py",
+    "tests/test_dag_proposal.py",
+    "tests/test_escalation.py",
 })
 
 

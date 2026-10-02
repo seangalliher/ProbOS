@@ -16,6 +16,8 @@ from probos.substrate.scaler import PoolScaler
 from probos.substrate.spawner import AgentSpawner
 from probos.types import CapabilityDescriptor
 
+from tests.fixtures.runtime_factory import started_runtime
+
 
 class _PoolTestAgent(BaseAgent):
     """Minimal agent for pool tests."""
@@ -678,47 +680,32 @@ class TestRuntimeScaling:
     @pytest.mark.asyncio
     async def test_runtime_creates_scaler_when_enabled(self, tmp_path):
         """Test 27: Runtime creates PoolScaler when scaling enabled."""
-        from probos.runtime import ProbOSRuntime
 
         cfg = SystemConfig()
         cfg.scaling.enabled = True
-        rt = ProbOSRuntime(config=cfg, data_dir=tmp_path)
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=cfg, fast_teardown=True) as rt:
             assert rt.pool_scaler is not None
-        finally:
-            await rt.stop()
 
     @pytest.mark.asyncio
     async def test_runtime_no_scaler_when_disabled(self, tmp_path):
         """Test 28: Runtime does NOT create scaler when scaling disabled."""
-        from probos.runtime import ProbOSRuntime
 
         cfg = SystemConfig()
         cfg.scaling.enabled = False
-        rt = ProbOSRuntime(config=cfg, data_dir=tmp_path)
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=cfg, fast_teardown=True) as rt:
             assert rt.pool_scaler is None
-        finally:
-            await rt.stop()
 
     @pytest.mark.asyncio
     async def test_status_includes_scaling(self, tmp_path):
         """Test 29: status() includes scaling info."""
-        from probos.runtime import ProbOSRuntime
 
         cfg = SystemConfig()
         cfg.scaling.enabled = True
-        rt = ProbOSRuntime(config=cfg, data_dir=tmp_path)
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=cfg, fast_teardown=True) as rt:
             status = rt.status()
             assert "scaling" in status
             # Should have pool-level info since scaler is active
             assert isinstance(status["scaling"], dict)
-        finally:
-            await rt.stop()
 
 
 # =====================================================================
@@ -795,21 +782,16 @@ class TestShellScalingCommand:
         from io import StringIO
         from rich.console import Console as RichConsole
         from probos.experience.shell import ProbOSShell
-        from probos.runtime import ProbOSRuntime
 
         cfg = SystemConfig()
         cfg.scaling.enabled = True
-        rt = ProbOSRuntime(config=cfg, data_dir=tmp_path)
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=cfg, fast_teardown=True) as rt:
             buf = StringIO()
             console = RichConsole(file=buf, force_terminal=True, width=120)
             shell = ProbOSShell(rt, console=console)
             await shell.execute_command("/scaling")
             output = buf.getvalue()
             assert "Pool Scaling" in output or "Scaling" in output
-        finally:
-            await rt.stop()
 
     def test_help_includes_scaling(self):
         """Test 33: /help listing includes /scaling."""

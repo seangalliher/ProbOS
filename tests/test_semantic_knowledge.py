@@ -29,6 +29,8 @@ from probos.substrate.identity import (
 )
 from probos.types import LLMRequest
 
+from tests.fixtures.runtime_factory import make_runtime, started_runtime, stop_runtime
+
 
 # ===========================================================================
 # Phase 20 cleanup tests (AD-241)
@@ -456,7 +458,6 @@ class TestBulkReindex:
 class TestRuntimeIntegration:
     @pytest.fixture
     def runtime(self, tmp_path):
-        from probos.runtime import ProbOSRuntime
         from probos.config import load_config
 
         config_path = tmp_path / "system.yaml"
@@ -488,7 +489,7 @@ class TestRuntimeIntegration:
             "  trust_boost: 0.1\n  trust_penalty: 0.05\n  pre_warm_top_k: 5\n"
         )
         config = load_config(str(config_path))
-        return ProbOSRuntime(config=config, data_dir=str(tmp_path / "data"))
+        return make_runtime(tmp_path, config=config)
 
     @pytest.mark.asyncio
     async def test_runtime_creates_layer_with_episodic(self, runtime, tmp_path) -> None:
@@ -500,7 +501,7 @@ class TestRuntimeIntegration:
         try:
             assert runtime._semantic_layer is not None
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_runtime_no_layer_without_episodic(self, runtime, tmp_path) -> None:
@@ -508,7 +509,7 @@ class TestRuntimeIntegration:
         try:
             assert runtime._semantic_layer is None
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_status_includes_semantic_knowledge(self, runtime, tmp_path) -> None:
@@ -521,7 +522,7 @@ class TestRuntimeIntegration:
             status = runtime.status()
             assert "semantic_knowledge" in status
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_status_disabled_without_layer(self, runtime, tmp_path) -> None:
@@ -531,7 +532,7 @@ class TestRuntimeIntegration:
             assert "semantic_knowledge" in status
             assert status["semantic_knowledge"] == {"enabled": False}
         finally:
-            await runtime.stop()
+            await stop_runtime(runtime, fast_teardown=True)
 
     @pytest.mark.asyncio
     async def test_shutdown_cleans_up_layer(self, runtime, tmp_path) -> None:
@@ -660,7 +661,6 @@ class TestShellAndPanel:
     @pytest.mark.asyncio
     async def test_search_command_no_query(self, tmp_path) -> None:
         from probos.config import load_config
-        from probos.runtime import ProbOSRuntime
 
         config_path = tmp_path / "system.yaml"
         config_path.write_text(
@@ -691,17 +691,13 @@ class TestShellAndPanel:
             "  trust_boost: 0.1\n  trust_penalty: 0.05\n  pre_warm_top_k: 5\n"
         )
         config = load_config(str(config_path))
-        rt = ProbOSRuntime(config=config, data_dir=str(tmp_path / "data"))
-        await rt.start()
-        try:
+        async with started_runtime(tmp_path, config=config, fast_teardown=True) as rt:
             buf = StringIO()
             console = Console(file=buf, width=120, force_terminal=True)
             shell = ProbOSShell(rt, console=console)
             await shell.execute_command("/search")
             output = buf.getvalue()
             assert "Usage" in output or "not available" in output
-        finally:
-            await rt.stop()
 
 
 # ===========================================================================

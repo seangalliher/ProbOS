@@ -22,8 +22,8 @@ from probos import work_item_steps as owned_steps
 from probos.api import create_app
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import SystemConfig
-from probos.runtime import ProbOSRuntime
 
+from tests.fixtures.runtime_factory import started_runtime
 from tests.test_ad1131_crew_session_delivery_metrics import (
     _Harness as _NotificationHarness,
     _make_outcome,
@@ -187,10 +187,8 @@ async def test_actionable_api_input_cannot_mutate_or_widen_view(actionable_capab
 async def runtime(tmp_path):
     """Runtime with MockLLMClient and utility agents enabled."""
     llm = MockLLMClient()
-    rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-    await rt.start()
-    yield rt
-    await rt.stop()
+    async with started_runtime(tmp_path, llm=llm, fast_teardown=True) as rt:
+        yield rt
 
 
 @pytest.fixture
@@ -199,10 +197,8 @@ async def runtime_no_utility(tmp_path):
     config = SystemConfig()
     config.utility_agents.enabled = False
     llm = MockLLMClient()
-    rt = ProbOSRuntime(config=config, data_dir=tmp_path / "data", llm_client=llm)
-    await rt.start()
-    yield rt
-    await rt.stop()
+    async with started_runtime(tmp_path, llm=llm, config=config, fast_teardown=True) as rt:
+        yield rt
 
 
 @pytest.fixture
@@ -1294,11 +1290,9 @@ class TestFastAPIEndpoints:
     async def app_and_runtime(self, tmp_path):
         """Create a FastAPI app with a running runtime."""
         llm = MockLLMClient()
-        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=llm)
-        await rt.start()
-        app = create_app(rt)
-        yield app, rt
-        await rt.stop()
+        async with started_runtime(tmp_path, llm=llm, fast_teardown=True) as rt:
+            app = create_app(rt)
+            yield app, rt
 
     @pytest.mark.asyncio
     async def test_health_endpoint(self, app_and_runtime):
