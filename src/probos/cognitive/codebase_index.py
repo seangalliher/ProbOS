@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import inspect
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,71 @@ _PROJECT_DOCS = [
     "docs/development/contributing.md",
 ]
 
+# The project's test suite, listed by name only and kept out of _file_tree (#1444)
+_TESTS_DIR = "tests"
+_MAX_TESTS_PER_FILE = 5
+
+
+def _suite_root(project_root: Path, *, warn: bool = False) -> Path | None:  # BF-880 A-1
+    """The project's own ``tests`` directory, or None when absent or redirected; ``warn`` logs why."""  # BF-880 A-1
+    suite = project_root / _TESTS_DIR  # BF-880 A-1 the project's own tests child
+    if os.path.islink(suite) or os.path.isjunction(suite):  # BF-880 A-1 a link or junction is never followed
+        reason = "is a symbolic link or junction"  # BF-880 A-1 reason: redirected
+    elif not suite.is_dir():  # BF-880 A-1 no suite ships with this install
+        return None  # BF-880 A-1 absent, quietly
+    elif suite.resolve() != project_root.resolve() / _TESTS_DIR:  # BF-880 A-1 backstop for redirects missed above
+        reason = "resolves outside the project's own tests directory"  # BF-880 A-1 reason: resolves elsewhere
+    else:  # BF-880 A-1 the real suite root
+        return suite  # BF-880 A-1 accepted
+    if warn:  # BF-880 A-1 once, at build; never per read
+        logger.warning(  # BF-880 A-1 names the reason, never the target or its contents
+            "CodebaseIndex: test directory %s %s; the suite is neither listed nor read this session",  # BF-880 A-1
+            suite,  # BF-880 A-1 the suite path only
+            reason,  # BF-880 A-1 why it was refused
+        )  # BF-880 A-1 end of the refusal warning
+    return None  # BF-880 A-1 refused
+
+
+def _list_test_files(project_root: Path) -> tuple[str, ...]:
+    """Sorted project-root-relative ``tests/test_*.py`` paths, by name only (#1444).
+
+    Top level only: the suite's per-module tests live there. A missing directory
+    means no suite ships with this install; an unreadable one disables test
+    discovery for the session instead of failing the boot that builds the index.
+    """
+    tests_root = _suite_root(project_root, warn=True)  # BF-880 A-1 a redirected suite root lists nothing
+    if tests_root is None:  # BF-880 A-1 absent or refused
+        return ()
+    try:
+        before = os.stat(tests_root, follow_symlinks=False)  # BF-880 A-2 the suite root's identity, before listing
+        with os.scandir(tests_root) as entries:
+            names = sorted(
+                entry.name
+                for entry in entries
+                if entry.name.startswith("test_")
+                and entry.name.endswith(".py")
+                and entry.is_file(follow_symlinks=False)  # BF-880 A-1 a linked test file is skipped
+            )
+        recheck = _suite_root(project_root)  # BF-880 A-2 re-validated after listing: a swap during it is caught
+        after = None if recheck is None else os.stat(recheck, follow_symlinks=False)  # BF-880 A-2 identity now
+    except OSError as exc:
+        logger.warning(
+            "CodebaseIndex: test directory %s could not be listed (%s); "
+            "test discovery is unavailable for this session",
+            tests_root,
+            exc,
+        )
+        return ()
+    if after is None or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):  # BF-880 A-2 re-check failed
+        logger.warning(  # BF-880 A-2 once; names the reason, never the listed names or a target's contents
+            "CodebaseIndex: test directory %s changed while it was listed (%s); "  # BF-880 A-2
+            "the listing is discarded and test discovery is unavailable for this session",  # BF-880 A-2
+            tests_root,  # BF-880 A-2 the suite path only
+            "it is no longer the project's own tests directory" if after is None else "it was replaced",  # BF-880 A-2
+        )  # BF-880 A-2 end of the discard warning
+        return ()  # BF-880 A-2 the listing is discarded
+    return tuple(f"{_TESTS_DIR}/{name}" for name in names)
+
 
 class CodebaseIndex:
     """Read-only structural map of the ProbOS source tree."""
@@ -85,6 +151,7 @@ class CodebaseIndex:
         self._caller_cache: dict[str, list[dict[str, Any]]] = {}  # AD-312
         self._import_graph: dict[str, list[str]] = {}  # AD-315: file → files it imports
         self._reverse_import_graph: dict[str, list[str]] = {}  # AD-315: file → files that import it
+        self._test_files: tuple[str, ...] = ()  # #1444: tests/test_*.py, never _file_tree keys
         self._built = False
 
     # ------------------------------------------------------------------
@@ -128,6 +195,9 @@ class CodebaseIndex:
                 # Prefix with "docs:" to distinguish from source files
                 self._file_tree[f"docs:{doc_rel}"] = meta
 
+        # List the project's test suite by name for find_tests_for (#1444)
+        self._test_files = _list_test_files(self._project_root)
+
         # Build import graph (AD-315a)
         for rel, meta in self._file_tree.items():
             if rel.startswith("docs:"):
@@ -158,11 +228,12 @@ class CodebaseIndex:
         self._extract_config_schema()
         self._built = True
         logger.info(
-            "CodebaseIndex built: %d files, %d agents, %d layers, %d docs",
+            "CodebaseIndex built: %d files, %d agents, %d layers, %d docs, %d test files",
             len([k for k in self._file_tree if not k.startswith("docs:")]),
             len(self._agent_map),
             len(self._layer_map),
             len([k for k in self._file_tree if k.startswith("docs:")]),
+            len(self._test_files),
         )
 
     # ------------------------------------------------------------------
@@ -260,9 +331,10 @@ class CodebaseIndex:
         start_line: int | None = None,
         end_line: int | None = None,
     ) -> str:
-        """Read source or doc file contents.  Bounded to source_root / project_root only."""
+        """Read a source, ``docs:`` or indexed test file, bounded to the root it resolves against."""
         # Normalize separators
         file_path = file_path.replace("\\", "/")
+        text: str | None = None  # BF-880 A-2 set only when a listed test file is read inside its own guard
 
         # Resolve against the correct root (AD-299)
         if file_path.startswith("docs:"):
@@ -272,6 +344,25 @@ class CodebaseIndex:
                 target.relative_to(self._project_root.resolve())
             except ValueError:
                 return ""
+        elif file_path.startswith(f"{_TESTS_DIR}/") and file_path in self._test_files:
+            # #1444: a suite file find_tests_for returns, bounded to the tests root
+            try:  # BF-880 A-2 resolving, checking and reading a listed test path stay inside one guard
+                if _suite_root(self._project_root) is None:  # BF-880 A-1 re-checked at read: redirected after build
+                    return ""  # BF-880 A-1 never follow a redirected suite root
+                unresolved = self._project_root / file_path  # BF-880 A-1 the listed name, before any link is followed
+                if os.path.islink(unresolved):  # BF-880 A-1 a test file swapped for a link after build
+                    return ""  # BF-880 A-1 never follow a linked test file
+                target = unresolved.resolve()  # BF-880 A-1 resolved only after the link checks
+                project = self._project_root.resolve()  # BF-880 A-1 the docs: anchor
+                target.relative_to(project)  # BF-880 A-1 inside the project
+                target.relative_to(project / _TESTS_DIR)  # BF-880 A-1 inside its own tests child, never a redirect's
+                if not target.is_file():  # BF-880 A-2 checked inside the guard
+                    return ""  # BF-880 A-2 not a regular file: nothing to read
+                text = target.read_text(encoding="utf-8", errors="replace")  # BF-880 A-2 read inside the guard
+            except ValueError:
+                return ""
+            except OSError:  # BF-880 A-2 e.g. a listed file swapped for a junction to a file: empty, never a raise
+                return ""  # BF-880 A-2 no warning per read: reads are frequent
         else:
             # Resolve the absolute path and ensure it stays within source root
             target = (self._source_root / file_path).resolve()
@@ -280,10 +371,10 @@ class CodebaseIndex:
             except ValueError:
                 return ""
 
-        if not target.is_file():
-            return ""
-
-        text = target.read_text(encoding="utf-8", errors="replace")
+        if text is None:  # BF-880 A-2 every other path is checked and read here, exactly as before
+            if not target.is_file():
+                return ""
+            text = target.read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines(keepends=True)
 
         if start_line is not None or end_line is not None:
@@ -380,26 +471,31 @@ class CodebaseIndex:
         return results[:max_results]
 
     def find_tests_for(self, file_path: str) -> list[str]:
-        """Find test files for a given source file using naming conventions.
+        """Find the project's test files for a source file by naming convention.
 
-        AD-312: Extracts the module name from *file_path* and searches the
-        file tree for test files matching ``test_{module}`` patterns.
+        AD-312, #1444: ranks the indexed ``tests/test_*.py`` files -- exactly
+        ``test_{module}.py``, then ``test_{module}_*.py``, then any test whose
+        name holds ``{module}`` as a whole ``_``-separated word -- and returns
+        at most ``_MAX_TESTS_PER_FILE`` paths, each readable by ``read_source``.
         """
-        # Extract module name: "experience/panels.py" → "panels"
-        parts = file_path.replace("\\", "/").split("/")
-        filename = parts[-1] if parts else file_path
-        module = filename.replace(".py", "")
+        # "experience/panels.py" → "panels"
+        filename = file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if not filename.endswith(".py") or filename == ".py":
+            return []
+        module = filename[: -len(".py")]
 
-        matches: list[str] = []
-        for rel in self._file_tree:
-            if rel.startswith("docs:"):
-                continue
-            rel_lower = rel.lower()
-            if f"test_{module}" in rel_lower or (
-                "test" in rel_lower and module in rel_lower
-            ):
-                matches.append(rel)
-        return sorted(matches)
+        exact: list[str] = []
+        prefixed: list[str] = []
+        worded: list[str] = []
+        for rel in self._test_files:
+            subject = rel.rsplit("/", 1)[-1][len("test_") : -len(".py")].lower()
+            if subject == module:
+                exact.append(rel)
+            elif subject.startswith(f"{module}_"):
+                prefixed.append(rel)
+            elif f"_{module}_" in f"_{subject}_":
+                worded.append(rel)
+        return (exact + prefixed + worded)[:_MAX_TESTS_PER_FILE]
 
     def get_full_api_surface(self) -> dict[str, list[dict[str, str]]]:
         """Return public API surface for all key classes.

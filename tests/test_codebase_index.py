@@ -308,20 +308,18 @@ class TestStructuredQueries:
         assert results1 == results2
 
     def test_find_tests_for_panels(self, tmp_path: Path):
-        """find_tests_for() matches test files by naming convention within the
-        indexed tree.
+        """find_tests_for() matches the project's ``tests/`` files by naming convention.
 
-        Unit-level: the production index is built over ``src/probos`` only,
-        which holds no test files, so in production this returns [] for every
-        file -- tracked in #1444. This test used to run against that tree and
-        assert only ``isinstance(tests, list)``, so it could not fail.
+        The suite lives beside ``src``, outside the indexed source tree (#1444,
+        BF-880); the production topology is covered in
+        ``test_bf880_codebase_index_test_discovery.py``.
         """
         source_root = tmp_path / "src" / "probos"
         (source_root / "experience").mkdir(parents=True)
-        (source_root / "tests").mkdir()
+        (tmp_path / "tests").mkdir()
         (source_root / "experience" / "panels.py").write_text('"""Panels."""\n', encoding="utf-8")
-        (source_root / "tests" / "test_panels.py").write_text('"""Tests."""\n', encoding="utf-8")
-        (source_root / "tests" / "test_other.py").write_text('"""Other."""\n', encoding="utf-8")
+        (tmp_path / "tests" / "test_panels.py").write_text('"""Tests."""\n', encoding="utf-8")
+        (tmp_path / "tests" / "test_other.py").write_text('"""Other."""\n', encoding="utf-8")
         index = CodebaseIndex(source_root=source_root)
         index.build()
 

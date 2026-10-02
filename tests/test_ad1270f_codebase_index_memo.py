@@ -163,7 +163,7 @@ def test_the_derived_dependencies_include_what_build_calls() -> None:
 
     pairs = {(getattr(owner, "__name__", repr(owner)), attr) for owner, attr in _direct_dependencies()}
 
-    assert {("ast", "parse"), ("ast", "iter_child_nodes"), ("ast", "unparse")} <= pairs
+    assert {("ast", "parse"), ("ast", "iter_child_nodes"), ("ast", "unparse"), ("os", "scandir")} <= pairs
 
 
 def test_a_shadowing_attribute_on_the_concrete_path_class_bypasses_the_memo(
@@ -250,6 +250,39 @@ def test_the_fingerprint_covers_sources_and_project_documents(tmp_path: Path) ->
     assert before is not None and after is not None
     assert {entry[0] for entry in before} == {"cognitive/agent.py", "runtime.py"}
     assert "docs:PROGRESS.md" in {entry[0] for entry in after}
+
+
+def test_the_fingerprint_covers_test_file_names_not_content(tmp_path: Path) -> None:
+    """BF-880: build() lists the suite's test files by name, so names are inputs."""
+    source_root = _tree(tmp_path)
+    (tmp_path / "tests").mkdir()
+    before = build_inputs_fingerprint(source_root)
+    (tmp_path / "tests" / "test_runtime.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "helper.py").write_text("y = 1\n", encoding="utf-8")
+    after = build_inputs_fingerprint(source_root)
+    (tmp_path / "tests" / "test_runtime.py").write_text("x = 2\n", encoding="utf-8")
+    edited = build_inputs_fingerprint(source_root)
+
+    assert before is not None and after is not None
+    assert ("tests/test_runtime.py", b"") in after and before != after
+    assert not any(name.endswith("helper.py") for name, _ in after)
+    assert edited == after, "build() reads test names, not their content"
+
+
+def test_a_new_test_file_is_never_served_from_a_stale_snapshot(tmp_path: Path) -> None:
+    source_root = _tree(tmp_path)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_runtime.py").write_text("x = 1\n", encoding="utf-8")
+    memo = _seeded(source_root)
+    copy = CodebaseIndex(source_root)
+    memo.build(copy)
+    (tmp_path / "tests" / "test_runtime_more.py").write_text("x = 1\n", encoding="utf-8")
+    rebuilt = CodebaseIndex(source_root)
+    memo.build(rebuilt)
+
+    assert copy._test_files == ("tests/test_runtime.py",)
+    assert (memo.real_builds, memo.copies_served) == (2, 1)
+    assert rebuilt.find_tests_for("runtime.py") == ["tests/test_runtime.py", "tests/test_runtime_more.py"]
 
 
 def test_install_routes_build_through_the_memo_and_restores_it(tmp_path: Path) -> None:
