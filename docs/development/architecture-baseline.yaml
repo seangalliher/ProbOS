@@ -1155,14 +1155,6 @@ violations:
   rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
   review_by: AD-1270c3 completion
 - category: unowned-task
-  key: probos.startup.communication::init_communication
-  callee: asyncio.get_event_loop().create_task
-  count: 1
-  disposition: debt
-  owner: AD-1270h
-  rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
-  review_by: AD-1270h closeout
-- category: unowned-task
   key: probos.startup.communication::init_communication._ward_room_emit
   callee: asyncio.create_task
   count: 1

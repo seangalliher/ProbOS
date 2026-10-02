@@ -7,11 +7,14 @@ services, persistence of knowledge artifacts, and session record writing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
 import math
+import sqlite3
 import time
+from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
@@ -30,6 +33,23 @@ logger = logging.getLogger(__name__)
 # quiesced.
 SHUTDOWN_WRITE_GRACE_S: float = 1.0  # AD-435
 SHUTDOWN_DISPATCH_GRACE_S: float = 2.0  # BF-296 Phase A: after the bus closes
+
+# BF-882: the bound on the last-resort close of one aiosqlite connection by a startup rollback.
+# A rollback has to end so that the start() error can reach its caller, and a close waits
+# behind the statement in flight on the connection's worker thread, which can run for as long
+# as it likes. It is not a tuning knob: it only has to be longer than a healthy close and
+# shorter than a hang. A close that is not done by then is cancelled and abandoned, never
+# awaited (``_RollbackSteps._bounded``).
+_LAST_RESORT_SECONDS: float = 5.0
+
+# BF-882: the last-resort closes the rollback abandoned. The event loop holds a task only
+# weakly, and an abandoned aiosqlite close still has a ``finally`` to run (it stops the worker
+# thread once the statement it was queued behind has finished), so each is held here until it
+# ends. Each ends at once when the loop shuts down: ``asyncio.run`` cancels and awaits every
+# pending task, and a close awaits a plain future, so that cancellation interrupts it. Nothing
+# else is ever abandoned: a coroutine that ignores cancellation here would keep the loop, and
+# so the interpreter, from ending, which is why a stop() that failed is never called again.
+_abandoned_tasks: set[asyncio.Task[Any]] = set()
 
 
 async def _close_crew_session_delivery(runtime: Any) -> None:
@@ -274,8 +294,17 @@ async def _close_llm_client_after_confab_probes(runtime: Any) -> None:
     await runtime.llm_client.close()
 
 
-async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
-    """Close runtime-owned SQLite services without another lifecycle owner."""
+async def _stop_runtime_sqlite_sidecars(
+    runtime: Any,
+    on_failure: Callable[[str, Any], None] | None = None,
+) -> None:
+    """Close runtime-owned SQLite services without another lifecycle owner.
+
+    A service whose ``stop()`` raises is logged and the rest are still closed. The runtime
+    drops its reference to every one of them either way, so ``on_failure(label, service)``
+    is how a startup rollback (BF-882) keeps a failed one, so that the connections it holds
+    can be closed from outside; it is None in a normal stop, which behaves as it always did.
+    """
     services = (
         ("capability_request_store", "capability request store"),
         ("fault_report_store", "fault report store"),  # AD-1169
@@ -299,8 +328,436 @@ async def _stop_runtime_sqlite_sidecars(runtime: Any) -> None:
                 label,
                 exc_info=True,
             )
+            if on_failure is not None:
+                on_failure(label, service)
         finally:
             setattr(runtime, attribute, None)
+
+
+def _close_sync_store(
+    store: Any,
+    label: str,
+    on_failure: Callable[[str, Any], None] | None = None,
+) -> None:
+    """BF-881 (#1452): close a SQLite store opened synchronously; log-and-degrade.
+
+    ``ProfileStore`` (``ProbOSRuntime.__init__``), ``ServiceProfileStore`` and
+    ``SemanticStore`` each had a ``close()`` that nothing called, so their handles
+    stayed open (a held file on Windows) until a garbage collection. A failing close
+    must not stop the rest of the teardown. ``on_failure(label, store)`` is how a startup
+    rollback (BF-882) keeps a store whose close failed; it is None in a normal stop.
+    """
+    if store is None:
+        return
+    try:
+        store.close()
+    except Exception:
+        logger.warning(
+            "BF-881: %s failed to close during shutdown; its SQLite handle stays open "
+            "until the store is collected. Shutdown continues.",
+            label,
+            exc_info=True,
+        )
+        if on_failure is not None:
+            on_failure(label, store)
+
+
+async def _stop_held_start_service(
+    runtime: Any,
+    *,
+    service_attr: str,
+    start_task_attr: str | None,
+    label: str,
+) -> None:
+    """BF-881 (#1452): stop a service nothing stopped, and the task that started it.
+
+    The AD-641a bridge and the AD-477 Captain's Log and Plan of the Day each have a
+    ``stop()`` that no shutdown step called, and the AD-733c-5 repoint dropped the only
+    reference to the AD-733c-2 ship-level perception controller, so five loops outlived
+    ``stop()``. A pending start task is cancelled first, so a service that has not begun
+    never does. ``stop()`` is awaited only when it is a coroutine function, which skips a
+    ``MagicMock`` runtime double (BF-254).
+
+    AD-477's ``stop()`` cancels its loop and awaits it, so the loop's own
+    ``CancelledError`` propagates out of ``stop()`` by contract. That one is swallowed. A
+    cancellation that arrives while this runs is not: the running task's cancel count is
+    compared with its count at entry, because ``stop()`` is typically awaited from a task
+    that was already cancelled (BF-303: the operator's Ctrl+C), whose count is above zero
+    for the whole teardown. Any other failure is logged and shutdown continues. Both
+    attributes are cleared either way.
+    """
+    service = getattr(runtime, service_attr, None)
+    start_task = getattr(runtime, start_task_attr, None) if start_task_attr else None
+    stop = getattr(service, "stop", None)
+    start_pending = isinstance(start_task, asyncio.Task) and not start_task.done()
+    stop_awaitable = inspect.iscoroutinefunction(stop)
+    if not (start_pending or stop_awaitable):
+        return
+
+    current = asyncio.current_task()
+    cancelling_at_entry = current.cancelling() if current is not None else 0
+
+    def _outer_cancel_arrived() -> bool:
+        return current is not None and current.cancelling() > cancelling_at_entry
+
+    try:
+        if start_pending:
+            start_task.cancel()
+            try:
+                await start_task
+            except asyncio.CancelledError:
+                if _outer_cancel_arrived():
+                    raise
+            except Exception:
+                logger.warning(
+                    "BF-881: the %s start task failed while it was cancelled for "
+                    "shutdown; stop() is still attempted",
+                    label,
+                    exc_info=True,
+                )
+        if stop_awaitable:
+            try:
+                await stop()
+            except asyncio.CancelledError:
+                if _outer_cancel_arrived():
+                    raise
+            except Exception:
+                logger.warning(
+                    "BF-881: %s.stop() failed during shutdown; its background loop may "
+                    "run until the event loop closes. Shutdown continues.",
+                    label,
+                    exc_info=True,
+                )
+    finally:
+        if service is not None:
+            setattr(runtime, service_attr, None)
+        if start_task is not None and start_task_attr:
+            setattr(runtime, start_task_attr, None)
+
+
+def _direct_connections(
+    component: Any,
+) -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
+    """The sqlite connections ``component`` holds as plain attributes: (aiosqlite, raw sqlite3).
+
+    One level, no deeper. A deliberate failure-path exception to the rule that nothing reads
+    another object's private attributes (Open/Closed, Law of Demeter). Only a startup
+    rollback uses it, for a component whose ``stop()`` has failed and is never asked again
+    (see ``_RollbackSteps``), so what it holds can only be released from outside. An aiosqlite
+    connection's worker thread is non-daemon: left open it keeps the interpreter from exiting
+    and holds the database file (a lock, on Windows), so the rollback closes it through its
+    own public ``close()``, which aiosqlite runs on that worker thread after any statement in
+    flight. A raw ``sqlite3.Connection`` is only reported: it has no thread, and closing it
+    from the event-loop thread while a statement runs on another thread crashed the
+    interpreter (an access violation), so it is never closed here. Nothing is traversed: a
+    connection held deeper than one attribute level (inside another object, a list or a dict)
+    is not found, and neither is any resource that is not a sqlite connection, or a component
+    that has no ``__dict__``.
+    """
+    import aiosqlite  # here, not at module level: only a failed rollback needs it
+
+    # Deliberate failure-path exception to the no-private-attribute rule: this component's
+    # own stop() has failed, so what it holds is read off it instead of asked for.
+    try:
+        attributes = list(vars(component).items())
+    except TypeError:  # no ``__dict__`` (a ``__slots__`` class): nothing to scan
+        return [], []
+    closable = [(name, value) for name, value in attributes if isinstance(value, aiosqlite.Connection)]
+    raw = [(name, value) for name, value in attributes if isinstance(value, sqlite3.Connection)]
+    return closable, raw
+
+
+async def _await_it(awaitable: Awaitable[Any]) -> Any:
+    """A coroutine around any awaitable: ``create_task`` takes only a coroutine."""
+    return await awaitable
+
+
+def _reap_abandoned(task: asyncio.Task[Any]) -> None:
+    """Done-callback of an abandoned task: let go of it and read its outcome.
+
+    Nobody awaits an abandoned task, and an exception nobody retrieves is only logged when
+    the task is garbage collected. A task that ends in an error is named in a warning.
+    """
+    _abandoned_tasks.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.warning(
+            "BF-882: the abandoned rollback action %r ended later with %s: %s; the rollback "
+            "had already gone on without it.",
+            task.get_name(), type(error).__name__, error,
+        )
+
+
+def _abandon_last_resort(task: asyncio.Task[Any], what: str, reason: str) -> None:
+    """Give up on a last-resort close: ask it to cancel, do not wait for it, keep it alive.
+
+    The cancellation is requested and never awaited, because the ``finally`` of an aiosqlite
+    ``close()`` queued behind a running statement blocks until that statement ends, which
+    would otherwise hold the whole rollback. The task stays in ``_abandoned_tasks`` until it
+    ends, so the loop's weak reference is not all that holds it. It is cooperative: it awaits
+    a plain future, so a second cancellation, which is what ``asyncio.run`` sends every
+    pending task when the loop shuts down, ends it at once. Only a caller that has let this
+    cancellation be delivered first can rely on that (see ``_RollbackSteps._bounded``).
+    """
+    if task.done():
+        _reap_abandoned(task)
+        return
+    task.cancel()
+    _abandoned_tasks.add(task)
+    task.add_done_callback(_reap_abandoned)
+    logger.warning(
+        "BF-882: %s was abandoned: %s. Its cancellation was requested but is not awaited, "
+        "so it may still be running; what it holds stays held until it ends. The rollback "
+        "goes on without it.",
+        what, reason,
+    )
+
+
+class _RollbackSteps:
+    """BF-882 (#1419): ``shutdown()``'s steps, best-effort in a rollback, transparent otherwise.
+
+    ``with steps("name", component):`` around one teardown step does nothing at all when
+    ``rollback`` is False, so a normal stop is the function it was: a failing step
+    propagates, with the same traceback and the same log lines. In a rollback a step that
+    raises is logged, naming the step and the exception, and the rollback goes on to the
+    next one. A rollback tears down a boot that failed halfway, so any component may be
+    half built; one that cannot stop must not leave every later store, pool and agent
+    running, because their non-daemon aiosqlite workers keep the interpreter from exiting
+    and a Yeoman that never stops keeps the AD-766 slot.
+
+    The component of a failed step is kept on a list this object owns, once per component.
+    ``shutdown()`` drops the runtime's own reference to a component whether or not its stop
+    succeeded, which would leave nobody able to release one that failed. A stop() that failed
+    is untrusted and is never called again: it can hang, and one that ignores cancellation
+    can never be ended, which keeps ``asyncio.run`` (it cancels and awaits every pending task
+    when it shuts the loop down) and so the interpreter from ending. What the component
+    holds is released from outside instead. After the last step, ``settle_failed`` closes the
+    aiosqlite connections the component holds directly as attributes, so their non-daemon
+    worker threads cannot keep the process alive. Each close runs as a task of its own for at
+    most ``_LAST_RESORT_SECONDS`` and is abandoned, not awaited, when that is up
+    (``_bounded``), so no component can hold the rollback.
+
+    Residual, by design: a component whose ``stop()`` fails is not retried, and only its
+    directly held aiosqlite connections are closed. One that holds its connection deeper than
+    one attribute level (inside another object, a list or a dict), or a resource that is not an
+    aiosqlite connection (a thread, a task, a file), is not released, and a non-daemon thread
+    among it can still keep the process alive. A raw ``sqlite3.Connection`` held directly by
+    such a component is reported and left open: closing it from the event-loop thread while a
+    statement runs on another thread crashed the interpreter. It has no worker thread, so it
+    cannot keep the process alive; its file stays held until the connection is collected or
+    the process exits. An abandoned close keeps running until its statement ends. Each such
+    component is named in a warning.
+
+    Cancellation follows the BF-881 rule. The cancel count of the running task is taken
+    when the teardown begins. A ``CancelledError`` while that count is unchanged is not a
+    request to stop this task (a component re-raising its own loop's cancellation, as
+    AD-477's ``stop()`` does by contract), so it is logged like any other failure. One that
+    arrives after the count has risen is the caller's cancellation and propagates.
+    """
+
+    def __init__(self, rollback: bool) -> None:
+        self._rollback = rollback
+        # Only a rollback reads the running task: a normal stop must not depend on it.
+        self._task = asyncio.current_task() if rollback else None
+        self._cancelling_at_entry = (
+            self._task.cancelling() if self._task is not None else 0
+        )
+        # (step, component) of each step that failed, once per component, in the order they failed.
+        self._failed: list[tuple[str, Any]] = []
+
+    def __call__(
+        self, step: str, component: Any = None,
+    ) -> contextlib.AbstractContextManager[None]:
+        if not self._rollback:
+            return contextlib.nullcontext()
+        return self._best_effort(step, component)
+
+    def keep_failed(self, step: str, component: Any) -> None:
+        """Keep a component whose failed stop the caller logged and swallowed itself."""
+        if self._rollback:
+            self._remember(step, component)
+
+    def failure_sink(
+        self, *, action: str = "stop",
+    ) -> Callable[[str, Any], None] | None:
+        """The callback for a helper that logs and swallows a failed stop itself.
+
+        ``action`` is the verb of the step's name (``"<label> <action>"``). None outside a
+        rollback, so the helper then behaves exactly as it always did.
+        """
+        if not self._rollback:
+            return None
+
+        def keep(label: str, component: Any) -> None:
+            self._remember(f"{label} {action}", component)
+
+        return keep
+
+    def _remember(self, step: str, component: Any) -> None:
+        if component is None or any(kept is component for _, kept in self._failed):
+            return
+        self._failed.append((step, component))
+
+    def _outer_cancel_arrived(self) -> bool:
+        return (
+            self._task is not None
+            and self._task.cancelling() > self._cancelling_at_entry
+        )
+
+    @contextlib.contextmanager
+    def _best_effort(
+        self, step: str, component: Any = None,
+    ) -> Iterator[None]:
+        try:
+            yield
+        except asyncio.CancelledError:
+            if self._outer_cancel_arrived():
+                raise
+            self._remember(step, component)
+            logger.warning(
+                "BF-882: startup rollback step %r ended in a CancelledError nobody asked "
+                "this task for; it may not have released everything. The rollback "
+                "continues with the next step.",
+                step,
+                exc_info=True,
+            )
+        except Exception as error:
+            self._remember(step, component)
+            logger.warning(
+                "BF-882: startup rollback step %r raised %s: %s; it may not have "
+                "released everything. The rollback continues with the next step.",
+                step,
+                type(error).__name__,
+                error,
+                exc_info=True,
+            )
+
+    async def settle_failed(self) -> None:
+        """After the last step: close the aiosqlite connections each failed component holds directly.
+
+        A component whose stop() failed is never asked again (see the class docstring); what
+        it holds is released from outside. Each aiosqlite connection it holds directly is
+        closed, the close bounded, abandoned if it is not done in time, and logged by
+        component, step and attribute; a raw sqlite3 connection is reported and left open.
+        Only the caller's own cancellation escapes this.
+        """
+        failed, self._failed = self._failed, []
+        for step, component in failed:
+            await self._close_direct_connections(step, component)
+
+    async def _bounded(self, awaitable: Awaitable[Any], what: str) -> bool:
+        """Await ``awaitable`` for at most ``_LAST_RESORT_SECONDS``: True if it finished, False if abandoned.
+
+        It runs as a task of its own and is waited for with ``asyncio.wait``, which stops
+        waiting when the time is up and never waits for the task to finish cancelling.
+        ``asyncio.wait_for`` does wait for that, and the ``finally`` of an aiosqlite close
+        queued behind a running statement blocks until the statement ends, so the whole
+        rollback (the audit drain, ``_started = False``) waited as long as the statement ran.
+        When the time is up the task is cancelled but not awaited, kept in ``_abandoned_tasks``
+        until it ends, and named in a warning. A task that finished gives its own outcome
+        here: its exception, or ``CancelledError`` if it ended cancelled by itself. A
+        ``CancelledError`` from the wait itself is the caller's own cancellation: the task is
+        abandoned and it propagates.
+
+        Only for an awaitable that honours cancellation: the abandoned task outlives the
+        rollback, and ``asyncio.run`` cancels and awaits every pending task when it shuts the
+        loop down, so one that ignored it would keep the interpreter from exiting.
+        """
+        task = asyncio.create_task(_await_it(awaitable), name=f"bf882-last-resort {what}")
+        try:
+            await asyncio.wait({task}, timeout=_LAST_RESORT_SECONDS)
+        except asyncio.CancelledError:
+            _abandon_last_resort(task, what, "the rollback itself was cancelled while waiting for it")
+            raise
+        if not task.done():
+            _abandon_last_resort(task, what, f"it did not finish within {_LAST_RESORT_SECONDS:g}s")
+            # One loop iteration so the cancellation just requested is DELIVERED now: two that
+            # arrive before the task runs are folded into one, and the close would then block in
+            # its finally, which the cancellation the loop's shutdown sends could no longer end.
+            await asyncio.sleep(0)
+            return False
+        task.result()
+        return True
+
+    async def close_if_left_open(self, step: str, component: Any) -> None:
+        """Close any aiosqlite connection ``component`` still holds directly, silently if it holds none.
+
+        For a component whose stop is made inside a helper that swallows the failure and then
+        drops the runtime's reference, at a call site that cannot hand the failure over (the
+        audit log's persistence, whose call AD-1278 pins). Capture the component before the helper
+        runs and call this after it: a component that stopped holds no connection and costs nothing.
+        """
+        if self._rollback and component is not None:
+            await self._close_direct_connections(
+                step, component, why="left its connection open", quiet=True,
+            )
+
+    async def _close_direct_connections(
+        self, step: str, component: Any, *, why: str = "failed", quiet: bool = False,
+    ) -> None:
+        name = type(component).__name__
+        closable, raw = _direct_connections(component)
+        if not quiet:
+            for attribute, connection in raw:
+                logger.warning(
+                    "BF-882: last-resort leaves %s.%s open: it is a raw %s.%s and rollback "
+                    "step %r %s. A raw sqlite3 connection is never closed from the event-loop "
+                    "thread, because a statement may be running on another thread and closing "
+                    "the connection under it crashes the interpreter. It has no worker thread, "
+                    "so it cannot keep the process alive; its file stays held until the "
+                    "connection is collected or the process exits.",
+                    name, attribute, type(connection).__module__, type(connection).__name__,
+                    step, why,
+                )
+        if not closable:
+            if not quiet:
+                logger.warning(
+                    "BF-882: rollback step %r %s and %s holds no aiosqlite connection as "
+                    "a direct attribute to close. Anything else it holds (a raw sqlite3 "
+                    "connection, a connection deeper than one attribute level, a thread, a "
+                    "task, another resource) stays held until the process exits, and a "
+                    "non-daemon worker thread among it can keep the process from exiting.",
+                    step, why, name,
+                )
+            return
+        for attribute, connection in closable:
+            logger.warning(
+                "BF-882: last-resort close of %s.%s (%s.%s): rollback step %r %s, so its "
+                "connection is closed directly instead of being left open with its worker "
+                "thread.",
+                name, attribute, type(connection).__module__, type(connection).__name__,
+                step, why,
+            )
+            what = f"last-resort close of {name}.{attribute} (after step {step!r})"
+            with self._best_effort(what):
+                await self._bounded(connection.close(), what)
+
+
+async def _quiesce_surviving_agents(runtime: Any, steps: _RollbackSteps) -> None:
+    """BF-882 (#1419): stop every agent a failed pool stop left running. Rollback only.
+
+    ``ResourcePool`` unwires an agent from the mesh before it stops it and keeps
+    ownership when the unwire fails, so such an agent (the singleton YeomanAgent among
+    them) survives ``_stop_pools_and_drain_intent_bus`` still running and still holding
+    whatever it holds. A rollback has no later retry, so each is stopped here, and only
+    then can its own ``stop()`` release what only it can (the Yeoman slot is freed after
+    the agent has stopped, never before). The ownership policy is unchanged: nothing is
+    unregistered and the pool is retained. A failing stop is logged, the next agent is
+    still stopped, and the agent is kept with every other component whose stop failed, so
+    that the aiosqlite connections it holds directly are closed at the end of the rollback.
+    It is not asked to stop again.
+    """
+    for agent in list(runtime.registry.all()):
+        if not getattr(agent, "is_alive", False):
+            continue
+        with steps(
+            f"force-stop agent {getattr(agent, 'id', '?')} "
+            f"({getattr(agent, 'agent_type', '?')})",
+            agent,
+        ):
+            await agent.stop()
 
 
 async def _stop_pools_and_drain_intent_bus(
@@ -346,8 +803,43 @@ async def _stop_pools_and_drain_intent_bus(
     return deferred_cancellation
 
 
-async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
-    """Graceful shutdown of all pools, mesh services, and persistence."""
+async def shutdown(
+    runtime: ProbOSRuntime, reason: str = "", *, rollback: bool = False,
+) -> None:
+    """Graceful shutdown of all pools, mesh services, and persistence.
+
+    ``rollback=True`` (BF-882, #1419) is the teardown of a ``start()`` that failed or was
+    cancelled (``startup/rollback.py``). It releases everything the partial boot started,
+    in this same order, and persists nothing: no session consolidation, no AD-820
+    integrity marker, no knowledge-store or working-memory write, no "Entering Stasis"
+    post, no proactive-cooldown write and no Night Orders expiry, because none of those is
+    a release and a boot that never completed has no session to record. The one record it
+    does touch is ``session_last.json``: refreshed when it exists (BF-137, a failed start
+    must not leave the previous session's timestamp to inflate the next stasis) and never
+    created, because the next boot reads ANY record as a stasis recovery. Everything else
+    runs: both waits, the BF-296 and BF-602 quiesce, the AD-824/825 sweeps, the AD-1278
+    flush and drain, the event-log rows and the LLM close. Every step is best-effort
+    (``_RollbackSteps``): one that raises is logged by name and the rollback goes on,
+    because a half-built component may not be able to stop and must not leave every later
+    store, pool and agent running. The component of a failed step is kept (this function
+    drops the runtime's own reference to every component, stopped or not) and, at the end
+    of the rollback, has the aiosqlite connections it holds directly as attributes closed as
+    a last resort, so that their non-daemon worker threads cannot keep the process alive. A
+    stop() that failed is never called again: it is untrusted, and one that ignores
+    cancellation can never be ended, which keeps ``asyncio.run`` (it cancels and awaits every
+    pending task when it shuts the loop down) and so the interpreter from ending. Each close
+    runs as a task of its own, bounded and abandoned (not awaited) when the time is up, so
+    none can hold the rollback. Residual: a component whose stop() fails is not retried, and
+    only its directly held aiosqlite connections are closed. One that also holds its
+    connection deeper than one attribute level, or a resource that is not an aiosqlite
+    connection, can still keep the process alive (a non-daemon thread among it); a raw
+    ``sqlite3.Connection`` it holds is reported and left open (closing one from the loop
+    thread while a statement runs on another thread crashed the interpreter; it has no
+    thread, so it only holds its file until it is collected or the process exits). Each is
+    named in a warning. The BF-598 and ``_started`` guards are bypassed, because the
+    runtime a rollback tears down is by definition one ``stop()`` would skip.
+    ``rollback=False`` (the default) is the unchanged shutdown.
+    """
     # BF-598: idempotency guard. A second shutdown() invocation (a duplicate
     # SIGTERM during Windows sleep/wake, or a retried stop()) must NOT re-run
     # teardown. The first invocation already consolidated and wrote the AD-820
@@ -355,7 +847,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # skips consolidation, and would DOWNGRADE the clean marker to partial —
     # the root cause of the recurring boot refusal. Use getattr-with-default so
     # a process that started before this field existed still degrades safely.
-    if getattr(runtime, "_shutdown_started", False):
+    if getattr(runtime, "_shutdown_started", False) and not rollback:
         logger.info(
             "BF-598: shutdown() re-entered (reason=%r); first invocation already "
             "ran — skipping teardown and preserving the AD-820 marker.",
@@ -364,6 +856,13 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         return
     runtime._shutdown_started = True
     deferred_shutdown_cancellation: asyncio.CancelledError | None = None
+    steps = _RollbackSteps(rollback)
+    if rollback:
+        # A rollback is the teardown of a start that failed. Set here as well as by
+        # rollback_failed_start so that a direct call is flagged too: two steps below must
+        # keep their AST shape (tests/test_ad654d_internal_emitters.py executes them with
+        # only ``runtime`` and ``logger``), so they read this instead of ``steps``.
+        runtime._start_failed = True
 
     crew_orchestrator = getattr(runtime, "crew_orchestrator", None)
     crew_close = (
@@ -377,7 +876,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         else None
     )
     if callable(crew_close):
-        crew_close()
+        with steps("crew scheduling close"):
+            crew_close()
 
     # BF-663: close the public probe-scheduling gate synchronously at shutdown
     # entry, before the first await. This makes the later registry snapshot a
@@ -385,7 +885,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # append to while teardown is in progress. The method also requests
     # cancellation immediately, preventing a registered-but-not-started probe
     # from beginning after shutdown starts.
-    runtime.close_confab_probe_scheduling()
+    with steps("confab probe scheduling close"):
+        runtime.close_confab_probe_scheduling()
 
     # AD-1246 / #1417: fire the kill switch of every run_python child the service
     # tracks, long and inline, before anything awaits, and refuse any new one. A
@@ -394,7 +895,8 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # a process the child started itself survives it.
     long_runs = getattr(runtime, "execution_long_runs", None)
     if isinstance(long_runs, LongRunService):
-        long_runs.close("shutdown")
+        with steps("run_python long-run close"):
+            long_runs.close("shutdown")
 
     # BF-135: Persist session record FIRST — synchronous file write, microseconds.
     # Must happen before any async operations (Ward Room, event log) because
@@ -408,38 +910,59 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # stasis duration on the next successful boot.
     # BF-065: Write to runtime._data_dir directly (not knowledge_store).
     try:
-        session_record = {
-            "session_id": runtime._session_id,
-            "start_time_utc": runtime._start_time_wall,
-            "shutdown_time_utc": time.time(),
-            "uptime_seconds": time.monotonic() - runtime._start_time,
-            "agent_count": len([a for a in runtime.registry.all() if is_crew_agent(a, runtime.ontology)]),
-            "reason": reason,
-        }
         session_path = runtime._data_dir / "session_last.json"
-        session_path.write_text(json.dumps(session_record, indent=2))
+        if rollback and not session_path.exists():
+            # BF-882: a rollback refreshes a session record that exists (BF-137: a failed
+            # start must not leave the previous session's timestamp to inflate the next
+            # boot's stasis) but never creates one. cognitive_services reads ANY record
+            # as a stasis recovery, so one written by a boot that never completed would
+            # turn a maiden voyage into one.
+            logger.info(
+                "BF-882: startup rollback found no session record and does not create "
+                "one; the next boot is still a first boot."
+            )
+        else:
+            session_record = {
+                "session_id": runtime._session_id,
+                "start_time_utc": runtime._start_time_wall,
+                "shutdown_time_utc": time.time(),
+                "uptime_seconds": time.monotonic() - runtime._start_time,
+                "agent_count": len([a for a in runtime.registry.all() if is_crew_agent(a, runtime.ontology)]),
+                "reason": reason,
+            }
+            session_path.write_text(json.dumps(session_record, indent=2))
     except Exception as e:
         logger.debug("AD-502: Session record persistence failed: %s", e)
 
     if crew_stop is not None and asyncio.iscoroutinefunction(crew_stop):
-        await crew_stop()
+        with steps("crew orchestrator stop", crew_orchestrator):
+            await crew_stop()
 
     # AD-1246: bounded, and returns without suspending when no tracked run is in flight.
     if isinstance(long_runs, LongRunService):
-        await long_runs.wait_settled(LONG_RUN_SETTLE_SECONDS)
+        with steps("run_python long-run settle"):
+            await long_runs.wait_settled(LONG_RUN_SETTLE_SECONDS)
 
-    if not runtime._started:
+    if not runtime._started and not rollback:
         return
 
-    logger.info("ProbOS shutting down...")
+    if rollback:
+        logger.info(
+            "BF-882: rolling back a failed start (reason=%r); stopping everything the "
+            "partial boot started. Nothing is persisted and no shutdown marker is written.",
+            reason,
+        )
+    else:
+        logger.info("ProbOS shutting down...")
 
     try:
         await runtime.event_log.log(category="system", event="stopping")
     except (asyncio.CancelledError, Exception):
         pass  # event log may be unavailable during shutdown
 
-    # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol)
-    if runtime.ward_room and runtime.ward_room.is_started:
+    # AD-435 + AD-502: Announce shutdown to Ward Room (stasis protocol). Not in a
+    # rollback (BF-882): a boot that never completed has no session to put into stasis.
+    if not rollback and runtime.ward_room and runtime.ward_room.is_started:
         try:
             all_hands = await runtime.ward_room.get_channel_by_name("All Hands")
             if all_hands:
@@ -474,11 +997,17 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Cancel periodic flush — BF-099: await cancellation before trust writes
     if hasattr(runtime, '_flush_task'):
-        runtime._flush_task.cancel()
-        try:
-            await runtime._flush_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        flush_cancelled = False
+        with steps("periodic flush task cancel"):
+            runtime._flush_task.cancel()
+            flush_cancelled = True
+        # Not awaited when the cancel itself failed in a rollback: the task would still be
+        # running, and waiting for it would hang the very teardown that must end.
+        if flush_cancelled:
+            try:
+                await runtime._flush_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     # ── Phase 1: Critical Persistence ──────────────────────────────────
     # Dream consolidation + episodic memory close MUST complete before the
@@ -597,7 +1126,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # updates (micro-dream Hebbian replay + prune + trust) and makes no
     # episodic-collection writes, so it finishes well under budget; the
     # deferred idle-time steps re-run on the next dream cycle.
-    if runtime.dream_scheduler and runtime.episodic_memory:
+    if rollback:
+        # BF-882: a boot that never completed has no session to consolidate, and the
+        # AD-820 marker below describes that consolidation, so neither runs.
+        logger.info(
+            "BF-882: startup rollback skips session consolidation and the AD-820 "
+            "integrity marker."
+        )
+    elif runtime.dream_scheduler and runtime.episodic_memory:
         logger.info(
             "Consolidating session memories (lean, budget=%.0fs)...",
             _shutdown_consolidation_timeout,
@@ -709,16 +1245,19 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # consolidation — this is the critical operation that caused hash mismatches
     # when it was positioned after ~25 service stops.
     if runtime.episodic_memory:
-        await runtime.episodic_memory.stop()
+        with steps("episodic memory stop", runtime.episodic_memory):
+            await runtime.episodic_memory.stop()
 
     # AD-455: stop red team campaign loop
     if hasattr(runtime, "red_team_lead") and runtime.red_team_lead is not None:
-        await runtime.red_team_lead.stop()
+        with steps("red team lead stop", runtime.red_team_lead):
+            await runtime.red_team_lead.stop()
 
     # AD-541f: Stop eviction audit log (companion to episodic memory)
     _eviction_audit = getattr(runtime, "_eviction_audit", None)
     if _eviction_audit is not None:
-        await _eviction_audit.stop()
+        with steps("eviction audit log stop", _eviction_audit):
+            await _eviction_audit.stop()
         runtime._eviction_audit = None
 
     _phase1_elapsed = _time.monotonic() - _phase1_start
@@ -799,7 +1338,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             read_shutdown_status,
         )
         _data_dir = getattr(runtime, "_data_dir", None)
-        if _data_dir is not None:
+        if _data_dir is not None and not rollback:
             if _consolidation_result == "full":
                 mark_clean_shutdown(
                     _data_dir,
@@ -847,51 +1386,85 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # BF-662 lifecycle: these runtime-owned SQLite services were
     # opened during startup but had no shutdown owner. Their non-daemon
     # aiosqlite workers kept pytest alive after all assertions completed.
-    await _stop_runtime_sqlite_sidecars(runtime)
+    with steps("runtime SQLite sidecars stop"):
+        await _stop_runtime_sqlite_sidecars(runtime, on_failure=steps.failure_sink())
 
     # Stop ACM (AD-427)
     if runtime.acm:
-        await runtime.acm.stop()
+        with steps("ACM stop", runtime.acm):
+            await runtime.acm.stop()
         runtime.acm = None
 
     # Stop Visiting Officer registry (AD-701)
     vo_registry = getattr(runtime, "visiting_officers", None)
     if vo_registry is not None:
-        await vo_registry.stop()
+        with steps("visiting officer registry stop", vo_registry):
+            await vo_registry.stop()
         runtime.visiting_officers = None
 
     # Stop Workflow Cron scheduler (AD-707)
     wfc = getattr(runtime, "workflow_cron", None)
     if wfc is not None:
-        await wfc.stop()
+        with steps("workflow cron stop", wfc):
+            await wfc.stop()
         runtime.workflow_cron = None
 
     # Stop Identity Registry (AD-441)
     if runtime.identity_registry:
-        await runtime.identity_registry.stop()
+        with steps("identity registry stop", runtime.identity_registry):
+            await runtime.identity_registry.stop()
         runtime.identity_registry = None
 
     # Stop SIF (AD-370)
     if runtime.sif:
-        await runtime.sif.stop()
+        with steps("SIF stop", runtime.sif):
+            await runtime.sif.stop()
         runtime.sif = None
 
     # Stop InitiativeEngine (AD-381)
     if runtime.initiative:
-        await runtime.initiative.stop()
+        with steps("initiative engine stop", runtime.initiative):
+            await runtime.initiative.stop()
         runtime.initiative = None
 
     from probos.recreation.turns import RecreationTurns
 
+    # BF-882: these two statements are best-effort in a rollback, like every other step,
+    # but they are executed on their own by tests/test_ad654d_internal_emitters.py with
+    # only ``runtime`` and ``logger`` in scope, so they read the runtime's own flag
+    # (set by the rollback) instead of the ``steps`` guard. A CancelledError is never
+    # swallowed here: turns.stop() does synchronous work and AgentCognitiveQueue.shutdown()
+    # waits with asyncio.wait, so neither re-raises a cancellation of its own, and the only
+    # one that can arrive is the caller's.
     recreation = getattr(runtime, "recreation_service", None)
     if recreation is not None:
         turns: RecreationTurns = recreation.turns
-        await turns.stop()
+        try:
+            await turns.stop()
+        except Exception:
+            if not getattr(runtime, "_start_failed", False):
+                raise
+            logger.warning(
+                "BF-882: startup rollback step 'recreation turns stop' raised; it may "
+                "not have released everything. The rollback continues with the next step.",
+                exc_info=True,
+            )
 
     # AD-654b: Shutdown cognitive queues (before proactive loop stops)
     if hasattr(runtime, 'intent_bus') and runtime.intent_bus:
         for agent_id, queue in list(runtime.intent_bus._agent_queues.items()):
-            await queue.shutdown()
+            try:
+                await queue.shutdown()
+            except Exception:
+                if not getattr(runtime, "_start_failed", False):
+                    raise
+                logger.warning(
+                    "BF-882: startup rollback step 'cognitive queue shutdown' raised for "
+                    "agent %s; it may not have released everything. The rollback continues "
+                    "with the next step.",
+                    agent_id,
+                    exc_info=True,
+                )
         logger.info("Shutdown: cognitive queues stopped")
 
     # AD-743: Stop ConversationPacingScheduler (cancels any pending follow-ups)
@@ -905,22 +1478,42 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             )
         runtime.conversation_pacing_scheduler = None
 
+    # BF-881 (#1452): the AD-641a bridge and the AD-477 Captain's Log and Plan of the
+    # Day each have a stop() that no step here called, so their loops (and a start task
+    # that had not run yet) outlived the runtime.
+    for _service_attr, _start_task_attr, _service_label in (
+        ("observability_bridge", "observability_bridge_start_task",
+         "AD-641a ObservabilityBridge"),
+        ("captains_log_service", "captains_log_start_task",
+         "AD-477 CaptainsLogService"),
+        ("plan_of_day_service", "plan_of_day_start_task",
+         "AD-477 PlanOfDayService"),
+    ):
+        await _stop_held_start_service(
+            runtime,
+            service_attr=_service_attr,
+            start_task_attr=_start_task_attr,
+            label=_service_label,
+        )
+
     # Stop Proactive Cognitive Loop (Phase 28b)
     if runtime.proactive_loop:
-        # AD-415: Persist proactive cooldown overrides before stopping
-        if runtime._knowledge_store and runtime.proactive_loop._agent_cooldowns:
+        # AD-415: Persist proactive cooldown overrides before stopping (not in a rollback)
+        if not rollback and runtime._knowledge_store and runtime.proactive_loop._agent_cooldowns:
             try:
                 await runtime._knowledge_store.store_cooldowns(runtime.proactive_loop._agent_cooldowns.copy())
             except Exception:
                 logger.warning("Failed to persist proactive cooldowns", exc_info=True)
-        await runtime.proactive_loop.stop()
+        with steps("proactive loop stop", runtime.proactive_loop):
+            await runtime.proactive_loop.stop()
         runtime.proactive_loop = None
 
     # AD-471: Stop watch manager and expire Night Orders
     if hasattr(runtime, 'watch_manager') and runtime.watch_manager:
-        await runtime.watch_manager.stop()
+        with steps("watch manager stop", runtime.watch_manager):
+            await runtime.watch_manager.stop()
         runtime.watch_manager = None
-    if hasattr(runtime, '_night_orders_mgr') and runtime._night_orders_mgr:
+    if not rollback and hasattr(runtime, '_night_orders_mgr') and runtime._night_orders_mgr:
         if runtime._night_orders_mgr.active:
             runtime._night_orders_mgr.expire()
 
@@ -947,6 +1540,16 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                     _aid, exc_info=True,
                 )
         runtime.perception_engagement_registry = None
+
+    # BF-881 (#1452): the AD-733c-5 repoint above replaces the singleton the block before
+    # it stopped, so the ship-level AD-733c-2 controller (kept on this attribute by
+    # finalize) had no other owner and its idle watchdog outlived the runtime.
+    await _stop_held_start_service(
+        runtime,
+        service_attr="perception_default_controller",
+        start_task_attr=None,
+        label="AD-733c-2 ship-level perception controller",
+    )
 
     # AD-706b: Stop browser recording reaper (background retention sweeper)
     if hasattr(runtime, 'recording_reaper') and runtime.recording_reaper is not None:
@@ -1015,6 +1618,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             await runtime.schema_version_store.stop()
         except Exception:
             logger.warning("AD-818: schema_version_store.stop() failed", exc_info=True)
+            steps.keep_failed("schema version store stop", runtime.schema_version_store)
 
     # AD-751: Stop desktop UX surface (tray, hotkey, autostart, notifications)
     if hasattr(runtime, 'hotkey_listener') and runtime.hotkey_listener is not None:
@@ -1034,18 +1638,25 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Stop Persistent Task Store (Phase 25a)
     if runtime.persistent_task_store:
-        await runtime.persistent_task_store.stop()
+        with steps("persistent task store stop", runtime.persistent_task_store):
+            await runtime.persistent_task_store.stop()
         runtime.persistent_task_store = None
 
     # Stop Workforce Scheduling Engine (AD-496)
     if runtime.work_item_store:
-        await _close_crew_session_delivery(runtime)
-        await runtime.work_item_store.stop()
+        with steps(
+            "crew session delivery close",
+            getattr(runtime, "crew_session_delivery_service", None),
+        ):
+            await _close_crew_session_delivery(runtime)
+        with steps("workforce store stop", runtime.work_item_store):
+            await runtime.work_item_store.stop()
         runtime.work_item_store = None
 
     # Stop build dispatcher (AD-375)
     if runtime.build_dispatcher:
-        await runtime.build_dispatcher.stop()
+        with steps("build dispatcher stop", runtime.build_dispatcher):
+            await runtime.build_dispatcher.stop()
         runtime.build_dispatcher = None
         runtime.build_queue = None
 
@@ -1054,12 +1665,20 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     from probos.cognitive.standing_orders import set_directive_store
 
     HttpFetchAgent.set_profile_store(None)
+    # BF-881 (#1452): HttpFetchAgent was disconnected above and reads the store only in
+    # synchronous code, so nothing can reach the store once it is closed.
+    _close_sync_store(
+        getattr(runtime, "service_profiles", None),
+        "AD-382 ServiceProfileStore",
+        on_failure=steps.failure_sink(action="close"),
+    )
     runtime.service_profiles = None
 
     # Disconnect directive store (AD-386)
     if runtime.directive_store:
         set_directive_store(None)
-        runtime.directive_store.close()
+        with steps("directive store close", runtime.directive_store):
+            runtime.directive_store.close()
         runtime.directive_store = None
 
     # AD-596b: Disconnect cognitive skill catalog from standing orders
@@ -1071,125 +1690,151 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
 
     # Stop Ward Room (AD-407)
     if runtime.ward_room:
-        await runtime.ward_room.stop_prune_loop()
-        await runtime.ward_room.stop()
+        with steps("ward room prune loop stop", runtime.ward_room):
+            await runtime.ward_room.stop_prune_loop()
+        with steps("ward room stop", runtime.ward_room):
+            await runtime.ward_room.stop()
         runtime.ward_room = None
 
     # Stop Cognitive Journal (AD-431)
     if runtime.cognitive_journal:
-        await runtime.cognitive_journal.stop()
+        with steps("cognitive journal stop", runtime.cognitive_journal):
+            await runtime.cognitive_journal.stop()
         runtime.cognitive_journal = None
 
     # AD-622: Clearance grant store
     if hasattr(runtime, 'clearance_grant_store') and runtime.clearance_grant_store:
-        await runtime.clearance_grant_store.stop()
+        with steps("clearance grant store stop", runtime.clearance_grant_store):
+            await runtime.clearance_grant_store.stop()
         runtime.clearance_grant_store = None
 
     # AD-904: Clinical notes store
     if hasattr(runtime, 'clinical_notes_store') and runtime.clinical_notes_store:
-        await runtime.clinical_notes_store.stop()
+        with steps("clinical notes store stop", runtime.clinical_notes_store):
+            await runtime.clinical_notes_store.stop()
         runtime.clinical_notes_store = None
 
     # AD-423b: Tool permission store
     if hasattr(runtime, 'tool_permission_store') and runtime.tool_permission_store:
-        await runtime.tool_permission_store.stop()
+        with steps("tool permission store stop", runtime.tool_permission_store):
+            await runtime.tool_permission_store.stop()
         runtime.tool_permission_store = None
 
     # AD-1278 phase 1: get the bulk of the audit trail onto disk while the
     # system is still fully alive. Registration stays OPEN -- pools, the intent
     # bus and the mesh services all tear down below and can still append.
-    await _flush_audit_log(runtime)
+    with steps("AD-1278 early audit flush"):
+        await _flush_audit_log(runtime)
 
     # AD-983b: Skill grant store (per-agent cognitive-skill grants)
     if getattr(runtime, 'skill_grant_store', None):
-        await runtime.skill_grant_store.stop()
+        with steps("skill grant store stop", runtime.skill_grant_store):
+            await runtime.skill_grant_store.stop()
         runtime.skill_grant_store = None
 
     # AD-1005/AD-1007: Intent grant store (per-agent mesh-capability grants)
     if getattr(runtime, 'intent_grant_store', None):
-        await runtime.intent_grant_store.stop()
+        with steps("intent grant store stop", runtime.intent_grant_store):
+            await runtime.intent_grant_store.stop()
         runtime.intent_grant_store = None
         runtime.hook_bus = None  # AD-1012
 
     # AD-1154: Action approval store (standing, TTL-bounded action approvals)
     if getattr(runtime, 'action_approval_store', None):
-        await runtime.action_approval_store.stop()
+        with steps("action approval store stop", runtime.action_approval_store):
+            await runtime.action_approval_store.stop()
         runtime.action_approval_store = None
 
     # AD-1015: MCP server registration store (runtime-mutable MCP registrations)
     if getattr(runtime, 'mcp_server_store', None):
-        await runtime.mcp_server_store.stop()
+        with steps("MCP server store stop", runtime.mcp_server_store):
+            await runtime.mcp_server_store.stop()
         runtime.mcp_server_store = None
 
     # AD-1019b: department-tier grant + tool-risk stores
     if getattr(runtime, 'department_tool_grant_store', None):
-        await runtime.department_tool_grant_store.stop()
+        with steps("department tool grant store stop", runtime.department_tool_grant_store):
+            await runtime.department_tool_grant_store.stop()
         runtime.department_tool_grant_store = None
     if getattr(runtime, 'mcp_tool_risk_store', None):
-        await runtime.mcp_tool_risk_store.stop()
+        with steps("MCP tool risk store stop", runtime.mcp_tool_risk_store):
+            await runtime.mcp_tool_risk_store.stop()
         runtime.mcp_tool_risk_store = None
 
     # Stop Counselor Profile Store (AD-503)
     if runtime._counselor_profile_store:
-        await runtime._counselor_profile_store.stop()
+        with steps("counselor profile store stop", runtime._counselor_profile_store):
+            await runtime._counselor_profile_store.stop()
         runtime._counselor_profile_store = None
 
     # Stop Procedure Store (AD-533)
     if runtime._procedure_store:
-        await runtime._procedure_store.stop()
+        with steps("procedure store stop", runtime._procedure_store):
+            await runtime._procedure_store.stop()
         runtime._procedure_store = None
 
     # Stop Drift Scheduler (AD-566c) — before qualification store
     drift_sched = getattr(runtime, "_drift_scheduler", None)
     if drift_sched is not None:
-        await drift_sched.stop()
+        with steps("drift scheduler stop", drift_sched):
+            await drift_sched.stop()
         runtime._drift_scheduler = None
 
     # Stop Qualification Store (AD-566a)
     qual_store = getattr(runtime, "_qualification_store", None)
     if qual_store is not None:
-        await qual_store.stop()
+        with steps("qualification store stop", qual_store):
+            await qual_store.stop()
         runtime._qualification_store = None
         runtime._qualification_harness = None
 
     # Stop Retrieval Practice Engine (AD-541c)
     if hasattr(runtime, '_retrieval_practice_engine') and runtime._retrieval_practice_engine:
-        await runtime._retrieval_practice_engine.stop()
+        with steps("retrieval practice engine stop", runtime._retrieval_practice_engine):
+            await runtime._retrieval_practice_engine.stop()
         runtime._retrieval_practice_engine = None
 
     # Stop Activation Tracker (AD-567d)
     _activation_tracker = getattr(runtime, "_activation_tracker", None)
     if _activation_tracker is not None:
-        await _activation_tracker.stop()
+        with steps("activation tracker stop", _activation_tracker):
+            await _activation_tracker.stop()
         runtime._activation_tracker = None
 
     # Stop Cognitive Skill Catalog (AD-596a)
     if runtime.cognitive_skill_catalog:
-        await runtime.cognitive_skill_catalog.stop()
+        with steps("cognitive skill catalog stop", runtime.cognitive_skill_catalog):
+            await runtime.cognitive_skill_catalog.stop()
         runtime.cognitive_skill_catalog = None
 
     # Stop Skill Framework (AD-428)
     if runtime.skill_service:
-        await runtime.skill_service.stop()
+        with steps("skill service stop", runtime.skill_service):
+            await runtime.skill_service.stop()
         runtime.skill_service = None
     if runtime.skill_registry:
-        await runtime.skill_registry.stop()
+        with steps("skill registry stop", runtime.skill_registry):
+            await runtime.skill_registry.stop()
         runtime.skill_registry = None
 
     # Stop Assignment Service (AD-408)
     if runtime.assignment_service:
-        await runtime.assignment_service.stop()
+        with steps("assignment service stop", runtime.assignment_service):
+            await runtime.assignment_service.stop()
         runtime.assignment_service = None
 
     # Stop red team agents
     for agent in runtime.red_team_agents:
-        await agent.stop()
-        await runtime.registry.unregister(agent.id)
+        with steps(f"red team agent {agent.id} stop", agent):
+            await agent.stop()
+        with steps(f"red team agent {agent.id} unregister"):
+            await runtime.registry.unregister(agent.id)
     runtime.red_team_agents.clear()
 
     # Stop pool scaler before stopping pools
     if runtime.pool_scaler:
-        await runtime.pool_scaler.stop()
+        with steps("pool scaler stop", runtime.pool_scaler):
+            await runtime.pool_scaler.stop()
         runtime.pool_scaler = None
 
     # Stop federation
@@ -1199,10 +1844,12 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         None,
     )
     if federation_telemetry_relay:
-        await federation_telemetry_relay.stop()
+        with steps("federation telemetry relay stop", federation_telemetry_relay):
+            await federation_telemetry_relay.stop()
         runtime.federation_telemetry_relay = None
     if runtime.federation_bridge:
-        await runtime.federation_bridge.stop()
+        with steps("federation bridge stop", runtime.federation_bridge):
+            await runtime.federation_bridge.stop()
         runtime.federation_bridge = None
     remote_avatar_telemetry_cache = getattr(
         runtime,
@@ -1210,15 +1857,20 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         None,
     )
     if remote_avatar_telemetry_cache:
-        remote_avatar_telemetry_cache.clear()
+        with steps("remote avatar telemetry cache clear"):
+            remote_avatar_telemetry_cache.clear()
     if runtime._federation_transport:
-        await runtime._federation_transport.stop()
+        with steps("federation transport stop", runtime._federation_transport):
+            await runtime._federation_transport.stop()
         runtime._federation_transport = None
 
-    # AD-573: Freeze all agent working memory before pools stop
-    if hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+    # AD-573: Freeze all agent working memory before pools stop (not in a rollback: a boot
+    # that never completed has no session state to freeze, BF-882)
+    if not rollback and hasattr(runtime, 'working_memory_store') and runtime.working_memory_store:
+        # BF-127 / BF-882: is_crew_agent is the module-level import. A function-local
+        # re-import here made the name local to all of shutdown(), so the session record
+        # above raised UnboundLocalError (logged at debug) whenever the registry had agents.
         try:
-            from probos.crew_utils import is_crew_agent  # BF-127
             states: dict = {}
             for agent in runtime.registry.all():
                 # BF-127: Only persist working memory for sovereign crew agents
@@ -1236,12 +1888,36 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
     # Stop all pools, then drain any previously scheduled or concurrent
     # IntentBus work while NATS is still available. Failures retain the pool
     # owner but cannot bypass the remaining transport teardown.
-    deferred_shutdown_cancellation = await _stop_pools_and_drain_intent_bus(
-        runtime
-    )
+    with steps("pools stop and intent bus drain"):
+        deferred_shutdown_cancellation = await _stop_pools_and_drain_intent_bus(
+            runtime
+        )
+
+    # BF-882: a pool that could not unwire an agent keeps it, running. A rollback has no
+    # later retry, so stop what is still alive before the transport below is torn down.
+    if rollback:
+        await _quiesce_surviving_agents(runtime, steps)
+
+    # BF-881 (#1452): three standing-orders module globals (single-runtime state, like
+    # the two cleared earlier) were never cleared. ``_billet_registry`` reaches the runtime
+    # through ``BilletRegistry._emit_event_fn``, so the whole stopped runtime stayed alive
+    # until the next one overwrote it. Cleared HERE, after the pools stop and the
+    # IntentBus drain, and not with the two above: a dispatch admitted before the bus
+    # closed is still running until the drain completes, and composes its prompt from
+    # these (sub_tasks/compose.py, analyze.py), which silently degrades without them.
+    with steps("standing-orders globals clear"):
+        from probos.cognitive.standing_orders import (
+            set_billet_registry,
+            set_step_router,
+            set_task_context,
+        )
+        set_billet_registry(None)
+        set_step_router(None)
+        set_task_context(None)
 
     # Persist knowledge store artifacts before stopping services
-    if runtime._knowledge_store:
+    # (not in a rollback: BF-882 persists nothing a completed session would)
+    if runtime._knowledge_store and not rollback:
         try:
             # Persist agent manifest (Phase 14c)
             await runtime._knowledge_store.store_manifest(runtime._build_manifest())
@@ -1265,10 +1941,14 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
             logger.warning("Knowledge store shutdown persistence failed: %s", e)
 
     # Stop mesh and consensus services
-    await runtime.gossip.stop()
-    await runtime.signal_manager.stop()
-    await runtime.hebbian_router.stop()
-    await runtime.trust_network.stop()
+    with steps("gossip protocol stop", runtime.gossip):
+        await runtime.gossip.stop()
+    with steps("signal manager stop", runtime.signal_manager):
+        await runtime.signal_manager.stop()
+    with steps("Hebbian router stop", runtime.hebbian_router):
+        await runtime.hebbian_router.stop()
+    with steps("trust network stop", runtime.trust_network):
+        await runtime.trust_network.stop()
 
     # AD-637: Stop NATS event bus
     if getattr(runtime, 'nats_bus', None):
@@ -1284,7 +1964,7 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         try:
             await runtime.working_memory_store.stop()
         except Exception:
-            pass
+            steps.keep_failed("working memory store stop", runtime.working_memory_store)
 
     # AD-524: Close Ship's Archive store
     if getattr(runtime, "_archive_store", None):
@@ -1297,6 +1977,22 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
                 "and the OS will reclaim the connection if needed: %s",
                 e,
             )
+            steps.keep_failed("ship's archive store close", runtime._archive_store)
+
+    # BF-881 (#1452): two more synchronous SQLite handles with a close() nothing called.
+    # SemanticStore (AD-750) is dropped after the close; ProfileStore keeps its attribute,
+    # because close() is idempotent and a closed store's _persist does nothing.
+    _semantic_store = getattr(runtime, "_semantic_store", None)
+    if _semantic_store is not None:
+        _close_sync_store(
+            _semantic_store, "AD-750 SemanticStore",
+            on_failure=steps.failure_sink(action="close"),
+        )
+        runtime._semantic_store = None
+    _close_sync_store(
+        getattr(runtime, "profile_store", None), "crew ProfileStore",
+        on_failure=steps.failure_sink(action="close"),
+    )
 
     # AD-1195: flush queued durable rows while the EventLog is still open, so
     # they land before the stopped row. A runtime double whose attribute is
@@ -1315,29 +2011,42 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):
         pass
-    await runtime.event_log.stop()
+    with steps("event log stop", runtime.event_log):
+        await runtime.event_log.stop()
 
     # BF-663: one-shot confab probes use the LLM but are not part of the generic
     # background registry. The production close seam drains the now-stable
     # registry before closing its dependency, so no evidence or notification can
     # arrive after shutdown. Dream consolidation remains earlier in the order.
-    await _close_llm_client_after_confab_probes(runtime)
+    with steps("LLM client close"):
+        await _close_llm_client_after_confab_probes(runtime)
 
     # Stop dreaming scheduler
     if runtime.dream_scheduler:
-        await runtime.dream_scheduler.stop()
+        with steps("dream scheduler stop", runtime.dream_scheduler):
+            await runtime.dream_scheduler.stop()
         runtime.dream_scheduler = None
 
     # Stop task scheduler (AD-282)
     if runtime.task_scheduler:
-        await runtime.task_scheduler.stop()
+        with steps("task scheduler stop", runtime.task_scheduler):
+            await runtime.task_scheduler.stop()
         runtime.task_scheduler = None
 
     try:
         # Stop semantic knowledge layer (AD-243)
         if runtime._semantic_layer:
-            await runtime._semantic_layer.stop()
+            with steps("semantic knowledge layer stop", runtime._semantic_layer):
+                await runtime._semantic_layer.stop()
             runtime._semantic_layer = None
+        # BF-882: the last step of a rollback. Every component whose stop failed was kept
+        # (the runtime's own reference to it is gone by now), so close the aiosqlite
+        # connections it holds directly, each close bounded and abandoned if it is not done
+        # in time. A failed stop() is never called again: it is untrusted, and one that
+        # ignores cancellation would keep the loop, and so the interpreter, from ending.
+        # Above the audit drain, which stays the last point at which anything can append.
+        if rollback:
+            await steps.settle_failed()
     finally:
         # AD-1278 phase 2: the authoritative drain. Here rather than with the
         # other stores because `drain()` closes registration, and this is the
@@ -1348,9 +2057,22 @@ async def shutdown(runtime: ProbOSRuntime, reason: str = "") -> None:
         # In a `finally` because review reproduced the skip: a raising
         # `_semantic_layer.stop()` gave `drain_called=False`, losing the tail on
         # exactly the failure path an investigator most wants the record for.
-        await _drain_audit_log(runtime)
+        #
+        # BF-882: the drain also stops the audit log's persistence, logs a failure to do
+        # so and drops the runtime's reference, at a call site AD-1278 pins. In a rollback
+        # the persistence is captured first and closed afterwards if it was left open.
+        audit_persistence = getattr(runtime, "audit_log_persistence", None) if rollback else None
+        with steps("AD-1278 audit drain"):
+            await _drain_audit_log(runtime)
+        await steps.close_if_left_open("AD-456d audit log persistence stop", audit_persistence)
 
     runtime._started = False
-    logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)
+    if rollback:
+        logger.info(
+            "BF-882: startup rollback complete. Final agent count: %d",
+            runtime.registry.count,
+        )
+    else:
+        logger.info("ProbOS shutdown complete. Final agent count: %d", runtime.registry.count)
     if deferred_shutdown_cancellation is not None:
         raise deferred_shutdown_cancellation

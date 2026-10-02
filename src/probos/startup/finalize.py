@@ -6285,6 +6285,10 @@ async def finalize_startup(
             _controller.transition_to(_PerceptionMode.AMBIENT, trigger="init")
             await _controller.start()
             runtime.perception_mode_controller = _controller
+            # BF-881 (#1452): the AD-733c-5 repoint below replaces the singleton above, so
+            # keep the ship-level controller reachable here for shutdown to stop. Its
+            # idle watchdog runs during the session exactly as before.
+            runtime.perception_default_controller = _controller
             logger.info("AD-733c-2: PerceptionModeController wired (initial=ambient)")
 
             # AD-733c-5: Per-agent engagement registry. The singleton
