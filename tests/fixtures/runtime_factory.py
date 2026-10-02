@@ -23,11 +23,13 @@ Fast teardown is opt-in and pinned three ways by
 tests/test_ad1270f_shutdown_grace.py: ``FAST_TEARDOWN_OPT_IN_FILES`` lists the
 files that ask for it; ``FAST_TEARDOWN_EFFECTIVE_MODULES`` lists the test modules
 that receive it through a fixture they define or import, from tests/fixtures/ or
-from any other test module (any test module may be a fixture source); and a
-final-action guard checks that every request is the last action of its fixture
-or test. So no opted-in test body observes what stop() leaves behind. The one
-intentional exception is tests/test_ad1270f_shutdown_grace.py, which reads the
-persisted shutdown marker after a fast teardown on purpose.
+from any other test module (any test module may be a fixture source), or that
+inherit one by subclassing a class imported from a module that owns a fast class
+fixture; and a final-action guard checks that every request is the last action of
+its fixture or test (as the first, outermost context of an ``async with``, since
+contexts exit right to left). So no opted-in test body observes what stop() leaves
+behind. The one intentional exception is tests/test_ad1270f_shutdown_grace.py,
+which reads the persisted shutdown marker after a fast teardown on purpose.
 """
 
 from __future__ import annotations
@@ -70,12 +72,13 @@ FAST_TEARDOWN_OPT_IN_FILES: frozenset[str] = frozenset({
 })
 
 # Test modules that RECEIVE fast teardown through a fixture: they define a
-# fast-teardown fixture (a class fixture counts) or import one from a fixture
+# fast-teardown fixture (a class fixture counts), import one from a fixture
 # source, which is tests/fixtures/experience_shell.py (``runtime``, and ``shell``,
-# which requests it) or any other test module. The same test pins this set with
-# an AST scan, so a new recipient fails until it has been reviewed and added
-# here. A fixture-only module under tests/fixtures/ is a source, not a recipient:
-# FAST_TEARDOWN_OPT_IN_FILES pins it.
+# which requests it) or any other test module, or import a class from a module
+# that owns a fast class fixture, which a subclass inherits. The same test pins
+# this set with an AST scan, so a new recipient fails until it has been reviewed
+# and added here. A fixture-only module under tests/fixtures/ is a source, not a
+# recipient: FAST_TEARDOWN_OPT_IN_FILES pins it.
 FAST_TEARDOWN_EFFECTIVE_MODULES: frozenset[str] = frozenset({
     "tests/test_experience.py",
     "tests/test_experience_commands.py",

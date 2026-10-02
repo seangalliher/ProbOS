@@ -9,8 +9,9 @@ waits and also their maximums. The shared runtime factory
 only: a fixture's teardown or the last action of a test. Three guards pin who gets
 that and where it may sit: ``FAST_TEARDOWN_OPT_IN_FILES`` (files that ask for it),
 ``FAST_TEARDOWN_EFFECTIVE_MODULES`` (test modules that receive it through a fixture
-they define or import from any fixture source) and a final-action guard (a request
-may only be the last action of a fixture or of a test, so no assertion follows it).
+they define, import from any fixture source, or inherit by subclassing an imported
+test class) and a final-action guard (a request may only be the last action of a
+fixture or of a test, so no assertion follows it).
 
 No opted-in test body observes what ``stop()`` leaves behind, with one
 intentional exception: this file. Its real-boot test (d) reads the persisted
@@ -872,7 +873,8 @@ async def test_started_runtime_passes_fast_teardown_to_the_teardown_stop(
 #
 # FAST_TEARDOWN_OPT_IN_FILES pins the call sites: files with a ``fast_teardown``
 # keyword that is not False. That is not the reach: any test module may define
-# a fast fixture, and every module that defines one or imports one gets fast
+# a fast fixture, and every module that defines one, imports one, or subclasses
+# an imported class that owns one (a class fixture is inherited) gets fast
 # teardown with no keyword of its own. FAST_TEARDOWN_EFFECTIVE_MODULES pins
 # those recipients, so a new one fails here until someone has checked that none
 # of its test bodies observe what stop() leaves behind. The final-action guard
@@ -980,8 +982,9 @@ def _fast_teardown_fixture_names(tree: ast.AST) -> set[str]:
     """Module-level fixtures of ``tree`` that give fast teardown.
 
     Directly (their own body asks for it) or by requesting a fixture that does,
-    as ``shell`` requests ``runtime``. Only a module-level name can be imported
-    by another module, so a class fixture is a recipient but never a source.
+    as ``shell`` requests ``runtime``. A module-level name can be imported by
+    another module. A class fixture cannot be imported by name, but a subclass
+    inherits it; ``_fast_teardown_class_names`` covers that.
     """
     fixtures = {
         node.name: node
@@ -1003,14 +1006,34 @@ def _fast_teardown_fixture_names(tree: ast.AST) -> set[str]:
     return fast
 
 
+def _fast_teardown_class_names(tree: ast.AST) -> set[str]:
+    """Class names of ``tree`` when some class in it owns a fast-teardown fixture.
+
+    A class fixture cannot be imported by name, but a subclass inherits it: a
+    module that imports ``C`` and subclasses it runs its tests, and any it adds,
+    with fast teardown and no keyword of its own. Every class of an owning module
+    counts, because a subclass of any of them may inherit from the owner.
+    """
+    classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    owns_one = any(
+        _is_pytest_fixture(inner) and _asks_for_fast_teardown(inner)
+        for cls in classes
+        for inner in ast.walk(cls)
+    )
+    return {cls.name for cls in classes} if owns_one else set()
+
+
 def _imports_fast_teardown_fixture(
     tree: ast.AST, sources: Mapping[str, set[str]],
 ) -> bool:
     """True when ``tree`` brings a fast-teardown fixture in from a fixture source.
 
     ``sources`` maps a source module's name, its last dotted segment, to the names
-    of its fast-teardown fixtures. A star import, a module import and a
-    ``pytest_plugins`` registration bring in every fixture, so they count too.
+    whose import brings fast teardown: its module-level fast fixtures and, when it
+    owns a fast class fixture, its classes (a subclass inherits that fixture). A
+    star import, a module import (by ``from``, ``import``, an alias or an attribute
+    such as ``tests.test_parent``) and a ``pytest_plugins`` registration bring in
+    everything, so they count too.
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -1022,6 +1045,9 @@ def _imports_fast_teardown_fixture(
                 return True
         elif isinstance(node, ast.Import):
             if any(alias.name.rsplit(".", 1)[-1] in sources for alias in node.names):
+                return True
+        elif isinstance(node, ast.Attribute):
+            if node.attr in sources:  # a source module reached as an attribute
                 return True
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -1046,14 +1072,11 @@ def _test_module_texts(root: Path) -> Iterator[tuple[str, str]]:
             yield relative, path.read_text(encoding="utf-8", errors="replace")
 
 
-def _fast_teardown_sources(root: Path = _REPO_ROOT) -> dict[str, set[str]]:
-    """Module name -> its fast-teardown fixture names, for every module that has one.
-
-    Any tests/**/*.py but the factory can be a source: a fast fixture defined in
-    a test module and imported elsewhere spreads fast teardown as surely as one
-    in tests/fixtures/.
-    """
-    sources: dict[str, set[str]] = {}
+def _fast_teardown_names_by_module(
+    root: Path, names_of: Callable[[ast.AST], set[str]],
+) -> dict[str, set[str]]:
+    """Module name -> ``names_of(tree)``, for every module where that is not empty."""
+    found: dict[str, set[str]] = {}
     for relative, text in _test_module_texts(root):
         if "fast_teardown" not in text:
             continue
@@ -1061,23 +1084,48 @@ def _fast_teardown_sources(root: Path = _REPO_ROOT) -> dict[str, set[str]]:
             tree = ast.parse(text, filename=relative)
         except SyntaxError:
             continue  # the receiving scan reports an unparsable module
-        names = _fast_teardown_fixture_names(tree)
+        names = names_of(tree)
         if names:
-            sources.setdefault(Path(relative).stem, set()).update(names)
-    return sources
+            found.setdefault(Path(relative).stem, set()).update(names)
+    return found
+
+
+def _fast_teardown_sources(root: Path = _REPO_ROOT) -> dict[str, set[str]]:
+    """Module name -> its module-level fast-teardown fixture names.
+
+    Any tests/**/*.py but the factory can be a source: a fast fixture defined in
+    a test module and imported elsewhere spreads fast teardown as surely as one
+    in tests/fixtures/.
+    """
+    return _fast_teardown_names_by_module(root, _fast_teardown_fixture_names)
+
+
+def _fast_teardown_class_sources(root: Path = _REPO_ROOT) -> dict[str, set[str]]:
+    """Module name -> its class names, for every module that owns a fast class fixture.
+
+    A subclass inherits a class fixture, so importing any of those classes (or the
+    module, which reaches them as attributes) hands the importer fast teardown.
+    """
+    return _fast_teardown_names_by_module(root, _fast_teardown_class_names)
 
 
 def _modules_receiving_fast_teardown(root: Path = _REPO_ROOT) -> set[str]:
-    """Test modules that define a fast-teardown fixture or import one from a source.
+    """Test modules that define a fast-teardown fixture or get one from another module.
 
+    They get one by importing a fast fixture from a source, or by importing a
+    class from a module that owns a fast class fixture, which a subclass inherits.
     The factory is the mechanism, and a fixture-only module under tests/fixtures/
     is a source: both are pinned by FAST_TEARDOWN_OPT_IN_FILES instead. Such a
-    module is still a recipient if it imports a fast fixture from another source.
+    module is still a recipient if it imports a fast fixture or such a class from
+    another source. A module that re-exports one is a recipient itself, so the
+    chain is reviewed at its first hop.
     """
-    sources = _fast_teardown_sources(root)
+    importable = _fast_teardown_sources(root)
+    for stem, classes in _fast_teardown_class_sources(root).items():
+        importable.setdefault(stem, set()).update(classes)
     found: set[str] = set()
     for relative, text in _test_module_texts(root):
-        if "fast_teardown" not in text and not any(name in text for name in sources):
+        if "fast_teardown" not in text and not any(name in text for name in importable):
             continue
         try:
             tree = ast.parse(text, filename=relative)
@@ -1087,7 +1135,7 @@ def _modules_receiving_fast_teardown(root: Path = _REPO_ROOT) -> set[str]:
         defines = bool(_fast_teardown_fixtures_defined_in(tree)) and not relative.startswith(
             _FIXTURE_SOURCE_DIR,
         )
-        if defines or _imports_fast_teardown_fixture(tree, sources):
+        if defines or _imports_fast_teardown_fixture(tree, importable):
             found.add(relative)
     return found
 
@@ -1138,6 +1186,8 @@ def test_definer_detector_flags_only_a_fixture_that_asks_for_fast_teardown(
 _FAST_FIXTURE_SOURCES = {
     _SHARED_FIXTURE_NAME: {"runtime", "shell"},
     "test_runtime": {"runtime"},
+    # owns a fast class fixture, so its classes are importable: a subclass inherits it
+    "test_escalation": {"TestRuntimeEscalation", "TestEscalationPanels"},
 }
 
 
@@ -1190,6 +1240,40 @@ _FAST_FIXTURE_SOURCES = {
             False,
             id="module-name-must-match-exactly",
         ),
+        pytest.param(
+            "from tests.test_escalation import TestRuntimeEscalation",
+            True,
+            id="class-of-a-module-that-owns-a-fast-class-fixture",
+        ),
+        pytest.param(
+            "from tests.test_escalation import TestEscalationPanels as Panels",
+            True,
+            id="any-class-of-such-a-module-by-alias",
+        ),
+        pytest.param(
+            "from tests.test_escalation import _make_node",
+            False,
+            id="non-class-name-of-such-a-module",
+        ),
+        pytest.param(
+            "from .test_escalation import TestRuntimeEscalation",
+            True,
+            id="class-of-such-a-module-relative",
+        ),
+        pytest.param("from tests import test_escalation", True, id="class-fixture-module-by-package"),
+        pytest.param(
+            "import tests.test_escalation as escalation_tests", True, id="class-fixture-module-by-alias",
+        ),
+        pytest.param(
+            "import tests\n\nclass T(tests.test_escalation.TestRuntimeEscalation):\n    pass\n",
+            True,
+            id="class-fixture-module-by-attribute",
+        ),
+        pytest.param(
+            "obj = object()\nvalue = obj.TestRuntimeEscalation",
+            False,
+            id="attribute-of-an-unrelated-object",
+        ),
     ],
 )
 def test_importer_detector_flags_only_a_fast_teardown_fixture_import(
@@ -1210,17 +1294,55 @@ def test_shared_fixture_names_follow_a_request_for_a_fast_fixture() -> None:
     assert _fast_teardown_fixture_names(tree) == {"base", "dependent"}
 
 
-def test_a_class_fixture_is_never_a_source_because_no_module_can_import_it() -> None:
+def test_a_class_fixture_is_no_module_level_name_but_its_classes_are_importable() -> None:
     tree = ast.parse(
         "class C:\n"
         "    @pytest.fixture\n"
         "    async def f(self, tmp_path):\n"
         "        async with started_runtime(tmp_path, fast_teardown=True) as rt:\n"
         "            yield rt\n"
+        "\n"
+        "class Other:\n"
+        "    pass\n"
     )
 
     assert _fast_teardown_fixtures_defined_in(tree) == {"f"}
     assert _fast_teardown_fixture_names(tree) == set()
+    assert _fast_teardown_class_names(tree) == {"C", "Other"}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param("class C:\n    pass\n", set(), id="no-fixture"),
+        pytest.param(
+            "class C:\n    @pytest.fixture\n    def f(self):\n        pass\n",
+            set(),
+            id="class-fixture-that-does-not-ask",
+        ),
+        pytest.param(
+            _FAST_FIXTURE_SOURCE.format(name="f", flag="True") + "class C:\n    pass\n",
+            set(),
+            id="module-level-fast-fixture-only",
+        ),
+        pytest.param(
+            "class C:\n"
+            "    class Inner:\n"
+            "        @pytest.fixture\n"
+            "        async def f(self, tmp_path):\n"
+            "            started_runtime(tmp_path, fast_teardown=True)\n"
+            "\n"
+            "class Other:\n"
+            "    pass\n",
+            {"C", "Inner", "Other"},
+            id="nested-owner",
+        ),
+    ],
+)
+def test_class_names_are_exported_only_by_a_module_that_owns_a_fast_class_fixture(
+    source: str, expected: set[str],
+) -> None:
+    assert _fast_teardown_class_names(ast.parse(source)) == expected
 
 
 def test_shared_fixture_module_gives_fast_teardown_through_runtime_and_shell_only() -> None:
@@ -1249,9 +1371,10 @@ def test_fast_teardown_effective_modules_are_exactly_the_pinned_set() -> None:
         "The test modules that receive fast teardown through a fixture "
         f"changed. New: {sorted(found - FAST_TEARDOWN_EFFECTIVE_MODULES)}; gone: "
         f"{sorted(FAST_TEARDOWN_EFFECTIVE_MODULES - found)}. Check that no test "
-        "body in a new module observes what stop() leaves behind, then update "
-        "FAST_TEARDOWN_EFFECTIVE_MODULES in tests/fixtures/runtime_factory.py "
-        "and this test."
+        "body in a new module observes what stop() leaves behind (and, if it "
+        "re-exports a fast fixture or class, that no importer of it does), then "
+        "update FAST_TEARDOWN_EFFECTIVE_MODULES in "
+        "tests/fixtures/runtime_factory.py and this test."
     )
 
 
@@ -1262,6 +1385,16 @@ def test_fast_teardown_sources_in_the_tree_are_the_modules_with_a_module_level_f
         "test_consensus_integration": {"runtime"},
         "test_distribution": {"runtime", "runtime_no_utility", "owned_steps_create_app"},
     }
+
+
+def test_class_sources_in_the_tree_are_the_modules_that_own_a_fast_class_fixture() -> None:
+    assert set(_fast_teardown_class_sources()) == {
+        "test_experience_panels",
+        "test_dag_proposal",
+        "test_escalation",
+        "test_distribution",
+    }
+    assert "TestRuntimeEscalation" in _fast_teardown_class_sources()["test_escalation"]
 
 
 def _write_tests(root: Path, files: dict[str, str]) -> None:
@@ -1320,19 +1453,56 @@ def test_receiving_scan_flags_a_module_that_defines_or_imports_a_fast_fixture(
     }
 
 
+def test_receiving_scan_flags_a_module_that_inherits_a_fast_class_fixture(
+    tmp_path: Path,
+) -> None:
+    _write_tests(tmp_path, {
+        "test_parent.py": _CLASS_FAST_FIXTURE_SOURCE + "\n\ndef helper():\n    pass\n",
+        "test_child.py": "from tests.test_parent import C\n\n\nclass TestChild(C):\n    pass\n",
+        "test_child_by_alias.py": (
+            "from tests.test_parent import C as Base\n\n\nclass TestChild(Base):\n    pass\n"
+        ),
+        "test_child_by_module.py": (
+            "from tests import test_parent\n\n\nclass TestChild(test_parent.C):\n    pass\n"
+        ),
+        "test_child_by_import.py": (
+            "import tests.test_parent as parent\n\n\nclass TestChild(parent.C):\n    pass\n"
+        ),
+        "test_child_by_attribute.py": (
+            "import tests\n\n\nclass TestChild(tests.test_parent.C):\n    pass\n"
+        ),
+        "test_uses_a_helper_only.py": "from tests.test_parent import helper\n",
+        "test_unrelated.py": "class TestUnrelated:\n    pass\n",
+    })
+
+    assert _modules_receiving_fast_teardown(tmp_path) == {
+        "tests/test_parent.py",
+        "tests/test_child.py",
+        "tests/test_child_by_alias.py",
+        "tests/test_child_by_module.py",
+        "tests/test_child_by_import.py",
+        "tests/test_child_by_attribute.py",
+    }
+
+
 # ---------------------------------------------------------------------------
 # (g) Final-action guard: a fast stop is the last thing a fixture or test does
 #
 # Fast teardown only skips the two fixed waits of a runtime's FINAL stop. A
 # request is accepted in exactly these places, so nothing can run after it that
 # could observe what stop() leaves behind:
-#   fixture: the context of the async with that is its last statement and holds
-#            the yield; or an awaited call that is its last statement after the
-#            yield; or the last statement of the finally of its last try, whose
-#            body holds the yield.
-#   test_*:  the context of the async with that is its last statement; or an
-#            awaited call that is its last statement; or the last statement of
-#            the finally of its last try.
+#   fixture: the FIRST context of the async with that is its last statement and
+#            holds the yield; or an awaited call that is its last statement after
+#            the yield; or the last statement of the finally of its last try,
+#            whose body holds the yield.
+#   test_*:  the FIRST context of the async with that is its last statement; or
+#            an awaited call that is its last statement; or the last statement
+#            of the finally of its last try.
+# Contexts exit right to left, so only the first item of an async with exits
+# last. A later item exits before it and cannot observe the stop; an earlier one
+# would exit after it. So ``async with started_runtime(..., fast_teardown=True),
+# other()`` is accepted and ``async with other(), started_runtime(...,
+# fast_teardown=True)`` is rejected.
 # Anything else (a helper, a stop before the yield, a statement after the stop)
 # fails, naming file:line and function.
 # ---------------------------------------------------------------------------
@@ -1379,9 +1549,14 @@ def _is_awaited(statement: ast.stmt, call: ast.Call) -> bool:
 
 
 def _is_async_context_of(statement: ast.stmt, call: ast.Call) -> bool:
-    return isinstance(statement, ast.AsyncWith) and any(
-        item.context_expr is call for item in statement.items
-    )
+    """True when ``call`` is the FIRST context of an ``async with``.
+
+    Contexts exit right to left, so the first item exits last and nothing in the
+    statement runs after its fast stop. Items after it were entered later and exit
+    earlier, before the stop. An item before it would exit after the stop and could
+    observe what stop() left behind.
+    """
+    return isinstance(statement, ast.AsyncWith) and statement.items[0].context_expr is call
 
 
 def _is_final_in_finally(statement: ast.stmt, call: ast.Call) -> bool:
@@ -1526,6 +1701,17 @@ _FINAL_ACTION_ACCEPTED = [
             await rt.start()
             await stop_runtime(rt, fast_teardown=flag)
     """), id="keyword-bound-to-a-variable"),
+    pytest.param(_src("""
+        async def test_x(tmp_path):
+            async with started_runtime(tmp_path, fast_teardown=True) as rt, observer(rt):
+                assert rt.pools
+    """), id="test-fast-context-first-with-an-inner-context"),
+    pytest.param(_src("""
+        @pytest.fixture
+        async def runtime(tmp_path):
+            async with started_runtime(tmp_path, fast_teardown=True) as rt, observer(rt):
+                yield rt
+    """), id="fixture-fast-context-first-with-an-inner-context"),
 ]
 
 _FINAL_ACTION_REJECTED = [
@@ -1641,6 +1827,22 @@ _FINAL_ACTION_REJECTED = [
     pytest.param(_src("""
         stop = lambda rt: stop_runtime(rt, fast_teardown=True)
     """), "1 in <lambda>", id="call-in-a-lambda"),
+    pytest.param(_src("""
+        async def test_x(tmp_path):
+            async with observer(), started_runtime(tmp_path, fast_teardown=True):
+                pass
+    """), "2 in test_x", id="observer-context-exits-after-the-fast-stop"),
+    pytest.param(_src("""
+        @pytest.fixture
+        async def runtime(tmp_path):
+            async with observer(), started_runtime(tmp_path, fast_teardown=True) as rt:
+                yield rt
+    """), "3 in runtime", id="fixture-observer-context-exits-after-the-fast-stop"),
+    pytest.param(_src("""
+        async def test_x(tmp_path):
+            async with first(), started_runtime(tmp_path, fast_teardown=True), last():
+                pass
+    """), "2 in test_x", id="fast-context-in-the-middle"),
 ]
 
 
