@@ -4869,6 +4869,8 @@ async def finalize_startup(
             runtime.federation_a2a_server = FederationA2AServer(
                 runtime=runtime, config=config.federation.a2a,
                 collect_intent_descriptors_fn=runtime._collect_intent_descriptors,
+                peer_admission_enabled=config.federation.peer_admission_enabled,  # AD-1198 armed A2A callers are principals
+                peer_requests=runtime.federation_peer_requests,  # AD-1198 signed A2A requests from pinned peers
             )
             await runtime.federation_a2a_server.start()
             logger.info(

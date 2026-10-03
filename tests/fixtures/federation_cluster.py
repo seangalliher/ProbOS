@@ -5,7 +5,9 @@ offline use: ephemeral 127.0.0.1 ports, LLM URLs on a closed port (each node als
 ``MockLLMClient``) and an isolated home, data directory and knowledge repo per node, so nothing on disk is shared.
 Each node runs ``federation_cluster_node.py`` and is driven over a 127.0.0.1 control socket (``ControlServer``).
 With ``http=True`` (AD-1198 slice 3a) each pinned node also serves the production main API on its own 127.0.0.1
-port, its peer's ``api_url`` names that port, and per-node ``extras`` are merged into the derived configs.
+port, and its peer's ``api_url`` names that port. Per-node ``extras`` are merged into every pinned config. With
+``a2a=True`` (AD-1198 slice 3b) each pinned node's A2A server is bound to its own reserved 127.0.0.1 port, and the
+node's extras decide whether that server is enabled.
 In the ``mitm`` topology each node's peer address is a ``WireProxy`` lane, a blocking-pyzmq relay that can drop,
 duplicate and replay whole payloads; in the ``direct`` topology (the shipped one) the nodes connect to each other.
 
@@ -383,6 +385,7 @@ class ClusterHarness:
         *,
         topology: Literal["mitm", "direct"],
         http: bool = False,
+        a2a: bool = False,
         extras: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
     ) -> None:
         if topology not in ("mitm", "direct"):
@@ -390,6 +393,7 @@ class ClusterHarness:
         self.root = root
         self.topology = topology
         self.http = http
+        self.a2a = a2a
         self.minted: dict[str, Identity] = {}
         self.port_retries: list[str] = []
         self.last_stopped: dict[str, dict[str, Any]] = {}
@@ -397,6 +401,7 @@ class ClusterHarness:
         self._control: ControlServer | None = None
         self._ports: dict[str, int] = {}
         self._api_ports: dict[str, int] = {}
+        self._a2a_ports: dict[str, int] = {}
         self._extras = dict(extras or {})
         self._runs: dict[str, _Run] = {}
         self._run_counts = {name: 0 for name in NODES}
@@ -436,22 +441,23 @@ class ClusterHarness:
         return self._control
 
     def _new_ports(self) -> None:
-        """Fresh ROUTER ports for both nodes (with ``http`` an API port each too, all four distinct) and, in the
-        mitm topology, a fresh proxy relaying to them."""
+        """Fresh ROUTER ports for both nodes (with ``http`` an API port each too, with ``a2a`` an A2A port each too,
+        all distinct) and, in the mitm topology, a fresh proxy relaying to them."""
         ports = {name: reserve_port() for name in NODES}
         while ports["node-2"] == ports["node-1"]:
             ports["node-2"] = reserve_port()
         used = set(ports.values())
-        api_ports: dict[str, int] = {}
-        if self.http:
-            for name in NODES:
+
+        def distinct() -> int:
+            port = reserve_port()
+            while port in used:
                 port = reserve_port()
-                while port in used:
-                    port = reserve_port()
-                used.add(port)
-                api_ports[name] = port
+            used.add(port)
+            return port
+
         self._ports = ports
-        self._api_ports = api_ports
+        self._api_ports = {name: distinct() for name in NODES} if self.http else {}
+        self._a2a_ports = {name: distinct() for name in NODES} if self.a2a else {}
         if self.topology == "mitm":
             if self.proxy is not None:
                 self.proxy.close()
@@ -465,6 +471,13 @@ class ClusterHarness:
 
     def _data_dir(self, name: str) -> Path:
         return node_dir(self.root, name) / "d"
+
+    def _pinned_extra(self, name: str) -> dict[str, dict[str, Any]] | None:
+        """``name``'s extras for a pinned boot; with ``a2a`` its A2A server binds its reserved 127.0.0.1 port."""
+        extra = {section: dict(values) for section, values in self._extras.get(name, {}).items()}
+        if self.a2a:
+            extra.setdefault("federation.a2a", {}).update(bind_host="127.0.0.1", bind_port=self._a2a_ports[name])
+        return extra or None
 
     def _assert_isolated(self, name: str, config: Path, env: dict[str, str]) -> None:
         own, other = node_dir(self.root, name), node_dir(self.root, OTHER[name])
@@ -480,7 +493,7 @@ class ClusterHarness:
         config = derive_node_config(
             name, self.root, bind_port=self._ports[name], peer_port=self._peer_port(name), phase=phase,
             pinned_public_key=pin, api_url=self.api_url(OTHER[name]) if serve_api else None,
-            extra=self._extras.get(name) if serve_api else None,
+            extra=self._pinned_extra(name) if phase == "pinned" else None,
         )
         data_dir = self._data_dir(name)
         env = child_env(self.root, name, data_dir)
@@ -541,9 +554,25 @@ class ClusterHarness:
         names = tuple(names)
         for name in names:
             self._spawn(name, "pinned", self.minted[OTHER[name]].public_key)
-        return {name: self._ready(name) for name in names}
+        ready: dict[str, dict[str, Any]] = {}
+        for name in names:
+            try:
+                ready[name] = self._ready(name)
+            except RuntimeError:
+                if not self._a2a_port_lost(name):
+                    raise
+                ready[name] = {"a2a_port_lost": True}  # H7: uvicorn ended the node over a taken A2A port (F-15)
+        return ready
+
+    def _a2a_port_lost(self, name: str) -> bool:
+        """Whether ``name``'s current run ended because another process held its reserved A2A port."""
+        port = self._a2a_ports.get(name)
+        marker = f"error while attempting to bind on address ('127.0.0.1', {port})"
+        return port is not None and marker in self.log(name, self.run_of(name))
 
     def _bind_failed(self, name: str, ready: dict[str, Any]) -> bool:
+        if ready.get("a2a_port_lost"):  # its A2A port was lost to another process (H7)
+            return True
         if self.http and ready.get("api_started") is False:  # its API port was lost to another process (H7)
             return True
         return ready["connected_peers"] == [] and _TRANSPORT_FAILED in self.log(name, self.run_of(name))
@@ -564,7 +593,10 @@ class ClusterHarness:
             note = f"H7: {failed} could not bind; restarting {list(running)} once on fresh ports"
             self.port_retries.append(note)
             warnings.warn(f"AD-1198 cluster gate {note}", stacklevel=2)
-            self.stop(*running)
+            lost = [name for name in running if ready.get(name, {}).get("a2a_port_lost")]
+            for name in lost:
+                self._kill(name)  # it has already ended: nothing answers a stop
+            self.stop(*(name for name in running if name not in lost))
             self._new_ports()
             ready = self._boot_pinned(running)
             failed = [name for name, event in ready.items() if self._bind_failed(name, event)]
@@ -638,6 +670,26 @@ class ClusterHarness:
     def api_url(self, name: str) -> str:
         """``name``'s main API base URL (``http`` harnesses only)."""
         return f"http://127.0.0.1:{self._api_ports[name]}"
+
+    def a2a_url(self, name: str) -> str:
+        """``name``'s A2A server base URL (``a2a`` harnesses only)."""
+        return f"http://127.0.0.1:{self._a2a_ports[name]}"
+
+    def a2a_post(
+        self, sender: str, target: str, rpc: Mapping[str, Any], *, headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """``sender`` signs ``rpc`` for ``target`` as an A2A peer request and POSTs it to ``target``'s A2A server;
+        the ``a2a`` event (``signed``, then the HTTP ``status``, the JSON ``response`` and the ``body`` as hex)."""
+        self.control.send(
+            sender, op="a2a_post", target=target, url=f"{self.a2a_url(target)}/a2a", rpc=dict(rpc),
+            headers=dict(headers or {}),
+        )
+        return self.control.wait(sender, "a2a", OP_TIMEOUT_S)
+
+    def a2a_callers(self, name: str) -> list[list[str]]:
+        """``name``'s A2A callers in its federation peer registry, as sorted ``[peer_id, trust_record_id]`` pairs."""
+        self.control.send(name, op="a2a_callers")
+        return list(self.control.wait(name, "a2a_callers", OP_TIMEOUT_S)["callers"])
 
     def put_attachment(self, name: str, data: bytes, mime: str) -> str:
         """Store ``data`` in ``name``'s production attachment store; its content hash."""
