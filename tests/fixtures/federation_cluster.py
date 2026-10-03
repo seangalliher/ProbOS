@@ -556,16 +556,13 @@ class ClusterHarness:
             self._spawn(name, "pinned", self.minted[OTHER[name]].public_key)
         ready: dict[str, dict[str, Any]] = {}
         for name in names:
-            try:
-                ready[name] = self._ready(name)
-            except RuntimeError:
-                if not self._a2a_port_lost(name):
-                    raise
-                ready[name] = {"a2a_port_lost": True}  # H7: uvicorn ended the node over a taken A2A port (F-15)
+            ready[name] = self._ready(name)
+            if self._a2a_port_lost(name):  # H7: its A2A server could not bind; since BF-884 the node stays up without it
+                ready[name]["a2a_port_lost"] = True
         return ready
 
     def _a2a_port_lost(self, name: str) -> bool:
-        """Whether ``name``'s current run ended because another process held its reserved A2A port."""
+        """Whether ``name``'s current run logged that another process held its reserved A2A port."""
         port = self._a2a_ports.get(name)
         marker = f"error while attempting to bind on address ('127.0.0.1', {port})"
         return port is not None and marker in self.log(name, self.run_of(name))
@@ -593,10 +590,7 @@ class ClusterHarness:
             note = f"H7: {failed} could not bind; restarting {list(running)} once on fresh ports"
             self.port_retries.append(note)
             warnings.warn(f"AD-1198 cluster gate {note}", stacklevel=2)
-            lost = [name for name in running if ready.get(name, {}).get("a2a_port_lost")]
-            for name in lost:
-                self._kill(name)  # it has already ended: nothing answers a stop
-            self.stop(*(name for name in running if name not in lost))
+            self.stop(*running)
             self._new_ports()
             ready = self._boot_pinned(running)
             failed = [name for name, event in ready.items() if self._bind_failed(name, event)]
