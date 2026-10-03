@@ -40,6 +40,7 @@ from probos.federation.mcp_server import (
     is_json_media_type,
     parse_jsonrpc_request,
     read_bounded_body,
+    serve_unless_bind_fails,
     strict_json_loads,
 )
 from probos.federation.peer_requests import A2A_REQUEST, max_peer_request_bytes
@@ -66,6 +67,7 @@ _BAD_PARTS = "Invalid params: message.parts must be an array"
 _BAD_ARGUMENTS = "Invalid params: the arguments after the skill id must be one JSON object"
 _BEARER_CALLER = "a2a-bearer"  # AD-1198 slice 3b: every bearer holder, while peer admission is armed
 _NODE_CALLER = "a2a-node:"  # AD-1198 slice 3b: a pinned peer's caller name is this plus its node id
+_BIND_FAILED = "AD-480d: A2A server bind failed (port %d): %s; the A2A server is not listening and ProbOS carries on (BF-884)"
 
 
 class PeerRequestAuthenticator(Protocol):
@@ -246,18 +248,10 @@ class FederationA2AServer:
             lifespan="off",
         )
         self._uvicorn_server = uvicorn.Server(uv_config)
-        try:
-            self._server_task = asyncio.create_task(
-                self._uvicorn_server.serve(), name="a2a-server"
-            )
-        except OSError as exc:
-            logger.warning(
-                "AD-480d: A2A server bind failed (port %d): %s",
-                self._config.bind_port,
-                exc,
-            )
-            self._server_task = None
-            self._uvicorn_server = None
+        self._server_task = asyncio.create_task(
+            serve_unless_bind_fails(self._uvicorn_server, port=self._config.bind_port, log=logger, message=_BIND_FAILED),
+            name="a2a-server",
+        )
 
     async def stop(self) -> None:
         if self._uvicorn_server is not None:

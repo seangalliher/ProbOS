@@ -38,6 +38,7 @@ _NOT_AN_OBJECT = "Invalid Request: the body must be a JSON-RPC request object"
 _NOT_JSON_RPC_2_0 = 'Invalid Request: a JSON-RPC 2.0 request carries "jsonrpc": "2.0" and a string method'
 MAX_REQUEST_BYTES = 1_048_576  # BF-875: one JSON-RPC request; cost: a larger request is refused with 413 (the HXI games send a few hundred bytes)
 _TOO_LARGE = f"Invalid Request: the request body exceeds {MAX_REQUEST_BYTES} bytes"
+_BIND_FAILED = "AD-480a: MCP server bind failed (port %d): %s; the MCP server is not listening and ProbOS carries on (BF-884)"
 
 
 def bearer_token_matches(authorization: str, expected: str) -> bool:
@@ -160,6 +161,22 @@ async def read_bounded_body(request: Any, limit: int = MAX_REQUEST_BYTES) -> byt
     return b"".join(chunks)
 
 
+async def serve_unless_bind_fails(server: Any, *, port: int, log: logging.Logger, message: str) -> None:
+    """BF-884: run a uvicorn ``server``; a port it cannot bind stops this server, never the process.
+
+    uvicorn 0.46 answers a failed bind by calling ``sys.exit(1)`` in ``startup()`` while it handles the
+    ``OSError``, before it sets ``started``. Only that exit is caught: ``message`` is logged with ``port`` and
+    the ``OSError``, and the serving task ends. Any other ``SystemExit`` -- one after startup, or one for another
+    reason (an app uvicorn cannot load exits with the same code) -- still ends the process.
+    """
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        if server.started or not isinstance(exc.__context__, OSError):  # BF-884 not the bind failure: a real exit
+            raise
+        log.warning(message, port, exc.__context__)
+
+
 def build_mcp_app(
     *,
     path: str,
@@ -277,18 +294,10 @@ class FederationMCPServer:
             lifespan="off",
         )
         self._uvicorn_server = uvicorn.Server(uv_config)
-        try:
-            self._server_task = asyncio.create_task(
-                self._uvicorn_server.serve(), name="mcp-server"
-            )
-        except OSError as exc:
-            logger.warning(
-                "AD-480a: MCP server bind failed (port %d): %s",
-                self._config.bind_port,
-                exc,
-            )
-            self._server_task = None
-            self._uvicorn_server = None
+        self._server_task = asyncio.create_task(
+            serve_unless_bind_fails(self._uvicorn_server, port=self._config.bind_port, log=logger, message=_BIND_FAILED),
+            name="mcp-server",
+        )
 
     async def stop(self) -> None:
         if self._uvicorn_server is not None:

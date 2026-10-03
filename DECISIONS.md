@@ -10368,3 +10368,36 @@ After its first slash command, its "approval" was a console prompt on the server
 **Honest limits.** A forged signed A2A request costs event-loop time before it is refused, with no rate limit: the Architect measured 19.8-20.8 ms for one at the bound (R-1). Plain `http://` gives no confidentiality of requests or responses, and responses are unsigned (R-2). Every bearer holder is one caller, so third-party clients still share a trust record and a task namespace with each other until AD-480k (R-3). A request overtaken by 64 or more of the same sender's later envelopes to this ship is refused `too old` (R-4). A request that was never delivered can be delivered once later by an on-path party (R-5). The task store's 1,000-entry bound is shared by every caller and drops the oldest entry first, so a busy caller evicts other callers' finished tasks (R-6). Old `a2a-peer:<label>` trust records stay in `trust.db`, unused while armed (R-7). The A2A dialect stays pre-0.2.0 (F-7, R-8). Pre-existing findings, recorded and not fixed here: the peer registry is one map for every protocol, so an unarmed A2A caller can label itself `mcp-anon:<id>` or `mcp-session:<id>` and update an MCP caller's registry entry (F-14; armed A2A names cannot collide); a taken A2A or MCP port ends the whole ProbOS process, because uvicorn calls `sys.exit(1)` inside the serving task after `start()` has returned (F-15, the Architect's probe P4; independently reachable); and nothing stops the A2A or MCP server at shutdown, while an armed A2A server whose federation seam has stopped refuses every signed request (F-16, the Architect's probe P17).
 
 **Ownership and rollback.** Disarm `federation.peer_admission_enabled` to return `POST /a2a` to the bearer door alone, with header labels and one task namespace. No configuration field, flag or store schema changes; A2A requests use the sender's existing AD-1197 replay windows. A Git revert needs no migration.
+
+### BF-884 OPEN -- a taken A2A or MCP server port no longer ends the ProbOS process
+
+**Date:** 2026-10-03. **Issue:** #1462, filed under the filing policy as an independently reachable production defect (finding F-15 of #1135 slice 3b). **Decision:** the Architect's build contract, option (a), in-envelope. It makes reachable the degrade path that AD-480d and AD-480a already promised, changes no API, configuration or schema, and reverts through Git. BF-884 was allocated to #1462 when it was filed (ceiling BF-883).
+
+**The defect.** Both inbound servers start uvicorn in a task that `start()` creates. Their `except OSError` around `asyncio.create_task` could never see a bind error. When the port is taken, uvicorn 0.46 calls `sys.exit(1)` inside that task (`Server.startup`). asyncio re-raises the `SystemExit` out of the event loop, and finalize's `except Exception` never sees it. Measured at `39287cb2` by the Architect (P1-A, P6): a process whose A2A or MCP server's port was held exited 1 within 1.2 s, and a whole node in slice 1's cluster harness died at boot.
+
+**What changes.**
+- A module-level helper, `probos.federation.mcp_server.serve_unless_bind_fails(server, *, port, log, message)`, sits beside BF-875's shared ones. It awaits `server.serve()` and absorbs exactly one exit: a `SystemExit` raised before `server.started` is set, while an `OSError` is being handled (`__context__`). It logs the server's warning with the port and the `OSError`. The serving task ends, `is_running` is False, `stop()` is safe, and the process carries on. Any other `SystemExit` propagates.
+- Both `start()` methods serve through it, and the unreachable `except OSError` is removed. Neither class gains a method; both stay at 15 (counted at `39287cb2` and on the change).
+- The warnings say what happens next: `AD-480d: A2A server bind failed (port N): <error>; the A2A server is not listening and ProbOS carries on (BF-884)`, and the matching AD-480a form for MCP.
+- Slice 3b's cluster harness (H7) no longer waits for the node to die. It reads uvicorn's bind error from the run log after `ready`, stops the node and restarts it once on fresh ports.
+- New file `tests/test_bf884_sidecar_bind_failure.py`, with 10 cases.
+
+**Why this option.**
+- Binding in `start()` and passing `sockets=` does not avoid the exit. uvicorn's own `Config.bind_socket()` also calls `sys.exit(1)` (measured), and it would do so synchronously inside `start()`, where finalize could not catch it either. It also sets `SO_REUSEADDR` unconditionally. A hand-rolled bind would re-implement asyncio's address resolution and per-platform socket options, and would change the path a free port takes.
+- A subclass overriding `Server.startup` couples to uvicorn's internals and needs uvicorn at import. A probe bind before starting leaves the race.
+- Catching every `SystemExit`, as the cluster harness does for the main API, would swallow a real exit. An app uvicorn cannot load exits with the same code 1 before `started`, and differs only in its context (measured).
+
+**Measured evidence.**
+- RED at `39287cb2` (the Architect's `red_r2`, on a base copy whose import drops the helper): the 4 real-failure cases fail and the 2 guard cases pass. A child process exits 1, and in-process the exit escapes `asyncio.run`. GREEN on the change: 10 of 10 in each of 3 runs (`b_green`, 3.1 s; within `b_family`; `b4-base`).
+- There are 15 single-line mutants, including the predicate in both directions. On the final bytes, after the 10 unmutated killers passed, each is killed by every test named for it: every kill is a test failure, none an error, and every restore is verified by sha256. The harness mutant MUT-H1 (`if self._a2a_port_lost(name):` to `if False:`) is killed by its probe, `p6_runtime_v3.py` (3 of 7, `[FAIL] one H7 retry recorded`).
+- The 11-file family, 474 tests including the three cluster gates, passes (`b_family`, 254.8 s on one worker). The Architect measured the seven server families and slice 3b's gate identical on HEAD and on the candidate (457), and both servers answering and stopping exactly as before on a free port.
+- A whole node whose A2A port is taken now stays up and logs uvicorn's bind error and the warning. The harness stops it gracefully and restarts it once on a fresh port, whose A2A server answers its card (200), and the node stops with exit 0 (`p6_runtime_v3.py`, 7 of 7, 32.6 s).
+- Processes: a census ran before and after every run that started python processes, and none was left alive.
+
+**Honest limits.**
+- finalize still logs "A2A server started on ..." before the bind is attempted, so on a taken port that line comes before the warning.
+- The predicate follows uvicorn 0.46's exit shape. A uvicorn that raised instead would end only the task, without the warning, and the four real-failure tests would fail.
+- Linux and macOS are unmeasured. On POSIX, an active listener still blocks the bind.
+- Out of scope and unchanged: the main API still exits on its own port, and nothing stops the A2A or MCP server at shutdown (#1419 T-2).
+
+**Ownership and rollback.** Revert the commit. Nothing persists and no configuration changes. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
