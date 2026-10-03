@@ -11,8 +11,10 @@ On Windows the selector loop is installed first (AD-108): zmq.asyncio hangs on t
 The node connects to the parent's 127.0.0.1 control socket and speaks JSON lines, each
 ``{"kind": ..., "node": <name>, ...}``. It emits ``hello``, boots ``ProbOSRuntime`` with an injected
 ``MockLLMClient`` and emits ``ready`` (or ``failed`` if the start raised), then answers the parent's ops --
-``forward`` (``forwarded``), ``status`` (``status``), ``rotate`` (``rotated``), ``put_attachment`` (``put``)
-and ``has_attachment`` (``has``); an op that fails is answered ``error`` -- until ``stop`` or until the
+``forward`` (``forwarded``), ``status`` (``status``), ``rotate`` (``rotated``), ``put_attachment`` (``put``),
+``has_attachment`` (``has``), ``a2a_post`` (``a2a``: an A2A request signed with this node's peer requests and
+POSTed, AD-1198 slice 3b) and ``a2a_callers`` (``a2a_callers``); an op that fails is answered ``error`` -- until
+``stop`` or until the
 control socket closes (the parent is gone), and then stops the runtime and emits ``stopped``. Given an
 ``<api_port>`` (AD-1198 slice 3a), the node also serves the production main API (``create_app(runtime)``)
 with uvicorn on 127.0.0.1 before ``ready`` and stops it before the runtime. After ``main`` returns a
@@ -85,6 +87,21 @@ async def _answer(command: dict[str, Any], runtime: Any) -> tuple[str, dict[str,
         return "put", {"sha": sha}
     if op == "has_attachment":
         return "has", {"sha": command["sha"], "exists": await runtime.attachment_store.exists(command["sha"])}
+    if op == "a2a_post":
+        import httpx
+
+        from probos.federation.peer_requests import A2A_REQUEST
+
+        body = await runtime.federation_peer_requests.sign(command["target"], A2A_REQUEST, command["rpc"])
+        if body is None:
+            return "a2a", {"signed": False}
+        headers = {"Content-Type": "application/json", **command.get("headers", {})}
+        async with httpx.AsyncClient(trust_env=False, timeout=30.0) as http:
+            response = await http.post(command["url"], content=body, headers=headers)
+        return "a2a", {"signed": True, "status": response.status_code, "response": response.json(), "body": body.hex()}
+    if op == "a2a_callers":
+        peers = runtime.federation_peer_registry.list_peers("a2a")
+        return "a2a_callers", {"callers": sorted([peer.peer_id, peer.trust_record_id] for peer in peers)}
     return "error", {"message": f"unknown op {op!r}"}
 
 

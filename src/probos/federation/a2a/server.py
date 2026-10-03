@@ -10,6 +10,15 @@ a caller. ``tasks/send`` dispatches only an intent that ``federation.a2a.exposed
 lists, an agent declares, and no declaration flags ``requires_consensus``; the agent card
 advertises exactly that set and the bearer requirement. The door and its helpers are
 BF-875's, shared with the MCP server.
+
+AD-1198 slice 3b: while ``federation.peer_admission_enabled`` is armed, a request without an
+``Authorization`` header is a signed peer request -- an AD-1197 envelope that a pinned peer
+sealed for this ship (topic ``a2a_request``), whose payload is the JSON-RPC request -- and
+``probos.federation.peer_requests`` authenticates it. Its caller is the node that signed it,
+never a header. The bearer stays the door for A2A clients that are not ProbOS ships, and every
+bearer holder is then one caller. Each caller has its own trust record (``a2a-node:<node id>``
+or ``a2a-bearer``: names no unarmed label can produce) and reads only the tasks it created.
+Unarmed, nothing here changes.
 """
 
 from __future__ import annotations
@@ -20,8 +29,9 @@ import logging
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING, cast
 
 from probos.federation.mcp_server import (
     MAX_REQUEST_BYTES,
@@ -32,6 +42,7 @@ from probos.federation.mcp_server import (
     read_bounded_body,
     strict_json_loads,
 )
+from probos.federation.peer_requests import A2A_REQUEST, max_peer_request_bytes
 from probos.types import IntentDescriptor, IntentMessage
 
 if TYPE_CHECKING:
@@ -53,6 +64,33 @@ _UNAVAILABLE = (
 )
 _BAD_PARTS = "Invalid params: message.parts must be an array"
 _BAD_ARGUMENTS = "Invalid params: the arguments after the skill id must be one JSON object"
+_BEARER_CALLER = "a2a-bearer"  # AD-1198 slice 3b: every bearer holder, while peer admission is armed
+_NODE_CALLER = "a2a-node:"  # AD-1198 slice 3b: a pinned peer's caller name is this plus its node id
+
+
+class PeerRequestAuthenticator(Protocol):
+    """What the A2A server needs to authenticate a signed peer request; ``PeerRequests`` satisfies it (AD-1198)."""
+
+    async def authenticate_payload(self, body: bytes, *, topic: str) -> tuple[str, dict[str, Any]] | None: ...
+
+
+@dataclass(frozen=True)
+class _Caller:
+    """Whom a dispatched request is for: its peer-registry entry, its trust record and its task namespace."""
+
+    peer_id: str
+    trust_record_id: str
+    owner: str
+
+
+def _labelled(peer_id: str) -> _Caller:
+    """BF-876's caller: a label it chose names its trust record, and every bearer holder shares one task namespace."""
+    return _Caller(peer_id, f"a2a-peer:{peer_id}", "")
+
+
+def _principal(name: str) -> _Caller:
+    """AD-1198 slice 3b: an armed caller, whose registry entry, trust record and task namespace are all ``name``."""
+    return _Caller(name, name, name)  # AD-1198 armed: one name for the registry entry, the trust record and the tasks
 
 
 def _jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -69,6 +107,7 @@ def build_a2a_app(
     auth_token: str,
     handle_agent_card_request: Callable[[], Awaitable[dict[str, Any]]],
     handle_jsonrpc: Callable[..., Awaitable[dict[str, Any]]],
+    handle_peer_request: Callable[[bytes], Awaitable[tuple[int, dict[str, Any]] | None]] | None = None,
 ) -> Any:
     """BF-876: the Starlette app ``start()`` serves, as a function so tests need no socket.
 
@@ -76,26 +115,41 @@ def build_a2a_app(
     unauthenticated caller learns nothing about the body it sent; then the JSON content
     type, which a browser cannot send cross-origin without a CORS preflight; then the
     size; then the JSON-RPC shape -- BF-875's order and helpers.
+
+    AD-1198 slice 3b: given ``handle_peer_request`` (peer admission armed), a request with no
+    ``Authorization`` header is a signed peer request instead. Its body is read up to the A2A
+    peer-request bound and handed over whole, and a refusal is exactly the 401 a request with
+    no bearer token gets. A request with the header takes the bearer door, unchanged.
     """
     from starlette.applications import Starlette
     from starlette.responses import JSONResponse
     from starlette.routing import Route
+
+    def unauthenticated():
+        return JSONResponse(
+            _jsonrpc_error(None, -32600, _AUTH_FAILED),
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     async def agent_card_endpoint(request):
         return JSONResponse(await handle_agent_card_request())
 
     async def jsonrpc_endpoint(request):
         auth_header = request.headers.get("authorization", "")
+        if handle_peer_request is not None and "authorization" not in request.headers:  # AD-1198 armed: no bearer, so a signed peer request
+            body = await read_bounded_body(request, max_peer_request_bytes(A2A_REQUEST))  # AD-1198 the A2A peer-request bound
+            answered = None if body is None else await handle_peer_request(body)
+            if answered is None:  # AD-1198 every refused peer request is the unauthenticated 401
+                return unauthenticated()
+            status, response = answered
+            return JSONResponse(response, status_code=status)
         if not bearer_token_matches(auth_header, auth_token):
             logger.info(
                 "BF-876: refused an A2A request from %s: missing or wrong bearer token",
                 request.client.host if request.client else "unknown",
             )
-            return JSONResponse(
-                _jsonrpc_error(None, -32600, _AUTH_FAILED),
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return unauthenticated()
         if not is_json_media_type(request.headers.get("content-type", "")):
             return JSONResponse(
                 _jsonrpc_error(
@@ -137,11 +191,15 @@ class FederationA2AServer:
         runtime: "ProbOSRuntime",
         config: "FederationA2AConfig",
         collect_intent_descriptors_fn: Callable[[], Iterable[IntentDescriptor]] | None = None,
+        peer_admission_enabled: bool = False,
+        peer_requests: PeerRequestAuthenticator | None = None,
     ) -> None:
         self._runtime = runtime
         self._config = config
         self._collect_intent_descriptors_fn = collect_intent_descriptors_fn
-        self._task_store: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+        self._armed = peer_admission_enabled is True  # AD-1198 armed: callers are principals, never labels
+        self._peer_requests = peer_requests if self._armed else None  # AD-1198 signed requests only while armed
+        self._task_store: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         self._lock = asyncio.Lock()
         self._server_task: asyncio.Task | None = None
         self._uvicorn_server: Any | None = None
@@ -160,12 +218,18 @@ class FederationA2AServer:
                 auth_token=self._config.auth_token,
                 handle_agent_card_request=self.handle_agent_card_request,
                 handle_jsonrpc=self.handle_jsonrpc,
+                handle_peer_request=self.handle_peer_request if self._armed else None,  # AD-1198 the signed door exists only while armed
             )
         except ImportError:
             logger.warning(
                 "AD-480d: starlette/uvicorn missing; A2A server disabled"
             )
             return
+        if self._armed and self._peer_requests is None:  # AD-1198 armed without the federation seam
+            logger.warning(
+                "AD-1198: peer admission is armed but federation peer requests are unavailable (federation is not "
+                "running), so the A2A server refuses every signed request; bearer requests are served as one caller",
+            )
         listed = self._config.exposed_intents
         unexposed = sorted(set(listed) - set(self._exposable()))
         if unexposed:
@@ -243,6 +307,32 @@ class FederationA2AServer:
                 peer_id[:80],
             )
             return self._error_envelope(request_id, -32600, _AUTH_FAILED)
+        caller = _principal(_BEARER_CALLER) if self._armed else _labelled(peer_id)  # AD-1198 armed: every bearer holder is one caller, and the peer header labels nothing
+        return await self._dispatch(payload, caller)
+
+    async def handle_peer_request(self, body: bytes) -> tuple[int, dict[str, Any]] | None:
+        """AD-1198 slice 3b: a signed A2A request -- ``(HTTP status, JSON-RPC response)``, or ``None`` when refused.
+
+        ``body`` is an AD-1197 envelope that a pinned peer sealed for this ship (topic ``a2a_request``),
+        whose payload is the JSON-RPC request. It is authenticated exactly as an inbound envelope, then
+        checked as the bearer door checks a body (400 when it is not a JSON-RPC 2.0 request). The caller
+        is the node that signed it, never a header. Without armed peer admission and its federation seam
+        every signed request is refused.
+        """
+        if self._peer_requests is None:  # AD-1198 no armed seam, no signed request
+            return None
+        authenticated = await self._peer_requests.authenticate_payload(body, topic=A2A_REQUEST)
+        if authenticated is None:  # AD-1198 a pinned peer's signed request, admitted once
+            return None
+        node_id, signed = authenticated
+        payload, error = parse_jsonrpc_request(json.dumps(signed).encode())
+        if error is not None:  # AD-1198 the signed payload is a JSON-RPC request, as the bearer door requires
+            return 400, error
+        return 200, await self._dispatch(cast("dict[str, Any]", payload), _principal(f"{_NODE_CALLER}{node_id}"))  # AD-1198 the caller is the node that signed it
+
+    async def _dispatch(self, payload: dict[str, Any], caller: _Caller) -> dict[str, Any]:
+        """An authenticated JSON-RPC request, run for ``caller``."""
+        request_id = payload.get("id")
         method = payload.get("method", "")
         params = payload.get("params") or {}
         if not isinstance(params, dict):
@@ -250,9 +340,9 @@ class FederationA2AServer:
 
         try:
             if method == "tasks/send":
-                return await self._handle_tasks_send(request_id, params, peer_id)
+                return await self._handle_tasks_send(request_id, params, caller)
             if method == "tasks/get":
-                return await self._handle_tasks_get(request_id, params)
+                return await self._handle_tasks_get(request_id, params, caller.owner)
             if method in (
                 "tasks/sendSubscribe",
                 "tasks/cancel",
@@ -272,7 +362,7 @@ class FederationA2AServer:
             )
 
     async def _handle_tasks_send(
-        self, request_id: Any, params: dict[str, Any], peer_id: str
+        self, request_id: Any, params: dict[str, Any], caller: _Caller
     ) -> dict[str, Any]:
         task_id = str(params.get("id") or uuid.uuid4().hex)
         session_id = str(params.get("sessionId") or "")
@@ -298,20 +388,20 @@ class FederationA2AServer:
         # trust, task or bus side effect before this point.
         if skill_id not in self._exposable():
             logger.info(
-                "BF-876: refused A2A tasks/send %r from %r", skill_id[:80], peer_id[:80]
+                "BF-876: refused A2A tasks/send %r from %r", skill_id[:80], caller.peer_id[:80]
             )
             return self._error_envelope(
                 request_id, -32602, _UNAVAILABLE.format(name=skill_id[:80])
             )
 
         # Trust onboarding
-        if peer_id:
-            await self._ensure_peer_registered(peer_id)
+        if caller.peer_id:
+            await self._ensure_peer_registered(caller)
 
         intent = IntentMessage(
             intent=skill_id,
             params=args,
-            context=f"a2a:{peer_id}",
+            context=f"a2a:{caller.peer_id}",
         )
         results = await self._runtime.intent_bus.broadcast(intent, federated=False)
         success = False
@@ -325,9 +415,9 @@ class FederationA2AServer:
                 winning = max(results, key=lambda x: x.confidence)
             success = winning.success
 
-        if peer_id:
+        if caller.peer_id:
             self._runtime.federation_peer_registry.record_outcome(
-                peer_id, success, intent_type=skill_id
+                caller.peer_id, success, intent_type=skill_id
             )
 
         artifact_text = json.dumps(
@@ -346,7 +436,7 @@ class FederationA2AServer:
             ],
             "history": [],
         }
-        await self._store_task(task_id, task)
+        await self._store_task(caller.owner, task_id, task)
         return {
             "jsonrpc": JSONRPC_VERSION,
             "id": request_id,
@@ -354,7 +444,7 @@ class FederationA2AServer:
         }
 
     async def _handle_tasks_get(
-        self, request_id: Any, params: dict[str, Any]
+        self, request_id: Any, params: dict[str, Any], owner: str
     ) -> dict[str, Any]:
         task_id = str(params.get("id") or "")
         if not task_id:
@@ -362,7 +452,7 @@ class FederationA2AServer:
                 request_id, -32602, "Invalid params: id required"
             )
         async with self._lock:
-            task = self._task_store.get(task_id)
+            task = self._task_store.get((owner, task_id))  # AD-1198 a caller reads only its own tasks
         if task is None:
             return self._error_envelope(
                 request_id, -32602, "Invalid params: task not found"
@@ -373,9 +463,9 @@ class FederationA2AServer:
             "result": task,
         }
 
-    async def _store_task(self, task_id: str, task: dict[str, Any]) -> None:
+    async def _store_task(self, owner: str, task_id: str, task: dict[str, Any]) -> None:
         async with self._lock:
-            self._task_store[task_id] = task
+            self._task_store[(owner, task_id)] = task  # AD-1198 each caller's tasks are its own
             while len(self._task_store) > _TASK_STORE_MAX:
                 self._task_store.popitem(last=False)
 
@@ -383,15 +473,15 @@ class FederationA2AServer:
         """BF-876: listed in exposed_intents, declared by an agent, and never consensus-flagged."""
         return exposable_intents(self._collect_intent_descriptors_fn, self._config.exposed_intents)
 
-    async def _ensure_peer_registered(self, peer_id: str) -> None:
+    async def _ensure_peer_registered(self, caller: _Caller) -> None:
         from probos.federation.peer import FederationPeer
 
         await self._runtime.federation_peer_registry.register_peer(
             FederationPeer(
                 protocol="a2a",
-                peer_id=peer_id,
-                endpoint=peer_id,
-                trust_record_id=f"a2a-peer:{peer_id}",
+                peer_id=caller.peer_id,
+                endpoint=caller.peer_id,
+                trust_record_id=caller.trust_record_id,
             )
         )
 
