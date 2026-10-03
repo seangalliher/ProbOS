@@ -27,7 +27,6 @@ from probos.cognitive.capability_triage import (
     fulfil_build,
     fulfil_grant,
     fulfil_install,
-    unified_ladder_enabled,
 )
 from probos.delegated_approvals import (
     RequestClass,
@@ -332,24 +331,23 @@ async def _fulfil_build_request(
 ) -> CapabilityRequest | None:
     """AD-1211: build the agent this request asked for, then fulfil it.
 
-    AD-1194 A-2: under the unified ladder the design follows the approval as
-    committed, re-read here -- a caller's copy (a cache, the BF-722 retry's) can
-    predate another store's decision or consensus raise.
+    AD-1194 A-2: the design follows the approval as committed, re-read here -- a
+    caller's copy (a cache, the BF-722 retry's) can predate another store's
+    decision or consensus raise. BF-877 (A-1.2): with the ladder on or off, since
+    the committed approval the policy admits is the design approval.
     """
-    unified = unified_ladder_enabled(getattr(runtime, "config", None))
-    if unified:
-        committed = await _committed_request(store, decided.id)
-        if committed is None or committed.status != "approved" or not _approval_admits_design(committed):
-            logger.error(
-                "AD-1194: build request %s is not, as committed, an approval the "
-                "approval policy admits (status=%s, decided by %r; a build that requires "
-                "consensus is the Captain's alone, and an approval names its decider); "
-                "nothing was designed",
-                decided.id[:12], getattr(committed, "status", None),
-                getattr(committed, "decided_by", None),
-            )
-            return None
-        decided = committed
+    committed = await _committed_request(store, decided.id)  # BF-877: re-read with the ladder on or off
+    if committed is None or committed.status != "approved" or not _approval_admits_design(committed):  # BF-877: policy
+        logger.error(
+            "AD-1194/BF-877: build request %s is not, as committed, an approval the "
+            "approval policy admits (status=%s, decided by %r; a build that requires "
+            "consensus is the Captain's alone, and an approval names its decider); "
+            "nothing was designed",
+            decided.id[:12], getattr(committed, "status", None),
+            getattr(committed, "decided_by", None),
+        )
+        return None
+    decided = committed
     return await fulfil_build(
         decided.id,
         store=store,
@@ -360,11 +358,10 @@ async def _fulfil_build_request(
         # file time. Without it an approved build designed an agent with
         # requires_consensus=False no matter how destructive the gap was.
         design_context=decided.payload,
-        # AD-1194: under the unified ladder the recorded approval -- the Captain's,
-        # or a delegate's the policy admits (above) -- IS the design approval, so
-        # the pipeline's console prompt must not ask again, or, with no callback
-        # wired, be the only "approval" a build ever had.
-        pre_approved=unified,
+        # AD-1194: the recorded approval -- the Captain's, or a delegate's the policy
+        # admits (above) -- IS the design approval, so the pipeline's console prompt
+        # must not ask again, and with no callback wired the gate must not refuse it.
+        pre_approved=True,  # BF-877: with the ladder off as well as on
     )
 
 

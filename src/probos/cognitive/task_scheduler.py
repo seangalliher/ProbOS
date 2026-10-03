@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.cognitive.self_mod import approval_refusal
+
 logger = logging.getLogger(__name__)
 
 
@@ -146,8 +148,17 @@ class TaskScheduler:
             else:
                 result = {"response": "(no runtime connected)"}
             task.last_result = result
-            task.status = "completed"
-            logger.debug("Task %s completed", task.id)
+            if approval_refusal(result) is not None:  # BF-877: a refused design did not run the task
+                task.status = "failed"
+                logger.warning(
+                    "BF-877: scheduled task %s did not run: a design it needs has no approval on "
+                    "record. The task is marked failed rather than completed; its reply says so "
+                    "and still goes to any requesting channel.",
+                    task.id,
+                )
+            else:
+                task.status = "completed"
+                logger.debug("Task %s completed", task.id)
 
             # Deliver to channel if requested
             if task.channel_id:

@@ -5501,6 +5501,7 @@ class ProbOSRuntime:
             # have X") should still trigger self-mod.
             from probos.cognitive.capability_triage import unified_ladder_enabled
             from probos.cognitive.decomposer import is_capability_gap
+            from probos.cognitive.self_mod import APPROVAL_UNAVAILABLE
             self_mod_result = None
             is_gap = dag.capability_gap or (dag.response and is_capability_gap(dag.response))
             if is_gap:
@@ -5512,11 +5513,11 @@ class ProbOSRuntime:
                     intent_meta = await self._extract_unhandled_intent(text)
                     if intent_meta and unified_ladder_enabled(self.config):
                         # AD-1194: an unattended NL gap files a PENDING build through
-                        # the capability ladder and designs nothing. The pipeline's
-                        # approval gate passes when no console callback is wired --
-                        # a serve vessel until its first HXI slash command, which
-                        # wires a stdin prompt nobody answers -- so this branch used
-                        # to design and register an agent nobody approved. The Captain
+                        # the capability ladder and designs nothing. Before BF-877 the
+                        # pipeline's approval gate passed when no console callback was
+                        # wired -- a serve vessel until its first HXI slash command,
+                        # which wired a stdin prompt nobody answers -- so this branch
+                        # designed and registered an agent nobody approved. The Captain
                         # now approves it on the capability-request surface, and its
                         # build fulfiller designs with the context recorded here.
                         # AD-1049's surface runs as the ladder's discover rung.
@@ -5628,6 +5629,12 @@ class ProbOSRuntime:
                 }
                 if self_mod_result:
                     result["self_mod"] = self_mod_result
+                    if self_mod_result.get("status") == APPROVAL_UNAVAILABLE:
+                        # BF-877: say the refusal in the reply, which is all a chat
+                        # retry or a channel delivery reads.
+                        result["response"] = "\n\n".join(
+                            part for part in (dag.response, self_mod_result.get("error", "")) if part
+                        )
                 # Verify response against self-model (AD-319)
                 if result.get("response"):
                     result["response"] = self._verify_response(

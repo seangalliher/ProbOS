@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from probos.cognitive.self_mod import approval_refusal
 from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
@@ -194,13 +195,28 @@ class WorkflowCronScheduler:
             if not _is_due(trig, now):
                 continue
             try:
-                await self._process_nl(trig.user_input)
+                result = await self._process_nl(trig.user_input)
             except Exception:
                 logger.warning(
                     "AD-707: trigger %s replay failed; skipping fire-count update",
                     trig.id,
                     exc_info=True,
                 )
+                continue
+            if approval_refusal(result) is not None:  # BF-877: a refused replay uses its slot, not a fire
+                trig.last_fired_at = now  # BF-877: not due again until its next cron time
+                logger.warning(
+                    "BF-877: cron trigger %s replay was refused: a design it needs has no approval "
+                    "on record. The fire is not counted; the next attempt is at its next scheduled "
+                    "time.",
+                    trig.id,
+                )
+                if self._db is not None:
+                    await self._db.execute(
+                        "UPDATE workflow_cron_triggers SET last_fired_at=? WHERE id=?",
+                        (now, trig.id),
+                    )
+                    await self._db.commit()
                 continue
             trig.last_fired_at = now
             trig.fire_count += 1

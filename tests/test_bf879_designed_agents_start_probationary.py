@@ -88,8 +88,12 @@ def _raw(trust: TrustNetwork, agent_id: str) -> tuple[float, float] | None:
 
 async def _design(runtime: ProbOSRuntime) -> list[str]:
     assert _probationary(runtime) != _crew(runtime), "premise: the two priors differ"
+    # BF-877: a booted runtime without a console wires no approval callback, and the
+    # gate now refuses an unapproved design; every production path that designs passes
+    # the Captain's approval this way.
     record = await runtime.self_mod_pipeline.handle_unhandled_intent(
         _INTENT, "Count the number of words in a text", {"text": "input text"},
+        pre_approved=True,
     )
     assert getattr(record, "status", None) == "active", f"premise: a working agent was designed ({record})"
     pool = runtime.pools.get(_POOL)

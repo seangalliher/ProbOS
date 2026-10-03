@@ -645,7 +645,7 @@ async def _boot_and_run(config_path: Path | None = None, fresh: bool = False, da
     console.print()
 
     # Interactive shell
-    shell = ProbOSShell(runtime, console)
+    shell = ProbOSShell(runtime, console, self_mod_console_approval=True)
     try:
         await shell.run()
     finally:

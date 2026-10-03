@@ -94,6 +94,7 @@ class SelfModManager:
     ) -> Any:
         """Hot-reload a patched self-mod'd agent into the runtime."""
         from probos.cognitive.agent_patcher import CorrectionResult
+        from probos.cognitive.self_mod import approval_refusal
 
         strategy = original_record.strategy
         agent_type = original_record.agent_type
@@ -164,6 +165,7 @@ class SelfModManager:
         # Record correction feedback (AD-234)
         retry_success = bool(
             retried and retry_result and not retry_result.get("error")
+            and approval_refusal(retry_result) is None  # BF-877: a retry refused for want of approval did not succeed
         )
         if self._feedback_engine:
             try:

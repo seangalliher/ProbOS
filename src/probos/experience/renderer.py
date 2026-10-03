@@ -212,7 +212,10 @@ class ExecutionRenderer:
                     # requirement -- and a sighting that requires consensus can arrive after
                     # the decision, filing a new request (R13) -- so under the ladder the
                     # shell offers no skill. The recommender always proposes a new agent.
-                    skill_withdrawn = ladder_on and any(
+                    # BF-877 (R11): with the ladder off a skill still drops a consensus
+                    # requirement the gap carries, so such a gap is offered no skill.
+                    consensus_gap = bool(intent_meta.get("requires_consensus", False))
+                    skill_withdrawn = (ladder_on or consensus_gap) and any(
                         opt.strategy == "add_skill" for opt in proposal.options
                     )
                     if skill_withdrawn:
@@ -231,7 +234,13 @@ class ExecutionRenderer:
                         f"  [bold]Purpose:[/bold] {shown['intent_description']}"
                     )
                     self.console.print()
-                    if skill_withdrawn:
+                    if skill_withdrawn and not ladder_on:
+                        self.console.print(
+                            "  [dim]A skill is not offered: this intent requires consensus, "
+                            "which a skill does not carry, so it is designed as a new "
+                            "agent.[/dim]"
+                        )
+                    elif skill_withdrawn:
                         self.console.print(
                             "  [dim]A skill is not offered: an approved build request is "
                             "designed as a new agent, with any consensus requirement it "
@@ -315,44 +324,41 @@ class ExecutionRenderer:
                             "requires_consensus", False
                         )
                         # Phase B: Execute chosen strategy
-                        orig_approval = self.runtime.self_mod_pipeline._user_approval_fn
-                        self.runtime.self_mod_pipeline._user_approval_fn = None
-                        try:
-                            if chosen_option.strategy == "add_skill" and hasattr(
-                                self.runtime.self_mod_pipeline, "handle_add_skill"
-                            ):
-                                self._status = self.console.status(
-                                    "[bold yellow]Designing skill...[/bold yellow]",
-                                    spinner="dots",
+                        # BF-877: the Captain's choice at this prompt is the approval, so the design
+                        # is pre-approved rather than the pipeline's callback being switched off.
+                        if chosen_option.strategy == "add_skill" and hasattr(
+                            self.runtime.self_mod_pipeline, "handle_add_skill"
+                        ):
+                            self._status = self.console.status(
+                                "[bold yellow]Designing skill...[/bold yellow]",
+                                spinner="dots",
+                            )
+                            self._status.start()
+                            try:
+                                record = await self.runtime.self_mod_pipeline.handle_add_skill(
+                                    intent_name=design["intent_name"],
+                                    intent_description=design["intent_description"],
+                                    parameters=design["parameters"],
+                                    target_agent_type=chosen_option.target_agent_type or "skill_agent",
                                 )
-                                self._status.start()
-                                try:
-                                    record = await self.runtime.self_mod_pipeline.handle_add_skill(
-                                        intent_name=design["intent_name"],
-                                        intent_description=design["intent_description"],
-                                        parameters=design["parameters"],
-                                        target_agent_type=chosen_option.target_agent_type or "skill_agent",
-                                    )
-                                finally:
-                                    if self._status is not None:
-                                        self._status.stop()
-                                        self._status = None
-                            else:
-                                self._status = self.console.status(
-                                    "[bold yellow]Designing agent...[/bold yellow]",
-                                    spinner="dots",
+                            finally:
+                                if self._status is not None:
+                                    self._status.stop()
+                                    self._status = None
+                        else:
+                            self._status = self.console.status(
+                                "[bold yellow]Designing agent...[/bold yellow]",
+                                spinner="dots",
+                            )
+                            self._status.start()
+                            try:
+                                record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
+                                    **design, requires_consensus=requires_consensus, pre_approved=True,
                                 )
-                                self._status.start()
-                                try:
-                                    record = await self.runtime.self_mod_pipeline.handle_unhandled_intent(
-                                        **design, requires_consensus=requires_consensus,
-                                    )
-                                finally:
-                                    if self._status is not None:
-                                        self._status.stop()
-                                        self._status = None
-                        finally:
-                            self.runtime.self_mod_pipeline._user_approval_fn = orig_approval
+                            finally:
+                                if self._status is not None:
+                                    self._status.stop()
+                                    self._status = None
 
                         if record and record.status == "active":
                             if approved_request is not None:

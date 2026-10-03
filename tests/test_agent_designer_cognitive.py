@@ -265,6 +265,9 @@ class TestEndToEndCognitiveDesign:
             intent_name="extract_keywords",
             intent_description="Extract keywords from text",
             parameters={"text": "input"},
+            # BF-877: nothing here can approve the design, and the gate now refuses
+            # an unapproved one; cognitive design, not approval, is under test.
+            pre_approved=True,
         )
 
         assert record is not None

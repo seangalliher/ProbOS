@@ -313,6 +313,9 @@ class TestResearchPhase:
             intent_name="test_intent",
             intent_description="Test intent",
             parameters={"x": "y"},
+            # BF-877: nothing here can approve the design, and the gate now refuses
+            # an unapproved one; skipping research, not approval, is under test.
+            pre_approved=True,
         )
         assert record is not None
         assert record.status == "active"
@@ -354,6 +357,9 @@ class TestResearchPhase:
             intent_name="json_parser",
             intent_description="Parse JSON data",
             parameters={"data": "input"},
+            # BF-877: no approver here either; the gate now refuses an unapproved
+            # design, and research context, not approval, is under test.
+            pre_approved=True,
         )
         assert research_called is True
         assert record is not None

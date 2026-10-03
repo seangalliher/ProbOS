@@ -871,8 +871,9 @@ async def test_a_pre_approved_design_is_not_asked_again_but_any_other_still_is()
 @pytest.mark.parametrize(
     ("config", "decided_by", "consensus", "pre_approved"),
     [
-        (SimpleNamespace(), "captain", True, False),
-        (SimpleNamespace(), "architect_0", True, False),
+        # BF-877 A-1.2: with the ladder off too, the recorded approval is the design approval
+        (SimpleNamespace(), "captain", True, True),
+        (SimpleNamespace(), "architect_0", True, None),
         (_on(), "captain", True, True),
         (_on(), "captain", False, True),
         (_on(), "architect_0", False, True),
@@ -890,7 +891,8 @@ async def test_the_build_route_designs_only_what_the_recorded_approval_admits(
     flag. The Captain's approval admits any build; a delegate's -- AD-1213 records
     the deciding agent's id -- admits only a build the policy lets a delegate
     decide, one that requires no consensus; an approval naming no decider admits
-    none. ``None`` means nothing is designed. OFF, the route is HEAD's."""
+    none. ``None`` means nothing is designed. BF-877 A-1.2: with the ladder off the
+    same policy applies; at HEAD the OFF route designed with ``pre_approved=False``."""
     seen: list[dict[str, Any]] = []
 
     async def spy(_request_id: str, **kwargs: Any) -> None:
@@ -2503,7 +2505,13 @@ async def test_off_the_hxi_click_ignores_the_request_id_and_designs_as_at_head(
 
     [(args, kwargs)] = pipe.calls
     assert args == ()
-    assert set(kwargs) == {"intent_name", "intent_description", "parameters", "execution_context", "on_progress"}
+    # BF-877: the click is the Captain's approval and now says so with pre_approved; the
+    # route used to switch the pipeline's approval callback off instead. The design is HEAD's.
+    assert set(kwargs) == {
+        "intent_name", "intent_description", "parameters", "execution_context", "on_progress",
+        "pre_approved",
+    }
+    assert kwargs["pre_approved"] is True
     assert (kwargs["intent_description"], kwargs["parameters"], kwargs["execution_context"]) == (
         "as typed", {"device": "sdb"}, "",
     )
@@ -2864,13 +2872,14 @@ async def test_a_sighting_after_the_decision_files_a_new_card_and_no_skill_is_at
 async def test_with_the_ladder_off_the_shell_still_offers_and_designs_a_skill(
     booted: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OFF parity for A-3: without the ladder nothing is filed or withdrawn, and "1" attaches
-    the skill as at HEAD. (That HEAD skill carries no consensus requirement is residual R11;
-    A-3 changes only the ladder's path.)"""
+    """OFF parity for A-3, for a gap that requires no consensus: without the ladder nothing
+    is filed or withdrawn, and "1" attaches the skill as at HEAD. BF-877 closed residual
+    R11, which this test used to pin: a skill carries no consensus requirement, so with
+    the ladder off a gap that requires consensus is offered no skill either."""
     from rich.console import Console
 
     monkeypatch.setattr(booted.config.capability_triage, "unified_ladder_enabled", False)
-    pipe = _skill_runtime(booted, monkeypatch)
+    pipe = _skill_runtime(booted, monkeypatch, requires_consensus=False)
     proposed: list[list[str]] = []
     renderer_mod = _skill_first_shell(monkeypatch, proposed)
     monkeypatch.setattr("builtins.input", _captain_takes_the_skill)
