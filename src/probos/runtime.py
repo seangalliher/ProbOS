@@ -237,7 +237,10 @@ def _platform_data_dir() -> Path:
     return base / "data"
 
 
-_DEFAULT_DATA_DIR = _platform_data_dir()
+# BF-883: there is deliberately no module-level default data directory. One
+# computed here at import froze before the test suite's PROBOS_DATA_DIR
+# override was set, so every runtime built without ``data_dir`` booted into the
+# live vessel's data. ``ProbOSRuntime.__init__`` resolves it per construction.
 
 
 class _LiveNATSSubscription(Protocol):
@@ -607,7 +610,9 @@ class ProbOSRuntime:
         episodic_memory: EpisodicMemory | None = None,
     ) -> None:
         self.config = config or load_config(_DEFAULT_CONFIG)
-        self._data_dir = Path(data_dir) if data_dir else _DEFAULT_DATA_DIR
+        # BF-883: resolved now, not at import, so an override set after import
+        # (the test suite's PROBOS_DATA_DIR) is honoured.
+        self._data_dir = Path(data_dir) if data_dir else _platform_data_dir()
         self._checkpoint_dir = self._data_dir / "checkpoints"
 
         # AD-823: daily episodic backup task handle. Created in start();

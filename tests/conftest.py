@@ -2,6 +2,23 @@
 
 import os
 import sys
+import tempfile
+
+# BF-883: keep the data directory away from the live vessel before any ``probos``
+# module is imported -- by the imports below or by test collection. The AD-682 session
+# fixture further down runs only after collection, so a data path resolved at import
+# time used to get the live %LOCALAPPDATA%\ProbOS\data; that is how six runtimes per
+# full run booted into the vessel's own data. Set here, ahead of every ``probos``
+# import in this file, it covers import-time resolution in ``probos`` code. It does
+# not cover a pytest plugin or ``-p`` module that imports ``probos`` before this
+# conftest loads. Nothing creates this path; the session fixture re-points the
+# variable per worker, so a write under it means an import-time capture. A caller
+# that already set PROBOS_DATA_DIR keeps it.
+if not os.environ.get("PROBOS_DATA_DIR"):
+    os.environ["PROBOS_DATA_DIR"] = os.path.join(
+        tempfile.gettempdir(), f"probos-collection-data-{os.getpid()}"
+    )
+
 import pytest
 
 from pathlib import Path
