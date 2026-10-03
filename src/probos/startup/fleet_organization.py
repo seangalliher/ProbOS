@@ -31,15 +31,21 @@ logger = logging.getLogger(__name__)
 def _envelope_transport(
     config: "SystemConfig", transport: Any, identity_key_binding: Any | None, data_dir: "Path | None",
 ) -> Any:
-    """AD-1197: the transport wrapped for signed envelopes when armed; the transport itself when off."""
+    """AD-1197/AD-1198: the transport wrapped for signed envelopes (and peer admission when armed); the transport itself when off."""
     if config.federation.envelope_signing_enabled is not True:  # AD-1197 off: the transport itself
         return transport
     if data_dir is None:
         raise ValueError("federation envelope signing needs a data directory for its replay store")
     from probos.federation.signed_transport import build_signed_transport
 
+    admission = None
+    if config.federation.peer_admission_enabled is True:  # AD-1198 armed: configured, pinned peers only
+        from probos.federation.admission import PeerAdmission
+
+        admission = PeerAdmission.from_config(config.federation)
     return build_signed_transport(
         transport, policy=config.federation.envelope_policy, key_binding=identity_key_binding, data_dir=data_dir,
+        admission=admission,
     )
 
 
@@ -222,6 +228,7 @@ async def organize_fleet(
                         node_id=config.federation.node_id,
                         bind_address=config.federation.bind_address,
                         peers=config.federation.peers,
+                        harden_routing=config.federation.peer_admission_enabled is True,  # AD-1198 hardened routing when admission is armed
                     ),
                     identity_key_binding,
                     data_dir,

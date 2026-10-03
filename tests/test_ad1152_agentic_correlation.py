@@ -263,6 +263,8 @@ async def _off_observation(
     # AD-1197's two inert envelope-signing fields were added after this capture too.
     assert config["federation"].pop("envelope_signing_enabled") is False
     assert config["federation"].pop("envelope_policy") == "sign"
+    # AD-1198's inert peer-admission flag was added after this capture too.
+    assert config["federation"].pop("peer_admission_enabled") is False
     # AD-1270f P1.2's two shutdown grace fields were added after this capture too; their
     # defaults are the pre-field waits (and their maximums), so production shutdown is unchanged.
     assert config["memory"].pop("shutdown_write_grace_s") == 1.0

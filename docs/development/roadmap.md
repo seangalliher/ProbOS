@@ -419,6 +419,7 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 |----|-------|-------|----------|
 | AD-1196 | Bind `did:probos` identifiers to Ed25519 keys, with rotation, revocation and compromise recovery -- implementation candidate (default-off `federation.identity_keys_enabled`) | [#1133](https://github.com/seangalliher/ProbOS/issues/1133) | 1 |
 | AD-1197 | Sign canonical federation envelopes with the ship key and add replay protection -- implementation candidate (default-off `federation.envelope_signing_enabled`, policy `sign` or `require`) | [#1134](https://github.com/seangalliher/ProbOS/issues/1134) | 1 |
+| AD-1198 | Admit federation peers by configuration and pinned ship keys, proven on the existing two-node cluster -- slice 1 of 3, implementation candidate (default-off `federation.peer_admission_enabled`, per-peer `pinned_public_key`) | [#1135](https://github.com/seangalliher/ProbOS/issues/1135) | 1 |
 
 #### Other Backlog Items
 

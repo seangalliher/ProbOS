@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1827
-  field_definitions: 1822
+  canonical_dump_leaves: 1828
+  field_definitions: 1824
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 2daada981773106394e5cff8a3fb0befca5b2139224bee9ac2d7875050dc8793
+canonical_dump_sha256: 50754621347e57b1cc78a3a92c08487756caab23b0556502991acff4877421b4
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1842,7 +1842,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 8defad110f6abe2a5ea23adbe491771f50d9a548296fa7a7dcc731c87d0d892a
+    schema_sha256: 8d9eea1ef0c8c3cf471fcb9206fec6a6d9c8060b2e482b7ff22439543860056b
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -1869,6 +1869,7 @@ models:
     - {default: '''''', name: identity_recovery_public_key}
     - {default: 'False', name: envelope_signing_enabled}
     - {default: '''sign''', name: envelope_policy}
+    - {default: 'False', name: peer_admission_enabled}
   FederationDiscoveryConfig:
     qualname: FederationDiscoveryConfig
     bases:
@@ -2601,11 +2602,12 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 273c2b82ad3631f8124e6360c2f7aa4cdd86ae30611c8570aa684c8b1b39fd81
+    schema_sha256: 53c6e7c85b4be17ff55bea5cbefc8198c1b85a1ff191d2c1de77dda1c6fcdbcf
     fields:
     - {default: <required>, name: node_id}
     - {default: <required>, name: address}
     - {default: <required>, has_default_factory: true, name: avatar_telemetry_agent_ids}
+    - {default: '''''', name: pinned_public_key}
   PerceptionConfig:
     qualname: PerceptionConfig
     bases:
@@ -3323,7 +3325,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9f701794828eddf8e7cd81dc873565abfa94c61e99f6a2e435ed2550c815d194
+    schema_sha256: 105e02b80b4c40615c9bacd6cef1e6f1d46fbee02cf9dac7b94dd65f7e6768af
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

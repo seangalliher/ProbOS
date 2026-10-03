@@ -1,6 +1,7 @@
 """ZeroMQ federation transport — real network communication between ProbOS nodes.
 
-NOT tested in the test suite — all federation tests use MockFederationTransport.
+Exercised over real sockets by ``tests/test_ad1198_cluster_gate.py`` (two node processes); the other
+federation tests use MockFederationTransport or a fake ZeroMQ context.
 This module requires ``pyzmq`` (``pip install pyzmq``).
 
 Uses ZeroMQ DEALER-ROUTER sockets:
@@ -15,6 +16,7 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 import uuid
 from collections.abc import Callable, Awaitable
 from typing import Any
@@ -62,7 +64,9 @@ class FederationTransport:
     """ZeroMQ-based federation transport.
 
     Provides the same interface as MockFederationTransport so FederationBridge
-    can use either interchangeably.
+    can use either interchangeably. ``harden_routing`` (AD-1198) makes the ROUTER
+    hand a routing id over to its reconnecting owner and gives each DEALER an
+    unguessable routing id, so no socket can squat a node's id.
     """
 
     def __init__(
@@ -70,6 +74,8 @@ class FederationTransport:
         node_id: str,
         bind_address: str,
         peers: list[PeerConfig],
+        *,
+        harden_routing: bool = False,
     ) -> None:
         if not _HAS_ZMQ:
             raise ImportError("pyzmq is required for FederationTransport")
@@ -77,6 +83,7 @@ class FederationTransport:
         self._node_id = node_id
         self._bind_address = bind_address
         self._peers_config = peers
+        self._harden_routing = harden_routing
         self._running = False
         self._inbound_handler: Callable[[FederationMessage], Awaitable[None]] | None = None
         self._response_queues: dict[str, asyncio.Queue[FederationMessage]] = {}
@@ -107,13 +114,16 @@ class FederationTransport:
 
             # ROUTER: accepts incoming connections from other nodes' DEALER sockets
             self._router_socket = self._ctx.socket(zmq.ROUTER)
+            if self._harden_routing:  # AD-1198 a reconnecting peer takes its routing id back
+                self._router_socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
             self._router_socket.bind(self._bind_address)
             logger.info("Federation ROUTER bound: %s", self._bind_address)
 
             # DEALER: one per peer, connects to peer's ROUTER
             for peer in self._peers_config:
                 dealer = self._ctx.socket(zmq.DEALER)
-                dealer.setsockopt(zmq.IDENTITY, self._node_id.encode())
+                routing_id = f"probos-{secrets.token_hex(16)}" if self._harden_routing else self._node_id  # AD-1198 an unguessable routing id
+                dealer.setsockopt(zmq.IDENTITY, routing_id.encode())
                 dealer.connect(peer.address)
                 self._dealer_sockets[peer.node_id] = dealer
                 logger.info("Federation DEALER connected to %s at %s", peer.node_id, peer.address)
