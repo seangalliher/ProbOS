@@ -1149,6 +1149,22 @@ class PeerConfig(BaseModel):
     # federation.peer_admission_enabled; then the peer must sign every envelope and its
     # key history must introduce this key with no re-inception after it.
     pinned_public_key: str = ""
+    # AD-1198 slice 3a: the peer's main API base URL (http or https, with a host and no credentials,
+    # query or fragment), or empty. Inert unless federation.peer_admission_enabled; then this ship
+    # fetches the peer's attachments there with signed peer requests, never a bearer token.
+    api_url: str = ""
+
+    @field_validator("api_url")
+    @classmethod
+    def _validate_api_url(cls, value: str) -> str:
+        """AD-1198: empty, or a plain http(s) base URL."""
+        if not value:
+            return value
+        parts = urllib.parse.urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname or "@" in parts.netloc or parts.query or parts.fragment:  # AD-1198 a plain http(s) base URL
+            raise ValueError("api_url must be an http(s) URL with a host and no credentials, query or fragment")
+        _ = parts.port  # ValueError for a port outside 0-65535, refused at parse time
+        return value
 
     @field_validator("pinned_public_key")
     @classmethod

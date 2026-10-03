@@ -48,7 +48,7 @@ pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
   canonical_dump_leaves: 1828
-  field_definitions: 1824
+  field_definitions: 1825
   incidental: 13
   own_models: 224
   owned: 291
@@ -1842,7 +1842,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 8d9eea1ef0c8c3cf471fcb9206fec6a6d9c8060b2e482b7ff22439543860056b
+    schema_sha256: b30568e3b8419261e64e666d97d1f3e8e1aa3c5cfd73eb18e9ac3661d37e4aa4
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -2602,12 +2602,13 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 53c6e7c85b4be17ff55bea5cbefc8198c1b85a1ff191d2c1de77dda1c6fcdbcf
+    schema_sha256: 00e7207dfa2d838452aabd5d3c4c1a340f65756f7fd2fa51378add8521f32c82
     fields:
     - {default: <required>, name: node_id}
     - {default: <required>, name: address}
     - {default: <required>, has_default_factory: true, name: avatar_telemetry_agent_ids}
     - {default: '''''', name: pinned_public_key}
+    - {default: '''''', name: api_url}
   PerceptionConfig:
     qualname: PerceptionConfig
     bases:
@@ -3325,7 +3326,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 105e02b80b4c40615c9bacd6cef1e6f1d46fbee02cf9dac7b94dd65f7e6768af
+    schema_sha256: c64259ae18e27dc0b0fa50478e6331656acb04990a1ee9cfb3c60ca6eaeffa78
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

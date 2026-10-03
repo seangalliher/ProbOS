@@ -509,6 +509,7 @@ class ProbOSRuntime:
     federation_peer_registry: "FederationPeerRegistry"
     federation_mcp_server: "FederationMCPServer | None"
     federation_a2a_server: "FederationA2AServer | None"
+    federation_peer_requests: Any  # AD-1198 PeerRequests | None
     self_mod_pipeline: SelfModificationPipeline | None
     mcp_app_registry: "MCPAppRegistry | None"  # AD-597
     proposal_store: Any | None  # AD-482b ProposalStore
@@ -1170,6 +1171,7 @@ class ProbOSRuntime:
         # --- Federation ---
         self.federation_bridge: FederationBridge | None = None
         self._federation_transport: FederationTransport | None = None
+        self.federation_peer_requests: Any = None  # AD-1198 set by fleet organization while peer admission is armed
         from probos.federation.telemetry_relay import (
             FederationTelemetryRelay,
             RemoteAvatarTelemetryCache,
@@ -2776,6 +2778,7 @@ class ProbOSRuntime:
         self.pool_scaler = org.pool_scaler
         self.federation_bridge = org.federation_bridge
         self._federation_transport = org.federation_transport
+        self.federation_peer_requests = org.federation_peer_requests  # AD-1198 signed peer HTTP requests (None unless admission is armed)
 
         # Phase 4: Cognitive Services (AD-517)
         from probos.startup.cognitive_services import init_cognitive_services

@@ -95,6 +95,7 @@ class FleetOrganizationResult:
     pool_scaler: "PoolScaler | None"
     federation_bridge: Any  # FederationBridge | None
     federation_transport: Any  # FederationTransport | None
+    federation_peer_requests: Any = None  # AD-1198 PeerRequests | None (armed peer admission only)
 
 
 @dataclass

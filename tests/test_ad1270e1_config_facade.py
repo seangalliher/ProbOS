@@ -1539,7 +1539,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1197 adds federation.envelope_signing_enabled and envelope_policy (1818 -> 1820).
     # AD-1270f P1.2 adds memory.shutdown_write_grace_s and shutdown_dispatch_grace_s (1820 -> 1822).
     # AD-1198 adds federation.peer_admission_enabled and peers[].pinned_public_key (1822 -> 1824).
-    assert counts["field_definitions"] == 1824  # AD-1206 intentionally adds github_repository.
+    # AD-1198 slice 3a adds peers[].api_url (1824 -> 1825).
+    assert counts["field_definitions"] == 1825  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225

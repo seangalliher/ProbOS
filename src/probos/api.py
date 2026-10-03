@@ -327,6 +327,8 @@ def create_app(runtime: Any) -> FastAPI:
         decision_pre_clearances_router,  # AD-1214: the Captain's decision pre-clearances
     ):
         app.include_router(r.router)
+    if federation_attachments_router.peer_requests_armed(getattr(runtime, "config", None)):  # AD-1198 the signed peer route is served only while admission is armed
+        app.include_router(federation_attachments_router.peer_router)
 
     # ------------------------------------------------------------------
     # WebSocket event stream

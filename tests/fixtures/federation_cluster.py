@@ -4,6 +4,8 @@ Two real ProbOS processes built from the shipped ``config/node-1.yaml`` and ``co
 offline use: ephemeral 127.0.0.1 ports, LLM URLs on a closed port (each node also gets an injected
 ``MockLLMClient``) and an isolated home, data directory and knowledge repo per node, so nothing on disk is shared.
 Each node runs ``federation_cluster_node.py`` and is driven over a 127.0.0.1 control socket (``ControlServer``).
+With ``http=True`` (AD-1198 slice 3a) each pinned node also serves the production main API on its own 127.0.0.1
+port, its peer's ``api_url`` names that port, and per-node ``extras`` are merged into the derived configs.
 In the ``mitm`` topology each node's peer address is a ``WireProxy`` lane, a blocking-pyzmq relay that can drop,
 duplicate and replay whole payloads; in the ``direct`` topology (the shipped one) the nodes connect to each other.
 
@@ -29,7 +31,7 @@ import sys
 import threading
 import time
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -82,11 +84,14 @@ def derive_node_config(
     peer_port: int,
     phase: Literal["mint", "pinned"],
     pinned_public_key: str | None = None,
+    api_url: str | None = None,
+    extra: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Path:
     """The shipped ``config/<name>.yaml`` derived for one offline boot; written to ``<root>/<short>/<phase>.yaml``.
 
     ``mint`` boots with federation off, only to commission the ship key. ``pinned`` arms envelope signing under
-    policy ``require`` and peer admission, with the one peer pinned to ``pinned_public_key``.
+    policy ``require`` and peer admission, with the one peer pinned to ``pinned_public_key``; ``api_url`` names
+    that peer's main API, and each ``extra`` section (a dotted path) is merged into the derived config.
     """
     other = OTHER[name]
     data = yaml.safe_load((REPO / "config" / f"{name}.yaml").read_text(encoding="utf-8"))
@@ -102,11 +107,19 @@ def derive_node_config(
     peers[0]["address"] = f"tcp://127.0.0.1:{peer_port}"
     federation.update(forward_timeout_ms=2000, identity_keys_enabled=True, identity_key_store="plaintext_dev")
     if phase == "mint":
+        assert api_url is None and extra is None, "a mint boot serves no API and takes no extras"
         federation["enabled"] = False
     elif phase == "pinned":
         assert pinned_public_key, f"a pinned boot of {name} needs {other}'s minted public key"
         federation.update(envelope_signing_enabled=True, envelope_policy="require", peer_admission_enabled=True)
         peers[0]["pinned_public_key"] = pinned_public_key
+        if api_url:
+            peers[0]["api_url"] = api_url
+        for section, values in (extra or {}).items():
+            target = data
+            for part in section.split("."):
+                target = target.setdefault(part, {})
+            target.update(values)
     else:
         raise ValueError(f"unknown phase {phase!r}")
     data.setdefault("knowledge", {})["repo_path"] = str(node_dir(root, name) / "k")
@@ -364,16 +377,27 @@ class _Run:
 class ClusterHarness:
     """Two real nodes from the shipped node configs, under one root; a context manager that kills what it started."""
 
-    def __init__(self, root: Path, *, topology: Literal["mitm", "direct"]) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        topology: Literal["mitm", "direct"],
+        http: bool = False,
+        extras: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
+    ) -> None:
         if topology not in ("mitm", "direct"):
             raise ValueError(f"unknown topology {topology!r}")
         self.root = root
         self.topology = topology
+        self.http = http
         self.minted: dict[str, Identity] = {}
         self.port_retries: list[str] = []
+        self.last_stopped: dict[str, dict[str, Any]] = {}
         self.proxy: WireProxy | None = None
         self._control: ControlServer | None = None
         self._ports: dict[str, int] = {}
+        self._api_ports: dict[str, int] = {}
+        self._extras = dict(extras or {})
         self._runs: dict[str, _Run] = {}
         self._run_counts = {name: 0 for name in NODES}
         self._tokens: dict[str, str] = {}
@@ -412,11 +436,22 @@ class ClusterHarness:
         return self._control
 
     def _new_ports(self) -> None:
-        """Fresh ROUTER ports for both nodes and, in the mitm topology, a fresh proxy relaying to them."""
+        """Fresh ROUTER ports for both nodes (with ``http`` an API port each too, all four distinct) and, in the
+        mitm topology, a fresh proxy relaying to them."""
         ports = {name: reserve_port() for name in NODES}
         while ports["node-2"] == ports["node-1"]:
             ports["node-2"] = reserve_port()
+        used = set(ports.values())
+        api_ports: dict[str, int] = {}
+        if self.http:
+            for name in NODES:
+                port = reserve_port()
+                while port in used:
+                    port = reserve_port()
+                used.add(port)
+                api_ports[name] = port
         self._ports = ports
+        self._api_ports = api_ports
         if self.topology == "mitm":
             if self.proxy is not None:
                 self.proxy.close()
@@ -441,9 +476,11 @@ class ClusterHarness:
 
     def _spawn(self, name: str, phase: Literal["mint", "pinned"], pin: str | None) -> None:
         assert name not in self._runs, f"{name} is already running"
+        serve_api = self.http and phase == "pinned"
         config = derive_node_config(
             name, self.root, bind_port=self._ports[name], peer_port=self._peer_port(name), phase=phase,
-            pinned_public_key=pin,
+            pinned_public_key=pin, api_url=self.api_url(OTHER[name]) if serve_api else None,
+            extra=self._extras.get(name) if serve_api else None,
         )
         data_dir = self._data_dir(name)
         env = child_env(self.root, name, data_dir)
@@ -456,7 +493,7 @@ class ClusterHarness:
             process = subprocess.Popen(
                 [
                     sys.executable, "-X", "utf8", "-u", str(NODE_RUNNER), str(config), str(data_dir),
-                    str(self.control.port), name,
+                    str(self.control.port), name, *([str(self._api_ports[name])] if serve_api else []),
                 ],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(node_dir(self.root, name)),
             )
@@ -507,14 +544,16 @@ class ClusterHarness:
         return {name: self._ready(name) for name in names}
 
     def _bind_failed(self, name: str, ready: dict[str, Any]) -> bool:
+        if self.http and ready.get("api_started") is False:  # its API port was lost to another process (H7)
+            return True
         return ready["connected_peers"] == [] and _TRANSPORT_FAILED in self.log(name, self.run_of(name))
 
     def boot(self, *names: str) -> dict[str, dict[str, Any]]:
         """Boot ``names`` (default both), each pinned to the other's minted key; their ``ready`` events.
 
         H7: a node whose ROUTER could not bind its reserved port (``connected_peers == []`` and the start
-        failure in its run log) makes every running node restart once on fresh ports; the retry is recorded in
-        ``port_retries`` and warned.
+        failure in its run log), or with ``http`` whose API could not (``api_started`` false), makes every
+        running node restart once on fresh ports; the retry is recorded in ``port_retries`` and warned.
         """
         targets = names or NODES
         assert self.minted, "boot() needs the minted identities: call mint() first"
@@ -535,6 +574,8 @@ class ClusterHarness:
             assert event["federation"] is True, event
             assert event["connected_peers"] == [OTHER[name]], event
             assert event["kid"] == self.minted[name].kid, event
+            if self.http:
+                assert event["api_started"] is True, event
         return {name: ready[name] for name in targets}
 
     def stop(self, *names: str) -> None:
@@ -542,7 +583,7 @@ class ClusterHarness:
         for name in names:
             self.control.send(name, op="stop")
         for name in names:
-            self.control.wait(name, "stopped", STOP_TIMEOUT_S)
+            self.last_stopped[name] = self.control.wait(name, "stopped", STOP_TIMEOUT_S)
         for name in names:
             run = self._runs[name]
             try:
@@ -561,9 +602,13 @@ class ClusterHarness:
 
     # -- operations -----------------------------------------------------------------------------------------
 
-    def forward(self, path: str, sender: str = "node-1") -> dict[str, Any]:
-        """``sender`` forwards ``read_file(path)``; the ``forwarded`` event plus ``ok``: a result is the token."""
-        self.control.send(sender, op="forward", intent="read_file", params={"path": path}, timeout=FORWARD_TIMEOUT_S)
+    def forward(self, path: str, sender: str = "node-1", *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """``sender`` forwards ``read_file(path)``, ``params`` merged in; the ``forwarded`` event plus ``ok``: a
+        result is the token."""
+        self.control.send(
+            sender, op="forward", intent="read_file", params={"path": path, **(params or {})},
+            timeout=FORWARD_TIMEOUT_S,
+        )
         event = self.control.wait(sender, "forwarded", FORWARD_TIMEOUT_S + 30.0)
         token = self._tokens[path]
         event["ok"] = any(result.get("result") == token for result in event["results"])
@@ -589,6 +634,22 @@ class ClusterHarness:
 
     def router_port(self, name: str) -> int:
         return self._ports[name]
+
+    def api_url(self, name: str) -> str:
+        """``name``'s main API base URL (``http`` harnesses only)."""
+        return f"http://127.0.0.1:{self._api_ports[name]}"
+
+    def put_attachment(self, name: str, data: bytes, mime: str) -> str:
+        """Store ``data`` in ``name``'s production attachment store; its content hash."""
+        self.control.send(name, op="put_attachment", hex=data.hex(), mime=mime)
+        return str(self.control.wait(name, "put", OP_TIMEOUT_S)["sha"])
+
+    def has_attachment(self, name: str, sha: str) -> bool:
+        """Whether ``name``'s production attachment store holds ``sha``."""
+        self.control.send(name, op="has_attachment", sha=sha)
+        event = self.control.wait(name, "has", OP_TIMEOUT_S)
+        assert event["sha"] == sha, event
+        return bool(event["exists"])
 
     # -- evidence -------------------------------------------------------------------------------------------
 

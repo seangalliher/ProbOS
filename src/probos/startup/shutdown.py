@@ -1863,6 +1863,7 @@ async def shutdown(
         with steps("federation transport stop", runtime._federation_transport):
             await runtime._federation_transport.stop()
         runtime._federation_transport = None
+    runtime.federation_peer_requests = None  # AD-1198 nothing is signed or admitted over a stopped seam
 
     # AD-573: Freeze all agent working memory before pools stop (not in a rollback: a boot
     # that never completed has no session state to freeze, BF-882)
