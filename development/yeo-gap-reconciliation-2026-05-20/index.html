@@ -1,0 +1,2214 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/yeo-gap-reconciliation-2026-05-20/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Yeo gap-doc reconciliation (2026-05-20) - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#yeo-gap-doc-reconciliation-2026-05-20" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Yeo gap-doc reconciliation (2026-05-20)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-microsoft-365-workiq-parity-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §1 — Microsoft 365 / WorkIQ parity (7)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-desktop-os-surface-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §2 — Desktop / OS surface (8)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-proactive-scheduling-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §3 — Proactive scheduling (6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-permissions-for-unattended-runs-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §4 — Permissions for unattended runs (5)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-personal-data-hardening-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §5 — Personal data hardening (6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-office-document-skills-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §6 — Office-document skills (3)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-conversational-front-door-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §7 — Conversational front door (5)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-identity-continuity-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §8 — Identity &amp; continuity (3)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-backstop-heartbeat-style-learning-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §9 — Backstop: heartbeat-style learning (5)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-explicit-non-goals-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        §10 — Explicit non-goals (4)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#child-ad-backlog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Child-AD backlog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spot-check-verdicts-the-four-high-priority-4-items-from-the-ad-765-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spot-check verdicts (the four high-priority §4 items from the AD-765 spec)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="yeo-gap-doc-reconciliation-2026-05-20">Yeo gap-doc reconciliation (2026-05-20)<a class="headerlink" href="#yeo-gap-doc-reconciliation-2026-05-20" title="Permanent link">&para;</a></h1>
+<p><strong>AD-765 deliverable.</strong> Filename frozen at <code>2026-05-20</code> per AD-765 review recommendation 1 — not retroactively renamed if landing date slides.</p>
+<p>Line-item audit of <code>Yeo_PA_Feature_Gap.md</code> (private commercial-repo research deliverable) against ProbOS HEAD (commit at audit time: post-AD-762 wave-184 close, highest AD <code>AD-766</code>). Replaces the "~70–80%" soft estimate in PROGRESS.md with hard numeric verdicts grounded in <code>file:line</code> / AD pointers.</p>
+<p><strong>Status legend.</strong> <code>shipped</code> = real implementation verified at file:line; <code>partial</code> = primitive exists but the gap-doc capability is not fully realized (missing sub-capabilities enumerated inline); <code>not-started</code> = no implementation found; <code>commercial-overlay-only</code> = explicitly excluded from OSS scope per AD-697/AD-698 boundary; <code>out-of-scope</code> = gap-doc's own non-goals section §10.</p>
+<p><strong>Summary line:</strong> <code>24 shipped / 11 partial / 12 not-started / 1 commercial / 4 out-of-scope</code> across 52 capabilities.</p>
+<hr />
+<h2 id="1-microsoft-365-workiq-parity-7">§1 — Microsoft 365 / WorkIQ parity (7)<a class="headerlink" href="#1-microsoft-365-workiq-parity-7" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M365 Auth Service (MSAL + WAM token broker, multi-tenant caching, refresh, sensitivity-label awareness)</td>
+<td>partial</td>
+<td><code>src/probos/integrations/m365_token_manager.py:1-200</code> ships MSAL device-code flow + keyring-backed refresh; AD-749 covers the OSS scope. <strong>Missing</strong>: WAM (Web Account Manager) broker integration, multi-tenant caching (single-tenant only), sensitivity-label awareness (no MIP/IRM hooks).</td>
+<td>AD-767</td>
+</tr>
+<tr>
+<td>OutlookAgent (list/read/search/draft mail; flag triage)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/m365_connector.py:35</code> <code>class OutlookAgent</code>; registered at <code>src/probos/runtime.py:1006</code> <code>spawner.register_template("outlook", OutlookAgent)</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>TeamsAgent (chats, channels, mentions, presence)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/m365_connector.py:146</code> <code>class TeamsAgent</code>; registered at <code>src/probos/runtime.py:1007</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>CalendarAgent (read/find-time/book, conflict detection, focus blocks)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/m365_connector.py:245</code> <code>class CalendarAgent</code>; registered at <code>src/probos/runtime.py:1008</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>SharePointAgent / OneDriveAgent (search, fetch, upload, link)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/m365_connector.py:344</code> <code>class SharePointAgent</code> + <code>:443</code> <code>class OneDriveAgent</code>; both registered at <code>src/probos/runtime.py:1009-1010</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>WorkIQ-style semantic layer (unified find_relevant_documents across mail/files/chat)</td>
+<td>partial</td>
+<td><code>src/probos/integrations/semantic_mapper.py:96</code> <code>class SemanticMapper</code> provides <code>bootstrap_from_episodic()</code> + <code>sync_m365_to_semantic()</code> (AD-750). <strong>Missing</strong>: single unified <code>find_relevant_documents(query)</code> entry point that fans out across mail+files+chat in one call; today the consumer must drive each connector separately.</td>
+<td>AD-768</td>
+</tr>
+<tr>
+<td>Information-barrier &amp; sensitivity-label compliance</td>
+<td>not-started</td>
+<td><code>src/probos/integrations/sharepoint_routing.py:18</code> has <code>sensitivity_label: str | None</code> field but it is <code>None</code> by default with no enforcement and no IRM/MIP integration. AD-765 prompt itself flagged this as deferred to a Y4-tier explicit AD when queued.</td>
+<td>AD-769</td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-desktop-os-surface-8">§2 — Desktop / OS surface (8)<a class="headerlink" href="#2-desktop-os-surface-8" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Native tray icon with status colors (idle/running/urgent)</td>
+<td>partial</td>
+<td><code>src/probos/experience/desktop/tray.py:14</code> <code>class TrayManager</code> exists with <code>set_status()</code> accepting <code>idle</code>/<code>running</code>/<code>urgent</code>. <strong>Critical gap</strong>: file never imports <code>pystray</code> (only mentions it in docstring at line 18); <code>set_status()</code> only updates an internal field + logs (line 47); no actual OS tray icon is drawn. Reference confirmed: <code>grep -n "import pystray\|from pystray"</code> in <code>src/probos/</code> returns 0 matches. AD-759 is the drafted prompt to ship the real packaged tray host.</td>
+<td>AD-770 (closes via AD-759 dispatch)</td>
+</tr>
+<tr>
+<td>OS notifications with click-through to action</td>
+<td>partial</td>
+<td><code>src/probos/experience/desktop/notifications.py:14</code> <code>class NotificationCenter.notify_with_action()</code> exists. <strong>Critical gap</strong>: implementation is <code>logger.info(...)</code> + <code>return actions[0]["label"] if actions else None</code> (line 47) — never invokes <code>win10toast</code>/<code>pyobjc</code>/<code>plyer</code>. No real OS toast or click-through.</td>
+<td>AD-771</td>
+</tr>
+<tr>
+<td>Global quick-capture hotkey (Ctrl-Shift-Space)</td>
+<td>partial</td>
+<td><code>src/probos/experience/desktop/hotkey.py:15</code> <code>class HotkeyListener.start_listening("ctrl+shift+space")</code> exists. <strong>Critical gap</strong>: <code>_listen_loop()</code> (line 57) is <code>while self._listening: await asyncio.sleep(1.0)</code> — placeholder; <code>pynput</code>/<code>keyboard</code> library never imported. No actual global hotkey registration.</td>
+<td>AD-772</td>
+</tr>
+<tr>
+<td>Mini-mode always-on-top compact window</td>
+<td>not-started</td>
+<td>No <code>MiniMode</code>/<code>MiniWindow</code>/<code>compact_mode</code> component in <code>ui/src/</code>; <code>grep -rn "MiniMode\|MiniWindow" ui/src</code> returns 0 matches. <code>hotkey.py:on_hotkey_pressed</code> logs "would activate mini-mode window" — never wired.</td>
+<td>AD-773</td>
+</tr>
+<tr>
+<td>Auto-start at login + single-instance lock</td>
+<td>shipped</td>
+<td><code>src/probos/experience/desktop/lifecycle.py:31-67</code> <code>acquire_lock()</code> real <code>os.O_EXCL</code> impl; <code>register_autostart()</code> at line 73 with real Windows registry (line 91 <code>winreg.SetValueEx</code>), macOS LaunchAgent (line 102 plist write), Linux <code>.desktop</code> file (line 137).</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Code-signed installer (MSIX/DMG/NSIS)</td>
+<td>not-started</td>
+<td>No installer manifest in repo. <code>grep -i "msix\|nsis\|codesign\|code_sign\|dmg"</code> returns no production-code matches. AD-759 spec drafts this requirement but is not yet built.</td>
+<td>AD-774 (subsumed by AD-759)</td>
+</tr>
+<tr>
+<td>Auto-update with channel rollout + crash-loop rollback</td>
+<td>not-started</td>
+<td>No <code>auto_update</code>/<code>crash_loop</code>/update-channel code in <code>src/probos/</code>.</td>
+<td>AD-775</td>
+</tr>
+<tr>
+<td>Power management (prevent-sleep / mouse-wiggle during proactive runs)</td>
+<td>not-started</td>
+<td>No <code>SetThreadExecutionState</code>/<code>prevent_sleep</code>/<code>inhibit_sleep</code> references in <code>src/probos/</code>.</td>
+<td>AD-776</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-proactive-scheduling-6">§3 — Proactive scheduling (6)<a class="headerlink" href="#3-proactive-scheduling-6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ProactiveScanAgent emitting scan_inbox/scan_calendar/scan_teams intents on schedule</td>
+<td>shipped</td>
+<td><code>src/probos/proactive.py:184</code> <code>class ProactiveScanAgent(CognitiveAgent)</code>; intent emission at <code>:201</code> (<code>intent="proactive_scan"</code> with <code>tagged_as="heartbeat"</code> at <code>:204</code>). Scheduled via <code>src/probos/agents/operations/scheduler.py:39</code> <code>proactive_scan_{scan_type}</code> hook.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Work-hours gate (Mon-Fri 08:00-18:00 default, configurable)</td>
+<td>shipped</td>
+<td><code>src/probos/proactive.py:247</code> <code>if not self._duty_schedule.work_hours.is_active(now): return ...</code>; configurable via <code>DutyScheduleConfig.work_hours</code> in <code>config/system.yaml:646</code>. AD-752.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Urgency classifier agent with trust-weighted confidence</td>
+<td>not-started</td>
+<td><code>urgency: float</code> field exists on <code>IntentMessage</code> (<code>src/probos/types.py:55</code>) but there is no dedicated <code>UrgencyClassifierAgent</code> and no trust-weighted confidence pipeline. <code>grep -i "UrgencyClassif"</code> returns 0 matches.</td>
+<td>AD-777</td>
+</tr>
+<tr>
+<td>Heartbeat session tagging (isProactiveSession)</td>
+<td>shipped</td>
+<td><code>src/probos/proactive.py:204</code> <code>params={"tagged_as": "heartbeat", ...}</code> on every proactive_scan intent. Naming differs from gap-doc's <code>isProactiveSession</code> but the routing/episodic concept is identical.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>/yeo enable|pause|status|interval N shell commands</td>
+<td>not-started</td>
+<td><code>grep "/yeo\b\|cmd_yeo"</code> in <code>src/probos/experience/commands/</code> returns 0 matches. No Captain-facing shell command surface for proactive toggle.</td>
+<td>AD-778</td>
+</tr>
+<tr>
+<td>Quiet hours / focus mode integration</td>
+<td>partial</td>
+<td>Quiet hours shipped: <code>src/probos/proactive.py:344</code> <code>quiet_hours_active=duty_schedule.quiet_hours.is_active(now)</code>; config at <code>config/system.yaml:655</code>. <strong>Missing</strong>: focus-mode integration (no <code>focus_mode</code>/<code>focus_block</code>/<code>focus_period</code> references in <code>src/probos/</code>); macOS Focus mode + Windows Focus Assist APIs not wired.</td>
+<td>AD-779</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-permissions-for-unattended-runs-5">§4 — Permissions for unattended runs (5)<a class="headerlink" href="#4-permissions-for-unattended-runs-5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>autoApproveReadOnly policy (tag intents/tools as read-only, bypass quorum)</td>
+<td>shipped</td>
+<td><strong>Spot-check #1 verdict</strong>: <code>src/probos/security/permission_model.py:38</code> <code>auto_approve_read_only: bool = False</code>; consensus bypass at <code>src/probos/consensus/quorum.py:194</code> <code>return QuorumResult(approved=True, reason="auto_approve_read_only")</code>. AD-753. Tests: <code>tests/test_permission_model.py:14</code> <code>test_should_auto_approve_read_only_intent_in_autopilot_returns_true</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Per-tool / per-server allow-deny lists scoped to ProactiveScan sessions</td>
+<td>not-started</td>
+<td>No allow/deny list scoped to <code>tagged_as="heartbeat"</code> proactive sessions. <code>auto_approve_read_only</code> is a global per-intent flag, not a session-scoped per-tool list.</td>
+<td>AD-780</td>
+</tr>
+<tr>
+<td>Pattern-allowlist for shell (PA tier)</td>
+<td>not-started</td>
+<td><code>src/probos/agents/shell_command.py</code> has <code>requires_consensus=True</code> (default deny) but no pattern-based allowlist. <code>grep "allowlist\|allow_list\|allowed_patterns"</code> in <code>shell_command.py</code> returns 0 matches.</td>
+<td>AD-781</td>
+</tr>
+<tr>
+<td>Permission card UI (inline Allow / Allow All read-only / Deny with audit log)</td>
+<td>shipped</td>
+<td>Backend: <code>src/probos/security/permission_card.py:16</code> <code>class PermissionCard</code> + <code>:28</code> <code>class PermissionCardManager</code> + <code>:114</code> <code>card_from_intent()</code>. Frontend: <code>ui/src/components/wardroom/PermissionCard.tsx:39</code> <code>export function PermissionCard({card, onApprove, onReject, onReviewMore})</code>. Wired via <code>src/probos/consensus/quorum.py:11</code> <code>from probos.security.permission_card import card_from_intent</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Tenant-policy hook (disableYeo, disableM365Read, allowed-tool list)</td>
+<td>partial</td>
+<td><code>src/probos/governance/policy_engine.py:10</code> <code>class TenantPolicyEngine(Protocol)</code> + <code>:20</code> <code>class NullPolicyEngine</code> (no-op default impl). Roadmap (AD-753 row) explicitly marks "tenant policy hook is extension-point only" — the seam is shipped, no real engine is provided in OSS. This is the AD-697/AD-698 commercial-overlay boundary working as intended for hooks; the Protocol surface is shipped.</td>
+<td>none (boundary intentional)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-personal-data-hardening-6">§5 — Personal data hardening (6)<a class="headerlink" href="#5-personal-data-hardening-6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Encryption at rest for tokens, cached M365 content, episodic excerpts with PII</td>
+<td>partial</td>
+<td>Tokens encrypted: <code>src/probos/security/credential_encryption.py:12</code> <code>class CredentialEncryptor</code> (system keyring / DPAPI / Keychain / libsecret); used by <code>src/probos/integrations/m365_token_manager.py:40</code>. <strong>Missing</strong>: cached M365 content (raw mail/file bodies) is not encrypted at rest; episodic ChromaDB excerpts containing PII are not encrypted.</td>
+<td>AD-782</td>
+</tr>
+<tr>
+<td>PII redaction in logs (emails, names, doc URLs masked)</td>
+<td>shipped</td>
+<td><strong>Spot-check #3 verdict</strong>: <code>src/probos/security/pii_redaction.py:9</code> <code>class PIIRedactor</code> with <code>_EMAIL_PATTERN</code> / <code>_PHONE_PATTERN</code> / <code>_URL_PATTERN</code> / <code>_DOCID_PATTERN</code> / <code>_TOKEN_PATTERN</code> regexes; <code>LogRedactionFormatter</code> at <code>:58</code> + <code>apply_redaction_to_handlers()</code> at <code>:66</code>. AD-754. Used by <code>src/probos/security/audit_log.py:11</code> <code>from probos.security.pii_redaction import PIIRedactor</code>. Names per se are not masked (the gap-doc mentions "names" but the implementation covers email/phone/URL/doc-IDs/tokens — name redaction would require NER which is not present).</td>
+<td>(sub-gap AD-783 — name NER)</td>
+</tr>
+<tr>
+<td>Conditional-access compatibility</td>
+<td>not-started</td>
+<td>No conditional-access (CA policy evaluation, device-compliance check) code in <code>src/probos/</code>. MSAL handles CA challenges in-flight but no first-class compatibility surface.</td>
+<td>AD-784</td>
+</tr>
+<tr>
+<td>Cert pinning for Graph + token endpoints</td>
+<td>not-started</td>
+<td><code>grep "cert_pin\|certificate_pinning"</code> returns 0 matches. HTTP clients use system trust store.</td>
+<td>AD-785</td>
+</tr>
+<tr>
+<td>"Forget this" tool (purge specific episodes/knowledge artifacts on user demand)</td>
+<td>shipped</td>
+<td><code>src/probos/routers/security.py:49</code> <code>@router.post("/forget")</code> <code>async def request_erasure</code>; backed by <code>src/probos/knowledge/erasure.py</code> <code>ErasureManager.forget_episode()</code> / <code>forget_resource()</code> / <code>forget_agent_memory()</code>. AD-754.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Audit log of every M365 read</td>
+<td>partial</td>
+<td><code>AuditLog</code> primitive exists at <code>src/probos/security/audit_log.py:25</code> + <code>src/probos/security/audit.py:39</code> (hash-chained, AD-456). <strong>Missing</strong>: not wired into every <code>m365_connector.py</code> read path — <code>grep "audit.*m365\|m365.*audit"</code> returns 0 matches in <code>src/probos/</code>. Each <code>OutlookAgent.list_messages</code> / <code>SharePointAgent.fetch_file</code> etc. must emit an AuditLog row.</td>
+<td>AD-786</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6-office-document-skills-3">§6 — Office-document skills (3)<a class="headerlink" href="#6-office-document-skills-3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DocxAgent / PptxAgent / XlsxAgent</td>
+<td>shipped</td>
+<td><strong>Spot-check #4 verdict</strong>: <code>src/probos/skill_framework.py:27</code> <code>class DocxAgent(SkillBasedAgent)</code>; <code>:130</code> <code>class PptxAgent</code>; <code>:216</code> <code>class XlsxAgent</code>. Registered at <code>src/probos/runtime.py:1016-1018</code> <code>spawner.register_template("office_docx", DocxAgent)</code> etc. AD-755.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>SharePoint upload routing (online edit vs Graph API upload)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/sharepoint_routing.py:30</code> <code>class SharePointRouter</code> with <code>route_for_read()</code> (<code>:41</code>) returning online-edit URL vs Graph API URL based on <code>_infer_source()</code>; <code>upload_to_personal()</code> at <code>:61</code> returns Graph upload URL.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Template library (resumes, meeting notes, status reports)</td>
+<td>shipped</td>
+<td><code>src/probos/integrations/template_registry.py:31</code> <code>class TemplateRegistry</code> with <code>list_templates()</code> + <code>create_from_template()</code>. AD-755.</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-conversational-front-door-5">§7 — Conversational front door (5)<a class="headerlink" href="#7-conversational-front-door-5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Welcome screen + suggested prompts</td>
+<td>shipped</td>
+<td><code>ui/src/components/WelcomeOverlay.tsx:6</code> <code>export function WelcomeOverlay()</code> with first-visit gate (<code>hxi_seen_intro</code> localStorage key) and two suggested prompts at line 71 (<code>Try: "What's the weather in Tokyo?" or "Summarize a URL"</code>).</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Personalities (work / casual / focus) as Captain-selectable profiles</td>
+<td>not-started</td>
+<td><code>personality: Record&lt;string, number&gt;</code> field on agent profile is per-agent Big Five traits (<code>ui/src/components/profile/ProfileInfoTab.tsx:198</code>), NOT Captain-selectable work/casual/focus presets. No <code>personality_profile_selector</code> or work/casual/focus mode switcher in UI.</td>
+<td>AD-787</td>
+</tr>
+<tr>
+<td>Suggested actions panel (Yeo proposes 3-5 things based on inbox/calendar)</td>
+<td>shipped</td>
+<td><code>ui/src/components/wardroom/SuggestedActionsPanel.tsx:39</code> <code>export const SuggestedActionsPanel</code> with <code>fetchSuggestedActions()</code> at <code>:28</code>. Test: <code>ui/src/__tests__/SuggestedActionsPanel.test.tsx:11</code>.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Cross-crew delegation UI (Yeo @-mentions specialists in chat)</td>
+<td>partial</td>
+<td>Backend chain-of-command delegation shipped (AD-440 <code>OrderManager.issue_order</code>); <code>@mentions</code> exist in WardRoom (per DECISIONS.md AD-654d "WardRoom @mentions"). <strong>Missing</strong>: explicit DM-thread UI affordance for Yeo to insert a <code>@SpecialistName</code> token that triggers cross-crew delegation; the UI shape for "Yeo proposes this should go to Architect" is not built.</td>
+<td>AD-788</td>
+</tr>
+<tr>
+<td>Yeo daily briefing at first interaction of the day</td>
+<td>shipped</td>
+<td><code>ui/src/components/wardroom/DailyBriefingPanel.tsx:20</code> <code>export const DailyBriefingPanel</code> with <code>fetchDailyBriefing()</code> at <code>:14</code>. Test: <code>ui/src/__tests__/DailyBriefingPanel.test.tsx:5</code>.</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8-identity-continuity-3">§8 — Identity &amp; continuity (3)<a class="headerlink" href="#8-identity-continuity-3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Captain Card adoption for personalization</td>
+<td>shipped</td>
+<td><code>src/probos/captain_card/card.py:42</code> <code>class CaptainCard(BaseModel)</code>; <code>default_captain_card()</code> at <code>:98</code>; <code>load_card()</code> at <code>:103</code>; wired in <code>src/probos/runtime.py</code> via <code>captain_card_enabled</code> config field (<code>src/probos/config.py:444</code>). AD-757.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Yeo personality + voice profile</td>
+<td>partial</td>
+<td><code>CaptainCard</code> model supports personality fields; voice binding goes through avatar telemetry. <strong>Missing</strong>: Yeo-specific personality binding distinct from generic CrewProfile — AD-766 (drafted Wave 184, not yet shipped) instantiates the YeomanAgent on the Bridge with explicit CaptainCard-driven persona.</td>
+<td>none (AD-766 dispatch closes the gap)</td>
+</tr>
+<tr>
+<td>Multi-device continuity (laptop + PWA on phone same state)</td>
+<td>commercial-overlay-only</td>
+<td>OSS scope per AD-697/AD-698 boundary is local-only single-device runtime. Multi-device state sync (Yeo state mirrored across laptop + phone PWA) is in commercial overlay territory.</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<h2 id="9-backstop-heartbeat-style-learning-5">§9 — Backstop: heartbeat-style learning (5)<a class="headerlink" href="#9-backstop-heartbeat-style-learning-5" title="Permanent link">&para;</a></h2>
+<p>All five are gap-doc "gets for free" items — existing primitives proactive runs benefit from automatically.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hebbian-learned proactive routing</td>
+<td>shipped</td>
+<td><code>src/probos/mesh/routing.py</code> Hebbian connection weights; proactive_scan intents flow through the same router as user intents.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Trust-decay on noisy classifiers</td>
+<td>shipped</td>
+<td><code>src/probos/consensus/trust.py</code> Bayesian Beta(alpha, beta) trust scoring; bad classifier outcomes decay trust, eligible classifiers re-route.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Dreaming consolidation of yesterday's interactions</td>
+<td>shipped</td>
+<td><code>src/probos/cognitive/dreaming.py</code> idle-time episodic consolidation; proactive_scan episodes consolidated alongside user-driven ones.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Correction loop ("this wasn't urgent" patches the classifier)</td>
+<td>shipped</td>
+<td><code>src/probos/cognitive/correction_detector.py</code> + <code>src/probos/cognitive/agent_patcher.py</code> — corrections detected, agents hot-patched, episodic memory updated.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>/why for every Yeo suggestion</td>
+<td>shipped</td>
+<td><code>IntrospectionAgent</code> exposes <code>why</code> intent (per runtime.py registration); slash command resolves through introspection.</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<h2 id="10-explicit-non-goals-4">§10 — Explicit non-goals (4)<a class="headerlink" href="#10-explicit-non-goals-4" title="Permanent link">&para;</a></h2>
+<p>All four are gap-doc's own §10 non-goals.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Status</th>
+<th>Evidence</th>
+<th>Follow-up</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Loki-style server-side memory store</td>
+<td>out-of-scope</td>
+<td>Gap-doc §10. ProbOS uses ChromaDB + Git-backed knowledge — explicit architectural choice not to ship a Loki-style server.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>In-house extraction pipeline</td>
+<td>out-of-scope</td>
+<td>Gap-doc §10. Leverages M365 Graph + episodic — no bespoke extractor.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Reliability machinery (DLQs, coalescing) for memory</td>
+<td>out-of-scope</td>
+<td>Gap-doc §10. Memory uses ChromaDB + episodic — DLQ patterns are NATS-side, not memory-side.</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Bespoke skill bundler</td>
+<td>out-of-scope</td>
+<td>Gap-doc §10. Skills land via <code>SkillBasedAgent</code> pattern, not a bundler.</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="child-ad-backlog">Child-AD backlog<a class="headerlink" href="#child-ad-backlog" title="Permanent link">&para;</a></h2>
+<p><strong>Current highest AD: AD-766</strong> (per <code>prompts/wave-plan.yaml:4024</code> Wave 184 dispatch). Child ADs below sequenced AD-767 → AD-789 (23 entries, one per <code>partial</code>/<code>not-started</code> row excluding commercial/out-of-scope/already-covered-by-existing-prompt rows).</p>
+<p>Format: <code>AD-XXX — &lt;capability&gt;. Builds on &lt;existing primitive&gt;. Scope: &lt;one sentence&gt;. Test plan: &lt;one sentence&gt;. License disposition: &lt;OSS / commercial-only / pattern-absorption&gt;.</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>AD-767 — M365 Auth: WAM broker + multi-tenant cache + sensitivity-label awareness. Builds on m365_token_manager.py (MSAL device-code). Scope: add WAM token broker for Windows-native interactive flow, per-tenant cache partitioning, and MIP sensitivity-label propagation into IntentMessage.params. Test plan: tests/test_m365_wam_broker.py covers Windows WAM happy path + tenant-isolation regression + label-on-fetch round-trip. License disposition: OSS (msal/msal-extensions both MIT).
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>AD-768 — WorkIQ unified find_relevant_documents API. Builds on integrations/semantic_mapper.py (SemanticMapper.sync_m365_to_semantic). Scope: add SemanticMapper.find_relevant_documents(query, owner) single-call fan-out across mail+files+chat returning ranked SemanticEntity list with provenance. Test plan: tests/test_semantic_mapper_unified_search.py covers cross-source recall + ranking + empty-corpus degrade. License disposition: OSS.
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>AD-769 — Information-barrier + sensitivity-label enforcement. Builds on sharepoint_routing.py (sensitivity_label field). Scope: enforce MIP labels at SharePointRouter.route_for_read (refuse + audit when label disallows current user/agent). Test plan: tests/test_sharepoint_label_enforcement.py covers public/confidential/restricted with allow + deny + audit-row assertions. License disposition: OSS.
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>AD-770 — Real pystray-backed tray icon. Builds on experience/desktop/tray.py (TrayManager stub). Scope: replace stub with real pystray icon + set_status() drawing amber/pulse/red glyphs across Win/macOS/Linux. Test plan: tests/test_tray_icon_smoke.py covers platform-conditional import + status-state transitions (mock pystray). License disposition: OSS (pystray LGPL is a copyleft risk — prefer pattern-absorption or rumps/PyQt alternative; license disposition Required-resolve before build).
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>AD-771 — Real OS notifications with click-through. Builds on experience/desktop/notifications.py (NotificationCenter stub). Scope: wire win10toast (Win), pyobjc UserNotifications (macOS), notify-send (Linux); register intent-callback for click-through. Test plan: tests/test_notification_center.py covers per-platform dispatch + callback resolution + quiet-hours suppression. License disposition: OSS (win10toast MIT, pyobjc MIT, libnotify LGPL via subprocess only).
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>AD-772 — Real global hotkey listener (Ctrl-Shift-Space). Builds on experience/desktop/hotkey.py (HotkeyListener placeholder). Scope: wire pynput global hotkey on all three platforms; activate mini-mode on press. Test plan: tests/test_hotkey_listener.py uses pynput Controller to simulate keypress + asserts on_hotkey_pressed callback fires. License disposition: OSS (pynput LGPL — same caveat as pystray; consider keyboard library MIT or platform-native fallback).
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>AD-773 — Mini-mode always-on-top compact HXI variant. Builds on ui/src/HXI canvas (full-mode). Scope: add Mini-Mode React variant (200x300px compact view, single-line intent input, recent results) opened by global hotkey via window.electron.openMiniMode() or PWA always-on-top fallback. Test plan: ui/src/__tests__/MiniMode.test.tsx covers render + intent submit + close. License disposition: OSS.
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>AD-774 — Code-signed installer (NSIS / DMG / MSIX). Builds on AD-759 native-desktop-tray-app spec. Scope: build NSIS (Win), DMG (macOS), MSIX (Win Store) installers with code-signing pipeline. Test plan: scripts/installer/test_installer_smoke.sh checks installer + signature on each OS. License disposition: OSS (NSIS zlib, mkdmg MIT). Subsumed by AD-759 dispatch — file as AD-759-1 if AD-759 takes a phased approach.
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>AD-775 — Auto-update with channel rollout + crash-loop rollback. Builds on installer (AD-774). Scope: Squirrel-style update service polling a release channel, with crash-loop detector that rolls back to previous version after 3 consecutive crashes within 5 min. Test plan: tests/test_updater.py mocks release server + crash sequence + asserts rollback. License disposition: OSS (squirrel.windows MIT, sparkle BSD).
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>AD-776 — Power management (prevent-sleep during proactive runs). Builds on proactive.py (proactive_scan loop). Scope: wrap proactive-scan window in SetThreadExecutionState (Win), caffeinate (macOS), systemd-inhibit (Linux) to prevent sleep. Test plan: tests/test_power_management.py mocks platform API + asserts inhibitor entered/exited around scan window. License disposition: OSS (platform-native API calls only).
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>AD-777 — Urgency classifier agent with trust-weighted confidence. Builds on consensus/trust.py + IntentMessage.urgency field. Scope: new UrgencyClassifierAgent (CognitiveAgent) that scores incoming inbox/calendar items 0.0-1.0 with trust-decay on miscalibrated outputs. Test plan: tests/test_urgency_classifier.py covers classification accuracy on synthetic corpus + trust-decay regression on systematic over/under-call. License disposition: OSS.
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>AD-778 — /yeo enable|pause|status|interval shell commands. Builds on experience/commands/ slash-command surface. Scope: register /yeo subcommands that toggle ProactiveScanAgent enabled-flag, set interval, and report status (next scan, last finding, work-hours active). Test plan: tests/test_yeo_commands.py covers each subcommand happy path + invalid-arg error. License disposition: OSS.
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>AD-779 — Focus-mode integration (macOS Focus, Win Focus Assist). Builds on proactive.py quiet_hours gate. Scope: detect OS-level Focus mode + add to gate predicate alongside quiet_hours. Test plan: tests/test_focus_mode_gate.py mocks platform Focus-state API + asserts scan suppressed when focus active. License disposition: OSS (platform-native APIs).
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>AD-780 — Per-tool/per-server allow-deny lists scoped to ProactiveScan sessions. Builds on security/permission_model.py (auto_approve_read_only). Scope: extend PermissionConfig with proactive_allow_tools / proactive_deny_tools / proactive_allow_servers arrays; gate at quorum entry for heartbeat-tagged intents. Test plan: tests/test_proactive_scoped_permissions.py covers allow + deny + default-fallback paths. License disposition: OSS.
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>AD-781 — Pattern-allowlist for shell (PA tier). Builds on agents/shell_command.py (requires_consensus=True default). Scope: ShellConfig.allow_patterns: list[str] (glob/regex) that bypasses consensus when intent.params.command matches; deny-list overrides allow. Test plan: tests/test_shell_pattern_allowlist.py covers match + non-match + deny-overrides-allow. License disposition: OSS.
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>AD-782 — Encryption at rest for cached M365 content + episodic PII excerpts. Builds on security/credential_encryption.py. Scope: extend CredentialEncryptor pattern to wrap ChromaDB writes containing PII tags + cached SharePoint/Outlook bodies with platform-keyring-derived key. Test plan: tests/test_episodic_encryption.py covers round-trip + key-rotation + lookup-by-tag. License disposition: OSS (keyring MIT).
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>AD-783 — Name redaction via lightweight NER. Builds on security/pii_redaction.py (regex-based redactors). Scope: add PIIRedactor.redact_names() using spaCy en_core_web_sm or regex-based fallback (titles + capitalized-pair heuristic) for "John Smith"-shape names. Test plan: tests/test_pii_name_redaction.py covers common-name + uncommon-name + false-positive (locations/orgs) cases. License disposition: OSS if regex-only; spaCy MIT + model CC-BY-SA — prefer regex/heuristic if model license blocks.
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>AD-784 — Conditional-access compatibility surface. Builds on integrations/m365_token_manager.py (MSAL CA challenge handling). Scope: surface CA challenges as first-class events (capability_blocked_by_ca) with required-claim + remediation-link in payload; UI toast guiding Captain through device-compliance step. Test plan: tests/test_conditional_access_flow.py mocks MSAL CA-challenge response + asserts event emitted + UI guidance shown. License disposition: OSS.
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>AD-785 — Cert pinning for Graph + Microsoft token endpoints. Builds on httpx client config. Scope: pin Microsoft Graph + login.microsoftonline.com cert SPKI hashes in httpx Transport layer; fail fast on mismatch + log security_event. Test plan: tests/test_cert_pinning.py covers valid-pin pass + mismatched-pin reject + emergency-override config. License disposition: OSS.
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>AD-786 — Audit-log wiring for every M365 read. Builds on security/audit_log.py + integrations/m365_connector.py. Scope: emit AuditLog row at every OutlookAgent / TeamsAgent / CalendarAgent / SharePointAgent / OneDriveAgent read entry-point with (agent, resource, sensitivity_label, outcome). Test plan: tests/test_m365_read_audit.py covers each connector + asserts audit row hash-chained + redaction applied. License disposition: OSS.
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>AD-787 — Captain-selectable personality profiles (work/casual/focus). Builds on captain_card/card.py + HXI overlay. Scope: PersonalityProfile enum + CaptainCard.active_profile field + UI selector in Settings → Profile; agents read profile to shape tone/verbosity/proactivity. Test plan: tests/test_personality_profile.py covers selector persistence + agent tone-shaping + default fallback. License disposition: OSS.
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>AD-788 — Cross-crew delegation UI (Yeo @-mentions specialists in DM). Builds on AD-440 OrderManager + WardRoom @mention surface. Scope: when YeomanAgent (AD-766) determines a request belongs to a specialist, render a UI affordance in the DM that previews the delegation target + Captain confirms before fan-out. Test plan: ui/src/__tests__/CrossCrewDelegationCard.test.tsx covers preview + confirm + cancel + audit row. License disposition: OSS.
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>AD-789 — Suggested actions ranking + dismiss-feedback loop. Builds on SuggestedActionsPanel.tsx. Scope: track which suggested actions Captain accepts / dismisses; surface signal to trust + Hebbian; re-rank future suggestions. Test plan: tests/test_suggested_actions_feedback.py + vitest covers dismiss → trust-decay + re-rank + persistence. License disposition: OSS. (Bonus: tightens the §9 "for free" learning loop on suggested-actions surface.)
+</code></pre></div>
+<h2 id="spot-check-verdicts-the-four-high-priority-4-items-from-the-ad-765-spec">Spot-check verdicts (the four high-priority §4 items from the AD-765 spec)<a class="headerlink" href="#spot-check-verdicts-the-four-high-priority-4-items-from-the-ad-765-spec" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong><code>autoApproveReadOnly</code> permission policy</strong> — <strong>SHIPPED</strong>. <code>security/permission_model.py:38</code> + <code>consensus/quorum.py:194</code>. The policy genuinely tags intents read-only and bypasses quorum at the gate. The §4 row corresponds 1:1 to AD-753.</li>
+<li><strong>Tray icon + global hotkey + mini-mode</strong> — <strong>PARTIAL (stub-only)</strong>. <code>experience/desktop/lifecycle.py</code> lock/autostart is real. <code>tray.py</code>, <code>notifications.py</code>, <code>hotkey.py</code> are import-free stubs with logger-only side effects — <code>pystray</code>/<code>pynput</code>/<code>win10toast</code>/<code>pyobjc</code> are never imported anywhere in <code>src/probos/</code>. The user-visible surface (tray icon drawing, OS toast, global key capture, mini-window) does not exist. AD-759 drafts the real packaged tray host; AD-770/771/772/773 cover the per-component gaps.</li>
+<li><strong>PII redaction in logs</strong> — <strong>SHIPPED (with one sub-gap)</strong>. <code>security/pii_redaction.py</code> covers email/phone/URL/doc-IDs/tokens via regex + <code>LogRedactionFormatter</code>. Name redaction is the one gap-doc sub-capability not covered (would require NER); filed as AD-783.</li>
+<li><strong>DocxAgent / PptxAgent / XlsxAgent</strong> — <strong>SHIPPED</strong>. <code>skill_framework.py:27,130,216</code> + <code>runtime.py:1016-1018</code> registration. All three are real <code>SkillBasedAgent</code> subclasses with template registration in the spawner.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

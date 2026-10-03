@@ -1,0 +1,2166 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/composable-cognition/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Composable Cognition — Cognitive Organs, the Spine, and the Two-Scale Nervous System - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#composable-cognition-cognitive-organs-the-spine-and-the-two-scale-nervous-system" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Composable Cognition — Cognitive Organs, the Spine, and the Two-Scale Nervous System
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why-this-concept" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Why this concept
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. The model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-cognitive-organ-a-child-component-not-an-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Cognitive Organ — a child component, not an agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-the-spine-the-agents-central-nervous-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 The Spine — the agent's central nervous system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-the-mesh-the-ships-nervous-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 The Mesh — the ship's nervous system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-same-pattern-scale-appropriate-properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Same pattern, scale-appropriate properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-the-single-governed-boundary-sovereignty-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 The single governed boundary (sovereignty preserved)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-the-self-minskys-no-central-self-answered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 The self (Minsky's "no central self," answered)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-brains-within-brains-recursion-allow-dont-require" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 Brains within brains (recursion — allow, don't require)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-body-plan-brain-region-map-and-proboss-latent-organs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The body plan (brain-region map) — and ProbOS's latent organs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-prior-art-absorbed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Prior art absorbed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-mapping-onto-probos-youre-naming-a-latent-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Mapping onto ProbOS (you're naming a latent structure)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-personal-organ-shared-ship-faculty-a-first-class-design-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Personal organ ⇄ shared ship faculty (a first-class design axis)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-realization-the-attention-organ-is-the-pilot-and-it-carries-the-foundation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Realization (the attention organ is the pilot — and it carries the foundation)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-non-goals-guardrails" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Non-goals &amp; guardrails
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-performance-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Performance &amp; scaling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Performance &amp; scaling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hot-path-organs-per-turn-perf-neutral-to-positive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hot-path organs (per-turn) — perf-neutral-to-positive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#background-organs-idle-the-real-scaling-concern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background organs (idle) — the real scaling concern
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#footprint-measurement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Footprint &amp; measurement
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-decisions-2026-06-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Decisions (2026-06-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="composable-cognition-cognitive-organs-the-spine-and-the-two-scale-nervous-system">Composable Cognition — Cognitive Organs, the Spine, and the Two-Scale Nervous System<a class="headerlink" href="#composable-cognition-cognitive-organs-the-spine-and-the-two-scale-nervous-system" title="Permanent link">&para;</a></h1>
+<p><strong>Status:</strong> Foundational concept (proposed). <strong>Date:</strong> 2026-06-18.
+<strong>Pilot:</strong> the Attention organ — epic #975, <a href="../attention-architecture/">attention-architecture.md</a>, <a href="../attention-research/">attention-research.md</a>.
+<strong>AD ceiling at authoring:</strong> AD-1026 landed; AD-1027 reserved (#973); AD-1028..1032 filed (#976–#980). New ADs here open at <strong>AD-1033</strong>.</p>
+<blockquote>
+<p><strong>Thesis.</strong> A ProbOS cognitive agent is an <strong>organism</strong>: a <strong>spine</strong> plus a set of
+<strong>cognitive organs</strong>. The spine is the agent's <em>central nervous system</em>
+(synchronous, integrated, private). The <strong>mesh</strong> is the <em>ship's nervous system</em>
+(asynchronous, governed, federated). The same pattern — a connective substrate
+linking cognitive units — appears at both scales with <strong>scale-appropriate
+properties</strong>. Society of Mind on the inside; the Nooplex on the outside; the same
+fractal at every level.</p>
+</blockquote>
+<hr />
+<h2 id="1-why-this-concept">1. Why this concept<a class="headerlink" href="#1-why-this-concept" title="Permanent link">&para;</a></h2>
+<p>ProbOS began with agents that were <em>services for the OS</em>. It now runs a <strong>crew — a
+civilization of independent brains.</strong> The open question is no longer "what services
+does the OS offer?" but <strong>"how is a brain composed?"</strong> Today a <code>CognitiveAgent</code> is a
+monolith with helpers and a fixed prompt-assembly pipeline. The recall arc
+(BF-630→632) and the attention work (#975) showed the cost of that: capabilities
+that should be distinct faculties (attention, memory, perception, valuation) are
+tangled into one method with no contract, no composition, and no introspection.</p>
+<p>The proposal: make <strong>Cognitive Organ</strong> a first-class concept and compose brains from
+organs connected by a spine. This is not a rewrite — ProbOS already has <em>latent</em>
+organs (see §5); we are <strong>naming an emergent structure</strong> and giving it a contract.</p>
+<h2 id="2-the-model">2. The model<a class="headerlink" href="#2-the-model" title="Permanent link">&para;</a></h2>
+<h3 id="21-cognitive-organ-a-child-component-not-an-agent">2.1 Cognitive Organ — a child component, not an agent<a class="headerlink" href="#21-cognitive-organ-a-child-component-not-an-agent" title="Permanent link">&para;</a></h3>
+<p>A <strong>Cognitive Organ</strong> is a bounded cognitive faculty that a <code>CognitiveAgent</code> is
+<em>composed of</em>. It is <strong>not</strong> a mesh agent. The five-part test (a capability is an
+organ only if it has <em>all</em> of these — otherwise it's a plain module/helper):</p>
+<ol>
+<li><strong>A distinct cognitive function</strong> — it does one identifiable thing a mind does
+   (attend, remember, perceive, value/feel, monitor-self, narrate, reflect).</li>
+<li><strong>Persistent state across cognitive cycles</strong> — it carries state between turns
+   (not a pure function).</li>
+<li><strong>The <code>perceive → decide → act</code> cognitive-cycle shape.</strong></li>
+<li><strong>1:1 ownership</strong> — intrinsic to <em>one</em> agent (personal), not a shared service.</li>
+<li><strong>Introspectability</strong> — its contribution to behavior is auditable.</li>
+</ol>
+<p><strong>Identity &amp; lifecycle (the load-bearing discipline):</strong>
+- <strong>Child, not peer.</strong> Identity is <em>derived</em> and namespaced under the parent (e.g.
+  <code>{parent_id}.attention</code>). An organ is <strong>not</strong> in the agent registry, <strong>not</strong>
+  addressable on the mesh, and has <strong>no independent trust score, vote, or consensus
+  standing.</strong> It exists only as part of its parent.
+- <strong>Born with the parent, dies with the parent.</strong> Constructed inside the parent's
+  birth; torn down inside the parent's teardown. No independent spawn or death.
+- <strong>Shape, not classification.</strong> It shares the agent <em>shape</em> (and the Society-of-Mind
+  lineage, where "organs" and "agents" are the same thing), but ProbOS keeps the
+  vocabulary crisp: <strong>organs are components; agents are mesh peers.</strong> We do <em>not</em>
+  register an <code>AttentionAgent</code>; we compose an <code>AttentionFaculty</code> organ. This avoids
+  the confusion other agent harnesses invite by overloading "agent."
+- <strong>Deterministic by default.</strong> Most organs run every cognitive cycle, before the
+  expensive LLM call; their work is arithmetic/structural, not reasoning. (Some
+  organs — reflection, narration — may invoke the LLM; that is the exception, not the
+  rule.)</p>
+<h3 id="22-the-spine-the-agents-central-nervous-system">2.2 The Spine — the agent's central nervous system<a class="headerlink" href="#22-the-spine-the-agents-central-nervous-system" title="Permanent link">&para;</a></h3>
+<p>The <strong>spine</strong> is the in-process connective backbone the agent provides. It does three
+things:
+- <strong>Composition</strong> — holds the organ registry ("which organs compose this brain") and
+  attaches/detaches organs at birth/death.
+- <strong>Cycle</strong> — drives the <code>perceive → decide → act</code> cognitive cycle across the organs.
+- <strong>Signaling</strong> — an in-process channel by which organs influence one another (the
+  valuation organ raises arousal → the attention organ narrows; the attention organ
+  selects memories → the narration organ phrases them).</p>
+<p>The spine is <strong>synchronous, in-process, ungoverned, and private.</strong> You do not hold a
+quorum vote between your own thalamus and hippocampus, and you do not put a network
+round-trip between two of your own organs.</p>
+<h3 id="23-the-mesh-the-ships-nervous-system">2.3 The Mesh — the ship's nervous system<a class="headerlink" href="#23-the-mesh-the-ships-nervous-system" title="Permanent link">&para;</a></h3>
+<p>The <strong>mesh</strong> (the intent bus + gossip + routing) is the <em>ship's</em> nervous system: it
+connects <strong>brains</strong> (cognitive agents). It is <strong>asynchronous, governed
+(consensus/trust), and federated</strong> (sovereign peers).</p>
+<h3 id="24-same-pattern-scale-appropriate-properties">2.4 Same pattern, scale-appropriate properties<a class="headerlink" href="#24-same-pattern-scale-appropriate-properties" title="Permanent link">&para;</a></h3>
+<p>The fractal is real, but each scale gets its own substrate. <strong>Conflating them is the
+failure mode</strong> (a synchronous unified mesh becomes a central scheduler; an async
+governed spine puts a network hop + consensus inside a single mind).</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Spine</strong> (agent NS)</th>
+<th><strong>Mesh</strong> (ship NS)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Coupling</td>
+<td><strong>Synchronous, in-process</strong></td>
+<td><strong>Asynchronous</strong> (pub/sub, gossip)</td>
+</tr>
+<tr>
+<td>Governance</td>
+<td><strong>None</strong> (organs aren't sovereign)</td>
+<td><strong>Consensus / trust / quorum</strong></td>
+</tr>
+<tr>
+<td>Topology</td>
+<td><strong>Integrated — one self</strong></td>
+<td><strong>Federated — sovereign peers</strong></td>
+</tr>
+<tr>
+<td>Boundary</td>
+<td>private to the agent</td>
+<td>the ship-wide fabric</td>
+</tr>
+<tr>
+<td>Biology</td>
+<td><strong>central</strong> nervous system</td>
+<td><strong>social/peripheral</strong> signaling between organisms</td>
+</tr>
+</tbody>
+</table>
+<p>A familiar framing: the <strong>mesh is a microservices architecture</strong> — autonomous,
+networked, governed services (ProbOS's intent bus + trust/consensus is, in effect, a
+<em>cognitive service mesh</em>). The <strong>spine is a modular monolith</strong> within each service —
+in-process, synchronous components, not independently deployable, not network-isolated.
+Same "bounded components, composition over monolith" philosophy; the substrate differs
+by scale. Calling an <em>organ</em> a microservice would wrongly imply a network hop +
+independent deployment (the over-engineering trap): <strong>organs are in-process modules;
+agents are the services.</strong></p>
+<h3 id="25-the-single-governed-boundary-sovereignty-preserved">2.5 The single governed boundary (sovereignty preserved)<a class="headerlink" href="#25-the-single-governed-boundary-sovereignty-preserved" title="Permanent link">&para;</a></h3>
+<p>An agent's nervous system connects to the ship's nervous system through <strong>one
+controlled gateway</strong> — the agent's existing mesh interface. Organs do <strong>not</strong>
+independently chatter on the mesh; the agent mediates. Exogenous signals (mentions,
+alerts, camera-change, gossip) enter as an <strong>owned inlet</strong> that updates organ state
+between turns. The CNS reaches the world through defined pathways, not every neuron
+wired to the outside — same discipline, and it is how <strong>AD-397 sovereignty</strong> is kept.</p>
+<h3 id="26-the-self-minskys-no-central-self-answered">2.6 The self (Minsky's "no central self," answered)<a class="headerlink" href="#26-the-self-minskys-no-central-self-answered" title="Permanent link">&para;</a></h3>
+<p>A society of organs needs something that makes it <em>one</em> mind rather than a swarm. That
+is the <strong>spine plus the agent's <code>instructions</code></strong> (its constitution). Not a homunculus
+— a connective backbone and an identity. "Who's in charge?" — <em>nobody and the spine,
+simultaneously.</em></p>
+<h3 id="27-brains-within-brains-recursion-allow-dont-require">2.7 Brains within brains (recursion — allow, don't require)<a class="headerlink" href="#27-brains-within-brains-recursion-allow-dont-require" title="Permanent link">&para;</a></h3>
+<p>An organ may itself be a composed brain (its own sub-spine + sub-organs) — e.g. a
+"memory organ" composed of episodic + working + consolidation sub-organs. The
+architecture <strong>permits</strong> this recursion but <strong>keeps it shallow</strong> (1–2 levels) to
+start. Most organs are leaves; earn depth where a faculty genuinely is a sub-society.</p>
+<p><strong>Organs, not neurons (hard guardrail).</strong> The granularity stops at the <em>organ</em>. We
+compose bounded faculties, not neuron-level sub-agents — decomposing an organ into a
+swarm of tiny "neurons" is over-engineering with no payoff at this scale. The
+five-part test (§2.1) is the floor: if it isn't a distinct, stateful, introspectable
+faculty, it's a plain module — not an organ, and never a neuron-agent.</p>
+<h2 id="3-the-body-plan-brain-region-map-and-proboss-latent-organs">3. The body plan (brain-region map) — and ProbOS's latent organs<a class="headerlink" href="#3-the-body-plan-brain-region-map-and-proboss-latent-organs" title="Permanent link">&para;</a></h2>
+<p>The organs aren't arbitrary; they map to a real cognitive architecture, and ProbOS
+already has seeds of most of them:</p>
+<table>
+<thead>
+<tr>
+<th>Organ</th>
+<th>Brain analogue</th>
+<th>ProbOS today (proto-organ)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Deliberation</strong></td>
+<td>cortex</td>
+<td>the LLM call (System-2) — the one expensive reasoning core organs surround</td>
+</tr>
+<tr>
+<td><strong>Attention / gating</strong></td>
+<td>thalamus</td>
+<td>AttentionFaculty (#977, being built)</td>
+</tr>
+<tr>
+<td><strong>Memory</strong></td>
+<td>hippocampus</td>
+<td>working memory (AD-573) + the episodic shard</td>
+</tr>
+<tr>
+<td><strong>Valuation / affect</strong></td>
+<td>amygdala</td>
+<td>cognitive zones / arousal (AD-588) + affective salience (#908)</td>
+</tr>
+<tr>
+<td><strong>Metacognition / self-monitoring</strong></td>
+<td>prefrontal</td>
+<td>self-monitoring (AD-504), confab guard (AD-592), source attribution (AD-568)</td>
+</tr>
+<tr>
+<td><strong>Interoception / body sense</strong></td>
+<td>insula</td>
+<td>avatar self-observation (AD-722)</td>
+</tr>
+<tr>
+<td><strong>Consolidation / reflection</strong></td>
+<td>default-mode network</td>
+<td>dreaming → <strong>becoming a personal organ</strong> (decided; AD-1035) so agents dream independently</td>
+</tr>
+<tr>
+<td><strong>Perception</strong></td>
+<td>sensory cortices</td>
+<td>the <strong>sensorium</strong> taxonomy (PROPRIO / INTERO / EXTERO) — already organ-flavored</td>
+</tr>
+</tbody>
+</table>
+<p>The sensorium layering is the strongest tell that ProbOS has been drifting toward
+organ composition without naming it.</p>
+<h2 id="4-prior-art-absorbed">4. Prior art absorbed<a class="headerlink" href="#4-prior-art-absorbed" title="Permanent link">&para;</a></h2>
+<p>The closest precedents are <em>academic cognitive architectures</em> and a few
+<em>implementations</em>. None does ProbOS's exact synthesis (deterministic organs as
+lifecycle-bound child components of an LLM agent, connected by a synchronous spine,
+inside an async governed mesh of such agents) — so this is a <strong>novel synthesis on
+well-established shoulders.</strong> Patterns absorbed; no code vendoring (license-clean).</p>
+<p><strong>Cognitive science / architectures (the canon):</strong>
+- <strong>Society of Mind</strong> (Minsky, 1986) — mind = society of agents in agencies; no central
+  self. The conceptual root.
+- <strong>Modularity of Mind</strong> (Fodor, 1983) — encapsulated, domain-specific modules + a
+  central system. → organ boundaries should be crisp; the spine is the central system.
+- <strong>ACT-R</strong> (Anderson) — <em>the strongest precedent.</em> A mind composed of <strong>modules</strong>
+  (declarative, procedural, goal, perceptual-motor), each exposing a <strong>buffer</strong>,
+  coordinated by a central production system. → organ = module, spine = coordinator,
+  the organ's output = its buffer/bid.
+- <strong>Soar</strong> (Laird, Newell, Rosenbloom) — working memory + productions; impasse-driven
+  subgoaling. → deliberate attention shifts on impasse.
+- <strong>Common Model of Cognition / Standard Model of the Mind</strong> (Laird, Lebiere,
+  Rosenbloom, 2017) — a <em>consensus</em> modular "body plan." → an agent type composes a
+  canonical organ set; differentiation is compositional.
+- <strong>LIDA</strong> (Franklin) — computational Global Workspace: attention codelets compete each
+  cognitive cycle to bring coalitions into the workspace, then broadcast. → the cycle
+  model for the spine + attention organ.
+- <strong>CoALA — Cognitive Architectures for Language Agents</strong> (Sumers, Yao, Narasimhan,
+  Griffiths; TMLR 2024; arXiv:2309.02427) — <em>the modern bridge.</em> Frames an LLM agent
+  as modular memory components + a structured action space + a generalized
+  decision procedure. → exactly our organs + spine with the LLM as the deliberation
+  core; validates the approach in the LLM era.
+- <strong>Generative Agents</strong> (Park et al., 2023) — memory/reflection/planning modules;
+  retrieval = recency + importance + relevance. → feeds the salience organ.</p>
+<p><strong>Implementations (GitHub — patterns absorbed, no vendoring):</strong>
+- <strong>ROS 2</strong> (<code>ros2/ros2</code>, Apache-2.0; "a meta operating system for robots") — nodes +
+  topics <em>are</em> a robot's nervous system: many small components coordinated by a
+  pub/sub graph. The canonical "nervous system = pub/sub graph of components." → our
+  <strong>mesh</strong> is the ROS-graph at the ship scale; we keep the <strong>spine</strong> synchronous (a
+  robot's reflex arcs aren't all on the async bus). Validates the metaphor.
+- <strong>OpenCog AtomSpace / Hyperon</strong> (<code>opencog/atomspace</code>) — "several dozen modules" /
+  MindAgents operating over a shared in-RAM hypergraph; described as "kind-of-like an
+  OS kernel." The <em>cognitive-synergy</em> precedent: specialized processes (organs) over a
+  shared substrate. → organs cooperate via shared state (working memory / the spine's
+  signal channel); the substrate-as-kernel framing.
+- <strong>Letta (formerly MemGPT)</strong> (<code>letta-ai/letta</code>, Apache-2.0) — stateful agents with
+  self-editing memory ("memory blocks") and OS-style virtual context management. The
+  <em>memory-organ</em> precedent: a persistent, self-managing memory faculty. → the memory
+  organ owns and edits its own state.</p>
+<h2 id="5-mapping-onto-probos-youre-naming-a-latent-structure">5. Mapping onto ProbOS (you're naming a latent structure)<a class="headerlink" href="#5-mapping-onto-probos-youre-naming-a-latent-structure" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>CognitiveAgent._run_cognitive_lifecycle</code> (perceive→decide→act) <strong>is the proto-spine
+  today</strong> — it already drives the cycle and calls the faculties. Formalizing the spine
+  makes <em>organ attachment</em> (composition) and <em>intra-organ signaling</em> explicit.</li>
+<li>The <strong>intent bus is the mesh</strong> (ship nervous system) — already exists.</li>
+<li>The <strong>sensorium registry</strong> (PROPRIO/INTERO/EXTERO) is the proto-organ catalog; the
+  AttentionBid catalog (#976) generalizes it.</li>
+<li><strong>Working memory</strong> (AD-573) is the clearest existing personal organ; the <strong>episodic
+  store</strong> is a <em>shared</em> faculty with per-agent shards — the canonical "personal organ
+  over a shared substrate."</li>
+</ul>
+<h2 id="6-personal-organ-shared-ship-faculty-a-first-class-design-axis">6. Personal organ ⇄ shared ship faculty (a first-class design axis)<a class="headerlink" href="#6-personal-organ-shared-ship-faculty-a-first-class-design-axis" title="Permanent link">&para;</a></h2>
+<p>A capability can be provided as a <strong>personal organ</strong> (paired, sovereign, intimate,
+synchronous) or a <strong>shared ship faculty</strong> (mesh service, governed, single-source):
+- <strong>Personal organs:</strong> attention, working memory, valuation/affect, self-monitoring,
+  interoception, narration.
+- <strong>Shared faculties:</strong> the Git knowledge base, event log, consensus, trust network,
+  the episodic <em>store</em> (with per-agent shards), the model router.
+- <strong>Rule:</strong> personal when it's intimate to one mind's identity/sovereignty and needs
+  private synchronous access; shared when it's ship-level truth, needs governance, or
+  benefits from a single source. Some capabilities are <em>both</em> (a personal
+  working-memory organ over a shared episodic store). <strong>Decided (2026-06-18):</strong>
+  <strong>dreaming becomes a personal organ</strong> (AD-1035) — each agent dreams <em>independently</em>
+  over its own episodic shard, rather than a single shared runtime consolidation pass.
+  This unlocks per-agent dream cadence (some agents dream more than others),
+  independent dream <em>exploration</em>, and the agent <em>interpreting its own dreams</em>
+  (AD-980/#909 becomes an organ capability). The episodic <em>store</em> stays shared (per-agent
+  shards); the <em>dreaming faculty</em> becomes personal.</p>
+<h2 id="7-realization-the-attention-organ-is-the-pilot-and-it-carries-the-foundation">7. Realization (the attention organ is the pilot — and it carries the foundation)<a class="headerlink" href="#7-realization-the-attention-organ-is-the-pilot-and-it-carries-the-foundation" title="Permanent link">&para;</a></h2>
+<p>The epic #975 is scoped so the attention organ <strong>establishes the whole pattern.</strong>
+Build order (dependency, not AD-number order):</p>
+<ol>
+<li><strong>AD-1028 (#976)</strong> — ContextAssembler seam + <code>AttentionBid</code> + global token budget
+   (behavior-preserving, default-OFF). <em>Context mechanics.</em></li>
+<li><strong>AD-1033 (new)</strong> — <code>CognitiveOrgan</code> protocol: the five-part contract + base class +
+   the child-identity / born-with-parent / dies-with-parent lifecycle helpers. <em>Pure
+   interface; the foundation.</em></li>
+<li><strong>AD-1034 (new)</strong> — <code>CognitiveSpine</code> (thin): organ registry/composition + the
+   cognitive-cycle driver + the in-process intra-organ signal channel + the single
+   governed mesh boundary. Behavior-preserving (byte-identical with zero organs
+   registered); the <code>CognitiveAgent</code> lifecycle is refactored to host it. <em>The backbone.</em></li>
+<li><strong>AD-1029 (#977)</strong> — <code>AttentionFaculty</code>: the <strong>first organ</strong>, conforming to the
+   AD-1033 contract, attached to the AD-1034 spine, driving the AD-1028 assembler. <em>The
+   pilot that proves the pattern.</em></li>
+<li><strong>AD-1030 (#978)</strong> — salience scoring · <strong>AD-1031 (#979)</strong> — camera as a bid (closes
+   #973) · <strong>AD-1032 (#980)</strong> — exogenous interrupts &amp; arousal.</li>
+</ol>
+<h2 id="8-non-goals-guardrails">8. Non-goals &amp; guardrails<a class="headerlink" href="#8-non-goals-guardrails" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Not a rewrite — and non-disruptive (load-bearing constraint).</strong> Concept + seam +
+  pilot + <em>retroactive classification</em> of the proto-organs (name them without
+  rewriting) + <em>opportunistic</em> migration. Strangler-fig. Every step is
+  behavior-preserving (default-OFF / zero-organ byte-identical); moving the existing
+  cognitive agents to this architecture must <strong>never disrupt or break them.</strong> The goal
+  is a more elegant architecture that scales — not a big-bang rebuild.</li>
+<li><strong>Don't metastasize.</strong> The five-part test gates what becomes an organ; helpers stay
+  helpers. Resist "everything is now an organ." <strong>Organs, not neurons.</strong></li>
+<li><strong>Don't network the spine.</strong> The spine is synchronous, in-process, ungoverned.</li>
+<li><strong>Behavior-preserving foundations.</strong> AD-1033/1034 ship byte-identical (default-OFF /
+  zero-organ); adaptivity comes later and gated.</li>
+<li><strong>Deterministic-by-default organs</strong> — no consensus/trust/LLM for internal calls.</li>
+</ul>
+<h2 id="9-performance-scaling">9. Performance &amp; scaling<a class="headerlink" href="#9-performance-scaling" title="Permanent link">&para;</a></h2>
+<p><strong>Guiding principle (2026-06-18):</strong> <em>optimize shared resources where possible; preserve
+autonomy where it provides an advantage.</em> The organs and agents are all one connected
+system on the ship — share the platform, keep the decisions sovereign. Two cost
+regimes, handled differently:</p>
+<h3 id="hot-path-organs-per-turn-perf-neutral-to-positive">Hot-path organs (per-turn) — perf-neutral-to-positive<a class="headerlink" href="#hot-path-organs-per-turn-perf-neutral-to-positive" title="Permanent link">&para;</a></h3>
+<p>Attention, working memory, valuation and perception-gating run <em>every cognitive cycle,
+before the LLM call</em>, but are cheap <strong>by construction</strong>: deterministic, bounded, and
+<strong>no LLM or network/mesh call on the synchronous cycle</strong>. Composing K organs is K cheap
+calls + bid scoring (arithmetic over a bounded candidate set) — sub-millisecond against
+a multi-second LLM call. The global <strong>token budget (AD-1028) is a net win</strong> (smaller
+prompts ⇒ cheaper, faster calls). Two rules preserve this: reuse the embeddings recall
+already computes (don't embed every bid fresh), and enforce <em>no <code>await</code> on a bus/network
+call in the cycle path</em> (the discipline-erosion guard, asserted in AD-1034).</p>
+<h3 id="background-organs-idle-the-real-scaling-concern">Background organs (idle) — the real scaling concern<a class="headerlink" href="#background-organs-idle-the-real-scaling-concern" title="Permanent link">&para;</a></h3>
+<p>Dreaming / reflection / interpretation run during idle and may use the LLM. Naive
+per-agent execution multiplies the <em>expensive</em> part (a 50-agent crew → up to 50×
+dreaming LLM cost) with thundering-herd + store-contention risk. <strong>Resolution —
+<em>personal faculty, shared bounded executor</em></strong> (the microservice-with-shared-platform
+pattern):
+- <strong>Faculty is personal</strong> — each agent decides what/when/how-much to dream over its own
+  shard (per-agent cadence; some dream more than others).
+- <strong>Execution is shared &amp; governed</strong> — evolve the existing idle/dreaming scheduler into
+  a <strong>background-cognition scheduler</strong>: a shared ship faculty that dispatches all organs'
+  background work through a <strong>bounded worker pool with a global concurrency cap</strong> and
+  jitter — <em>not</em> N×K per-organ timers. Same serialization as today's single pass, with
+  per-agent independence on top.
+- <strong>Entrance gate</strong> — an organ runs only with enough <em>new salient</em> material since last
+  time (cf. AD-670); idle agents don't pay.
+- <strong>Cheaper tiers + offline</strong> — bulk consolidation on fast/local tiers, deep tier only
+  for genuine synthesis; idle-time work, so it never touches per-turn latency.
+- <strong>Promote shared-worthy outputs</strong> — genuinely cross-agent results (extracted
+  procedures, anti-patterns) go to the shared knowledge base, so N dreamers don't
+  re-derive the same procedure 50×.</p>
+<h3 id="footprint-measurement">Footprint &amp; measurement<a class="headerlink" href="#footprint-measurement" title="Permanent link">&para;</a></h3>
+<p>Keep organ state <strong>lean</strong> (spill to the shared store; no big per-organ buffers); drive
+background work from the shared scheduler, not per-organ asyncio loops. The
+behavior-preserving / default-OFF migration lets us <strong>benchmark before/after each organ
+lands</strong> — per-turn overhead (target sub-ms) and aggregate background cost (LLM
+calls/hour); a regression backs out the flag.</p>
+<h2 id="10-decisions-2026-06-18">10. Decisions (2026-06-18)<a class="headerlink" href="#10-decisions-2026-06-18" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Design-Principle elevation — DONE.</strong> "Composable cognition (agents are
+   organisms)" is now <strong>Design Principle #12</strong> in <code>.github/copilot-instructions.md</code>,
+   with the cognitive-organ layer noted in the Agent Classification Framework. We
+   elevated <em>now</em> rather than after the pilot — the Captain judged it the right
+   foundation (and an early miss not to have started here), under the hard constraint
+   that migration stays <strong>non-disruptive</strong>.</li>
+<li><strong>Dreaming becomes a personal organ — DECIDED (AD-1035).</strong> Agents dream
+   independently over their own shard; see §6. Unlocks dream interpretation, independent
+   exploration, and per-agent cadence.</li>
+<li><strong>Recursion depth — capped at the organ level.</strong> <em>Organs, not neurons</em> (§2.7); 1–2
+   levels only, and only where a faculty genuinely is a sub-society.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

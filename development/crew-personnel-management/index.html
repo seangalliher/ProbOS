@@ -1,0 +1,2216 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/crew-personnel-management/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Crew Personnel Management — The Ship's Office - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#crew-personnel-management-the-ships-office" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Crew Personnel Management — The Ship's Office
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Why this exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-navy-grounding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The Navy grounding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-capability-model-what-a-service-record-contains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The capability model (what a Service Record contains)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3a-how-the-acm-and-the-ontology-relate-two-views-one-crew-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. How the ACM and the ontology relate (two views, one crew agent)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3b-billets-the-watch-bill-the-personnel-system-must-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b. Billets — the Watch Bill the personnel system must surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-seam-table-what-exists-whats-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The seam table — what exists, what's missing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-ad-convergence-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The AD convergence sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-design-boundaries-do-not-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Design boundaries (do NOT build)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-commercial-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Commercial boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="crew-personnel-management-the-ships-office">Crew Personnel Management — The Ship's Office<a class="headerlink" href="#crew-personnel-management-the-ships-office" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Status:</strong> Architecture spec (2026-06-06). Drafted as the design hub for the
+<strong>Crew Personnel Management</strong> epic (AD-891 → AD-901, GitHub #855-865). This is
+the canonical reference; the per-AD build spec lives in
+<a href="../../prompts/ad-891-899-crew-personnel-management-epic.md"><code>prompts/ad-891-899-crew-personnel-management-epic.md</code></a>.</p>
+</blockquote>
+<p><em>"The crew member is the sovereign constant; everything else is infrastructure."</em></p>
+<hr />
+<h2 id="1-why-this-exists">1. Why this exists<a class="headerlink" href="#1-why-this-exists" title="Permanent link">&para;</a></h2>
+<p>ProbOS has spent six waves (AD-885 → AD-890) building the <strong>capability spine</strong> —
+the Role → Skills → Tools commissioning chain, with the ACM
+(<code>AgentCapitalService</code>) as the single front door (see
+<a href="../skills-and-tools-architecture/"><code>skills-and-tools-architecture.md</code></a>). That
+work made the data <em>correct and unified</em>. It did <strong>not</strong> give the Captain a place
+to <strong>see and manage</strong> it.</p>
+<p>Today a Captain who wants to answer "what is this crew member qualified for, what
+are they assigned to, what may they touch, and what are their standing orders?"
+has no single surface. The data exists across the ACM, the skill framework, the
+tool registry, the work board, the duty schedule, and the standing-orders
+composer — but it is scattered, partly private (duties), and almost entirely
+invisible to the HXI. There is also <strong>no way to manage the skill library itself</strong>:
+<code>SkillDefinition</code>s load from YAML at startup and are immutable at runtime.</p>
+<p>This epic closes that gap. It gives ProbOS a <strong>personnel management experience</strong> —
+a Workday-for-crew-agents — modeled on how a warship actually manages the people
+aboard.</p>
+<hr />
+<h2 id="2-the-navy-grounding">2. The Navy grounding<a class="headerlink" href="#2-the-navy-grounding" title="Permanent link">&para;</a></h2>
+<p>Warships do not "manage users." They run a <strong>Ship's Office</strong> (the personnel
+office, run by the Personnel Officer and the PS — Personnel Specialist — rating).
+The real-world systems map cleanly onto what ProbOS already has:</p>
+<table>
+<thead>
+<tr>
+<th>US Navy system</th>
+<th>What it does</th>
+<th>ProbOS analogue</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NSIPS</strong> (Navy Standard Integrated Personnel System)</td>
+<td>The single web-enabled personnel system of record</td>
+<td><strong>Crew Personnel Console</strong> — the new HXI experience (this epic)</td>
+</tr>
+<tr>
+<td><strong>ESR</strong> (Electronic Service Record)</td>
+<td>The per-sailor record inside NSIPS: identity, history, qualifications, awards, administrative remarks</td>
+<td><strong>Crew Service Record</strong> — the per-agent personnel profile view</td>
+</tr>
+<tr>
+<td><strong>NEC</strong> (Navy Enlisted Classification)</td>
+<td>Coded skill identifiers a sailor holds</td>
+<td><strong>Skill Library</strong> (<code>SkillDefinition</code> / <code>SkillRegistry</code>)</td>
+</tr>
+<tr>
+<td><strong>PQS</strong> (Personnel Qualification Standard)</td>
+<td>Formal qualification to <em>operate equipment</em> / <em>stand a watch</em></td>
+<td><strong>Tool certifications</strong> — the per-agent tool grants (<code>ToolAccessGrant</code>)</td>
+</tr>
+<tr>
+<td><strong>WQSB / Watch Bill</strong> (Watch, Quarter &amp; Station Bill)</td>
+<td>The onboard bill: who does what, where, when (watches, battle stations)</td>
+<td><strong>Duties + active assignments</strong> (duty schedule + work board)</td>
+</tr>
+<tr>
+<td><strong>EDVR</strong> (Enlisted Distribution &amp; Verification Report)</td>
+<td>Monthly manning snapshot for a command — billets authorized vs. filled</td>
+<td><strong>Crew roster / manning view</strong></td>
+</tr>
+<tr>
+<td><strong>Manpower Authorization</strong> (OPNAV billets)</td>
+<td>The authorized billet structure a command is manned to</td>
+<td><strong>Role templates / posts</strong> (<code>RoleTemplate</code>, ontology)</td>
+</tr>
+<tr>
+<td><strong>Standing Orders</strong> (Captain's / XO's standing orders, departmental orders)</td>
+<td>The layered written orders every watch-stander operates under</td>
+<td><strong>Standing-orders composer</strong> (<code>compose_instructions</code>, 4-tier)</td>
+</tr>
+<tr>
+<td><strong>Division Officer's Notebook</strong></td>
+<td>The manager's per-sailor tracking of quals and PQS progress</td>
+<td><strong>The Captain's view</strong> — the console itself</td>
+</tr>
+</tbody>
+</table>
+<p>The key insight ProbOS already encodes (AD-441c): <strong>crew agents carry a birth
+certificate (a sovereign DID); tool agents carry an AssetTag.</strong> Personnel and
+equipment are different kinds of thing. So:</p>
+<ul>
+<li><strong>Crew</strong> get a <strong>Service Record</strong> (this epic — a personnel system).</li>
+<li><strong>Tools/equipment</strong> get an <strong>Asset Registry</strong> (the existing <code>ToolRegistry</code>).</li>
+</ul>
+<p>The Personnel Console is the <em>people</em> counterpart to the <em>asset</em> registry — two
+sister "ship's systems," not one merged blob. The Captain's request for "an asset
+management system experience for the ship" is satisfied by treating crew as
+personnel (service records) and tools as certified equipment (PQS-style grants),
+each with its own management surface inside one console.</p>
+<hr />
+<h2 id="3-the-capability-model-what-a-service-record-contains">3. The capability model (what a Service Record contains)<a class="headerlink" href="#3-the-capability-model-what-a-service-record-contains" title="Permanent link">&para;</a></h2>
+<p>A crew agent's <strong>Service Record</strong> is the union of seven facets, every one of
+which already has a backing store:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Crew Service Record
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── Identity &amp; Lifecycle   callsign, display_name, department, rank,
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                          lifecycle_state, onboarded_at, Big Five personality   [ACM]
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── Role / Post            RoleTemplate (post_id, required/optional skills)       [ontology]
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── Skills &amp; Proficiency   developmental skills (PCC/role/acquired) +
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│                          cognitive skills (SKILL.md), with proficiency          [skill framework + catalog]
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── Qualifications (Tools) tools the agent is *certified* to use (grants)         [tool registry + permissions]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── Duties                 recurring scheduled responsibilities (the watch bill)  [duty schedule]   ← PRIVATE today
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>├── Active Assignments     current/in-flight work items                           [work board]
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>├── Standing Orders        the 4-tier composed orders the agent operates under    [standing-orders composer]
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>└── Experience             trust (α,β), earned agency, episode count              [trust + earned agency + episodic]
+</code></pre></div>
+<p>The ACM's <code>get_consolidated_profile(agent_id, runtime)</code> already aggregates most
+of this (13 keys after AD-885/AD-889). The two missing facets are <strong>duties</strong>
+(deliberately omitted in AD-885 — see §4) and <strong>active assignments</strong> (queryable
+from the work board but not yet folded into the lens).</p>
+<hr />
+<h2 id="3a-how-the-acm-and-the-ontology-relate-two-views-one-crew-agent">3a. How the ACM and the ontology relate (two views, one crew agent)<a class="headerlink" href="#3a-how-the-acm-and-the-ontology-relate-two-views-one-crew-agent" title="Permanent link">&para;</a></h2>
+<p>The personnel system draws from <strong>two identity subsystems that overlap but are
+not the same store</strong>, and the console must compose them without silently
+preferring one over the other:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>ACM</strong> (<code>acm.py</code>)</th>
+<th><strong>Ontology</strong> (<code>ontology/service.py</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mental model</td>
+<td>The HR department — the agent's <em>record</em></td>
+<td>The org chart — the agent's <em>billet</em></td>
+</tr>
+<tr>
+<td>Keyed on</td>
+<td><code>agent_id</code> (sovereign DID, AD-441c)</td>
+<td><code>agent_type</code> (role)</td>
+</tr>
+<tr>
+<td>Owns</td>
+<td>lifecycle, trust, skills, tools, personality, episodes, earned agency</td>
+<td>department, <strong>post/billet</strong>, assignment, chain of command, <code>RoleTemplate</code></td>
+</tr>
+<tr>
+<td>Roster call</td>
+<td><code>get_consolidated_profile</code> (per-agent)</td>
+<td><code>get_crew_manifest</code> (ship-wide)</td>
+</tr>
+<tr>
+<td><code>department</code></td>
+<td>from <code>CrewProfileStore</code> (block 2)</td>
+<td>from the ontology <em>assignment</em></td>
+</tr>
+<tr>
+<td><code>rank</code></td>
+<td>from <code>CrewProfile.rank</code> (stored)</td>
+<td>derived from <code>trust_network</code> via <code>Rank.from_trust</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>The overlap is real and can drift.</strong> Both surfaces report <code>department</code> and
+<code>rank</code>, computed from different sources. Today the ACM already <em>consumes</em> the
+ontology in one direction — <code>commission()</code> walks
+<code>ontology.get_role_template_for_agent(agent_type)</code> to acquire role skills
+(<code>acm.py</code> L426, AD-889) — but <code>get_consolidated_profile</code> does <strong>not</strong> pull
+<code>post</code>/billet from the ontology, so the per-agent lens currently has no post/
+chain-of-command facet at all.</p>
+<p><strong>Resolution for this epic (no new reconciliation layer):</strong></p>
+<ul>
+<li>The <strong>Service Record</strong> (<code>/api/crew/{id}/record</code>) is <strong>ACM-authoritative</strong> —
+  it is the HR record. AD-897 enriches it with the ontology's <code>post</code> /
+  <code>RoleTemplate</code> for the <em>Role / Post</em> section (display-only read of
+  <code>get_crew_context</code> / <code>get_role_template_for_agent</code>).</li>
+<li>The <strong>Roster</strong> (<code>/api/crew/roster</code>) is <strong>ontology-authoritative</strong> — it wraps
+  <code>get_crew_manifest</code>, the same source the live HXI roster already uses.</li>
+<li>Each endpoint's docstring states which surface owns which field, so the
+  ACM↔ontology drift is <strong>explicit, not silent</strong>. A future AD (out of scope
+  here) may unify <code>rank</code>/<code>department</code> to a single source; this epic only
+  documents the seam.</li>
+</ul>
+<blockquote>
+<p><strong>Architectural note for the Architect review:</strong> the long-term direction is
+for the ACM to treat the ontology as the <em>authority for org-chart facets</em>
+(post, department, assignment) and own only the <em>earned/learned</em> facets
+(trust, skills, tools, lifecycle). <code>get_consolidated_profile</code> reading
+<code>department</code> from <code>CrewProfileStore</code> instead of the ontology assignment is a
+latent dual-source smell — flagged here, deliberately not fixed in AD-892 to
+keep the blast radius small.</p>
+</blockquote>
+<hr />
+<h2 id="3b-billets-the-watch-bill-the-personnel-system-must-surface">3b. Billets — the Watch Bill the personnel system must surface<a class="headerlink" href="#3b-billets-the-watch-bill-the-personnel-system-must-surface" title="Permanent link">&para;</a></h2>
+<p>A <strong>billet</strong> is a permanent <em>position</em> (a post); agents <em>rotate through</em> it. This
+is the Navy Watch Bill model, and ProbOS already implements it end-to-end
+(AD-595a–e) — but it is <strong>invisible to both the ACM lens and the personnel
+console plan</strong>, which is the gap this question exposes.</p>
+<p><strong>What exists (verified 2026-06-06):</strong></p>
+<ul>
+<li><strong><code>BilletRegistry</code></strong> (<code>ontology/billet_registry.py</code>, AD-595a) — the
+  authoritative Watch Bill. A facade over <code>DepartmentService</code> (which remains the
+  source of truth for posts/assignments). It is <strong>already publicly exposed</strong>:
+  <code>runtime.billet_registry</code> (<code>runtime.py</code> L1438) delegates to
+  <code>ontology.billet_registry</code>. No forcing-function accessor needed (unlike
+  duties).</li>
+<li><strong><code>BilletHolder</code></strong> snapshot: <code>billet_id, title, department,
+  holder_agent_type, holder_callsign, holder_agent_id</code>. Holder fields are <code>None</code>
+  when the billet is <strong>vacant</strong> — so the roster shows <em>authorized vs. filled</em>,
+  the true EDVR value.</li>
+<li><strong><code>get_roster()</code> / <code>get_department_roster(dept)</code></strong> — the full Watch Bill
+  including vacant billets. This is the <em>manpower-authorization</em> lens (every
+  post, manned or gapped), distinct from <code>get_crew_manifest</code> (only assigned
+  agents).</li>
+<li><strong>A second qualification system.</strong> <code>Post.required_qualifications</code> is a list of
+  <strong>test names</strong> (AD-595d), checked by
+  <code>BilletRegistry.check_qualifications(billet_id, agent_type, agent_id) -&gt;
+  (qualified, missing)</code> against a <code>QualificationStore</code> of pass/fail test results.
+  This is <strong>PQS in its truest form</strong> — distinct from tool certifications.</li>
+</ul>
+<p><strong>Two homes for "qualification" — the personnel system must show both:</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Tool certifications</strong> (AD-894)</th>
+<th><strong>Billet qualifications</strong> (AD-595d)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Store</td>
+<td><code>ToolPermissionStore</code> (grants)</td>
+<td><code>QualificationStore</code> (test results)</td>
+</tr>
+<tr>
+<td>Question answered</td>
+<td>"What equipment may this agent operate?"</td>
+<td>"Is this agent qualified to <em>hold this post</em>?"</td>
+</tr>
+<tr>
+<td>Navy analogue</td>
+<td>Equipment/system PQS sign-off</td>
+<td>Watchstation PQS / billet qualification</td>
+</tr>
+<tr>
+<td>Gate</td>
+<td>Captain-issued grant</td>
+<td>Pass the post's required tests</td>
+</tr>
+</tbody>
+</table>
+<p><strong>How billets wire into task / work management today (verified):</strong></p>
+<ul>
+<li><strong>Onboarding</strong> assigns the billet at the naming ceremony
+  (<code>agent_onboarding.py</code> L416 <code>billet_registry.assign(post_id, agent_type, ...)</code>).</li>
+<li><strong>SOP bills</strong> (<code>sop/runtime.py</code> L541, AD-618b) — the strongest billet→work
+  link. <code>_assign_role</code> filters candidates by <code>get_department_roster(dept)</code> then
+  <code>check_qualifications(...)</code> before assigning an agent to a bill role.
+  <strong>Qualification-gated work assignment already exists — but only for SOP bills.</strong></li>
+<li><strong>Consultation routing</strong> (<code>cognitive/consultation.py</code> L331) uses
+  <code>get_roster()</code> to find expertise holders.</li>
+<li><strong>An agent reads its own billet standing</strong> (<code>cognitive_agent.py</code> L615,
+  <code>proactive.py</code> L472 <code>get_qualification_standing</code>).</li>
+<li><strong>Intent→department routing</strong> (<code>activation/task_router.py</code>) routes by
+  department via posts/assignments — but does <strong>not</strong> consult billet
+  qualifications.</li>
+</ul>
+<p><strong>The gap (and the scope line):</strong></p>
+<ol>
+<li>The <strong>ACM <code>get_consolidated_profile</code> has no billet facet at all</strong> — no post,
+   no chain of command, no qualification standing. The personnel record is
+   incomplete without it.</li>
+<li>The <strong>general work board (<code>WorkItemStore.assign</code>) does NOT gate on billet
+   qualifications</strong> — only SOP bills do. <code>transition_requires_assignment</code> is the
+   only gate. So a work item can be assigned to an agent who hasn't qualified for
+   the relevant post. Whether to extend qualification-gating from SOP bills to
+   the general work board is a <strong>real architectural decision, deferred</strong> (see
+   §6) — this epic <em>surfaces</em> billets and qualification standing in the record
+   (read-only); it does not change work-assignment gating.</li>
+</ol>
+<p><strong>Where billets land in this epic:</strong> AD-892's record endpoint adds the agent's
+billet (post + qualification standing) read from <code>runtime.billet_registry</code>; the
+roster MAY offer a Watch-Bill mode (<code>get_roster</code>, incl. vacant billets) as the
+manpower-authorization lens; AD-897 renders both in the <em>Role / Post</em> and
+<em>Qualifications</em> sections. No new billet mutators — assignment stays with the
+onboarding/naming ceremony.</p>
+<hr />
+<h2 id="4-the-seam-table-what-exists-whats-missing">4. The seam table — what exists, what's missing<a class="headerlink" href="#4-the-seam-table-what-exists-whats-missing" title="Permanent link">&para;</a></h2>
+<p>Verified against the live codebase (2026-06-06). Each gap row maps to an AD.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Facet</th>
+<th>Backing store</th>
+<th>State</th>
+<th>Gap → AD</th>
+<th>Issue</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Crew roster</td>
+<td><code>OntologyService.get_crew_manifest</code> (live HXI source, <code>/api/ontology/crew-manifest</code>) + registry crew enumeration</td>
+<td>EXISTS</td>
+<td><code>/api/crew/roster</code> wraps it + adds lifecycle/skill/tool counts + <strong>includes unbilleted crew</strong> (<code>assigned: false</code>) so the EDVR shows everyone aboard</td>
+<td>AD-892</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Consolidated profile</td>
+<td><code>acm.py get_consolidated_profile</code></td>
+<td>EXISTS (13 keys)</td>
+<td>Not exposed over HTTP</td>
+<td>AD-892</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Duties</td>
+<td><code>DutyScheduleTracker.get_due_duties</code></td>
+<td><strong>PRIVATE</strong> (<code>proactive.py</code> <code>_duty_tracker</code>)</td>
+<td>No public accessor; not in lens</td>
+<td><strong>AD-891</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Active assignments</td>
+<td><code>WorkItemStore</code> + <code>/api/work-items?assigned_to=</code></td>
+<td>EXISTS</td>
+<td>Fold into record/UI</td>
+<td>AD-892/AD-897</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Standing orders (read)</td>
+<td><code>standing_orders.compose_instructions</code></td>
+<td>EXISTS (internal only)</td>
+<td>No read API</td>
+<td>AD-893</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Tool certifications</td>
+<td><code>ToolRegistry</code> + <code>ToolPermissionStore</code></td>
+<td>EXISTS</td>
+<td>No HTTP surface; no grant/revoke UI</td>
+<td>AD-894</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Skill library CRUD</td>
+<td><code>SkillRegistry</code> (<code>SkillDefinition</code>)</td>
+<td><strong>READ-ONLY</strong> (YAML at startup, immutable)</td>
+<td>No create/update/delete; not persisted</td>
+<td><strong>AD-895</strong></td>
+</tr>
+<tr>
+<td>7</td>
+<td>Roles / posts</td>
+<td><code>ontology RoleTemplate</code></td>
+<td>EXISTS</td>
+<td>Display only</td>
+<td>AD-892/AD-897</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Service Record view</td>
+<td><code>AgentProfilePanel</code> (6 tabs)</td>
+<td>PARTIAL</td>
+<td>No HR-style record view</td>
+<td>AD-897</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Skill mgmt UI</td>
+<td>—</td>
+<td>MISSING</td>
+<td>No skill-library admin surface</td>
+<td>AD-898</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Tool cert mgmt UI</td>
+<td>—</td>
+<td>MISSING</td>
+<td>No certification admin surface</td>
+<td>AD-899</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Billet / Watch Bill</td>
+<td><code>BilletRegistry</code> (<code>runtime.billet_registry</code>, public)</td>
+<td>EXISTS, public</td>
+<td>Not in ACM lens; not in record/roster</td>
+<td>AD-892/AD-897</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Billet qualifications</td>
+<td><code>QualificationStore</code> + <code>check_qualifications</code></td>
+<td>EXISTS</td>
+<td>Standing not surfaced in record</td>
+<td>AD-892/AD-897</td>
+</tr>
+<tr>
+<td>14</td>
+<td>Standing-order editing (governed)</td>
+<td><code>DirectiveStore</code> (<code>runtime.directive_store</code>, AD-386)</td>
+<td>EXISTS, CLI only</td>
+<td>No HTTP surface; not in console</td>
+<td>AD-900/AD-901</td>
+</tr>
+</tbody>
+</table>
+<p>Two <strong>forcing functions</strong> fall out of the verify-first pass:</p>
+<ul>
+<li>
+<p><strong>Duties are blocked behind a Law-of-Demeter violation.</strong> <code>get_due_duties</code> is
+  private on <code>runtime.proactive_loop._duty_tracker</code> (<code>proactive.py</code> L607). AD-885
+  explicitly omitted duties for this reason. <strong>AD-891 must ship a public
+  <code>runtime.duty_schedule_tracker</code> first</strong> — it is the forcing function for the
+  whole duties facet and runs first in the epic.</p>
+</li>
+<li>
+<p><strong>The skill library is immutable at runtime.</strong> <code>SkillRegistry</code> loads
+  <code>SkillDefinition</code>s from <code>config/ontology/skills.yaml</code> at startup with no
+  create/update/delete and no write-back. The Captain's "full CRUD on skills"
+  requires a <strong>writable, persisted skill-definition store</strong> (AD-895) — the
+  largest single new backend capability in the epic. It must follow the
+  cloud-ready storage convention (abstract <code>typing.Protocol</code>, not a hardcoded
+  SQLite call) so the commercial overlay can swap backends.</p>
+</li>
+</ul>
+<hr />
+<h2 id="5-the-ad-convergence-sequence">5. The AD convergence sequence<a class="headerlink" href="#5-the-ad-convergence-sequence" title="Permanent link">&para;</a></h2>
+<p>Smallest-blast-first; backend seams before the UI that consumes them. Each UI AD
+hard-depends on its backend AD.</p>
+<p><strong>Backend / API layer</strong></p>
+<ol>
+<li><strong>AD-891 — Public duty accessor + duties in the lens</strong> (#855). Park the
+   <code>DutyScheduleTracker</code> (or a thin read-only view of it) on
+   <code>runtime.duty_schedule_tracker</code>; add a public <code>list_duties_for_agent</code>-style
+   read; append a <code>duties</code> block to <code>get_consolidated_profile</code>. Closes the
+   AD-885 NO-SEAM. Forcing function — runs first.</li>
+<li><strong>AD-892 — Crew Service Record + Roster HTTP surface</strong> (#856). New
+   <code>routers/crew.py</code>: <code>GET /api/crew/roster</code> (the EDVR-style manning list) and
+   <code>GET /api/crew/{agent_id}/record</code> (the consolidated profile + active
+   assignments over HTTP). Read-only. The single surface the console binds to.</li>
+<li><strong>AD-893 — Standing Orders read surface</strong> (#857). <code>GET
+   /api/crew/{agent_id}/standing-orders</code> returns the 4-tier composed orders for
+   display. Read-only preview; no mutation of the order files.</li>
+<li><strong>AD-894 — Tool Registry + certification surface</strong> (#858). <code>GET /api/tools</code>
+   (the asset catalog), <code>GET /api/crew/{agent_id}/tools</code> (certifications =
+   active grants), and Captain-authorized grant/revoke
+   (<code>POST</code>/<code>DELETE</code>) over <code>ToolPermissionStore.issue_grant</code> /<code>revoke_grant</code>.
+   Granting a tool is a privilege change — Captain authority, audited.</li>
+<li><strong>AD-895 — Skill Library CRUD</strong> (#859). A writable, persisted
+   skill-definition store behind a <code>typing.Protocol</code>; <code>create</code>/<code>update</code>/<code>delete</code>
+   on <code>SkillDefinition</code> with validation (protect built-in PCCs and any skill in
+   active use); <code>GET/POST/PUT/DELETE /api/skills/definitions</code>. Full CRUD on the
+   skill library from the ACM.</li>
+</ol>
+<p><strong>HXI / experience layer</strong></p>
+<ol>
+<li><strong>AD-896 — Crew Personnel Console (shell)</strong> (#860). A new resizable /
+   draggable / dockable HXI window — the <strong>Ship's Office</strong> — reusing the AD-837
+   WardRoom display-mode pattern (docked / floating / maximized). Master-detail:
+   roster on the left, service record on the right. A <em>separate experience</em>, not
+   another tab on the profile panel.</li>
+<li><strong>AD-897 — Service Record detail view</strong> (#861). The Workday-style personnel
+   profile inside the console: Identity &amp; Role, Skills &amp; Proficiency,
+   Qualifications (certified tools), Duties &amp; Active Assignments, Standing
+   Orders, Experience. Binds to AD-892/893/894 endpoints.</li>
+<li><strong>AD-898 — Skill Library management view</strong> (#862). The UI for AD-895: browse,
+   create, edit, retire skill definitions; the skill-library admin console.</li>
+<li><strong>AD-899 — Tool certification management view</strong> (#863). The UI for AD-894:
+   browse the tool registry (asset catalog), view and grant/revoke per-agent
+   certifications.</li>
+</ol>
+<p><strong>Governed standing-order editing (the approval-gated write path)</strong></p>
+<ol>
+<li><strong>AD-900 — Governed directive authoring surface</strong> (#864). HTTP surface over
+    the existing <code>DirectiveStore</code> (AD-386) — the evolvable runtime overlay that
+    <code>compose_instructions</code> already merges on top of the immutable 4-tier files.
+    <code>GET/POST /api/crew/{agent_id}/directives</code>, <code>POST .../directives/{id}/approve</code>,
+    <code>DELETE .../directives/{id}</code>. Captain orders land <code>ACTIVE</code> immediately;
+    lower-authority directives stay <code>PENDING_APPROVAL</code> until approved — <strong>the
+    approval gate already exists; this AD exposes it, it does not build it.</strong>
+    Does NOT edit the static <code>.md</code> tier files. Every mutation invalidates the
+    standing-orders cache (<code>clear_cache</code>), exactly as the <code>/order</code> CLI does.</li>
+<li><strong>AD-901 — Standing Orders &amp; Directives management view</strong> (#865). The UI for
+    AD-900 inside the Service Record: read-only 4-tier orders (AD-893) plus a
+    Directives panel to issue a Captain's order, approve a pending directive, and
+    revoke — the approval gate made visible.</li>
+</ol>
+<hr />
+<h2 id="6-design-boundaries-do-not-build">6. Design boundaries (do NOT build)<a class="headerlink" href="#6-design-boundaries-do-not-build" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No HR/payroll/leave/evaluation cruft.</strong> This is crew <em>capability and
+  assignment</em> management, not a human-resources benefits system. No
+  compensation, no leave balances, no performance-review workflow.</li>
+<li><strong>No new identity model.</strong> Crew identity is AD-441c (sovereign DID / birth
+  cert). The console <em>reads and displays</em> it; it does not mint or re-issue it.</li>
+<li><strong>No editing of the static standing-order tier files in this epic.</strong> AD-893 is
+  read-only. The governed <em>write</em> path is the <strong><code>DirectiveStore</code> overlay</strong>
+  (AD-900/901): the Captain issues/approves/revokes <strong>directives</strong>, which
+  <code>compose_instructions</code> already merges on top of the 4-tier files. The static
+  <code>.md</code> files (<code>federation.md</code> is immutable by design) and the self-mod /
+  directive-store-internals governance path are NOT edited from the console.</li>
+<li><strong>No consensus bypass.</strong> Tool grant/revoke (AD-894), skill
+  create/update/delete (AD-895), and directive issue/approve/revoke (AD-900) are
+  state changes — they go through the existing authority models (Captain
+  authority / <code>authorize_directive</code>, audited via grant records / directive
+  status / event log). Do not add a back door that mutates a store without its
+  existing authorization path and audit trail.</li>
+<li><strong>No merge of the asset registry and the personnel record.</strong> Crew = service
+  records; tools = assets. They share the console as sister surfaces but remain
+  distinct stores (per AD-441c).</li>
+<li><strong>No windowing-framework rewrite.</strong> AD-896 reuses the existing WardRoom mode
+  pattern. Splitter columns, snap-to-edge tiling, and OS-detached windows remain
+  the existing forward markers (AD-837b/c/d), out of scope here.</li>
+<li><strong>No new billet mutators, and no change to work-assignment gating.</strong> Billets
+  are assigned at the onboarding/naming ceremony (AD-595b); the console <em>reads</em>
+  the Watch Bill and qualification standing, it does not create/assign billets.
+  Extending billet-qualification gating from SOP bills (<code>sop/runtime.py</code>, where
+  it already exists) to the general work board (<code>WorkItemStore.assign</code>) is a
+  <strong>separate future AD</strong> — surfaced as a smell in §3b, deliberately not built
+  here.</li>
+</ul>
+<hr />
+<h2 id="7-commercial-boundary">7. Commercial boundary<a class="headerlink" href="#7-commercial-boundary" title="Permanent link">&para;</a></h2>
+<p>This epic is <strong>OSS</strong> — it is "how the product works" (a personnel management
+surface over the existing capability spine). The crew-as-personnel /
+agent-services model connects to the <strong>Agent Services Automation (ASA)</strong> vision
+in the commercial repo (<code>research/agent-services-automation-vision.md</code>), but ASA
+financials, billing, PSA, and customer-facing positioning stay commercial. The
+console is an OSS extension point; reference ASA only as a downstream consumer,
+never inline its monetization details here.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

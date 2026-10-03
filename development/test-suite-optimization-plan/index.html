@@ -1,0 +1,3037 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/test-suite-optimization-plan/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Test Suite Optimization Plan - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#test-suite-optimization-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Test Suite Optimization Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-quality-constraints-non-negotiable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Quality constraints (non-negotiable)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Evidence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Evidence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-data-was-collected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the data was collected
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#31-where-the-time-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Where the time goes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-the-critical-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 The critical path
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-anatomy-of-a-runtime-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Anatomy of a runtime boot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-ab-experiment-remove-only-the-two-incidental-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 A/B experiment: remove only the two incidental costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-collection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Collection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-scheduling-simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 Scheduling simulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#37-flakes-and-red-time-september" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.7 Flakes and red time (September)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#38-ci-and-parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.8 CI and parity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. The plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-critical-path-and-flake-root-causes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0: critical path and flake root causes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-runtime-boot-cost-and-duration-aware-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: runtime boot cost and duration-aware scheduling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-scaling-outliers-ci" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: scaling, outliers, CI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-keep-it-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: keep it fast
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-how-quality-is-verified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. How quality is verified
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-explicitly-rejected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Explicitly rejected
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-suggested-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Suggested order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-test-value-and-redundancy-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Test value and redundancy review
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Test value and redundancy review">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-headline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 Headline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#92-static-census" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.2 Static census
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#93-what-septembers-red-gates-say-about-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.3 What September's red gates say about value
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#94-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.4 Actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-execution-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Execution log
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-reproducing-the-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: reproducing the evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="test-suite-optimization-plan">Test Suite Optimization Plan<a class="headerlink" href="#test-suite-optimization-plan" title="Permanent link">&para;</a></h1>
+<p><strong>Status:</strong> Execution started 2026-09-30. Batch A (#1443) ships P0.2's #1419 G-1/G-1b, P0.3, P0.4, V2 and one V1 fix. Batch B (#1445) ships P0.1 (the test_experience.py split) and the rest of V1. Batch C (#1446) ships P1.3's test-side CodebaseIndex memo. Batch D (#1448) ships P2.6 (overlay hermeticity), the five remaining same-file identical-body pairs (V1), the V4 literal-copy removal, and root-cause fixes for two §3.7 flakes. Batch E (#1450) ships P1.4 (each worker starts on one of the heaviest files; full LPT was measured and rejected), P1.2 (teardown-scoped shutdown grace, first slice) and P0.5 with a report-only P3.1. Batch F ships P2.7 (three CI shards with an exactly-once verifier), the WinError 10055 root-cause fix (§3.7) and P2.2's first slice (the phantom-precheck kwargs tests call the helper in-process). Batch G (see its PR) ships P1.1 slice 2 (fast final stops in ten more boot files, a receiving-module guard that accepts any test module as a fixture source, and a final-action guard) and V3 slice 1 (14 slow weak-assertion tests strengthened, one recorded false positive), and records the Captain's V5, P3.4 and V6 decisions. G-2 is deferred (see P0.2). Everything else below is still a proposal. Evidence snapshot taken 2026-09-30.
+<strong>Parent program:</strong> AD-1270f "Fail-Broad Impact Selection and Balanced Full Gate" in the <a href="../platform-maturity-program/">Platform Maturity Program</a> (<a href="https://github.com/seangalliher/ProbOS/issues/1324">#1324</a>). The flake root causes in P0.2 are already recorded as G-1/G-2 in <a href="https://github.com/seangalliher/ProbOS/issues/1419">#1419</a>.
+<strong>AD allocation:</strong> None. Every item maps to an existing owner. If a production change is picked up and needs its own AD, allocate one with <code>scripts/ad_ceiling.py</code> at that point.
+<strong>Scope:</strong> The Python suite under <code>tests/</code>, run by the canonical gate (<a href="../../scripts/run_test_gate.py">run_test_gate.py</a>) and by CI. The UI Vitest job is out of scope: it takes 4.9 minutes in CI and isn't the bottleneck.</p>
+<h2 id="1-summary">1. Summary<a class="headerlink" href="#1-summary" title="Permanent link">&para;</a></h2>
+<p>The canonical gate spends <strong>18:10 in pytest (about 19 minutes end to end) for 37,841 tests</strong>. CI's <code>python-tests</code> job takes <strong>36.4 minutes</strong> against a 45-minute timeout, up from a 27.1-minute median at the start of September. Three measured causes explain most of that time.</p>
+<ol>
+<li><strong>One file sets the gate's wall-clock.</strong> The sample covers 14 green canonical gates since 2026-09-03. In every one, the busiest xdist worker was the one running <a href="../../tests/test_experience.py">test_experience.py</a>, and that file alone took 777–941 s. The second-busiest worker finished 270–370 s earlier. So 15 of the 16 workers sit idle for the last five minutes or more of every gate. More workers can't help, because <code>--dist=loadfile</code> never splits a file.</li>
+<li><strong>Full <code>ProbOSRuntime</code> boots take 60% of all test time.</strong> The 53 files that build and start a runtime account for 5,452 s of the 9,056 s total. A warm boot and stop costs about 7 s, and about 5 s of that is incidental:</li>
+<li>3.0 s of fixed shutdown sleeps;</li>
+<li>about 2 s re-parsing all 963 source files to rebuild the CodebaseIndex.</li>
+</ol>
+<p>An experiment that removed only those two costs cut two boot-heavy subsets by 59–63%, and every test still passed.
+3. <strong>Scheduling ignores duration.</strong> xdist orders files by <em>test count</em>. A heavy file with few tests, such as <code>test_experience.py</code> (109 tests, 872 s), starts late.</p>
+<p>Confirmed flakes also cost time: commits that went red and then green with no code change used 2.4 gate-hours in September. The biggest flake class (<a href="https://github.com/seangalliher/ProbOS/issues/1419">#1419</a> G-1/G-2) caused 48 and 58 cascading failures in two separate runs.</p>
+<p><strong>Projected result.</strong> Every collected test still runs exactly once in every phase.</p>
+<table>
+<thead>
+<tr>
+<th>After</th>
+<th style="text-align: right;">pytest phase</th>
+<th>Source of the saving</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Phase 0: split <code>test_experience.py</code></td>
+<td style="text-align: right;">about 13.7 min</td>
+<td>critical path only</td>
+</tr>
+<tr>
+<td>Phase 1: duration-ordered scheduling and cheaper runtime boots</td>
+<td style="text-align: right;">about 9.7 min</td>
+<td>balance, plus about 27% of suite CPU removed</td>
+</tr>
+<tr>
+<td>Phase 2: 20-worker sweep, if it scales</td>
+<td style="text-align: right;">at best about 8.3 min</td>
+<td>throughput</td>
+</tr>
+</tbody>
+</table>
+<p>Phase 1 brings the whole gate to about 10.4 minutes (pytest plus about 41 s of preflight and wrapper time), under the AD-1270f target of 12:00. Phase 1 alone takes CI from about 36 to about 27 minutes, and three duration-balanced shards take it to about 10–12 minutes.</p>
+<p><strong>Are some tests duplicative or low-value? (§9)</strong> A few, but that isn't where the time goes:</p>
+<ul>
+<li>literal duplicates cost 12.6 s in total;</li>
+<li>there are a handful of tests that can't fail or don't set up what their names claim;</li>
+<li>about 40 slow tests (344 s) start a runtime and then assert little.</li>
+</ul>
+<p>Gate history shows the broad suite catches real cross-cutting defects: untouched existing tests led to 11 product fixes in September. The cheap pinning tests that sometimes just need updating are exactly the ones worth running first, not the ones to delete.</p>
+<h2 id="2-quality-constraints-non-negotiable">2. Quality constraints (non-negotiable)<a class="headerlink" href="#2-quality-constraints-non-negotiable" title="Permanent link">&para;</a></h2>
+<p>These come from the AD-1270f acceptance criteria and the Testing Standards in <code>.github/copilot-instructions.md</code>.</p>
+<ul>
+<li><strong>Every collected node runs exactly once</strong> in the canonical gate. The target may not be met with a skip, a deselection, a timeout change, or a semantic change. The frozen full gate remains the only release authority.</li>
+<li><strong>No test is deleted, merged, or scaled down to save time.</strong> For example, the 1000-row capacity proof stays at 1000 rows. A test may still be retired for <em>value</em> reasons — a literal duplicate, or a test that can't fail — but only through the V7 protocol (§9.4).</li>
+<li><strong>Isolation stays per test.</strong> No <code>ProbOSRuntime</code> is shared across a module, class, or session, except V5's optional read-only runtime per profile (§9.4).</li>
+<li><strong>Production defaults don't change.</strong> If the test profile differs from <code>SystemConfig()</code> defaults, the difference goes on an explicit allowlist that a test pins (§5.4).</li>
+<li><strong>Scheduling may change <em>where</em> and <em>when</em> a test runs, never <em>whether</em> it runs.</strong> The wrapper's existing checks (identical collection, exactly-once execution, JUnit/collection equality) remain the authority.</li>
+</ul>
+<h2 id="3-evidence">3. Evidence<a class="headerlink" href="#3-evidence" title="Permanent link">&para;</a></h2>
+<h3 id="how-the-data-was-collected">How the data was collected<a class="headerlink" href="#how-the-data-was-collected" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Gate artifacts:</strong> 131 canonical full gates since 2026-08-31, from <code>logs/gates/</code> in every linked worktree. 112 of them include per-worker execution evidence (<code>*.collection-workers/gw*.json</code>).</li>
+<li><strong>Experiments:</strong> run on 2026-09-30 on the reference host:</li>
+<li>Ryzen 9 7950X3D, 16 cores / 32 threads, 64 GB RAM, Windows;</li>
+<li>Python 3.12.13, pytest 9.0.2, xdist 3.8.0, pytest-asyncio 1.3.0.</li>
+<li><strong>Baseline run:</strong> <code>issue-1131-r2</code>, commit <code>a37e39ed</code>, started 2026-09-30T14:37Z. pytest reported 1,090.5 s, and the gate spent about 41 s outside pytest.</li>
+</ul>
+<h3 id="31-where-the-time-goes">3.1 Where the time goes<a class="headerlink" href="#31-where-the-time-goes" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Per-test duration</th>
+<th style="text-align: right;">Tests</th>
+<th style="text-align: right;">Share of tests</th>
+<th style="text-align: right;">Time</th>
+<th style="text-align: right;">Share of time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&lt; 10 ms</td>
+<td style="text-align: right;">24,604</td>
+<td style="text-align: right;">65.0%</td>
+<td style="text-align: right;">66 s</td>
+<td style="text-align: right;">0.7%</td>
+</tr>
+<tr>
+<td>10–100 ms</td>
+<td style="text-align: right;">7,538</td>
+<td style="text-align: right;">19.9%</td>
+<td style="text-align: right;">272 s</td>
+<td style="text-align: right;">3.0%</td>
+</tr>
+<tr>
+<td>0.1–1 s</td>
+<td style="text-align: right;">4,660</td>
+<td style="text-align: right;">12.3%</td>
+<td style="text-align: right;">1,388 s</td>
+<td style="text-align: right;">15.3%</td>
+</tr>
+<tr>
+<td>1–5 s</td>
+<td style="text-align: right;">445</td>
+<td style="text-align: right;">1.2%</td>
+<td style="text-align: right;">888 s</td>
+<td style="text-align: right;">9.8%</td>
+</tr>
+<tr>
+<td>5–30 s</td>
+<td style="text-align: right;">589</td>
+<td style="text-align: right;">1.6%</td>
+<td style="text-align: right;">6,107 s</td>
+<td style="text-align: right;">67.4%</td>
+</tr>
+<tr>
+<td>≥ 30 s</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">&lt; 0.1%</td>
+<td style="text-align: right;">337 s</td>
+<td style="text-align: right;">3.7%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>594 tests (1.6%) take 71% of the time. The 32,142 tests under 100 ms (85% of all tests) take 3.7%.</strong> Pruning or merging fast tests would buy almost nothing.</p>
+<p>Time also clusters by file:</p>
+<ul>
+<li>the top 10 files take 37% of the time, and the top 50 take 74%;</li>
+<li>1,146 of the 1,510 files each total under 1 s.</li>
+</ul>
+<p>The heaviest files:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th style="text-align: right;">Time</th>
+<th style="text-align: right;">Tests</th>
+<th style="text-align: right;">Mean per test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_experience.py</code></td>
+<td style="text-align: right;">872 s</td>
+<td style="text-align: right;">109</td>
+<td style="text-align: right;">8.0 s</td>
+</tr>
+<tr>
+<td><code>test_dag_proposal.py</code></td>
+<td style="text-align: right;">365 s</td>
+<td style="text-align: right;">42</td>
+<td style="text-align: right;">8.7 s</td>
+</tr>
+<tr>
+<td><code>test_system_qa.py</code></td>
+<td style="text-align: right;">362 s</td>
+<td style="text-align: right;">74</td>
+<td style="text-align: right;">4.9 s</td>
+</tr>
+<tr>
+<td><code>test_distribution.py</code></td>
+<td style="text-align: right;">327 s</td>
+<td style="text-align: right;">107</td>
+<td style="text-align: right;">3.1 s</td>
+</tr>
+<tr>
+<td><code>test_runtime.py</code></td>
+<td style="text-align: right;">292 s</td>
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">10.1 s</td>
+</tr>
+<tr>
+<td><code>test_ad1192_owned_steps_store.py</code></td>
+<td style="text-align: right;">275 s</td>
+<td style="text-align: right;">380</td>
+<td style="text-align: right;">0.7 s (one test takes 171 s)</td>
+</tr>
+<tr>
+<td><code>test_knowledge_store.py</code></td>
+<td style="text-align: right;">247 s</td>
+<td style="text-align: right;">308</td>
+<td style="text-align: right;">0.8 s</td>
+</tr>
+<tr>
+<td><code>test_ad1205_fault_paths.py</code></td>
+<td style="text-align: right;">222 s</td>
+<td style="text-align: right;">231</td>
+<td style="text-align: right;">1.0 s</td>
+</tr>
+<tr>
+<td><code>test_ad1194_unified_capability_triage.py</code></td>
+<td style="text-align: right;">208 s</td>
+<td style="text-align: right;">188</td>
+<td style="text-align: right;">1.1 s</td>
+</tr>
+<tr>
+<td><code>test_run_test_gate.py</code></td>
+<td style="text-align: right;">195 s</td>
+<td style="text-align: right;">83</td>
+<td style="text-align: right;">2.4 s</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-the-critical-path">3.2 The critical path<a class="headerlink" href="#32-the-critical-path" title="Permanent link">&para;</a></h3>
+<p>"Busy" is the sum of JUnit times for the nodes a worker actually executed.</p>
+<table>
+<thead>
+<tr>
+<th>Gate (date)</th>
+<th style="text-align: right;">Tests</th>
+<th style="text-align: right;">pytest wall</th>
+<th style="text-align: right;">Busiest worker</th>
+<th style="text-align: right;"><code>test_experience.py</code> on it</th>
+<th style="text-align: right;">2nd busiest</th>
+<th style="text-align: right;">Mean</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>09-03</td>
+<td style="text-align: right;">28,469</td>
+<td style="text-align: right;">1,030 s</td>
+<td style="text-align: right;">908 s</td>
+<td style="text-align: right;">907 s</td>
+<td style="text-align: right;">537 s</td>
+<td style="text-align: right;">490 s</td>
+</tr>
+<tr>
+<td>09-06</td>
+<td style="text-align: right;">28,965</td>
+<td style="text-align: right;">974 s</td>
+<td style="text-align: right;">813 s</td>
+<td style="text-align: right;">811 s</td>
+<td style="text-align: right;">471 s</td>
+<td style="text-align: right;">430 s</td>
+</tr>
+<tr>
+<td>09-09</td>
+<td style="text-align: right;">29,071</td>
+<td style="text-align: right;">1,044 s</td>
+<td style="text-align: right;">886 s</td>
+<td style="text-align: right;">883 s</td>
+<td style="text-align: right;">537 s</td>
+<td style="text-align: right;">495 s</td>
+</tr>
+<tr>
+<td>09-12</td>
+<td style="text-align: right;">30,046</td>
+<td style="text-align: right;">992 s</td>
+<td style="text-align: right;">865 s</td>
+<td style="text-align: right;">859 s</td>
+<td style="text-align: right;">532 s</td>
+<td style="text-align: right;">484 s</td>
+</tr>
+<tr>
+<td>09-15</td>
+<td style="text-align: right;">30,844</td>
+<td style="text-align: right;">953 s</td>
+<td style="text-align: right;">784 s</td>
+<td style="text-align: right;">777 s</td>
+<td style="text-align: right;">464 s</td>
+<td style="text-align: right;">427 s</td>
+</tr>
+<tr>
+<td>09-18</td>
+<td style="text-align: right;">31,210</td>
+<td style="text-align: right;">1,095 s</td>
+<td style="text-align: right;">948 s</td>
+<td style="text-align: right;">941 s</td>
+<td style="text-align: right;">614 s</td>
+<td style="text-align: right;">574 s</td>
+</tr>
+<tr>
+<td>09-20</td>
+<td style="text-align: right;">33,459</td>
+<td style="text-align: right;">1,100 s</td>
+<td style="text-align: right;">935 s</td>
+<td style="text-align: right;">919 s</td>
+<td style="text-align: right;">592 s</td>
+<td style="text-align: right;">564 s</td>
+</tr>
+<tr>
+<td>09-24</td>
+<td style="text-align: right;">35,293</td>
+<td style="text-align: right;">1,041 s</td>
+<td style="text-align: right;">860 s</td>
+<td style="text-align: right;">832 s</td>
+<td style="text-align: right;">577 s</td>
+<td style="text-align: right;">519 s</td>
+</tr>
+<tr>
+<td>09-27 (1429)</td>
+<td style="text-align: right;">36,815</td>
+<td style="text-align: right;">978 s</td>
+<td style="text-align: right;">826 s</td>
+<td style="text-align: right;">792 s</td>
+<td style="text-align: right;">553 s</td>
+<td style="text-align: right;">506 s</td>
+</tr>
+<tr>
+<td>09-27 (1431)</td>
+<td style="text-align: right;">36,975</td>
+<td style="text-align: right;">983 s</td>
+<td style="text-align: right;">829 s</td>
+<td style="text-align: right;">794 s</td>
+<td style="text-align: right;">554 s</td>
+<td style="text-align: right;">509 s</td>
+</tr>
+<tr>
+<td>09-27 (1433-r2)</td>
+<td style="text-align: right;">37,104</td>
+<td style="text-align: right;">1,090 s</td>
+<td style="text-align: right;">906 s</td>
+<td style="text-align: right;">868 s</td>
+<td style="text-align: right;">618 s</td>
+<td style="text-align: right;">565 s</td>
+</tr>
+<tr>
+<td>09-28</td>
+<td style="text-align: right;">37,233</td>
+<td style="text-align: right;">1,081 s</td>
+<td style="text-align: right;">879 s</td>
+<td style="text-align: right;">835 s</td>
+<td style="text-align: right;">598 s</td>
+<td style="text-align: right;">553 s</td>
+</tr>
+<tr>
+<td>09-30 (1083)</td>
+<td style="text-align: right;">37,653</td>
+<td style="text-align: right;">1,131 s</td>
+<td style="text-align: right;">938 s</td>
+<td style="text-align: right;">899 s</td>
+<td style="text-align: right;">644 s</td>
+<td style="text-align: right;">577 s</td>
+</tr>
+<tr>
+<td>09-30 (1131-r2)</td>
+<td style="text-align: right;">37,841</td>
+<td style="text-align: right;">1,095 s</td>
+<td style="text-align: right;">925 s</td>
+<td style="text-align: right;">872 s</td>
+<td style="text-align: right;">621 s</td>
+<td style="text-align: right;">566 s</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>The wall-clock stayed flat while the suite grew 33%.</strong> Tests went from 28.5K to 37.8K, but wall time held at 950–1,130 s. The growth landed on idle workers: mean busy time rose from about 430–490 s to about 566–577 s. Once the mean reaches <code>test_experience.py</code>'s duration, the gate will start growing with the suite again.</li>
+<li><strong><code>test_experience.py</code> starts late.</strong> It has 31 classes, and most of its tests boot and stop their own runtime through function-scoped fixtures (<code>tests/test_experience.py:20-27</code>). Its 109 tests put it mid-queue under xdist's count ordering.</li>
+<li><strong>The busiest worker carries 120–200 s of non-test time,</strong> about 70 s of which is collection (§3.5). The rest isn't attributed yet. P0.5 now records each worker's collection, start-wait, in-span gap and tail time in <code>gwN.json</code>, and <code>--gate-balance</code> reports them, so the first canonical gate that carries that data will attribute it.</li>
+<li><strong>The stale claim is corrected (P0.5).</strong> The <code>scripts/select_tests.py --gate-balance</code> docstring and report note said the imbalance was "not of any single large file". The table above contradicts that. The text now says that <code>loadfile</code> never splits a file, so one file can set the critical path, and <code>--gate-balance</code> names that file for each run.</li>
+</ul>
+<h3 id="33-anatomy-of-a-runtime-boot">3.3 Anatomy of a runtime boot<a class="headerlink" href="#33-anatomy-of-a-runtime-boot" title="Permanent link">&para;</a></h3>
+<p>The profile below boots <code>ProbOSRuntime(data_dir=tmp, llm_client=MockLLMClient())</code> the way the <code>test_experience.py</code> fixture does, in a single process on an idle host.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th style="text-align: right;">Time</th>
+<th>What dominates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>import probos.runtime</code></td>
+<td style="text-align: right;">1.1 s</td>
+<td>Paid once per process</td>
+</tr>
+<tr>
+<td>First <code>start()</code> in a process</td>
+<td style="text-align: right;">10.6–11.2 s</td>
+<td>One-time per-process initialisation (not attributed)</td>
+</tr>
+<tr>
+<td>Warm <code>start()</code></td>
+<td style="text-align: right;">3.9–4.3 s</td>
+<td><code>CodebaseIndex.build()</code>: 2.0 s of CPU running <code>ast.parse</code> over all 963 files under <code>src/probos</code>. It is called synchronously on the event loop from <code>startup/agent_fleet.py:332-333</code>. After that come the hash-chained event-log inserts during agent onboarding and pool creation.</td>
+</tr>
+<tr>
+<td><code>stop()</code></td>
+<td style="text-align: right;">3.1–3.2 s</td>
+<td>3.0 s of fixed sleeps in <a href="../../src/probos/startup/shutdown.py">shutdown.py</a>: <code>await asyncio.sleep(1)</code> (AD-435 grace, line 422) and <code>await asyncio.sleep(2.0)</code> (BF-296 Phase A grace, line 468).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-ab-experiment-remove-only-the-two-incidental-costs">3.4 A/B experiment: remove only the two incidental costs<a class="headerlink" href="#34-ab-experiment-remove-only-the-two-incidental-costs" title="Permanent link">&para;</a></h3>
+<p>The experiment used a plugin that is not committed. It did two things and nothing else:</p>
+<ul>
+<li>it skipped exactly the two shutdown sleeps above;</li>
+<li>it memoised <code>CodebaseIndex.build()</code> once per process for the real package root, deep-copying the snapshot for each new instance.</li>
+</ul>
+<p>The plugin counted its own effect, so a silent no-op couldn't be mistaken for a result. Both arms ran serially (<code>-n 0</code>) on the same tree, and both passed.</p>
+<table>
+<thead>
+<tr>
+<th>Subset</th>
+<th style="text-align: right;">Tests / boots</th>
+<th style="text-align: right;">Baseline</th>
+<th style="text-align: right;">Experiment</th>
+<th style="text-align: right;">Change</th>
+<th>Probe counters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_experience.py -k "TestPanels or TestShellCommands"</code></td>
+<td style="text-align: right;">26 / 20</td>
+<td style="text-align: right;">153.7 s</td>
+<td style="text-align: right;">57.5 s</td>
+<td style="text-align: right;">−62.6%</td>
+<td>40 sleeps skipped; 1 real build, 19 memo hits</td>
+</tr>
+<tr>
+<td><code>test_knowledge_store.py -k "Runtime or shutdown or Shutdown"</code>, including <code>test_shutdown_flushes_knowledge</code> and <code>test_shutdown_persists_{workflows,trust,routing}</code></td>
+<td style="text-align: right;">8 / 8</td>
+<td style="text-align: right;">66.5 s</td>
+<td style="text-align: right;">27.3 s</td>
+<td style="text-align: right;">−58.9%</td>
+<td>16 sleeps skipped; 1 real build, 7 memo hits</td>
+</tr>
+</tbody>
+</table>
+<p>The saving is <strong>4.8–4.9 s per boot</strong>. The boot files contain about 505 tests of 3 s or more, so the estimated saving is about 2,400 s of the 9,056 s suite, or about 27%.</p>
+<p>This is an estimate, and three limitations apply:</p>
+<ul>
+<li>It assumes one boot per test of 3 s or more in the boot files. Some tests boot twice (the warm-boot tests); some slow tests don't boot at all.</li>
+<li>The A/B ran serially on an idle host.</li>
+<li>It measured both interventions together. The split between them comes from the §3.3 profile: about 3.0 s for the sleeps, about 2 s for the index build.</li>
+</ul>
+<p>To tighten it, the factory (P1.1) counts boots and index builds exactly, and the Phase 1 decision uses interleaved full canonical gate arms (§5.2).</p>
+<h3 id="35-collection">3.5 Collection<a class="headerlink" href="#35-collection" title="Permanent link">&para;</a></h3>
+<p>Every xdist worker collects the whole suite, and scheduling waits for the slowest one. Collection times, with everything deselected so only collection is measured:</p>
+<table>
+<thead>
+<tr>
+<th>Setup</th>
+<th style="text-align: right;">Cold assertion-rewrite cache</th>
+<th style="text-align: right;">Warm cache</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16 workers in a freshly materialised worktree (what the gate uses)</td>
+<td style="text-align: right;">70.9 s</td>
+<td style="text-align: right;">44.3 s</td>
+</tr>
+<tr>
+<td>Single process</td>
+<td style="text-align: right;">35.2 s</td>
+<td style="text-align: right;">about 19.5 s</td>
+</tr>
+</tbody>
+</table>
+<p>One file loads the embedding model during collection. <code>tests/test_ad1138_records_semantic_index.py:730-733</code> calls <code>get_embedding_function()</code> inside a module-level <code>skipif</code>. As a result, every worker imports sentence-transformers, torch, and transformers (6.3 s of cumulative import time) and loads the model while it collects.</p>
+<p>Ignoring that one file:</p>
+<ul>
+<li>cuts warm single-process collection from 19.6 s to 14.2 s (−28%);</li>
+<li>removes torch from collection entirely.</li>
+</ul>
+<h3 id="36-scheduling-simulation">3.6 Scheduling simulation<a class="headerlink" href="#36-scheduling-simulation" title="Permanent link">&para;</a></h3>
+<p>The simulator replays xdist 3.8's <code>loadfile</code> policy against the baseline's per-test durations plus the measured 70 s of cold collection:</p>
+<ul>
+<li>files are queued in order of test count;</li>
+<li>a worker pulls its next file when it has two or fewer tests left.</li>
+</ul>
+<p>For the baseline it predicts 994 s. The measured figure is 995 s (the busiest worker's busy time plus collection). The other ~95 s of the 1,090 s pytest phase is unattributed, so every projection below adds 95 s.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario (16 workers unless noted)</th>
+<th style="text-align: right;">Simulated makespan</th>
+<th style="text-align: right;">Projected pytest phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Today (validation)</td>
+<td style="text-align: right;">994 s</td>
+<td style="text-align: right;">1,090 s (measured)</td>
+</tr>
+<tr>
+<td>Duration (LPT) ordering alone</td>
+<td style="text-align: right;">942 s</td>
+<td style="text-align: right;">about 1,037 s</td>
+</tr>
+<tr>
+<td>Split <code>test_experience.py</code> into 4 files</td>
+<td style="text-align: right;">728 s</td>
+<td style="text-align: right;">about 823 s (13.7 min)</td>
+</tr>
+<tr>
+<td>Split + LPT ordering</td>
+<td style="text-align: right;">636 s</td>
+<td style="text-align: right;">about 731 s (12.2 min)</td>
+</tr>
+<tr>
+<td>Boot fix alone</td>
+<td style="text-align: right;">593 s</td>
+<td style="text-align: right;">about 688 s (11.5 min)</td>
+</tr>
+<tr>
+<td>Boot fix + LPT, no split</td>
+<td style="text-align: right;">510 s</td>
+<td style="text-align: right;">about 605 s (10.1 min)</td>
+</tr>
+<tr>
+<td>Boot fix + split + LPT</td>
+<td style="text-align: right;">485 s</td>
+<td style="text-align: right;">about 580 s (9.7 min)</td>
+</tr>
+<tr>
+<td>Same, 20 workers (if throughput scales)</td>
+<td style="text-align: right;">402 s</td>
+<td style="text-align: right;">about 497 s (8.3 min)</td>
+</tr>
+<tr>
+<td>Same, 24 workers (if throughput scales)</td>
+<td style="text-align: right;">347 s</td>
+<td style="text-align: right;">about 442 s (7.4 min)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Ordering alone does almost nothing, because the one file is the floor.</strong> Even after the boot fix, <code>test_experience.py</code> (about 440 s) is still slightly above the balanced mean. That's why the split survives into Phase 1.</li>
+<li><strong>Treat the worker-count rows as best cases</strong> — lower bounds on elapsed time. They assume per-test times don't grow as workers are added, and that the 95 s of unattributed time and the collection cost stay constant. The host has 16 physical cores, SMT gains on CPU-bound work are partial, and collection already slows under 16-way contention (§3.5). Only the P2.1 sweep can settle this.</li>
+<li><strong>The replay did not predict P1.4.</strong> It treats each duration as fixed, but real durations depend on co-scheduling and on what the worker process ran before. Makespan models that ignore both mispredict, and the LPT rows above were not borne out: a same-tree A/B (see P1.4) found full LPT no faster than stock. Order changes are judged by an interleaved same-tree A/B of wall time and total busy, not by simulated makespan or balance.</li>
+</ul>
+<h3 id="37-flakes-and-red-time-september">3.7 Flakes and red time (September)<a class="headerlink" href="#37-flakes-and-red-time-september" title="Permanent link">&para;</a></h3>
+<p><strong>Overall:</strong> 129 canonical full gates took 38.8 gate-hours. 30 of them were red, one of them an interrupted run; that's 9.2 hours, or 23.7% of gate time. The AD-1270f target is under 10%.</p>
+<p><strong>Confirmed flakes:</strong> 8 commits went red and then green with no code change, costing 2.4 hours. A same-commit red on a ninth commit is excluded because that run was interrupted.</p>
+<ul>
+<li><strong>#1419 G-1/G-2 happened twice.</strong> In <code>ad1246-full1</code> there were 48 failures, all on gw5. In <code>issue-1171</code> on 09-26 there were 58 failures, all on gw8; #1419 doesn't record this recurrence yet. Both runs followed the same chain:</li>
+<li>A runtime boot raised one <code>FileNotFoundError</code> for <code>src/probos/_ad1256_injected_store.py</code> inside <code>CodebaseIndex.build()</code>. The file had been written into the tree under test by <code>tests/test_ad1256_store_registry.py:1306</code>, running on another worker.</li>
+<li>After that, every later boot on the same worker failed with "YeomanAgent is a singleton; one instance is already live."</li>
+<li><strong>Single-test flakes:</strong></li>
+<li><code>test_ward_room.py::test_browse_threads_sort_recent</code> (also named as a known flake in <code>ci.yml</code>). <em>Fixed in Batch D:</em> two back-to-back <code>create_thread</code> calls can share one <code>last_activity</code>, and <code>ORDER BY last_activity DESC</code> has no tie-break, so SQLite returned the tied rows oldest-first (15 ties in 300 real-clock runs, every failure a tie). The test now drives a controlled clock. <code>test_unread_counts</code> and <code>test_list_threads_sorted_by_recent</code> had the same exposure and got the same fix; the latter passed only because SQLite's activity index happened to return tied rows newest-first.</li>
+<li><code>test_performance_p0.py::test_large_coalition_completes_quickly</code>. <em>Fixed in Batch D:</em> the wall-clock bound measured gate load (0.01 s idle, 2.66 s on a 16-worker gate). It is now <code>test_large_coalition_work_is_sampled_not_factorial</code>, which counts coalition-rule evaluations against a literal ceiling.</li>
+<li><code>test_ad1154_approval_inbox.py::test_a_raising_session_lookup_degrades_without_admitting_more</code>;</li>
+<li><code>test_ad1022_workstation_registry.py::test_api_dormant_when_disabled</code>;</li>
+<li><code>test_run_test_gate.py::test_main_collection_hook_cannot_remove_one_failing_node</code>.</li>
+</ul>
+<p><em>Root cause found and fixed in Batch F:</em> all three are <code>WinError 10055</code> at test setup, while asyncio builds its self-pipe <code>socketpair()</code> (the third is a nested gate whose first worker failed to start). A per-test probe over 4,786 tests refuted the leak hypothesis: live sockets, loops and TCP rows went 0 → 0. The cause is churn. On Windows every asyncio loop's self-pipe is a loopback TCP pair, and closing a loop leaves a TIME_WAIT that holds an ephemeral port for 120 s. One worker created up to 785 loops in one 120 s window, so 16 workers can hold most of the 16,384-port range. <code>tests/fixtures/abortive_self_pipe.py</code> now closes only the self-pipe ends abortively (a plain <code>socketpair()</code> is untouched): 20 closed loops leave 0 TIME_WAIT instead of about 20. The same probe found pytest-timeout keeping two kernel semaphores per finished test (released now) and unstopped stores in <code>test_ad1019e</code> (stopped now).
+- <strong>A test close to its timeout:</strong> <code>test_ad1192_owned_steps_store.py::test_1000_admitted_rows_reach_real_storage_verdicts_with_bounded_terminal_footprint</code> runs 171 s against the 180 s per-test timeout. In one red run (<code>ordinary-1129-7718fe7c-r2</code>), its xdist worker crashed while running it. The cause isn't attributed.</p>
+<p><strong>Late discovery (replay).</strong> Of the 27 September red gates with JUnit failures, 14 would have shown at least one failure from files whose historical total is under 5 s: 1,332 files and 628 s of CPU. Widening the lane to files under 20 s (1,429 files, 1,506 s of CPU) raises that to 21 of 27.</p>
+<h3 id="38-ci-and-parity">3.8 CI and parity<a class="headerlink" href="#38-ci-and-parity" title="Permanent link">&para;</a></h3>
+<p><strong>Duration trend.</strong> Median duration of successful push-to-main CI runs:</p>
+<table>
+<thead>
+<tr>
+<th>Period</th>
+<th style="text-align: right;">Median CI duration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sep 1–10</td>
+<td style="text-align: right;">27.1 min</td>
+</tr>
+<tr>
+<td>Sep 11–20</td>
+<td style="text-align: right;">28.2 min</td>
+</tr>
+<tr>
+<td>Sep 21–30</td>
+<td style="text-align: right;">34.7 min</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>CI runs <code>-n auto</code> on a 4-vCPU runner, so it is limited by throughput and follows <em>total</em> test time rather than the critical path.</li>
+<li>The median rose 7.6 minutes in about three weeks. If that pace holds, CI reaches its 45-minute timeout within roughly a month. The latest run left 8.6 minutes of headroom.</li>
+</ul>
+<p><strong>Local gates and CI don't run the same system:</strong></p>
+<ul>
+<li>CI sets <code>PROBOS_EMBEDDINGS=local</code>; the local gate doesn't.</li>
+<li>The local venv has one <code>probos.extensions</code> entry point installed, which is discovered at runtime boot. CI has none.</li>
+</ul>
+<h2 id="4-the-plan">4. The plan<a class="headerlink" href="#4-the-plan" title="Permanent link">&para;</a></h2>
+<h3 id="phase-0-critical-path-and-flake-root-causes">Phase 0: critical path and flake root causes<a class="headerlink" href="#phase-0-critical-path-and-flake-root-causes" title="Permanent link">&para;</a></h3>
+<p>Everything in this phase is small, independent, and test-side, apart from G-1b and G-2 in P0.2.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+<th>Expected effect</th>
+<th>Quality guard</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0.1</td>
+<td><strong>Split <code>test_experience.py</code></strong> by class group into 3–4 files (shell commands; panels and renderer; memory, episodic and attention; roster and the rest). Move its module-level fixtures (<code>runtime</code>, <code>console</code>, <code>shell</code>) to a shared local module. The P1.4 class-grain allowlist is the alternative with no node-ID churn.</td>
+<td>18.2 → about 13.7 min on its own</td>
+<td>Identical node count, with a 1:1 old→new node mapping checked from the collection manifests. No fixture scope changes.</td>
+</tr>
+<tr>
+<td>P0.2</td>
+<td><strong>Fix #1419 G-1/G-2:</strong><br>• G-1: <code>test_ad1256_store_registry</code> injects into a copied tree under <code>tmp_path</code>, never into the tree under test.<br>• G-1b: <code>CodebaseIndex._analyze_file</code> tolerates a file that disappears between listing and reading.<br>• G-2: a failed <code>ProbOSRuntime.start()</code> releases the <code>YeomanAgent</code> singleton.<br>Add the 09-26 recurrence to #1419.<br><strong>G-2 status (2026-09-30):</strong> deferred. Adversarial review blocked a first attempt that stopped only the pools. It left infrastructure tasks and non-daemon SQLite threads running, which kept a pytest process alive after its test passed. An unwire failure still kept the singleton. A late failure left <code>_started=True</code>. G-2 needs a designed, marker-free, reverse-order rollback of everything a partial boot started. G-1 removes the trigger measured in both cascades.</td>
+<td>Removes the 48- and 58-failure cascades (two reruns, about 36 minutes in September)</td>
+<td>One regression test per defect: for G-1, the store-registry test proves it never touches the tree under test; for G-1b, a build survives a file vanishing mid-scan; for G-2, a failed start followed by a fresh start succeeds in the same process</td>
+</tr>
+<tr>
+<td>P0.3</td>
+<td><strong>Shorten one test's child process.</strong> In <code>test_bf781_isolation_claims.py::TestRunDoesNotClaimItNeverRaises::test_the_behaviour_the_correction_describes</code>, change the child's <code>time.sleep(30)</code> / <code>timeout_seconds=30.0</code> to a few seconds. Today teardown takes 29.6 s against a 0.4 s call phase. That's the documented behaviour of <code>SubprocessSandbox.run</code>: the executor thread keeps running after cancellation.</td>
+<td>−27 s</td>
+<td>The assertion (CancelledError propagates) stays the same. The child must still outlive the cancellation point.</td>
+</tr>
+<tr>
+<td>P0.4</td>
+<td><strong>Make the <code>test_ad1138</code> skip lazy.</strong> Evaluate it in a fixture with <code>pytest.skip</code>, not in a module-level <code>skipif</code>.</td>
+<td>Warm collection −28% per process, and no torch import during the collection barrier</td>
+<td>Skip and run counts stay identical, with and without real embeddings</td>
+</tr>
+<tr>
+<td>P0.5</td>
+<td><strong>Instrument the gate. Shipped in Batch E.</strong><br>• The per-worker payload in <a href="../../scripts/_gate_pytest_plugin.py">_gate_pytest_plugin.py</a> gains a <code>timing</code> block (<code>schema_version</code> stays 1): monotonic and wall stamps for plugin load, session start, collection done, first test start, last test end and session finish, plus each file's first start, last end, summed duration and node count.<br>• A <code>timing</code> block is trusted only when it agrees with the worker's own <code>executed_nodeids</code> (same files, exact node counts, stamps in order, durations that fit their span); otherwise the worker is measured from JUnit.<br>• <code>select_tests.py --gate-balance</code> reports per-worker busy time (timestamps first, JUnit as the fallback), the critical-path worker and its dominant file. It names no critical path from incomplete evidence: workers, exit statuses, node uniqueness, counts and the union must match the collection artifact, or it reports an error and <code>busy: null</code>. Ranking and thresholds use raw seconds; only the display is rounded. The shared logic lives in <a href="../../scripts/_gate_timing.py">_gate_timing.py</a>.<br>• The stale docstring is corrected (§3.2).</td>
+<td>Measurement only; it attributes the unexplained 95–200 s once a canonical gate carries the data</td>
+<td>This is release-authority code, so it gets an adversarial review. Validation, exit codes and the merged collection artifact are unchanged, and so are the receipt's keys, status semantics and validation. The receipt's manifest hash covers the report-only budget like any other manifest field.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-1-runtime-boot-cost-and-duration-aware-scheduling">Phase 1: runtime boot cost and duration-aware scheduling<a class="headerlink" href="#phase-1-runtime-boot-cost-and-duration-aware-scheduling" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+<th>Expected effect</th>
+<th>Quality guard</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1.1</td>
+<td><strong>Shared test runtime factory:</strong> one <code>make_runtime(tmp_path, *, llm=None, config=None)</code> in <code>tests/conftest.py</code> or a <code>tests/support/</code> module. It replaces 27 locally defined runtime fixtures and the 240 <code>ProbOSRuntime(</code> constructions spread across 58 files. Migrate the heaviest boot files first; the 53 boot files hold 60% of suite time.<br>• <strong>Slice 2 shipped in Batch G:</strong> fast final stops for 157 nodes in ten boot files (<code>test_runtime</code>, <code>test_consensus_integration</code>, <code>test_distribution</code>, <code>test_dag_proposal</code>, <code>test_system_qa</code>, <code>test_escalation</code>, <code>test_self_mod</code>, <code>test_emergent_detector</code>, <code>test_semantic_knowledge</code>, <code>test_scaling</code>). Only a runtime's final stop gets it, in four shapes: (a) a yield fixture, (b) a test whose body is wholly inside <code>async with started_runtime(..., fast_teardown=True)</code>, (c) a <code>try/finally</code> whose finally is the test's last statement, (d) a final top-level stop. Every other stop keeps production timing (<code>test_start_and_stop</code>, <code>test_start_is_idempotent</code> and <code>test_shutdown_cleans_up_layer</code> are named). Two guards pin it in <code>test_ad1270f_shutdown_grace.py</code>: the receiving-module scan treats any test module as a fixture source, not only <code>tests/fixtures/experience_shell.py</code> (9 effective modules, 13 opted-in files), and a final-action guard fails any request that is not the last action of its fixture or test. Measured alone, median of 3 per file: seconds inside <code>stop()</code> across the ten files 546 → 56, 485 s saved over the 157 nodes, every node at least 2.67 s faster; outcomes and the node set are unchanged. <em>Deferred, with reasons:</em> <code>test_hxi_chat_integration</code> (custom harness), <code>test_dreaming</code> (needs an <code>episodic_memory</code> passthrough in the factory), <code>test_ad1272_trust_accrues_per_unit_of_work</code> (trust-write accounting), <code>test_persistent_identity</code> (warm boot) and <code>test_knowledge_store</code> (excluded).</td>
+<td>Enables P1.2–P1.3 and fixes the DRY problem</td>
+<td>Migrate file by file; each migrated file's JUnit outcome must match</td>
+</tr>
+<tr>
+<td>P1.2</td>
+<td><strong>Shutdown grace.</strong><br>• <em>Preferred:</em> replace both fixed sleeps with a bounded drain that returns once in-flight work is observably quiescent, capped at today's 1 s and 2 s. <code>IntentBus</code> already tracks in-flight dispatch (<code>close_to_new_dispatches</code>, <code>drain_pending_tasks</code>, <code>_pending_results</code> in <code>mesh/intent.py</code>); it needs a public idle predicate. But AD-435's 1 s grace covers in-flight DB writes more broadly, so the Architect must first list every writer that grace protects and make each one observable.<br>• <em>Fallback, if they can't all be observed:</em> two Pydantic fields beside <code>shutdown_drain_timeout_s</code>, defaulting to 1.0 and 2.0. The factory keeps <strong>production timing by default</strong>. Fast shutdown is opt-in per file. What shutdown leaves behind is not observed by any opted-in test body; pinned by the guard. Shutdown, persistence and concurrency tests keep production timing.<br>• <strong>Shipped in Batch E: the fallback.</strong> Two bounded fields, <code>shutdown_write_grace_s</code> (1.0) and <code>shutdown_dispatch_grace_s</code> (2.0), whose defaults are today's waits and also their maximums. A shared factory in <code>tests/fixtures/runtime_factory.py</code> zeroes both only for its own teardown stop, after the test body, and only for the files and modules that two guard tests pin: the files that ask for it, and the test modules that receive it through a shared fixture. The one intentional observer of what shutdown leaves behind is <code>tests/test_ad1270f_shutdown_grace.py</code>. First slice: the <code>test_experience*</code> family. The bounded drain was not selected: AD-435's writers (the periodic flush, the background loops and per-event fan-out tasks) expose no in-flight signal, and a 2 s drain cannot see tasks spawned inside handlers. P1.1 extends the opt-in file by file.</td>
+<td>Preferred: about −3 s per boot, about −1,500 s of suite CPU. Fallback: less, depending on the opt-in coverage.</td>
+<td>The production default stays unchanged and pinned (§5.3). What shutdown leaves behind is not observed by any opted-in test body; pinned by the guard.</td>
+</tr>
+<tr>
+<td>P1.3</td>
+<td><strong>CodebaseIndex reuse.</strong><br>• <em>Test side:</em> the factory memoises one build per worker process and hands each runtime a deep copy (the index writes to <code>_caller_cache</code> at query time). Keep the memoised snapshot pristine. Key it on the source root plus a fingerprint of <strong>every input <code>build()</code> reads</strong>: all <code>*.py</code> files under the root, and the <code>_PROJECT_DOCS</code> files (<code>DECISIONS.md</code>, <code>PROGRESS.md</code>, the progress-era files, <code>roadmap.md</code>, <code>contributing.md</code>). Give the same memo to the function-scoped <code>index</code> fixture in <code>test_codebase_index.py</code>, which does a real build for each of its 38 tests, while keeping at least one test that exercises a real <code>build()</code>.<br>• <em>Production option for the Architect:</em> build off the event loop or lazily. Today it blocks the loop for about 2 s on every boot.</td>
+<td>About −2 s per boot, about −1,000 s of suite CPU</td>
+<td>Only the real, unmodified tree is memoised; indexes rooted in <code>tmp_path</code> bypass the memo.</td>
+</tr>
+<tr>
+<td>P1.4</td>
+<td><strong>Duration-aware scheduler: start each worker on one of the heaviest files (shipped in Batch E).</strong> An optional <code>pytest_xdist_make_scheduler</code> hook in <code>tests/conftest.py</code> delegates to <code>tests/fixtures/duration_scheduler.py</code>, which returns a <code>LoadFileScheduling</code> subclass. The root conftest is loaded on the controller for both the gate command and plain <code>pytest</code>, and xdist's own hook is <code>trylast</code>. The subclass changes only the order of the first distribution. xdist builds the whole work queue as usual, and the first assignment then re-orders it in place:<br>• each file is weighted by the seconds recorded in <code>tests/fixtures/file_durations.json</code>; a file the data doesn't know is weighted by test count × the suite's mean seconds per test (the mean, not the per-test median, which would send an unseen heavy file last);<br>• with K workers (K is <code>len(self.nodes)</code> once xdist has shut down any surplus workers), the K heaviest files go first, heaviest first, using a stable sort, so ties keep xdist's order, at the K boundary too. Every other file keeps xdist's count order. Each worker starts on one of the K heaviest files, and the top-up and later pulls take the rest in stock order. With no more files than workers this is the full descending order.<br><em>Why not longest-first for every file:</em> full longest-first (LPT) was built first, measured, and replaced (see the effect column).<br><em>Residual:</em> a heavy file with few tests that ranks below K keeps its late stock slot (<code>test_selfmod_e2e.py</code> ran last on gw1, from 461 s to 558 s, in the measured run). Promoting such files too is unmeasured and left out; it is worth its own A/B only if hybrid runs keep putting a below-K few-test file on the critical path.<br><em>What it guarantees:</em> for a run that completes, every collected node runs exactly once, as with stock xdist. Crash handling is xdist's own and unchanged: it re-queues a crashed worker's unit, so the crashing node is retried. With <code>--maxfail</code> or <code>-x</code> (CI uses <code>--maxfail=10</code>) the scheduler stays on, and which nodes ran before the stop depends on the order, as with any order change.<br><code>scripts/gen_file_durations.py</code> writes the durations file from a green canonical gate's JUnit and collection artifacts, and refuses unless the JUnit's testcases are exactly the collected nodes. The hook returns <code>None</code>, and xdist's stock scheduler runs, for any dist mode other than <code>loadfile</code>, for <code>--no-loadscope-reorder</code> (the only opt-out), for missing or invalid data, and when xdist's internals are missing. A <code>loadfile</code> session whose workers collected the same non-empty set prints exactly one <code>AD-1270f duration scheduler: heaviest K of N files first ...</code> line saying which case applied; an empty or mismatched collection never reaches the first distribution, so an enabled scheduler prints nothing then.<br><em>Not built (optional):</em> an allowlist of files scheduled at class grain; promoting the files ranked below K.</td>
+<td><strong>Measured, not simulated</strong>: the earlier projection (13.7 → about 12.2 min, from the full-LPT replay) was not borne out. One tree (<code>9d305d61</code>), five back-to-back runs with the canonical pytest flags and P0.5 timing. <strong>Non-canonical</strong>: these are not gates. Pytest phase: stock 668.1 s and 689.9 s (busiest/mean 1.181 and 1.173; total busy 8,228 and 8,550 s); full LPT 721.4 s (its first run) and 689.1 s (1.035 and 1.027; 9,321 and 9,701 s); this rule 618.0 s (one run; 1.027; 8,660 s), 50–72 s faster than stock.<br><em>Why full LPT was rejected:</em> it balances better but is no faster than stock (689.1 vs 689.9 s; 721.4 s was its first run), at about 13% more total busy. The extra time sits in the 1,331 files that took under 5 s in the first stock run, which LPT runs last (649 and 720 s under stock, 1,343 and 1,460 s under LPT, 736 s under this rule). That is consistent with per-process accumulation in workers that already ran the heavy runtime-boot files; it is the probable cause, not isolated. More extra time comes from subprocess-heavy files started together at t=0 (<code>test_run_test_gate.py</code>: 318 and 350 s under stock, 400 and 422 s under LPT). The Batch E gate passed its balance check (busiest ≤ 1.10 × mean) at 1.045 under LPT, so balance alone was the wrong signal.<br>This rule is one run; the batch PR carries the replication and the canonical gate.</td>
+<td>It changes scheduling order only. The wrapper's collection-identity and exactly-once checks are unchanged and still judge every completed run. Order changes are judged by an interleaved same-tree A/B of wall time and total busy, not by balance or simulated makespan.</td>
+</tr>
+<tr>
+<td>P1.5</td>
+<td><strong>Run the equivalence protocol (§5)</strong> before and after P1.2–P1.4.</td>
+<td>—</td>
+<td>§5</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-2-scaling-outliers-ci">Phase 2: scaling, outliers, CI<a class="headerlink" href="#phase-2-scaling-outliers-ci" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+<th>Expected effect</th>
+<th>Quality guard</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P2.1</td>
+<td><strong>Worker sweep:</strong> 16, 20 and 24 workers on the same commit and node manifest, at least 3 canonical runs each. Record wall time, peak RSS, and red/flake count. Adopt the highest count that adds no flakes, and change <code>pyproject.toml</code> <code>addopts</code> and the wrapper's <code>--workers</code> default together.</td>
+<td>At best about 9.7 → 8.3 min</td>
+<td>No flake increase. BF #466 and BF-657 are why this is measured, not assumed.</td>
+</tr>
+<tr>
+<td>P2.2</td>
+<td><strong>Subprocess-heavy outliers.</strong> Rule: a real process stays wherever the process boundary <em>is</em> the behaviour under test. Only collapse repeats where the process is just transport.<br>• <code>test_phantom_api_precheck_kwargs.py</code> (165 s): every helper call starts a fresh interpreter that re-parses <code>src/probos</code>, and one test makes five calls (71 s). The same pattern appears in <code>_method_calls</code> and <code>test_ad685c_phantom_type_shape</code>. The helper's parsing logic is the behaviour here and the process is transport. So call it in-process against a session-cached parse, and keep real CLI and real <code>pwsh</code> wrapper tests for each distinct CLI/wrapper behaviour.<br>• <strong>Slice 1 shipped: the phantom-precheck kwargs tests.</strong> Reading the tree corrected the premise. Test 4 makes six helper calls, not five (five fences and one masked body). <code>test_phantom_api_precheck_method_calls.py</code> and <code>test_ad685c_phantom_type_shape.py</code> have nothing to convert: the first makes one direct CLI call, kept real because it is the only real-CLI test on a UTF-8 archived prompt, and the second makes none (its <code>pwsh</code> self-test stays real). So the ten helper calls in kwargs tests 2–6 now run the helper's real <code>main()</code> in-process, through <code>tests/fixtures/phantom_helper_memo.py</code>: a private copy of the helper, compiled from the exact bytes that were digested (no <code>__pycache__</code> entry is read or written), with stdin swapped and stdout and stderr captured. The parse cache is the helper's own. It is reused only while the content digest of the helper and of every <code>*.py</code> under <code>src/probos</code> is unchanged; any change loads a fresh instance, and the module-scoped fixture releases it at teardown. The kwargs file launches one direct helper process instead of 11 (test 1 stays the real CLI test). The <code>method_calls</code> CLI test and all five <code>pwsh</code> wrapper tests are unchanged, and so are the kwargs file's node IDs and assertions. <code>tests/test_ad1270f_phantom_helper_memo.py</code> adds 19 tests that pin the harness itself (when the cache may be served, that a changed helper runs its changed code, the exit mapping). <em>V7:</em> 17 helper mutants (the <code>main()</code> plumbing, the kwarg logic, the index builders) ran against kwargs tests 1–6 before and after. 16 are killed in both arms and 1 survives in both (the exit-status line, which no kwargs test observes). The process-entry mutant is killed by test 1 in both arms. A premise probe on the cached-index hit survives before and is killed by the warm in-process tests after. <em>Measured alone, 3 runs each:</em> the kwargs file 172.3 s → 53.2 s; tests 2–6 call time 121.2 s → 11.1 s (−91%); the other two files are untouched controls. <em>Stated limit, timeouts:</em> test 1 keeps its 60 s subprocess guard and the wrapper tests their 120 s, but an in-process call has no per-call limit. Only the suite-wide pytest-timeout (180 s) guards it, and on Windows that timeout terminates the xdist worker. The canonical gate's exactly-once check turns that into a red gate, never a false green.<br>• <code>test_run_test_gate.py</code> wave-orchestrator tests (about 14.5 s each): build the template git repo once per session and copy it per test. The git state stays identical, and so does the coverage.<br>• <code>test_ad1205_fault_paths.py</code> (231 tests with a 1.0 s mean, some of them spawning real sandbox children): audit first. Keep every behaviour-distinct real-child case, and collapse only identical repeat launches.<br>Both this file and <code>test_phantom_api_precheck_kwargs.py</code> caught a real defect in September (§9.3), so prove any reduction in either with targeted mutation first (V7).</td>
+<td>About −250 to −400 s of CPU, mostly helping CI throughput</td>
+<td>Every behaviour-distinct cross-process case keeps a real process</td>
+</tr>
+<tr>
+<td>P2.3</td>
+<td><strong>Whole-tree scanning tests</strong> (<code>test_ad1270b_architecture_fitness.py</code> 74 s, <code>test_ad1256_store_registry.py</code> 80 s, <code>test_ad1270b_seam_contracts.py</code>, <code>test_codebase_index.py</code> 95 s): cache the real-tree scan once per worker session. Tests that prove a checker "can fail" mutate a <em>copy</em> (see P0.2).</td>
+<td>About −150 s of CPU</td>
+<td>Each checker still has a real-tree test</td>
+</tr>
+<tr>
+<td>P2.4</td>
+<td><strong>Product-performance leads the tests surfaced.</strong> Profile these first, and file only if confirmed:<br>• <code>test_ad1242_crew_verifier_trace.py::test_public_future_render_bounds_entire_redacted_section[20000-*]</code> takes 11.6–14.2 s in isolation, against about 1.2 s for the other cases. That's about 3.5× the input for 11× the time, which is consistent with quadratic cost in the render or redaction path.<br>• The 1000-row capacity test spends about 57 ms per committed transition.</td>
+<td>Depends on the findings</td>
+<td>No N reduction, no timeout change</td>
+</tr>
+<tr>
+<td>P2.5</td>
+<td><strong>Fix each confirmed single-test flake (§3.7) at its root:</strong> ordering, clocks, subprocess timing.</td>
+<td>Part of the 2.4 h of confirmed-flake reruns</td>
+<td>Each fix comes with a regression test</td>
+</tr>
+<tr>
+<td>P2.6</td>
+<td><strong>Hermeticity.</strong> <em>Shipped in Batch D.</em><br>• Add <code>os.environ.setdefault("PROBOS_DISABLE_OVERLAY", "1")</code> to <code>tests/conftest.py</code>, next to BF-245's NATS default, so local gates boot the same OSS runtime as CI. Tests of the extension seam keep opting in. The default is declared in <code>config-profiles.yaml</code> <code>ci_divergences</code> (new <code>first-party-env</code> mechanism), so deleting it fails <code>check_config_profiles.py</code>.<br>• Don't adopt <code>PROBOS_EMBEDDINGS=local</code> in the canonical gate (§6).</td>
+<td>Local/CI parity. No measurable time saving (the installed hooks cost about 1 ms per boot)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P2.7</td>
+<td><strong>CI sharding (shipped in Batch F).</strong> <code>python-tests-shard</code> runs the suite as three file-level shards (matrix 1–3, <code>fail-fast: false</code>), and a final <code>python-tests</code> job proves exactly-once execution across them the way the wrapper does per worker: every collected node executes exactly once (an execution <em>count</em> of 1, not just set union), and shards don't overlap.<br>• Each shard collects the whole suite and keeps its own files under the unchanged <code>-n auto --maxfail=10</code> command; <code>--maxfail=10</code> is each shard's own budget.<br>• <code>scripts/ci_shards.py</code> assigns files longest first on the millisecond durations from <code>tests/fixtures/file_durations.json</code> (P1.4); a file the data doesn't know weighs its node count × the known files' mean milliseconds per node. <code>scripts/_ci_shard_pytest_plugin.py</code> (loaded with <code>-p</code>) filters each worker's collection, refuses any other hook that removes, adds or renames a node, and writes per-worker evidence: the full-collection and assignment digests, plus every setup report with repeats kept.<br>• <code>python-tests</code> keeps its check name, runs under <code>always()</code> and fails unless every shard succeeded. It then runs <code>scripts/ci_shards.py verify</code> on the downloaded evidence: identical independent collections, a recomputed disjoint assignment, and an execution count of exactly 1 per node.<br>CI evidence is not release authority; the canonical gate is unchanged.</td>
+<td>About 36 → 10–12 min per run (a projection; no sharded CI run has been measured yet)</td>
+<td>A per-node count check and a duplicate check across shards (<code>scripts/ci_shards.py verify</code>), pinned by <code>tests/test_ci_shards.py</code> and <code>tests/test_ci_shard_pytest_plugin.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-3-keep-it-fast">Phase 3: keep it fast<a class="headerlink" href="#phase-3-keep-it-fast" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P3.1</td>
+<td><strong>Duration budget in the wrapper summary.</strong> List tests over 10 s, files over 120 s or over 50% of mean worker busy time, and any file that becomes the critical path. Start report-only. Once the baseline is stable, fail on <em>new</em> offenders unless they're listed with a reason.<br><strong>Report-only half shipped:</strong> once collection validation has succeeded, the gate manifest carries <code>duration_budget</code> (otherwise it is null and <code>duration_budget_skipped</code> says why) and the console prints one <code>DURATION BUDGET (report-only)</code> line. It reads only the validated <code>gw0..gw(N-1)</code> files, and its cost is linear in that evidence: 0.14 to 0.29 s over seven runs on a synthetic 37.9k-test, 16-worker gate. Neither changes an exit code, the manifest's <code>error</code> or <code>summary</code>, or whether a receipt is issued. The receipt's keys, status semantics and validation are unchanged, and its manifest hash covers the budget like any other manifest field. Enforcement and the offender allowlist are not started.</td>
+</tr>
+<tr>
+<td>P3.2</td>
+<td><strong>Refresh the durations file</strong> whenever the critical-path worker goes above 110% of mean busy time, and at least weekly. Run <code>python scripts/gen_file_durations.py --junit &lt;gate&gt;.xml</code> on the JUnit of the latest green canonical gate. It reads the sibling <code>&lt;gate&gt;.collection.json</code>, writes <code>tests/fixtures/file_durations.json</code>, and refuses to write if any test failed or the JUnit's testcases aren't exactly the collected nodes. The refreshed file is a tracked change under <code>tests/</code>, so it needs its own broad gate before it is pushed.</td>
+</tr>
+<tr>
+<td>P3.3</td>
+<td><strong>Add test-writing rules to the Testing Standards:</strong><br>• boot runtimes only through the factory;<br>• no fixed sleeps of 0.5 s or more — today there are 114 <code>asyncio.sleep(≥0.5)</code> lines in 50 files and 85 <code>time.sleep(</code> call sites in 35 files. Use one shared <code>wait_until</code> helper instead of the six private copies;<br>• never write into the tree under test;<br>• keep a real subprocess wherever the process boundary is the behaviour under test, and never respawn a process just as transport.</td>
+</tr>
+<tr>
+<td>P3.4</td>
+<td><strong>Fail-fast lane (declined as a default step).</strong> An advisory wrapper mode that runs files with historical duration under 5 s (1,332 files, about 628 s of CPU) before the full gate. On the September replay, it would have exposed 14 of 27 red gates in about 2 minutes instead of about 18. It isn't release authority and adds about 2 minutes to green runs. Keep it out of canonical preflight, which AD-1270f caps at 90 s.<br><strong>Declined as a default pre-gate step (Captain, 2026-10-01).</strong> At a gate of about 13.5 minutes and a 23% red rate it costs about 0.4 min per gate net; break-even needs a red rate above about 28%. At most an opt-in local mode, if requested later.</td>
+</tr>
+<tr>
+<td>P3.5</td>
+<td><strong>Feed the AD-1270f selector shadow series.</strong> It has 1 of its 20 eligible rows, and none since 2026-09-02. This is related work, not part of this plan's time budget.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-how-quality-is-verified">5. How quality is verified<a class="headerlink" href="#5-how-quality-is-verified" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Node-set invariance.</strong> Every change keeps the canonical collection's node count. P0.1 also ships a 1:1 mapping from old to new node IDs.</li>
+<li><strong>Outcome invariance (A/B).</strong> On the same commit, run full canonical gates with and without each Phase 1 change, and interleave the arms. Compare the normalised <strong><code>nodeid → outcome</code> map</strong> (passed, skipped with its reason, xfailed, failed), not aggregate counts. The gate checks collection and execution identity, not per-node outcomes. Only predeclared differences are allowed. A new failure is investigated as a latent isolation defect, not reverted on sight: new file co-locations can expose cross-file pollution, as the YeomanAgent singleton did.</li>
+<li><strong>Production-default pins.</strong> One test asserts that a default-config shutdown still grants the 1 s and 2 s grace, or the drain cap. Another asserts that a default <code>CodebaseIndex</code> still builds from disk.</li>
+<li><strong>Test-profile drift guard.</strong> A test asserts that the factory's config differs from <code>SystemConfig()</code> only in allowlisted fields. Nobody can quietly turn off a subsystem to make a boot test faster.</li>
+<li><strong>Targeted mutation, only for the new guards</strong> (per the Captain's rule):</li>
+<li>set the default grace to 0 → the pin fails;</li>
+<li>make the memo return a shared, un-copied snapshot → an isolation test fails;</li>
+<li>drop a file from the scheduler queue → wrapper validation fails.</li>
+</ol>
+<p>Run the unmutated baseline first. Use single-line anchors and mutate in place with a <code>.mutbak</code> backup.
+6. <strong>Track the AD-1270f metrics:</strong> red-time share, late-discovery rate, and full-gate critical path on the same host fingerprint and node-manifest hash.</p>
+<h2 id="6-explicitly-rejected">6. Explicitly rejected<a class="headerlink" href="#6-explicitly-rejected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Deselecting or skipping <code>slow</code> tests in the canonical gate, changing per-test timeouts, or shrinking capacity tests.</strong> Each breaks the AD-1270f acceptance criteria.</li>
+<li><strong>Sharing one runtime across a module or class.</strong> It breaks isolation, and the YeomanAgent cascade shows what happens. V5's optional per-profile read-only runtime is the one exception (§9.4).</li>
+<li><strong><code>PROBOS_EMBEDDINGS=local</code> in the canonical gate.</strong> Real-embedding tests such as <code>TestSemanticQuality</code> would turn into skips.</li>
+<li><strong>Pruning or merging fast tests to save time.</strong> 85% of tests take 3.7% of the time. Retiring a test for value reasons is a separate question (§9), with its own proof protocol.</li>
+<li><strong>Relaxing SQLite durability for the hash-chained event log.</strong> After P1.2 and P1.3, its per-row commits are the next-largest boot cost. But it's an audit store, so any change there is a Captain decision, not a test optimisation.</li>
+<li><strong><code>-n auto</code> or <code>-n 32</code> without the P2.1 sweep.</strong> BF #466 and BF-657 already recorded worker crashes and timing flakes under oversubscription.</li>
+<li><strong>Using impact selection for release.</strong> The AD-1270f selector stays advisory.</li>
+</ul>
+<h2 id="7-risks">7. Risks<a class="headerlink" href="#7-risks" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>New worker co-locations (P0.1, P1.4) expose latent cross-file pollution</td>
+<td>Treat each case as a pre-existing isolation defect, and run the A/B at least 3 times before adopting</td>
+</tr>
+<tr>
+<td>The durations file goes stale</td>
+<td>Balance degrades, but no test is ever skipped. P3.2 refreshes it, and P0.5 detects drift.</td>
+</tr>
+<tr>
+<td>The custom scheduler depends on xdist's <code>LoadFileScheduling</code> internals</td>
+<td>A test pins the xdist minor version it was written against, and the hook falls back to the stock scheduler if the base API is missing</td>
+</tr>
+<tr>
+<td>The bounded drain (P1.2) changes shutdown timing in production</td>
+<td>It can only wait <em>less</em> than today's fixed sleeps, and only when nothing is in flight. The fallback keeps production byte-identical.</td>
+</tr>
+<tr>
+<td>Windows timer, Defender, and thermal variance distort benchmarks</td>
+<td>At least 3 runs per arm; report the median and spread; same host fingerprint</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8-suggested-order">8. Suggested order<a class="headerlink" href="#8-suggested-order" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>P0.2 and P0.3.</strong> Flake root cause and the 27 s teardown. Each is independent and small.</li>
+<li><strong>P0.1, then P0.4 and P0.5.</strong> Taken in isolation, P0.1 gives the largest wall-clock drop in the plan.</li>
+<li><strong>P1.1 → P1.2 → P1.3</strong>, migrating the heaviest boot files first. Run the §5 A/B after each step.</li>
+<li><strong>P1.4.</strong></li>
+<li><strong>P2.1 and P2.7.</strong> CI urgency: roughly a month to the timeout if September's pace holds.</li>
+<li><strong>The rest of Phase 2, then Phase 3.</strong></li>
+</ol>
+<p>Batches follow the repository's batched-execution rule: up to three bounded items, focused tests, a scoped adversarial review for each item, and one canonical gate per batch.</p>
+<h2 id="9-test-value-and-redundancy-review">9. Test value and redundancy review<a class="headerlink" href="#9-test-value-and-redundancy-review" title="Permanent link">&para;</a></h2>
+<p>The question here: are any tests duplicative, or not providing value? Two methods answered it.</p>
+<ul>
+<li><strong>A static census of every test function</strong>, joined to the baseline gate's timings: 27,183 functions, 37,842 nodes, 9,064 s. Each category below was checked by reading flagged tests before it was reported.</li>
+<li><strong>Gate history</strong>: what each September red gate led to — a product fix, a test edit, or nothing.</li>
+</ul>
+<h3 id="91-headline">9.1 Headline<a class="headerlink" href="#91-headline" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Redundancy isn't where the time is.</strong> Removing every literal duplicate and every test that can't fail would save about 13 s of 9,064 s. Even the entire set of slow tests with weak or no assertions (§9.2) is only 3.8% of suite time.</li>
+<li><strong>The census did find real value defects, in small numbers:</strong></li>
+<li>tests that can't fail;</li>
+<li>tests whose names claim a scenario they never set up;</li>
+<li>slow tests that start a full runtime they don't use, or assert almost nothing.</li>
+<li><strong>History shows the broad suite catches real, cross-cutting defects.</strong> Untouched, pre-existing test files led to 11 product fixes in September.</li>
+<li><strong>The same cheap pinning and contract tests also cause most of the churn.</strong> In 19 events, an untouched, pre-existing test was fixed by editing only the test. The fix for that is running those tests earlier, not deleting them. "It never fails" is never evidence that a test is worthless.</li>
+</ul>
+<h3 id="92-static-census">9.2 Static census<a class="headerlink" href="#92-static-census" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th style="text-align: right;">Functions (nodes)</th>
+<th style="text-align: right;">Time</th>
+<th>Verified examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Literal duplicates:</strong> same body, same decorators, and every global and fixture it reads resolves to an identical definition</td>
+<td style="text-align: right;">34 extra copies in 25 groups (34)</td>
+<td style="text-align: right;">12.6 s</td>
+<td><code>test_format_duration.py</code> ↔ <code>test_temporal_context.py</code> (four identical tests); three slice tripwires copied verbatim into all five <code>test_ad1270e2{e..i}_*_models.py</code> files (one of them, <code>test_the_index_still_sees_a_never_moved_model</code>, costs about 3.1 s per copy, 12.4 s for the four extra copies)</td>
+</tr>
+<tr>
+<td>Body-identical but different data — <em>not</em> duplicates</td>
+<td style="text-align: right;">59 of the 83 body-identical groups</td>
+<td style="text-align: right;">—</td>
+<td>The data comes from <code>parametrize</code> decorators, per-file constants, or per-file fixtures, e.g. the three <code>test_ad1159_work_permits</code> TTL tests</td>
+</tr>
+<tr>
+<td>Near-duplicate shape (same structure, different literals)</td>
+<td style="text-align: right;">1,056 extra copies in 702 groups (1,235)</td>
+<td style="text-align: right;">402 s</td>
+<td>Candidates for parametrization. Parametrizing changes no runtime, so this is maintainability only.</td>
+</tr>
+<tr>
+<td><strong>Every assertion is a tautology</strong> (the test can't fail)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">~0 s</td>
+<td><code>test_dispatch_wiring.py::TestRuntimeWiring::test_runtime_has_build_queue_field</code> and <code>…_build_dispatcher_field</code> both assert <code>hasattr(ProbOSRuntime, '__init__')</code>. <code>test_ad632h_parallel_dispatch.py::TestBackwardCompatibility::test_handler_protocol_unchanged</code> asserts <code>hasattr(SubTaskHandler, '__call__')</code>. None of them checks what its name claims.</td>
+</tr>
+<tr>
+<td><strong>Same body, different claimed scenario</strong></td>
+<td style="text-align: right;">at least 4 pairs (including the <code>test_dispatch_wiring</code> pair above)</td>
+<td style="text-align: right;">~0 s</td>
+<td><code>test_multi_agent_replay_dispatch.py::test_compound_replay_no_registry</code> copies <code>…_no_intent_bus</code> (<code>MagicMock(spec=[])</code>). None of the other 12 test call sites of <code>_execute_compound_replay</code> sets up an intent bus without a registry. <code>test_ad596e_skill_validation.py::test_validate_spec_valid_with_hyphens_and_digits</code> uses the same input as <code>…_valid_name</code>. <code>test_graduated_zones.py::test_get_zone_returns_current_zone</code> copies <code>…_new_agent_starts_green</code>.</td>
+</tr>
+<tr>
+<td>Docstring claims more than the test checks</td>
+<td style="text-align: right;">at least 1</td>
+<td style="text-align: right;">~0 s</td>
+<td><code>test_codebase_index.py::test_find_tests_for_panels</code> says it "finds test_experience.py" but only asserts <code>isinstance(tests, list)</code></td>
+</tr>
+<tr>
+<td>Either/or ("hedged") assertions</td>
+<td style="text-align: right;">217 (219 asserts)</td>
+<td style="text-align: right;">351 s</td>
+<td>Some just allow for wording variants. Others accept nearly any outcome:<br>• <code>'Pool Scaling' in output or 'Scaling' in output</code> — the first branch implies the second;<br>• <code>result is None or result.verdict == 'error'</code>;<br>• <code>test_dag_proposal.py::test_plan_with_text</code>'s <code>… or "read" in output.lower()</code></td>
+</tr>
+<tr>
+<td>No assertion at all</td>
+<td style="text-align: right;">154 (167)</td>
+<td style="text-align: right;">44 s</td>
+<td>Mostly "does not raise" smoke tests. 4 of them are slow (37 s). For example, <code>test_ad843c2_device_consensus.py::test_store_device_consensus_episode_honest_degrade_when_no_memory</code> starts a runtime (11.5 s) to call one private helper and asserts nothing.</td>
+</tr>
+<tr>
+<td>Only weak assertions (<code>isinstance</code>, <code>is not None</code>, bare truthiness)</td>
+<td style="text-align: right;">868 (943)</td>
+<td style="text-align: right;">351 s</td>
+<td>36 of them are slow (307 s), and 29 of those start a runtime. For example, <code>test_self_mod.py::TestRuntimeSelfMod::test_runtime_creates_pipeline_when_enabled</code> spends 13.8 s to assert two attributes are not <code>None</code>.</td>
+</tr>
+<tr>
+<td>Starts a runtime it never uses</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">20.7 s</td>
+<td><code>test_experience.py::TestReflectCapability::test_render_dag_result_{with,without}_reflection</code> request <code>runtime</code> but only render a hand-built dict. Both sit in the critical-path file. (A third flagged case, <code>test_dag_proposal.py::test_plan_with_text</code>, is a false positive: its <code>shell</code> already needs the same runtime instance.)</td>
+</tr>
+<tr>
+<td>Text-scan pins (read file text, assert membership)</td>
+<td style="text-align: right;">441 (506)</td>
+<td style="text-align: right;">199 s</td>
+<td>These pin the source (307 functions, 121 s) or docs and prompts (121 functions, 111 s). Keep them where the text <em>is</em> the contract, as in AD-1270g's executable documentation. Otherwise prefer a behavioural test.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="93-what-septembers-red-gates-say-about-value">9.3 What September's red gates say about value<a class="headerlink" href="#93-what-septembers-red-gates-say-about-value" title="Permanent link">&para;</a></h3>
+<p>Of the 27 September red gates with JUnit failures, 7 were same-commit flakes. The other 20 were compared with the next green gate in the same worktree.</p>
+<table>
+<thead>
+<tr>
+<th>What changed before green</th>
+<th style="text-align: right;">Gates</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Product code only; the failing tests were untouched (a defect caught)</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>Product code and the failing tests</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>Only tests</td>
+<td style="text-align: right;">13</td>
+</tr>
+<tr>
+<td>No later green gate</td>
+<td style="text-align: right;">1</td>
+</tr>
+</tbody>
+</table>
+<p>Counting per failing test file (52 file-level failures), each file was compared with the candidate's base on main:</p>
+<table>
+<thead>
+<tr>
+<th>Failing file</th>
+<th>Resolved by</th>
+<th style="text-align: right;">Files</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pre-existing and untouched by the candidate (44)</td>
+<td>Product fixed, test unchanged: <strong>defect caught</strong></td>
+<td style="text-align: right;">11</td>
+</tr>
+<tr>
+<td></td>
+<td>Both product and test changed</td>
+<td style="text-align: right;">12</td>
+</tr>
+<tr>
+<td></td>
+<td>Only the test edited: <strong>change detector</strong></td>
+<td style="text-align: right;">19</td>
+</tr>
+<tr>
+<td></td>
+<td>Neither</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>Pre-existing, but edited by the candidate</td>
+<td>—</td>
+<td style="text-align: right;">6</td>
+</tr>
+<tr>
+<td>New in the candidate</td>
+<td>—</td>
+<td style="text-align: right;">2</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>The defect catchers</strong> span 11 files. They include the golden and pinning tests <code>test_ad1179_tool_schema_golden.py</code> and <code>test_ad1152_agentic_correlation.py</code>, and both slow subprocess files, <code>test_ad1205_fault_paths.py</code> and <code>test_phantom_api_precheck_kwargs.py</code>.</li>
+<li><strong>The change detectors</strong> span 17 files. They include <code>test_layer_boundaries.py</code> and <code>test_ad1164_continue_or_ask.py</code> (twice each), plus <code>test_ad1152_agentic_correlation.py</code> again. Several are deliberate governance tripwires: updating <code>test_layer_boundaries.py</code> <em>is</em> the review step for a new cross-layer import. Their cost is a full red gate each, about 18 minutes.</li>
+<li><strong>Both groups are mostly cheap.</strong> 14 of the 17 change-detector files take under 20 s per gate (9 under 5 s), and so do 9 of the 11 defect-catching files (7 under 5 s). The P3.4 fast lane would surface both in about 2 minutes.</li>
+<li><strong>This changes P2.2.</strong> Any reduction of real-process cases in <code>test_ad1205_fault_paths.py</code> or <code>test_phantom_api_precheck_kwargs.py</code> must first be proven by targeted mutation not to lose detection, because both files caught real defects in September.</li>
+</ul>
+<h3 id="94-actions">9.4 Actions<a class="headerlink" href="#94-actions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>V1</td>
+<td><strong>Fix the tests that can't fail or don't set up what they claim.</strong><br>• Rewrite the three tautologies so they assert what their names say.<br>• Give <code>test_compound_replay_no_registry</code> an intent bus without a registry, and add the inverse case.<br>• Make <code>test_find_tests_for_panels</code> assert the finding its docstring promises, or correct the docstring.<br>• Replace the two copied cases (<code>ad596e</code>, <code>graduated_zones</code>) with the case each name describes.</td>
+<td>Quality. No time change.</td>
+</tr>
+<tr>
+<td>V2</td>
+<td><strong>Drop the unused <code>runtime</code> parameter</strong> from the two <code>TestReflectCapability</code> tests.</td>
+<td>−20.7 s of CPU, all of it on the critical-path file</td>
+</tr>
+<tr>
+<td>V3</td>
+<td><strong>Strengthen the 40 slow weak or no-assert tests.</strong><br>• Replace presence checks with type, identity and wiring checks.<br>• Replace "must not raise" with an assertion on the degrade outcome (e.g. no episode stored, warning logged).<br>• Pin hedged either/or assertions to the one deterministic outcome, where there is one.<br>• If a test needs only an object rather than a started runtime, use the lightest fixture that still exercises the behaviour under test.<br>• <strong>Slice 1 shipped in Batch G:</strong> 15 tests in the ten migrated boot files, 7 of V5's 8 weak-only wiring tests among them. 14 are strengthened to exact type, identity, count and wiring checks, each shown by a single-line mutant to kill what the old assertion survived (mutation table on the PR). 1 stays unchanged as a recorded census false positive, <code>test_intent_descriptors_include_utility</code>: its planned clause, descriptor names equal to <code>_collect_intent_descriptors()</code>, is false at baseline (84 against 88: the decomposer is refreshed once, before four late registrations), so the existing subset check stays and kills a mutant that empties the decomposer's list. 25 remain: 7 in <code>test_knowledge_store</code>, 6 in <code>test_experience*</code> (including <code>test_self_mod_pipeline_exists</code>) and 12 others.</td>
+<td>Quality; some time</td>
+</tr>
+<tr>
+<td>V4</td>
+<td><strong>Remove the 34 literal duplicate copies,</strong> keeping one of each. Move the shared <code>test_ad1270e2*</code> tripwires into one parametrized module. Parametrize near-duplicate shapes when a file is next touched.<br><em>Batch D:</em> the cross-file copies are gone, each re-verified identical by AST (body, decorators, parameters, transitive globals and fixtures). The <code>test_ad1270e2*</code> tripwires now live only in e2e, since every copy checked the same package-wide property. The five same-file pairs were mostly V1 defects rather than duplicates: four now set up the case their name claims (each kills a mutant the old body survived), and one was a true duplicate and was removed. The 16 changed files went from 1,189 to 1,163 nodes: 26 copies retired, plus one test renamed (27 node IDs removed, 1 added). V7 evidence for every retirement (37 single-line mutants over 12 groups; the twin and the retired copy have identical kill sets in all 56 comparisons) is on #1448. No measurable time saving: the shared <code>config_schema</code> setup moves to whichever test requests it next.</td>
+<td>Planned −12.6 s (JUnit time attributed to the copies); realized: no measurable saving. Maintainability</td>
+</tr>
+<tr>
+<td>V5</td>
+<td><strong>Wiring census (declined as a merge).</strong> Fourteen slow wiring-presence tests ("runtime creates X…", 139 s; 8 of them have only weak assertions) each start a runtime to check that a service was created. One table-driven wiring test per config profile could keep every assertion (strengthened) and report all missing services at once. It merges tests, which §2 otherwise avoids for time savings: fewer runtime starts, but coarser failure granularity.<br><strong>Declined as a merge (Captain, 2026-10-01); per-service nodes kept.</strong> Quality half: V3. Time half: P1.1 fast teardown. An optional shared read-only runtime per profile is allowed only if it keeps one node per service and the tests live in their own module (YeomanAgent singleton); not built.</td>
+<td>None from a merge; the time half is counted under P1.1</td>
+</tr>
+<tr>
+<td>V6</td>
+<td><strong>Tag pinning and contract tests</strong> (e.g. <code>pytest.mark.contract</code>), so the P3.4 fast lane selects them by intent rather than by duration. Give each golden file a one-command, reviewed regeneration path. <strong>Deferred: only needed for a fast lane.</strong></td>
+<td>The 19 change-detector events would surface in about 2 minutes instead of about 18</td>
+</tr>
+<tr>
+<td>V7</td>
+<td><strong>Retirement protocol for any test:</strong><br>1. name the stronger test that covers the same behaviour;<br>2. run targeted mutation on the code under test and show the retiring test kills no mutant the remaining tests miss (baseline first; single-line anchors);<br>3. record the node-set change in the PR.<br>Never retire a test because it "never fails."</td>
+<td>A guardrail</td>
+</tr>
+</tbody>
+</table>
+<p>V1 and V2 are small enough to join Phase 0. V3–V6 fit alongside P1.1, since the factory migration touches the same files.</p>
+<h2 id="10-execution-log">10. Execution log<a class="headerlink" href="#10-execution-log" title="Permanent link">&para;</a></h2>
+<p>Every row was measured on the reference host by a canonical gate, with a receipt bound to the commit.</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Change</th>
+<th style="text-align: right;">Canonical gate (pytest phase)</th>
+<th style="text-align: right;">Busiest worker vs mean</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Baseline</td>
+<td><code>origin/main</code> before execution (<code>issue-1131-r2</code>)</td>
+<td style="text-align: right;">1,090.5 s</td>
+<td style="text-align: right;">925 s vs 566 s</td>
+<td><code>test_experience.py</code> on the busiest worker</td>
+</tr>
+<tr>
+<td>Batch A (#1443)</td>
+<td>#1419 G-1/G-1b, P0.3, P0.4, V2, one V1 fix</td>
+<td style="text-align: right;">980.4 s</td>
+<td style="text-align: right;">not analysed</td>
+<td>Merged. G-2 deferred (see P0.2).</td>
+</tr>
+<tr>
+<td>Batch B (#1445)</td>
+<td>P0.1 split, the other V1 fixes</td>
+<td style="text-align: right;">763.3 s (−30% vs baseline)</td>
+<td style="text-align: right;">653.5 s vs 575.3 s</td>
+<td>Spread 548–654 s across 16 workers. Found #1444.</td>
+</tr>
+<tr>
+<td>Batch C (#1446)</td>
+<td>P1.3 test-side CodebaseIndex memo</td>
+<td style="text-align: right;">677.7 s (−38% vs baseline)</td>
+<td style="text-align: right;">556 s vs 468 s</td>
+<td>A/B on 20 runtime boots: 173.8 s → 121.1 s (about 2.6 s per boot). A rerun under host contention measured 762.1 s with uniformly higher CPU.</td>
+</tr>
+<tr>
+<td>Batch D (#1448)</td>
+<td>P2.6 hermeticity, V1 pairs, V4 copies, two flake root causes</td>
+<td style="text-align: right;">834.4 s (shared host)</td>
+<td style="text-align: right;">—</td>
+<td>Quality and parity, not speed. Other agents' test runs shared the host during the gate, so its time is not comparable.</td>
+</tr>
+<tr>
+<td>Batch E (#1450)</td>
+<td>P1.4 scheduler (each worker starts on one of the K heaviest files, the rest keep xdist's order; replaced full LPT after a same-tree A/B), P1.2 first slice, P0.5 timing + report-only P3.1 budget</td>
+<td style="text-align: right;">757.6 s (<code>testopt-e5</code>)</td>
+<td style="text-align: right;">620.8 s vs 599.5 s (1.036x)</td>
+<td>Full LPT was built first and replaced before the canonical gate: it balanced best but was no faster than stock (see the P1.4 row). The batch PR holds the canonical gate and the A/B replication. Before: Batch C's gate (<code>a2d14224</code>), busiest 556 s vs mean 468 s (1.19x); the durations file was generated from that gate.</td>
+</tr>
+<tr>
+<td>Batch F: P2.2 slice 1</td>
+<td>Phantom-precheck kwargs tests 2–6 call the helper's <code>main()</code> in-process, against a cache keyed on file content (<code>tests/fixtures/phantom_helper_memo.py</code>). Test 1, the <code>method_calls</code> CLI test and the five <code>pwsh</code> wrapper tests stay real processes.</td>
+<td style="text-align: right;">see the PR</td>
+<td style="text-align: right;">—</td>
+<td>Direct helper launches in the kwargs file: 11 → 1. Node set: the kwargs file's 9 IDs are unchanged and 19 harness tests are added. In-process calls have no per-call time limit: only the suite-wide pytest-timeout (180 s) guards them. Alone, median of 3 with the range (pytest-reported): kwargs 172.3 s (172.0–178.0) → 53.2 s (51.9–67.9); tests 2–6 call time 121.2 s → 11.1 s (−91%); controls <code>method_calls</code> 25.4 s → 25.6 s and <code>ad685c</code> 13.8 s → 13.4 s. V7: 17 mutants, the same 16 killed before and after (the process-entry mutant only by test 1 after), premise probe survives before and is killed after (matrix on the PR). The base weight in <code>file_durations.json</code> (142.5 s, from Batch C's gate) is not refreshed here; P3.2 regenerates it. The canonical gate and the file's span in its P0.5 timing block are on the PR.</td>
+</tr>
+<tr>
+<td>Batch F</td>
+<td>P2.7 CI sharding (3 shards + exactly-once verifier), WinError 10055 self-pipe fix, P2.2 slice 1</td>
+<td style="text-align: right;">see the Batch F PR</td>
+<td style="text-align: right;">see the Batch F PR</td>
+<td>P2.7's effect is measured in CI (per-shard and end-to-end time), not by the local gate.</td>
+</tr>
+<tr>
+<td>Batch G</td>
+<td>P1.1 slice 2 (fast final stops in ten boot files; receiving-module and final-action guards), V3 slice 1, the Captain's V5, P3.4 and V6 decisions</td>
+<td style="text-align: right;">see the PR</td>
+<td style="text-align: right;">see the PR</td>
+<td>Migrated nodes: 157 (<code>test_runtime</code> 25, <code>test_consensus_integration</code> 14, <code>test_distribution</code> 26, <code>test_dag_proposal</code> 36, <code>test_system_qa</code> 33, <code>test_escalation</code> 4, <code>test_self_mod</code> 5, <code>test_emergent_detector</code> 5, <code>test_semantic_knowledge</code> 5, <code>test_scaling</code> 4). Alone, median of 3 per file, with a probe on <code>ProbOSRuntime.stop</code>: seconds inside <code>stop()</code> 546 → 56 (485 s saved; every migrated node at least 2.67 s faster), each file's outcomes identical to base in all 3 after runs, node set unchanged outside the guard file (+41 guard nodes). Wall time is not compared: the base arm ran while another gate shared the host. V3: 14 strengthened, 1 recorded false positive. V5 declined as a merge, P3.4 declined as a default step, V6 deferred (Captain, 2026-10-01). The 10 files' P0.5 busy seconds against <code>testopt-f2</code> are on the PR. <code>file_durations.json</code> is not refreshed here; P3.2 regenerates it.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not executed yet, and why:</strong>
+- <strong>P1.1 (shared runtime factory):</strong> slice 2 shipped in Batch G (ten boot files). Still open: <code>test_hxi_chat_integration</code> (custom harness), <code>test_dreaming</code> (needs an <code>episodic_memory</code> passthrough in the factory), <code>test_ad1272_trust_accrues_per_unit_of_work</code> (trust-write accounting) and <code>test_persistent_identity</code> (warm boot); <code>test_knowledge_store</code> is excluded. No decision is pending.
+- <strong>P2 and P3:</strong> the worker sweep needs dedicated machine time.
+- <strong>P2.2 (the rest):</strong> the <code>test_run_test_gate.py</code> template repo and the <code>test_ad1205_fault_paths.py</code> audit are still open. The audit needs the same V7 proof before any real-child case is collapsed.
+- <strong>V3, V5, V6:</strong> no decision is pending. V3 slice 1 shipped in Batch G (25 tests remain). V5 is declined as a merge and its time half is P1.1; P3.4 is declined as a default step; V6 is deferred until a fast lane exists.</p>
+<h2 id="appendix-reproducing-the-evidence">Appendix: reproducing the evidence<a class="headerlink" href="#appendix-reproducing-the-evidence" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Per-worker busy time:</strong> <code>python scripts/select_tests.py --gate-balance &lt;run&gt;.collection.json &lt;run&gt;.xml</code> does this join and uses the <code>timing</code> block of each <code>gwN.json</code> when it has one. By hand, join the <code>executed_nodeids</code> in <code>&lt;run&gt;.collection-workers/gw*.json</code> with the JUnit <code>time</code> attributes of the same run. Map <code>file</code> + <code>classname</code> + <code>name</code> to node IDs the way <code>scripts/_gate_timing.py::junit_node_id</code> does (<code>select_tests.junit_node_id</code> re-exports it).</li>
+<li><strong>Scheduling simulation:</strong> replay xdist 3.8 <code>LoadScopeScheduling.schedule()</code> and <code>_reschedule()</code>:</li>
+<li>work units are files;</li>
+<li>the queue is sorted by test count (<code>loadscopereorder</code> defaults on);</li>
+<li>a worker pulls its next unit when two or fewer of its tests are pending.</li>
+</ul>
+<p>Validate the replay against the measured baseline before using it for projections.
+- <strong>Boot anatomy:</strong> use cProfile, plus an await-chain sampler that walks <code>cr_await</code> from the <code>start()</code>/<code>stop()</code> task every 10 ms.
+- <strong>A/B probe:</strong> a pytest plugin loaded with <code>-p</code>. It short-circuits <code>asyncio.sleep</code> only when called from <code>probos/startup/shutdown.py</code> with 1 or 2.0 s, memoises <code>CodebaseIndex.build</code> for the real package root, and prints its own counters so a no-op is visible.
+- <strong>Collection:</strong> <code>pytest tests/ -n 16 --dist=loadfile -o addopts= -k &lt;no-match&gt;</code> in a fresh <code>git worktree</code>, run cold and then warm. For the import profile, use <code>-X importtime</code> with <code>-s</code>, because capture swallows the import log.
+- <strong>Flakes:</strong> group gate manifests by <code>snapshot_before.head</code>, excluding interrupted runs (<code>interrupted: true</code>, exit 130). A head with both red and green full gates is a confirmed flake.
+- <strong>Value census (§9.2):</strong> an AST pass over every <code>test*</code> function in <code>tests/</code>, joined to JUnit times by file, class and base name.
+  - It classifies assertion strength, fixture use, and whether a test reads file text.
+  - Duplicate candidates are grouped by body hash, then kept only if decorators, same-file fixtures and every free global resolve to identical definitions in each file.
+  - Every category was checked by reading flagged tests. False positives found by that reading are reported as such (e.g. <code>test_plan_with_text</code>).
+- <strong>Red-gate value (§9.3):</strong> for each non-flake red gate, take the next green gate in the same worktree and <code>git diff --name-only</code> the two heads. Classify each failing test file against the candidate's base: the first ancestor on <code>origin/main</code>'s first-parent line.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

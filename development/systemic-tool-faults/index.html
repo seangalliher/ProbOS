@@ -1,0 +1,2109 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/systemic-tool-faults/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Systemic tool-fault observations (AD-1205) - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#systemic-tool-fault-observations-ad-1205" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Systemic tool-fault observations (AD-1205)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#generated-entry-provenance-r1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generated-entry provenance (R1)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generated-entry provenance (R1)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observer-classification-of-generated-entry-errors-r2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observer classification of generated-entry errors (R2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observation-owner-and-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observation owner and identity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#raw-disposition-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw disposition capture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#qualification-resets-and-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Qualification, resets and bounds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logical-turn-ownership-and-consumers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logical-turn ownership and consumers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatible-carrier-and-publication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatible carrier and publication
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#privacy-and-repair-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Privacy and repair boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-candidate-evidence-rejected-by-r1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical candidate evidence -- rejected by R1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#r1-repair-evidence-and-remaining-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R1 repair evidence and remaining limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="R1 repair evidence and remaining limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#final-r1-focused-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Final R1 focused selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#r2-review-and-narrow-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R2 review and narrow correction
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="systemic-tool-fault-observations-ad-1205">Systemic tool-fault observations (AD-1205)<a class="headerlink" href="#systemic-tool-fault-observations-ad-1205" title="Permanent link">&para;</a></h1>
+<p>Implementation candidate for #1150. This is detection, not automatic repair.
+Independent review, canonical preflight/full-gate evidence and release remain
+separate, parent-owned steps. No live-vessel or external-model measurement is
+claimed.</p>
+<h2 id="generated-entry-provenance-r1">Generated-entry provenance (R1)<a class="headerlink" href="#generated-entry-provenance-r1" title="Permanent link">&para;</a></h2>
+<p>The rejected candidate promoted stderr by text shape. R1 withdrew that proof:
+an entered user script can print the same diagnostic, even naming its actual
+workdir. The old script-printing positive tests are retained as negative spoof
+regressions rather than deleted or described as launch-origin evidence.</p>
+<p><a href="../../src/probos/execution/isolation.py">SubprocessSandbox</a> now validates only
+its generated-code launch plan, after construction and before <code>Popen</code>. It checks
+the actual interpreter/flags, resolves the argv entry against the actual child
+cwd, compares it with the intended <code>script.py</code> or <code>_probos_launch.py</code>, and checks
+the required generated files (including <code>script.py</code> behind a launcher). Truthy
+explicit argv retains precedence; a correct cwd-relative entry remains valid.
+A missing/mismatched plan produces an honest existing <code>ExecutionResult.error</code>
+with workdir, empty stdout/stderr, no exit code and no launched process.
+<code>LaunchOutcome</code>, audit ownership, cancellation, containment and cleanup retain
+their existing paths. There is no retry or new result/schema field.</p>
+<p><a href="../../src/probos/tools/code_execution_tool.py">CodeExecutionTool</a> forwards
+nonempty execution errors verbatim and never promotes stderr alone. Ordinary
+user exits, import failures, diagnostic lookalikes, nested interpreter errors,
+success and timeout behavior remain unchanged. Evidence is deliberately split:</p>
+<ol>
+<li>A controlled historical <code>ExecutionResult.error</code> retains canonical signature
+   <code>d7e439af0281014e261e38dc45f51aa8927aa2422cc67a82e94f99d5d9c5b577</code>
+   and trace/argument recovery. It proves identity, not launch origin.</li>
+<li>The real approved interpreter, given a genuinely absent/doubled entry, proves
+   actual argv/cwd, exit 2, its diagnostic and no entered user script.</li>
+<li>An injected bad generated plan through the real sandbox/tool/observer/store
+   proves the host pre-launch error and <strong>zero interpreter launches</strong>. It is not
+   the interpreter result from item 2.</li>
+</ol>
+<p>A file can disappear after the check. Stderr cannot authenticate that origin;
+the repair does not add post-launch attribution, a handshake or another
+containment mechanism. A regression exercises this explicit limitation.</p>
+<h3 id="observer-classification-of-generated-entry-errors-r2">Observer classification of generated-entry errors (R2)<a class="headerlink" href="#observer-classification-of-generated-entry-errors-r2" title="Permanent link">&para;</a></h3>
+<p>The observer-only classifier recognizes the exact, case-sensitive prefix
+<code>generated entry pre-launch check failed:</code> as category <code>other</code>, after the
+existing explicit governance exclusions and before generic substring matching.
+Configured paths can legitimately contain <code>invalid</code>, <code>permission</code> or
+<code>cancelled</code>; those path components must not turn a host-generated launch fault
+into policy noise.</p>
+<p>The producer's full error text and canonical signature are unchanged. The
+generic capability classifier still classifies its inputs as before; no
+permission, confirmation, cancellation, execution or repair policy is changed.
+Missing-colon, whitespace-altered, differently cased, embedded and extended
+near-prefixes retain generic classification. This rule handles the existing
+error channel only. It neither promotes stderr nor authenticates post-launch
+failures.</p>
+<h2 id="observation-owner-and-identity">Observation owner and identity<a class="headerlink" href="#observation-owner-and-identity" title="Permanent link">&para;</a></h2>
+<p><a href="../../src/probos/fault_report.py">FaultReportStore</a> owns a process-local
+<a href="../../src/probos/fault_detection.py">ToolFaultObserver</a> and its existing
+<code>file_fault</code> publisher. The public boundary is the typed keyword-only
+<code>observe_tool_run(turn, batch, agent_id, thread_id="", attempted="",
+tool_trace_ref=None)</code> method.</p>
+<p>The collector joins unique completed call/result IDs, requires an exact boolean
+error flag and nonempty normalized error, and logs/skips malformed or mismatched
+evidence. Invalid evidence is never interpreted as success. Count-one evidence
+uses the existing <code>ToolDefect</code> carrier, canonical ID resolver, normalizer and
+digest. The shared executor passes the same memoized resolver to trace writing,
+raw capture, legacy detection and observation. Identity is derived before truncation; bounded
+error text is not rehashed downstream. Existing <code>observed_as</code> provenance reaches
+the unchanged repair argument reader.</p>
+<h2 id="raw-disposition-capture">Raw disposition capture<a class="headerlink" href="#raw-disposition-capture" title="Permanent link">&para;</a></h2>
+<p>Each supported shared or native loop invocation creates its own typed
+<code>ToolFaultCapture</code>; the logical-turn token and shared executor hold no scratch
+capture. The optional run keyword passes through
+<code>run -&gt; _run_scoped -&gt; _execute_tool_uses -&gt; _execute_one_tool</code>. Capture happens
+at the raw-result boundary before conversion, not by parsing rendered dicts.
+Tool result fields, conversion, event payloads and measured tool duration are
+unchanged; unsupported paths allocate no capture or extra run keyword.</p>
+<p>Only actual currently registered MCP/browser adapter types supply these
+structured non-invocation facts. A source-backed correction projection exposes
+a narrow adapter-kind query, not the source tool or additional authority.
+Arbitrary tool names, type labels and returned flags do not establish adapter
+identity. MCP's exact confirmation refusal and BrowserTool's tier-3 intervention
+are neutral in cross-turn aggregation.</p>
+<p>Capture retains at most 1,024 request identities, each with an observed name
+and typed disposition; IDs and names are limited to 128 characters. It retains
+no result body, arguments, conversation, confirmation token or session payload.
+Oversized identities are rejected, not truncated. Duplicate IDs, mismatched
+identity, overflow or capture/query failure make the affected run's diagnostics
+unavailable, with a handled failure, not healthy evidence or legacy fallback.
+Cancellation still propagates.</p>
+<h2 id="qualification-resets-and-bounds">Qualification, resets and bounds<a class="headerlink" href="#qualification-resets-and-bounds" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Cross-turn qualification requires the same canonical tool/error signature in
+  <strong>three distinct logical turns within a rolling 3,600 seconds</strong>. An observation
+  exactly 3,600 seconds old is expired. The clock is injectable and monotonic.
+  Three independent uncontradicted turns distinguish recurring failures from
+  isolated transients; one hour accommodates longer tasks.</li>
+<li>The existing same-run threshold of <strong>two</strong> and <code>resolve_tool_defect</code> stay
+  unchanged. Count-one candidates never become legacy verdicts.</li>
+<li>Known permission, approval, consensus, cancellation, ambiguous-not-invoked,
+  pre-hook and invalid-parameter refusals do not vote <strong>or reset</strong> cross-turn.
+  Neutral-only turns preserve a pending streak; a genuine fault plus neutral
+  refusal in one batch still contributes its original vote. Exact
+  <code>requires_confirmation</code> is observer-only noise. This does not rewrite the
+  legacy same-run detector, its two-hit verdict (including refusal errors), or
+  capability policy.</li>
+<li>A success for that canonical tool clears its pending streak. A different
+  error starts a new streak. Mixed errors or success/failure batches clear the
+  pending streak rather than contributing a pure vote. Other/no-tool turns are
+  neutral except for expiry. These resets do not erase durable reports.</li>
+<li>Tool health is shared across agents within the store's runtime. The report
+  describes the qualifying observation's agent/thread, not invented ownership
+  of earlier failures.</li>
+<li>There are at most <strong>1,024 tool candidates</strong>, each retaining one bounded
+  signature and at most three bounded turn identities/timestamps. Expiry runs
+  before deterministic least-recently-observed eviction.</li>
+<li>A batch retains at most 1,024 tools. A logical turn retains at most <strong>1,024
+  combined tool-state and publication-reservation entries</strong>. Overflow warns
+  once and declines new diagnostics, never evicting a reservation to make room
+  for a duplicate attempt. Execution itself is not capped by these bounds.</li>
+<li>A repaired/dismissed report clears its matching pending streak. Later
+  independent faults require fresh qualification; existing new-report behavior
+  gives them a new ID. A process/new-store-instance restart drops candidates
+  while durable reports survive. Losing up to two prethreshold observations is
+  an explicit bounded cost; no candidate schema or persistence is introduced.</li>
+</ul>
+<p>Occurrences mean <strong>qualified filing turns</strong>, not failed calls. Turns one and two
+are not backfilled. Turn three creates occurrence/event one; the next qualifying
+distinct turn increments to occurrence/event two. Same-run and cross-turn
+qualification are unioned per signature/logical turn.</p>
+<h2 id="logical-turn-ownership-and-consumers">Logical-turn ownership and consumers<a class="headerlink" href="#logical-turn-ownership-and-consumers" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Observation unit</th>
+<th>Persisted attempted context</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shared direct/task invocation</td>
+<td>Fresh token per invocation unless explicitly supplied</td>
+<td>Empty by default</td>
+</tr>
+<tr>
+<td>Delegated child</td>
+<td>Fresh child invocation, not its parent's token</td>
+<td>Empty</td>
+</tr>
+<tr>
+<td>Conversational DM</td>
+<td>One token outside continuation/promotion passes</td>
+<td>Exact <code>params["captain_message"]</code> string only</td>
+</tr>
+<tr>
+<td>Crew child</td>
+<td>One token outside all outer continuation passes</td>
+<td>Empty</td>
+</tr>
+<tr>
+<td>Legacy correction</td>
+<td>One token across convergence retries; next episode gets a new one</td>
+<td>Empty</td>
+</tr>
+<tr>
+<td>Session correction</td>
+<td>Same episode rule through the frozen runtime projection</td>
+<td>Empty</td>
+</tr>
+<tr>
+<td>Native build</td>
+<td>Fresh token for the independently owned loop invocation</td>
+<td>Empty; missing trace remains <code>None</code></td>
+</tr>
+</tbody>
+</table>
+<p>The session projection exposes only a <code>ToolFaultObservationPort</code> with
+<code>observe_tool_run</code>. It does not expose the fault store, registry mutation,
+configuration/grant authority or an ambient runtime. Its event emitters remain
+neutral. Its projected registry's added public query reveals adapter kind only
+for permitted, enabled source-backed definitions.</p>
+<h2 id="compatible-carrier-and-publication">Compatible carrier and publication<a class="headerlink" href="#compatible-carrier-and-publication" title="Permanent link">&para;</a></h2>
+<p>The original twelve-field <code>WorkItemAgenticOutcome</code> remains unchanged.
+Supported observation returns its non-frozen, keyword-only
+<code>ObservedWorkItemAgenticOutcome</code> subtype with a required, bounded, validated
+<code>FaultObservationResult</code>. Inherited objects are retained without recursive
+<code>asdict</code> conversion. Missing/unsupported observers return the exact base type
+and allocate no token or additional observation kwargs. A non-callable method
+attribute is unsupported, not a usable observer.</p>
+<p>The public/private executor methods append only the optional keyword-only
+<code>fault_turn=None</code> and <code>fault_attempted=""</code>. These are diagnostic identity/context,
+not continuation controls. The authorized AD-1155 signature guard retains its
+entire ordered expectation and earlier assertions, appends these names, and
+checks their kind, defaults and annotations.</p>
+<p>DM and exhaustion recognize only the exact observed subtype and validate its
+result. Handled-empty, failed or malformed observed results suppress legacy
+refiling without inventing an ID. Uninstrumented legacy results retain their
+fallback. Exhaustion still uses only the original same-run verdict.
+Its appended <code>fault_attempted: str | None = None</code> is a separate filing override:
+explicit empty wins, and malformed supplied values cannot trigger a fallback.
+Omitted/None preserves the older external-call display/base fallback.</p>
+<p>Reporting is <strong>at most one attempt per qualified signature/logical turn</strong>.
+Reservation occurs before awaiting publication. Concurrent diagnostic
+transitions and closure are serialized, but tools and cognition are not.
+Publication failure/cancellation retains the reservation; cancellation propagates
+and releases locks. A later pass or legacy hook cannot automatically retry it.
+A fresh qualifying turn can make its own attempt.</p>
+<p>An ID is <strong>not a durability or delivery receipt</strong>. The existing store can return
+a cached report after persistence or event-delivery degradation. The observer
+does not manufacture a stronger guarantee. There is no new durable exactly-once
+delivery protocol or automatic recovery worker.</p>
+<p>Generic dataclass serialization/equality differs for the subtype; blanket wire
+identity is not claimed. Existing explicit projections retain the frozen
+fourteen-key crew record, ordered <code>SubtaskResult</code>, plan identity, delegation
+evidence, native metadata, tool-result fields, trace schema and old goldens.</p>
+<h2 id="privacy-and-repair-boundary">Privacy and repair boundary<a class="headerlink" href="#privacy-and-repair-boundary" title="Permanent link">&para;</a></h2>
+<p>Candidates do not retain raw arguments, tool outputs, code, conversation,
+assembled instructions or delegated evidence. The transient batch carries only
+bounded <code>ToolDefect</code> material and outcome flags; qualified reports use the
+existing bounded error/attempted fields and original trace reference. Existing
+trace retention is unchanged.</p>
+<p>The DM computes <code>_fault_request_text</code> once per logical turn and uses it for
+observed, legacy per-pass and explicitly overridden exhaustion filing. Its sole
+source is the exact string at <code>params["captain_message"]</code>, including empty or
+whitespace-only strings. Missing/malformed params or values, lookalike keys,
+enriched <code>text</code>, top-level fields and assembled prompts yield no attempted
+text. Promotion, display selection and continuation prompts are unchanged.
+The omitted-argument exhaustion API's old fallback remains a compatibility
+boundary, not a blanket privacy guarantee for external callers.</p>
+<p><code>FAULT_REPORTED</code> keeps its five keys and existing store ownership. The real
+RepairDispatcher remains behind its existing enabled flag, occurrence threshold
+and target selection. At the existing threshold of two filing turns, enabled
+repair produces one pending capability approval; disabled repair produces none.
+No repair execution, routing change, new retry policy or authority expansion is
+part of AD-1205.</p>
+<h2 id="historical-candidate-evidence-rejected-by-r1">Historical candidate evidence -- rejected by R1<a class="headerlink" href="#historical-candidate-evidence-rejected-by-r1" title="Permanent link">&para;</a></h2>
+<p>The original subprocess -&gt; trace -&gt; reopened SQLite -&gt; repair-approval positive
+used submitted code printing the historical diagnostic. Its claimed launch
+origin is withdrawn. R1 also independently reproduced MCP confirmation filing,
+browser intervention resetting pending faults, and private-context fallback for
+raw-empty/raw-missing DM requests. The following original counts and artifacts
+are retained as history, not acceptance or coverage evidence for the R1 repair.</p>
+<p>Boundary coverage includes alias/digit/hex/Unicode identity, raw-request privacy,
+reset/noise/malformed evidence, exact expiry, candidate/turn limits, overlapping
+execution, execution/publication/lock cancellation, duplicate callbacks, internal
+persistence/emitter failures, closure and fresh-store restart. A malformed
+observer result cannot reopen legacy filing. The final 42-file combined focused
+selection passed <strong>2,733 cases, with zero failures, errors or skips</strong>, including
+<strong>146 new cases</strong> (63 observer and 83 production-path cases). Completed-DM
+two-hit and both correction-path same-run controls preserve one filing attempt
+per qualified logical turn. All <strong>366 added executable statements</strong> across the
+nine production modules were covered. The new observer module covered all 275
+statements and 109/110 branches. The
+uncovered negative edge of <code>elif defect is not None</code> is unreachable after a
+validated failing result has constructed its defect; no source-only test or
+coverage exclusion was added to disguise it.</p>
+<p>The run includes the original eight-file baseline, affected consumer families,
+the unchanged AD-1191 base-field guard, AD-1152/AD-1200 goldens and the offline
+ledger tests. All 331 loaded ProbOS modules and 46 test/helper modules resolved
+to the candidate; the nine changed production origins were asserted before test
+I/O. The exact 42-file command/arguments and complete origin enumeration are in
+<code>logs/gates/ordinary-1150-final-focus-cli-20260919T091103834.log</code>; the matching
+JUnit has SHA-256
+<code>0c2aa110bfd712a6edf7b4519d2c58a553f0c2ce52f23c06200d52497bcd5724</code>.
+The matching <code>.coverage.json</code> and <code>.delta-coverage.json</code> retain the scoped
+coverage details. Coverage of the entire nine legacy modules was 39%; the
+100% statement figure applies to the added executable statements, not the
+whole repository.</p>
+<p>The earlier combined run's sole failure was Windows multiprocessing trying to
+reload a stdin launcher. A spawn-compatible <code>python -c</code> entry passed the
+unchanged hard-kill control and then the complete selection. No old assertion
+or golden was relaxed for that runner failure. Three additional qualification
+controls account for the final count increase.</p>
+<p>The derived report is rendered offline from the unchanged pinned snapshot, not
+refreshed through Git/GitHub.</p>
+<h2 id="r1-repair-evidence-and-remaining-limits">R1 repair evidence and remaining limits<a class="headerlink" href="#r1-repair-evidence-and-remaining-limits" title="Permanent link">&para;</a></h2>
+<p>Parent-ratified R1 requires all three repairs together. Initial discriminating
+tests reproduced 11 failures. The pre-launch guard probe reached its forbidden
+<code>Popen</code> fixture in all 18 bad-plan cases before repair; four separate real-origin
+cases initially needed their Windows diagnostic path assertion corrected to
+CPython's <code>repr(path)</code> spelling. Those fixture errors are retained in the log.</p>
+<p>Intermediate focused selections passed 129 capture/loop cases, 239 privacy/
+legacy/approval-chain cases, 351 owner/execution/audit/cleanup cases, and 133
+projection/parallel/byte-preservation cases. These selections overlap and are
+not additive. The chain also caught an initial host diagnostic containing
+<code>validation</code>, which matched the existing invalid-parameter classifier;
+the producer now says <code>pre-launch check</code>, without changing that
+classifier or its policy.</p>
+<p>The mandatory isolated chain uses actual registered MCP/BrowserTool producers,
+shared execution, a real reopened fault store, RepairDispatcher and the real
+capability-request store: <code>F, F, neutral, F, F</code> yields occurrence 1 on the third
+genuine failure, then occurrence 2 and one approval only when enabled. Empty/
+missing raw requests keep attempted empty; private attachment/recall/visual
+markers do not enter fault persistence, events or requests. No bridge/click is
+performed for the refusals, and no repair is executed. The event fixture drains
+listeners locally; this is not evidence of live transport.</p>
+<p>Real correction episodes exercise neutral refusals on both correction paths.
+Reused shared/native executors use independent captures even for overlapping
+runs with reused provider IDs. Both transcript modes, parallel request-order
+correlation, original result/event bytes, bounds, capture failures, cancellation,
+aliases and unchanged old consumers are covered by focused tests.</p>
+<h3 id="final-r1-focused-selection">Final R1 focused selection<a class="headerlink" href="#final-r1-focused-selection" title="Permanent link">&para;</a></h3>
+<p>The complete selected run passed <strong>3,729 tests, 0 failures, 0 errors, 0 skipped</strong>
+across <strong>66 test files</strong>: the prior 42-file selection, 20 additional complete
+consumer files, and explicitly enumerated cases from four more files. The two
+AD-1205 owners contain <strong>284 passing cases</strong> (91 observer, 193 production-path),
+138 more than the rejected candidate. One <code>importlib_metadata</code> deprecation
+warning remains; it is not a test failure.</p>
+<p>Evidence is retained under
+<code>logs/gates/ordinary-1150-r1-final-focus-20260919T113035025.*</code>: log, JUnit,
+summary, full invocation/import provenance and coverage. JUnit SHA-256:
+<code>cd0c985071251c8d30f6710335d0b6e903c65c5963e51b3b43738ea6ece5ee5f</code>.
+All 582 loaded ProbOS modules and 73 test/helper modules were candidate-local.
+Existing Python 3.12.13 used explicit candidate cwd and <code>src</code> plus root import
+paths, asserted before test I/O and after execution.</p>
+<p>Measured R1 added-line coverage, compared with the unchanged rejected index,
+is <strong>122/122 added executable statements</strong> across nine edited production files.
+The current observer covers <strong>328/328 statements and 131/132 branches</strong>; its
+remaining negative defect-presence edge is the previously documented defensive
+edge after validated failing-result construction. No coverage exclusion was
+added. These are scoped measurements, not whole-repository or whole-module
+100% claims. The matching <code>.r1-delta-coverage.json</code> records the verified
+aggregate. An earlier run's null-counter aggregation artifact and corrected
+version are retained separately.</p>
+<p>Limits selected explicitly before the run (no added skip/xfail):</p>
+<ul>
+<li>POSIX memory enforcement on this Windows host:
+  <code>test_ad993_isolation.py::test_memory_limit_enforced</code>.</li>
+<li>Opt-in real Chromium:
+  <code>test_ad706_browser_tool.py::test_real_chromium_goto_about_blank</code>.</li>
+<li>Privileged/host-dependent symlink creation:
+  <code>test_bf788_workdir_cleanup_retries.py::test_a_dangling_link_is_not_read_as_removed</code>.</li>
+<li>Actual offline venv/package-install machinery, outside the no-dependency
+  envelope: <code>test_ad994_code_runner.py::test_install_package_offline_degrades_honestly</code>.</li>
+</ul>
+<p>Generated-script/launcher success, exit/import/timeout, explicit argv precedence,
+audit once, no retry and cleanup/containment controls ran through the selected
+real/fake-substrate consumers. MCP tests use owned stdio fixtures, not network
+servers or an external provider. No live browser/model/vessel work was performed.
+Editor diagnostic tools were unavailable; no standalone editor/type-check
+result is claimed.</p>
+<p>The first expanded run passed 3,726 cases and failed only three derived-ledger
+freshness checks after tracker edits. The allowed report was regenerated offline
+from the unchanged pinned snapshot, and the entire unchanged 3,729-case selection
+was rerun green. Earlier artifacts remain retained.</p>
+<p>The later final-inspection pass made the new interpreter fixture portable and
+asserted candidate imports before fixture I/O. Its rerun exposed two flaky
+byte-comparison fixtures: the capture-OFF/ON requests independently sampled
+their timestamps. R1 keeps the complete field/byte assertions and supplies an
+identical explicit input timestamp instead. The focused fixture/docs selection
+passed 39 cases, followed by the final unchanged 3,729-case selection above.
+No old test/golden was changed for either fixture correction.</p>
+<h3 id="r2-review-and-narrow-correction">R2 review and narrow correction<a class="headerlink" href="#r2-review-and-narrow-correction" title="Permanent link">&para;</a></h3>
+<p>R2 independently verified all three original R1 repairs and blocked one remaining
+Medium seam: valid scratch roots containing policy-classifier words suppressed
+generated-entry fault observations. The parent's retained confirmation used the
+real fault store: an ordinary root filed once after three turns, while
+<code>invalid</code>, <code>permission</code> and <code>cancelled</code> roots filed no report.</p>
+<p>The correction is restricted to the observer-only exact-prefix rule above.
+The guarded bad-plan regression now covers missing and doubled entries under
+all four root names. Each case uses exactly three distinct logical turns and
+verifies no launch, unchanged producer/trace error bytes and signature, original
+argument recovery, audit and cleanup behavior, occurrence 1 only on turn three,
+and the reopened store.</p>
+<p>Before the correction, the new 40-case selection had nine failures and 31
+passes: three direct classification failures and six full-chain failures.
+After the correction, the expanded focused regression selection passed
+<strong>48 cases</strong>, including explicit governance and MCP controls, with zero
+failures/errors/skips. Evidence is retained under
+<code>logs/gates/ordinary-1150-r2-regression-after-20260919T122333998.*</code>.
+The retained 66-file selection and its four documented selection limits remain
+the final focused validation boundary; the parent's later canonical gate will
+run its own unmodified collection.</p>
+<p>The final retained selection passed <strong>3,767 tests, 0 failures, 0 errors,
+0 skipped</strong>, with one <code>importlib_metadata</code> deprecation warning. The AD-1205
+owners contain <strong>322 cases</strong> (91 observer, 231 production-path), 38 more than
+the R1 selection. Both R2-added executable classifier statements were covered;
+this is not a whole-module coverage claim. All 582 loaded ProbOS modules and
+73 test/helper modules were candidate-local, and all 18 candidate files were
+unchanged during the run.</p>
+<p>Final log/JUnit/summary/import-origin/coverage evidence is retained under
+<code>logs/gates/ordinary-1150-r2-final-focus-20260919T123004792.*</code>.
+JUnit SHA-256:
+<code>070a9fad451557715b174e2b90e6f4f04f8c9903acd057aba940f0bed787e04a</code>.
+The R2 frozen index remains <code>d3fd649ec4831b4501a2fe4c1fc92b296779a087</code>;
+earlier R1 and R2 defect-positive evidence remains retained.</p>
+<p>No independent approval of this R2 correction, canonical preflight/full gate, staging, commit,
+release, live-vessel diagnosis or verified closure is claimed. The parent owns
+frozen-candidate re-review and all release steps.</p>
+<p>Rollback removes the diagnostic wiring/capture/collector and generated-entry
+guard together. There is no migration to undo: durable rows/events
+already use the existing schema. Do not delete old fault rows, refresh the
+pinned ledger snapshot or relax repair/capability controls as part of rollback.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

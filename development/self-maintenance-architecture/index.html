@@ -1,0 +1,2107 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/self-maintenance-architecture/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AD-1299 - ProbOS Self-Maintenance Architecture - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ad-1299-probos-self-maintenance-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AD-1299 - ProbOS Self-Maintenance Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose-and-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose and boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existing-foundations-and-measured-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing foundations and measured limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-and-cognitive-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership and cognitive lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#separate-authority-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Separate authority classes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supervisedcampaignadapter-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SupervisedCampaignAdapter v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-neutral-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend-neutral execution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#isolate-validate-promote-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Isolate, validate, promote, recover
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-bounded-implementation-epic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One bounded implementation epic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allocation-and-issue-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Allocation and issue reconciliation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ad-1299-probos-self-maintenance-architecture">AD-1299 - ProbOS Self-Maintenance Architecture<a class="headerlink" href="#ad-1299-probos-self-maintenance-architecture" title="Permanent link">&para;</a></h1>
+<p><strong>Status: planned, not implemented.</strong> This is an OSS architecture decision, not
+an active Supervised Worker campaign or permission to start one. No runtime,
+deployment, governance policy, or campaign state changes are authorized here.</p>
+<p><strong>Tracking:</strong> <a href="https://github.com/seangalliher/ProbOS/issues/1352">Epic #1352</a>.
+See the <a href="../roadmap/#probos-self-maintenance-ad-1299">roadmap</a> and the append-only
+<a href="../../DECISIONS.md#ad-1299-2026-09-06---governed-probos-self-maintenance">decision record</a>.</p>
+<h2 id="purpose-and-boundary">Purpose and boundary<a class="headerlink" href="#purpose-and-boundary" title="Permanent link">&para;</a></h2>
+<p>A Utility-tier <strong>ProbOS Engineering Maintenance Agent</strong> diagnoses, repairs,
+maintains, and enhances ProbOS by composing its existing engineering and
+self-modification systems. It is an instructions-first <code>CognitiveAgent</code>, not
+another coding loop, scheduler, or root of trust. Its proposed implementation
+name is <code>EngineeringMaintenanceAgent</code>; this document does not claim that class
+is already implemented.</p>
+<p><strong>Supervised Worker remains independent.</strong> It owns campaign admission,
+authority, durable campaign state, operation reconciliation, evidence
+acceptance, review requirements, and completion. ProbOS is both the system
+being maintained and one possible execution backend. It cannot authorize its
+own promotion or repair the governance layer that decides whether to accept it.</p>
+<p>The boundary is a versioned <strong><code>SupervisedCampaignAdapter</code></strong>, not a vendored copy,
+fork, in-process import, or reimplementation of Supervised Worker. The trusted
+Worker installation, policy, credentials, and durable state stay outside the
+candidate's writable environment. Root-of-trust independence requires enforced
+process/filesystem isolation; a different directory under the same unrestricted
+principal is not a security boundary.</p>
+<h2 id="existing-foundations-and-measured-limits">Existing foundations and measured limits<a class="headerlink" href="#existing-foundations-and-measured-limits" title="Permanent link">&para;</a></h2>
+<p>These are inspected source contracts, not a claim that a running vessel has
+exercised the proposed end-to-end path.</p>
+<table>
+<thead>
+<tr>
+<th>Foundation</th>
+<th>Reuse and boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../../src/probos/cognitive/engineering_officer.py">EngineeringAgent</a></td>
+<td>The existing Domain-tier Engineering officer provides analysis and optimization proposals. Keep that role and the chain of command; the new Utility agent owns the scoped maintenance-facing cognitive lifecycle, not department leadership.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/repair_brief.py">RepairBrief</a> and <a href="../../src/probos/cognitive/repair_dispatch.py">RepairDispatcher</a></td>
+<td>AD-1172 already carries a harness-neutral brief and prepares a Captain-approved target choice without running a harness. Reuse its fault identity, brief, and approval surface; do not add a parallel fault store or target chooser.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/repair_verification.py">Repair verification</a></td>
+<td>The existing verifier can label a changed error signature <code>repaired</code> even when the operation still fails. Preserve that fault-specific meaning; it is not acceptance evidence for the requested behavior or runtime promotion.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/architect.py">ArchitectAgent</a></td>
+<td>Grounded engineering proposals. Retain its existing role; adding a Utility maintenance agent does not reclassify the Architect.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/builder.py">Builder and execute_approved_build</a></td>
+<td>Existing <code>BuildSpec</code> and build execution. The helper writes into the supplied <code>work_dir</code>; its branch creation does not establish runtime isolation. Its embedded code-review rejection is currently a soft gate, not independent promotion approval.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/swe_harness/native_builder.py">NativeBuilderHarness</a></td>
+<td>Existing ProbOS coding harness and tool loop. Passing a directory in a prompt does not enforce tool filesystem confinement.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/self_mod.py">SelfModificationPipeline</a></td>
+<td>Reuse design, validation, sandbox, probationary trust, and behavioral monitoring through injected dependencies. Maintenance candidates must bind registration and pool creation to the shadow runtime, never the active runtime.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/code_validator.py">CodeValidator</a></td>
+<td>Validates generated agent source, including agent-schema conformance. It is not a general validator for arbitrary runtime modules and is not a substitute for isolation or repository gates.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/agents/system_qa.py">SystemQAAgent</a> and <a href="../../src/probos/agents/red_team.py">RedTeamAgent</a></td>
+<td>Reuse QA and adversarial checks with campaign-bound inputs and results. Merely registering an agent or producing a verdict does not prove the candidate was tested.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/consensus/trust.py">TrustNetwork</a> and <a href="../../src/probos/cognitive/episodic.py">episodic memory</a></td>
+<td>Learn from verified attempted outcomes; neither a high trust score nor a remembered lesson grants authority.</td>
+</tr>
+<tr>
+<td><a href="../../scripts/run_test_gate.py">Repository test gate</a></td>
+<td>Reuse the canonical frozen-tree validation and receipts; a harness exit or a selected subset is not the broad gate.</td>
+</tr>
+</tbody>
+</table>
+<p>The closed <a href="https://github.com/seangalliher/ProbOS/issues/1095">self-diagnosis and repair epic #1095</a>
+owns AD-1166 through AD-1173. Its closure records the shipped fault/diagnose/repair
+loop; its original problem statement is historical, not a current absence
+claim. AD-1299 extends those foundations with independently governed campaigns
+and immutable runtime promotion rather than reopening or duplicating them.</p>
+<p>The <a href="https://github.com/seangalliher/supervised-worker/blob/main/docs/architecture.md">Supervised Worker architecture</a>
+currently describes Copilot execution and version-2 role handoffs. The adapter
+and ProbOS-backend support below are proposed integration work, not a claim
+that the present plugin exposes a backend-neutral service API. Adapter v1 and
+Worker handoff v2 are separate version namespaces.</p>
+<h2 id="ownership-and-cognitive-lifecycle">Ownership and cognitive lifecycle<a class="headerlink" href="#ownership-and-cognitive-lifecycle" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TD
+    Signals[Faults, diagnostics, upkeep requests, approved goals]
+    Agent[Engineering Maintenance Agent - Utility]
+    Adapter[SupervisedCampaignAdapter v1]
+    Worker[Independent Supervised Worker]
+    Architect[Existing Architect and approved BuildSpec]
+    Native[ProbOS coding harness and Builder]
+    GHCP[GitHub Copilot / GHCP]
+    Candidate[Isolated candidate and shadow validation]
+    Evidence[QA, Red Team, independent review, frozen gate]
+    Release[External release controller]
+    Health[Health observation or rollback]
+    Signals --&gt; Agent --&gt; Adapter --&gt; Worker
+    Worker --&gt; Architect
+    Worker --&gt; Native
+    Worker --&gt; GHCP
+    Architect --&gt; Candidate
+    Native --&gt; Candidate
+    GHCP --&gt; Candidate
+    Candidate --&gt; Evidence --&gt; Worker
+    Worker --&gt; Release --&gt; Health
+    Health --&gt; Worker
+    Worker --&gt; Adapter</code></pre>
+<ul>
+<li><strong>Perceive:</strong> read scoped diagnostics, existing fault records, source/test
+  evidence, and relevant episodes. Resolve operational paths and release identity
+  from the process/deployment authority, never from a repository-relative guess.</li>
+<li><strong>Decide:</strong> use instructions-driven reasoning to diagnose, classify the work,
+  choose an existing engineering capability, and propose a bounded objective.
+  An agent's classification is a proposal; the Worker validates authority.</li>
+<li><strong>Act:</strong> obtain an Architect-reviewed contract, submit it through the adapter,
+  and collaborate with Builder, QA, and Red Team within the admitted campaign.
+  Deterministic services own transitions; agents own engineering judgment.</li>
+<li><strong>Report:</strong> project authoritative campaign evidence into existing work/approval
+  surfaces and episodic memory. Distinguish proposed, built, tested, promoted,
+  healthy, rolled back, blocked, failed, and unknown outcomes. Reports and
+  ProbOS work-item status are not campaign completion authority.</li>
+</ul>
+<p>No second durable campaign database or scheduler is introduced in ProbOS.
+Adapter caches and work-item projections are disposable and recoverable from
+Worker-issued identity/revision receipts. New dependencies use narrow injected
+protocols; eventual configuration belongs in the existing Pydantic models.
+Autonomous repair, maintenance, and enhancement admission default to disabled.
+Without a compatible, authenticated Worker, diagnosis and proposals remain
+available but mutation and promotion are blocked with an explicit escalation.</p>
+<h2 id="separate-authority-classes">Separate authority classes<a class="headerlink" href="#separate-authority-classes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Permitted objective</th>
+<th>Required authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Repair</td>
+<td>Restore an existing approved behavior against a reproduced defect and a discriminating regression test.</td>
+<td>Captain approval, or an explicit time-bounded repair delegation with repository, paths, tools, risk, budgets, and allowed effects fixed in advance. No feature expansion.</td>
+</tr>
+<tr>
+<td>Maintenance</td>
+<td>Preserve approved behavior through declared upkeep, supported dependency refresh, performance work, or bounded operational maintenance.</td>
+<td>A separate maintenance grant with compatibility criteria, allowed operations, schedule, and resource limits. A repair grant does not imply it.</td>
+</tr>
+<tr>
+<td>Enhancement</td>
+<td>Add or intentionally change behavior, capability, public contracts, or architecture.</td>
+<td>Explicit Captain-approved scope and architecture decision, followed by its own accepted build contract. Neither repair nor maintenance authority implies enhancement authority.</td>
+</tr>
+</tbody>
+</table>
+<p>Authority is checked at admission and every consequential boundary. Expiry,
+revocation, scope drift, mixed-class changes, or an unclassified effect pauses
+work for reauthorization; changing a label never widens a grant. Security,
+governance, deployment-control, and data-migration effects require explicit
+approval regardless of the proposed class. Destructive mesh intents retain
+consensus requirements; consensus and trust do not replace external approval.</p>
+<p>The agent, Builder, and either backend cannot change Worker code, constitution,
+policy, role mapping, review rules, grants, completion criteria, or accepted
+evidence. Changes to the adapter or release controller itself require separate
+external review/activation; a campaign cannot weaken the controls judging it.
+Escalation routes authority to the appropriate owner rather than silently
+removing a capability or continuing with weaker controls.</p>
+<h2 id="supervisedcampaignadapter-v1">SupervisedCampaignAdapter v1<a class="headerlink" href="#supervisedcampaignadapter-v1" title="Permanent link">&para;</a></h2>
+<p>The proposed contract identifier is <code>supervised-campaign-adapter/v1</code>. Negotiate
+the exact supported protocol, Worker identity/version, handoff schema version,
+and capabilities before admission. Unsupported versions or missing required
+capabilities are incompatible, not permission to fall back to direct execution.
+Breaking changes require a new major contract and explicit acceptance; optional
+extensions cannot change a safety-critical field or an old receipt's meaning.</p>
+<table>
+<thead>
+<tr>
+<th>Contract area</th>
+<th>Required v1 semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity</td>
+<td>Worker-issued <code>campaign_id</code>; stable <code>item_id</code> and <code>operation_id</code>; a new <code>attempt_id</code> for each execution attempt; repository identity, immutable base commit/tree, and expected campaign revision. Backend identity is attempt metadata, never the campaign key.</td>
+</tr>
+<tr>
+<td>Authority</td>
+<td>Work class, requester provenance, accepted workflow/policy/contract hashes, grant identity and expiry, approved path/tool/effect footprint, budgets, reviewer independence policy, and promotion/rollback authorization references. Backend restrictions may narrow a grant but never expand it.</td>
+</tr>
+<tr>
+<td>Candidate</td>
+<td>Exact source tree, artifact/dependency manifest hashes, isolated environment identity, test configuration, prior healthy release, and data/config compatibility plan. A path or branch name alone is not candidate identity.</td>
+</tr>
+<tr>
+<td>Evidence</td>
+<td>Typed, versioned, content-addressed references with producer provenance, operation/attempt identity, candidate identity, observed result, command/check identity, and completion status. Verify bytes and provenance; a digest alone does not establish authenticity. No raw prompts, credentials, or tool payloads in control messages.</td>
+</tr>
+<tr>
+<td>Operations</td>
+<td>Proposed <code>negotiate</code>, <code>submit</code>, <code>inspect</code>, <code>request_cancel</code>, <code>request_promotion</code>, and <code>request_rollback</code> operations. Mutations require expected revision and idempotency identity. These are adapter requirements, not names asserted to exist in today's Worker CLI.</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td>Worker-authoritative inspect/reconcile before retry or backend change. An unknown side effect is not failed, cancelled, or safe to replay. Duplicate submissions resolve to the existing operation; no transport-level exactly-once claim.</td>
+</tr>
+<tr>
+<td>Results</td>
+<td>Worker-issued revision and evidence references distinguish acknowledged admission, progress, blocked/unknown, terminal failure/cancellation, completion, and rollback. Acknowledgement is not execution, execution is not promotion, and a backend's success flag cannot close a campaign.</td>
+</tr>
+</tbody>
+</table>
+<p>The Worker remains the only durable campaign-state writer. The adapter uses
+supported authenticated Worker operations and validated role handoffs; it never
+edits <code>.supervised-worker/</code>, fabricates helper receipts, reads private internals
+as an API, or acquires governance authority through the maintained runtime.
+Any necessary Worker-side public extension belongs upstream in the independent
+Worker project, not in a copied OSS implementation.</p>
+<p>The current Worker requires passed focused and broad evidence before its formal
+pre-review handoff. Repository pre-gate engineering review does not substitute
+for that issued review attempt. The adapter must preserve the required ordering
+and bind the reviewed Git index, the committed tree tested by the repository
+gate, and the promoted artifacts to the same candidate. Do not relabel an
+informal review, a different commit's tests, or a self-reported model identity
+as a Worker-accepted receipt.</p>
+<h2 id="backend-neutral-execution">Backend-neutral execution<a class="headerlink" href="#backend-neutral-execution" title="Permanent link">&para;</a></h2>
+<p>Both <strong>ProbOS coding harness</strong> and <strong>GitHub Copilot/GHCP</strong> implement the same
+admitted execution contract. The Worker dispatches an approved role/attempt;
+it does not gain another inference client or autonomous coding loop. Existing
+Architect, Builder, QA, Red Team, and self-modification capabilities remain
+reusable components, including when GHCP authors the candidate.</p>
+<p>Backend choice must not change <strong>campaign identity, authority, review, evidence,
+completion, promotion, or rollback semantics</strong>. Every backend returns provisional
+artifacts and observed outcomes. Worker-controlled validators accept evidence;
+the backend cannot attest its own report into release authority. Model/host
+provenance and reviewer separation must be established under the same accepted
+policy on both paths. A backend unable to provide a required fact is blocked,
+not given a backend-specific waiver.</p>
+<p>A switch preserves campaign/item/operation identity, budget consumption,
+accepted policy/contract, prior attempts, and evidence history. The Worker must
+first resolve the old attempt and prove it no longer has write authority. It
+then issues a new attempt/workspace lease and records the selected backend.
+Ambiguous execution blocks the switch; automatic fallback must not replay a
+possibly completed edit, push, promotion, or rollback. Only evidence for the
+exact unchanged candidate can remain current across attempts.</p>
+<h2 id="isolate-validate-promote-recover">Isolate, validate, promote, recover<a class="headerlink" href="#isolate-validate-promote-recover" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Pin and isolate.</strong> Record the approved base and active release identities.
+   Create a separate worktree and constrained execution environment. Preserve
+   existing worktrees and uncommitted changes. No backend may write to the
+   active runtime tree, environment, packages, data, governance state, or
+   deployment selector. Check canonical paths, junctions/symlinks, hard links,
+   subprocess working directories, and tool roots. A worktree is isolation of
+   source changes, not a sandbox for arbitrary build/test code.</li>
+<li><strong>Diagnose and build.</strong> Reuse the existing fault/repair flow, Architect and
+   <code>BuildSpec</code>, then Builder/native harness or GHCP against the isolated
+   candidate. Assert the reproduction's premise before trusting it. Bind every
+   mutation to the accepted footprint. No active-runtime <code>AgentPatcher</code>,
+   monkey-patching, module reload, live registration, or in-place package update
+   is a maintenance deployment path.</li>
+<li><strong>Shadow validation.</strong> Run a separate candidate process with disposable or
+   verified snapshot-derived data, separate ports/identities, and blocked or
+   explicitly brokered external effects. Prove interpreter/import origins are
+   the candidate, not the parent's editable installation. Apply <code>CodeValidator</code>
+   before every generated/restored agent import, retain sandbox/probation/QA/
+   behavioral checks, and use repository static/security checks for core code.
+   Do not weaken agent-schema validation to make arbitrary core modules pass.
+   Replaying stored failing arguments requires authority for the operation's
+   effects and an isolated target; a trace is not permission to repeat a live
+   destructive action. Test the intended behavior, not just disappearance of
+   the original error signature.</li>
+<li><strong>Freeze and verify.</strong> Run focused regressions through affected production
+   consumers, System QA and Red Team, then an independent adversarial review
+   against the frozen candidate under the accepted reviewer policy. Repair
+   findings before the final canonical repository gate; include UI tests/build
+   where applicable. Any source, test, dependency, configuration, or artifact
+   change invalidates affected evidence and requires revalidation. No unresolved
+   Critical/High finding and no missing/unknown required check can pass.</li>
+<li><strong>Prepare immutable release.</strong> Produce a content-addressed release manifest
+   binding source, executable artifacts, dependencies, relevant configuration,
+   evidence, and the prior known-good release. Verify the staged bytes again
+   before activation. Retain the previous release and a verified recovery path.
+   Irreversible migrations are outside ordinary v1 admission; data-affecting
+   work needs an explicitly approved compatibility and restoration proof.</li>
+<li><strong>Promote externally.</strong> Only an independent release controller acting on
+   Worker-verified authorization may drain/stop the old process and activate
+   the immutable candidate with an expected-release/generation check. Use the
+   deployment platform's atomic selector or controlled restart protocol; never
+   overwrite files imported by the running process. ProbOS, Builder, and GHCP
+   have no direct promotion credential. Persist intent/outcome so a crash or
+   ambiguous switch can be reconciled before any retry.</li>
+<li><strong>Observe and roll back.</strong> External health checks verify the actual release
+   identity, readiness, targeted repaired behavior, and bounded observation
+   criteria fixed before promotion. Missing or ambiguous health is not healthy.
+   On failure, the release controller restores the prior immutable release under
+   preauthorized rollback policy and verifies its health. Code rollback is not
+   data rollback: prohibit automatic reuse of incompatible data and escalate
+   when the approved restore procedure cannot safely run. Worker recovery must
+   remain usable when ProbOS is unhealthy or stopped.</li>
+</ol>
+<p><strong>Completion requires the chain</strong>, not its individual producers: accepted
+contract, isolated build, current validation and independent review, verified
+immutable promotion, and passed post-promotion observation. Any required remote
+publication and issue closure must also be read back from their authorities.
+Rolled back is a recorded outcome, not a successful enhancement. Keep campaign
+completion separate from build success and from restoring service after failure.</p>
+<p>Record diagnoses, attempted actions, reviewer findings, verification outcomes,
+promotion, and rollback as linked episodes with evidence references. Trust
+updates retain raw <code>(alpha, beta)</code> parameters and are idempotent over verified
+attempted outcomes; no-attempt/blocked outcomes do not earn success credit.
+Lessons, Hebbian routing, and behavioral monitoring can improve future proposals
+but cannot modify external authority or waive future gates.</p>
+<h2 id="one-bounded-implementation-epic">One bounded implementation epic<a class="headerlink" href="#one-bounded-implementation-epic" title="Permanent link">&para;</a></h2>
+<p>Use one AD and one epic with ordered acceptance slices, not a new issue per
+component. Existing fault/repair and platform-maturity owners retain their scope.
+Split only if implementation establishes a separately owned, independently
+testable blocker that cannot be delivered inside this contract.</p>
+<ul>
+<li><strong>S1 - Contract and conformance:</strong> specify adapter v1 and the public Worker
+  integration boundary; test both backends against the same authority, identity,
+  evidence, cancellation, unknown-outcome, and backend-switch fixtures.</li>
+<li><strong>S2 - Utility agent and admission:</strong> wire instructions-first diagnosis and
+  the three authority classes through existing fault/Architect/approval surfaces.
+  Test happy, denied/expired, empty, unavailable, and malformed paths; default-off
+  behavior must preserve the existing runtime.</li>
+<li><strong>S3 - Isolated engineering:</strong> reuse Builder/harness, self-modification,
+  CodeValidator, QA and Red Team in a shadow environment. Tests must prove actual
+  consumer crossings and attempted writes cannot reach protected roots.</li>
+<li><strong>S4 - Release and recovery:</strong> prove immutable promotion, external health,
+  rollback, crash reconciliation, evidence currency, and episodic/trust outcomes
+  across both real execution backends. A simulated backend alone cannot satisfy
+  dual-backend acceptance.</li>
+</ul>
+<p>The milestone test starts from a real seeded ProbOS defect, obtains the proper
+authority, builds in isolation, validates through the repaired consumer, obtains
+independent review, promotes a frozen release, and verifies health. Run it once
+per backend with identical acceptance semantics. Pair it with denied authority,
+tampered/stale evidence, active-root write attempts, unknown execution, interrupted
+promotion, failing health, and verified rollback. Assert each failure fixture
+actually reached the boundary it claims to exercise.</p>
+<p>Include a retry that fails with a different signature: it may satisfy the old
+fault-specific verifier but must not satisfy campaign success. Formal Worker
+review/evidence binding must be exercised, not replaced with a test-only approval.</p>
+<p>Verify all changes comply with the Engineering Principles in
+<code>.github/copilot-instructions.md</code>.</p>
+<p><strong>Do not build:</strong> a second coding harness, LLM client, central cognitive
+dispatcher, durable campaign engine, tracker/dashboard, new fault database,
+in-place runtime updater, governance self-editor, or relaxed validation path.
+This planning change does not activate agents, run a campaign, alter existing
+issues' completion, or modify any <code>.supervised-worker</code> state.</p>
+<h2 id="allocation-and-issue-reconciliation">Allocation and issue reconciliation<a class="headerlink" href="#allocation-and-issue-reconciliation" title="Permanent link">&para;</a></h2>
+<p>On 2026-09-06 the first operation was
+<a href="../../scripts/ad_ceiling.py">scripts/ad_ceiling.py</a>. It requires all three
+sources to succeed and refuses truncated GitHub enumeration. Its result was:</p>
+<table>
+<thead>
+<tr>
+<th>Authoritative source</th>
+<th>Ceiling</th>
+<th>Enumeration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Git log subjects, all refs</td>
+<td>AD-1298</td>
+<td>1,976 AD references</td>
+</tr>
+<tr>
+<td>GitHub issue titles, open and closed</td>
+<td>AD-1291</td>
+<td>1,351 issues; 993 AD-titled; below the 4,000 limit</td>
+</tr>
+<tr>
+<td><code>prompts/ad-*.md</code> filenames</td>
+<td>AD-1298</td>
+<td>61 matching prompt files</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Verified prior ceiling: AD-1298. Next sequential allocation: AD-1299.</strong> S1-S4
+above are acceptance slices within this AD, not additional AD allocations.</p>
+<p>Duplicate searches used <code>repo:seangalliher/ProbOS is:issue</code> with no state filter,
+so both open and closed issues were searched. All five returned
+<code>incomplete_results: false</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Additional search terms</th>
+<th>Results</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maintenance</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>"Supervised Worker"</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>"self-repair"</code></td>
+<td>1: closed #1095, the existing fault/repair foundation</td>
+</tr>
+<tr>
+<td><code>"self-maintenance"</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>repair runtime</code></td>
+<td>1: closed <a href="https://github.com/seangalliher/ProbOS/issues/377">#377</a>, Runtime Public API Promotion</td>
+</tr>
+</tbody>
+</table>
+<p>The existing <a href="https://github.com/seangalliher/ProbOS/issues/1324">platform-maturity epic #1324</a>
+continues to own capability truth, consumer-crossing tests, modularity, and
+recovery foundations. This plan consumes those contracts without absorbing its
+backlog. One new self-maintenance epic is sufficient for this bounded integration;
+upstream compatibility is an acceptance condition, not a speculative new issue.
+The single new issue is <a href="https://github.com/seangalliher/ProbOS/issues/1352">#1352</a>;
+no child issues are allocated. Linking #1324 does not activate or inherit its
+execution delegation.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
