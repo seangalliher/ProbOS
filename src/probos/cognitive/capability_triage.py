@@ -638,9 +638,9 @@ async def _file_through_ladder(
 
     Only a grant may still be fulfilled at file time, through the unchanged fast
     path. An install and a build are always left pending for the Captain. A build
-    is never designed here: the pipeline's own approval gate passes when no console
-    callback is wired (a serve vessel until its first HXI slash command) and
-    otherwise asks a console, so a file-time build is not one the Captain approved.
+    is never designed here: the pipeline's own approval gate refuses a design when no
+    console callback is wired (BF-877) and otherwise asks a console, so a file-time
+    build is not one the Captain approved.
     """
     tool_reg: Any = None
     selected_server: Any = None

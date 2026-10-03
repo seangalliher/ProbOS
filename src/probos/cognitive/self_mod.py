@@ -27,6 +27,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# BF-877: the status and reply of a design that needs approval, is not pre-approved,
+# and has no approval callback to ask.
+APPROVAL_UNAVAILABLE = "approval_unavailable"
+APPROVAL_UNAVAILABLE_DETAIL = (
+    "Not designed: a new agent needs the Captain's approval. None is on record for "
+    "this request, and this process has no approval prompt. Approve it with the HXI "
+    "Build Agent button or at the interactive shell, or turn on "
+    "capability_triage.unified_ladder_enabled to file it as a build request for the "
+    "Captain."
+)
+
+
+def approval_refusal(result: object) -> str | None:
+    """BF-877: the refusal text when an NL ``result`` carries a design refused for want of approval, else None."""
+    if not isinstance(result, dict):
+        return None
+    self_mod = result.get("self_mod")
+    if not isinstance(self_mod, dict) or self_mod.get("status") != APPROVAL_UNAVAILABLE:  # BF-877: only the refusal
+        return None
+    error = self_mod.get("error")
+    return error if isinstance(error, str) and error else APPROVAL_UNAVAILABLE_DETAIL
+
 
 @dataclass
 class DesignedAgentRecord:
@@ -49,7 +71,8 @@ class SelfModificationPipeline:
 
     Flow:
     1. Check config: is self_mod enabled? Under max_designed_agents?
-    2. Ask user for approval to design an agent (if require_user_approval)
+    2. Ask user for approval to design an agent (if require_user_approval), unless it
+       is pre-approved; with no approval callback to ask, refuse (BF-877)
     3. Call AgentDesigner to generate code
     4. Call CodeValidator to statically analyze code
     5. DependencyResolver — detect missing packages, prompt user, install
@@ -114,9 +137,13 @@ class SelfModificationPipeline:
 
         Returns DesignedAgentRecord if successful, None if any step fails.
 
-        AD-1194: ``pre_approved`` means the Captain already approved this design
-        on the capability-request route, so the user-approval prompt is not asked
-        again. Every other gate still runs.
+        ``pre_approved`` means the Captain already approved this design -- on the
+        capability-request route (AD-1194), with the HXI Build Agent button or at
+        the shell's strategy prompt (BF-877) -- so the user-approval prompt is not
+        asked again. Every other gate still runs. BF-877: a design that needs
+        approval, is not pre-approved and has no approval callback to ask is
+        refused; an ``APPROVAL_UNAVAILABLE`` record is returned and nothing is
+        designed.
         """
         # AD-872: cheap pre-design shape gate. Honest-degrade (Tier-2): a gate
         # failure must NEVER block a legitimate forge — log and fall through to
@@ -165,9 +192,30 @@ class SelfModificationPipeline:
             self._records.append(record)
             return record
 
-        # User approval gate -- not asked twice for a design the Captain already
-        # approved on the capability-request route (AD-1194).
-        if self._config.require_user_approval and self._user_approval_fn and not pre_approved:
+        # User approval gate -- not asked for a design the Captain already approved
+        # (AD-1194, BF-877), and refused when there is nobody to ask (BF-877).
+        if self._config.require_user_approval and not pre_approved:
+            if self._user_approval_fn is None:
+                logger.warning(
+                    "BF-877: refused to design an agent for intent %r: "
+                    "self_mod.require_user_approval is on, the design was not pre-approved, "
+                    "and no approval callback is wired in this process; nothing was designed. "
+                    "Approve it with the HXI Build Agent button or at the interactive shell, "
+                    "or turn on capability_triage.unified_ladder_enabled to file it as a "
+                    "build request for the Captain.",
+                    intent_name,
+                )
+                record = DesignedAgentRecord(
+                    intent_name=intent_name,
+                    agent_type=intent_name,
+                    class_name="",
+                    source_code="",
+                    created_at=time.monotonic(),
+                    status=APPROVAL_UNAVAILABLE,
+                    error=APPROVAL_UNAVAILABLE_DETAIL,
+                )
+                self._records.append(record)
+                return record
             description = (
                 f"Intent: {intent_name}\n"
                 f"Description: {intent_description}\n"
@@ -627,6 +675,10 @@ class SelfModificationPipeline:
         self._monitor.track_agent_type(f"skill:{intent_name}")
         logger.info("Skill designed and attached: %s -> %s", intent_name, target_agent_type)
         return record
+
+    def set_user_approval_fn(self, fn: Callable[[str], Awaitable[bool]] | None) -> None:
+        """Install, or clear with ``None``, the callback that approves a design (BF-877)."""
+        self._user_approval_fn = fn
 
     def designed_agents(self) -> list[DesignedAgentRecord]:
         """Return all designed agent records (active and removed)."""

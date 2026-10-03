@@ -52,6 +52,12 @@ class ProbOSShell:
     Slash commands (``/status``, ``/agents``, etc.) inspect system state.
     Plain text is routed through the cognitive pipeline via
     ``ExecutionRenderer.process_with_feedback()``.
+
+    ``self_mod_console_approval`` (BF-877): when set, the shell asks at its console
+    to approve a self-mod design. The CLI REPL passes it; ``serve`` (with or without
+    ``--interactive``) and the API do not -- a server process gets its approvals
+    through the HXI or the inbox, and the API builds a shell per HXI slash command
+    with a discarded console, so it installs no approval prompt.
     """
 
     COMMANDS: dict[str, str] = {
@@ -122,6 +128,8 @@ class ProbOSShell:
         self,
         runtime: ProbOSRuntime,
         console: Console | None = None,
+        *,
+        self_mod_console_approval: bool = False,
     ) -> None:
         self.runtime = runtime
         self.console = console or Console()
@@ -139,11 +147,13 @@ class ProbOSShell:
                 lambda desc, ctx: user_escalation_callback(self.console, desc, ctx)
             )
 
-        # Wire self-mod user approval callback
+        # Wire self-mod user approval callback -- only an attended console may ask
+        # (BF-877). The API's slash-command shell prints to a discarded buffer.
         if self.runtime.self_mod_pipeline:
-            self.runtime.self_mod_pipeline._user_approval_fn = (
-                lambda desc: user_self_mod_approval(self.console, desc)
-            )
+            if self_mod_console_approval:
+                self.runtime.self_mod_pipeline.set_user_approval_fn(
+                    lambda desc: user_self_mod_approval(self.console, desc)
+                )
             self.runtime.self_mod_pipeline._import_approval_fn = (
                 lambda names: user_import_approval(self.console, self.renderer, names)
             )

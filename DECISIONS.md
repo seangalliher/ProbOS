@@ -10209,3 +10209,48 @@ Measured at `cf13eb4f` through the real pipeline and registration: (2.0, 2.0) as
 - A runtime that is never stopped, a never-started runtime's `crew_profiles.db` (open until it is collected), executor threads and the suite slowdown are out of scope.
 
 **Ownership and rollback:** A Git revert needs no migration; the decorator is one line, and `rollback` defaults to False. No column, config key, event, tool or tool schema is added or changed. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
+
+### BF-877 OPEN -- A self-mod design nobody approved is refused, not built
+
+**Date:** 2026-10-02. **Existing issue:** #1438. **Decision:** the Captain's (#1438, comment 5945966053), executed by the Architect's build contract as amended by the orchestrator's A-1, A-2 and A-3. BF-877 was already allocated to #1438, so no number is allocated.
+
+**The defect.** `SelfModificationPipeline.handle_unhandled_intent` asked for approval only when a callback was wired (`require_user_approval and _user_approval_fn and not pre_approved`). The only code that wires one is `ProbOSShell`, which the CLI builds, and which the API builds once for every HXI slash command. So a `serve` vessel designed and registered unapproved agents:
+- from unattended NL requests with the ladder off;
+- from AD-855 work-item builds at filing time;
+- from build cards approved with the ladder off, without checking that the approval admits the design.
+
+After its first slash command, its "approval" was a console prompt on the server's stdin. Measured at `bc7b9bc4`: the unattended NL request and the AD-855 build each designed and registered the agent, and one HXI slash command installed the console prompt; 10 of 18 prototype tests fail there.
+
+**What changes.**
+- A design that needs approval, is not pre-approved and has no callback to ask is refused before any side effect. The pipeline keeps and returns a record with status `approval_unavailable` and a reply text; one WARNING names the intent, the cause and the remedy; the unattended NL reply carries the text, also when the decomposer's own reply was empty.
+- Unattended consumers of `process_natural_language` read the refusal through one classifier, `approval_refusal`, and treat it as a failure, never as a success (A-2):
+  - a refused one-shot persistent task, or one with no run left, is marked failed, never completed, and its last result carries the refusal. A refused recurring task with runs left stays scheduled, with the refusal in its last result, and tries again at its next run, because a refusal ends once the Captain approves the design (A-3);
+  - the in-memory task scheduler marks the task failed and still delivers its reply, which states the refusal;
+  - a cron replay uses its slot without counting a fire, rather than re-firing on every one-second tick until the Captain acts, and is next attempted at its next scheduled time;
+  - a correction retry is not scored as a success.
+- A refused DAG resume keeps its checkpoint and returns the refusal, which the resume route answers with 400, so the DAG can be resumed again once the design is approved (A-3).
+- The HXI Build Agent route and the shell's strategy choice pass `pre_approved=True`, instead of setting the callback to `None` and restoring it.
+- `ProbOSShell` installs the console prompt only when built with `self_mod_console_approval=True`, through a new public `set_user_approval_fn`. Only the CLI REPL passes it; `serve` (with or without `--interactive`) and the API do not (A-1.1).
+- The build fulfiller re-reads the committed request with the ladder on or off, designs only what the AD-1194 approval policy admits, and passes `pre_approved=True` (A-1.2). With the ladder off, a build card the Captain approves is designed; a delegate's approval of a build that requires consensus designs nothing and logs an ERROR; an AD-855 file-time build, refused at filing, waits in the inbox until it is approved.
+- With the ladder off, the shell offers no skill for a gap that requires consensus (R11), and the new agent is designed with that requirement.
+
+**Why this option.**
+- A distinct status, not `rejected_by_user`, because nobody declined.
+- A returned record, not `None`, because the reason must reach the requester.
+- A constructor flag that defaults to no prompt, because a default of "install it" fails open for the next server-side construction. `serve --interactive` serves the API and runs every unattended producer, so it is a server process too; its approvals arrive through the HXI or the inbox.
+- A card the Captain approves is designed with the ladder off as well as on: the route records the decider either way, and the committed approval the policy admits is the design approval. Refusing it would leave the Captain's explicit approval unable to design (Design Principle 13c).
+
+**Measured evidence.**
+- Census at `d8b6ffd0`: 5,323 nodes in 105 files (the 48-file consumer family, 2,141; 40 static-scan files, 2,176; 17 approval and fulfilment files, 1,006), 0 failed. With the change, 13 flipped in 4 files: three tests that drive a real pipeline with no callback (`test_research.py`, `test_agent_designer_cognitive.py`), the six `test_bf879` designs, and four AD-1194 pins (the HXI click's keyword set, the ladder-off skill offer for a consensus gap, and the build route's two ladder-off rows). Each is repaired with `pre_approved=True` or an updated pin, with an inline reason; no assertion is deleted.
+- Re-census on `fe37b7c0` (after #1455): the same 5,345 nodes, the new tests included, pass with 0 failed and 0 errors, outcome for outcome as on `d8b6ffd0`; the contract's focused set passes 272.
+- On the A-2 candidate: the four consumer families and their neighbours (10 files, 164 nodes), the focused set (288) and the approval and fulfilment files (1,006) pass with 0 failed and 0 errors.
+- On the A-3 candidate: the persistent-task and DAG-resume files and their neighbours (5 files, 67 nodes) and the focused set (290) pass with 0 failed and 0 errors.
+- 40 new tests in `tests/test_bf877_unapproved_design_is_refused.py`. 22 cross the unattended NL path, the HXI click, the shell prompt, the API shell, the CLI REPL shell, the AD-855 build and the Captain's later approval, a delegate's approval and the ladder card, through a booted runtime with only the LLM designer, validator and sandbox stubbed; 11 of them fail at `d8b6ffd0` (with a shim that adds only the two constants the file imports, so they fail on behaviour, not on the import), and the other 11 pin what must not change. 16 more (A-2) pin the classifier and each unattended consumer against a refusal and a success; one of them crosses a refusal from the real `process_natural_language` into a real `PersistentTaskStore`. 2 more (A-3) pin a refused recurring task that stays scheduled and fires again at its next run, and a refused DAG resume that keeps its checkpoint, through the resume route.
+- 28/28 mutants killed against green baselines: the contract's 18, with M12 retargeted to the `serve --interactive` construction; two on the fulfiller's policy line and its `pre_approved`; six (A-2) on the classifier's status comparison, each consumer's refusal branch and the cron trigger's slot; and two (A-3) on the persistent task's recurring-or-terminal decision and the DAG resume's refusal branch, with the persistent task's A-2 mutant re-run against the reshaped branch. Each was a single whole-line anchor, mutated in place and restored with its SHA-256 checked.
+
+**Honest limits.**
+- The API's slash-command shell still installs console prompts for import approval, dependency installs and escalation.
+- The HXI import auto-approver can outlive a Build Agent click when no shell ever wired an import callback.
+- The HXI duty schedule lists only pending scheduled tasks (`ui/src/store/useStore.ts` fetches `?status=pending`, and the snapshot cache keeps pending and running tasks only), so a refused one-shot task leaves it without showing why, as every failed task always has. The refusal is kept in the task's `last_result`, the `/designed` record and a WARNING. A refused recurring task stays listed, but its last result is not shown.
+
+**Ownership and rollback:** A Git revert needs no migration: no column, config key, event type or HTTP field is added. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.

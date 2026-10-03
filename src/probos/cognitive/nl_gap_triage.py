@@ -3,8 +3,8 @@
 Two capability-gap paths existed and only one was triaged. AD-855's work-item gaps
 went through ``capability_triage.triage_and_file``; the ordinary NL path went from
 "no agent handles this" straight to the self-modification pipeline, whose approval
-gate passes when no console callback is wired -- a serve vessel until its first HXI
-slash command, which wires a stdin prompt nobody answers. With
+gate passed when no console callback was wired -- a serve vessel until its first HXI
+slash command, which wired a stdin prompt nobody answers (BF-877 closed both). With
 ``capability_triage.unified_ladder_enabled`` set, the NL producers file through the
 same ladder, and this module is their adapter onto it:
 

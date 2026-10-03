@@ -1429,7 +1429,6 @@ async def _run_selfmod(
     rt: Any,
 ) -> None:
     """Background self-mod pipeline with WebSocket progress events."""
-    original_approval_fn = None
     original_import_approval_fn = None
     try:
         rt.emit_event(EventType.SELF_MOD_STARTED, {
@@ -1450,10 +1449,6 @@ async def _run_selfmod(
         if rt.self_mod_pipeline:
             original_import_approval_fn = rt.self_mod_pipeline._import_approval_fn
             rt.self_mod_pipeline._import_approval_fn = _auto_approve_imports
-            # Clicking "Build Agent" in the HXI IS the user's approval —
-            # skip the console input() prompt that the Shell wires up.
-            original_approval_fn = rt.self_mod_pipeline._user_approval_fn
-            rt.self_mod_pipeline._user_approval_fn = None
 
         # Build execution context from prior execution
         exec_context = ""
@@ -1511,8 +1506,9 @@ async def _run_selfmod(
             ladder_request = approval.request
             design = nl_gap_triage.recorded_design(ladder_request)
 
+        # BF-877: clicking Build Agent in the HXI is the Captain's approval of this design.
         record = await rt.self_mod_pipeline.handle_unhandled_intent(
-            **design, on_progress=_on_progress,
+            **design, on_progress=_on_progress, pre_approved=True,
         )
 
         if record and record.status == "active":
@@ -1656,7 +1652,5 @@ async def _run_selfmod(
     finally:
         # Restore callbacks for interactive shell use
         if rt.self_mod_pipeline:
-            if original_approval_fn is not None:
-                rt.self_mod_pipeline._user_approval_fn = original_approval_fn
             if original_import_approval_fn is not None:
                 rt.self_mod_pipeline._import_approval_fn = original_import_approval_fn

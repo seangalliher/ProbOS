@@ -239,7 +239,7 @@ async def init_cognitive_services(
             unregister_fn=unregister_designed_agent_fn,
             create_pool_fn=create_designed_pool_fn,
             set_trust_fn=set_probationary_trust_fn,
-            user_approval_fn=None,  # Shell sets this after creation
+            user_approval_fn=None,  # set by an attended shell; unset, unapproved designs are refused (BF-877)
             skill_designer=skill_designer,
             skill_validator=skill_validator,
             add_skill_fn=add_skill_to_agents_fn,

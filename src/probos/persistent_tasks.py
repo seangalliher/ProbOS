@@ -349,6 +349,7 @@ class PersistentTaskStore(EventEmitterMixin):
         """
         from pathlib import Path
         from probos.cognitive.checkpoint import load_checkpoint, restore_dag, delete_checkpoint
+        from probos.cognitive.self_mod import approval_refusal
 
         if not self._checkpoint_dir:
             return {"error": "No checkpoint directory configured"}
@@ -385,6 +386,14 @@ class PersistentTaskStore(EventEmitterMixin):
                 checkpoint.source_text,
                 channel_id=None,
             )
+            refusal = approval_refusal(result)
+            if refusal is not None:  # BF-877: a refused resume keeps its checkpoint for a later resume
+                logger.warning(
+                    "BF-877: DAG %s was not resumed: a design it needs has no approval on record. Its "
+                    "checkpoint is kept, so it can be resumed again once the design is approved.",
+                    dag_id[:8],
+                )
+                return {"error": refusal, "dag_id": dag_id}
             # Clean up checkpoint on success
             delete_checkpoint(Path(self._checkpoint_dir), dag_id)
             self._emit(EventType.SCHEDULED_TASK_DAG_RESUMED, {
@@ -479,6 +488,48 @@ class PersistentTaskStore(EventEmitterMixin):
             )
             await self._db.commit()
             self._emit(EventType.SCHEDULED_TASK_UPDATED, {"task_id": task.id, "status": "failed"})
+            await self._refresh_snapshot_cache()
+            return
+
+        from probos.cognitive.self_mod import approval_refusal
+
+        refusal = approval_refusal(result)
+        if refusal is not None:  # BF-877: a design refused for want of approval did not run the task
+            refused_result = json.dumps({"error": refusal})
+            refused_at = time.time()
+            if task.schedule_type == "once" or (task.max_runs is not None and task.run_count + 1 >= task.max_runs):  # BF-877: no run left
+                status = "failed"
+                logger.warning(
+                    "BF-877: persistent task %s did not run: a design it needs has no approval on "
+                    "record. The task is marked failed rather than completed, and its last result "
+                    "carries the refusal.",
+                    task.id,
+                )
+                await self._db.execute(
+                    "UPDATE scheduled_tasks SET status = 'failed', last_result = ?, last_run_at = ?, run_count = run_count + 1 WHERE id = ?",
+                    (refused_result, refused_at, task.id),
+                )
+            else:  # BF-877: a refusal is recoverable, so a task with runs left stays scheduled
+                status = "pending"
+                logger.warning(
+                    "BF-877: recurring persistent task %s did not run this time: a design it needs has "
+                    "no approval on record. It stays scheduled and will try again at its next run, and "
+                    "its last result carries the refusal.",
+                    task.id,
+                )
+                next_run = self._compute_next_run(
+                    schedule_type=task.schedule_type,
+                    execute_at=None,
+                    interval_seconds=task.interval_seconds,
+                    cron_expr=task.cron_expr,
+                    now=refused_at,
+                )
+                await self._db.execute(
+                    "UPDATE scheduled_tasks SET status = 'pending', last_result = ?, last_run_at = ?, run_count = run_count + 1, next_run_at = ? WHERE id = ?",
+                    (refused_result, refused_at, next_run, task.id),
+                )
+            await self._db.commit()
+            self._emit(EventType.SCHEDULED_TASK_UPDATED, {"task_id": task.id, "status": status})
             await self._refresh_snapshot_cache()
             return
 
