@@ -1144,6 +1144,22 @@ class PeerConfig(BaseModel):
         default_factory=list,
         max_length=32,
     )
+    # AD-1198: the peer's ship signing PUBLIC key (base64 raw Ed25519, as the peer's
+    # GET /api/identity/keys lists it under keys[].public_key), or empty. Inert unless
+    # federation.peer_admission_enabled; then the peer must sign every envelope and its
+    # key history must introduce this key with no re-inception after it.
+    pinned_public_key: str = ""
+
+    @field_validator("pinned_public_key")
+    @classmethod
+    def _validate_pinned_public_key(cls, value: str) -> str:
+        """AD-1198: empty, or a base64 raw 32-byte Ed25519 public key."""
+        if not value:
+            return value
+        from probos.substrate.device_pairing import decode_public_key
+
+        decode_public_key(value)  # AD-1198 a pin is an Ed25519 public key
+        return value
 
     @field_validator("avatar_telemetry_agent_ids", mode="before")
     @classmethod
@@ -2454,6 +2470,12 @@ class FederationConfig(BaseModel):
     # accepts unsigned envelopes only from peers never seen signing; "require"
     # sends and accepts nothing unsigned.
     envelope_policy: Literal["sign", "require"] = "sign"
+    # AD-1198: admit only the configured peers. Unconfigured sources are refused before
+    # any envelope state is read or written; a peer with pinned_public_key must sign and
+    # present a key history that introduced that key; a broadcast speaks only for its
+    # sender; ZeroMQ routing ids are hardened. Needs envelope_signing_enabled; under
+    # policy "require" every peer must be pinned. Default-OFF: off is byte-identical.
+    peer_admission_enabled: bool = False
 
     @field_validator("memory_access_policy")
     @classmethod
@@ -2493,6 +2515,26 @@ class FederationConfig(BaseModel):
         """AD-1197: envelopes are signed with the ship key, so signing needs the key binding."""
         if self.envelope_signing_enabled and not self.identity_keys_enabled:  # AD-1197 signing needs the ship key
             raise ValueError("federation.envelope_signing_enabled requires federation.identity_keys_enabled")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_peer_admission(self) -> "FederationConfig":
+        """AD-1198: admission judges signed envelopes from a bounded, unambiguous peer list."""
+        if not self.peer_admission_enabled:
+            return self
+        if not self.envelope_signing_enabled:  # AD-1198 admission needs signed envelopes
+            raise ValueError("federation.peer_admission_enabled requires federation.envelope_signing_enabled")
+        ids = [peer.node_id for peer in self.peers]
+        if len(ids) != len(set(ids)):  # AD-1198 one entry per peer
+            raise ValueError("federation.peer_admission_enabled needs each peer node_id at most once")
+        if self.node_id in ids:  # AD-1198 a node is not its own peer
+            raise ValueError("federation.peer_admission_enabled: federation.node_id must not be one of its peers")
+        if len(ids) > 256:  # AD-1198 at most MAX_HELD_SENDERS peers
+            raise ValueError("federation.peer_admission_enabled supports at most 256 peers")
+        if any(not 1 <= len(node_id) <= 256 for node_id in (self.node_id, *ids)):  # AD-1198 node ids fit a signed envelope
+            raise ValueError("federation.peer_admission_enabled needs node ids of 1 to 256 characters")
+        if self.envelope_policy == "require" and any(not peer.pinned_public_key for peer in self.peers):  # AD-1198 require: every peer is pinned
+            raise ValueError("federation.envelope_policy 'require' with peer admission needs pinned_public_key on every peer")
         return self
 
 

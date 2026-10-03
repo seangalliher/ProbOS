@@ -26,6 +26,7 @@ from probos.federation_envelope_store import ENVELOPE_DB_NAME, EnvelopeStore
 from probos.types import FederationMessage
 
 if TYPE_CHECKING:
+    from probos.federation.admission import PeerAdmission
     from probos.protocols import ConnectionFactory
 
 
@@ -37,12 +38,14 @@ class SignedFederationTransport:
     send_to_all_peers, receive_with_timeout, request_peer, deliver_response, and
     add_peer by getattr). Requests and one-way messages are verified before
     dispatch; the response topics the bridge only queues are verified once, where
-    they are consumed. Policy lives in the guard.
+    they are consumed. Policy lives in the guard. With peer admission (AD-1198)
+    every inbound message first passes ``PeerAdmission.admits_message``.
     """
 
-    def __init__(self, inner: Any, guard: EnvelopeGuard) -> None:
+    def __init__(self, inner: Any, guard: EnvelopeGuard, admission: PeerAdmission | None = None) -> None:
         self._inner = inner
         self._guard = guard
+        self._admission = admission
         self._handler: Any = None
         self._inner_started = False
 
@@ -118,6 +121,8 @@ class SignedFederationTransport:
                 return None
             if type(message) is not FederationMessage or message.source_node != peer_node_id:  # AD-1197 only the peer asked
                 continue
+            if self._admission is not None and not self._admission.admits_message(message):  # AD-1198 a response passes admission where it is consumed
+                continue
             if await self._guard.admit(message):  # AD-1197 a response is verified where it is consumed
                 return message
 
@@ -134,6 +139,8 @@ class SignedFederationTransport:
         if sealed is None:
             raise EnvelopeNotSent("the envelope could not be signed, and nothing unsigned is sent")
         response = await self._inner.request_peer(peer_node_id, sealed, timeout_ms)
+        if response is not None and self._admission is not None and not self._admission.admits_message(response):  # AD-1198 a directed response passes admission
+            raise EnvelopeRejected("the directed response failed peer admission")
         if response is not None and not await self._guard.admit(response):  # AD-1197 directed response
             raise EnvelopeRejected("the directed response failed envelope verification")
         return response
@@ -148,8 +155,11 @@ class SignedFederationTransport:
         raise AttributeError(name)
 
     async def _on_inbound(self, message: Any) -> None:
+        """Admit, then dispatch. ZeroMQ queues an intent_response before this runs (F-5); it is refused only where consumed."""
         handler = self._handler
         if handler is None:
+            return
+        if self._admission is not None and not self._admission.admits_message(message):  # AD-1198 configured peers only, before any topic
             return
         if type(message) is FederationMessage and type(message.type) is str and message.type in RESPONSE_TOPICS:
             await handler(message)  # queued by the bridge; verified where it is consumed
@@ -166,10 +176,18 @@ def build_signed_transport(
     key_binding: EnvelopeSigner | None,
     data_dir: Path,
     connection_factory: ConnectionFactory | None = None,
+    admission: PeerAdmission | None = None,
 ) -> SignedFederationTransport:
-    """The armed transport: ``inner`` wrapped, with a guard over the ship key and the node's replay store."""
+    """The armed transport: ``inner`` wrapped, with a guard over the ship key and the node's replay store.
+
+    With ``admission`` (AD-1198) the seam delivers only configured peers and the guard holds only key
+    histories that satisfy their pins.
+    """
     if key_binding is None:
         raise ValueError("federation envelope signing needs the ship key binding (federation.identity_keys_enabled)")
     store = EnvelopeStore(Path(data_dir) / ENVELOPE_DB_NAME, connection_factory=connection_factory)
-    guard = EnvelopeGuard(signer=key_binding, store=store, local_node_id=inner.node_id, policy=policy)
-    return SignedFederationTransport(inner, guard)
+    guard = EnvelopeGuard(
+        signer=key_binding, store=store, local_node_id=inner.node_id, policy=policy,
+        identity_policy=admission,  # AD-1198 the guard enforces the pins
+    )
+    return SignedFederationTransport(inner, guard, admission)  # AD-1198 the seam enforces admission

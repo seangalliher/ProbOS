@@ -353,6 +353,7 @@ Multi-node federation configuration.
 | `identity_recovery_public_key` | `str` | `''` | — |  |
 | `envelope_signing_enabled` | `bool` | `False` | — |  |
 | `envelope_policy` | `Literal['sign', 'require']` | `'sign'` | — |  |
+| `peer_admission_enabled` | `bool` | `False` | — |  |
 
 ## `mcp_server`
 

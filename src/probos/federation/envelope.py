@@ -130,6 +130,17 @@ class EnvelopeStateStore(Protocol):
     ) -> None: ...
 
 
+class PeerIdentityPolicy(Protocol):
+    """AD-1198: which sources the guard may hold, and whether a key history satisfies a source's pin.
+
+    ``PeerAdmission`` satisfies it. Without one the guard behaves exactly as AD-1197 shipped it.
+    """
+
+    def admits_source(self, source: str) -> bool: ...
+
+    def identity_refusal(self, source: str, state: KeyState) -> str | None: ...
+
+
 @dataclass(frozen=True)
 class EnvelopeAuth:
     """A signature block (``FederationMessage.auth``) that passed :func:`parse_auth`."""
@@ -294,10 +305,16 @@ class EnvelopeGuard:
     accepts nothing unsigned and keeps federation closed when its store cannot open;
     ``sign`` sends unsigned while the key cannot sign, accepts unsigned envelopes
     only from senders never seen signing, and runs plain federation when its store
-    cannot open. A malformed signature block is never read as unsigned.
+    cannot open. A malformed signature block is never read as unsigned. With an
+    ``identity_policy`` (AD-1198) it holds only the sources the policy admits, a first
+    contact or a stored hold must satisfy the source's pin, and a store that cannot open
+    keeps federation closed under either policy.
     """
 
-    def __init__(self, *, signer: EnvelopeSigner, store: EnvelopeStateStore, local_node_id: str, policy: str) -> None:
+    def __init__(
+        self, *, signer: EnvelopeSigner, store: EnvelopeStateStore, local_node_id: str, policy: str,
+        identity_policy: PeerIdentityPolicy | None = None,
+    ) -> None:
         if policy not in (POLICY_SIGN, POLICY_REQUIRE):
             raise ValueError(f"the envelope policy must be {POLICY_SIGN!r} or {POLICY_REQUIRE!r}")
         if not local_node_id:
@@ -306,6 +323,7 @@ class EnvelopeGuard:
         self._store = store
         self._local_node_id = local_node_id
         self._policy = policy
+        self._identity = identity_policy
         self._mode = _MODE_NEW
         self._epoch = 0
         self._seq = 0
@@ -324,8 +342,9 @@ class EnvelopeGuard:
     async def start(self) -> None:
         """Open the store, commit a new send epoch and load the holds; never raises for a store failure.
 
-        A store that cannot open keeps federation closed under ``require`` and runs it
-        unsigned and unverified under ``sign`` -- logged either way.
+        A store that cannot open keeps federation closed under ``require`` or with peer
+        admission armed (AD-1198), and otherwise runs it unsigned and unverified under
+        ``sign`` -- logged either way.
         """
         try:
             await self._store.start()
@@ -336,13 +355,20 @@ class EnvelopeGuard:
                 await self._store.stop()
             if not isinstance(exc, Exception):
                 raise
-            if self._policy == POLICY_REQUIRE:
+            if self._policy == POLICY_REQUIRE or self._identity is not None:  # AD-1198 armed admission never degrades to unverified
                 self._mode = _MODE_CLOSED
-                logger.error(
-                    "AD-1197: the federation envelope store could not be opened (%s); policy 'require' keeps "
-                    "federation closed -- nothing is sent or accepted -- until it opens on a restart",
-                    type(exc).__name__,
-                )
+                if self._identity is not None:
+                    logger.error(
+                        "AD-1198: the federation envelope store could not be opened (%s); peer admission is armed, so "
+                        "federation stays closed -- nothing is sent or accepted -- until it opens on a restart",
+                        type(exc).__name__,
+                    )
+                else:
+                    logger.error(
+                        "AD-1197: the federation envelope store could not be opened (%s); policy 'require' keeps "
+                        "federation closed -- nothing is sent or accepted -- until it opens on a restart",
+                        type(exc).__name__,
+                    )
             else:
                 self._mode = _MODE_UNGUARDED
                 logger.warning(
@@ -354,6 +380,8 @@ class EnvelopeGuard:
         holds: dict[str, HeldSender] = {}
         invalid: set[str] = set()
         for source, stored in senders.items():
+            if self._identity is not None and not self._identity.admits_source(source):  # AD-1198 only configured peers are held
+                continue
             events: tuple[KeyEvent, ...] = ()
             try:
                 events = key_events_from_wire(json.loads(stored.key_events_json))
@@ -366,6 +394,15 @@ class EnvelopeGuard:
                     "AD-1197: the key history held for %r does not replay; its envelopes are refused until an "
                     "operator resolves it",
                     source[:64],
+                )
+                continue
+            why = None if self._identity is None else self._identity.identity_refusal(source, state)  # AD-1198 a held history must satisfy its pin
+            if why is not None:
+                invalid.add(source)
+                logger.error(
+                    "AD-1198: the key history held for %r does not satisfy its identity pin (%s); its envelopes are "
+                    "refused until its pin or its hold is corrected",
+                    source[:64], why,
                 )
                 continue
             holds[source] = HeldSender(state.did, events, state)
@@ -475,7 +512,7 @@ class EnvelopeGuard:
         """Whether ``message`` may be delivered: verified, admitted through its replay window and recorded.
 
         Total: anything malformed is a rejection, logged once with its topic, source and reason.
-        Unguarded (policy ``sign`` whose store could not open), unsigned and well-formed signed
+        Unguarded (policy ``sign`` without peer admission, whose store could not open), unsigned and well-formed signed
         envelopes are admitted without verification -- the designed degrade -- and a malformed
         block is refused, as in every mode. A signed envelope whose source node id is not 1 to
         ``MAX_NODE_ID_CHARS`` characters is refused in every mode, before the store is read or
@@ -512,6 +549,8 @@ class EnvelopeGuard:
             return "malformed"
         if source == self._local_node_id:  # AD-1197 reflection
             return "reflected"
+        if self._identity is not None and not self._identity.admits_source(source):  # AD-1198 an unconfigured source is refused
+            return "unconfigured source"
         if message.auth is None:
             return self._unsigned(source)
         parsed = parse_auth(message.auth)
@@ -547,6 +586,9 @@ class EnvelopeGuard:
             return "key history does not replay"
         if state is None:
             return "malformed"
+        why = None if held is not None or self._identity is None else self._identity.identity_refusal(source, state)  # AD-1198 a first contact must satisfy its pin
+        if why is not None:
+            return why
         grows = tail is not None
         key_ids = used.union(kept.kid for kept in state.keys) if grows else frozenset()  # AD-1197 A-2 the kept run's keys join every key verified before
         if len(key_ids) > MAX_HELD_KEY_IDS:  # AD-1197 A-2 a sender past the bound is refused, never forgotten
