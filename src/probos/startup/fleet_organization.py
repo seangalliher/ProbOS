@@ -180,6 +180,7 @@ async def organize_fleet(
     # Start federation if enabled (AD-637e: NATS-first, ZeroMQ fallback)
     federation_bridge = None
     federation_transport = None
+    federation_peer_requests = None
     if config.federation.enabled:
         from probos.federation import FederationRouter, FederationBridge
 
@@ -262,6 +263,10 @@ async def organize_fleet(
             intent_bus.set_federation_handler(bridge.forward_intent)
             federation_bridge = bridge
             federation_transport = transport
+            if config.federation.peer_admission_enabled is True:  # AD-1198 signed peer HTTP requests over the armed seam
+                from probos.federation.peer_requests import PeerRequests
+
+                federation_peer_requests = PeerRequests(transport.peer_request_seam)
             logger.info("Federation started: node=%s", config.federation.node_id)
 
     logger.info("Startup [fleet_organization]: complete")
@@ -269,4 +274,5 @@ async def organize_fleet(
         pool_scaler=pool_scaler,
         federation_bridge=federation_bridge,
         federation_transport=federation_transport,
+        federation_peer_requests=federation_peer_requests,
     )

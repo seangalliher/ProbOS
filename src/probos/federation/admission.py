@@ -10,7 +10,9 @@ contains (AD-1197 R-25) -- so a pin older than the run is refused, never guessed
 A broadcast speaks only for its sender. The seam (``SignedFederationTransport``)
 asks :meth:`PeerAdmission.admits_message` before anything else; the envelope guard
 asks :meth:`PeerAdmission.admits_source` and :meth:`PeerAdmission.identity_refusal`.
-Nothing here reads a clock.
+The HTTP seam (slice 3a) asks :meth:`PeerAdmission.admits_request` and
+:meth:`PeerAdmission.pinned`: only a pinned peer is served over HTTP or sent a peer
+request. Nothing here reads a clock.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import base64
 import binascii
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from probos.federation.envelope import BROADCAST_TOPICS
 from probos.types import FederationMessage
@@ -81,6 +83,10 @@ class PeerAdmission:
         """Whether ``source`` is a configured peer: the only nodes that may be held or delivered."""
         return source in self._pins  # AD-1198 configured peers are the only sources
 
+    def pinned(self, node_id: str) -> bool:
+        """Whether ``node_id`` is a configured peer with a pinned key: the only peers a peer request goes to (AD-1198)."""
+        return bool(self._pins.get(node_id))
+
     def identity_refusal(self, source: str, state: KeyState) -> str | None:
         """Why ``state`` does not satisfy ``source``'s pin, or ``None``; an unpinned peer is not judged here."""
         pinned = self._pins.get(source, b"")
@@ -105,6 +111,15 @@ class PeerAdmission:
         payload = message.payload
         if message.type in BROADCAST_TOPICS and type(payload) is dict and payload.get("node_id", source) != source:  # AD-1198 a broadcast speaks for its sender
             return self._refused(message, "gossip names another node")
+        return True
+
+    def admits_request(self, message: object) -> bool:
+        """Whether ``message`` may be served as a peer request (AD-1198 slice 3a): it passes
+        :meth:`admits_message` and comes from a pinned peer -- an unpinned peer is never served over HTTP."""
+        if not self.admits_message(message):
+            return False
+        if not self._pins[cast(FederationMessage, message).source_node]:  # AD-1198 peer requests only from pinned peers
+            return self._refused(message, "request from an unpinned peer")
         return True
 
     def _refused(self, message: object, reason: str) -> bool:

@@ -14,6 +14,10 @@ references across federation. Inline attachment bytes remain transport-unsafe.
 Caveat C-B: auto-resolution fires only for an A2A-configured sender peer with a
 matching ``node_id`` — there is no resolver from an arbitrary ``source_node`` to
 a fetchable URL otherwise.
+
+AD-1198 slice 3a: while ``federation.peer_admission_enabled`` is armed the sender is
+the configured federation peer of that ``node_id``, and each fetch is a signed peer
+request to its ``api_url``; ``a2a.outbound_peers`` and their tokens are not read.
 """
 
 from __future__ import annotations
@@ -21,7 +25,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from probos.federation.attachment_fetch import fetch_remote_attachment
+from probos.federation.attachment_fetch import fetch_remote_attachment, fetch_remote_attachment_signed
+from probos.federation.peer_requests import ATTACHMENT_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +136,8 @@ async def resolve_missing_attachments(
         shas = extract_attachment_shas(params)
         if not shas:
             return 0
+        if getattr(cfg.federation, "peer_admission_enabled", False) is True:  # AD-1198 armed: signed requests to the pinned peer's API, never a bearer token
+            return await _resolve_signed(runtime, cfg.federation, shas, source_node, store, http)
         peer = resolve_sender_peer(cfg.federation.a2a, source_node)
         if peer is None:
             return 0
@@ -167,3 +174,43 @@ async def resolve_missing_attachments(
             exc_info=True,
         )
         return count
+
+
+async def _resolve_signed(
+    runtime: Any, federation: Any, shas: list[str], source_node: str, store: Any, http: Any,
+) -> int:
+    """AD-1198: fetch each missing attachment from the sender's main API with a peer request signed for it.
+
+    The sender is the configured peer of that node id; its ``api_url`` names its main API. No token from
+    ``a2a.outbound_peers`` is read or sent. Returns the number stored; a failed fetch is logged and skipped.
+    """
+    peer = next((p for p in federation.peers if p.node_id == source_node), None)
+    api_url = getattr(peer, "api_url", "") if peer is not None else ""
+    peer_requests = getattr(runtime, "federation_peer_requests", None)
+    if not api_url or peer_requests is None:  # AD-1198 the peer's API URL and the armed seam, or nothing is fetched
+        logger.info(
+            "AD-1198: attachments referenced by %r are not fetched (%s)",
+            source_node[:64], "no api_url for that peer" if not api_url else "peer requests are unavailable",
+        )
+        return 0
+    count = 0
+    for sha in shas:
+        if await store.exists(sha):  # idempotent, as the bearer path
+            continue
+        try:
+            body = await peer_requests.sign(source_node, ATTACHMENT_REQUEST, {"content_hash": sha})
+            if body is None:
+                logger.warning(
+                    "AD-1198: the request for attachment %s from %r could not be signed; not fetched",
+                    sha[:8], source_node[:64],
+                )
+                continue
+            if await fetch_remote_attachment_signed(api_url, sha, body=body, store=store, http=http):
+                count += 1
+        except Exception:
+            # Tier-2 log-and-degrade, as the bearer path: one failed fetch never aborts the rest.
+            logger.warning(
+                "AD-1198: signed fetch of attachment %s from %r failed; skipping", sha[:8], source_node[:64],
+                exc_info=True,
+            )
+    return count

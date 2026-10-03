@@ -2,7 +2,7 @@
 
 Run as a script by ``tests/fixtures/federation_cluster.py`` (the parent harness), never imported by a test::
 
-    python -X utf8 -u federation_cluster_node.py <config.yaml> <data_dir> <control_port> <name>
+    python -X utf8 -u federation_cluster_node.py <config.yaml> <data_dir> <control_port> <name> [<api_port>]
 
 The parent builds the environment: ``PYTHONPATH`` names the worktree's ``src``, so this script edits no
 ``sys.path``; stdin is DEVNULL (a pipe there hung the knowledge store's git flush on shutdown, probe N r2).
@@ -11,10 +11,13 @@ On Windows the selector loop is installed first (AD-108): zmq.asyncio hangs on t
 The node connects to the parent's 127.0.0.1 control socket and speaks JSON lines, each
 ``{"kind": ..., "node": <name>, ...}``. It emits ``hello``, boots ``ProbOSRuntime`` with an injected
 ``MockLLMClient`` and emits ``ready`` (or ``failed`` if the start raised), then answers the parent's ops --
-``forward`` (``forwarded``), ``status`` (``status``) and ``rotate`` (``rotated``); an op that fails is
-answered ``error`` -- until ``stop`` or until the control socket closes (the parent is gone), and then stops
-the runtime and emits ``stopped``. After ``main`` returns a faulthandler watchdog dumps every stack into
-the run log and exits 1 if anything keeps the interpreter alive (the #1455 convention): a clean exit is 0.
+``forward`` (``forwarded``), ``status`` (``status``), ``rotate`` (``rotated``), ``put_attachment`` (``put``)
+and ``has_attachment`` (``has``); an op that fails is answered ``error`` -- until ``stop`` or until the
+control socket closes (the parent is gone), and then stops the runtime and emits ``stopped``. Given an
+``<api_port>`` (AD-1198 slice 3a), the node also serves the production main API (``create_app(runtime)``)
+with uvicorn on 127.0.0.1 before ``ready`` and stops it before the runtime. After ``main`` returns a
+faulthandler watchdog dumps every stack into the run log and exits 1 if anything keeps the interpreter alive
+(the #1455 convention): a clean exit is 0.
 
 Import-safe: everything runs only when this file is run as a script.
 """
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import faulthandler
+import hashlib
 import json
 import logging
 import sys
@@ -32,6 +36,8 @@ from typing import Any
 
 _STOP_WATCHDOG_S = 60  # runtime.stop() took 3.2 s in probe N3
 _EXIT_WATCHDOG_S = 30  # after main returns
+_API_START_S = 30  # create_app and uvicorn were ready in 2.8-3.8 s per node under load (probe P4)
+_API_STOP_S = 15
 
 
 async def _key_fields(binding: Any) -> dict[str, Any]:
@@ -72,10 +78,50 @@ async def _answer(command: dict[str, Any], runtime: Any) -> tuple[str, dict[str,
     if op == "rotate":
         await binding.rotate()
         return "rotated", await _key_fields(binding)
+    if op == "put_attachment":
+        data = bytes.fromhex(command["hex"])
+        sha = hashlib.sha256(data).hexdigest()
+        await runtime.attachment_store.write(sha, data, command["mime"])
+        return "put", {"sha": sha}
+    if op == "has_attachment":
+        return "has", {"sha": command["sha"], "exists": await runtime.attachment_store.exists(command["sha"])}
     return "error", {"message": f"unknown op {op!r}"}
 
 
-async def main(config_path: str, data_dir: str, control_port: int, name: str) -> None:
+async def _serve_api(runtime: Any, port: int) -> tuple[Any, asyncio.Task[Any]]:
+    """Serve the production main API, ``create_app(runtime)``, with uvicorn on 127.0.0.1:``port`` (AD-1198 slice 3a).
+
+    Returns the server and its task once the server has started, its task has ended (a port it could not
+    bind leaves ``server.started`` false, H7) or ``_API_START_S`` has passed.
+    """
+    import uvicorn
+
+    from probos.api import create_app
+
+    server = uvicorn.Server(uvicorn.Config(create_app(runtime), host="127.0.0.1", port=port, log_level="warning"))
+
+    async def _serve() -> None:
+        try:
+            await server.serve()
+        except SystemExit:  # uvicorn calls sys.exit(1) on a port it cannot bind: report api_started False (H7)
+            pass
+
+    serving = asyncio.create_task(_serve(), name=f"cluster-api-{port}")
+    deadline = time.monotonic() + _API_START_S
+    while not server.started and not serving.done() and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    return server, serving
+
+
+async def _stop_api(server: Any, serving: Any) -> None:
+    """Ask uvicorn to exit and wait for it, bounded by ``_API_STOP_S``; a server still running then is cancelled."""
+    server.should_exit = True
+    done, _ = await asyncio.wait({serving}, timeout=_API_STOP_S)
+    if not done:
+        serving.cancel()
+
+
+async def main(config_path: str, data_dir: str, control_port: int, name: str, api_port: int | None = None) -> None:
     reader, writer = await asyncio.open_connection("127.0.0.1", control_port)
 
     async def emit(kind: str, **data: Any) -> None:
@@ -96,12 +142,16 @@ async def main(config_path: str, data_dir: str, control_port: int, name: str) ->
         await emit("failed", error=f"{type(error).__name__}: {error}")
         writer.close()
         raise
+    server, serving = None, None
     try:
+        if api_port is not None:
+            server, serving = await _serve_api(runtime, api_port)
         bridge = runtime.federation_bridge
         await emit(
             "ready", probos_file=probos.__file__, boot_s=round(time.monotonic() - began, 2),
             federation=bridge is not None,
             connected_peers=[] if bridge is None else bridge.federation_status()["connected_peers"],
+            api_started=None if server is None else bool(server.started),
             **await _key_fields(runtime.identity_key_binding),
         )
         while True:
@@ -119,10 +169,15 @@ async def main(config_path: str, data_dir: str, control_port: int, name: str) ->
     finally:
         faulthandler.dump_traceback_later(_STOP_WATCHDOG_S, repeat=False, file=sys.stderr)
         stopping = time.monotonic()
+        if server is not None:
+            await _stop_api(server, serving)
         await runtime.stop()
         faulthandler.cancel_dump_traceback_later()
         try:
-            await emit("stopped", stop_s=round(time.monotonic() - stopping, 2))
+            await emit(
+                "stopped", stop_s=round(time.monotonic() - stopping, 2),
+                peer_requests_released=getattr(runtime, "federation_peer_requests", None) is None,
+            )
         except (ConnectionError, OSError):
             pass  # the parent closed the control socket first; it reads the exit code instead
         writer.close()
@@ -132,5 +187,6 @@ if __name__ == "__main__":
     if sys.platform == "win32":  # AD-108: pyzmq needs add_reader, which the Proactor loop lacks (probe Z0p)
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
-    asyncio.run(main(sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]))
+    api_port = int(sys.argv[5]) if len(sys.argv) > 5 else None
+    asyncio.run(main(sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], api_port))
     faulthandler.dump_traceback_later(_EXIT_WATCHDOG_S, exit=True, file=sys.stderr)
