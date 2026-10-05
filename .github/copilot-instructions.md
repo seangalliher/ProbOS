@@ -44,6 +44,8 @@ Invoke it with a different model than the one that wrote the code (`.github/agen
 
 **When the reviewer fails to start, retry — do not skip it.** Measured 2026-08-25: three consecutive failures ("Sorry, no response was returned", then two "Server error. Stream terminated") before a fourth attempt on a different model succeeded. Fallbacks, in order: retry as-is; drop `agentName` and give the adversarial framing in the prompt; shorten the prompt to well under ~4 KB and scope it to named files rather than a large diff; then change model (`GPT-5.3-Codex` worked when `GPT-5.6 Sol` would not). The review that finally ran is the one that caught a 307/308 method-drift regression in a security control — skipping it would have shipped that.
 
+**Brief the reviewer with properties to verify, not attack scenarios.** Measured 2026-10-05 (#1135): a GPT-6 Sol review whose brief framed its checks as adversary scenarios was refused 13 minutes in with a `422` content flag ("possible cybersecurity risk"). The same review, relaunched with the checks worded as properties to verify, ran to completion and found the defects, as did the next round on GPT-6.1 Sol. Write "a peer outside the pin set is refused", not who could break it and how. Same scope and rigor — only the wording changes. A 422 content flag is a phrasing failure, not an outage: relaunch once with a shorter, neutral brief before working through the fallbacks above.
+
 **Scope the review to the changed behaviour, its immediate caller, and the consumer that must accept it.** Scoping is about not wandering into unrelated code — it is not permission to stop short. Trace every changed contract through all affected production consumers, and verify at least one end-to-end path where one exists. When the blast radius crosses layers, follow it; stopping at the immediate caller because the boundary looked tidy is how the seam defects in this repo survive.
 
 **Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. For findings you are not fixing here, follow the filing policy in **Backlog Burn-Down Mode** below rather than opening an issue per finding.
@@ -51,6 +53,16 @@ Invoke it with a different model than the one that wrote the code (`.github/agen
 Why this is a standing order rather than advice: on 2026-08-11 an external review of BF-753/AD-1239 found five defects in one wave, and the immediate re-review of the fix (BF-754) found four more — including a docstring claiming a validation property the code did not provide, in a commit written minutes after recording that exact lesson. The author had verified every change against the thing they had just changed, which is the one check that cannot see a seam. Every finding sat between the changed component and its consumer.
 
 The reviewer's advantage is stance, not intelligence: it asks *does the next component accept this*, having no memory of already believing the answer. That stance is not reachable by trying harder on your own diff.
+
+---
+
+## Delegation and Waiting (Standing Order)
+
+**Delegate synchronously when the next step needs the result.** Run Diff Reviewer calls and bounded Builder milestones with `mode: "sync"`: a failure then returns to the caller as a tool result and is handled at once (2026-09-19: the orchestrator acted on a failed sync review 44 seconds later). Sync delegations of up to two hours have completed reliably; split longer work, such as a full Architect contract, into bounded milestones, or run it in the background with a watchdog.
+
+**A background agent that fails sends no notification.** Completion produces an "is now idle" notification that wakes the waiting caller; failure produces nothing. Measured twice: on 2026-10-02 a model-response failure left the orchestrator idle for 6.0 hours, and on 2026-10-05 a review refused with a 422 thirteen minutes after launch left it idle for 6.5 hours. Both ended only when the Captain typed. "Using the wait productively" does not justify that risk — in the 2026-10-05 session the orchestrator was active for 40 minutes of 18.5 hours.
+
+**Never end a turn waiting on a background or `write_agent` agent without a watchdog.** Start an async shell such as `Start-Sleep -Seconds 900`; its completion notification wakes an idle caller (observed 26 times, after up to 38 idle minutes). On wake, `read_agent` the agent: if it failed, recover at once; if it is still running, re-arm. Report a failure by when it happened, not by `read_agent`'s elapsed time, which counts from launch — a 13-minute failure was once reported as taking 6.7 hours.
 
 ---
 
@@ -170,6 +182,7 @@ All code MUST maintain the **ProbOS Principles Stack**. These are enforced durin
   - **Single-line anchors only** — this is a CRLF tree and multi-line anchors silently match nothing. An anchor that is not found is an INERT mutant, not a killed one; say so.
   - Classify a timeout banner as **INVALID, never SURVIVED**: a run that never completed proves nothing.
   - **A surviving mutant may mean the MUTANT is wrong, not the test.** Measured twice this session: a mutant that dropped a `<redacted>@` marker rather than the stripping itself, and one whose subclass was rejected by an earlier gate so the bound under test was never reached. Before concluding a test is weak, check that the mutant actually reaches the behaviour it claims to break.
+  - **One campaign per candidate.** When a build contract pins byte-exact files and carries its author's executed mutation table for them, a Builder whose base tree and file hashes match does not repeat the campaign; it reruns only the mutants whose files differ, or those a review's test-validity concern names. Measured 2026-10-05 (#1135 slice 2a): repeating it on byte-identical files cost the Builder about 50 minutes across two rounds.
 - **Run focused tests with**: `d:/ProbOS/.venv/Scripts/pytest.exe <test-files-or-node-ids> -q -n 0 -p no:randomly`
 - **Coverage rule**: All new public methods and branches must have tests. Target 100% coverage on new code — gaps require justification.
 - **Test structure**: Follow Arrange-Act-Assert. Each test should verify one behavior. Name tests descriptively: `test_{method}_{scenario}_{expected}` (e.g., `test_get_template_missing_key_returns_none`).
