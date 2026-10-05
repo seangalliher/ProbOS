@@ -40,7 +40,7 @@ These errors cluster in the subsystems you know best, because familiarity is wha
 
 **Before any commit that changes source, run the `Diff Reviewer` subagent on the staged diff and address what it finds.** Not optional, not "when the change feels risky" — the changes that felt safe are the ones this catches.
 
-Invoke it with a different model than the one that wrote the code (`.github/agents/diff-reviewer.agent.md` pins `GPT-5.6 Sol`; the author is usually Claude). A second read by the same model shares the same blind spots. Tell it what the change claims to do, name the consumer that has to accept it, and point at anything live it can probe.
+Invoke it with a different model than the one that wrote the code (`.github/agents/diff-reviewer.agent.md` pins `GPT-6.1 Sol`, with older GPT models as availability fallbacks; the author is usually Claude). A second read by the same model shares the same blind spots. Tell it what the change claims to do, name the consumer that has to accept it, and point at anything live it can probe.
 
 **When the reviewer fails to start, retry — do not skip it.** Measured 2026-08-25: three consecutive failures ("Sorry, no response was returned", then two "Server error. Stream terminated") before a fourth attempt on a different model succeeded. Fallbacks, in order: retry as-is; drop `agentName` and give the adversarial framing in the prompt; shorten the prompt to well under ~4 KB and scope it to named files rather than a large diff; then change model (`GPT-5.3-Codex` worked when `GPT-5.6 Sol` would not). The review that finally ran is the one that caught a 307/308 method-drift regression in a security control — skipping it would have shipped that.
 

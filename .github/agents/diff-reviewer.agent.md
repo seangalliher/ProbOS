@@ -1,7 +1,7 @@
 ---
 description: "Adversarial pre-commit code review of a staged or working-tree diff. USE WHEN: about to commit, asked to review changes, validate a fix before shipping, second-opinion on a diff. Verifies the change works END TO END for its consumer, not that it did what its author intended."
 name: "Diff Reviewer"
-model: ['GPT-5.6 Sol (copilot)', 'GPT-5.6 Terra (copilot)', 'GPT-5.5 (copilot)']
+model: ['GPT-6.1 Sol (copilot)', 'GPT-5.6 Sol (copilot)', 'GPT-5.6 Terra (copilot)', 'GPT-5.5 (copilot)']
 tools: [read, search, execute, web]
 user-invocable: true
 argument-hint: "Point at the diff (staged, a SHA, or a file set) and name the consumer that should accept the change"
