@@ -1161,6 +1161,7 @@ _STOPPED_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("assignment_service", "assignment service stop"),
     ("pool_scaler", "pool scaler stop"),
     ("federation_telemetry_relay", "federation telemetry relay stop"),
+    ("federation_identity_exchange", "federation identity exchange stop"),  # AD-1198 slice 2a
     ("federation_bridge", "federation bridge stop"),
     ("_federation_transport", "federation transport stop"),
     ("gossip", "gossip protocol stop"),

@@ -350,6 +350,46 @@ class LedgerBlock:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def verify_chain_structure(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+    """AD-443b: the structural check of a foreign Identity Ledger snapshot, ``(valid, message)``.
+
+    Walks blocks in order, recomputes each block_hash, verifies previous_hash
+    linkage, verifies genesis previous_hash is all zeros. Pure and synchronous:
+    :meth:`AgentIdentityRegistry.verify_remote_chain` returns exactly this, and the
+    armed identity exchange runs it on every chain it relies on (AD-1198 A-2). A
+    block missing a field is a refusal; any other malformed block raises, as before.
+    """
+    if not blocks:
+        return False, "Empty chain"
+
+    for i, b in enumerate(blocks):
+        try:
+            block = LedgerBlock(
+                index=b["index"],
+                timestamp=b["timestamp"],
+                certificate_hash=b["certificate_hash"],
+                agent_did=b["agent_did"],
+                previous_hash=b["previous_hash"],
+                block_hash=b["block_hash"],
+            )
+        except KeyError as exc:
+            return False, f"Block {i}: missing field {exc!s}"
+
+        expected_hash = block.compute_hash()
+        if block.block_hash != expected_hash:
+            return False, f"Block {block.index}: hash mismatch"
+
+        if i == 0:
+            if block.previous_hash != "0" * 64:
+                return False, "Genesis block: invalid previous_hash (expected all zeros)"
+        else:
+            prev_block_hash = blocks[i - 1]["block_hash"]
+            if block.previous_hash != prev_block_hash:
+                return False, f"Block {block.index}: chain linkage broken"
+
+    return True, f"Chain valid: {len(blocks)} blocks"
+
+
 _IDENTITY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS birth_certificates (
     agent_uuid TEXT PRIMARY KEY,
@@ -1084,36 +1124,9 @@ class AgentIdentityRegistry:
         Mirrors the local `verify_chain()` shape: walks blocks in order,
         recomputes each block_hash, verifies previous_hash linkage, verifies
         genesis previous_hash is all zeros. Does not require a started DB.
+        The check is :func:`verify_chain_structure` (moved there unchanged, AD-1198 A-2).
         """
-        if not blocks:
-            return False, "Empty chain"
-
-        for i, b in enumerate(blocks):
-            try:
-                block = LedgerBlock(
-                    index=b["index"],
-                    timestamp=b["timestamp"],
-                    certificate_hash=b["certificate_hash"],
-                    agent_did=b["agent_did"],
-                    previous_hash=b["previous_hash"],
-                    block_hash=b["block_hash"],
-                )
-            except KeyError as exc:
-                return False, f"Block {i}: missing field {exc!s}"
-
-            expected_hash = block.compute_hash()
-            if block.block_hash != expected_hash:
-                return False, f"Block {block.index}: hash mismatch"
-
-            if i == 0:
-                if block.previous_hash != "0" * 64:
-                    return False, "Genesis block: invalid previous_hash (expected all zeros)"
-            else:
-                prev_block_hash = blocks[i - 1]["block_hash"]
-                if block.previous_hash != prev_block_hash:
-                    return False, f"Block {block.index}: chain linkage broken"
-
-        return True, f"Chain valid: {len(blocks)} blocks"
+        return verify_chain_structure(blocks)  # AD-1198 A-2 one structural check, shared with the armed exchange
 
     async def import_chain(self, blocks: list[dict[str, Any]]) -> tuple[bool, str]:
         """AD-443b: Accept a remote ship's exported Identity Ledger and persist it.

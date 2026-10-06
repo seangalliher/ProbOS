@@ -13,7 +13,10 @@ The node connects to the parent's 127.0.0.1 control socket and speaks JSON lines
 ``MockLLMClient`` and emits ``ready`` (or ``failed`` if the start raised), then answers the parent's ops --
 ``forward`` (``forwarded``), ``status`` (``status``), ``rotate`` (``rotated``), ``put_attachment`` (``put``),
 ``has_attachment`` (``has``), ``a2a_post`` (``a2a``: an A2A request signed with this node's peer requests and
-POSTed, AD-1198 slice 3b) and ``a2a_callers`` (``a2a_callers``); an op that fails is answered ``error`` -- until
+POSTed, AD-1198 slice 3b), ``a2a_callers`` (``a2a_callers``), ``transfer`` (``transferred``: this node's first crew
+member by callsign, transferred with a certificate and its chain through ``FederationBridge.request_transfer``, AD-1198
+slice 2a) and ``foreign`` (``foreign``: what this node's identity registry holds for a transferred agent); an op that
+fails is answered ``error`` -- until
 ``stop`` or until the
 control socket closes (the parent is gone), and then stops the runtime and emits ``stopped``. Given an
 ``<api_port>`` (AD-1198 slice 3a), the node also serves the production main API (``create_app(runtime)``)
@@ -102,6 +105,27 @@ async def _answer(command: dict[str, Any], runtime: Any) -> tuple[str, dict[str,
     if op == "a2a_callers":
         peers = runtime.federation_peer_registry.list_peers("a2a")
         return "a2a_callers", {"callers": sorted([peer.peer_id, peer.trust_record_id] for peer in peers)}
+    if op == "transfer":
+        registry = runtime.identity_registry
+        crew = min(registry.get_all(), key=lambda born: born.callsign)
+        certificate = await registry.issue_transfer_certificate(crew.agent_uuid, command["target_did"])
+        accepted, message = await bridge.request_transfer(command["target"], certificate, await registry.export_chain())
+        return "transferred", {
+            "accepted": accepted, "message": message, "agent_uuid": certificate.agent_uuid, "did": certificate.did,
+            "certificate_hash": certificate.certificate_hash, "origin_ship_did": certificate.origin_ship_did,
+            "origin_vessel": certificate.origin_vessel_name,
+        }
+    if op == "foreign":
+        registry = runtime.identity_registry
+        known = registry.get_by_uuid(command["agent_uuid"])
+        chain = registry.get_foreign_chain(command["origin_ship_did"])
+        rows = await registry.get_transfer_certificates_for(command["did"])
+        return "foreign", {
+            "found": known is not None, "did": None if known is None else known.did,
+            "vessel_name": None if known is None else known.vessel_name,
+            "transfers": sorted([row["direction"], row["certificate_hash"]] for row in rows),
+            "foreign_chain_blocks": None if chain is None else len(chain),
+        }
     return "error", {"message": f"unknown op {op!r}"}
 
 
@@ -169,6 +193,7 @@ async def main(config_path: str, data_dir: str, control_port: int, name: str, ap
             federation=bridge is not None,
             connected_peers=[] if bridge is None else bridge.federation_status()["connected_peers"],
             api_started=None if server is None else bool(server.started),
+            identity_exchange=runtime.federation_identity_exchange is not None,  # AD-1198 slice 2a: wired only while armed
             **await _key_fields(runtime.identity_key_binding),
         )
         while True:
@@ -194,6 +219,7 @@ async def main(config_path: str, data_dir: str, control_port: int, name: str, ap
             await emit(
                 "stopped", stop_s=round(time.monotonic() - stopping, 2),
                 peer_requests_released=getattr(runtime, "federation_peer_requests", None) is None,
+                identity_exchange_released=getattr(runtime, "federation_identity_exchange", None) is None,
             )
         except (ConnectionError, OSError):
             pass  # the parent closed the control socket first; it reads the exit code instead

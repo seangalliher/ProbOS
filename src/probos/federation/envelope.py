@@ -33,9 +33,9 @@ import dataclasses
 import hashlib
 import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from probos.federation.ard.jcs import canonicalize
 from probos.federation.ard.jws import parse_detached
@@ -68,6 +68,8 @@ RESPONSE_TOPICS = frozenset({"intent_response", "chain_response", "transfer_resp
 ATTACHMENT_REQUEST = "attachment_request"  # AD-1198 slice 3a: a peer's signed attachment fetch
 A2A_REQUEST = "a2a_request"  # AD-1198 slice 3b: a peer's signed A2A JSON-RPC request
 PEER_REQUEST_TOPICS = frozenset({ATTACHMENT_REQUEST, A2A_REQUEST})  # AD-1198 accepted only over HTTP (peer_requests.py), never over the bridge
+CHAIN_REQUEST = "chain_request"  # AD-1198 slice 2a: a request for a ship's identity-ledger chain (bridge.py answers it)
+CHAIN_RESPONSE = "chain_response"  # AD-1198 slice 2a: the one topic a resync admits with the key history its chain carries
 POLICY_SIGN = "sign"
 POLICY_REQUIRE = "require"
 REPLAY_WINDOW = 64
@@ -142,6 +144,9 @@ class PeerIdentityPolicy(Protocol):
     def admits_source(self, source: str) -> bool: ...
 
     def identity_refusal(self, source: str, state: KeyState) -> str | None: ...
+
+
+LedgerHistory = Callable[[str], tuple[tuple[KeyEvent, ...], KeyState] | None]  # AD-1198 A-1 a DID's key history as identity.db stores it, re-verified, and its key state
 
 
 @dataclass(frozen=True)
@@ -316,7 +321,7 @@ class EnvelopeGuard:
 
     def __init__(
         self, *, signer: EnvelopeSigner, store: EnvelopeStateStore, local_node_id: str, policy: str,
-        identity_policy: PeerIdentityPolicy | None = None,
+        identity_policy: PeerIdentityPolicy | None = None, ledger: LedgerHistory | None = None,
     ) -> None:
         if policy not in (POLICY_SIGN, POLICY_REQUIRE):
             raise ValueError(f"the envelope policy must be {POLICY_SIGN!r} or {POLICY_REQUIRE!r}")
@@ -336,11 +341,23 @@ class EnvelopeGuard:
         self._invalid: set[str] = set()
         self._windows: dict[tuple[str, str], StoredWindow] = {}
         self._unsigned_reason: str | None = None
+        self._gap_listener: Callable[[str], None] | None = None  # AD-1198 slice 2a: told of each key history gap
+        self._ledger = ledger  # AD-1198 A-1: at start, a held history's pin may be judged on the chain identity.db stores
 
     @property
     def accepts_traffic(self) -> bool:
         """Whether this node sends and accepts federation traffic at all."""
         return self._mode in (_MODE_ARMED, _MODE_UNGUARDED)
+
+    def held(self, source: str) -> HeldSender | None:
+        """AD-1198: the key history held for ``source`` -- its newest events and the state they replay to -- or ``None``."""
+        return self._holds.get(source)
+
+    def on_history_gap(self, listener: Callable[[str], None] | None) -> None:
+        """AD-1198: call ``listener`` with the source of each envelope refused for a key history gap, which a resync from
+        that source's chain can heal; ``None`` removes it. The listener must return at once and must not raise.
+        """
+        self._gap_listener = listener
 
     async def start(self) -> None:
         """Open the store, commit a new send epoch and load the holds; never raises for a store failure.
@@ -400,6 +417,8 @@ class EnvelopeGuard:
                 )
                 continue
             why = None if self._identity is None else self._identity.identity_refusal(source, state)  # AD-1198 a held history must satisfy its pin
+            if why == "pin (key)" and self._ledger is not None:  # AD-1198 A-1 newest events without the pinned key: judged on the full history
+                why = self._pin_on_ledger(source, events, state)
             if why is not None:
                 invalid.add(source)
                 logger.error(
@@ -415,6 +434,40 @@ class EnvelopeGuard:
         logger.info(
             "AD-1197: federation envelope signing armed (policy %s, %d senders held)", self._policy, len(holds),
         )
+
+    def _pin_on_ledger(self, source: str, events: tuple[KeyEvent, ...], state: KeyState) -> str | None:
+        """AD-1198 A-1: a held history refused at start for ``pin (key)`` -- its newest events no longer introduce the
+        pinned key, as after a resync -- judged again on the full key history: the chain identity.db stores for the held
+        DID (re-verified, ``ledger``), joined to the held events. The stored chain must reach the held head keeping the
+        held events unchanged, or the held events must continue it from its head, replayed from its state under every
+        AD-1196 rule; the pin and its continuity are then judged on that full state. ``pin (key)`` again when nothing is
+        stored, the chain does not verify or the two do not join. Never raises.
+        """
+        found = None
+        with contextlib.suppress(Exception):  # an unread chain proves nothing: the hold is refused as before
+            found = None if self._ledger is None else self._ledger(state.did)
+        if found is None or self._identity is None:
+            return "pin (key)"
+        history, full = found
+        try:
+            if full.seq < state.seq:  # AD-1198 A-1 the held events continue the stored chain from its head
+                keeps, _ = keeps_held_key_events(history, events, carried_head=state.seq)
+                if keeps:
+                    full = derive_key_state(events[len(events) - (state.seq - full.seq):], after=full) or full
+            else:
+                keeps, _ = keeps_held_key_events(events, history, carried_head=full.seq)
+        except (KeyEventInvalid, ValueError, TypeError, KeyError):  # AD-1198 A-1 a history that does not replay proves nothing
+            keeps = False
+        if not keeps:  # AD-1198 A-1 the stored chain and the held events must be one history
+            return "pin (key)"
+        why = self._identity.identity_refusal(source, full)  # AD-1198 A-1 the pin and its continuity on the full history
+        if why is None:
+            logger.info(
+                "AD-1198: on the chain identity.db stores for %r, the key history held for it satisfies its identity "
+                "pin (key seq %d); it is held",
+                source[:64], state.seq,
+            )
+        return why
 
     async def stop(self) -> None:
         """Close the store; afterwards nothing is sent or accepted."""
@@ -542,9 +595,49 @@ class EnvelopeGuard:
             "AD-1197: envelope %r from %r rejected (%s); not delivered",
             _label(getattr(message, "type", None)), _label(getattr(message, "source_node", None)), reason,
         )
+        if reason == "key history gap" and self._gap_listener is not None:  # AD-1198 a key history gap asks for a resync
+            self._gap_listener(cast(FederationMessage, message).source_node)
         return False
 
-    async def _admit_locked(self, message: object) -> str | None:
+    async def resync(
+        self, message: object, history: Sequence[KeyEvent], before_record: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> bool:
+        """AD-1198: admit a pinned peer's directed ``chain_response`` with ``history``, the key events of the chain it
+        carries, in place of the run its signature block carries -- so a hold refused for a key history gap is resynchronised.
+
+        Only while armed with peer admission, only a ``chain_response`` and only for a source already held. ``history``
+        is judged exactly as a carried run: it must end at the head the envelope was signed under, keep the held events
+        unchanged and re-incept nothing after them; the events past the held head replay from the held state under every
+        AD-1196 rule and may not reintroduce a recorded key; the newest 32 become the hold, every key the new events
+        introduced is recorded, and the envelope is verified under the new head's key and recorded in its replay window.
+        ``before_record`` (A-1) runs once every check has passed, immediately before anything is recorded: a reason it
+        returns refuses the resync. A refusal is never raised: it is logged with its reason and changes nothing (a
+        cancellation propagates).
+        """
+        if self._mode != _MODE_ARMED or self._identity is None:  # AD-1198 a resync only with peer admission armed
+            reason: str | None = "not armed"
+        elif type(message) is not FederationMessage or message.type != CHAIN_RESPONSE:  # AD-1198 only a chain response carries a history
+            reason = "topic"
+        else:
+            try:
+                async with self._accept_lock:
+                    reason = await self._admit_locked(message, tuple(history), before_record)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- trust boundary: anything malformed is a refusal
+                reason = f"malformed ({type(exc).__name__})"
+        if reason is None:
+            return True
+        logger.warning(
+            "AD-1198: chain response from %r not admitted for a resync (%s); the key history held for it is unchanged",
+            _label(getattr(message, "source_node", None)), reason,
+        )
+        return False
+
+    async def _admit_locked(
+        self, message: object, history: tuple[KeyEvent, ...] | None = None,
+        before_record: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> str | None:
         if type(message) is not FederationMessage:
             return "malformed"
         source = message.source_node
@@ -564,9 +657,13 @@ class EnvelopeGuard:
         if source in self._invalid:
             return "held history"
         held = self._holds.get(source)
+        if history is not None and held is None:  # AD-1198 a resync re-anchors a hold; a first contact carries its own run
+            return "not held"
         if held is None and len(self._holds) + len(self._invalid) >= MAX_HELD_SENDERS:  # AD-1197 bounded first contact
             return "first contact refused"
-        carried = key_events_from_wire(parsed.key_events)
+        carried = key_events_from_wire(parsed.key_events) if history is None else history  # AD-1198 a resync carries its chain's history
+        if history is not None and (not carried or carried[-1].payload.get("seq") != parsed.key_seq):  # AD-1198 the history ends at the signing head
+            return "stale key"
         keeps, why = keeps_held_key_events(held.events if held else (), carried, carried_head=parsed.key_seq)
         if not keeps:  # AD-1197 held history
             return why
@@ -577,12 +674,13 @@ class EnvelopeGuard:
             except Exception as exc:  # noqa: BLE001 -- an unread record is an unchecked rule: not delivered
                 return f"not recorded ({type(exc).__name__})"  # AD-1197 A-2 an unread record refuses the growth
         tail = None
+        derived: KeyState | None = None
         try:
             if held is None:
                 tail = carried
             elif parsed.key_seq > held.state.seq:
                 new = carried[len(carried) - (parsed.key_seq - held.state.seq):]
-                derive_key_state(new, after=held.state, used_key_ids=used)  # AD-1197 A-1 new events replay from the held state
+                derived = derive_key_state(new, after=held.state, used_key_ids=used)  # AD-1197 A-1 new events replay from the held state
                 tail = (*held.events, *new)[-MAX_KEY_EVENTS:]  # AD-1197 A-1 a hold keeps the newest events
             state = held.state if tail is None else replay_key_events(tail)  # AD-1197 A-1 held from the oldest kept event
         except (KeyEventInvalid, ValueError, TypeError, KeyError):
@@ -593,7 +691,8 @@ class EnvelopeGuard:
         if why is not None:
             return why
         grows = tail is not None
-        key_ids = used.union(kept.kid for kept in state.keys) if grows else frozenset()  # AD-1197 A-2 the kept run's keys join every key verified before
+        recorded = state if derived is None else derived  # AD-1198 every key the new events introduced, also those older than the kept run
+        key_ids = used.union(kept.kid for kept in recorded.keys) if grows else frozenset()  # AD-1197 A-2 the kept run's keys join every key verified before
         if len(key_ids) > MAX_HELD_KEY_IDS:  # AD-1197 A-2 a sender past the bound is refused, never forgotten
             return "key history too long"
         if parsed.key_seq != state.seq or parsed.key_head != state.head_digest:  # AD-1197 stale key
@@ -614,6 +713,10 @@ class EnvelopeGuard:
         window, why = advance_window(self._windows.get((source, channel)), parsed.key_seq, parsed.epoch, parsed.seq)
         if window is None:
             return why
+        if before_record is not None:  # AD-1198 A-1 a resync's chain is in identity.db before its hold is recorded
+            refused = await before_record()
+            if refused is not None:
+                return refused
         sender = (
             StoredSender(state.did, state.seq, state.head_digest, json.dumps(key_events_to_wire(tail)))
             if grows else None
