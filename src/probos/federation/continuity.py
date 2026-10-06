@@ -28,6 +28,14 @@ otherwise kept and the import refused. A late or repeated answer to an ended res
 intent while it is among the newest ``MAX_ENDED_RESYNCS`` ended requests (``signed_transport``). A sender past 4,096 key
 ids (AD-1197 R-24) is not healed by a resync. An unarmed node builds no exchange, and its bridge answers exactly as
 before.
+
+Slice 2b: a held peer's envelope refused for a held history or a stale key also asks for a resync, and the fetched chain
+may take the place of the held events where it parts from them, by recovery-key precedence
+(``probos.identity_keys.recovery_precedence``): only where the two part inside the held run, and only when the chain's
+event there is a ``recovery`` that replays from the state they share. identity.db first replaces a verified stored chain
+the fetched chain takes precedence over -- the one exception to extending it, which the registry judges again
+(``import_chain(..., supersede=True)``) -- and then the guard re-anchors the hold on the chain's branch in one logged
+write (``EnvelopeGuard.resync``). A transfer's chain never moves either hold.
 """
 
 from __future__ import annotations
@@ -39,9 +47,15 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from probos.federation.envelope import CHAIN_REQUEST, HeldSender
+from probos.federation.envelope import CHAIN_REQUEST, DIVERGENCE_REFUSALS, HeldSender
 from probos.identity import verify_chain_structure
-from probos.identity_keys import ATTEST_KEY_EVENT, KeyEvent, keeps_held_key_events, verify_chain_signatures
+from probos.identity_keys import (
+    KeyEvent,
+    chain_key_events,
+    keeps_held_key_events,
+    recovery_precedence,
+    verify_chain_signatures,
+)
 from probos.types import FederationMessage
 
 if TYPE_CHECKING:
@@ -70,7 +84,7 @@ class IdentityLedger(StoredChains, Protocol):
 
     async def export_chain(self) -> list[dict[str, Any]]: ...
 
-    async def import_chain(self, blocks: list[dict[str, Any]]) -> tuple[bool, str]: ...
+    async def import_chain(self, blocks: list[dict[str, Any]], *, supersede: bool = False) -> tuple[bool, str]: ...
 
     async def import_transfer_certificate(self, cert: TransferCertificate) -> tuple[bool, str]: ...
 
@@ -107,15 +121,9 @@ def within_chain_bounds(blocks: object) -> bool:
 
 
 def chain_key_history(blocks: list[dict[str, Any]]) -> tuple[KeyEvent, ...]:
-    """The key events ``blocks`` anchors, in ledger order; for a chain whose signatures have verified."""
-    return tuple(
-        KeyEvent(
-            index=block["index"], payload=block["attestation"]["event"],
-            signatures=block["attestation"]["signatures"], digest=block["certificate_hash"],
-        )
-        for block in blocks
-        if isinstance(block.get("attestation"), Mapping) and block["attestation"].get("kind") == ATTEST_KEY_EVENT
-    )
+    """The key events ``blocks`` anchors, in ledger order; for a chain whose signatures have verified. The same reading
+    as identity.db's (``probos.identity_keys.chain_key_events``; AD-1198 slice 2b)."""
+    return chain_key_events(blocks)
 
 
 def verified_chain_state(blocks: object, did: str | None = None) -> KeyState | None:
@@ -255,8 +263,10 @@ class IdentityExchange:
         return await self._registry.import_transfer_certificate(cert)
 
     def history_gap(self, source: str) -> None:
-        """The guard's listener for a key history gap: begin one resync of ``source``, unless it is not a pinned peer,
-        one is running, the exchange has stopped, or the last began less than ``RESYNC_INTERVAL_S`` ago. Returns at once.
+        """The guard's listener for a key history gap -- and (slice 2b) for a held source's held history or stale key,
+        where a recovery in its chain may take precedence over the held events: begin one resync of ``source``, unless it
+        is not a pinned peer, one is running, the exchange has stopped, or the last began less than ``RESYNC_INTERVAL_S``
+        ago. Returns at once.
         """
         if self._stopped or source in self._resyncs or not self._admission.pinned(source):  # AD-1198 one resync at a time, pinned peers only
             return
@@ -279,7 +289,7 @@ class IdentityExchange:
 
         async def ledger_first(answer: FederationMessage) -> str | None:
             try:
-                imported, why = await self._into_ledger(source, answer.payload["blocks"])  # AD-1198 A-1 identity.db holds the chain first
+                imported, why = await self._into_ledger(source, answer.payload["blocks"], supersede=True)  # AD-1198 A-1 identity.db holds the chain first
             except Exception as exc:  # noqa: BLE001 -- identity.db could not import: the hold is not recorded
                 return f"identity.db: {type(exc).__name__}"
             return None if imported else f"identity.db: {why}"  # AD-1198 A-1 a chain identity.db refuses resynchronises nothing
@@ -301,7 +311,8 @@ class IdentityExchange:
         return True
 
     async def stop(self) -> None:
-        """Begin no more resyncs and cancel those running; shutdown calls this before the bridge and the transport stop."""
+        """Begin no more resyncs, cancel those running and wait for them: a hold write under way is waited for, at most the
+        guard's ``STORE_WRITE_SETTLE_S`` (A-1, A-2); shutdown calls this before the bridge and the transport stop."""
         self._stopped = True
         self._seam.on_history_gap(None)
         running = list(self._resyncs.values())
@@ -312,19 +323,23 @@ class IdentityExchange:
     async def _history(self, source: str, answer: FederationMessage) -> tuple[KeyEvent, ...] | None:
         """The key history of the chain in ``answer`` when it is ``source``'s own; ``None`` otherwise."""
         blocks = answer.payload.get("blocks") if type(answer.payload) is dict else None
-        reason, history = await self._judged(source, blocks)
+        reason, history = await self._judged(source, blocks, supersede=True)  # AD-1198 slice 2b only a resync may move the hold to another branch
         if reason is not None:
             self._note_refusal(source, "resync answer", reason)
             return None
         return history
 
-    async def _into_ledger(self, sender: str, blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+    async def _into_ledger(
+        self, sender: str, blocks: list[dict[str, Any]], *, supersede: bool = False,
+    ) -> tuple[bool, str]:
         """identity.db imports ``blocks`` -- ``sender``'s own chain, judged -- only as an extension of the chain it
         stores for that DID (A-1), and that stored chain counts only when it verifies in full (A-2). Against a verified
         stored chain an older snapshot changes nothing and counts as imported, so a transfer it carries is judged against
-        the longer stored chain, and a chain that does not extend it is refused. A stored chain that does not verify --
-        unsigned, or failing its hashes, links or signatures -- is replaced when ``blocks`` begins with every one of its
-        block hashes, and is otherwise kept and ``blocks`` refused. One import at a time.
+        the longer stored chain, and a chain that does not extend it is refused -- unless ``supersede`` (a resync; slice
+        2b) and ``blocks`` takes recovery-key precedence over it: then it replaces it, the one exception, which the
+        registry judges again. A stored chain that does not verify -- unsigned, or failing its hashes, links or
+        signatures -- is replaced when ``blocks`` begins with every one of its block hashes, and is otherwise kept and
+        ``blocks`` refused. One import at a time.
         """
         async with self._ledger_lock:  # AD-1198 A-1 compare and import as one step
             did = blocks[0]["agent_did"]
@@ -336,13 +351,19 @@ class IdentityExchange:
                 if verified and given == kept[: len(given)]:  # AD-1198 A-1 an older snapshot of the stored chain changes nothing
                     return True, f"Chain kept: the {len(stored)} blocks stored for {did} already hold these {len(blocks)}"
                 if given[: len(kept)] != kept:  # AD-1198 A-1 an armed import only extends the stored chain
+                    if supersede and verified and recovery_precedence(chain_key_history(stored), chain_key_history(blocks))[0] is not None:  # AD-1198 slice 2b a resync's branch replaces a stored branch it takes precedence over
+                        return await self._registry.import_chain(blocks, supersede=True)  # AD-1198 slice 2b the registry judges the branch change again
                     reason = "does not extend the stored chain" if verified else "the stored chain does not verify and this one does not contain it"  # AD-1198 A-2 an unverified stored chain is kept, not extended
                     self._note_refusal(sender, "chain", reason)
                     return False, f"identity exchange refused ({reason})"
             return await self._registry.import_chain(blocks)
 
-    async def _judged(self, sender: str, blocks: object) -> tuple[str | None, tuple[KeyEvent, ...]]:
-        """Why ``blocks`` is not ``sender``'s own chain, or ``None`` and the key history it carries."""
+    async def _judged(
+        self, sender: str, blocks: object, *, supersede: bool = False,
+    ) -> tuple[str | None, tuple[KeyEvent, ...]]:
+        """Why ``blocks`` is not ``sender``'s own chain, or ``None`` and the key history it carries. With ``supersede`` (a
+        resync; slice 2b) a chain that does not keep the held events is the sender's own when it takes recovery-key
+        precedence over them."""
         if not self._admission.pinned(sender):  # AD-1198 identity is exchanged only with a pinned peer
             return "unpinned peer", ()
         held = self._seam.held(sender)
@@ -361,6 +382,9 @@ class IdentityExchange:
             return pin, ()
         history = chain_key_history(chain)
         keeps, why = keeps_held_key_events(held.events, history, carried_head=state.seq)
+        if not keeps and supersede and why in DIVERGENCE_REFUSALS:  # AD-1198 slice 2b a resync's chain may take precedence over the held events
+            divergent, precedence = recovery_precedence(held.events, history)
+            keeps, why = divergent is not None, f"{why}: {precedence}"  # AD-1198 slice 2b the refusal names the judgement
         if not keeps:  # AD-1198 identity.db follows the envelope hold, never another branch
             return why, ()
         return None, history

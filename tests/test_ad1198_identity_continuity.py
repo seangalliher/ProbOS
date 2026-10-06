@@ -385,7 +385,13 @@ async def test_s2a_m1_a_cancelled_resync_propagates_and_changes_nothing(tmp_path
 
 
 class _PausingStore(EnvelopeStore):
-    """An envelope store whose ``record`` waits at a gate, so a resync can be cancelled while it records."""
+    """An envelope store whose ``key_ids`` waits at a gate, so a resync can be cancelled before it records.
+
+    AD-1198 A-1 (slice 2b-i) moved the gate here from ``record``: a store write that has begun is now waited for -- to
+    its end, or for at most ``STORE_WRITE_SETTLE_S`` (A-2) -- before a cancellation is raised (the a1 and a2 tests of
+    ``tests/test_ad1198_fork_resolution.py``), so "changes nothing" holds for a cancellation that arrives before the
+    write. The test's assertions are unchanged.
+    """
 
     def __init__(self, path: Path) -> None:
         super().__init__(path)
@@ -393,15 +399,17 @@ class _PausingStore(EnvelopeStore):
         self.gate = asyncio.Event()
         self.gate.set()
 
-    async def record(self, *args: Any, **kwargs: Any) -> None:
+    async def key_ids(self, source: str) -> frozenset[str]:
         self.paused.set()
         await self.gate.wait()
-        await super().record(*args, **kwargs)
+        return await super().key_ids(source)
 
 
-async def test_s2a_m1_only_a_key_history_gap_tells_the_listener(
+async def test_s2a_m1_a_key_history_gap_tells_the_listener_and_a_duplicate_or_an_unconfigured_source_does_not(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # AD-1198 slice 2b renamed this test from test_s2a_m1_only_a_key_history_gap_tells_the_listener: a held source's held
+    # history or stale key now tells the listener too (tests/test_ad1198_fork_resolution.py); its assertions are unchanged.
     caplog.set_level(logging.INFO, logger=_ENVELOPE_LOGGER)
     wire = _Wire()
     async with contextlib.AsyncExitStack() as stack:

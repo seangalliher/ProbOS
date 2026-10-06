@@ -17,7 +17,8 @@ and refuses an event that reintroduces one, as AD-1196's full replay does. It
 verifies the JWS under the active key of the held history and admits the envelope
 through a durable 64-wide replay window per source and channel, ordered by key
 history, epoch and sequence, recorded before the message is delivered. Timestamps
-are signed and never judged: nothing here reads a clock.
+are signed and never judged: nothing here reads a clock. The one timer here bounds how
+long the guard waits for its own store (AD-1198 A-2); it never judges an envelope.
 
 This module's logger records no signature, key-event history, epoch or sequence.
 The store's SQL parameters -- public key events and window counters, never a private
@@ -30,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import functools
 import hashlib
 import json
 import logging
@@ -51,6 +53,7 @@ from probos.identity_keys import (
     derive_key_state,
     event_digest,
     keeps_held_key_events,
+    recovery_precedence,
     replay_key_events,
     verify_signature_for,
 )
@@ -70,6 +73,7 @@ A2A_REQUEST = "a2a_request"  # AD-1198 slice 3b: a peer's signed A2A JSON-RPC re
 PEER_REQUEST_TOPICS = frozenset({ATTACHMENT_REQUEST, A2A_REQUEST})  # AD-1198 accepted only over HTTP (peer_requests.py), never over the bridge
 CHAIN_REQUEST = "chain_request"  # AD-1198 slice 2a: a request for a ship's identity-ledger chain (bridge.py answers it)
 CHAIN_RESPONSE = "chain_response"  # AD-1198 slice 2a: the one topic a resync admits with the key history its chain carries
+DIVERGENCE_REFUSALS = frozenset({"held history", "stale key"})  # AD-1198 slice 2b: the refusals of a held source whose history parts from the held events
 POLICY_SIGN = "sign"
 POLICY_REQUIRE = "require"
 REPLAY_WINDOW = 64
@@ -79,6 +83,11 @@ MAX_HELD_KEY_IDS = 4_096  # the most key ids a receiver records per sender; past
 MAX_SEQUENCE = 2**53 - 1
 MAX_AUTH_BYTES = 65_536
 MAX_NODE_ID_CHARS = 256  # the longest node id a signed envelope may name as its source or target (AD-1197 A-2b)
+# AD-1198 A-2: the longest the guard waits for one write, or the close, of its envelope store. The one wait a healthy
+# write has is for a lock another connection holds, and the store's SQLite busy timeout (5 s) bounds it; the bound
+# allows that wait in full and one second more, so a write still running then is stalled, not contended. Past it the
+# write's outcome is unknown: nothing is admitted until the write ends, and then exactly what it committed is held.
+STORE_WRITE_SETTLE_S = 6.0  # AD-1198 A-2 the bound on one store write or close
 _MASK = (1 << REPLAY_WINDOW) - 1
 _AUTH_MEMBERS = frozenset({"v", "target", "epoch", "seq", "key_seq", "key_head", "jws", "key_events"})
 _EVENT_MEMBERS = frozenset({"index", "event", "signatures"})
@@ -132,6 +141,10 @@ class EnvelopeStateStore(Protocol):
     async def record(
         self, source: str, channel: str, sender: StoredSender | None, window: StoredWindow,
         key_ids: frozenset[str] = frozenset(),
+    ) -> None: ...
+
+    async def reanchor(
+        self, source: str, channel: str, sender: StoredSender, window: StoredWindow, key_ids: frozenset[str],
     ) -> None: ...
 
 
@@ -306,6 +319,114 @@ def _is_node_id(value: object) -> bool:
     return type(value) is str and 1 <= len(value) <= MAX_NODE_ID_CHARS
 
 
+_STORE_WRITE_TASK_NAME = "ad1198-envelope-store-write"
+_STORE_SETTLE_TASK_NAME = "ad1198-envelope-store-settle"
+_STORE_CLOSE_TASK_NAME = "ad1198-envelope-store-close"
+_UNSETTLED = "store write unsettled"
+
+
+async def _ended(write: Callable[[], Awaitable[None]]) -> BaseException | None:
+    """How the store write ``write`` starts ended: ``None`` once it committed, else the exception it raised."""
+    try:
+        await write()
+    except Exception as exc:  # noqa: BLE001 -- not recorded means not delivered, in both policies
+        return exc  # AD-1198 A-1 a failed write is an outcome, read by its caller
+    return None
+
+
+async def _written(
+    write: Callable[[], Awaitable[None]],
+) -> tuple[asyncio.Task[BaseException | None], asyncio.CancelledError | None]:
+    """AD-1198 A-1, A-2: run one store write in a task of its own and wait for it, whatever happens to its caller -- the
+    shield-and-wait pattern of ``startup/fleet_organization.py`` -- for at most ``STORE_WRITE_SETTLE_S`` from its start.
+    aiosqlite completes a COMMIT it has begun even when its caller is cancelled, so a write its caller stopped waiting
+    for may still commit; and nothing bounds how long a COMMIT takes -- SQLite's busy timeout bounds only a wait for a
+    lock another connection holds. Returns the write's task, ended or still running at the bound, and the caller's
+    cancellation if one arrived meanwhile, which the caller raises once it has settled what the write lets it hold. The
+    write is never cancelled here: one still running at the bound has an unknown outcome, not a rolled-back one.
+    """
+    writing = asyncio.create_task(_ended(write), name=_STORE_WRITE_TASK_NAME)
+    settling = asyncio.create_task(asyncio.wait({writing}, timeout=STORE_WRITE_SETTLE_S), name=_STORE_SETTLE_TASK_NAME)  # AD-1198 A-2 the wait ends when the write has, or at the bound
+    cancelled: asyncio.CancelledError | None = None
+    while not settling.done():  # AD-1198 A-1 the wait ends only when the write has, or the bound has passed
+        try:
+            await asyncio.shield(settling)  # AD-1198 A-1 a cancellation of the caller does not interrupt the store's write
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc  # AD-1198 A-1 the caller's cancellation is kept, and raised once what committed is held
+    return writing, cancelled
+
+
+class _StoreWrite:
+    """AD-1198 A-2: one store write the guard started -- its source, its task, and what the guard holds once it has
+    committed -- owned by the guard until its outcome is known."""
+
+    def __init__(self, source: str, task: asyncio.Task[BaseException | None], publish: Callable[[], None]) -> None:
+        self.source = source
+        self.task = task
+        self.publish = publish
+
+    def outcome(self, *, late: bool) -> str | None:
+        """``None`` once the write committed, and what it committed is then held; ``"not recorded (...)"`` once it
+        failed, and nothing of it is held; ``"store write unsettled"`` while it runs, or once it ended cancelled --
+        whether it committed is then unknown, and stays so. ``late`` settles a write the guard stopped waiting for."""
+        if not self.task.done() or self.task.cancelled():  # AD-1198 A-2 a write still running, or one that ended cancelled, may or may not have committed
+            if not late:
+                logger.error(
+                    "AD-1198: the envelope store's write for %r %s; whether it committed is unknown, so no envelope is "
+                    "admitted until %s",
+                    self.source[:64],
+                    "ended cancelled" if self.task.done() else f"has not ended within {STORE_WRITE_SETTLE_S:g} s",
+                    "a restart reads the store" if self.task.done() else "it ends, and then what it committed is held",
+                )
+            return _UNSETTLED
+        failure = self.task.result()
+        if failure is None:  # AD-1198 A-1 exactly what committed is held
+            self.publish()
+        if late:
+            logger.warning(
+                "AD-1198: the envelope store's write for %r has ended (%s) after the guard stopped waiting for it; %s, "
+                "and envelopes are admitted again",
+                self.source[:64], "committed" if failure is None else f"not recorded: {type(failure).__name__}",
+                "what it committed is held" if failure is None else "nothing of it is held",
+            )
+        return None if failure is None else f"not recorded ({type(failure).__name__})"  # AD-1197 not recorded, not delivered
+
+
+def _close_ended(closing: asyncio.Task[None]) -> None:
+    """AD-1198 A-3: once a close of the store that the guard's stop did not wait out has ended, read its outcome -- so
+    that no exception of it is left unretrieved -- and report one that failed, once. A cancelled close has no exception
+    to read, and one that completed has nothing to report."""
+    failure = None if closing.cancelled() else closing.exception()  # AD-1198 A-3 the outcome of a close left running is read once it ends
+    if failure is not None:  # AD-1198 A-3 and a close that failed is reported, once
+        logger.warning(
+            "AD-1198: the federation envelope store's close, left running when the guard's stop ended, failed (%s); the "
+            "store may not have closed cleanly, nothing retries the close, and the next start opens the store as it stands",
+            type(failure).__name__,
+        )
+
+
+async def _closed(closing: asyncio.Task[None], behind: _StoreWrite | None) -> None:
+    """AD-1198 A-2: wait for the store's close ``closing`` at most ``STORE_WRITE_SETTLE_S`` -- not at all behind a store
+    write still running, whose statements it is queued behind -- and raise what it raised once it has ended. A close
+    that has not ended by the bound is logged and left to end on aiosqlite's worker thread, owned by the guard. A close
+    this wait leaves running -- at the bound, or because the wait itself was cancelled -- is read once it ends (A-3)."""
+    blocked = behind is not None and not behind.task.done()  # AD-1198 A-2 a close queued behind an unsettled write cannot end before it
+    try:
+        await asyncio.wait({closing}, timeout=0 if blocked else STORE_WRITE_SETTLE_S)  # AD-1198 A-2 the guard's stop waits for its store at most the bound
+    except asyncio.CancelledError:
+        closing.add_done_callback(_close_ended)  # AD-1198 A-3 a close whose wait was cancelled is read once it ends
+        raise  # AD-1198 A-3 and the cancellation of the guard's stop is raised, never swallowed
+    if closing.done():
+        closing.result()
+        return
+    closing.add_done_callback(_close_ended)  # AD-1198 A-3 a close left running at the bound is read once it ends
+    logger.warning(
+        "AD-1198: the federation envelope store has not closed %s; the guard is stopped, and the store closes once the "
+        "statement ahead of its close ends",
+        "behind its unsettled write" if blocked else f"within {STORE_WRITE_SETTLE_S:g} s",
+    )
+
+
 class EnvelopeGuard:
     """Seals outbound envelopes and admits inbound ones for one node (AD-1197).
 
@@ -343,6 +464,8 @@ class EnvelopeGuard:
         self._unsigned_reason: str | None = None
         self._gap_listener: Callable[[str], None] | None = None  # AD-1198 slice 2a: told of each key history gap
         self._ledger = ledger  # AD-1198 A-1: at start, a held history's pin may be judged on the chain identity.db stores
+        self._unsettled: _StoreWrite | None = None  # AD-1198 A-2 a store write whose outcome is not known yet, owned until it is
+        self._closing: set[asyncio.Task[None]] = set()  # AD-1198 A-2 each close of the store, owned until it ends
 
     @property
     def accepts_traffic(self) -> bool:
@@ -350,12 +473,15 @@ class EnvelopeGuard:
         return self._mode in (_MODE_ARMED, _MODE_UNGUARDED)
 
     def held(self, source: str) -> HeldSender | None:
-        """AD-1198: the key history held for ``source`` -- its newest events and the state they replay to -- or ``None``."""
+        """AD-1198: the key history held for ``source`` -- its newest events and the state they replay to -- or ``None``.
+        While a store write is unsettled (A-2) it may lag the store by that write, and nothing is admitted."""
         return self._holds.get(source)
 
     def on_history_gap(self, listener: Callable[[str], None] | None) -> None:
         """AD-1198: call ``listener`` with the source of each envelope refused for a key history gap, which a resync from
-        that source's chain can heal; ``None`` removes it. The listener must return at once and must not raise.
+        that source's chain can heal, and (slice 2b), while peer admission is armed, of each envelope from a held source
+        refused for a held history or a stale key, where a recovery in that chain may take precedence over the held
+        events; ``None`` removes it. The listener must return at once and must not raise.
         """
         self._gap_listener = listener
 
@@ -470,10 +596,15 @@ class EnvelopeGuard:
         return why
 
     async def stop(self) -> None:
-        """Close the store; afterwards nothing is sent or accepted."""
+        """Close the store; afterwards nothing is sent or accepted. The close is waited for at most ``STORE_WRITE_SETTLE_S``,
+        and not at all behind a store write left unsettled; one that has not ended is left to end, owned by the guard (A-2).
+        """
         async with self._accept_lock:
+            closing = asyncio.create_task(self._store.stop(), name=_STORE_CLOSE_TASK_NAME)
+            self._closing.add(closing)  # AD-1198 A-2 the guard owns each close of its store until it ends
+            closing.add_done_callback(self._closing.discard)  # AD-1198 A-2 and lets it go once it has ended
             try:
-                await self._store.stop()
+                await _closed(closing, self._unsettled)
             except Exception as exc:  # noqa: BLE001 -- shutdown degrades: the guard is stopped either way
                 logger.warning(
                     "AD-1197: the federation envelope store did not close cleanly (%s); the guard is stopped",
@@ -572,7 +703,10 @@ class EnvelopeGuard:
         envelopes are admitted without verification -- the designed degrade -- and a malformed
         block is refused, as in every mode. A signed envelope whose source node id is not 1 to
         ``MAX_NODE_ID_CHARS`` characters is refused in every mode, before the store is read or
-        written (AD-1197 A-2b).
+        written (AD-1197 A-2b). A cancellation that arrives while the envelope is being recorded is
+        raised once the store's write has ended, with what it committed held (AD-1198 A-1), or once
+        ``STORE_WRITE_SETTLE_S`` has passed: an envelope whose write has not ended by then is not
+        delivered, and nothing is admitted until that write ends (A-2).
         """
         if self._mode not in (_MODE_ARMED, _MODE_UNGUARDED):
             return False
@@ -595,7 +729,8 @@ class EnvelopeGuard:
             "AD-1197: envelope %r from %r rejected (%s); not delivered",
             _label(getattr(message, "type", None)), _label(getattr(message, "source_node", None)), reason,
         )
-        if reason == "key history gap" and self._gap_listener is not None:  # AD-1198 a key history gap asks for a resync
+        diverged = reason in DIVERGENCE_REFUSALS and self._identity is not None and cast(FederationMessage, message).source_node in self._holds  # AD-1198 A-1 a held source's divergence asks for a resync only while peer admission is armed
+        if (reason == "key history gap" or diverged) and self._gap_listener is not None:  # AD-1198 a gap, or (slice 2b) a held source's divergence, asks for a resync
             self._gap_listener(cast(FederationMessage, message).source_node)
         return False
 
@@ -611,8 +746,19 @@ class EnvelopeGuard:
         AD-1196 rule and may not reintroduce a recorded key; the newest 32 become the hold, every key the new events
         introduced is recorded, and the envelope is verified under the new head's key and recorded in its replay window.
         ``before_record`` (A-1) runs once every check has passed, immediately before anything is recorded: a reason it
-        returns refuses the resync. A refusal is never raised: it is logged with its reason and changes nothing (a
-        cancellation propagates).
+        returns refuses the resync. A refusal is never raised: it is logged with its reason and changes nothing. A
+        cancellation propagates: before the store write begins nothing is recorded, though ``before_record`` may already
+        have written identity.db, which is then ahead of the hold until the next resync; once the write has begun it is
+        waited for, at most ``STORE_WRITE_SETTLE_S``, and what it committed is held before the cancellation is raised
+        (A-1). A write still running then has an unknown outcome: the resync ends at the bound -- cancelled, or else
+        refused -- and nothing is admitted until the write ends (A-2).
+
+        Slice 2b: a ``history`` that does not keep the held events is admitted only when it takes recovery-key precedence
+        over them (``recovery_precedence``). Its events from the recovery on replay from the state the two branches share
+        under every AD-1196 rule and may not reintroduce a recorded key; its full key state must satisfy the source's
+        pin; its newest 32 events become the hold, even when that moves the hold back; the key ids of both branches stay
+        recorded; the source's replay windows start again with this envelope's; and the store writes all of it in one
+        transaction (``reanchor``), which is logged.
         """
         if self._mode != _MODE_ARMED or self._identity is None:  # AD-1198 a resync only with peer admission armed
             reason: str | None = "not armed"
@@ -638,6 +784,9 @@ class EnvelopeGuard:
         self, message: object, history: tuple[KeyEvent, ...] | None = None,
         before_record: Callable[[], Awaitable[str | None]] | None = None,
     ) -> str | None:
+        if self._unsettled is not None and self._unsettled.outcome(late=True) == _UNSETTLED:  # AD-1198 A-2 nothing is admitted while the store may hold what memory does not
+            return _UNSETTLED
+        self._unsettled = None  # AD-1198 A-2 a write left unsettled is let go once what it committed is held
         if type(message) is not FederationMessage:
             return "malformed"
         source = message.source_node
@@ -665,10 +814,13 @@ class EnvelopeGuard:
         if history is not None and (not carried or carried[-1].payload.get("seq") != parsed.key_seq):  # AD-1198 the history ends at the signing head
             return "stale key"
         keeps, why = keeps_held_key_events(held.events if held else (), carried, carried_head=parsed.key_seq)
-        if not keeps:  # AD-1197 held history
+        divergent = None
+        if not keeps and history is not None and held is not None and why in DIVERGENCE_REFUSALS:  # AD-1198 slice 2b a resync's chain may take precedence over the hold
+            divergent, _ = recovery_precedence(held.events, carried)
+        if not keeps and divergent is None:  # AD-1197 held history
             return why
         used: frozenset[str] = frozenset()
-        if held is not None and parsed.key_seq > held.state.seq:
+        if held is not None and (parsed.key_seq > held.state.seq or divergent is not None):  # AD-1198 slice 2b a re-anchor reads the recorded key ids too
             try:
                 used = await self._store.key_ids(source)  # AD-1197 A-2 every key this receiver verified for the sender
             except Exception as exc:  # noqa: BLE001 -- an unread record is an unchecked rule: not delivered
@@ -676,7 +828,10 @@ class EnvelopeGuard:
         tail = None
         derived: KeyState | None = None
         try:
-            if held is None:
+            if divergent is not None:  # AD-1198 slice 2b the branch replays from the state the two branches share
+                derived = derive_key_state(carried[divergent:], after=derive_key_state(carried[:divergent]), used_key_ids=used)  # AD-1198 slice 2b from the shared state, never reintroducing a recorded key
+                tail = carried[-MAX_KEY_EVENTS:]  # AD-1198 slice 2b the branch's newest events become the hold
+            elif held is None:
                 tail = carried
             elif parsed.key_seq > held.state.seq:
                 new = carried[len(carried) - (parsed.key_seq - held.state.seq):]
@@ -688,6 +843,8 @@ class EnvelopeGuard:
         if state is None:
             return "malformed"
         why = None if held is not None or self._identity is None else self._identity.identity_refusal(source, state)  # AD-1198 a first contact must satisfy its pin
+        if divergent is not None and self._identity is not None:  # AD-1198 slice 2b a re-anchor satisfies the pin
+            why = self._identity.identity_refusal(source, cast(KeyState, derived))  # AD-1198 slice 2b the pin on the full key state, not the kept run
         if why is not None:
             return why
         grows = tail is not None
@@ -710,7 +867,7 @@ class EnvelopeGuard:
         if not verify_signature_for(parsed.jws, payload, public_key_b64=state.active.public_key, kid=state.active_kid, typ=ENVELOPE_JWS_TYP):  # AD-1197 signature
             return "signature"
         channel = CHANNEL_BROADCAST if parsed.target == BROADCAST else CHANNEL_DIRECT
-        window, why = advance_window(self._windows.get((source, channel)), parsed.key_seq, parsed.epoch, parsed.seq)
+        window, why = advance_window(None if divergent is not None else self._windows.get((source, channel)), parsed.key_seq, parsed.epoch, parsed.seq)  # AD-1198 slice 2b a re-anchored source's windows start again
         if window is None:
             return why
         if before_record is not None:  # AD-1198 A-1 a resync's chain is in identity.db before its hold is recorded
@@ -721,14 +878,34 @@ class EnvelopeGuard:
             StoredSender(state.did, state.seq, state.head_digest, json.dumps(key_events_to_wire(tail)))
             if grows else None
         )
-        try:
-            await self._store.record(source, channel, sender, window, key_ids)
-        except Exception as exc:  # noqa: BLE001 -- not recorded means not delivered, in both policies
-            return f"not recorded ({type(exc).__name__})"  # AD-1197 not recorded, not delivered
-        self._windows[(source, channel)] = window
-        if grows:
-            self._holds[source] = HeldSender(state.did, tail, state)
-        return None
+        if divergent is None:
+            write = functools.partial(self._store.record, source, channel, sender, window, key_ids)
+        else:
+            write = functools.partial(self._store.reanchor, source, channel, cast(StoredSender, sender), window, key_ids)  # AD-1198 slice 2b the one write that may move a hold back
+
+        def publish() -> None:  # AD-1198 A-2 what the write committed, held at once or once a write left unsettled ends
+            if divergent is not None:
+                self._windows = {key: kept for key, kept in self._windows.items() if key[0] != source}  # AD-1198 slice 2b the guard forgets the source's windows in memory too
+                logger.warning(
+                    "AD-1198: re-anchored the key history held for %r on the branch its chain carries: the recovery at key "
+                    "seq %d takes precedence over the held events from there (key seq %d -> %d); its replay windows start "
+                    "again, and the %d key ids recorded for it, of both branches, stay recorded",
+                    source[:64], divergent, cast(HeldSender, held).state.seq, state.seq, len(key_ids),
+                )
+            self._windows[(source, channel)] = window
+            if grows:
+                self._holds[source] = HeldSender(state.did, tail, state)
+
+        writing, cancelled = await _written(write)  # AD-1198 A-1 the write and what it holds complete as one, whatever happens to the caller -- within the bound (A-2)
+        written = _StoreWrite(source, writing, publish)
+        reason = written.outcome(late=False)
+        if reason == _UNSETTLED:  # AD-1198 A-2 an unknown outcome: the guard owns the write until it is known, and admits nothing meanwhile
+            self._unsettled = written
+        if cancelled is not None:  # AD-1198 A-1 a cancellation that arrived during the write is raised once what committed is held
+            raise cancelled
+        if writing.cancelled():  # AD-1198 A-1 a write that ended cancelled raises its cancellation, never a refusal (AD-1197)
+            raise asyncio.CancelledError
+        return reason
 
     def _unsigned(self, source: str) -> str | None:
         if self._policy == POLICY_REQUIRE:  # AD-1197 require: nothing unsigned enters
