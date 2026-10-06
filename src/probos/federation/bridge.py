@@ -30,6 +30,7 @@ from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.types import FederationMessage, IntentMessage, IntentResult, NodeSelfModel
 
 if TYPE_CHECKING:
+    from probos.federation.continuity import IdentityExchange
     from probos.federation.mock_transport import MockFederationTransport
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
@@ -1016,6 +1017,7 @@ class FederationBridge:
         hebbian_map: Any | None = None,
         attachment_resolver: AttachmentResolver | None = None,
         relay_topics: tuple[FederationRelayTopic, ...] = (),
+        identity_exchange: IdentityExchange | None = None,
     ) -> None:
         self._node_id = node_id
         self._transport = transport
@@ -1027,6 +1029,9 @@ class FederationBridge:
         # AD-443e: Identity registry handle — required for transfer/chain
         # message handling; None disables the mobility wire types.
         self._identity_registry = identity_registry
+        # AD-1198 slice 2a: armed peer admission answers both identity requests through the exchange, bound to the
+        # sender; None keeps them as above.
+        self._identity_exchange = identity_exchange
         # AD-479b/c: optional trust + Hebbian handles for per-result outcome wiring.
         self._trust_network = trust_network
         self._hebbian_map = hebbian_map
@@ -2095,7 +2100,8 @@ class FederationBridge:
 
     async def _handle_chain_request(self, message: FederationMessage) -> None:
         """Peer asks for our exported Identity Ledger chain."""
-        if self._identity_registry is None:
+        registry = self._identity_registry if self._identity_exchange is None else self._identity_exchange.for_sender(message.source_node)  # AD-1198 armed: the exchange answers the sender
+        if registry is None:
             response = FederationMessage(
                 type="chain_response",
                 source_node=self._node_id,
@@ -2104,7 +2110,7 @@ class FederationBridge:
                 timestamp=time.monotonic(),
             )
         else:
-            blocks = await self._identity_registry.export_chain()
+            blocks = await registry.export_chain()
             response = FederationMessage(
                 type="chain_response",
                 source_node=self._node_id,
@@ -2122,7 +2128,8 @@ class FederationBridge:
         """
         from probos.mobility import TransferCertificate
 
-        if self._identity_registry is None:
+        registry = self._identity_registry if self._identity_exchange is None else self._identity_exchange.for_sender(message.source_node)  # AD-1198 armed: the exchange imports for the sender
+        if registry is None:
             response = FederationMessage(
                 type="transfer_response",
                 source_node=self._node_id,
@@ -2156,7 +2163,7 @@ class FederationBridge:
             await self._transport.send_to_peer(message.source_node, response)
             return
 
-        chain_ok, chain_msg = await self._identity_registry.import_chain(chain_blocks)
+        chain_ok, chain_msg = await registry.import_chain(chain_blocks)
         if not chain_ok:
             response = FederationMessage(
                 type="transfer_response",
@@ -2172,7 +2179,7 @@ class FederationBridge:
             await self._transport.send_to_peer(message.source_node, response)
             return
 
-        cert_ok, cert_msg = await self._identity_registry.import_transfer_certificate(cert)
+        cert_ok, cert_msg = await registry.import_transfer_certificate(cert)
         if cert_ok:
             self._stats["transfers_received"] += 1
 

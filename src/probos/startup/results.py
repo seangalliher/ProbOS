@@ -96,6 +96,7 @@ class FleetOrganizationResult:
     federation_bridge: Any  # FederationBridge | None
     federation_transport: Any  # FederationTransport | None
     federation_peer_requests: Any = None  # AD-1198 PeerRequests | None (armed peer admission only)
+    federation_identity_exchange: Any = None  # AD-1198 slice 2a IdentityExchange | None (armed peer admission only)
 
 
 @dataclass

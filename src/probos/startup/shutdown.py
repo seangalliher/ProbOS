@@ -1847,6 +1847,11 @@ async def shutdown(
         with steps("federation telemetry relay stop", federation_telemetry_relay):
             await federation_telemetry_relay.stop()
         runtime.federation_telemetry_relay = None
+    identity_exchange = getattr(runtime, "federation_identity_exchange", None)
+    if identity_exchange is not None:  # AD-1198 slice 2a: no resync outlives the bridge and the transport it uses
+        with steps("federation identity exchange stop", identity_exchange):
+            await identity_exchange.stop()
+        runtime.federation_identity_exchange = None
     if runtime.federation_bridge:
         with steps("federation bridge stop", runtime.federation_bridge):
             await runtime.federation_bridge.stop()

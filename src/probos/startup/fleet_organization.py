@@ -6,6 +6,7 @@ transport/bridge if enabled.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _envelope_transport(
     config: "SystemConfig", transport: Any, identity_key_binding: Any | None, data_dir: "Path | None",
+    identity_registry: Any | None = None,
 ) -> Any:
     """AD-1197/AD-1198: the transport wrapped for signed envelopes (and peer admission when armed); the transport itself when off."""
     if config.federation.envelope_signing_enabled is not True:  # AD-1197 off: the transport itself
@@ -39,14 +41,80 @@ def _envelope_transport(
     from probos.federation.signed_transport import build_signed_transport
 
     admission = None
+    ledger = None
     if config.federation.peer_admission_enabled is True:  # AD-1198 armed: configured, pinned peers only
         from probos.federation.admission import PeerAdmission
 
         admission = PeerAdmission.from_config(config.federation)
+        if identity_registry is not None:  # AD-1198 A-1 at start a held history's pin may be judged on identity.db's chain
+            from functools import partial
+
+            from probos.federation.continuity import stored_key_history
+
+            ledger = partial(stored_key_history, identity_registry)
     return build_signed_transport(
         transport, policy=config.federation.envelope_policy, key_binding=identity_key_binding, data_dir=data_dir,
-        admission=admission,
+        admission=admission, ledger=ledger,
     )
+
+
+_UNPUBLISHED_STOP_TASK_NAME = "ad1198-unpublished-federation-stop"
+
+
+async def _stop_unpublished_federation(exchange: Any, bridge: Any, transport: Any) -> None:
+    """AD-1198 A-1/A-2: stop the federation a failed fleet organization built but never handed to the runtime, whose
+    rollback cannot reach it -- the identity exchange, the bridge, then the transport, as shutdown orders them.
+
+    The stops run in a task of their own (the BF-882 rollback pattern, ``startup/rollback.py``): the caller waits for it
+    under ``asyncio.shield``, so a cancellation of the caller does not interrupt them; such a cancellation is raised once
+    they have finished, and otherwise this returns and the caller re-raises its own error. ``_stop_each`` catches every
+    ``Exception`` itself, so the task can only end cancelled, which is logged.
+    """
+    logger.warning(
+        "AD-1198: fleet organization failed after its federation transport was built; stopping the federation it "
+        "built before the error propagates"
+    )
+    current = asyncio.current_task()
+    cancelling_at_entry = current.cancelling() if current is not None else 0
+    stopping = asyncio.create_task(_stop_each(exchange, bridge, transport), name=_UNPUBLISHED_STOP_TASK_NAME)
+    outer: asyncio.CancelledError | None = None
+    while not stopping.done():
+        try:
+            await asyncio.shield(stopping)  # AD-1198 A-2 a cancellation of the caller does not interrupt the stops
+        except asyncio.CancelledError as cancelled:
+            if outer is None and current is not None and current.cancelling() > cancelling_at_entry:  # AD-1198 A-2 the caller was cancelled: keep waiting, raise it afterwards
+                outer = cancelled
+    if stopping.cancelled():
+        logger.warning(
+            "AD-1198: the cleanup of a failed fleet organization was itself cancelled; a component it could not stop "
+            "may stay running until the process exits"
+        )
+    if outer is not None:
+        raise outer  # AD-1198 A-2 a cancellation that arrived during the cleanup is raised once it has finished
+
+
+async def _stop_each(exchange: Any, bridge: Any, transport: Any) -> None:
+    """The identity exchange, the bridge, then the transport, each that exists: a stop that fails or ends cancelled is
+    logged and the next still runs, and such a cancellation is raised once every stop has run."""
+    interrupted: asyncio.CancelledError | None = None
+    for label, component in (("identity exchange", exchange), ("bridge", bridge), ("transport", transport)):
+        if component is None:
+            continue
+        try:
+            await component.stop()
+        except asyncio.CancelledError as cancelled:  # AD-1198 A-2 a stop that ends cancelled does not skip the next
+            interrupted = interrupted or cancelled
+            logger.warning(
+                "AD-1198: the federation %s of a failed fleet organization was cancelled while it stopped; continuing",
+                label,
+            )
+        except Exception as exc:  # noqa: BLE001 -- rollback degrades: the original error propagates
+            logger.warning(
+                "AD-1198: the federation %s of a failed fleet organization did not stop cleanly (%s); continuing",
+                label, type(exc).__name__,
+            )
+    if interrupted is not None:
+        raise interrupted
 
 
 async def organize_fleet(
@@ -69,6 +137,7 @@ async def organize_fleet(
     nats_bus: Any | None = None,
     identity_key_binding: Any | None = None,
     data_dir: "Path | None" = None,
+    identity_registry: Any | None = None,
 ) -> FleetOrganizationResult:
     """Register pool groups, start scaler, set up federation."""
     logger.info("Startup [fleet_organization]: starting")
@@ -181,6 +250,7 @@ async def organize_fleet(
     federation_bridge = None
     federation_transport = None
     federation_peer_requests = None
+    identity_exchange = None
     if config.federation.enabled:
         from probos.federation import FederationRouter, FederationBridge
 
@@ -201,6 +271,7 @@ async def organize_fleet(
                     ),
                     identity_key_binding,
                     data_dir,
+                    identity_registry,  # AD-1198 A-1 the NATS transport's guard may judge a held pin on identity.db's chain
                 )
                 await transport.start()
                 # AD-479f: TLS pass-through surface — NATSBus consumes config.tls
@@ -233,6 +304,7 @@ async def organize_fleet(
                     ),
                     identity_key_binding,
                     data_dir,
+                    identity_registry,  # AD-1198 A-1 the ZeroMQ transport's guard may judge a held pin on identity.db's chain
                 )
                 await transport.start()
             except ImportError:
@@ -241,32 +313,48 @@ async def organize_fleet(
                 logger.warning("Federation transport failed to start: %s", e)
 
         if transport is not None:
-            router = FederationRouter()
-            validate_fn = (
-                validate_remote_result_fn
-                if config.federation.validate_remote_results
-                else None
-            )
-            bridge = FederationBridge(
-                node_id=config.federation.node_id,
-                transport=transport,
-                router=router,
-                intent_bus=intent_bus,
-                config=config.federation,
-                self_model_fn=build_self_model_fn,
-                validate_fn=validate_fn,
-                attachment_resolver=attachment_resolver_fn,
-                relay_topics=relay_topics,
-            )
-            await bridge.start()
-            # PATCH(AD-517): Wire federation function into intent bus
-            intent_bus.set_federation_handler(bridge.forward_intent)
-            federation_bridge = bridge
-            federation_transport = transport
-            if config.federation.peer_admission_enabled is True:  # AD-1198 signed peer HTTP requests over the armed seam
-                from probos.federation.peer_requests import PeerRequests
+            bridge = None
+            try:
+                router = FederationRouter()
+                validate_fn = (
+                    validate_remote_result_fn
+                    if config.federation.validate_remote_results
+                    else None
+                )
+                if config.federation.peer_admission_enabled is True and identity_registry is not None:  # AD-1198 slice 2a armed: the identity exchange answers chain and transfer requests
+                    from probos.federation.admission import PeerAdmission
+                    from probos.federation.continuity import IdentityExchange
 
-                federation_peer_requests = PeerRequests(transport.peer_request_seam)
+                    identity_exchange = IdentityExchange(
+                        node_id=config.federation.node_id, registry=identity_registry, seam=transport.chain_seam,
+                        admission=PeerAdmission.from_config(config.federation),
+                        timeout_ms=config.federation.forward_timeout_ms,
+                    )
+                    transport.chain_seam.on_history_gap(identity_exchange.history_gap)  # AD-1198 a key history gap asks for a resync
+                bridge = FederationBridge(
+                    node_id=config.federation.node_id,
+                    transport=transport,
+                    router=router,
+                    intent_bus=intent_bus,
+                    config=config.federation,
+                    self_model_fn=build_self_model_fn,
+                    validate_fn=validate_fn,
+                    attachment_resolver=attachment_resolver_fn,
+                    relay_topics=relay_topics,
+                    identity_exchange=identity_exchange,  # AD-1198 None unless peer admission is armed: the bridge answers as before
+                )
+                await bridge.start()
+                # PATCH(AD-517): Wire federation function into intent bus
+                intent_bus.set_federation_handler(bridge.forward_intent)
+                federation_bridge = bridge
+                federation_transport = transport
+                if config.federation.peer_admission_enabled is True:  # AD-1198 signed peer HTTP requests over the armed seam
+                    from probos.federation.peer_requests import PeerRequests
+
+                    federation_peer_requests = PeerRequests(transport.peer_request_seam)
+            except BaseException:  # AD-1198 A-1 what the runtime was never handed must not outlive a failed organization
+                await _stop_unpublished_federation(identity_exchange, bridge, transport)
+                raise
             logger.info("Federation started: node=%s", config.federation.node_id)
 
     logger.info("Startup [fleet_organization]: complete")
@@ -275,4 +363,5 @@ async def organize_fleet(
         federation_bridge=federation_bridge,
         federation_transport=federation_transport,
         federation_peer_requests=federation_peer_requests,
+        federation_identity_exchange=identity_exchange,
     )

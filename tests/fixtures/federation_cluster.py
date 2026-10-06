@@ -7,7 +7,8 @@ Each node runs ``federation_cluster_node.py`` and is driven over a 127.0.0.1 con
 With ``http=True`` (AD-1198 slice 3a) each pinned node also serves the production main API on its own 127.0.0.1
 port, and its peer's ``api_url`` names that port. Per-node ``extras`` are merged into every pinned config. With
 ``a2a=True`` (AD-1198 slice 3b) each pinned node's A2A server is bound to its own reserved 127.0.0.1 port, and the
-node's extras decide whether that server is enabled.
+node's extras decide whether that server is enabled. ``transfer`` and ``foreign`` (AD-1198 slice 2a) move a crew
+member between the ships with a transfer certificate and its chain, and read what each identity registry then holds.
 In the ``mitm`` topology each node's peer address is a ``WireProxy`` lane, a blocking-pyzmq relay that can drop,
 duplicate and replay whole payloads; in the ``direct`` topology (the shipped one) the nodes connect to each other.
 
@@ -684,6 +685,18 @@ class ClusterHarness:
         """``name``'s A2A callers in its federation peer registry, as sorted ``[peer_id, trust_record_id]`` pairs."""
         self.control.send(name, op="a2a_callers")
         return list(self.control.wait(name, "a2a_callers", OP_TIMEOUT_S)["callers"])
+
+    def transfer(self, sender: str, target: str, *, target_did: str | None = None) -> dict[str, Any]:
+        """``sender`` transfers its first crew member by callsign to ``target``: a transfer certificate naming
+        ``target``'s minted ship DID (or ``target_did``), sent with ``sender``'s chain; the ``transferred`` event."""
+        self.control.send(sender, op="transfer", target=target, target_did=target_did or self.minted[target].did)
+        return self.control.wait(sender, "transferred", OP_TIMEOUT_S)
+
+    def foreign(self, name: str, agent_uuid: str, did: str, origin_ship_did: str) -> dict[str, Any]:
+        """What ``name``'s identity registry holds for a transferred agent: its record, its transfer rows and the
+        origin ship's chain; the ``foreign`` event."""
+        self.control.send(name, op="foreign", agent_uuid=agent_uuid, did=did, origin_ship_did=origin_ship_did)
+        return self.control.wait(name, "foreign", OP_TIMEOUT_S)
 
     def put_attachment(self, name: str, data: bytes, mime: str) -> str:
         """Store ``data`` in ``name``'s production attachment store; its content hash."""
