@@ -258,7 +258,9 @@ class SignedChainSeam:
         return self._guard.held(source)
 
     def on_history_gap(self, listener: Callable[[str], None] | None) -> None:
-        """``listener`` is told the source of each envelope the guard refuses for a key history gap; ``None`` removes it."""
+        """``listener`` is told the source of each envelope the guard refuses for a key history gap and (slice 2b), while
+        peer admission is armed, of each held source's envelope it refuses for a held history or a stale key; ``None``
+        removes it."""
         self._guard.on_history_gap(listener)
 
     def ended_answer(self, from_node_id: object, message: object) -> bool:

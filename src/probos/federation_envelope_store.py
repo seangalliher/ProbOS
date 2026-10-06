@@ -6,11 +6,22 @@ verified for it, one replay window per source and channel (``direct`` or
 ``broadcast``), and this node's send epoch. Every write is one ``BEGIN IMMEDIATE``
 transaction that refuses to move state backwards: a hold only advances, never changes
 DID and never forgets a key id, a window only moves forward, and the epoch only
-increments. Nothing is ever deleted.
+increments. Nothing is ever deleted, with one exception (AD-1198 slice 2b): ``reanchor``
+moves a hold to a branch that takes recovery-key precedence over it, even back -- never
+to another DID and never forgetting a key id -- and clears that source's replay windows
+in the same transaction.
 
 Public material only -- key-event histories, key ids, counters and 64-bit window
 masks; never a private key, an envelope signature or a message body. Nothing here
 reads a clock.
+
+A cancellation that reaches a caller while its write's ``COMMIT`` is queued or under
+way does not undo it: aiosqlite runs every call it has queued, so the transaction may
+still commit. Nor does anything here bound how long a ``COMMIT`` takes: the busy
+timeout bounds only a wait for a lock another connection holds. The envelope guard
+therefore waits for each write it starts, for at most ``STORE_WRITE_SETTLE_S``, before
+it acts on a cancellation, and admits nothing while a write it stopped waiting for has
+not ended (AD-1198 A-1, A-2).
 """
 
 from __future__ import annotations
@@ -63,6 +74,11 @@ _UPSERT_WINDOW = (
     "ON CONFLICT(source_node, channel) DO UPDATE SET key_seq = excluded.key_seq, epoch = excluded.epoch, "
     "hwm = excluded.hwm, mask = excluded.mask"
 )
+_REANCHOR_SENDER = (  # AD-1198 slice 2b the one hold write that may move a hold back
+    "UPDATE envelope_senders SET key_seq = ?, key_head = ?, key_events_json = ?, key_ids_json = ? "
+    "WHERE source_node = ? AND did = ?"  # AD-1198 slice 2b only this source's hold, and only under its DID
+)
+_CLEAR_WINDOWS = "DELETE FROM envelope_windows WHERE source_node = ?"  # AD-1198 slice 2b a re-anchored source's windows start again
 _NEXT_EPOCH = (
     "INSERT INTO envelope_send_epoch (singleton, epoch) VALUES (1, 1) "
     "ON CONFLICT(singleton) DO UPDATE SET epoch = envelope_send_epoch.epoch + 1"
@@ -212,6 +228,42 @@ class EnvelopeStore:
                 row = await cursor.fetchone()
             if row is not None and not _moves_forward(StoredWindow(row[0], row[1], row[2], int(row[3], 16)), window):  # AD-1197 replay state never moves back
                 raise EnvelopeStateConflict(f"the replay window for {source[:64]!r} cannot move backwards")
+            await db.execute(
+                _UPSERT_WINDOW, (source, channel, window.key_seq, window.epoch, window.hwm, f"{window.mask:016x}"),
+            )
+            await db.commit()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await db.execute("ROLLBACK")
+            raise
+
+    async def reanchor(
+        self, source: str, channel: str, sender: StoredSender, window: StoredWindow, key_ids: frozenset[str],
+    ) -> None:
+        """AD-1198 slice 2b: re-anchor the hold of ``source`` on a branch that takes recovery-key precedence over it.
+
+        One transaction: the hold becomes ``sender`` even when that moves it back, ``key_ids`` -- never fewer than were
+        recorded -- replaces the recorded key ids, every replay window of ``source`` is cleared, and ``window`` is recorded
+        for ``channel``. Raises :class:`EnvelopeStateConflict`, writing nothing, when no hold is recorded for ``source``,
+        when ``key_ids`` would forget a recorded key id, or when the hold names another DID than ``sender``; any other
+        failure also rolls the whole transaction back.
+        """
+        db = self._require()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            async with db.execute(_SELECT_KEY_IDS, (source,)) as cursor:
+                row = await cursor.fetchone()
+            if row is None:  # AD-1198 slice 2b only a recorded hold is re-anchored
+                raise EnvelopeStateConflict(f"no key history is held for {source[:64]!r}")
+            if not key_ids >= _key_ids_from(row[0], source):  # AD-1198 slice 2b a re-anchor forgets no recorded key id
+                raise EnvelopeStateConflict(f"the key ids recorded for {source[:64]!r} cannot be forgotten")
+            cursor = await db.execute(
+                _REANCHOR_SENDER,
+                (sender.key_seq, sender.key_head, sender.key_events_json, json.dumps(sorted(key_ids)), source, sender.did),
+            )
+            if cursor.rowcount != 1:  # AD-1198 slice 2b a re-anchor never changes the DID
+                raise EnvelopeStateConflict(f"the key history held for {source[:64]!r} names another DID")
+            await db.execute(_CLEAR_WINDOWS, (source,))
             await db.execute(
                 _UPSERT_WINDOW, (source, channel, window.key_seq, window.epoch, window.hwm, f"{window.mask:016x}"),
             )

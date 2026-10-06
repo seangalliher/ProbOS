@@ -899,13 +899,77 @@ def keeps_held_key_events(
     if carried_first > held_head + 1:  # AD-1197 A-1 the carried run must reach the held head
         return False, "key history gap"
     for seq in range(max(held_first, carried_first), held_head + 1):
-        mine, theirs = held[seq - held_first], carried[seq - carried_first]
-        if canonical_bytes({"index": theirs.index, "event": theirs.payload, "signatures": theirs.signatures}) != canonical_bytes({"index": mine.index, "event": mine.payload, "signatures": mine.signatures}):  # AD-1197 held key events are immutable
+        if _held_form(carried[seq - carried_first]) != _held_form(held[seq - held_first]):  # AD-1197 held key events are immutable
             return False, "held history"
     for event in carried[held_head + 1 - carried_first:]:
         if event.payload.get("event") == EVENT_REINCEPTION:  # AD-1197 no takeover
             return False, "held history"
     return True, "keeps"
+
+
+def _held_form(event: KeyEvent) -> bytes:
+    """A key event as held events are compared: its block index, payload and signatures, in RFC 8785 form (AD-1197)."""
+    return canonical_bytes({"index": event.index, "event": event.payload, "signatures": event.signatures})
+
+
+def chain_key_events(blocks: Sequence[Mapping[str, Any]]) -> tuple[KeyEvent, ...]:
+    """The key events ``blocks`` anchors, in ledger order; for a chain whose signatures have verified (AD-1198)."""
+    return tuple(
+        KeyEvent(
+            index=block["index"], payload=block["attestation"]["event"],
+            signatures=block["attestation"]["signatures"], digest=block["certificate_hash"],
+        )
+        for block in blocks
+        if isinstance(block.get("attestation"), Mapping) and block["attestation"].get("kind") == ATTEST_KEY_EVENT
+    )
+
+
+def _replays_from(event: KeyEvent, state: KeyState | None) -> bool:
+    """Whether ``event`` replays from ``state`` under every AD-1196 rule."""
+    try:
+        derive_key_state([event], after=state)
+    except (KeyEventInvalid, ValueError, TypeError, KeyError):
+        return False
+    return True
+
+
+def recovery_precedence(held: Sequence[KeyEvent], history: Sequence[KeyEvent]) -> tuple[int | None, str]:
+    """AD-1198 slice 2b: where ``history`` -- a key history from its inception -- takes precedence over ``held``, a
+    contiguous run of held key events it does not keep; and why, or ``None`` and why not.
+
+    The two must part inside the held run: the run's first event follows ``history`` (its prior digest is the digest of
+    the history's event before it), and both carry an event at the first sequence number where they differ. ``history``
+    takes precedence there only when its event is a ``recovery`` that replays from the key state the two share -- so the
+    recovery key committed in that state signed it -- and the held event there is not a ``recovery`` that replays from
+    that state as well; and only when the whole history replays from that state, the events after the recovery
+    included (A-1). The reason a recovery declares and its compromise point decide which signatures it voids
+    (``signature_verdict``), not precedence: the compromise point is an index of the recovering ship's own ledger. Never
+    raises: a history that does not replay takes precedence over nothing.
+    """
+    try:
+        if not held or not history or [event.payload["seq"] for event in history] != list(range(len(history))):  # AD-1198 precedence needs a full key history
+            return None, "not a full key history"
+        first = held[0].payload["seq"]
+        if [event.payload["seq"] for event in held] != list(range(first, first + len(held))):  # AD-1198 precedence needs a contiguous held run
+            return None, "not a contiguous held run"
+        if first > 0 and (len(history) < first or held[0].payload["prior"] != history[first - 1].digest):  # AD-1198 the branches part inside the held run
+            return None, "the held events do not follow this history"
+        last = min(first + len(held), len(history))  # AD-1198 both branches carry an event where they part
+        divergent = next((seq for seq in range(first, last) if _held_form(held[seq - first]) != _held_form(history[seq])), None)
+        if divergent is None:
+            return None, "no divergent event"
+        if history[divergent].payload["event"] != EVENT_RECOVERY:  # AD-1198 only a recovery takes precedence
+            return None, "the first divergent event is not a recovery"
+        shared = derive_key_state(history[:divergent])
+        if not _replays_from(history[divergent], shared):  # AD-1198 signed by the recovery key committed in the shared state
+            return None, "the recovery does not replay from the shared state"
+        rival = held[divergent - first]
+        if rival.payload["event"] == EVENT_RECOVERY and _replays_from(rival, shared):  # AD-1198 two recoveries from one state: neither takes precedence
+            return None, "both branches recover there"
+        derive_key_state(history[divergent:], after=shared)  # AD-1198 A-1 precedence only for a history that replays in full from the shared state
+        return divergent, f"a recovery at key seq {divergent} supersedes the held events from there"
+    except (KeyEventInvalid, ValueError, TypeError, KeyError, AttributeError, IndexError):  # AD-1198 a history that does not replay supersedes nothing
+        return None, "the history does not replay"
 
 
 def did_document(state: KeyState) -> dict[str, Any]:

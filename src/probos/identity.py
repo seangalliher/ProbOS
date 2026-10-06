@@ -1128,13 +1128,15 @@ class AgentIdentityRegistry:
         """
         return verify_chain_structure(blocks)  # AD-1198 A-2 one structural check, shared with the armed exchange
 
-    async def import_chain(self, blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+    async def import_chain(self, blocks: list[dict[str, Any]], *, supersede: bool = False) -> tuple[bool, str]:
         """AD-443b: Accept a remote ship's exported Identity Ledger and persist it.
 
         Validates the chain via verify_remote_chain BEFORE persisting; rejects
         on any integrity failure. Latest-wins on repeated import for the same
         origin_ship_did, except that, when armed, an origin's verified key history
-        is kept (AD-1196 A-1).
+        is kept (AD-1196 A-1) -- unless ``supersede`` is given and the chain takes
+        recovery-key precedence over it (``recovery_precedence``), when it replaces
+        it (AD-1198 slice 2b: the identity exchange asks this only for a resync).
         """
         if not self._db:
             return False, "Registry not started"
@@ -1172,15 +1174,24 @@ class AgentIdentityRegistry:
         async with self._foreign_chain_lock:  # AD-1196 A-1
             stored = self._foreign_chain_cache.get(origin_ship_did)
             if self._key_binding is not None and stored is not None:
-                from probos.identity_keys import keeps_key_history
+                from probos.identity_keys import chain_key_events, keeps_key_history, recovery_precedence
 
                 keeps, why = keeps_key_history(stored, blocks)
-                if not keeps:  # AD-1196 A-1 key history is append-only per origin
+                divergent = None
+                if not keeps and supersede:  # AD-1198 slice 2b only when asked may a recovery take precedence over the stored branch
+                    divergent, _ = recovery_precedence(chain_key_events(stored), chain_key_events(blocks))
+                if not keeps and divergent is None:  # AD-1196 A-1 key history is append-only per origin
                     logger.warning(
                         "AD-1196: import chain from %s rejected: %s; the stored chain is kept",
                         origin_ship_did, why,
                     )
                     return False, f"Key history check failed: {why}"
+                if divergent is not None:
+                    logger.warning(
+                        "AD-1198: the chain stored for %s is replaced by one whose recovery at key seq %d takes "
+                        "precedence over it (%s); the replaced branch is no longer stored here",
+                        origin_ship_did, divergent, why,
+                    )
             await self._db.execute(
                 "INSERT OR REPLACE INTO foreign_chains "
                 "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
