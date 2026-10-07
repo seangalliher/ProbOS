@@ -15,8 +15,8 @@ The node connects to the parent's 127.0.0.1 control socket and speaks JSON lines
 ``has_attachment`` (``has``), ``a2a_post`` (``a2a``: an A2A request signed with this node's peer requests and
 POSTed, AD-1198 slice 3b), ``a2a_callers`` (``a2a_callers``), ``transfer`` (``transferred``: this node's first crew
 member by callsign, transferred with a certificate and its chain through ``FederationBridge.request_transfer``, AD-1198
-slice 2a) and ``foreign`` (``foreign``: what this node's identity registry holds for a transferred agent); an op that
-fails is answered ``error`` -- until
+slice 2a), ``foreign`` (``foreign``: what this node's identity registry holds for a transferred agent) and ``slot``
+(``slotted``: a slot given to a crew member, AD-1198 slice 2b-iii); an op that fails is answered ``error`` -- until
 ``stop`` or until the
 control socket closes (the parent is gone), and then stops the runtime and emits ``stopped``. Given an
 ``<api_port>`` (AD-1198 slice 3a), the node also serves the production main API (``create_app(runtime)``)
@@ -126,6 +126,9 @@ async def _answer(command: dict[str, Any], runtime: Any) -> tuple[str, dict[str,
             "transfers": sorted([row["direction"], row["certificate_hash"]] for row in rows),
             "foreign_chain_blocks": None if chain is None else len(chain),
         }
+    if op == "slot":  # AD-1198 slice 2b-iii a transferred crew member has a slot only once a caller gives it one (AD-443d)
+        assigned, message = await runtime.identity_registry.reassign_slot(command["agent_uuid"], command["slot_id"])
+        return "slotted", {"assigned": assigned, "message": message}
     return "error", {"message": f"unknown op {op!r}"}
 
 
