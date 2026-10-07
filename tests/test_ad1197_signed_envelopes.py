@@ -2291,7 +2291,7 @@ async def test_nats_two_nodes_sign_gossip_and_intents_and_verify_responses_where
 
 class _MemoryStore:
     """An ``EnvelopeStateStore`` in memory whose start, stop or record can be made to raise. It records nothing, so it
-    refuses every re-anchor as ``EnvelopeStore`` refuses a source it holds nothing for."""
+    refuses every re-anchor as ``EnvelopeStore`` refuses a source it holds nothing for, and a reset forgets nothing."""
 
     def __init__(
         self, *, start_error: BaseException | None = None, stop_error: BaseException | None = None,
@@ -2329,6 +2329,9 @@ class _MemoryStore:
         self, source: str, channel: str, sender: StoredSender, window: StoredWindow, key_ids: frozenset[str],
     ) -> None:
         raise EnvelopeStateConflict(f"no key history is held for {source[:64]!r}")
+
+    async def forget(self, source: str) -> None:
+        return None  # AD-1198 slice 2c nothing is held here, so nothing is forgotten, as EnvelopeStore's of an unheld source
 
 
 class _StartFailingConnection:

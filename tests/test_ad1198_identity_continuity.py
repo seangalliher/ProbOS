@@ -63,6 +63,7 @@ from tests.test_ad1198_peer_admission import _admit
 # slice 2a names (M1 onward; omit this block for the M0 run on the unmodified base)
 import probos.federation.continuity as continuity_module  # noqa: E402
 import probos.federation.envelope as envelope_module  # noqa: E402
+import probos.identity as identity_module  # noqa: E402
 from probos.federation.continuity import (  # noqa: E402
     MAX_CHAIN_BLOCKS,
     MAX_CHAIN_BYTES,
@@ -504,6 +505,23 @@ async def test_s2a_m2_a_transfer_imports_its_senders_own_chain_and_certificate(t
         assert b.registry.get_foreign_chain(xfer.origin_ship_did) == chain
 
 
+class _AfterTheLast:
+    """AD-1198 slice 2c A-1.15 (F-26): ``identity.py``'s clock while one agent is transferred twice -- every ``time()`` at
+    least a millisecond after the one before it, so the two transfer timestamps differ by construction whatever the tick
+    of the clock it wraps (by default 15.625 ms on Windows), and that clock's own time whenever it has moved further on."""
+
+    def __init__(self, clock: Any) -> None:
+        self._clock = clock
+        self._last = float("-inf")
+
+    def time(self) -> float:
+        self._last = max(self._clock.time(), self._last + 0.001)
+        return self._last
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._clock, name)
+
+
 async def test_s2a_m2_a_chain_or_certificate_that_is_not_the_senders_own_is_refused_and_nothing_is_stored(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -530,8 +548,11 @@ async def test_s2a_m2_a_chain_or_certificate_that_is_not_the_senders_own_is_refu
         misattested[-1] = {**misattested[-1], "attestation": {**misattested[-1]["attestation"], "jws": signed_birth[1]["attestation"]["signatures"]["new"]}}
         ship_b = b.registry.get_ship_certificate()
         assert ship_b is not None
-        for_b = await a.registry.issue_transfer_certificate(troi.agent_uuid, ship_b.ship_did)
-        for_x = await a.registry.issue_transfer_certificate(troi.agent_uuid, generate_ship_did("ship-x"))
+        with monkeypatch.context() as patched:  # A-1.15 (F-26): one agent's two transfers get two timestamps, whatever the clock's tick
+            patched.setattr(identity_module, "time", _AfterTheLast(identity_module.time))
+            for_b = await a.registry.issue_transfer_certificate(troi.agent_uuid, ship_b.ship_did)
+            for_x = await a.registry.issue_transfer_certificate(troi.agent_uuid, generate_ship_did("ship-x"))
+        assert for_b.transfer_timestamp < for_x.transfer_timestamp  # premise: one agent, two transfers, two timestamps
         worf = await _birth(c.registry, "Worf", instance_id="ship-c")
         from_c = await c.registry.issue_transfer_certificate(worf.agent_uuid, ship_b.ship_did)
         monkeypatch.setattr(continuity_module, "MAX_CHAIN_BLOCKS", len(chain) - 1)

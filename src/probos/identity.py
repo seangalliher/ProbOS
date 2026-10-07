@@ -1467,6 +1467,33 @@ class AgentIdentityRegistry:
         """Return the imported chain snapshot for a peer ship, or None."""
         return self._foreign_chain_cache.get(origin_ship_did)
 
+    async def forget_foreign_chain(self, origin_ship_did: str) -> int:
+        """AD-1198 slice 2c: forget the chain stored for ``origin_ship_did`` -- never its foreign birth or transfer
+        certificates, which are kept for audit -- so that the next chain of that ship is imported as a first one; how many
+        blocks were forgotten (0 when none was stored). One deletion under the lock that chain and transfer imports take,
+        in a transaction of its own on a connection of its own (Amendment A-1): what another writer has pending on the
+        registry's shared connection -- this ship's key events, births and transfers -- is never committed or rolled
+        back with it, and SQLite's write lock orders the two, so it waits for that writer's commit, at most SQLite's
+        busy timeout (5 s), and then fails. A deletion that does not commit is discarded with its connection, and the
+        in-memory copy follows the committed deletion.
+        """
+        if not self._db:  # AD-1198 slice 2c a registry not started forgets nothing
+            raise RuntimeError("the identity registry is not started")
+        async with self._foreign_chain_lock:  # AD-1198 slice 2c ordered with every chain and transfer import
+            stored = self._foreign_chain_cache.get(origin_ship_did)
+            own = await self._connection_factory.connect(str(self._data_dir / "identity.db"))  # AD-1198 slice 2c A-1 a connection of its own: no other writer's statement is in its transaction
+            try:
+                await own.execute("DELETE FROM foreign_chains WHERE origin_ship_did = ?", (origin_ship_did,))  # AD-1198 slice 2c only that ship's chain
+                await own.commit()  # AD-1198 slice 2c A-1 it commits its own deletion and nothing else
+            finally:
+                await own.close()  # AD-1198 slice 2c A-1 a deletion that did not commit is discarded with its connection
+            self._foreign_chain_cache.pop(origin_ship_did, None)  # AD-1198 slice 2c the in-memory copy follows the committed deletion
+        logger.info(
+            "AD-1198: the chain stored for %s is forgotten (%d blocks); its foreign birth and transfer certificates are kept",
+            origin_ship_did, 0 if stored is None else len(stored),
+        )
+        return 0 if stored is None else len(stored)
+
     async def get_transfer_certificates_for(
         self, agent_did: str
     ) -> list[dict[str, Any]]:
