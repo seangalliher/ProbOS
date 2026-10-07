@@ -906,7 +906,7 @@ async def test_failed_key_event_write_latches_needs_restart_and_restart_rederive
     assert status["status"] == "active" and status["active_kid"] == k1 and status["seq"] == 0
     assert valid, message
     orphans = [block for block in chain[1:] if block["agent_did"] == SHIP_A and "attestation" not in block]
-    assert len(orphans) == 1
+    assert orphans == []  # BF-885 (#1468): the failed rotation's ledger block is rolled back with it; before, Bravo's commit made it durable
     report = verify_chain_signatures(chain)
     assert report.ok and report.key_events == 1 and report.valid == 1
 

@@ -56,12 +56,12 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from probos.federation.envelope import CHAIN_REQUEST, DIVERGENCE_REFUSALS, HeldSender
-from probos.identity import verify_chain_structure
+from probos.identity import chain_block_hashes, verify_chain_structure
 from probos.identity_keys import (
     KeyEvent,
     chain_key_events,
@@ -97,7 +97,9 @@ class IdentityLedger(StoredChains, Protocol):
 
     async def export_chain(self) -> list[dict[str, Any]]: ...
 
-    async def import_chain(self, blocks: list[dict[str, Any]], *, supersede: bool = False) -> tuple[bool, str]: ...
+    async def import_chain(
+        self, blocks: list[dict[str, Any]], *, supersede: bool = False, if_stored: tuple[Any, ...] | None = None,
+    ) -> tuple[bool, str]: ...
 
     async def import_transfer_certificate(self, cert: TransferCertificate) -> tuple[bool, str]: ...
 
@@ -453,7 +455,8 @@ class IdentityExchange:
         ``blocks`` refused. One import at a time, judged again against the hold as it is then, and none while a store write
         of the guard is unsettled (slice 2c, Amendment A-1: a reset may have forgotten the hold since the chain was judged,
         or a first contact after it may hold another branch, and a reset's write may have forgotten a hold the guard still
-        shows).
+        shows). identity.db then imports it only while it still stores exactly the chain judged here (``if_stored``;
+        BF-885 A-1): an identity.db import whose caller stopped waiting may have committed another since.
         """
         async with self._ledger_lock:  # AD-1198 A-1 compare and import as one step
             did = blocks[0]["agent_did"]
@@ -465,19 +468,21 @@ class IdentityExchange:
                 self._note_refusal(sender, "chain", why)
                 return False, f"identity exchange refused ({why})"
             stored = self._registry.get_foreign_chain(did)
+            judged = chain_block_hashes(stored)  # BF-885 A-1 identity.db imports only while it still stores this chain
+            superseding = False
             if stored:
                 verified = verified_chain_state(stored, did) is not None  # AD-1198 A-2 only a stored chain that verifies is relied on
-                kept = [block.get("block_hash") if isinstance(block, Mapping) else None for block in stored]
+                kept = list(judged)
                 given = [block.get("block_hash") for block in blocks]
                 if verified and given == kept[: len(given)]:  # AD-1198 A-1 an older snapshot of the stored chain changes nothing
                     return True, f"Chain kept: the {len(stored)} blocks stored for {did} already hold these {len(blocks)}"
                 if given[: len(kept)] != kept:  # AD-1198 A-1 an armed import only extends the stored chain
-                    if supersede and verified and recovery_precedence(chain_key_history(stored), chain_key_history(blocks))[0] is not None:  # AD-1198 slice 2b a resync's branch replaces a stored branch it takes precedence over
-                        return await self._registry.import_chain(blocks, supersede=True)  # AD-1198 slice 2b the registry judges the branch change again
-                    reason = "does not extend the stored chain" if verified else "the stored chain does not verify and this one does not contain it"  # AD-1198 A-2 an unverified stored chain is kept, not extended
-                    self._note_refusal(sender, "chain", reason)
-                    return False, f"identity exchange refused ({reason})"
-            return await self._registry.import_chain(blocks)
+                    superseding = supersede and verified and recovery_precedence(chain_key_history(stored), chain_key_history(blocks))[0] is not None  # AD-1198 slice 2b a resync's branch replaces a stored branch it takes precedence over
+                    if not superseding:
+                        reason = "does not extend the stored chain" if verified else "the stored chain does not verify and this one does not contain it"  # AD-1198 A-2 an unverified stored chain is kept, not extended
+                        self._note_refusal(sender, "chain", reason)
+                        return False, f"identity exchange refused ({reason})"
+            return await self._registry.import_chain(blocks, supersede=superseding, if_stored=judged)  # AD-1198 slice 2b the registry judges a branch change again; BF-885 A-1 only while it stores the chain judged here
 
     async def _judged(
         self, sender: str, blocks: object, *, supersede: bool = False,

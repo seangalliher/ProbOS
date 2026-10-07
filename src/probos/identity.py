@@ -22,17 +22,20 @@ Sha256Hash2024.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 
 from probos.captain_card.card import CaptainCard
+from probos.identity_writer import IdentityWriter
 from probos.mobility import TransferCertificate
 
 if TYPE_CHECKING:
@@ -390,6 +393,17 @@ def verify_chain_structure(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
     return True, f"Chain valid: {len(blocks)} blocks"
 
 
+def chain_block_hashes(blocks: Sequence[object] | None) -> tuple[Any, ...]:
+    """BF-885 A-1: a stored chain's block hashes, in order -- ``()`` for none, ``None`` for a block that is not a mapping --
+    as the armed identity exchange judges a chain against it, and as ``AgentIdentityRegistry.import_chain`` compares it
+    (``if_stored``) with the chain identity.db stores once the import's unit is admitted."""
+    return tuple(block.get("block_hash") if isinstance(block, Mapping) else None for block in blocks or ())
+
+
+class _Refused(Exception):
+    """BF-885 A-1: a judgement made inside a unit refused its write; the unit is rolled back and the reason returned."""
+
+
 _IDENTITY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS birth_certificates (
     agent_uuid TEXT PRIMARY KEY,
@@ -514,6 +528,7 @@ class AgentIdentityRegistry:
         self._foreign_chain_cache: dict[str, list[dict[str, Any]]] = {}  # origin_ship_did -> chain blocks
         self._ledger_lock = asyncio.Lock()
         self._foreign_chain_lock = asyncio.Lock()  # AD-1196 A-1/A-2: chain and transfer imports, one at a time
+        self._writer = IdentityWriter(lambda: self._db)  # BF-885: every write of identity.db is one unit, one unit at a time
         # AD-1196: the ship DID's key binding; None keeps every path as it was before it.
         self._key_binding = key_binding
         self._connection_factory = connection_factory
@@ -609,7 +624,7 @@ class AgentIdentityRegistry:
             )
             if self._key_binding is not None:
                 await self._key_binding.attach(
-                    self._db, ledger_lock=self._ledger_lock, append_block=self._append_to_ledger,
+                    self._db, ledger_lock=self._ledger_lock, append_block=self._append_to_ledger, writer=self._writer,
                 )
 
         # Load or create ship birth certificate (if instance_id provided)
@@ -623,6 +638,7 @@ class AgentIdentityRegistry:
     async def stop(self) -> None:
         """Close identity database."""
         if self._db:
+            await self._writer.stop()  # BF-885 a unit still ending ends before its connection is closed
             await self._db.close()
             self._db = None
 
@@ -685,20 +701,22 @@ class AgentIdentityRegistry:
 
         # Persist ship certificate
         vc_json = json.dumps(cert.to_verifiable_credential(), sort_keys=True)
-        await self._db.execute(
-            "INSERT INTO ship_birth_certificate "
-            "(ship_did, instance_id, vessel_name, commissioned_at, version, "
-            "certificate_hash, certificate_vc_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (cert.ship_did, cert.instance_id, cert.vessel_name,
-             cert.commissioned_at, cert.version, cert.certificate_hash, vc_json),
-        )
 
-        # Create genesis block immediately — the ship's birth is block 0
-        self._ship_certificate = cert  # Set before genesis so it uses real ship data
-        await self._create_genesis_block()
+        def committed() -> None:  # BF-885 memory holds the ship's certificate once it has committed
+            self._ship_certificate = cert
 
-        await self._db.commit()
+        async with self._writer.unit(committed) as db:  # BF-885 the certificate and its genesis block commit together, or neither
+            await db.execute(
+                "INSERT INTO ship_birth_certificate "
+                "(ship_did, instance_id, vessel_name, commissioned_at, version, "
+                "certificate_hash, certificate_vc_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (cert.ship_did, cert.instance_id, cert.vessel_name,
+                 cert.commissioned_at, cert.version, cert.certificate_hash, vc_json),
+            )
+
+            # Create genesis block immediately — the ship's birth is block 0
+            await self._create_genesis_block(cert)  # BF-885 from this certificate: memory holds it only once committed
 
         logger.info(
             "SHIP COMMISSIONED: %s — DID %s — Timeline begins",
@@ -768,15 +786,17 @@ class AgentIdentityRegistry:
             tier=tier,
         )
 
-        await self._db.execute(
-            "INSERT INTO asset_tags "
-            "(asset_uuid, asset_type, slot_id, installed_at, pool_name, tier) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (tag.asset_uuid, tag.asset_type, tag.slot_id,
-             tag.installed_at, tag.pool_name, tag.tier),
-        )
-        await self._db.commit()
-        self._asset_cache[tag.slot_id] = tag
+        def committed() -> None:  # BF-885 the asset tag is held once it has committed
+            self._asset_cache[tag.slot_id] = tag
+
+        async with self._writer.unit(committed) as db:  # BF-885 an asset tag is one unit: nothing else commits or rolls back with it
+            await db.execute(
+                "INSERT INTO asset_tags "
+                "(asset_uuid, asset_type, slot_id, installed_at, pool_name, tier) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (tag.asset_uuid, tag.asset_type, tag.slot_id,
+                 tag.installed_at, tag.pool_name, tag.tier),
+            )
 
         logger.info("Asset tag issued: %s (%s) — %s", tag.asset_type, tag.tier, tag.asset_uuid)
         return tag
@@ -856,17 +876,6 @@ class AgentIdentityRegistry:
         # Persist certificate
         vc = cert.to_verifiable_credential()
         vc_json = json.dumps(vc, sort_keys=True)
-        await self._db.execute(
-            "INSERT INTO birth_certificates "
-            "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
-            "birth_timestamp, department, post_id, baseline_version, "
-            "certificate_hash, certificate_vc_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (cert.agent_uuid, cert.did, cert.agent_type, cert.callsign,
-             cert.instance_id, cert.vessel_name, cert.birth_timestamp,
-             cert.department, cert.post_id, cert.baseline_version,
-             cert.certificate_hash, vc_json),
-        )
 
         # Map slot_id -> agent_uuid for restart persistence
         if slot_id:
@@ -877,37 +886,48 @@ class AgentIdentityRegistry:
                     "Slot %s already mapped to agent %s — overwriting with %s",
                     slot_id, existing.agent_uuid, agent_uuid,
                 )
-            await self._db.execute(
-                "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
-                (slot_id, agent_uuid),
-            )
+
+        def committed() -> None:  # BF-885 the birth is held once it has committed
+            self._uuid_cache[cert.agent_uuid] = cert
+            if slot_id:
+                self._slot_cache[slot_id] = cert
 
         # Append to Identity Ledger (blockchain) — serialized to prevent index conflicts
-        async with self._ledger_lock:
+        async with self._ledger_lock:  # BF-885 taken before the first statement: nothing of this birth is pending while it waits
             signed = None
-            if self._key_binding is not None:
-                # AD-1196: sign and anchor under one lock, so the signer is the key active at the anchor.
-                signed = await self._key_binding.sign_record_locked(vc)
-            block = await self._append_to_ledger(cert.certificate_hash, cert.did)
-            if self._key_binding is not None and signed is not None:
-                from probos.identity_keys import ATTEST_AGENT_BIRTH
-
-                await self._key_binding.record_attestation_locked(
-                    block_index=block.index, kind=ATTEST_AGENT_BIRTH, subject_did=cert.did,
-                    certificate_hash=cert.certificate_hash, kid=signed[0], jws=signed[1],
+            async with self._writer.unit(committed) as db:  # BF-885 the birth, its slot, its block and its signature: all or none
+                if self._key_binding is not None:  # BF-885 A-1 signed once admitted: its anchor is the committed tip's next block
+                    # AD-1196: sign and anchor under one lock, so the signer is the key active at the anchor.
+                    signed = await self._key_binding.sign_record_locked(vc)
+                await db.execute(
+                    "INSERT INTO birth_certificates "
+                    "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
+                    "birth_timestamp, department, post_id, baseline_version, "
+                    "certificate_hash, certificate_vc_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (cert.agent_uuid, cert.did, cert.agent_type, cert.callsign,
+                     cert.instance_id, cert.vessel_name, cert.birth_timestamp,
+                     cert.department, cert.post_id, cert.baseline_version,
+                     cert.certificate_hash, vc_json),
                 )
+                if slot_id:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
+                        (slot_id, agent_uuid),
+                    )
+                block = await self._append_to_ledger(cert.certificate_hash, cert.did)
+                if self._key_binding is not None and signed is not None:
+                    from probos.identity_keys import ATTEST_AGENT_BIRTH
+
+                    await self._key_binding.record_attestation_locked(
+                        block_index=block.index, kind=ATTEST_AGENT_BIRTH, subject_did=cert.did,
+                        certificate_hash=cert.certificate_hash, kid=signed[0], jws=signed[1],
+                    )
         if self._key_binding is not None and signed is None:
             logger.warning(
                 "AD-1196: birth certificate for %s issued UNSIGNED: identity key status is %s",
                 cert.did, self._key_binding.key_status,
             )
-
-        await self._db.commit()
-
-        # Update caches
-        self._uuid_cache[cert.agent_uuid] = cert
-        if slot_id:
-            self._slot_cache[slot_id] = cert
 
         logger.info(
             "Birth certificate issued: %s (%s) — DID %s",
@@ -993,27 +1013,30 @@ class AgentIdentityRegistry:
 
         return block
 
-    async def _create_genesis_block(self) -> LedgerBlock:
+    async def _create_genesis_block(self, ship: ShipBirthCertificate | None = None) -> LedgerBlock:
         """Create the genesis block — the ship's commissioning on the ledger.
 
         If a ShipBirthCertificate exists, the genesis block carries its hash
         and the ship's DID. Otherwise falls back to placeholder values for
-        backwards compatibility with pre-commissioning databases.
+        backwards compatibility with pre-commissioning databases. ``ship`` is
+        the certificate being commissioned, which memory holds only once it
+        has committed (BF-885); the registry's otherwise.
         """
         if not self._db:
             raise RuntimeError("Identity registry not started")
 
+        ship = ship or self._ship_certificate  # BF-885 the certificate in this unit, before memory holds it
         # Use real ship identity if available
-        if self._ship_certificate:
-            cert_hash = self._ship_certificate.certificate_hash
-            agent_did = self._ship_certificate.ship_did
+        if ship:
+            cert_hash = ship.certificate_hash
+            agent_did = ship.ship_did
         else:
             cert_hash = "genesis"
             agent_did = "ship"
 
         genesis = LedgerBlock(
             index=0,
-            timestamp=self._ship_certificate.commissioned_at if self._ship_certificate else time.time(),
+            timestamp=ship.commissioned_at if ship else time.time(),
             certificate_hash=cert_hash,
             agent_did=agent_did,
             previous_hash="0" * 64,
@@ -1081,38 +1104,43 @@ class AgentIdentityRegistry:
         """Export the full ledger for federation sync.
 
         Returns the complete chain as a list of dicts, each containing
-        the block data and the associated birth certificate VC.
+        the block data and the associated birth certificate VC. BF-885 A-1:
+        one committed snapshot, its attestations included -- read under the
+        writer's read guard, so no unit's pending statement leaves the ship;
+        refused (``IdentityUnitUnsettled``) as a unit is, never served from
+        what has not committed.
         """
         if not self._db:
             return []
 
         blocks: list[dict[str, Any]] = []
-        async with self._db.execute(
-            "SELECT l.block_index, l.timestamp, l.certificate_hash, l.agent_did, "
-            "l.previous_hash, l.block_hash, c.certificate_vc_json "
-            "FROM identity_ledger l "
-            "LEFT JOIN birth_certificates c ON l.agent_did = c.did "
-            "ORDER BY l.block_index ASC"
-        ) as cursor:
-            async for row in cursor:
-                blocks.append({
-                    "index": row[0],
-                    "timestamp": row[1],
-                    "certificate_hash": row[2],
-                    "agent_did": row[3],
-                    "previous_hash": row[4],
-                    "block_hash": row[5],
-                    "credential": json.loads(row[6]) if row[6] else None,
-                })
+        async with self._writer.read():  # BF-885 A-1 no unit has a statement pending while the chain and its attestations are read
+            async with self._db.execute(
+                "SELECT l.block_index, l.timestamp, l.certificate_hash, l.agent_did, "
+                "l.previous_hash, l.block_hash, c.certificate_vc_json "
+                "FROM identity_ledger l "
+                "LEFT JOIN birth_certificates c ON l.agent_did = c.did "
+                "ORDER BY l.block_index ASC"
+            ) as cursor:
+                async for row in cursor:
+                    blocks.append({
+                        "index": row[0],
+                        "timestamp": row[1],
+                        "certificate_hash": row[2],
+                        "agent_did": row[3],
+                        "previous_hash": row[4],
+                        "block_hash": row[5],
+                        "credential": json.loads(row[6]) if row[6] else None,
+                    })
 
-        # Attach ship certificate to genesis block if available
-        # The LEFT JOIN on birth_certificates won't find the ship cert (different table)
-        # so we attach it explicitly when it exists
-        if blocks and self._ship_certificate and not blocks[0].get("credential"):
-            blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
+            # Attach ship certificate to genesis block if available
+            # The LEFT JOIN on birth_certificates won't find the ship cert (different table)
+            # so we attach it explicitly when it exists
+            if blocks and self._ship_certificate and not blocks[0].get("credential"):
+                blocks[0]["credential"] = self._ship_certificate.to_verifiable_credential()
 
-        if self._key_binding is not None:
-            await self._key_binding.annotate_export(blocks)
+            if self._key_binding is not None:
+                await self._key_binding.annotate_export(blocks)
 
         return blocks
 
@@ -1128,7 +1156,9 @@ class AgentIdentityRegistry:
         """
         return verify_chain_structure(blocks)  # AD-1198 A-2 one structural check, shared with the armed exchange
 
-    async def import_chain(self, blocks: list[dict[str, Any]], *, supersede: bool = False) -> tuple[bool, str]:
+    async def import_chain(
+        self, blocks: list[dict[str, Any]], *, supersede: bool = False, if_stored: tuple[Any, ...] | None = None,
+    ) -> tuple[bool, str]:
         """AD-443b: Accept a remote ship's exported Identity Ledger and persist it.
 
         Validates the chain via verify_remote_chain BEFORE persisting; rejects
@@ -1137,6 +1167,13 @@ class AgentIdentityRegistry:
         is kept (AD-1196 A-1) -- unless ``supersede`` is given and the chain takes
         recovery-key precedence over it (``recovery_precedence``), when it replaces
         it (AD-1198 slice 2b: the identity exchange asks this only for a resync).
+
+        BF-885 A-1: the stored chain is read and judged inside the import's unit,
+        once the writer has admitted it -- a unit whose caller stopped waiting may
+        have committed another chain since anything read before. ``if_stored`` is
+        the stored chain the caller judged ``blocks`` against
+        (``chain_block_hashes``; ``()`` for none): the import is refused, and
+        nothing written, unless identity.db still stores exactly that chain.
         """
         if not self._db:
             return False, "Registry not started"
@@ -1171,8 +1208,16 @@ class AgentIdentityRegistry:
                 )
 
         origin_ship_did = blocks[0]["agent_did"]
-        async with self._foreign_chain_lock:  # AD-1196 A-1
+
+        def judged() -> None:  # BF-885 A-1 run inside the import's unit once admitted: the stored chain as committed
             stored = self._foreign_chain_cache.get(origin_ship_did)
+            if if_stored is not None and chain_block_hashes(stored) != tuple(if_stored):  # BF-885 A-1 the chain the caller judged against is still the one stored
+                logger.warning(
+                    "BF-885: import chain from %s refused: identity.db stores another chain for it than the one this "
+                    "import was judged against; nothing was imported",
+                    origin_ship_did,
+                )
+                raise _Refused(f"Stored chain changed: identity.db stores another chain for {origin_ship_did} than the one judged")
             if self._key_binding is not None and stored is not None:
                 from probos.identity_keys import chain_key_events, keeps_key_history, recovery_precedence
 
@@ -1185,20 +1230,28 @@ class AgentIdentityRegistry:
                         "AD-1196: import chain from %s rejected: %s; the stored chain is kept",
                         origin_ship_did, why,
                     )
-                    return False, f"Key history check failed: {why}"
+                    raise _Refused(f"Key history check failed: {why}")
                 if divergent is not None:
                     logger.warning(
                         "AD-1198: the chain stored for %s is replaced by one whose recovery at key seq %d takes "
                         "precedence over it (%s); the replaced branch is no longer stored here",
                         origin_ship_did, divergent, why,
                     )
-            await self._db.execute(
-                "INSERT OR REPLACE INTO foreign_chains "
-                "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
-                (origin_ship_did, json.dumps(blocks), time.time()),
-            )
-            await self._db.commit()
+
+        def committed() -> None:  # BF-885 the chain is held once it has committed
             self._foreign_chain_cache[origin_ship_did] = list(blocks)
+
+        async with self._foreign_chain_lock:  # AD-1196 A-1
+            try:
+                async with self._writer.unit(committed) as db:  # BF-885 a chain import is one unit: nothing else commits or rolls back with it
+                    judged()  # BF-885 A-1 the stored chain judged as committed, once the writer admitted this unit
+                    await db.execute(
+                        "INSERT OR REPLACE INTO foreign_chains "
+                        "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
+                        (origin_ship_did, json.dumps(blocks), time.time()),
+                    )
+            except _Refused as refused:  # BF-885 A-1 a chain refused inside its unit: rolled back, nothing written
+                return False, str(refused)
         logger.info(
             "Foreign chain imported: %d blocks from %s; available for transfer verification",
             len(blocks), origin_ship_did,
@@ -1253,40 +1306,39 @@ class AgentIdentityRegistry:
         )
         xfer.certificate_hash = xfer.compute_hash()
 
-        if self._key_binding is not None:
-            # AD-1196: sign and anchor the transfer under the ledger lock; without an active key
-            # signing raises before anything is written.
-            from probos.identity_keys import ATTEST_TRANSFER, credential_digest
+        async with self._ledger_lock if self._key_binding is not None else contextlib.nullcontext():  # BF-885 held through the unit, and as before only when signed
+            async with self._writer.unit() as db:  # BF-885 its block, its signature and its row: all or none
+                if self._key_binding is not None:  # BF-885 A-1 signed once admitted: the birth read and the anchor are what committed
+                    # AD-1196: sign and anchor the transfer under the ledger lock; without an active key
+                    # signing raises before anything is written.
+                    from probos.identity_keys import ATTEST_TRANSFER, credential_digest
 
-            async with self._ledger_lock:
-                async with self._db.execute(
-                    "SELECT certificate_vc_json FROM birth_certificates WHERE did = ?", (cert.did,),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                birth_digest = credential_digest(json.loads(row[0]))  # AD-1196 A-1 birth binding
-                signed = await self._key_binding.sign_record_locked(
-                    xfer.to_verifiable_credential(), required=True, birth_credential_digest=birth_digest,
+                    async with db.execute(
+                        "SELECT certificate_vc_json FROM birth_certificates WHERE did = ?", (cert.did,),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                    birth_digest = credential_digest(json.loads(row[0]))  # AD-1196 A-1 birth binding
+                    signed = await self._key_binding.sign_record_locked(
+                        xfer.to_verifiable_credential(), required=True, birth_credential_digest=birth_digest,
+                    )
+                    assert signed is not None  # required signing raises instead of returning None
+                    block = await self._append_to_ledger(xfer.certificate_hash, xfer.did)
+                    await self._key_binding.record_attestation_locked(
+                        block_index=block.index, kind=ATTEST_TRANSFER, subject_did=xfer.did,
+                        certificate_hash=xfer.certificate_hash, kid=signed[0], jws=signed[1],
+                    )
+                await db.execute(
+                    "INSERT INTO transfer_certificates "
+                    "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        xfer.did,
+                        xfer.transfer_timestamp,
+                        "outgoing",
+                        xfer.certificate_hash,
+                        json.dumps(xfer.to_verifiable_credential()),
+                    ),
                 )
-                assert signed is not None  # required signing raises instead of returning None
-                block = await self._append_to_ledger(xfer.certificate_hash, xfer.did)
-                await self._key_binding.record_attestation_locked(
-                    block_index=block.index, kind=ATTEST_TRANSFER, subject_did=xfer.did,
-                    certificate_hash=xfer.certificate_hash, kid=signed[0], jws=signed[1],
-                )
-
-        await self._db.execute(
-            "INSERT INTO transfer_certificates "
-            "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                xfer.did,
-                xfer.transfer_timestamp,
-                "outgoing",
-                xfer.certificate_hash,
-                json.dumps(xfer.to_verifiable_credential()),
-            ),
-        )
-        await self._db.commit()
         logger.info(
             "Transfer certificate issued: %s (%s) -> %s; ready for delivery to destination",
             xfer.callsign, xfer.did, target_instance_did,
@@ -1305,6 +1357,8 @@ class AgentIdentityRegistry:
         Does NOT reassign a slot — caller must call reassign_slot explicitly.
         AD-1196 A-2: the origin chain is read, checked and the certificate
         persisted under the foreign-chain lock that import_chain also takes.
+        BF-885 A-1: read and checked inside the import's unit, once the writer
+        has admitted it, so the chain judged is the one identity.db stores.
         """
         if not self._db:
             return False, "Registry not started"
@@ -1318,7 +1372,7 @@ class AgentIdentityRegistry:
             )
             return False, "Certificate hash mismatch"
 
-        async with self._foreign_chain_lock:  # AD-1196 A-2 verify and persist under one lock
+        def judged() -> AgentBirthCertificate:  # BF-885 A-1 run inside the import's unit once admitted: the origin chain as committed
             chain = self._foreign_chain_cache.get(cert.origin_ship_did)
             if chain is None:
                 logger.warning(
@@ -1326,7 +1380,7 @@ class AgentIdentityRegistry:
                     "call import_chain first",
                     cert.origin_ship_did,
                 )
-                return False, f"Origin chain {cert.origin_ship_did} not imported"
+                raise _Refused(f"Origin chain {cert.origin_ship_did} not imported")
 
             # Confirm the cert claims an agent the origin ship's ledger actually issued.
             chain_match = False
@@ -1347,9 +1401,7 @@ class AgentIdentityRegistry:
                     "in origin chain %s",
                     cert.did, cert.origin_ship_did,
                 )
-                return False, (
-                    f"Certificate subject {cert.did} not found in origin chain"
-                )
+                raise _Refused(f"Certificate subject {cert.did} not found in origin chain")
 
             birth_index: int | None = None
             if self._key_binding is not None:
@@ -1361,7 +1413,7 @@ class AgentIdentityRegistry:
                 )
                 if not verdict.accepted:
                     logger.warning("AD-1196: transfer certificate %s rejected: %s", cert.did, verdict.reason)
-                    return False, verdict.reason
+                    raise _Refused(verdict.reason)
                 logger.info("AD-1196: transfer certificate %s accepted: %s", cert.did, verdict.reason)
                 birth_index = verdict.birth_index
 
@@ -1394,35 +1446,43 @@ class AgentIdentityRegistry:
                 break
 
             if fcert is None:
-                return False, "Failed to reconstruct foreign birth certificate"
+                raise _Refused("Failed to reconstruct foreign birth certificate")
+            return fcert
 
-            await self._db.execute(
-                "INSERT OR REPLACE INTO foreign_birth_certificates "
-                "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
-                "birth_timestamp, department, post_id, baseline_version, "
-                "certificate_hash, certificate_vc_json, origin_ship_did, imported_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    fcert.agent_uuid, fcert.did, fcert.agent_type, fcert.callsign,
-                    fcert.instance_id, fcert.vessel_name, fcert.birth_timestamp,
-                    fcert.department, fcert.post_id, fcert.baseline_version,
-                    fcert.certificate_hash,
-                    json.dumps(cert.to_verifiable_credential()),
-                    cert.origin_ship_did, time.time(),
-                ),
-            )
-            await self._db.execute(
-                "INSERT OR REPLACE INTO transfer_certificates "
-                "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    cert.did, cert.transfer_timestamp, "incoming",
-                    cert.certificate_hash,
-                    json.dumps(cert.to_verifiable_credential()),
-                ),
-            )
-            await self._db.commit()
+        def committed() -> None:  # BF-885 the foreign birth is held once it has committed
             self._foreign_uuid_cache[fcert.agent_uuid] = fcert
+
+        async with self._foreign_chain_lock:  # AD-1196 A-2 verify and persist under one lock
+            try:
+                async with self._writer.unit(committed) as db:  # BF-885 the foreign birth and its transfer commit together, or neither
+                    fcert = judged()  # BF-885 A-1 judged against the origin chain as committed, once the writer admitted this unit
+                    await db.execute(
+                        "INSERT OR REPLACE INTO foreign_birth_certificates "
+                        "(agent_uuid, did, agent_type, callsign, instance_id, vessel_name, "
+                        "birth_timestamp, department, post_id, baseline_version, "
+                        "certificate_hash, certificate_vc_json, origin_ship_did, imported_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            fcert.agent_uuid, fcert.did, fcert.agent_type, fcert.callsign,
+                            fcert.instance_id, fcert.vessel_name, fcert.birth_timestamp,
+                            fcert.department, fcert.post_id, fcert.baseline_version,
+                            fcert.certificate_hash,
+                            json.dumps(cert.to_verifiable_credential()),
+                            cert.origin_ship_did, time.time(),
+                        ),
+                    )
+                    await db.execute(
+                        "INSERT OR REPLACE INTO transfer_certificates "
+                        "(did, transfer_timestamp, direction, certificate_hash, certificate_vc_json) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            cert.did, cert.transfer_timestamp, "incoming",
+                            cert.certificate_hash,
+                            json.dumps(cert.to_verifiable_credential()),
+                        ),
+                    )
+            except _Refused as refused:  # BF-885 A-1 a certificate refused inside its unit: rolled back, nothing written
+                return False, str(refused)
         logger.info(
             "Transfer certificate imported: %s (%s) from %s; "
             "available via get_by_uuid (caller must reassign_slot)",
@@ -1449,12 +1509,15 @@ class AgentIdentityRegistry:
             return False, f"agent_uuid {agent_uuid} not found"
 
         prior = self._slot_cache.get(new_slot_id)
-        await self._db.execute(
-            "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
-            (new_slot_id, agent_uuid),
-        )
-        await self._db.commit()
-        self._slot_cache[new_slot_id] = cert
+
+        def committed() -> None:  # BF-885 the slot is held once it has committed
+            self._slot_cache[new_slot_id] = cert
+
+        async with self._writer.unit(committed) as db:  # BF-885 a slot mapping is one unit: nothing else commits or rolls back with it
+            await db.execute(
+                "INSERT OR REPLACE INTO slot_mappings (slot_id, agent_uuid) VALUES (?, ?)",
+                (new_slot_id, agent_uuid),
+            )
         logger.info(
             "Slot reassigned: %s -> %s (%s [%s]); prior occupant %s; "
             "birth provenance preserved per AD-499",
@@ -1473,21 +1536,22 @@ class AgentIdentityRegistry:
         blocks were forgotten (0 when none was stored). One deletion under the lock that chain and transfer imports take,
         in a transaction of its own on a connection of its own (Amendment A-1): what another writer has pending on the
         registry's shared connection -- this ship's key events, births and transfers -- is never committed or rolled
-        back with it, and SQLite's write lock orders the two, so it waits for that writer's commit, at most SQLite's
-        busy timeout (5 s), and then fails. A deletion that does not commit is discarded with its connection, and the
-        in-memory copy follows the committed deletion.
+        back with it. It is one unit of identity.db's writer (BF-885), so it waits for another writer's unit to end, at
+        most the writer's bound, and then fails. A deletion that does not commit is discarded, and the in-memory copy
+        follows the committed deletion, also for a caller cancelled while it commits.
         """
         if not self._db:  # AD-1198 slice 2c a registry not started forgets nothing
             raise RuntimeError("the identity registry is not started")
         async with self._foreign_chain_lock:  # AD-1198 slice 2c ordered with every chain and transfer import
-            stored = self._foreign_chain_cache.get(origin_ship_did)
             own = await self._connection_factory.connect(str(self._data_dir / "identity.db"))  # AD-1198 slice 2c A-1 a connection of its own: no other writer's statement is in its transaction
             try:
-                await own.execute("DELETE FROM foreign_chains WHERE origin_ship_did = ?", (origin_ship_did,))  # AD-1198 slice 2c only that ship's chain
-                await own.commit()  # AD-1198 slice 2c A-1 it commits its own deletion and nothing else
+                async with self._writer.unit(  # BF-885 one unit, whose end the in-memory copy follows
+                    lambda: self._foreign_chain_cache.pop(origin_ship_did, None), connection=own,
+                ) as db:
+                    stored = self._foreign_chain_cache.get(origin_ship_did)  # BF-885 A-1 what is forgotten, read once admitted
+                    await db.execute("DELETE FROM foreign_chains WHERE origin_ship_did = ?", (origin_ship_did,))  # AD-1198 slice 2c only that ship's chain
             finally:
                 await own.close()  # AD-1198 slice 2c A-1 a deletion that did not commit is discarded with its connection
-            self._foreign_chain_cache.pop(origin_ship_did, None)  # AD-1198 slice 2c the in-memory copy follows the committed deletion
         logger.info(
             "AD-1198: the chain stored for %s is forgotten (%d blocks); its foreign birth and transfer certificates are kept",
             origin_ship_did, 0 if stored is None else len(stored),
