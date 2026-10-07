@@ -840,12 +840,12 @@ async def test_s2a_a1_a_resync_whose_chain_identity_db_refuses_records_no_hold(
         before = _rows(b.store_path)
         asked: list[tuple[int, int]] = []
 
-        async def refusing(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        async def refusing(blocks: list[dict[str, Any]], **_options: Any) -> tuple[bool, str]:  # BF-885 A-1 the exchange passes supersede= and if_stored=
             held = b.transport.chain_seam.held("node-a")
             asked.append((len(blocks), -1 if held is None else held.state.seq))
             return False, "Registry not started"
 
-        async def failing(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        async def failing(blocks: list[dict[str, Any]], **_options: Any) -> tuple[bool, str]:
             raise RuntimeError("disk I/O error")
 
         monkeypatch.setattr(b.registry, "import_chain", refusing)
@@ -1206,10 +1206,10 @@ async def test_s2a_a1_an_armed_import_only_extends_the_stored_chain_one_import_a
         release = asyncio.Event()
         real_import = b.registry.import_chain
 
-        async def slow(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        async def slow(blocks: list[dict[str, Any]], **options: Any) -> tuple[bool, str]:  # BF-885 A-1 the exchange passes supersede= and if_stored=
             imports.append(len(blocks))
             await release.wait()
-            return await real_import(blocks)
+            return await real_import(blocks, **options)
 
         monkeypatch.setattr(b.registry, "import_chain", slow)
         newest = asyncio.create_task(exchange.import_chain_from("node-a", fifth))
@@ -1234,7 +1234,7 @@ async def test_s2a_a1_a_resync_stopped_while_identity_db_imports_records_no_hold
         entered = asyncio.Event()
         seen: list[int] = []
 
-        async def paused(blocks: list[dict[str, Any]]) -> tuple[bool, str]:
+        async def paused(blocks: list[dict[str, Any]], **_options: Any) -> tuple[bool, str]:  # BF-885 A-1 the exchange passes supersede= and if_stored=
             held = b.transport.chain_seam.held("node-a")
             seen.append(-1 if held is None else held.state.seq)
             entered.set()

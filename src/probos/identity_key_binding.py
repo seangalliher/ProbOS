@@ -5,13 +5,15 @@ the binding is armed: ``identity_key_events`` (inception, rotation, recovery and
 re-inception, each anchored at an identity-ledger block whose ``certificate_hash``
 is the event's RFC 8785 digest) and ``identity_signatures`` (a detached JWS per
 signed certificate, keyed by its ledger block). It shares the registry's
-connection and ledger lock: a record is signed and anchored under that lock, so
-its signer is always the key active at its anchor.
+connection, ledger lock and writer: a record is signed and anchored under that
+lock, so its signer is always the key active at its anchor, and a key event is
+one unit of identity.db's writer (BF-885), committed with nothing else and
+rolled back alone.
 
 Every key event is replayed (``derive_key_state``) before anything is written;
-the shared connection is never rolled back; memory changes only after a commit.
-A failure after the first write latches ``needs_restart`` until a restart
-re-derives the state from what was committed. Private keys stay in the injected
+memory changes only after a commit. A failure or cancellation inside a key
+event's unit latches ``needs_restart`` until a restart re-derives the state from
+what was committed. Private keys stay in the injected
 :class:`IdentityKeyStore`, and nothing here logs key material -- only key ids.
 """
 
@@ -67,6 +69,7 @@ if TYPE_CHECKING:
 
     from probos.config import FederationConfig
     from probos.identity import LedgerBlock, ShipBirthCertificate
+    from probos.identity_writer import IdentityWriter
     from probos.protocols import DatabaseConnection
 
 logger = logging.getLogger(__name__)
@@ -189,6 +192,7 @@ class IdentityKeyBinding:
         self._db: DatabaseConnection | None = None
         self._ledger_lock: asyncio.Lock | None = None
         self._append_block: Callable[[str, str], Awaitable[LedgerBlock]] | None = None
+        self._writer: IdentityWriter | None = None  # BF-885 the registry's: a key event is one unit of identity.db
         self._events: list[KeyEvent] = []
         self._state: KeyState | None = None
         self._status = STATUS_UNBOUND
@@ -206,13 +210,16 @@ class IdentityKeyBinding:
         *,
         ledger_lock: asyncio.Lock,
         append_block: Callable[[str, str], Awaitable[LedgerBlock]],
+        writer: IdentityWriter,
     ) -> None:
         """Create the companion tables and re-derive the key state from committed rows.
 
         Rows that do not replay leave the binding ``invalid`` (logged, never raised);
-        database errors propagate. Clears any pending recovery.
+        database errors propagate. Clears any pending recovery. ``writer`` is the
+        registry's (BF-885): every key event is one of its units.
         """
         self._db, self._ledger_lock, self._append_block = db, ledger_lock, append_block
+        self._writer = writer
         self._events, self._state, self._pending = [], None, None
         await db.executescript(IDENTITY_KEYS_SCHEMA)
         await db.commit()
@@ -316,10 +323,12 @@ class IdentityKeyBinding:
     async def sign_record_locked(
         self, record: Mapping[str, Any], *, required: bool = False, birth_credential_digest: str = "",
     ) -> tuple[str, str] | None:
-        """Sign a credential's RFC 8785 form with the active key; the caller holds the ledger lock.
+        """Sign a credential's RFC 8785 form with the active key; the caller holds the ledger lock, inside its unit.
 
         The protected header names the block the caller appends next (``anchor_index``)
-        and, for a transfer, its agent's ``birth_credential_digest``. Returns
+        and, for a transfer, its agent's ``birth_credential_digest``: read once the
+        writer has admitted the caller's unit (BF-885 A-1), when no other unit has
+        a block pending, it is the committed tip's next block. Returns
         ``(kid, jws)``, or ``None`` when the key is not active (the caller issues the
         record unsigned and says so). With ``required`` it raises
         :class:`IdentityKeyUnavailable` instead. A store failure latches ``key_unavailable``.
@@ -383,7 +392,7 @@ class IdentityKeyBinding:
         kid: str,
         jws: str,
     ) -> None:
-        """Record a certificate signature at its ledger block; the caller holds the lock and commits."""
+        """Record a certificate signature at its ledger block; the caller holds the lock, inside its unit (BF-885)."""
         await _require(self._db, "database").execute(
             "INSERT INTO identity_signatures (block_index, kind, subject_did, certificate_hash, kid, jws) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -391,7 +400,8 @@ class IdentityKeyBinding:
         )
 
     async def annotate_export(self, blocks: list[dict[str, Any]]) -> None:
-        """Add an ``attestation`` member to exported blocks that anchor a key event or a signed certificate."""
+        """Add an ``attestation`` member to exported blocks that anchor a key event or a signed certificate; the registry
+        calls this under its writer's read guard (BF-885 A-1), so only committed attestations are added."""
         if self._db is None or not blocks:
             return
         attestations: dict[int, dict[str, Any]] = {}
@@ -594,26 +604,27 @@ class IdentityKeyBinding:
         logger.info("AD-1196: ship DID %s bound to key %s at ledger block %d", ship.ship_did, kid, index)
 
     async def _commit_event_locked(self, payload: dict[str, Any], signatures: dict[str, str]) -> int:
-        """Replay, append, record and commit one key event; the caller holds the ledger lock."""
-        db = _require(self._db, "database")
+        """Replay, append, record and commit one key event as one unit of identity.db (BF-885); the caller holds the
+        ledger lock. Its block index and the state it replays to are derived once the writer has admitted the unit (A-1)."""
         append_block = _require(self._append_block, "ledger")
-        expected = await _ledger_tip(db) + 1
-        candidate = KeyEvent(index=expected, payload=payload, signatures=signatures, digest=event_digest(payload))
-        state = _require(derive_key_state([*self._events, candidate]), "key state")
+        writer = _require(self._writer, "writer")
         try:
-            block = await append_block(candidate.digest, payload["did"])
-            if block.index != expected:
-                raise IdentityKeyError(f"the ledger appended block {block.index}, expected {expected}")
-            await db.execute(
-                "INSERT INTO identity_key_events "
-                "(block_index, did, seq, event, digest, payload_json, signatures_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    expected, payload["did"], payload["seq"], payload["event"], candidate.digest,
-                    canonical_bytes(payload).decode("utf-8"), json.dumps(signatures, sort_keys=True),
-                ),
-            )
-            await db.commit()
+            async with writer.unit() as unit:  # BF-885 the block and the event commit together, or neither, and nothing else
+                expected = await _ledger_tip(unit) + 1  # BF-885 A-1 derived once admitted: the committed tip's next block
+                candidate = KeyEvent(index=expected, payload=payload, signatures=signatures, digest=event_digest(payload))
+                state = _require(derive_key_state([*self._events, candidate]), "key state")  # BF-885 A-1 replayed at that block
+                block = await append_block(candidate.digest, payload["did"])
+                if block.index != expected:
+                    raise IdentityKeyError(f"the ledger appended block {block.index}, expected {expected}")
+                await unit.execute(
+                    "INSERT INTO identity_key_events "
+                    "(block_index, did, seq, event, digest, payload_json, signatures_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        expected, payload["did"], payload["seq"], payload["event"], candidate.digest,
+                        canonical_bytes(payload).decode("utf-8"), json.dumps(signatures, sort_keys=True),
+                    ),
+                )
         except BaseException:  # includes cancellation: memory must never trust a half-written event
             self._status = STATUS_NEEDS_RESTART
             self._reason = "a key event could not be recorded"
