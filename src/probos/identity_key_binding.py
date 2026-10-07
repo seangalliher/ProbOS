@@ -1,4 +1,4 @@
-"""AD-1196: the ship DID's Ed25519 key binding -- the declared store behind identity.db's key tables.
+"""AD-1196: the ship DID's Ed25519 key binding -- the declared store behind identity.db's companion tables.
 
 Owns two companion tables in identity.db (the AD-1206 pattern), created only when
 the binding is armed: ``identity_key_events`` (inception, rotation, recovery and
@@ -15,6 +15,12 @@ memory changes only after a commit. A failure or cancellation inside a key
 event's unit latches ``needs_restart`` until a restart re-derives the state from
 what was committed. Private keys stay in the injected
 :class:`IdentityKeyStore`, and nothing here logs key material -- only key ids.
+
+It also holds the schema of a third companion table, AD-1198 slice 2b-ii's
+``transfer_marks`` (``TRANSFER_MARKS_SCHEMA``), so that identity.db's one store
+declaration covers it (AD-1256 allows one declaration per file):
+``probos.identity_transfer_marks.TransferMarks`` creates it, only while
+federation.peer_admission_enabled is armed, and is its only writer.
 """
 
 from __future__ import annotations
@@ -95,6 +101,23 @@ CREATE TABLE IF NOT EXISTS identity_signatures (
     kid TEXT NOT NULL,
     jws TEXT NOT NULL
 );
+"""
+
+# AD-1198 slice 2b-ii: the standing of stored incoming transfer certificates, as an append-only log -- one row each time
+# a certificate's standing, or the reason for it, changes -- created and written only by
+# probos.identity_transfer_marks.TransferMarks, through identity.db's writer.
+TRANSFER_MARKS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS transfer_marks (
+    seq INTEGER PRIMARY KEY,
+    certificate_hash TEXT NOT NULL,
+    subject_did TEXT NOT NULL,
+    origin_ship_did TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('mark', 'clear')),
+    reason TEXT NOT NULL,
+    chain_head TEXT NOT NULL,
+    chain_blocks INTEGER NOT NULL,
+    judged_at REAL NOT NULL
+)
 """
 
 
