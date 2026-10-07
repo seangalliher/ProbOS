@@ -36,15 +36,28 @@ event there is a ``recovery`` that replays from the state they share. identity.d
 the fetched chain takes precedence over -- the one exception to extending it, which the registry judges again
 (``import_chain(..., supersede=True)``) -- and then the guard re-anchors the hold on the chain's branch in one logged
 write (``EnvelopeGuard.resync``). A transfer's chain never moves either hold.
+
+Slice 2c: an operator's reset (``IdentityExchange.reset``, behind ``POST /api/identity/peers/{node_id}/reset``) forgets
+one configured peer's held key history -- identity.db's stored chain for the held DID first, in a transaction of its own,
+then the hold, every key id recorded for it and its replay windows in one envelope-store transaction -- holding the
+exchange's ledger lock from before the first until the second has ended or the guard's bound has passed, so no chain
+import interleaves. Every import judges its chain again under that lock against the hold as it is then -- a reset may
+have forgotten it since the chain was judged (``not held``), or a first contact after it may hold another branch -- and
+none is imported while a store write of the guard is unsettled (``store write unsettled``): a reset's may have
+forgotten a hold the guard still shows (Amendment A-1). Foreign birth and transfer certificates are kept. The peer's
+next envelope is a first contact under its current pin, and the operator's audit runs once the hold's write has
+committed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from probos.federation.envelope import CHAIN_REQUEST, DIVERGENCE_REFUSALS, HeldSender
@@ -88,6 +101,8 @@ class IdentityLedger(StoredChains, Protocol):
 
     async def import_transfer_certificate(self, cert: TransferCertificate) -> tuple[bool, str]: ...
 
+    async def forget_foreign_chain(self, origin_ship_did: str) -> int: ...
+
 
 class ChainSeam(Protocol):
     """What the exchange needs from the armed federation seam; ``SignedChainSeam`` satisfies it."""
@@ -104,6 +119,25 @@ class ChainSeam(Protocol):
         history_of: Callable[[FederationMessage], Awaitable[tuple[KeyEvent, ...] | None]],
         before_record: Callable[[FederationMessage], Awaitable[str | None]] | None = None,
     ) -> FederationMessage | None: ...
+
+    async def forget(
+        self, source: str, holding: Callable[[str | None], contextlib.AbstractAsyncContextManager[object]],
+        committed: Callable[[], None] | None = None,
+    ) -> str | None: ...
+
+    def settled(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class PeerReset:
+    """AD-1198 slice 2c: what an operator's reset of one configured peer forgot -- public data only, never key material."""
+
+    node_id: str
+    forgotten: bool  # whether a key history was held for the peer, and so forgotten
+    did: str | None  # the DID of that key history
+    key_seq: int | None  # its held key seq; None when nothing was held, or when the hold had been refused at start
+    refused_at_start: bool  # whether that hold had been refused at start
+    identity_chain_blocks: int  # the blocks of identity.db's chain for that DID that were forgotten (0 when none was stored)
 
 
 def within_chain_bounds(blocks: object) -> bool:
@@ -161,6 +195,22 @@ def stored_key_history(chains: StoredChains, did: str) -> tuple[tuple[KeyEvent, 
     if state is None:
         return None
     return chain_key_history(cast("list[dict[str, Any]]", blocks)), state
+
+
+def _keeps_hold(held: HeldSender | None, history: tuple[KeyEvent, ...], *, supersede: bool) -> str | None:
+    """AD-1198 slice 2c A-1: why ``history`` -- the key history of a verified chain, never empty, ending at its head --
+    does not keep ``held``, the key history held for its sender, or ``None``. ``IdentityExchange._judged`` judges a chain
+    so, and ``_into_ledger`` judges it again under the exchange's ledger lock against the hold as it is then: a reset may
+    have forgotten the hold since, or a first contact after it may hold another branch. With ``supersede`` (a resync;
+    slice 2b) a history that does not keep the held events keeps them where it takes recovery-key precedence over them.
+    """
+    if held is None:  # AD-1198 slice 2c a chain is imported only while its sender is held: a reset may have forgotten it since the chain was judged
+        return "not held"
+    keeps, why = keeps_held_key_events(held.events, history, carried_head=history[-1].payload["seq"])  # AD-1198 slice 2c A-1 the held events as they are now, kept by the chain
+    if not keeps and supersede and why in DIVERGENCE_REFUSALS:  # AD-1198 slice 2b a resync's chain may take precedence over the held events
+        divergent, precedence = recovery_precedence(held.events, history)
+        keeps, why = divergent is not None, f"{why}: {precedence}"  # AD-1198 slice 2b the refusal names the judgement
+    return None if keeps else why
 
 
 class _PeerIdentity:
@@ -310,6 +360,67 @@ class IdentityExchange:
         )
         return True
 
+    async def reset(
+        self, source: str, audit: Callable[[PeerReset], None] | None = None,
+    ) -> tuple[str | None, PeerReset | None]:
+        """AD-1198 slice 2c: on an operator's request, forget the key history held for the configured peer ``source``:
+        identity.db's stored chain for the held DID first, then -- in one envelope-store transaction -- the hold, every key
+        id recorded for it and its replay windows (``ChainSeam.forget``). The exchange's ledger lock is taken before
+        identity.db's chain is forgotten and kept until the hold's write has ended or the guard's bound has passed, so no
+        chain import interleaves. Foreign birth and transfer certificates are kept. ``audit`` is called with the
+        ``PeerReset`` once the hold's write has committed: inside the write and once, also for a cancelled caller and a
+        write that commits after the guard's bound (Amendment A-1). ``(None, PeerReset)`` once done -- also when nothing
+        was held -- else ``(reason, None)``: an unconfigured peer, a stopped exchange, a guard not armed or with a store
+        write unsettled, or a store that failed. The peer's next envelope is a first contact under its current pin.
+        """
+        if self._stopped or not self._admission.admits_source(source):  # AD-1198 slice 2c only a configured peer, and only while the exchange runs
+            reason = "stopped" if self._stopped else "unconfigured peer"
+            logger.warning("AD-1198: the reset of %r was refused (%s); nothing was forgotten", source[:64], reason)
+            return reason, None
+        found: dict[str, Any] = {}
+
+        def report() -> PeerReset:  # AD-1198 slice 2c A-1 what was forgotten, as identity.db's step read it
+            return PeerReset(
+                node_id=source, forgotten=found["did"] is not None, did=found["did"], key_seq=found["key_seq"],  # AD-1198 slice 2c forgotten when a history was held
+                refused_at_start=found["refused"], identity_chain_blocks=found["blocks"],
+            )
+
+        def committed() -> None:
+            if audit is not None:  # AD-1198 slice 2c A-1 the operator's audit, once the hold's write has committed
+                audit(report())
+
+        @contextlib.asynccontextmanager
+        async def ledger_first(did: str | None) -> AsyncIterator[None]:
+            async with self._ledger_lock:  # AD-1198 slice 2c no chain import interleaves until the hold's write has ended
+                held = self._seam.held(source)
+                found.update(did=did, key_seq=None if held is None else held.state.seq, refused=held is None and did is not None)  # AD-1198 slice 2c what is forgotten, read under the accept lock
+                found["blocks"] = 0 if did is None else await self._registry.forget_foreign_chain(did)  # AD-1198 slice 2c identity.db forgets the held DID's chain first
+                yield
+
+        try:
+            reason = await self._seam.forget(source, ledger_first, committed)  # AD-1198 slice 2c the guard forgets the hold inside identity.db's step
+        except Exception as exc:  # noqa: BLE001 -- identity.db could not forget its chain: the hold is not forgotten either
+            reason = f"identity.db: {type(exc).__name__}"  # AD-1198 slice 2c a failure of identity.db refuses the reset
+        if reason is not None:
+            logger.warning(
+                "AD-1198: the reset of %r was refused (%s); %s", source[:64], reason,
+                f"identity.db forgot its {found['blocks']}-block chain for that DID, but the hold's write did not complete, "
+                "and a reset that completes forgets both" if "blocks" in found else "nothing was forgotten",
+            )
+            return reason, None
+        reset = report()
+        if reset.forgotten:
+            logger.warning(
+                "AD-1198: reset the key history held for %r on the operator's request (DID %s, %s): its hold, every key id "
+                "recorded for it and its replay windows are forgotten, with identity.db's %d-block chain for that DID; its "
+                "next envelope is a first contact under its current pin",
+                source[:64], reset.did, "refused at start" if reset.refused_at_start else f"key seq {reset.key_seq}",
+                reset.identity_chain_blocks,
+            )
+        else:
+            logger.info("AD-1198: reset of %r on the operator's request: no key history was held for it", source[:64])
+        return None, reset
+
     async def stop(self) -> None:
         """Begin no more resyncs, cancel those running and wait for them: a hold write under way is waited for, at most the
         guard's ``STORE_WRITE_SETTLE_S`` (A-1, A-2); shutdown calls this before the bridge and the transport stop."""
@@ -339,10 +450,20 @@ class IdentityExchange:
         2b) and ``blocks`` takes recovery-key precedence over it: then it replaces it, the one exception, which the
         registry judges again. A stored chain that does not verify -- unsigned, or failing its hashes, links or
         signatures -- is replaced when ``blocks`` begins with every one of its block hashes, and is otherwise kept and
-        ``blocks`` refused. One import at a time.
+        ``blocks`` refused. One import at a time, judged again against the hold as it is then, and none while a store write
+        of the guard is unsettled (slice 2c, Amendment A-1: a reset may have forgotten the hold since the chain was judged,
+        or a first contact after it may hold another branch, and a reset's write may have forgotten a hold the guard still
+        shows).
         """
         async with self._ledger_lock:  # AD-1198 A-1 compare and import as one step
             did = blocks[0]["agent_did"]
+            if not self._seam.settled():  # AD-1198 slice 2c A-1 no import while a store write is unsettled: a reset's may have forgotten a hold the guard still shows
+                why: str | None = "store write unsettled"
+            else:
+                why = _keeps_hold(self._seam.held(sender), chain_key_history(blocks), supersede=supersede)  # AD-1198 slice 2c A-1 the chain judged again against the hold as it is now
+            if why is not None:
+                self._note_refusal(sender, "chain", why)
+                return False, f"identity exchange refused ({why})"
             stored = self._registry.get_foreign_chain(did)
             if stored:
                 verified = verified_chain_state(stored, did) is not None  # AD-1198 A-2 only a stored chain that verifies is relied on
@@ -381,11 +502,8 @@ class IdentityExchange:
         if pin is not None:
             return pin, ()
         history = chain_key_history(chain)
-        keeps, why = keeps_held_key_events(held.events, history, carried_head=state.seq)
-        if not keeps and supersede and why in DIVERGENCE_REFUSALS:  # AD-1198 slice 2b a resync's chain may take precedence over the held events
-            divergent, precedence = recovery_precedence(held.events, history)
-            keeps, why = divergent is not None, f"{why}: {precedence}"  # AD-1198 slice 2b the refusal names the judgement
-        if not keeps:  # AD-1198 identity.db follows the envelope hold, never another branch
+        why = _keeps_hold(held, history, supersede=supersede)  # AD-1198 slice 2c A-1 one judgement against the hold, made again by the import under the ledger lock
+        if why is not None:  # AD-1198 identity.db follows the envelope hold, never another branch
             return why, ()
         return None, history
 

@@ -34,6 +34,8 @@ from probos.federation_envelope_store import ENVELOPE_DB_NAME, EnvelopeStore
 from probos.types import FederationMessage
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
+
     from probos.federation.admission import PeerAdmission
     from probos.identity_keys import KeyEvent
     from probos.protocols import ConnectionFactory
@@ -244,7 +246,7 @@ class SignedChainSeam:
 
     :class:`SignedFederationTransport` builds one over its own wrapped transport, guard and peer admission and exposes
     it as ``chain_seam``, so a resync is verified and recorded in the same hold and replay windows as the peer's
-    envelopes. It satisfies ``probos.federation.continuity.ChainSeam``.
+    envelopes, and a reset (slice 2c) forgets them there. It satisfies ``probos.federation.continuity.ChainSeam``.
     """
 
     def __init__(self, inner: Any, guard: EnvelopeGuard, admission: PeerAdmission | None) -> None:
@@ -257,11 +259,24 @@ class SignedChainSeam:
         """The key history this node holds for ``source``, or ``None``."""
         return self._guard.held(source)
 
+    def settled(self) -> bool:
+        """AD-1198 slice 2c A-1: whether the guard's holds show what its store holds (``EnvelopeGuard.settled``)."""
+        return self._guard.settled()  # AD-1198 slice 2c A-1 the guard's settlement, through the seam
+
     def on_history_gap(self, listener: Callable[[str], None] | None) -> None:
         """``listener`` is told the source of each envelope the guard refuses for a key history gap and (slice 2b), while
         peer admission is armed, of each held source's envelope it refuses for a held history or a stale key; ``None``
         removes it."""
         self._guard.on_history_gap(listener)
+
+    async def forget(
+        self, source: str, holding: Callable[[str | None], AbstractAsyncContextManager[object]],
+        committed: Callable[[], None] | None = None,
+    ) -> str | None:
+        """AD-1198 slice 2c: forget the key history this node holds for ``source`` (``EnvelopeGuard.forget``), the store's
+        write running inside ``holding`` and ``committed`` once it has committed (A-1); ``None`` once forgotten, else why
+        not."""
+        return await self._guard.forget(source, holding, committed)  # AD-1198 slice 2c a reset forgets in the guard that holds the peer
 
     def ended_answer(self, from_node_id: object, message: object) -> bool:
         """AD-1198 A-1: whether ``message`` is a ``chain_response`` from ``from_node_id`` to one of this seam's resync

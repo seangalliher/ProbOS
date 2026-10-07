@@ -147,6 +147,8 @@ class EnvelopeStateStore(Protocol):
         self, source: str, channel: str, sender: StoredSender, window: StoredWindow, key_ids: frozenset[str],
     ) -> None: ...
 
+    async def forget(self, source: str) -> None: ...
+
 
 class PeerIdentityPolicy(Protocol):
     """AD-1198: which sources the guard may hold, and whether a key history satisfies a source's pin.
@@ -392,6 +394,42 @@ class _StoreWrite:
         return None if failure is None else f"not recorded ({type(failure).__name__})"  # AD-1197 not recorded, not delivered
 
 
+async def _settled(
+    source: str, write: Callable[[], Awaitable[None]], publish: Callable[[], None],
+) -> tuple[_StoreWrite, str | None, asyncio.CancelledError | None]:
+    """AD-1198 A-1, A-2: run one store write of the guard for ``source`` (``_written``) and hold what it committed
+    (``publish``); the write, its outcome (``_StoreWrite.outcome``) and the cancellation its caller raises -- the caller's
+    own, kept while the write ended, or else the write's, when the write's own task ended cancelled. The caller owns a
+    write whose outcome is ``store write unsettled`` before it raises. Every store write of the guard is settled here:
+    an admission's, a resync's, a re-anchor's and (slice 2c) a reset's."""
+    writing, cancelled = await _written(write)  # AD-1198 A-1 the write and what it holds complete as one, whatever happens to the caller -- within the bound (A-2)
+    written = _StoreWrite(source, writing, publish)
+    reason = written.outcome(late=False)
+    if cancelled is None and writing.cancelled():  # AD-1198 A-1 a write that ended cancelled raises its cancellation, never a refusal (AD-1197)
+        cancelled = asyncio.CancelledError()
+    return written, reason, cancelled
+
+
+async def _forgotten(
+    forget: Callable[[str], Awaitable[None]], source: str, committed: Callable[[], None] | None,
+) -> None:
+    """AD-1198 slice 2c A-1: a reset's store write -- ``source`` forgotten (``EnvelopeStateStore.forget``), then
+    ``committed`` once that transaction has committed. It runs inside the write's own task (``_written``), so a cancelled
+    caller, or a write that commits after ``STORE_WRITE_SETTLE_S``, still reaches ``committed``: once, and never for a
+    write that failed. A ``committed`` that raises is logged, and the write's outcome stays the store's."""
+    await forget(source)
+    if committed is None:  # AD-1198 slice 2c A-1 nothing follows a reset that names no next step
+        return
+    try:
+        committed()  # AD-1198 slice 2c A-1 what follows a committed reset (its audit) runs once, whatever happens to its caller
+    except Exception as exc:  # AD-1198 slice 2c A-1 log-and-degrade: a committed reset stands whatever follows it
+        logger.warning(
+            "AD-1198: the reset of %r has committed, but what follows its commit failed (%s); the reset stands, and "
+            "that step is not retried",
+            source[:64], type(exc).__name__,
+        )
+
+
 def _close_ended(closing: asyncio.Task[None]) -> None:
     """AD-1198 A-3: once a close of the store that the guard's stop did not wait out has ended, read its outcome -- so
     that no exception of it is left unretrieved -- and report one that failed, once. A cancelled close has no exception
@@ -427,6 +465,45 @@ async def _closed(closing: asyncio.Task[None], behind: _StoreWrite | None) -> No
     )
 
 
+def _pin_on_ledger(
+    identity: PeerIdentityPolicy | None, ledger: LedgerHistory | None, source: str, events: tuple[KeyEvent, ...],
+    state: KeyState,
+) -> str | None:
+    """AD-1198 A-1: a held history refused at start for ``pin (key)`` -- its newest events no longer introduce the
+    pinned key, as after a resync -- judged again on the full key history: the chain identity.db stores for the held
+    DID (re-verified, ``ledger``), joined to the held events. The stored chain must reach the held head keeping the
+    held events unchanged, or the held events must continue it from its head, replayed from its state under every
+    AD-1196 rule; the pin and its continuity are then judged on that full state. ``pin (key)`` again when nothing is
+    stored, the chain does not verify or the two do not join. Never raises. A module function since slice 2c (it reads
+    no state of the guard), called by ``EnvelopeGuard.start``.
+    """
+    found = None
+    with contextlib.suppress(Exception):  # an unread chain proves nothing: the hold is refused as before
+        found = None if ledger is None else ledger(state.did)
+    if found is None or identity is None:
+        return "pin (key)"
+    history, full = found
+    try:
+        if full.seq < state.seq:  # AD-1198 A-1 the held events continue the stored chain from its head
+            keeps, _ = keeps_held_key_events(history, events, carried_head=state.seq)
+            if keeps:
+                full = derive_key_state(events[len(events) - (state.seq - full.seq):], after=full) or full
+        else:
+            keeps, _ = keeps_held_key_events(events, history, carried_head=full.seq)
+    except (KeyEventInvalid, ValueError, TypeError, KeyError):  # AD-1198 A-1 a history that does not replay proves nothing
+        keeps = False
+    if not keeps:  # AD-1198 A-1 the stored chain and the held events must be one history
+        return "pin (key)"
+    why = identity.identity_refusal(source, full)  # AD-1198 A-1 the pin and its continuity on the full history
+    if why is None:
+        logger.info(
+            "AD-1198: on the chain identity.db stores for %r, the key history held for it satisfies its identity "
+            "pin (key seq %d); it is held",
+            source[:64], state.seq,
+        )
+    return why
+
+
 class EnvelopeGuard:
     """Seals outbound envelopes and admits inbound ones for one node (AD-1197).
 
@@ -459,7 +536,7 @@ class EnvelopeGuard:
         self._sign_lock = asyncio.Lock()
         self._accept_lock = asyncio.Lock()
         self._holds: dict[str, HeldSender] = {}
-        self._invalid: set[str] = set()
+        self._invalid: dict[str, str] = {}  # AD-1198 slice 2c each source whose hold was refused at start, and the DID it names
         self._windows: dict[tuple[str, str], StoredWindow] = {}
         self._unsigned_reason: str | None = None
         self._gap_listener: Callable[[str], None] | None = None  # AD-1198 slice 2a: told of each key history gap
@@ -476,6 +553,12 @@ class EnvelopeGuard:
         """AD-1198: the key history held for ``source`` -- its newest events and the state they replay to -- or ``None``.
         While a store write is unsettled (A-2) it may lag the store by that write, and nothing is admitted."""
         return self._holds.get(source)
+
+    def settled(self) -> bool:
+        """AD-1198 slice 2c A-1: whether ``held`` shows what the store holds -- ``False`` from when a store write outlasts
+        ``STORE_WRITE_SETTLE_S`` (A-2) until the guard has read its outcome and holds what it committed, at its next
+        admission, resync or reset. Meanwhile a reset's write may have forgotten a hold that ``held`` still shows."""
+        return self._unsettled is None  # AD-1198 slice 2c A-1 unsettled while a write's outcome is unknown or not yet held
 
     def on_history_gap(self, listener: Callable[[str], None] | None) -> None:
         """AD-1198: call ``listener`` with the source of each envelope refused for a key history gap, which a resync from
@@ -524,7 +607,7 @@ class EnvelopeGuard:
                 )
             return
         holds: dict[str, HeldSender] = {}
-        invalid: set[str] = set()
+        invalid: dict[str, str] = {}
         for source, stored in senders.items():
             if self._identity is not None and not self._identity.admits_source(source):  # AD-1198 only configured peers are held
                 continue
@@ -535,7 +618,7 @@ class EnvelopeGuard:
             except (KeyEventInvalid, ValueError, TypeError, KeyError):
                 state = None
             if state is None or state.did != stored.did or state.seq != stored.key_seq or state.head_digest != stored.key_head:  # AD-1197 a stored history must replay
-                invalid.add(source)
+                invalid[source] = stored.did  # AD-1198 slice 2c a hold that does not replay keeps the DID it names, which a reset forgets with it
                 logger.error(
                     "AD-1197: the key history held for %r does not replay; its envelopes are refused until an "
                     "operator resolves it",
@@ -544,9 +627,9 @@ class EnvelopeGuard:
                 continue
             why = None if self._identity is None else self._identity.identity_refusal(source, state)  # AD-1198 a held history must satisfy its pin
             if why == "pin (key)" and self._ledger is not None:  # AD-1198 A-1 newest events without the pinned key: judged on the full history
-                why = self._pin_on_ledger(source, events, state)
+                why = _pin_on_ledger(self._identity, self._ledger, source, events, state)  # AD-1198 A-1 the pin judged on identity.db's chain (a module function since slice 2c)
             if why is not None:
-                invalid.add(source)
+                invalid[source] = state.did  # AD-1198 slice 2c a hold refused for its pin keeps its DID, which a reset forgets with it
                 logger.error(
                     "AD-1198: the key history held for %r does not satisfy its identity pin (%s); its envelopes are "
                     "refused until its pin or its hold is corrected",
@@ -560,40 +643,6 @@ class EnvelopeGuard:
         logger.info(
             "AD-1197: federation envelope signing armed (policy %s, %d senders held)", self._policy, len(holds),
         )
-
-    def _pin_on_ledger(self, source: str, events: tuple[KeyEvent, ...], state: KeyState) -> str | None:
-        """AD-1198 A-1: a held history refused at start for ``pin (key)`` -- its newest events no longer introduce the
-        pinned key, as after a resync -- judged again on the full key history: the chain identity.db stores for the held
-        DID (re-verified, ``ledger``), joined to the held events. The stored chain must reach the held head keeping the
-        held events unchanged, or the held events must continue it from its head, replayed from its state under every
-        AD-1196 rule; the pin and its continuity are then judged on that full state. ``pin (key)`` again when nothing is
-        stored, the chain does not verify or the two do not join. Never raises.
-        """
-        found = None
-        with contextlib.suppress(Exception):  # an unread chain proves nothing: the hold is refused as before
-            found = None if self._ledger is None else self._ledger(state.did)
-        if found is None or self._identity is None:
-            return "pin (key)"
-        history, full = found
-        try:
-            if full.seq < state.seq:  # AD-1198 A-1 the held events continue the stored chain from its head
-                keeps, _ = keeps_held_key_events(history, events, carried_head=state.seq)
-                if keeps:
-                    full = derive_key_state(events[len(events) - (state.seq - full.seq):], after=full) or full
-            else:
-                keeps, _ = keeps_held_key_events(events, history, carried_head=full.seq)
-        except (KeyEventInvalid, ValueError, TypeError, KeyError):  # AD-1198 A-1 a history that does not replay proves nothing
-            keeps = False
-        if not keeps:  # AD-1198 A-1 the stored chain and the held events must be one history
-            return "pin (key)"
-        why = self._identity.identity_refusal(source, full)  # AD-1198 A-1 the pin and its continuity on the full history
-        if why is None:
-            logger.info(
-                "AD-1198: on the chain identity.db stores for %r, the key history held for it satisfies its identity "
-                "pin (key seq %d); it is held",
-                source[:64], state.seq,
-            )
-        return why
 
     async def stop(self) -> None:
         """Close the store; afterwards nothing is sent or accepted. The close is waited for at most ``STORE_WRITE_SETTLE_S``,
@@ -780,6 +829,40 @@ class EnvelopeGuard:
         )
         return False
 
+    async def forget(
+        self, source: str, holding: Callable[[str | None], contextlib.AbstractAsyncContextManager[object]],
+        committed: Callable[[], None] | None = None,
+    ) -> str | None:
+        """AD-1198 slice 2c: forget the key history held for ``source`` -- its newest events, every key id recorded for
+        it, its replay windows and a refusal at start -- in one store write (``EnvelopeStateStore.forget``), so that its
+        next envelope is a first contact under its current pin. Only while armed with peer admission, and not while a
+        store write is unsettled (A-2). Under the accept lock the write runs inside ``holding(did)`` -- ``did`` names the
+        held or refused history, ``None`` when nothing is held -- which identity.db enters first, and it is settled as an
+        admission's write is (A-1, A-2). ``committed`` runs once the store's transaction has committed, inside the write
+        (Amendment A-1: ``_forgotten``). ``None`` once forgotten, also when nothing was held; otherwise why nothing was.
+        A cancellation is raised once the write has settled.
+        """
+        async with self._accept_lock:  # AD-1198 slice 2c a reset is ordered with every admission and resync
+            if self._mode != _MODE_ARMED or self._identity is None:  # AD-1198 slice 2c a reset only with peer admission armed
+                return "not armed"
+            if self._unsettled is not None and self._unsettled.outcome(late=True) == _UNSETTLED:  # AD-1198 slice 2c nothing is forgotten while a write's outcome is unknown
+                return _UNSETTLED
+            self._unsettled = None  # AD-1198 slice 2c a write left unsettled is let go once what it committed is held
+            held = self._holds.get(source)  # AD-1198 slice 2c the hold whose DID identity.db forgets first
+
+            def publish() -> None:  # AD-1198 slice 2c what the store forgot, memory forgets
+                self._holds.pop(source, None)  # AD-1198 slice 2c its hold is forgotten in memory
+                self._invalid.pop(source, None)  # AD-1198 slice 2c a refusal at start
+                self._windows = {key: kept for key, kept in self._windows.items() if key[0] != source}  # AD-1198 slice 2c its replay windows
+
+            async with holding(held.did if held is not None else self._invalid.get(source)):  # AD-1198 slice 2c identity.db first, and its imports wait until the hold is forgotten
+                written, reason, cancelled = await _settled(source, functools.partial(_forgotten, self._store.forget, source, committed), publish)  # AD-1198 slice 2c settled as an admission's write
+                if reason == _UNSETTLED:  # AD-1198 slice 2c an unknown outcome is owned until it is known
+                    self._unsettled = written
+            if cancelled is not None:  # AD-1198 slice 2c a cancellation is raised once the write has settled
+                raise cancelled
+            return reason
+
     async def _admit_locked(
         self, message: object, history: tuple[KeyEvent, ...] | None = None,
         before_record: Callable[[], Awaitable[str | None]] | None = None,
@@ -896,15 +979,11 @@ class EnvelopeGuard:
             if grows:
                 self._holds[source] = HeldSender(state.did, tail, state)
 
-        writing, cancelled = await _written(write)  # AD-1198 A-1 the write and what it holds complete as one, whatever happens to the caller -- within the bound (A-2)
-        written = _StoreWrite(source, writing, publish)
-        reason = written.outcome(late=False)
+        written, reason, cancelled = await _settled(source, write, publish)  # AD-1198 A-1, A-2 the store write settled as every write of the guard is
         if reason == _UNSETTLED:  # AD-1198 A-2 an unknown outcome: the guard owns the write until it is known, and admits nothing meanwhile
             self._unsettled = written
         if cancelled is not None:  # AD-1198 A-1 a cancellation that arrived during the write is raised once what committed is held
             raise cancelled
-        if writing.cancelled():  # AD-1198 A-1 a write that ended cancelled raises its cancellation, never a refusal (AD-1197)
-            raise asyncio.CancelledError
         return reason
 
     def _unsigned(self, source: str) -> str | None:

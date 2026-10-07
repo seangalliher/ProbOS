@@ -6,10 +6,11 @@ verified for it, one replay window per source and channel (``direct`` or
 ``broadcast``), and this node's send epoch. Every write is one ``BEGIN IMMEDIATE``
 transaction that refuses to move state backwards: a hold only advances, never changes
 DID and never forgets a key id, a window only moves forward, and the epoch only
-increments. Nothing is ever deleted, with one exception (AD-1198 slice 2b): ``reanchor``
+increments. Nothing is ever deleted, with two exceptions (AD-1198): ``reanchor`` (slice 2b)
 moves a hold to a branch that takes recovery-key precedence over it, even back -- never
 to another DID and never forgetting a key id -- and clears that source's replay windows
-in the same transaction.
+in the same transaction; and ``forget`` (slice 2c, an operator's reset) deletes one
+source's hold, its recorded key ids and its replay windows in one transaction.
 
 Public material only -- key-event histories, key ids, counters and 64-bit window
 masks; never a private key, an envelope signature or a message body. Nothing here
@@ -79,6 +80,7 @@ _REANCHOR_SENDER = (  # AD-1198 slice 2b the one hold write that may move a hold
     "WHERE source_node = ? AND did = ?"  # AD-1198 slice 2b only this source's hold, and only under its DID
 )
 _CLEAR_WINDOWS = "DELETE FROM envelope_windows WHERE source_node = ?"  # AD-1198 slice 2b a re-anchored source's windows start again
+_FORGET_SENDER = "DELETE FROM envelope_senders WHERE source_node = ?"  # AD-1198 slice 2c a reset forgets one source's hold and its key ids
 _NEXT_EPOCH = (
     "INSERT INTO envelope_send_epoch (singleton, epoch) VALUES (1, 1) "
     "ON CONFLICT(singleton) DO UPDATE SET epoch = envelope_send_epoch.epoch + 1"
@@ -271,6 +273,21 @@ class EnvelopeStore:
         except BaseException:
             with contextlib.suppress(Exception):
                 await db.execute("ROLLBACK")
+            raise
+
+    async def forget(self, source: str) -> None:
+        """AD-1198 slice 2c: forget ``source`` -- its hold, every key id recorded for it and every replay window it has --
+        in one transaction, so that its next envelope is a first contact. Forgetting a source nothing is held for changes
+        nothing; any failure rolls the whole transaction back."""
+        db = self._require()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(_FORGET_SENDER, (source,))  # AD-1198 slice 2c the hold and its recorded key ids
+            await db.execute(_CLEAR_WINDOWS, (source,))  # AD-1198 slice 2c and its replay windows, in the same transaction
+            await db.commit()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await db.execute("ROLLBACK")  # AD-1198 slice 2c nothing of a failed reset is kept
             raise
 
     def _require(self) -> Any:

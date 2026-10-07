@@ -386,9 +386,11 @@ def test_envelope_store_declaration_matches_its_owner(monkeypatch: pytest.Monkey
         "criticality": "feature-gated",
         "lifecycle_owner": "probos.federation.envelope.EnvelopeGuard",
         "retention": "unbounded",
-        "retention_note": (
-            "No DELETE FROM: one row per sender ever held (at most 256), with at most 4,096 key ids each, at most "
-            "two replay windows per sender and one send-epoch row, updated in place and only ever forward."
+        "retention_note": (  # AD-1198 slice 2c: "No DELETE FROM" stopped being true when a re-anchor (2b) and a reset (2c) delete rows
+            "One row per sender held (at most 256), with at most 4,096 key ids each, at most two replay windows per "
+            "sender and one send-epoch row, updated in place and only ever forward, with two deletions (AD-1198): a "
+            "re-anchor deletes one sender's replay windows (slice 2b), and an operator's reset deletes one sender's row "
+            "and replay windows (slice 2c), each in one transaction."
         ),
         "backup": "included",
         "restore": "unknown",
