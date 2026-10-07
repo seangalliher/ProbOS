@@ -28,7 +28,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,6 +40,7 @@ from probos.mobility import TransferCertificate
 
 if TYPE_CHECKING:
     from probos.identity_key_binding import IdentityKeyBinding
+    from probos.identity_transfer_marks import TransferMark, TransferMarks
 
 
 logger = logging.getLogger(__name__)
@@ -516,6 +517,7 @@ class AgentIdentityRegistry:
         connection_factory: ConnectionFactory | None = None,
         *,
         key_binding: IdentityKeyBinding | None = None,
+        transfer_marks: TransferMarks | None = None,
     ) -> None:
         self._data_dir = data_dir
         self._db: DatabaseConnection | None = None
@@ -531,6 +533,9 @@ class AgentIdentityRegistry:
         self._writer = IdentityWriter(lambda: self._db)  # BF-885: every write of identity.db is one unit, one unit at a time
         # AD-1196: the ship DID's key binding; None keeps every path as it was before it.
         self._key_binding = key_binding
+        # AD-1198 slice 2b-ii: the re-check of stored incoming transfer certificates, armed with peer admission; None keeps
+        # every path as it was before it.
+        self._transfer_marks = transfer_marks
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -626,6 +631,24 @@ class AgentIdentityRegistry:
                 await self._key_binding.attach(
                     self._db, ledger_lock=self._ledger_lock, append_block=self._append_to_ledger, writer=self._writer,
                 )
+            if self._transfer_marks is not None:  # AD-1198 slice 2b-ii armed: the marks table, its marks, every stored certificate judged again
+                applied: list[Callable[[], None]] = []
+
+                def swept() -> None:  # AD-1198 slice 2b-ii the marks as the start's unit committed them, held once it has
+                    for held in applied:
+                        held()
+
+                try:
+                    async with self._writer.unit(swept) as db:  # AD-1198 slice 2b-ii one unit: the start's marks commit together or not at all (A-1: a table it created stays)
+                        applied.append(await self._transfer_marks.recheck(db, dict(self._foreign_chain_cache)))
+                except Exception as exc:  # noqa: BLE001 -- log-and-degrade: the marks stay not loaded (not known) until a later unit loads them (A-1)
+                    logger.warning(
+                        "AD-1198: the stored incoming transfer certificates could not be judged again at start (%s); their "
+                        "marks are not loaded -- the registry and the agent identity endpoint report them as not known -- "
+                        "until a unit that reads them commits, as the next chain identity.db stores does, and the next "
+                        "chain stored for each origin judges its certificates again",
+                        type(exc).__name__,
+                    )
 
         # Load or create ship birth certificate (if instance_id provided)
         if instance_id and not self._ship_certificate:
@@ -1174,6 +1197,14 @@ class AgentIdentityRegistry:
         the stored chain the caller judged ``blocks`` against
         (``chain_block_hashes``; ``()`` for none): the import is refused, and
         nothing written, unless identity.db still stores exactly that chain.
+
+        AD-1198 slice 2b-ii: while the re-check is armed (``transfer_marks``),
+        every stored incoming transfer certificate of that origin is judged
+        again against ``blocks`` inside the same unit -- marked when the chain
+        no longer supports it, cleared when it supports it again -- so the chain
+        and their standing commit together, or neither. A stored certificate
+        that cannot be attributed to the ship that issued it is left unjudged
+        and logged, and fails nothing else (A-1).
         """
         if not self._db:
             return False, "Registry not started"
@@ -1238,8 +1269,12 @@ class AgentIdentityRegistry:
                         origin_ship_did, divergent, why,
                     )
 
+        rechecked: list[Callable[[], None]] = []  # AD-1198 slice 2b-ii what the re-check holds once this import has committed
+
         def committed() -> None:  # BF-885 the chain is held once it has committed
             self._foreign_chain_cache[origin_ship_did] = list(blocks)
+            for held in rechecked:  # AD-1198 slice 2b-ii and, with it, the standing of that origin's stored transfer certificates
+                held()
 
         async with self._foreign_chain_lock:  # AD-1196 A-1
             try:
@@ -1250,6 +1285,8 @@ class AgentIdentityRegistry:
                         "(origin_ship_did, chain_json, imported_at) VALUES (?, ?, ?)",
                         (origin_ship_did, json.dumps(blocks), time.time()),
                     )
+                    if self._transfer_marks is not None:  # AD-1198 slice 2b-ii armed: that origin's stored transfer certificates judged again against this chain, in this unit
+                        rechecked.append(await self._transfer_marks.recheck(db, {origin_ship_did: blocks}))
             except _Refused as refused:  # BF-885 A-1 a chain refused inside its unit: rolled back, nothing written
                 return False, str(refused)
         logger.info(
@@ -1530,6 +1567,14 @@ class AgentIdentityRegistry:
         """Return the imported chain snapshot for a peer ship, or None."""
         return self._foreign_chain_cache.get(origin_ship_did)
 
+    def transfer_marks(self, did: str) -> tuple[TransferMark, ...] | None:
+        """AD-1198 slice 2b-ii: the marks on ``did``'s stored incoming transfer certificates -- each one the chain
+        identity.db stores for its origin no longer supports, with AD-1196's reason -- in the order they were marked;
+        empty when there are none, or while the re-check is not armed. ``None`` while it is armed and the marks are not
+        loaded (A-1) -- not known, never shown as none -- until a unit that read them has committed: the start's, or the
+        next chain stored. A marked certificate, its foreign birth record and its slot are kept and stay readable."""
+        return () if self._transfer_marks is None else self._transfer_marks.marks_for(did)
+
     async def forget_foreign_chain(self, origin_ship_did: str) -> int:
         """AD-1198 slice 2c: forget the chain stored for ``origin_ship_did`` -- never its foreign birth or transfer
         certificates, which are kept for audit -- so that the next chain of that ship is imported as a first one; how many
@@ -1538,7 +1583,8 @@ class AgentIdentityRegistry:
         registry's shared connection -- this ship's key events, births and transfers -- is never committed or rolled
         back with it. It is one unit of identity.db's writer (BF-885), so it waits for another writer's unit to end, at
         most the writer's bound, and then fails. A deletion that does not commit is discarded, and the in-memory copy
-        follows the committed deletion, also for a caller cancelled while it commits.
+        follows the committed deletion, also for a caller cancelled while it commits. The marks on those certificates
+        are kept too (AD-1198 slice 2b-ii): the next chain stored for that ship judges them again.
         """
         if not self._db:  # AD-1198 slice 2c a registry not started forgets nothing
             raise RuntimeError("the identity registry is not started")

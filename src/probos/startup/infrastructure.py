@@ -72,7 +72,17 @@ async def boot_infrastructure(
 
         identity_key_binding = build_identity_key_binding(config.federation, data_dir)
 
-    identity_registry = AgentIdentityRegistry(data_dir=data_dir, key_binding=identity_key_binding)
+    # AD-1198 slice 2b-ii: stored incoming transfer certificates judged again by every chain stored, only while peer
+    # admission is armed (off is byte-identical: no table, no re-check).
+    transfer_marks = None
+    if config.federation.peer_admission_enabled is True:
+        from probos.identity_transfer_marks import TransferMarks
+
+        transfer_marks = TransferMarks()
+
+    identity_registry = AgentIdentityRegistry(
+        data_dir=data_dir, key_binding=identity_key_binding, transfer_marks=transfer_marks,
+    )
     await identity_registry.start()
     logger.info("identity registry started")
 

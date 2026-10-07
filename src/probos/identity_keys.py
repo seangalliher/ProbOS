@@ -791,7 +791,15 @@ def verify_chain_signatures(blocks: Sequence[Mapping[str, Any]]) -> ChainSignatu
 def _verify_transfer_attestation(
     chain: Sequence[Mapping[str, Any]], credential: Mapping[str, Any], certificate_hash: str, subject_did: str,
 ) -> TransferVerdict:
-    report = verify_chain_signatures(chain)
+    return _judge_transfer(chain, verify_chain_signatures(chain), credential, certificate_hash, subject_did)
+
+
+def _judge_transfer(
+    chain: Sequence[Mapping[str, Any]], report: ChainSignatureReport, credential: Mapping[str, Any],
+    certificate_hash: str, subject_did: str,
+) -> TransferVerdict:
+    """One transfer certificate judged against ``chain``, whose signatures ``report`` verified -- the one judgement behind
+    :func:`verify_transfer_attestation` and :func:`verify_transfer_attestations` (AD-1198 slice 2b-ii)."""
     if not report.ok:
         return TransferVerdict(False, f"the origin chain's signatures do not verify: {report.reason}", None)
     if report.state is None:
@@ -850,6 +858,25 @@ def verify_transfer_attestation(
         return _verify_transfer_attestation(chain, credential, certificate_hash, subject_did)
     except Exception as exc:  # noqa: BLE001 -- trust boundary: anything malformed is a rejection
         return TransferVerdict(False, f"malformed transfer attestation ({type(exc).__name__})", None)
+
+
+def verify_transfer_attestations(
+    chain: Sequence[Mapping[str, Any]], certificates: Sequence[tuple[Mapping[str, Any], str, str]],
+) -> tuple[TransferVerdict, ...]:
+    """AD-1198 slice 2b-ii: :func:`verify_transfer_attestation` for each ``(credential, certificate_hash, subject_did)``
+    of ``certificates``, in order, against one ``chain`` whose signatures are verified once -- so judging every stored
+    certificate of one origin costs one verification of its chain, not one each. Never raises: a malformed chain or
+    certificate is a rejection, as there.
+    """
+    report = verify_chain_signatures(chain)  # AD-1198 slice 2b-ii one verification of the chain, for every certificate
+    verdicts: list[TransferVerdict] = []
+    for certificate in certificates:
+        try:
+            credential, certificate_hash, subject_did = certificate
+            verdicts.append(_judge_transfer(chain, report, credential, certificate_hash, subject_did))
+        except Exception as exc:  # noqa: BLE001 -- trust boundary: a malformed certificate is a rejection
+            verdicts.append(TransferVerdict(False, f"malformed transfer attestation ({type(exc).__name__})", None))
+    return tuple(verdicts)
 
 
 def keeps_key_history(stored: Sequence[Mapping[str, Any]], blocks: Sequence[Mapping[str, Any]]) -> tuple[bool, str]:

@@ -120,7 +120,7 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
     ),
     StoreDeclaration(
         id="identity.key-binding",
-        title="Ship DID key events and certificate signatures (AD-1196)",
+        title="Ship DID key events and certificate signatures (AD-1196), and incoming transfer certificate marks (AD-1198)",
         owner_module="probos.identity_key_binding",
         owner_symbol="IdentityKeyBinding",
         canonical_path="identity.db",
@@ -128,8 +128,9 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         lifecycle_owner="probos.identity.AgentIdentityRegistry",
         retention=StoreRetention.UNBOUNDED,
         retention_note=(
-            "Append-only: one row per key event and per signed certificate, never deleted. "
-            "Growth is bounded by births, transfers and the Captain's key actions."
+            "Append-only: one row per key event and per signed certificate, and one per change of an incoming "
+            "transfer certificate's standing, never deleted. Growth is bounded by births, transfers, the Captain's "
+            "key actions and the chains stored for peer ships."
         ),
         backup="included",
         restore="unknown",
@@ -138,7 +139,10 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "Companion tables co-located with the AD-441 identity ledger in identity.db, sharing "
             "AgentIdentityRegistry's connection and ledger lock; created only when "
             "federation.identity_keys_enabled. Public keys, key events and signatures only: private "
-            "keys never enter this database (OS keyring, or the explicit plaintext_dev directory)."
+            "keys never enter this database (OS keyring, or the explicit plaintext_dev directory). "
+            "transfer_marks (AD-1198 slice 2b-ii) is created and written only by "
+            "probos.identity_transfer_marks.TransferMarks, through the registry's writer, only when "
+            "federation.peer_admission_enabled; its schema is declared here because identity.db has one declaration."
         ),
     ),
     StoreDeclaration(

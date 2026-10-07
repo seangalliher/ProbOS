@@ -188,7 +188,9 @@ async def _profile_measurements(runtime: Any, agent_id: str) -> dict[str, Any]:
 
 @router.get("/{agent_id}/identity")
 async def get_agent_identity(agent_id: str, runtime: Any = Depends(get_runtime)) -> Any:
-    """Return the agent's birth certificate and DID."""
+    """Return the agent's birth certificate and DID -- and, for a record whose incoming transfer the chain identity.db
+    stores for its origin no longer supports, that transfer's marks (AD-1198 slice 2b-ii); ``transfer_marks`` is
+    ``null`` while the marks are not loaded (A-1: not known, never shown as none)."""
     if not runtime.identity_registry:
         return JSONResponse({"error": "Identity registry not available"}, status_code=503)
 
@@ -196,11 +198,19 @@ async def get_agent_identity(agent_id: str, runtime: Any = Depends(get_runtime))
     if not cert:
         return JSONResponse({"error": "No birth certificate found"}, status_code=404)
 
-    return {
+    body: dict[str, Any] = {
         "sovereign_id": cert.agent_uuid,
         "did": cert.did,
         "birth_certificate": cert.to_verifiable_credential(),
     }
+    marks = runtime.identity_registry.transfer_marks(cert.did)
+    if marks is None:  # AD-1198 slice 2b-ii A-1 the marks are not loaded: shown as not known (null), never as none
+        body["transfer_marks"] = None
+    elif marks:  # AD-1198 slice 2b-ii shown for a marked record; an unmarked record's answer is as before
+        from dataclasses import asdict
+
+        body["transfer_marks"] = [asdict(mark) for mark in marks]
+    return body
 
 
 @router.get("/{agent_id}/profile")
