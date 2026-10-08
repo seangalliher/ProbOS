@@ -1428,7 +1428,14 @@ class _FakeWorkItemStore:
 
     async def transition_work_item(
         self, work_item_id: str, new_status: str, source: str = "system",
+        *, expected: dict[str, Any] | None = None,
     ) -> None:
+        # BF-887 (#1163): the store's compare-and-set keyword, read as the store reads
+        # it -- a missing key is None -- so a move the store would refuse is not
+        # recorded. A promoted turn that can park closes with one.
+        current = next((item.metadata for item in self.created if item.id == work_item_id), {})
+        if expected is not None and any(current.get(key) != value for key, value in expected.items()):
+            return None
         self.transitions.append((work_item_id, new_status, source))
 
 

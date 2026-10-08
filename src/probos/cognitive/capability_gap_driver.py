@@ -16,7 +16,10 @@ capability gap while working an item:
   2. ``on_capability_event`` subscribes to CAPABILITY_REQUEST_FULFILLED and
      CAPABILITY_REQUEST_DECIDED. When a blocked item's request is fulfilled it
      resumes the item (``blocked`` -> ``in_progress``) and re-dispatches it
-     through the WorkItemRouter. When the request is denied it cancels the
+     through the WorkItemRouter -- except an AD-1165 promoted turn, which the
+     router must never be handed: the agent that ran it takes the turn's next
+     pass instead (BF-887). Either way the log says what actually happened.
+     When the request is denied it cancels the
      item, recording the denial reason. An ``approved`` decision is a no-op
      (resume happens only on FULFILLED, which the grant fast-path also emits,
      and which AD-1204's approval handler emits for a ``continue``). Resume and
@@ -28,7 +31,6 @@ Tier-2 log-and-degrade throughout: missing stores/router never raise.
 from __future__ import annotations
 
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.capability_triage import (
@@ -295,6 +297,12 @@ class CapabilityGapDriver:
         so of the request's event and the post-park check only the one that moves
         it dispatches, and resolving a request the item no longer waits on does
         nothing.
+
+        BF-887: an AD-1165 promoted turn is never handed to the router. Its item
+        is deliberately not dispatchable, so the router dropped it while this
+        logged "resumed and re-dispatched" and the turn never ran again (#1163).
+        It goes to the agent that ran it. Every other item is re-dispatched as
+        before, and the log says what the router did with it.
         """
         updated = await store.transition_work_item(
             work_item_id, "in_progress", source="capability_gap_driver",
@@ -310,6 +318,14 @@ class CapabilityGapDriver:
                 work_item_id,
             )
             return
+        from probos.cognitive.turn_promotion import (
+            is_promoted_turn,
+            resume_promoted_turn,
+        )
+
+        if is_promoted_turn(updated):
+            await resume_promoted_turn(self._runtime, updated, request_id)
+            return
         router = getattr(self._runtime, "work_item_router", None)
         if router is None:
             logger.warning(
@@ -321,16 +337,48 @@ class CapabilityGapDriver:
         item = await store.get_work_item(work_item_id)
         if item is None:
             return
-        await router.on_work_item_created(
-            {
-                "type": "work_item_created",
-                "data": {"work_item": item.to_dict()},
-                "timestamp": time.time(),
-            }
-        )
-        logger.info(
-            "AD-855: work item %s resumed and re-dispatched", work_item_id
-        )
+        await self._redispatch(router, item, request_id)
+
+    async def _redispatch(self, router: Any, item: Any, request_id: str) -> None:
+        """BF-887: hand a resumed item back to the router, and log what it did.
+
+        ``dispatch_work_item`` returns whether a delivery substrate admitted the
+        item (BF-810). ``on_work_item_created``, which this called before,
+        returns nothing, so a resume the router dropped was logged as a
+        re-dispatch. The item's status is the same either way.
+        """
+        wi = item.to_dict()
+        try:
+            admitted = await router.dispatch_work_item(wi)
+        except Exception:
+            logger.warning(
+                "AD-855: re-dispatching resumed work item %s raised; it stays "
+                "in_progress with no agent sent it, so it needs reassigning or "
+                "cancelling",
+                item.id, exc_info=True,
+            )
+            return
+        if admitted:
+            logger.info("AD-855: work item %s resumed and re-dispatched", item.id)
+        elif not router.is_dispatchable(wi):
+            logger.warning(
+                "AD-855: work item %s resumed to in_progress on capability request "
+                "%s, but it is not dispatchable (no tag in "
+                "hybrid_dispatch.dispatchable_tags and no metadata['dispatchable']), "
+                "so the router sent it to no agent; it stays in_progress until it "
+                "is reassigned or cancelled, or the Quartermaster strands it after "
+                "work_board_reconciler.strand_timeout_seconds",
+                item.id, request_id[:12],
+            )
+        else:
+            logger.warning(
+                "AD-855: work item %s resumed to in_progress on capability request "
+                "%s, but no agent admitted its re-dispatch; it stays in_progress "
+                "until it is reassigned or cancelled (the Quartermaster re-routes a "
+                "live-owned item only once it stalls past "
+                "work_board_reconciler.stall_timeout_seconds, off by default)",
+                item.id, request_id[:12],
+            )
 
     async def _cancel(
         self,

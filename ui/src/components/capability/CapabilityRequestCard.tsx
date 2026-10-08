@@ -33,6 +33,9 @@ export function CapabilityRequestCard({ requestId, request, inline = false, onDe
   // The closure submits the detached row that produced this render, never a
   // lookup of a newer row made just before the POST.
   const expected = useMemo(() => request ? structuredClone(request) : undefined, [request]);
+  // BF-887 (#1163 runbook row 3): the Captain knows the crew by callsign, so the card
+  // names the requester that way; the agent id stays on the element as its tooltip.
+  const requester = useStore(state => (expected ? state.agents.get(expected.agent_id)?.callsign : undefined) || '');
   const [reason, setReason] = useState('');
   const [selected, setSelected] = useState(false);
   const [ttl, setTtl] = useState('');
@@ -112,7 +115,9 @@ export function CapabilityRequestCard({ requestId, request, inline = false, onDe
       <div style={{ color: '#9098b0', margin: '4px 0', overflowWrap: 'anywhere' }}>
         {approvalDisplayText(expected.rationale) || <em>no rationale provided</em>}
       </div>
-      <div style={{ color: DIM, overflowWrap: 'anywhere' }}>Request {requestId} · Agent {approvalDisplayText(expected.agent_id)}</div>
+      <div style={{ color: DIM, overflowWrap: 'anywhere' }}>Request {requestId} · Agent <span
+        data-testid="capability-requesting-agent" title={approvalDisplayText(expected.agent_id)}
+      >{approvalDisplayText(requester || expected.agent_id)}</span></div>
       <div style={{ color: DIM, marginBottom: 6 }}>
         {expected.work_item_id
           ? <span data-testid="linked-work-item">work item {approvalDisplayText(expected.work_item_id)}</span>

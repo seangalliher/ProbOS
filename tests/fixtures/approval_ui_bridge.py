@@ -36,6 +36,7 @@ from probos.cognitive.capability_gap_driver import CapabilityGapDriver
 from probos.cognitive.continue_or_ask import resolve_exhausted_turn
 from probos.cognitive.queue import AgentCognitiveQueue
 from probos.cognitive.repair_issue import IssueAttempt, RepairIssueFulfiller
+from probos.cognitive.turn_promotion import RESUME_START_FAILED, RESUME_STARTED
 from probos.config import ApprovalInboxConfig, DmAgenticConfig, SystemConfig
 from probos.consensus.trust import TrustNetwork
 from probos.events import EventType
@@ -52,7 +53,7 @@ from probos.threads import ChatThreadMessage, ChatThreadStore
 from probos.tools.action_approvals import ActionApprovalStore
 from probos.tools.protocol import ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
-from probos.types import IntentMessage
+from probos.types import IntentMessage, Priority
 from probos.workforce import WorkItem, WorkItemStore
 
 CANDIDATE = Path(__file__).resolve().parents[2]
@@ -186,6 +187,24 @@ class _ExecutionAgent(BaseAgent):
         super().__init__(agent_id=AGENT_ID)
         self.work_items = work_items
         self.calls: list[dict[str, Any]] = []
+        self.queue: AgentCognitiveQueue | None = None
+
+    def resume_promoted_turn(self, work_item_id: str, request_id: str) -> str:
+        """BF-887: the consumer an approved ``continue`` hands a promoted turn to.
+
+        A real agent starts the turn's next pass as a task of its own; this one
+        queues it on its own cognitive queue, so ``drain()`` joins it and ``act``
+        records it with the item's status as it ran.
+        """
+        assert self.queue is not None, "fixture wiring: the queue is set at start"
+        accepted = self.queue.enqueue(
+            IntentMessage(
+                intent="promoted_turn_resume", params={"work_item_id": work_item_id},
+                target_agent_id=self.id,
+            ),
+            Priority.NORMAL,
+        )
+        return RESUME_STARTED if accepted else RESUME_START_FAILED
 
     async def perceive(self, intent: dict[str, Any]) -> Any:
         return intent
@@ -306,6 +325,7 @@ class ApprovalUiBridge(ProbOSRuntime):
                 agent_id=AGENT_ID, handler=self.execution_agent.handle_intent,
                 emit_event=self.emit_event,
             )
+            self.execution_agent.queue = self.queue
             self.resources.push_async_callback(self.queue.shutdown)
             await self.queue.start()
             self.dispatcher = Dispatcher(

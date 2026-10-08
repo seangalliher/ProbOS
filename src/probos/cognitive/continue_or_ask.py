@@ -448,6 +448,23 @@ def _continuation_block(previous_output: str) -> str:
         return ""
 
 
+def continuation_task_text(base_task_text: str, previous_output: str) -> str:
+    """The task text of the pass that carries a stopped turn on.
+
+    The assembled prompt rebuilt from its base -- so the block cannot stack --
+    plus AD-1155's continuation block composed from what the last pass
+    produced: the same text the standing-rule branch of
+    :func:`resolve_exhausted_turn` re-invokes with. BF-887 runs it when an
+    approved ``continue`` resumes a promoted turn, so an approval and a
+    standing rule carry a turn on identically.
+
+    Returns ``""`` when the block does not compose, which a caller must read as
+    "do not run": the base alone would start the task over.
+    """
+    block = _continuation_block(previous_output)
+    return base_task_text + block if block else ""
+
+
 async def file_continue_request(
     runtime: Any,
     *,
@@ -457,6 +474,7 @@ async def file_continue_request(
     passes: int,
     display_task_text: str = "",
     work_item_id: str | None = None,
+    parked: dict[str, str] | None = None,
 ) -> str:
     """File the ``kind="continue"`` ask. Returns its id, or ``""`` on any failure.
 
@@ -481,6 +499,10 @@ async def file_continue_request(
     ``None`` (a turn that finished under the promotion budget, so there is no
     item) files exactly the request this function filed before this AD, and
     parks nothing.
+
+    BF-887: ``parked``, when supplied, gets ``"request_id"`` once the item is
+    parked on the filed ask -- the one case in which an approval can resume the
+    turn, and so the one case in which its caller keeps the turn's next pass.
 
     Never raises. A missing store or a failed write logs at WARNING and yields
     ``""``; the caller then reports the partial work with the no-id note. Losing
@@ -519,9 +541,11 @@ async def file_continue_request(
     if type(request_id) is not str or not request_id:
         return ""
     if work_item_id:
-        await _park_work_item(
+        was_parked = await _park_work_item(
             runtime, work_item_id=work_item_id, request_id=request_id
         )
+        if was_parked and parked is not None:
+            parked["request_id"] = request_id
     logger.info(
         "AD-1164: conversational turn for agent %s stopped at its step limit "
         "after %d pass(es); filed continue request %s and returned the partial "
@@ -597,6 +621,7 @@ async def resolve_exhausted_turn(
     already_filed: Mapping[str, str] | None = None,
     config: Any,
     fault_attempted: str | None = None,
+    parked: dict[str, str] | None = None,
 ) -> str:
     """Turn a step-limit stop into a continuation or an honest, durable ask.
 
@@ -629,6 +654,9 @@ async def resolve_exhausted_turn(
     ``occurrences`` stays a true number in the Captain-facing repair prompt.
     Omitted or ``None`` — every existing call site — files exactly as it does
     today.
+    BF-887: ``parked`` is passed to :func:`file_continue_request`, which records
+    the request id in it once the item is parked on the ask. Omitted or
+    ``None``, nothing is recorded.
     The order of the gates is load-bearing:
 
     1. Gate off  ⇒ return the outcome's text unchanged.
@@ -799,6 +827,7 @@ async def resolve_exhausted_turn(
         passes=passes,
         display_task_text=display_task_text,
         work_item_id=work_item_id,
+        parked=parked,
     )
     lead = _CUT_OFF_LEAD_WITH_WORK if partial else _CUT_OFF_LEAD_NO_WORK
     tail = (

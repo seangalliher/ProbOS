@@ -20,7 +20,16 @@ that driver:
 The load-bearing test is
 ``TestApprovalResumes::test_approving_re_dispatches_the_item_not_just_relabels_it``.
 A status flip without a dispatch is the same dead end with a nicer label, so the
-router call is asserted, not the status.
+consumer is asserted, not the status.
+
+BF-887 (#1163) moved that consumer. The router this suite asserted on was a stub
+that accepted everything; the real ``WorkItemRouter`` drops a promoted turn's
+item by design (AD-1165), so on the reference vessel the "re-dispatch" ran
+nothing for eleven minutes. A promoted turn is now handed to the agent that ran
+it and the router must never see it: the router double records every call, so a
+misroute fails, and ``_ResumingAgent`` records the hand-off. The chain through
+the real agent, stores, router and thread is
+``tests/test_bf887_continue_resumes_the_promoted_turn.py``.
 """
 
 from __future__ import annotations
@@ -57,6 +66,7 @@ from probos.routers.capability_requests import (
     decide_capability_request,
 )
 from probos.workforce import WorkItemStore
+from tests.test_ad1211_approval_fulfils_every_kind import _AgentRegistry, _ResumingAgent
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -67,13 +77,24 @@ _TASK = "Type Hello World into the document I have open"
 
 
 class _RecordingRouter:
-    """Stub WorkItemRouter that records re-dispatch calls (AD-855's shape)."""
+    """Stub WorkItemRouter that records re-dispatch calls (AD-855's shape).
+
+    BF-887: records ``dispatch_work_item`` too, the entry AD-855 now uses, so a
+    promoted turn handed to the router shows up here and fails the suite.
+    """
 
     def __init__(self) -> None:
         self.dispatched: list[dict] = []
 
     async def on_work_item_created(self, event: dict) -> None:
         self.dispatched.append(event)
+
+    async def dispatch_work_item(self, wi: dict) -> bool:
+        self.dispatched.append({"type": "work_item_created", "data": {"work_item": wi}})
+        return True
+
+    def is_dispatchable(self, wi: dict) -> bool:
+        return True
 
 
 class _EventBus:
@@ -183,10 +204,13 @@ async def request_store(tmp_path, bus):
 async def wired(work_item_store, request_store, bus):
     """A runtime with the whole AD-855 loop wired the way startup wires it."""
     router = _RecordingRouter()
+    # BF-887: the agent that ran the turn, which an approval now resumes.
+    agent = _ResumingAgent("counselor_0")
     runtime = _Runtime(
         work_item_router=router,
         work_item_store=work_item_store,
         capability_request_store=request_store,
+        registry=_AgentRegistry(agent),
         config=None,
     )
     driver = CapabilityGapDriver(
@@ -200,6 +224,7 @@ async def wired(work_item_store, request_store, bus):
         runtime=runtime,
         driver=driver,
         router=router,
+        agent=agent,
         bus=bus,
         work_item_store=work_item_store,
         request_store=request_store,
@@ -448,7 +473,11 @@ class TestApprovalResumes:
         A status flip without a dispatch is the same dead end with a nicer
         label: the row would read ``in_progress`` while nothing ran, which is
         precisely the state the two stranded live items were already in. So the
-        assertion is on the ROUTER, not the status.
+        assertion is on the CONSUMER, not the status.
+
+        BF-887: this asserted the item reached the ROUTER, and on the reference
+        vessel the real router dropped it and nothing ran (#1163). The consumer
+        is the agent that ran the turn; the router must never be handed it.
         """
         # Arrange — a genuinely exhausted, genuinely promoted, genuinely parked turn.
         item, req = await _exhaust_a_promoted_turn(wired)
@@ -462,12 +491,12 @@ class TestApprovalResumes:
         )
         await wired.bus.drain()
 
-        # Assert — the work item was handed back to the router to run again.
-        assert len(wired.router.dispatched) == 1
-        dispatched = wired.router.dispatched[0]
-        assert dispatched["type"] == "work_item_created"
-        assert dispatched["data"]["work_item"]["id"] == item.id
-        assert dispatched["data"]["work_item"]["status"] == "in_progress"
+        # Assert — the agent that ran the turn was asked to take its next pass,
+        # once, with the item in_progress, and the router saw nothing.
+        assert wired.agent.resumed == [item.id]
+        assert wired.router.dispatched == []
+        refreshed = await wired.work_item_store.get_work_item(item.id)
+        assert refreshed is not None and refreshed.status == "in_progress"
 
     @pytest.mark.asyncio
     async def test_nothing_resumes_without_an_approval(self, wired):
@@ -477,6 +506,7 @@ class TestApprovalResumes:
 
         # Assert
         assert wired.router.dispatched == []
+        assert wired.agent.resumed == []  # BF-887: the consumer since #1163
         refreshed = await wired.work_item_store.get_work_item(item.id)
         assert refreshed is not None and refreshed.status == "blocked"
 
@@ -523,6 +553,7 @@ class TestDenialIsHonest:
         # Assert
         assert "capability_request_fulfilled" not in wired.bus.emitted
         assert wired.router.dispatched == []
+        assert wired.agent.resumed == []  # BF-887: the consumer since #1163
 
 
 # ── 6. A turn that was NOT promoted is untouched ───────────────────────────
@@ -586,7 +617,11 @@ class TestUnpromotedTurnIsUnchanged:
 class TestIdempotency:
     @pytest.mark.asyncio
     async def test_a_second_fulfilled_event_does_not_re_dispatch(self, wired):
-        """The driver acts only while the item is ``blocked``; it now is not."""
+        """The driver acts only while the item is ``blocked``; it now is not.
+
+        BF-887: counted at the agent the resume reaches, not the router, which
+        never sees a promoted turn (#1163).
+        """
         # Arrange — approve once.
         item, req = await _exhaust_a_promoted_turn(wired)
         await decide_capability_request(
@@ -595,7 +630,7 @@ class TestIdempotency:
             runtime=wired.runtime,
         )
         await wired.bus.drain()
-        assert len(wired.router.dispatched) == 1
+        assert wired.agent.resumed == [item.id]
 
         # Act — replay the same FULFILLED event.
         await wired.driver.on_capability_event(
@@ -606,8 +641,9 @@ class TestIdempotency:
             }
         )
 
-        # Assert — still exactly one dispatch, item unchanged.
-        assert len(wired.router.dispatched) == 1
+        # Assert — still exactly one resume, no dispatch, item unchanged.
+        assert wired.agent.resumed == [item.id]
+        assert wired.router.dispatched == []
         refreshed = await wired.work_item_store.get_work_item(item.id)
         assert refreshed is not None and refreshed.status == "in_progress"
 
@@ -647,6 +683,7 @@ class TestIdempotency:
             )
         assert excinfo.value.status_code == 400
         assert wired.router.dispatched == []
+        assert len(wired.agent.resumed) == 1  # BF-887: resumed once, not twice
 
 
 # ── The plumbing route: how the id reaches the file site ───────────────────
@@ -767,7 +804,10 @@ class TestPromotionPublishesTheWorkItemId:
         # Assert — one cell, written by promotion, read at the file site.
         assert '_promoted: dict[str, str] = {"work_item_id": ""}' in source
         assert "def _record_promotion(work_item_id: str) -> None:" in source
-        assert "on_promoted=_record_promotion," in source
+        # BF-887: promotion now also keeps the turn's next pass, so the
+        # callback is ``_on_promoted``, which records the id first.
+        assert "on_promoted=_on_promoted," in source
+        assert "_record_promotion(work_item_id)\n" in source
         assert 'work_item_id=_promoted["work_item_id"] or None,' in source
 
 

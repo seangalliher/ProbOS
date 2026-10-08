@@ -50,6 +50,15 @@ The promoted work item is deliberately **not dispatchable**: it carries neither
 already has an owner — the agent whose turn it was — and routing it a second
 time would execute it twice. The item is the durable *record* of work in
 flight, not a request for someone to start it.
+
+BF-887: the rule holds when the turn is RESUMED too. A promoted turn that stops
+at its step limit files a ``continue`` ask, parks its item and ends. Approving
+the ask used to re-dispatch the item through ``WorkItemRouter``, which dropped
+it by the rule above while AD-855 logged a resume, so the turn never ran again
+(#1163). The agent that ran the turn now keeps the one pass it can still take
+(:class:`PromotedTurnContinuations`), and an approval starts that pass in the
+same thread under this module's own reporter (:func:`resume_promoted_turn`,
+:func:`start_resumed_run`). The router is never handed the item.
 """
 
 from __future__ import annotations
@@ -61,7 +70,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from types import CoroutineType
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
 from probos.cognitive.promoted_report_delivery import promoted_report_metadata
@@ -237,6 +246,68 @@ _LEASE_KEY: str = "promoted_run_lease_at"
 # reads consistently, and carries a distinct value so an operator can tell
 # which component wrote the ending.
 _UNCONFIRMED_EXPIRED_REASON: str = "unconfirmed_grace_expired"
+
+# BF-887: what resuming an approved ``continue`` for a promoted turn came to.
+# Plain strings: each that strands the item is also the suffix of the
+# ``stranded_reason`` recorded on it, so the log and the board use the same word.
+RESUME_STARTED: str = "started"
+RESUME_NO_AGENT: str = "no_agent"
+RESUME_NO_CONTINUATION: str = "no_continuation"
+RESUME_START_FAILED: str = "start_failed"
+RESUME_UNIDENTIFIED: str = "unidentified"
+# The item left ``in_progress`` on its ask between AD-855's resume and the hand-off
+# -- cancelled on the board, say -- so nothing runs it and nothing strands it.
+RESUME_MOVED_ON: str = "moved_on"
+
+# BF-887: the ``stranded_reason`` of an item closed because nothing could
+# resume it -- the key the sweep's ``strand_terminal`` and BF-825 use, with a
+# value of its own so an operator can tell which component ended the row.
+_RESUME_LOST_REASON_PREFIX: str = "continue_resume_"
+RESUME_LOST_REASONS: frozenset[str] = frozenset(
+    _RESUME_LOST_REASON_PREFIX + outcome
+    for outcome in (
+        RESUME_NO_AGENT, RESUME_NO_CONTINUATION, RESUME_START_FAILED, RESUME_UNIDENTIFIED,
+    )
+)
+
+# BF-887: the "why" of the WARNING for each outcome that is not a start.
+_RESUME_LOST_WHY: dict[str, str] = {
+    RESUME_UNIDENTIFIED: "the item is assigned to no agent, or names no thread",
+    RESUME_NO_AGENT: "agent {agent} is not aboard to take it",
+    RESUME_NO_CONTINUATION: (
+        "agent {agent} holds no next pass for it (the vessel restarted, the "
+        "agent was reset, or it released the turn)"
+    ),
+    RESUME_START_FAILED: "starting agent {agent}'s next pass raised",
+}
+
+# BF-887: how many promoted turns one agent keeps ready to take their next pass.
+#
+# A decision, not an inheritance (Design Principle 13a). Each entry is a turn's
+# live working state -- assembled prompt, executor, budget, observation -- so
+# the bound is memory. An entry is kept from promotion until a segment of the
+# turn ends without parking on a ``continue`` ask, so what accumulates is turns
+# the Captain has been asked about and has not yet answered -- and turns whose
+# ask was then settled without resuming them (denied, cancelled or expired, or
+# approved once the item was unassigned, reassigned or moved on), which stay
+# held until this bound releases them or the agent is recycled. The reference
+# vessel's Bridge listed ten actionable continue requests across every agent on
+# 2026-10-07 (#1163), nine of them from before AD-1204; sixteen per agent covers
+# that with room. Past it the OLDEST is released with a WARNING, and approving
+# its ask then closes the item and tells the Captain to ask again.
+_MAX_HELD_CONTINUATIONS: int = 16
+
+# BF-887: posted into the thread when an approved ``continue`` finds nothing to
+# resume. It names no cause, because the causes differ -- a restart, an owner
+# cleared on the board while the agent that ran the turn still holds its pass,
+# no such agent aboard -- and the WARNING carries the one that applied, so the
+# notice is true whichever it was. Asserted clean against the REAL
+# ``decomposer._CAPABILITY_GAP_RE`` by the suite, like every string in this module.
+_REPORT_RESUME_LOST: str = (
+    "That task was approved to continue, but its next pass did not start, so I "
+    "have closed it on the board, and the details are in the ship's log. Ask me "
+    "again and I will start it fresh."
+)
 
 
 @dataclass(frozen=True)
@@ -665,6 +736,7 @@ async def _close_expired_unconfirmed_turn(
     request_text: str,
     grace_seconds: float,
     plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
 ) -> None:
     """BF-825: the reporter writes the ending itself, and discards the answer.
 
@@ -681,15 +753,24 @@ async def _close_expired_unconfirmed_turn(
 
     ``plan_mode`` (AD-1156 A-4): the run was a plan-mode turn, so its episode
     carries the plan-mode marker.
+
+    ``settle_expected`` (BF-887): as for :func:`_finish_promoted_turn`. A segment
+    whose item has moved on to a later ask stores its episode and writes nothing.
     """
-    logger.warning(
-        "BF-825: the promoted run for work item %s did not land within %.1fs "
-        "of its unconfirmed notice; the reporter is ending the row failed and "
-        "discarding any late result. The Captain already holds the interim "
-        "notice, and leaving the row open is what let the reconciler strand it "
-        "while a transcript and an episode said it had succeeded",
-        work_item_id, grace_seconds,
+    moved_on = await _segment_moved_on(
+        runtime, work_item_id, settle_expected,
+        ending="did not answer its cancellation within its grace",
     )
+    if not moved_on:
+        logger.warning(
+            "BF-825: the promoted run for work item %s did not land within %.1fs "
+            "of its unconfirmed notice; the reporter is attempting a guarded ending "
+            "of the row as failed -- refused by the store if the row has moved on "
+            "since -- and discarding any late result. The Captain already holds the "
+            "interim notice, and leaving the row open is what let the reconciler "
+            "strand it while a transcript and an episode said it had succeeded",
+            work_item_id, grace_seconds,
+        )
     await _store_promoted_episode(
         runtime=runtime,
         agent_id=agent_id,
@@ -703,6 +784,8 @@ async def _close_expired_unconfirmed_turn(
         failed=True,
         plan_mode=plan_mode,
     )
+    if moved_on:
+        return
     store = getattr(runtime, "work_item_store", None)
     if store is None:
         return
@@ -720,17 +803,28 @@ async def _close_expired_unconfirmed_turn(
                 },
                 expected_status="in_progress",
                 source=agent_id,
+                **_settle_cas(settle_expected),
             )
         except asyncio.CancelledError:
             raise
+        except ValueError as exc:
+            # BF-887 (#1163, review round 3): the store refused the compare-and-set.
+            logger.info(
+                "BF-825: work item %s refused the record of why it ended (%s): it "
+                "has moved on since this run was admitted, or already ended; nothing "
+                "is recorded, and the guarded close is still attempted",
+                work_item_id, exc,
+            )
         except Exception:
             logger.info(
-                "BF-825: could not record why work item %s ended; it is closed "
-                "failed either way and only the recorded reason is lost",
+                "BF-825: could not record why work item %s ended; the guarded close "
+                "is still attempted, and only the recorded reason is lost",
                 work_item_id, exc_info=True,
             )
     try:
-        await store.transition_work_item(work_item_id, "failed", source=agent_id)
+        ended = await store.transition_work_item(
+            work_item_id, "failed", source=agent_id, **_settle_cas(settle_expected),
+        )
     except Exception:
         logger.warning(
             "BF-825: could not close work item %s after its grace expired; the "
@@ -738,6 +832,18 @@ async def _close_expired_unconfirmed_turn(
             "strand remains the backstop",
             work_item_id, exc_info=True,
         )
+    else:
+        # BF-887 (#1163, review round 3): a refused compare-and-set returns None
+        # rather than raising; the WARNING above announced only the attempt.
+        if ended is None:
+            logger.warning(
+                "BF-825: work item %s refused its guarded close to failed: it has "
+                "moved on since this run was admitted -- a later ask, or the segment "
+                "its approval started, holds it, or it has already ended or is gone "
+                "-- so it keeps its status; whoever holds it owns how it ends, and "
+                "this reporter writes nothing more",
+                work_item_id,
+            )
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -1492,6 +1598,7 @@ async def _finish_promoted_turn(
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
 ) -> None:
     """Await a promoted run, report it into the thread, close the work item.
 
@@ -1510,6 +1617,13 @@ async def _finish_promoted_turn(
     ``plan_mode`` (AD-1156 A-4): the run was a plan-mode turn. Its report is
     posted as plan mode leaves a reply and its episode carries the plan-mode
     marker (:func:`_plan_mode_report`).
+
+    ``settle_expected`` (BF-887): what the item held when this segment of a
+    promoted turn was admitted (:func:`_segment_moved_on`). Given, a run that
+    failed, was stopped or expired ends the item only if it has not moved on to a
+    later ask since, and every closing write is a compare-and-set on what the item
+    held -- the ask that admitted the segment, or none for the turn's own run
+    (:func:`_settle_cas`). ``None`` is the ending this function shipped with.
     """
     text = ""
     failed = False
@@ -1637,6 +1751,29 @@ async def _finish_promoted_turn(
             work_item_id=work_item_id,
             request_text=request_text,
             grace_seconds=unconfirmed_grace_seconds,
+            plan_mode=plan_mode,
+            settle_expected=settle_expected,
+        )
+        return
+
+    # BF-887: a segment that failed or was stopped after its item moved on to a
+    # later ask -- this segment parked it there, and that ask, or the segment its
+    # approval started, now owns the item's ending -- neither reports an ending
+    # into the thread nor writes one (#1163). Its episode is still stored: it
+    # records what this segment came to.
+    if (failed or abandoned) and await _segment_moved_on(
+        runtime, work_item_id, settle_expected,
+        ending="was stopped by its watchdog" if abandoned else "failed",
+    ):
+        await _store_promoted_episode(
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            body=_REPORT_ABANDONED if abandoned else _REPORT_FAILED,
+            complete=False,
+            failed=True,
             plan_mode=plan_mode,
         )
         return
@@ -1766,6 +1903,7 @@ async def _finish_promoted_turn(
             work_item_id,
             "failed" if (failed or abandoned) else "done",
             source=agent_id,
+            **_settle_cas(settle_expected),
         )
     except Exception:
         logger.warning(
@@ -1809,6 +1947,7 @@ async def _report_holding_slot(
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
 ) -> None:
     """BF-732: hold a concurrency slot for as long as the promoted run lives.
 
@@ -1860,6 +1999,7 @@ async def _report_holding_slot(
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
             plan_mode=plan_mode,
+            settle_expected=settle_expected,
         )
     except asyncio.CancelledError:
         # The reporter can be cancelled while QUEUED for a slot, i.e. before
@@ -1960,6 +2100,7 @@ async def _report_with_supervisor(
     unconfirmed_grace_seconds: float = 0.0,
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
 ) -> None:
     """Acquire the BF-732 slot if there is one, then report under it."""
     slot = None
@@ -2001,6 +2142,7 @@ async def _report_with_supervisor(
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
             plan_mode=plan_mode,
+            settle_expected=settle_expected,
         )
     finally:
         if held:
@@ -2036,6 +2178,7 @@ async def run_with_promotion(
     run_id_provider: Callable[[], str | None] | None = None,
     trace_ref_provider: Callable[[], str | None] | None = None,
     plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -2141,6 +2284,10 @@ async def run_with_promotion(
     posted as plan mode leaves a reply, since it bypasses the reply pipeline, and
     its episode carries the plan-mode marker, so dreaming learns nothing from it.
     The inline path is untouched: its text goes through the pipeline.
+
+    ``settle_expected`` (BF-887) goes to the reporter: what the item holds while
+    this run is the turn's (:func:`_finish_promoted_turn`). ``None`` keeps the
+    ending this function shipped with.
     """
     if promote_after_seconds <= 0.0:
         return await work()
@@ -2224,6 +2371,7 @@ async def run_with_promotion(
             unconfirmed_grace_seconds=unconfirmed_grace_seconds,
             strand_timeout_seconds=strand_timeout_seconds,
             plan_mode=plan_mode,
+            settle_expected=settle_expected,
         ),
         name=f"ad1165-report-{work_item.id[:8]}",
     )
@@ -2246,3 +2394,440 @@ async def run_with_promotion(
         agent_id, work_item.id, waited_seconds, promote_after_seconds, thread_id,
     )
     return _ACK_TEMPLATE.format(work_item_id=work_item.id)
+
+
+# -- BF-887: an approved ``continue`` resumes the promoted turn it parked -------
+
+
+def is_promoted_turn(item: Any) -> bool:
+    """BF-887: whether a work item is the record of an AD-1165 promoted turn.
+
+    Either marker is enough. The record must never be handed to
+    ``WorkItemRouter`` (module docstring), so the test errs toward recognising
+    it rather than toward routing it.
+    """
+    metadata = getattr(item, "metadata", None)
+    if type(metadata) is dict and metadata.get("source") == PROMOTION_SOURCE:
+        return True
+    tags = getattr(item, "tags", None)
+    return isinstance(tags, list) and PROMOTION_TAG in tags
+
+
+async def _segment_moved_on(
+    runtime: Any,
+    work_item_id: str,
+    settle_expected: dict[str, Any] | None,
+    *,
+    ending: str,
+) -> bool:
+    """BF-887: whether a segment's item has moved on, so the segment must not end it.
+
+    A promoted turn that parks on a ``continue`` ask runs in segments: its own
+    run, then one for each approved ask. ``settle_expected`` is what the item held
+    when this segment was admitted: ``{"capability_request_id": <the ask whose
+    approval started it>}``, ``None`` as the value for the turn's own run. Once
+    the segment has parked the item on a new ask, that ask, or the segment its
+    approval starts, owns the item's ending, so a segment that fails or is
+    stopped after that must neither close the item nor tell the Captain it did:
+    an older segment's watchdog closed a newer, healthy segment's item
+    ``failed``, and approving that segment's next ask then resumed nothing
+    (#1163, review round 2). ``ending`` says how this segment ended.
+
+    False -- end the item as before -- when no ``settle_expected`` is given
+    (every caller but a promoted turn that can file a ``continue`` ask), when
+    the store cannot be read, or when the item still holds what it held.
+    """
+    if settle_expected is None:
+        return False
+    get = getattr(getattr(runtime, "work_item_store", None), "get_work_item", None)
+    if not callable(get):
+        return False
+    try:
+        item = await get(work_item_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "BF-887: could not read promoted work item %s before ending a segment "
+            "of its turn that %s; ending it as before",
+            work_item_id, ending, exc_info=True,
+        )
+        return False
+    metadata = getattr(item, "metadata", None)
+    if type(metadata) is not dict:
+        return False
+    now = {key: metadata.get(key) for key in settle_expected}
+    if now == settle_expected:
+        return False
+    logger.warning(
+        "BF-887: a segment of promoted work item %s %s after the item moved on "
+        "(admitted on %s, now on %s); the later ask, or the segment its approval "
+        "started, owns how the item ends, so this segment posts no ending and "
+        "leaves the item as it is",
+        work_item_id, ending, settle_expected, now,
+    )
+    return True
+
+
+def _settle_cas(settle_expected: dict[str, Any] | None) -> dict[str, Any]:
+    """BF-887: the compare-and-set a segment's closing write carries, as keyword arguments.
+
+    Every closing write of a segment carries what the item held when the segment
+    was admitted -- the ask whose approval started it, or, for the turn's own
+    run, no ask (``None``, as the store reads a missing key) -- so the store
+    refuses the write once the item has moved on. The read in
+    :func:`_segment_moved_on` is not enough on its own: a run that refuses its
+    cancellation past BF-825's grace is still alive, so after that read and
+    before these writes -- while the episode is stored -- it can park the item,
+    and the approval of its ask can admit a newer segment (#1163, review round
+    3). Only a caller that gives no ``settle_expected`` closes as this module
+    always did.
+    """
+    if settle_expected is None:
+        return {}
+    return {"expected": settle_expected}
+
+
+class PromotedTurnContinuations:
+    """BF-887: the next pass each of one agent's promoted turns can still take.
+
+    A promoted turn that stops at its step limit has ended: its run returned the
+    stop notice and nothing in the process runs it again. What it can still do
+    is take the pass AD-1164 runs under a standing rule -- the turn's own
+    assembled prompt plus the continuation block built from the work it stopped
+    with, in its thread, under its executor, budget and mode. That pass closes
+    over the turn's live state, so it is kept here, on the agent that ran the
+    turn: from promotion until a segment of the turn ends without parking on a
+    ``continue`` ask, or until the approval that resumes it takes it out.
+
+    Memory only, on purpose: the closure IS the turn's working state, and none
+    of it survives a restart. :func:`resume_promoted_turn` says so when it finds
+    nothing here, rather than rebuilding a different turn.
+    """
+
+    def __init__(
+        self, *, agent_id: str, limit: int = _MAX_HELD_CONTINUATIONS,
+    ) -> None:
+        self._agent_id = agent_id
+        self._limit = max(1, limit)
+        self._held: dict[str, Callable[[str], None]] = {}
+
+    def __len__(self) -> int:
+        return len(self._held)
+
+    def __contains__(self, work_item_id: object) -> bool:
+        return work_item_id in self._held
+
+    def hold(self, work_item_id: str, start: Callable[[str], None]) -> None:
+        """Keep ``start`` as the next pass of ``work_item_id``'s turn, replacing any earlier one.
+
+        The turn becomes the newest held, so the bound releases turns by how long
+        they have waited for an approval, not by when they were first promoted.
+        ``start`` is called with the id of the ask whose approval resumes the turn.
+        """
+        self.release(work_item_id)
+        self._held[work_item_id] = start
+        while len(self._held) > self._limit:
+            released = next(iter(self._held))
+            del self._held[released]
+            logger.warning(
+                "BF-887: agent %s already holds %d promoted turns ready to take "
+                "their next pass, the most it keeps; the oldest, work item %s, "
+                "is released, so approving its continue request closes it on the "
+                "board and asks the Captain to start it again",
+                self._agent_id, self._limit, released,
+            )
+
+    def release(
+        self, work_item_id: str, start: Callable[[str], None] | None = None,
+    ) -> None:
+        """Forget ``work_item_id``'s next pass: its turn ended without parking on an ask.
+
+        Given ``start``, only while that is still the pass held for the item: a
+        segment that ends releases the pass it kept, never one a newer segment of
+        the same turn has kept since.
+        """
+        if start is None or self._held.get(work_item_id) is start:
+            self._held.pop(work_item_id, None)
+
+    def resume(self, work_item_id: str, request_id: str) -> str:
+        """Start the next pass of ``work_item_id``'s turn and return a ``RESUME_*`` outcome.
+
+        ``request_id`` is the ``continue`` ask whose approval resumed the turn: the
+        pass ends the item only while the item is still on it. Taken out before it
+        is started, so it runs at most once; AD-855's
+        compare-and-set already admits one resume per ask. Never raises: a start
+        that raises is reported as :data:`RESUME_START_FAILED`.
+        """
+        start = self._held.pop(work_item_id, None)
+        if start is None:
+            return RESUME_NO_CONTINUATION
+        try:
+            start(request_id)
+        except Exception:
+            logger.warning(
+                "BF-887: starting the next pass of promoted work item %s for "
+                "agent %s raised, so nothing is running it",
+                work_item_id, self._agent_id, exc_info=True,
+            )
+            return RESUME_START_FAILED
+        return RESUME_STARTED
+
+
+@runtime_checkable
+class _ResumesPromotedTurns(Protocol):
+    """BF-887: the one method :func:`resume_promoted_turn` needs of an agent."""
+
+    def resume_promoted_turn(self, work_item_id: str, request_id: str) -> str: ...
+
+
+def start_resumed_run(
+    work: Callable[[], Awaitable[str]],
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_text: str,
+    hold: set["asyncio.Task[Any]"],
+    completed_probe: Callable[[], bool] | None = None,
+    failures_probe: Callable[[], Any] | None = None,
+    trace_ref_provider: Callable[[], str | None] | None = None,
+    background_slot: Callable[[], Any] | None = None,
+    deadline_seconds: float = 0.0,
+    unconfirmed_grace_seconds: float = 0.0,
+    strand_timeout_seconds: float = 0.0,
+    plan_mode: bool = False,
+    settle_expected: dict[str, Any] | None = None,
+) -> "asyncio.Task[None]":
+    """BF-887: run the next pass of a promoted turn that an approval resumed.
+
+    The tail of :func:`run_with_promotion`'s promoted branch, for a run that is
+    a background task from its first instruction: there is no reply to wait
+    for, no item to create (it is the turn's own, already ``in_progress``) and
+    no acknowledgement to return. The run and its reporter go into ``hold``,
+    and the reporter is this module's own (:func:`_report_holding_slot`), so the
+    result is posted into the thread, the episode is stored and the item ends
+    ``done`` or ``failed`` -- or, when the pass stops at its step limit again,
+    stays parked on the ask that pass files -- exactly as for the turn's first
+    run, under the same BF-732 slot, BF-733 deadline and BF-825 lease.
+    ``settle_expected`` names the ask that admitted this segment
+    (:func:`_finish_promoted_turn`).
+
+    Synchronous: it only creates the two tasks, so the approval path that calls
+    it never waits on a model. Returns the reporter.
+    """
+    task: "asyncio.Task[str]" = asyncio.create_task(
+        work(), name=f"bf887-resume-{agent_id[:8]}",
+    )
+    reporter: "asyncio.Task[None]" = asyncio.create_task(
+        _report_holding_slot(
+            task,
+            runtime=runtime,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            work_item_id=work_item_id,
+            request_text=request_text,
+            completed_probe=completed_probe,
+            failures_probe=failures_probe,
+            trace_ref_provider=trace_ref_provider,
+            background_slot=background_slot,
+            deadline_seconds=deadline_seconds,
+            unconfirmed_grace_seconds=unconfirmed_grace_seconds,
+            strand_timeout_seconds=strand_timeout_seconds,
+            plan_mode=plan_mode,
+            settle_expected=settle_expected,
+        ),
+        name=f"bf887-report-{work_item_id[:8]}",
+    )
+    for owned in (task, reporter):
+        hold.add(owned)
+        owned.add_done_callback(hold.discard)
+    logger.info(
+        "BF-887: agent=%s is running the next pass of promoted work item %s; it "
+        "reports into thread %s",
+        agent_id, work_item_id, thread_id,
+    )
+    return reporter
+
+
+async def _resumed_item_now(
+    runtime: Any, item: Any, work_item_id: str, request_id: str,
+) -> Any:
+    """BF-887: the resumed item as the store holds it now, or None when it moved on.
+
+    Moved on: gone, or no longer ``in_progress`` on ``request_id`` -- cancelled on
+    the board, say. Nothing awaits between this read and the start of the next
+    pass, so the owner that starts it is the owner the board shows. A store that
+    cannot be read leaves the hand-off to ``item``, the snapshot AD-855's resume
+    returned, as it was before this read.
+    """
+    get = getattr(getattr(runtime, "work_item_store", None), "get_work_item", None)
+    if not callable(get):
+        return item
+    try:
+        current = await get(work_item_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "BF-887: could not read promoted work item %s again before handing it "
+            "to its agent; handing it off as AD-855's resume returned it",
+            work_item_id, exc_info=True,
+        )
+        return item
+    metadata = getattr(current, "metadata", None)
+    linked = metadata.get("capability_request_id") if type(metadata) is dict else None
+    if getattr(current, "status", None) == "in_progress" and linked == request_id:
+        return current
+    logger.info(
+        "AD-855/BF-887: work item %s left in_progress on capability request %s "
+        "before its next pass started (it is now %s, on %s), so nothing runs it "
+        "and it is left as it is",
+        work_item_id, request_id[:12], getattr(current, "status", None) or "gone",
+        f"capability request {str(linked)[:12]}" if linked else "no recorded request",
+    )
+    return None
+
+
+async def resume_promoted_turn(runtime: Any, item: Any, request_id: str) -> str:
+    """BF-887: hand a resumed promoted turn to the agent that ran it.
+
+    Called by AD-855 (``CapabilityGapDriver._resume``) after its compare-and-set
+    moved the item ``blocked -> in_progress`` for ``request_id``, which admits
+    one call per ask. The item is never handed to ``WorkItemRouter``. It is read
+    again first (:func:`_resumed_item_now`): the store returns that
+    compare-and-set's snapshot only after publishing its cache, and an edit on
+    the board can land in between. An item that has left ``in_progress`` on
+    ``request_id`` since is left as it is (:data:`RESUME_MOVED_ON`). The agent
+    named by ``assigned_to`` -- the item's CURRENT owner, as the store holds it
+    now -- starts the turn's next pass (:meth:`PromotedTurnContinuations.resume`),
+    which ends the item only while it is still on ``request_id``. When nothing can --
+    the item is assigned to no agent or names no thread, no such agent is
+    aboard, it holds no next pass for the turn, or the start raised -- a WARNING
+    says what happened, why, and what is being done about it; the item is closed
+    ``failed`` with its ``stranded_reason``; and, once it is, the Captain is told
+    in the turn's thread by the agent that ran the turn, as the record kept them
+    at promotion (``metadata``), so an owner cleared or changed on the board
+    since does not silence the notice.
+
+    Returns the ``RESUME_*`` outcome. Never raises apart from cancellation.
+    """
+    work_item_id = str(getattr(item, "id", "") or "")
+    item = await _resumed_item_now(runtime, item, work_item_id, request_id)
+    if item is None:
+        return RESUME_MOVED_ON
+    agent_id = str(getattr(item, "assigned_to", "") or "")
+    metadata = getattr(item, "metadata", None)
+    if type(metadata) is not dict:
+        metadata = {}
+    thread_id = str(metadata.get("thread_id") or "")
+    # Who the notice is from: the agent the Captain was talking to, whose thread
+    # it is. Only running the next pass needs the current owner.
+    author_id = str(metadata.get("agent_id") or "") or agent_id
+    outcome = RESUME_UNIDENTIFIED
+    if agent_id and thread_id:
+        try:
+            registry = getattr(runtime, "registry", None)
+            agent = registry.get(agent_id) if registry is not None else None
+            outcome = (
+                agent.resume_promoted_turn(work_item_id, request_id)
+                if isinstance(agent, _ResumesPromotedTurns)
+                else RESUME_NO_AGENT
+            )
+        except Exception:
+            logger.warning(
+                "BF-887: handing promoted work item %s to agent %s raised",
+                work_item_id, agent_id, exc_info=True,
+            )
+            outcome = RESUME_START_FAILED
+    if outcome == RESUME_STARTED:
+        logger.info(
+            "AD-855/BF-887: work item %s resumed on capability request %s: agent "
+            "%s is running the turn's next pass, which reports into thread %s",
+            work_item_id, request_id[:12], agent_id, thread_id,
+        )
+        return outcome
+    # Logged BEFORE the close and the notice, so it says what is being done, not
+# what has been: a failure of either is logged where it happens
+# (``_close_unresumed_turn``, ``_post_report``), and a cancellation propagates.
+    logger.warning(
+        "AD-855/BF-887: work item %s is a promoted conversational turn whose "
+        "continue request %s is fulfilled, but %s, so nothing runs its next pass; "
+        "closing it as failed (stranded_reason=%s%s), then %s",
+        work_item_id, request_id[:12],
+        _RESUME_LOST_WHY.get(outcome, outcome).format(agent=agent_id or "<none>"),
+        _RESUME_LOST_REASON_PREFIX, outcome,
+        f"telling the Captain in thread {thread_id} to ask again once it is closed"
+        if author_id and thread_id
+        else "posting no notice: it names no thread or agent to post one as",
+    )
+    await _close_unresumed_turn(
+        runtime=runtime, agent_id=author_id, thread_id=thread_id,
+        work_item_id=work_item_id, request_id=request_id, outcome=outcome,
+    )
+    return outcome
+
+
+async def _close_unresumed_turn(
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_id: str,
+    outcome: str,
+) -> None:
+    """BF-887: end a promoted turn nothing can resume, and say so in its thread.
+
+    One compare-and-set write: ``in_progress -> failed`` only while the item is
+    still on ``request_id``, with ``stranded_reason`` in the same write.
+    ``failed``, not ``cancelled``: nobody chose this ending (BF-730). The notice
+    is posted only once the board says what the notice says, as ``agent_id`` --
+    the agent that ran the turn, which need not be the item's owner by now.
+    """
+    store = getattr(runtime, "work_item_store", None)
+    if store is None:
+        logger.warning(
+            "BF-887: no work-item store, so promoted work item %s stays "
+            "in_progress with nothing running it; the reconciler's strand is the "
+            "backstop",
+            work_item_id,
+        )
+        return
+    try:
+        closed = await store.transition_work_item(
+            work_item_id, "failed", source="capability_gap_driver",
+            expected_status="in_progress",
+            expected={"capability_request_id": request_id},
+            metadata_patch={
+                "stranded_reason": _RESUME_LOST_REASON_PREFIX + outcome,
+                "stranded_at": time.time(),
+            },
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning(
+            "BF-887: closing promoted work item %s raised; it keeps its status, "
+            "and the reconciler's strand is the backstop",
+            work_item_id, exc_info=True,
+        )
+        return
+    if closed is None:
+        logger.warning(
+            "BF-887: promoted work item %s was not closed -- it is no longer "
+            "in_progress on capability request %s -- so it keeps the status "
+            "another component gave it and no notice is posted",
+            work_item_id, request_id[:12],
+        )
+        return
+    if not (agent_id and thread_id):
+        return
+    await _post_report(
+        runtime=runtime,
+        agent_id=agent_id,
+        thread_id=thread_id,
+        work_item_id=work_item_id,
+        body=_REPORT_RESUME_LOST,
+    )

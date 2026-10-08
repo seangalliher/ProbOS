@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from probos.cognitive.salience import SalienceWeights
     from probos.cognitive.spreading_activation import SpreadingActivationEngine
     from probos.cognitive.thought_store import ThoughtStore
+    from probos.cognitive.turn_promotion import PromotedTurnContinuations
     from probos.config import MemoryBudgetConfig
 
 logger = logging.getLogger(__name__)
@@ -1331,6 +1332,12 @@ class CognitiveAgent(BaseAgent):
         # kill it. It is bounded by ``max_iterations`` and the LLM timeouts, so
         # it always terminates on its own.
         self._promoted_turn_tasks: set[asyncio.Task[Any]] = set()
+
+        # BF-887: the next pass each of this agent's promoted turns can still
+        # take, kept until an approved ``continue`` resumes it or the turn ends
+        # without one. Made by the first promotion; like the tasks above it is
+        # not cleared by ``stop()``, because it is the Captain's work.
+        self._promoted_turn_continuations: PromotedTurnContinuations | None = None
 
         # AD-423c: ToolContext, set during onboarding
         self.tool_context: Any = None
@@ -4612,8 +4619,15 @@ class CognitiveAgent(BaseAgent):
             # AD-1164 re-invokes through this same function, so a turn that
             # was exhausted on pass 1 and completed on pass 2 correctly reads
             # as complete.
-            _last_stop: dict[str, str] = {"reason": ""}
+            _last_stop: dict[str, str] = {"reason": "", "text": ""}
             _last_trace_ref: dict[str, str | None] = {"ref": None}
+            # BF-887: the cells the CURRENT segment of this turn writes. The
+            # first segment is the turn's own run and writes the two cells above;
+            # each approved ``continue`` starts a segment with cells of its own,
+            # so a reporter still finishing an earlier segment reads only what
+            # that segment did. Segments never run passes at the same time: a new
+            # one starts only after the last one stopped and filed its ask.
+            _segment: dict[str, Any] = {"stop": _last_stop, "trace": _last_trace_ref}
 
             # AD-1204: the promoted work item's id, published back here by
             # ``run_with_promotion`` the moment the item is created. It cannot
@@ -4711,7 +4725,8 @@ class CognitiveAgent(BaseAgent):
                 )
 
             async def _run_pass(task_text: str) -> Any:
-                _last_trace_ref["ref"] = None
+                stop, trace = _segment["stop"], _segment["trace"]
+                trace["ref"] = None
                 owned_turn_id: str | None = None
                 owned_presentation_kwargs: dict[str, Any] = {}
                 if owned_steps_presentation is not None:
@@ -4752,12 +4767,16 @@ class CognitiveAgent(BaseAgent):
                 )
                 if _turn_cost is not None:
                     _turn_cost.record(outcome)
-                _last_stop["reason"] = str(
+                stop["reason"] = str(
                     getattr(outcome, "stopped_reason", "") or ""
                 )
+                # BF-887: what an approved ``continue`` carries this turn on
+                # from -- the text AD-1164's standing-rule branch continues from.
+                _final = getattr(outcome, "final_text", "")
+                stop["text"] = _final if type(_final) is str else ""
                 # A pass without a receipt replaces, rather than inherits, the
                 # prior pass. Keep it off the foreground acknowledgement.
-                _last_trace_ref["ref"] = getattr(outcome, "tool_trace_ref", None)
+                trace["ref"] = getattr(outcome, "tool_trace_ref", None)
                 _accumulate_pass_failures(observation, outcome)
                 _collect_owned_steps_tool_views(observation, outcome)
                 # AD-1295 (#1087): the same fold point, for the record that says
@@ -4779,8 +4798,10 @@ class CognitiveAgent(BaseAgent):
                 )
                 return outcome
 
-            async def _agentic_turn() -> str:
-                outcome = await _run_pass(user_message)
+            async def _settle_turn(outcome: Any, parked: dict[str, str]) -> str:
+                # BF-887: read before any await -- an approval landing while this
+                # segment files its ask can already start the next segment.
+                stop = _segment["stop"]
                 turn_text = getattr(outcome, "final_text", "") or ""
                 # AD-1164: a turn that hit the step limit continues under a
                 # standing rule or files an ask, and says so either way. Gated
@@ -4815,12 +4836,47 @@ class CognitiveAgent(BaseAgent):
                         already_filed=_filed_faults,
                         config=cfg,
                         fault_attempted=_fault_attempted,
+                        # BF-887: told whether this segment parked the item on
+                        # the ask it filed, which is what keeps its next pass.
+                        parked=parked,
                     )
                 # AD-1208: a cost stop says so ahead of any partial work, inline and
                 # promoted alike; nothing is filed (continue_or_ask gate 2).
-                if _turn_cost is not None and _last_stop["reason"] == "token_budget":
+                if _turn_cost is not None and stop["reason"] == "token_budget":
                     turn_text = _turn_cost.render_stop(turn_text)
                 return turn_text
+
+            # BF-887: a segment of this turn -- the first is the turn's own run,
+            # each approved ``continue`` starts another -- and the next pass it
+            # keeps: ``start`` once kept, ``parked`` once it parked the item on
+            # the ask it filed, ``over`` once it has ended.
+            def _new_segment() -> dict[str, Any]:
+                return {"start": None, "parked": {}, "over": False}
+
+            def _end_segment(segment: dict[str, Any]) -> None:
+                # Every way a segment ends comes here -- a result, an exception,
+                # the BF-733 watchdog's cancellation -- and only parking on an
+                # ask keeps its next pass. So the bound counts turns still running
+                # or waiting on the Captain, and turns whose ask was then settled
+                # without resuming them -- denied, cancelled or expired, or
+                # approved once the item was unassigned, reassigned or moved on --
+                # until the bound releases them or the agent is recycled. Only its
+                # OWN pass: a newer segment may hold the item's by the time an
+                # older one ends.
+                segment["over"] = True
+                if segment["start"] is not None and not segment["parked"]:
+                    held = getattr(self, "_promoted_turn_continuations", None)
+                    if held is not None:
+                        held.release(_promoted["work_item_id"], segment["start"])
+
+            _first_segment = _new_segment()
+
+            async def _agentic_turn() -> str:
+                try:
+                    outcome = await _run_pass(user_message)
+                    return await _settle_turn(outcome, _first_segment["parked"])
+                finally:
+                    _end_segment(_first_segment)
 
             # AD-1165: same arming-site convention — a non-positive budget skips
             # the import entirely and awaits the turn inline, byte-identical to
@@ -4844,7 +4900,9 @@ class CognitiveAgent(BaseAgent):
 
                 from probos.cognitive.turn_promotion import (
                     _INCOMPLETE_STOP_REASONS,
+                    PromotedTurnContinuations,
                     run_with_promotion,
+                    start_resumed_run,
                 )
 
                 # BF-732: the promoted run keeps a slot of its own. The
@@ -4860,7 +4918,13 @@ class CognitiveAgent(BaseAgent):
 
                 # AD-1246: this turn can stop waiting, so a run_python call in it
                 # may ask for more than the inline wall clock (probos.execution.long_runs).
-                if thread_id:
+                # BF-887: a function, because a resumed segment measures its own
+                # grant -- its BF-733 watchdog starts when it is resumed, and a
+                # grant kept from the turn's first run would have run out by the
+                # time the Captain approves.
+                def _grant_long_runs(now: float) -> None:
+                    if not thread_id:
+                        return
                     from probos.execution.long_runs import (
                         EXECUTION_LONG_RUN_GRANT_KEY, LongRunGrant,
                     )
@@ -4874,12 +4938,116 @@ class CognitiveAgent(BaseAgent):
                         deadline_seconds=_coerce_promotion_budget(
                             getattr(cfg, "promoted_run_deadline_seconds", 0.0)
                         ),
-                        now=time.monotonic(),
+                        now=now,
                     )
                     if _grant is not None:
                         _long_run_kwargs["extra_context"] = {
                             EXECUTION_LONG_RUN_GRANT_KEY: _grant,
                         }
+                    else:
+                        _long_run_kwargs.pop("extra_context", None)
+
+                _grant_long_runs(time.monotonic())
+
+                # BF-887: what an approved ``continue`` resumes. A promoted turn
+                # that stops at its step limit has ENDED -- its run returned the
+                # stop notice -- and AD-855 used to hand its item to
+                # ``WorkItemRouter``, which drops it by design, so the turn never
+                # ran again (#1163). The turn now keeps, on this agent, the one
+                # pass it can still take: the pass AD-1164 runs under a standing
+                # rule -- this turn's assembled prompt plus the continuation
+                # block built from the work it stopped with -- in this thread,
+                # under this turn's executor, budget and mode, reported by
+                # AD-1165's own reporter. Kept from promotion, before any ask can
+                # link to the item, so even an approval that lands while the ask
+                # is being filed finds it.
+                #
+                # ``getattr``: the synthetic-runtime harnesses of this method
+                # build the agent as a ``SimpleNamespace`` (see
+                # ``_conversational_thread_id``).
+                _continuations = getattr(self, "_promoted_turn_continuations", None)
+                if _continuations is None:
+                    _continuations = PromotedTurnContinuations(agent_id=self.id)
+                    self._promoted_turn_continuations = _continuations
+
+                def _hold_next_pass(
+                    segment: dict[str, Any], previous: dict[str, str],
+                ) -> None:
+                    # A segment that has already ended keeps nothing. Promotion is
+                    # published once the item is written, and the run can finish
+                    # during that write -- unparked, since its item had no id.
+                    if segment["over"]:
+                        return
+                    segment["start"] = lambda request_id: _start_next_pass(
+                        previous, request_id,
+                    )
+                    _continuations.hold(_promoted["work_item_id"], segment["start"])
+
+                def _start_next_pass(previous: dict[str, str], request_id: str) -> None:
+                    from probos.cognitive.continue_or_ask import continuation_task_text
+
+                    task_text = continuation_task_text(user_message, previous["text"])
+                    if not task_text:
+                        raise RuntimeError(
+                            "BF-887: the continuation block did not compose, so "
+                            "the turn's next pass would start the task over"
+                        )
+                    stop: dict[str, str] = {"reason": "", "text": ""}
+                    trace: dict[str, str | None] = {"ref": None}
+                    _segment["stop"], _segment["trace"] = stop, trace
+                    segment = _new_segment()
+                    # This segment's watchdog starts now, with no promotion wait
+                    # in front of it.
+                    _grant_long_runs(time.monotonic() - promote_after)
+                    start_resumed_run(
+                        lambda: _resumed_segment(task_text, segment),
+                        runtime=runtime,
+                        agent_id=self.id,
+                        thread_id=thread_id,
+                        work_item_id=_promoted["work_item_id"],
+                        request_text=_promotion_request_text(observation, user_message),
+                        hold=self._promoted_turn_tasks,
+                        completed_probe=(
+                            lambda: stop["reason"] not in _INCOMPLETE_STOP_REASONS
+                        ),
+                        failures_probe=lambda: observation.get("_dm_tool_failures"),
+                        trace_ref_provider=lambda: trace["ref"],
+                        background_slot=_bg_slot,
+                        **_plan_mode_promotion,
+                        # The bounds the first run waits under, read the same
+                        # way (a drift guard compares the two calls).
+                        deadline_seconds=_coerce_promotion_budget(
+                            getattr(cfg, "promoted_run_deadline_seconds", 0.0)
+                        ),
+                        unconfirmed_grace_seconds=_coerce_promotion_budget(
+                            getattr(cfg, "promoted_run_unconfirmed_grace_seconds", 0.0)
+                        ),
+                        strand_timeout_seconds=_coerce_promotion_budget(
+                            getattr(
+                                getattr(
+                                    getattr(runtime, "config", None),
+                                    "work_board_reconciler", None,
+                                ),
+                                "strand_timeout_seconds", 0.0,
+                            )
+                        ),
+                        # The ask whose approval admitted this segment: it ends the
+                        # item only while the item is still on it.
+                        settle_expected={"capability_request_id": request_id},
+                    )
+                    _hold_next_pass(segment, stop)
+
+                async def _resumed_segment(task_text: str, segment: dict[str, Any]) -> str:
+                    try:
+                        return await _settle_turn(
+                            await _run_pass(task_text), segment["parked"],
+                        )
+                    finally:
+                        _end_segment(segment)
+
+                def _on_promoted(work_item_id: str) -> None:
+                    _record_promotion(work_item_id)
+                    _hold_next_pass(_first_segment, _last_stop)
 
                 text = await run_with_promotion(
                     _agentic_turn,
@@ -4898,7 +5066,7 @@ class CognitiveAgent(BaseAgent):
                     # passes fold into.
                     failures_probe=lambda: observation.get("_dm_tool_failures"),
                     trace_ref_provider=lambda: _last_trace_ref["ref"],
-                    on_promoted=_record_promotion,
+                    on_promoted=_on_promoted,
                     **_promotion_diagnostic_kwargs,
                     **_plan_mode_promotion,
                     background_slot=_bg_slot,
@@ -4929,6 +5097,15 @@ class CognitiveAgent(BaseAgent):
                             "strand_timeout_seconds", 0.0,
                         )
                     ),
+                    # BF-887: the turn's own run was admitted by no ask. Only a
+                    # turn that can park on a ``continue`` ask has later segments,
+                    # which can own its ending, so only its run reads the item
+                    # before ending it.
+                    settle_expected=(
+                        {"capability_request_id": None}
+                        if getattr(cfg, "continue_or_ask_enabled", False) is True
+                        else None
+                    ),
                 )
             text = text.strip()
             if text and not _promoted["work_item_id"]:
@@ -4948,6 +5125,24 @@ class CognitiveAgent(BaseAgent):
                 self.id, exc_info=True,
             )
             return None
+
+    def resume_promoted_turn(self, work_item_id: str, request_id: str) -> str:
+        """BF-887: start the next pass of this agent's promoted turn ``work_item_id``.
+
+        Called by ``turn_promotion.resume_promoted_turn`` once AD-855 has
+        resumed the turn's item for an approved ``continue`` ask, ``request_id``;
+        the pass ends the item only while the item is still on it. Returns a
+        ``turn_promotion.RESUME_*`` outcome: ``"started"``; ``"no_continuation"``
+        when this agent holds no next pass for the item -- it was restarted or
+        reset since the turn stopped, or the turn ended without parking on an
+        ask; or ``"start_failed"`` when starting it raised. Never raises.
+        """
+        from probos.cognitive.turn_promotion import RESUME_NO_CONTINUATION
+
+        continuations = self._promoted_turn_continuations
+        if continuations is None:
+            return RESUME_NO_CONTINUATION
+        return continuations.resume(work_item_id, request_id)
 
     async def _run_llm_fallback(self, observation: dict[str, Any]) -> dict[str, Any] | None:
         """AD-534b: Re-run through LLM path, skipping procedural memory and decision cache."""
