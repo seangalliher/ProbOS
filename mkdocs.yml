@@ -50,6 +50,9 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - attr_list
   - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - tables
   - toc:
       permalink: true
@@ -57,9 +60,12 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
+    - Quickstart: quickstart.md
+    - What ProbOS Is: getting-started.md
     - Installation: getting-started/installation.md
     - Interactive Shell: getting-started/shell.md
     - Configuration: getting-started/configuration.md
+    - Desktop: getting-started/desktop.md
   - Architecture:
     - Overview: architecture/overview.md
     - Substrate: architecture/substrate.md
@@ -70,12 +76,17 @@ nav:
     - Memory: architecture/memory.md
     - Federation: architecture/federation.md
     - Knowledge: architecture/knowledge.md
+    - Self-Perception Framing: architecture/self-perception-framing.md
+    - HXI Glass Bridge (Design): design/hxi-glass-bridge.md
   - Agents:
     - Agent Inventory: agents/inventory.md
     - Key Concepts: agents/concepts.md
   - Development:
     - Status: development/status.md
     - Roadmap: development/roadmap.md
+    - Nooplex Readiness: development/nooplex-readiness.md
+    - Platform Maturity Program: development/platform-maturity-program.md
+    - Composable Cognition: development/composable-cognition.md
     - Project Structure: development/structure.md
     - Design Principles: development/design-principles.md
     - Configuration Reference: development/config-reference.md

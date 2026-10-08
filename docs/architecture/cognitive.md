@@ -1,13 +1,13 @@
 # Cognitive Layer
 
-The Cognitive layer is the intelligence center — it handles natural language understanding, memory, learning, self-modification, procedural learning, self-regulation, and the builder/architect pipeline.
+The Cognitive layer is the intelligence center — natural-language understanding, crew cognition and agentic tool use, memory, learning, self-modification, procedural learning, self-regulation, and the builder/architect pipeline.
 
-## Pipeline
+## Ship's Computer Pipeline
 
-Natural language goes through:
+A natural-language request to the Ship's Computer goes through:
 
 1. **Working memory** assembles system state (agent health, trust scores, Hebbian weights, capabilities) within a token budget
-2. **Episodic recall** finds similar past interactions for context (6-factor composite scoring)
+2. **Episodic recall** finds similar past interactions for context
 3. **Workflow cache** checks for previously successful DAG patterns (exact match, then fuzzy)
 4. **LLM decomposer** converts text into a `TaskDAG` — a directed acyclic graph of typed intents with dependencies
 5. **Attention manager** scores tasks: `urgency x relevance x deadline_factor x dependency_bonus`
@@ -17,20 +17,41 @@ Natural language goes through:
 
 Each agent class declares structured `IntentDescriptor` metadata. The decomposer's system prompt is assembled at runtime from whatever agents are registered. New agent types self-integrate without any configuration changes.
 
-## Standing Orders
+## Crew Agents and Standing Orders
 
-A 4-tier instruction hierarchy composed at call time:
+Crew agents are instructions-first `CognitiveAgent`s: their behavior is defined by instructions the LLM reasons over, not by hard-coded logic. Those instructions come from a four-tier hierarchy composed at call time:
 
 1. **Federation Constitution** — universal, immutable rules
 2. **Ship Standing Orders** — per-instance configuration
 3. **Department Protocols** — per-department standards
-4. **Agent Standing Orders** — per-agent, evolvable through self-mod
+4. **Agent Standing Orders** — per-agent, evolvable through self-modification
 
-`compose_instructions()` assembles the complete system prompt for each `CognitiveAgent.decide()` call.
+`compose_instructions()` assembles the complete system prompt for each crew agent's LLM call.
+
+## Agentic Loop and Tools
+
+When a crew member replies to a 1:1 direct message — a shell `@callsign` session or a 1:1 chat in the HXI — or works a dispatched work item, it can run a multi-turn **agentic loop**: the agent reasons, calls tools, reads their results and continues until the work is done. The loop is bounded by step, cost and trust limits; reaching the step limit becomes a checkpoint that asks whether to continue, and a turn that outgrows a reply becomes a task. Tool calls and their outputs are recorded in a durable trace. Both loops are opt-in (`dm_agentic.enabled` and `agentic_dispatch.enabled`) and on in the reference `config/system.yaml`; group, Ward Room, proactive and vision turns keep a single LLM pass.
+
+Tools come from a shared **tool registry**:
+
+| Tool family | Examples |
+|-------------|----------|
+| Discovery and delegation | Capability search, task delegation to other agents |
+| Durable work | Work-item discovery and claiming, status and steps, work permits, action approvals |
+| Knowledge | Recall of produced artifacts, oracle queries, event-log queries, self-queries, published findings |
+| Code execution | Governed Python in per-agent workspaces; missing libraries become approval-gated install requests |
+| Browser | An agent-driven Chromium browser (Playwright), offered to the loop read-only and behind a URL allowlist |
+| MCP | Tools from registered MCP servers, authorized per agent and per tool, with consensus for high-risk invocations |
+
+Agents also reach mesh capabilities — file reads, HTTP fetches, office documents and more — through the intent bus, so every call keeps its trust, consensus and audit properties. Code execution, the browser tool and MCP agent tools are each opt-in, and on in the reference configuration.
+
+## Composable Cognition
+
+A cognitive agent is an organism: a **cognitive spine** — the agent's private nervous system for composing organs and running the cognitive cycle — plus **cognitive organs**, bounded faculties such as attention (`AttentionFaculty`) and dreaming (`DreamingOrgan`). Organs are child components that are born and die with their agent and are namespaced under it; they are not mesh-registered agents. The mesh is the same pattern at ship scale: asynchronous and governed where the spine is synchronous and private. The migration is incremental and behavior-preserving. See [Composable Cognition](../development/composable-cognition.md).
 
 ## Self-Modification
 
-When ProbOS encounters a capability gap (no agent can handle a request), it designs a new agent:
+When ProbOS encounters a capability gap (no agent can handle a request), it can design a new agent:
 
 ```
 Capability gap detected
@@ -41,6 +62,8 @@ Capability gap detected
     → SystemQA smoke tests
     → BehavioralMonitor tracks post-deployment
 ```
+
+Designs need approval: an attended shell asks the Captain, and without an approver unapproved designs are refused. On warm boot, restored agent code passes `CodeValidator` again before it is loaded.
 
 ## Builder Pipeline (Transporter Pattern)
 
@@ -54,9 +77,11 @@ BuildSpec → BuildBlueprint → ChunkDecomposer (Dematerializer)
     → Test-Fix Loop → Code Review → Commit Gate
 ```
 
+The code-review step is a `CodeReviewAgent` the Builder runs against Standing Orders, and builds wait for the Captain's approval before they land.
+
 ## Cognitive JIT / Procedural Learning
 
-A 9-stage pipeline (AD-531 through AD-539, 618 tests) that converts LLM-driven task execution into replayable deterministic procedures:
+A pipeline (AD-531 through AD-539) that converts LLM-driven task execution into replayable deterministic procedures:
 
 1. **Episode Clustering** — group similar episodes by semantic similarity
 2. **Procedure Extraction** — extract deterministic steps from clustered episodes
@@ -68,24 +93,27 @@ A 9-stage pipeline (AD-531 through AD-539, 618 tests) that converts LLM-driven t
 8. **Lifecycle Management** — Ebbinghaus decay, archival, ChromaDB dedup, merge
 9. **Gap Detection** — identify skill gaps, trigger qualification programs
 
-## Dreaming (12-Step Consolidation)
+## Dreaming
 
-During idle periods, the dreaming engine runs a full consolidation cycle:
+Between full cycles, a **micro-dream** replays the most recent episodes. During idle periods, the dreaming engine runs a full consolidation cycle:
 
 | Step | Function |
 |------|----------|
-| 1 | Episode replay and clustering |
-| 2 | Pattern extraction |
-| 3 | Procedure compilation |
-| 4 | Trust score recalibration |
-| 5 | Hebbian weight adjustment |
-| 6 | Workflow cache refresh |
-| 7 | Notebook consolidation + cross-agent convergence detection |
-| 8 | Pre-warm predictions for likely upcoming requests |
-| 9 | Emergence metrics computation (PID-based) |
-| 10 | Standing order evolution proposals |
-| 11 | Prune dead connections |
-| 12 | ACT-R activation decay — unreinforced memories weaken, low-activation episodes pruned |
+| 0 | Flush un-consolidated episodes through the micro-dream (Hebbian replay) |
+| 2 | Prune — decay all weights and remove below-threshold connections |
+| 3 | Trust consolidation from recent track records; contradiction detection |
+| 4 | Pre-warm — learn temporal intent sequences for faster routing |
+| 5 | Idle pool scale-down |
+| 6 | Episode clustering; expertise directory update |
+| 7 | Procedure extraction, evolution and lifecycle; failure distillation; fallback and observational learning; notebook consolidation and cross-agent convergence; relationship inference |
+| 8 | Capability gap prediction |
+| 9 | Emergence metrics (PID-based) |
+| 10 | Notebook quality metrics |
+| 11 | Spaced retrieval practice; reconsolidation reviews |
+| 12 | Activation-based memory pruning — unreinforced memories weaken, low-activation episodes are pruned |
+| 13 | Behavioral metrics |
+| 14 | Source attribution consolidation |
+| 15 | Reflection episode promotion |
 
 Dreaming literally strengthens memories — episodes replayed during consolidation record activation events, increasing their recall priority. The same mechanism as sleep replay in neuroscience (Rasch & Born, 2013).
 
@@ -97,15 +125,7 @@ Three-tier model (AD-502 through AD-506):
 - **Tier 2 (Social)** — Peer regulation: cross-agent repetition detection, tier credit system between agents
 - **Tier 3 (System)** — Graduated zone model: GREEN (normal) → AMBER (warning) → RED (intervention) → CRITICAL (cooldown). Automatic escalation with Counselor oversight
 
-The Counselor (Echo) subscribes to trust updates, circuit breaker trips, dream completions, self-monitoring concerns, and peer repetition events. Issues therapeutic interventions, cooldown directives, and wellness sweeps.
-
-## Trust Cascade Dampening
-
-Three-layer protection against runaway trust collapse (AD-558):
-
-1. **Progressive dampening** — geometric decay (1.0 / 0.75 / 0.5 / 0.25) prevents rapid cascading
-2. **Hard trust floor** — 0.05 minimum prevents trust from reaching zero
-3. **Network circuit breaker** — triggers when too many agents in too many departments are affected simultaneously
+The Ship's Counselor subscribes to trust updates, circuit breaker trips, dream completions, self-monitoring concerns, and peer repetition events, and issues therapeutic interventions, cooldown directives, and wellness sweeps.
 
 ## Emergence Metrics
 
@@ -133,14 +153,17 @@ Human corrections are the richest learning signal:
 |------|---------|
 | `cognitive/cognitive_agent.py` | Instructions-first LLM agent base |
 | `cognitive/decomposer.py` | NL → TaskDAG + DAG executor |
-| `cognitive/episodic.py` | Episodic memory with Anchor Frames |
-| `cognitive/dreaming.py` | 12-step dream consolidation |
 | `cognitive/standing_orders.py` | 4-tier instruction composition |
-| `cognitive/trust_dampening.py` | Trust cascade dampening |
+| `cognitive/agentic_dispatch.py` | Agentic dispatch for crew work |
+| `cognitive/crew_orchestrator.py` | Durable crew workflow orchestration |
+| `cognitive/spine.py`, `cognitive/organ.py` | Cognitive spine and organ contract |
+| `tools/registry.py` | Shared tool registry |
+| `cognitive/episodic.py` | Episodic memory with Anchor Frames |
+| `cognitive/dreaming.py` | Dream consolidation |
+| `cognitive/procedures.py`, `cognitive/procedure_store.py` | Cognitive JIT procedures |
+| `cognitive/circuit_breaker.py` | Cognitive zone model and circuit breaker |
 | `cognitive/emergence_metrics.py` | PID-based emergence measurement |
-| `cognitive/self_regulation.py` | 3-tier cognitive self-regulation |
-| `cognitive/qualification_tests.py` | Cognitive qualification probes |
-| `cognitive/architect.py` | ArchitectAgent (Meridian) |
+| `cognitive/architect.py` | ArchitectAgent (First Officer) |
 | `cognitive/builder.py` | BuilderAgent (Transporter Pattern) |
-| `cognitive/counselor.py` | CounselorAgent (Echo) |
-| `cognitive_jit/` | Procedural Learning pipeline (9 modules) |
+| `cognitive/counselor.py` | CounselorAgent (Ship's Counselor) |
+| `cognitive/correction_detector.py`, `cognitive/agent_patcher.py` | Correction feedback loop |

@@ -1,207 +1,153 @@
 # Project Structure
 
-```
-src/probos/
-├── __init__.py              # Package root
-├── __main__.py              # Entry point (probos CLI)
-├── config.py                # Pydantic config models
-├── runtime.py               # Top-level orchestrator (2,762 lines, decomposed)
-├── types.py                 # Core types (30+ dataclasses)
-├── build_queue.py           # Priority build queue
-├── build_dispatcher.py      # Automated builder dispatch
-├── crew_profile.py          # Crew identity + personality
-├── sif.py                   # Structural Integrity Field
-├── task_tracker.py          # Agent task lifecycle
-├── watch_rotation.py        # Watch rotation + duty shifts
-├── worktree_manager.py      # Git worktree lifecycle
-├── agents/                  # Tool agents (deterministic) + department crews
-│   ├── file_reader.py       #   read_file, stat_file
-│   ├── file_writer.py       #   write_file (consensus-gated)
-│   ├── directory_list.py    #   list_directory
-│   ├── file_search.py       #   search_files
-│   ├── shell_command.py     #   run_command (consensus-gated)
-│   ├── http_fetch.py        #   http_fetch (rate-limited)
-│   ├── introspect.py        #   explain_last, agent_info, system_health, why
-│   ├── system_qa.py         #   Smoke tests for designed agents
-│   ├── red_team.py          #   Independent verification + write checks
-│   ├── corrupted.py         #   Test agent (deliberately wrong)
-│   ├── utility/             #   10 bundled utility agents
-│   │   ├── web_agents.py    #     WebSearch, PageReader, Weather, News
-│   │   ├── language_agents.py #   Translator, Summarizer
-│   │   ├── productivity_agents.py # Calculator, Todo, NoteTaker
-│   │   └── organizer_agents.py #  Scheduler
-│   ├── medical/             #   Medical department (5 agents)
-│   │   ├── diagnostician.py #     Chief Medical Officer (Bones)
-│   │   ├── vitals_monitor.py #    Continuous health metrics (Chapel)
-│   │   ├── surgeon.py       #     Targeted remediation (Chapel, dual-hatted)
-│   │   ├── pharmacist.py    #     Configuration prescriptions (Keiko)
-│   │   └── pathologist.py   #     Failure analysis (Cortez)
-│   └── science/             #   Science Analytical Pyramid (AD-560)
-│       ├── data_analyst.py  #     Data Analyst (Kira)
-│       ├── systems_analyst.py #   Systems Analyst (Lynx)
-│       └── research_specialist.py # Research Specialist (Atlas)
-├── cognitive/               # LLM pipeline + self-modification + crew agents
-│   ├── cognitive_agent.py   #   Instructions-first LLM agent base
-│   ├── decomposer.py        #   NL → TaskDAG + DAG executor
-│   ├── prompt_builder.py    #   Dynamic system prompt assembly
-│   ├── llm_client.py        #   OpenAI-compatible + mock client
-│   ├── working_memory.py    #   Bounded context assembly
-│   ├── episodic.py          #   Episodic memory (Anchor Frames, ACT-R activation)
-│   ├── attention.py         #   Priority scoring + focus tracking
-│   ├── dreaming.py          #   12-step dream consolidation
-│   ├── dream_adapter.py     #   Dream cycle coordination
-│   ├── workflow_cache.py    #   LRU pattern cache
-│   ├── standing_orders.py   #   4-tier instruction composition
-│   ├── self_model.py        #   SystemSelfModel for grounding
-│   ├── trust_dampening.py   #   Trust cascade dampening (AD-558)
-│   ├── emergence_metrics.py #   PID-based emergence measurement (AD-557)
-│   ├── self_regulation.py   #   3-tier cognitive self-regulation (AD-502–506)
-│   ├── qualification_tests.py # Cognitive qualification probes
-│   ├── domain_tests.py      #   Domain-specific qualification tests
-│   ├── orientation.py       #   Agent orientation service
-│   ├── architect.py         #   ArchitectAgent / First Officer (Meridian)
-│   ├── builder.py           #   BuilderAgent / Chief Engineer
-│   ├── code_reviewer.py     #   CodeReviewAgent
-│   ├── counselor.py         #   CounselorAgent / Ship's Counselor (Echo)
-│   ├── scout.py             #   ScoutAgent (Horizon)
-│   ├── security_officer.py  #   SecurityAgent (Worf)
-│   ├── operations_officer.py #  OperationsAgent (O'Brien)
-│   ├── engineering_officer.py # EngineeringAgent (LaForge)
-│   ├── codebase_index.py    #   Codebase knowledge graph
-│   ├── copilot_adapter.py   #   Visiting officer (Copilot SDK)
-│   ├── agent_designer.py    #   LLM designs new agents from capability gaps
-│   ├── self_mod.py          #   Self-modification pipeline
-│   ├── code_validator.py    #   Static analysis for generated code
-│   ├── sandbox.py           #   Isolated execution for untrusted agents
-│   └── ...                  #   + feedback, patcher, embeddings, proactive, etc.
-├── cognitive_jit/           # Procedural Learning pipeline (AD-531–539)
-│   ├── clustering.py        #   Episode clustering
-│   ├── extraction.py        #   Procedure extraction
-│   ├── store.py             #   Procedure store
-│   ├── replay.py            #   Replay engine + fallback
-│   ├── graduation.py        #   Dreyfus competency levels
-│   ├── governance.py        #   Trust-gated promotion
-│   ├── observational.py     #   Observational learning (Bandura)
-│   ├── lifecycle.py         #   Decay, archival, dedup
-│   └── gap_detection.py     #   Gap → qualification triggering
-├── identity/                # W3C DID Identity (AD-441)
-│   ├── did.py               #   DID generation + resolution
-│   ├── credentials.py       #   Verifiable Credentials
-│   ├── ledger.py            #   Identity Ledger (hash-chain)
-│   └── birth_certificate.py #   Agent + Ship birth certificates
-├── ward_room/               # Agent Communication Fabric (AD-407–412)
-│   ├── channels.py          #   Channel management (10 default)
-│   ├── messages.py          #   Message storage + threading
-│   ├── dm.py                #   Direct message channels
-│   └── moderation.py        #   Content moderation + rate limiting
-├── ships_records/           # Ship's Records (AD-434)
-│   ├── notebooks.py         #   Agent notebook management
-│   ├── duty_log.py          #   Duty log entries
-│   └── captains_log.py      #   Captain's Log
-├── startup/                 # Runtime decomposition (AD-515–519)
-│   ├── infrastructure.py    #   Phase 1: Core infrastructure
-│   ├── structural_services.py # Phase 2: Structural services
-│   ├── agent_fleet.py       #   Phase 3: Agent pool creation
-│   ├── fleet_organization.py #  Phase 4: Pool groups + departments
-│   ├── cognitive_services.py #  Phase 5: Skills, QA, self-mod
-│   ├── communication.py     #   Phase 6: Channels + Discord
-│   ├── dreaming.py          #   Phase 7: Dream engine setup
-│   ├── results.py           #   Phase 8: Result persistence
-│   ├── finalize.py          #   Phase 9: Final initialization
-│   └── shutdown.py          #   Graceful shutdown sequence
-├── routers/                 # FastAPI routers (AD-515–519)
-│   ├── agents.py            #   Agent management endpoints
-│   ├── chat.py              #   Chat + intent processing
-│   ├── wardroom.py          #   Ward Room API
-│   ├── identity.py          #   DID + credential endpoints
-│   ├── procedures.py        #   Cognitive JIT procedures
-│   ├── records.py           #   Ship's Records API
-│   ├── recreation.py        #   Recreation + games
-│   └── ...                  #   + 13 more domain routers
-├── experience/              # User interface
-│   ├── shell.py             #   Async REPL (42 slash commands)
-│   ├── renderer.py          #   Real-time DAG execution display
-│   ├── panels.py            #   Rich panel/table rendering
-│   └── commands/            #   Shell commands (AD-517)
-│       ├── commands_status.py    # /status, /agents, /ping, etc.
-│       ├── commands_memory.py    # /memory, /recall, /dream, etc.
-│       ├── commands_knowledge.py # /knowledge, /search, /scout, etc.
-│       ├── commands_directives.py # /orders, /directives, etc.
-│       ├── commands_autonomous.py # /conn, /night-orders, /watch
-│       ├── commands_procedure.py  # /procedure, /gap, /qualify
-│       └── ...              #   + 6 more command modules
-├── recreation/              # Agent recreation system (AD-526)
-│   ├── games.py             #   Game engine (tic-tac-toe, etc.)
-│   └── creative.py          #   Creative expression channels
-├── ontology/                # Vessel ontology (AD-513)
-│   └── vessel.py            #   Crew manifest + cognitive grounding
-├── storage/                 # Abstract storage interfaces
-│   └── connections.py       #   Cloud-ready DB connection layer
-├── channels/                # Communication adapters
-│   ├── base.py              #   Channel ABC
-│   ├── discord_adapter.py   #   Discord integration
-│   └── response_formatter.py #  Format responses per channel
-├── consensus/               # Multi-agent agreement
-│   ├── quorum.py            #   Confidence-weighted voting
-│   ├── trust.py             #   Bayesian Beta(α,β) reputation
-│   ├── shapley.py           #   Shapley value attribution
-│   └── escalation.py        #   3-tier failure cascade
-├── federation/              # Multi-node mesh
-│   ├── bridge.py            #   ZeroMQ node bridge
-│   ├── router.py            #   Intent forwarding + loop prevention
-│   └── transport.py         #   Transport abstraction
-├── knowledge/               # Persistent storage
-│   ├── store.py             #   Git-backed operational state persistence
-│   └── semantic.py          #   SemanticKnowledgeLayer (ChromaDB)
-├── mesh/                    # Agent coordination
-│   ├── intent.py            #   Pub/sub bus with fan-out
-│   ├── routing.py           #   Hebbian learning (SQLite)
-│   ├── capability.py        #   Fuzzy matching registry
-│   ├── gossip.py            #   SWIM-style state exchange
-│   └── signal.py            #   TTL-enforced signals
-├── substrate/               # Agent lifecycle
-│   ├── agent.py             #   BaseAgent ABC (perceive/decide/act/report)
-│   ├── registry.py          #   Async-safe agent index
-│   ├── spawner.py           #   Template-based factory
-│   ├── pool.py              #   Resource pools + health checks
-│   ├── pool_group.py        #   PoolGroup + PoolGroupRegistry
-│   ├── scaler.py            #   Demand-based pool scaling
-│   ├── heartbeat.py         #   Periodic pulse loop
-│   ├── event_log.py         #   Append-only SQLite audit log
-│   ├── identity.py          #   Deterministic slot identity
-│   └── skill_agent.py       #   SkillBasedAgent (dynamic skill dispatch)
-└── utils/                   # Shared utilities
+ProbOS is a Python runtime with a React web interface, an Electron desktop host, and a large test suite. This page maps where things live; package descriptions come from each package's own docstring.
 
+## Repository Layout
+
+```
+ProbOS/
+├── src/probos/          # The runtime — 993 Python modules (~344,000 lines)
+├── ui/                  # HXI — React 19, Three.js, Zustand, Vite
+├── desktop/             # Electron tray host for the HXI
+├── config/              # system.yaml, standing orders, ontology, skills, manuals, profiles
+├── docs/                # probos.dev sources (MkDocs Material)
+├── tests/               # pytest suite (~40,000 tests)
+├── scripts/             # Test gate, CI sharding, AD ledger, config and architecture checks
+├── prompts/             # Build prompts for architecture decisions
+├── docker/, Dockerfile  # Container build
+├── DECISIONS.md         # Architecture decision log
+└── PROGRESS.md          # Narrative progress log
+```
+
+## Key Modules
+
+| Module | Role |
+|--------|------|
+| `__main__.py` | The `probos` CLI: shell, `serve`, `setup`, `doctor`, `reset`, `migrate`, backups, channels, pairing |
+| `runtime.py` | Top-level orchestrator: boots pools, wires layers, processes natural language |
+| `config.py`, `config_models/` | Pydantic configuration models |
+| `types.py` | Core dataclasses (`IntentMessage`, `IntentResult`, `TaskDAG`, `IntentDescriptor`, …) |
+| `api.py`, `routers/` | FastAPI application and its 67 router modules |
+| `events.py`, `ws_event_stream.py` | Typed event registry and the HXI `/ws/events` stream |
+| `proactive.py` | Proactive cognitive loop — periodic idle-think for crew agents |
+| `workforce.py`, `work_item_steps.py` | Workforce scheduling engine — work items, assignment and durable steps |
+| `identity.py`, `identity_keys.py`, `identity_key_binding.py` | DIDs, birth certificates, the identity ledger, Ed25519 keys |
+| `earned_agency.py` | Rank-based agency and recall tiers |
+
+## Packages by Layer
+
+### Substrate and Mesh
+
+| Package | Purpose |
+|---------|---------|
+| `substrate/` | `BaseAgent`, pools and pool groups, spawner, registry, heartbeat, event log, scaler |
+| `mesh/` | Intent bus, Hebbian routing, capability registry, gossip, signals, NATS bus |
+| `activation/` | TaskEvent protocol and dispatcher; ontology-based task routing |
+| `storage/` | Abstract database storage layer |
+| `infrastructure/` | Backup and storage abstraction |
+
+### Consensus, Governance and Security
+
+| Package | Purpose |
+|---------|---------|
+| `consensus/` | Quorum engine, trust network, Shapley attribution, escalation |
+| `governance/` | Action risk tiers, decision queue, compensation and recovery, tenant policy hook |
+| `security/` | Threat detection, trust integrity, egress and URL guards, permissions, sandboxes, audit |
+
+### Cognitive
+
+| Package | Purpose |
+|---------|---------|
+| `cognitive/` | `CognitiveAgent`, decomposer, memory, dreaming, procedures, agentic dispatch, crew orchestration, crew agents, self-modification |
+| `agents/` | Infrastructure, utility, medical, engineering and operations agents |
+| `tools/` | Tool registry and tools: code execution, browser, delegation, work items, knowledge queries |
+| `execution/` | Governed ephemeral code execution — tiered isolation |
+| `sop/` | Bill System — declarative multi-agent standard operating procedures |
+| `crew_development/` | Crew development framework |
+| `perception/` | Visual perception — frame ingestion and episode anchoring |
+| `consultation/` | Consultation workspaces |
+| `creative/`, `recreation/` | Creative expression and social gaming between agents |
+| `holodeck/` | Holodeck birth chamber and scenarios |
+
+### Knowledge and Records
+
+| Package | Purpose |
+|---------|---------|
+| `knowledge/` | Git-backed KnowledgeStore, Ship's Records, semantic layer, knowledge edges, claims |
+| `ontology/` | Vessel ontology — structure, organization and schema |
+| `artifacts/`, `attachments/` | Versioned, content-addressed artifacts and chat attachments |
+| `threads/`, `task_sessions/` | Chat threads and task sessions |
+| `maintenance/` | Episodic backups and `rebuild-episodic` |
+
+### Experience
+
+| Package | Purpose |
+|---------|---------|
+| `experience/` | Rich terminal shell, slash commands, renderer, panels |
+| `ward_room/` | Ward Room — the crew communication fabric |
+| `channels/` | Discord, Slack, Telegram, Matrix, Teams, Gmail and webhook adapters |
+| `audio/`, `voice/`, `avatars/` | Server-side audio, voice and the avatar pipeline |
+| `settings/`, `workstations/`, `captain_card/`, `cloud_pickers/`, `a2ui/`, `mcp_apps/` | HXI settings, workstation types, the Captain Card, cloud file pickers, choice widgets, MCP app host |
+
+### Federation, Integrations and Extensions
+
+| Package | Purpose |
+|---------|---------|
+| `federation/` | Transports, bridge and router, signed envelopes, peer admission, A2A, ARD |
+| `integrations/` | MCP bridge, Microsoft 365 |
+| `interop/` | Interop adapters (gitagent) |
+| `discovery/` | LAN mDNS discovery for the mobile PADD |
+| `migration/` | Import from OpenClaw and Hermes Agent |
+| `extensions/`, `packs/`, `hooks/` | Extension substrate, capability packs, lifecycle hooks |
+
+### Platform and Operations
+
+| Package | Purpose |
+|---------|---------|
+| `startup/` | Boot phases: agent fleet, fleet organization, dreaming, finalize, … |
+| `doctor/` | Pluggable health checks for `probos doctor` |
+| `maturity/` | Capability truth ledger (AD-1270a) |
+| `degradation/` | Graceful degradation ("saucer separation") |
+| `naval/` | Naval organization protocols, Captain's Log |
+| `onboarding/` | Cold-start helpers |
+| `utils/` | Shared helpers |
+
+## Configuration
+
+```
 config/
-├── system.yaml              # Main configuration
-└── standing_orders/         # Constitution hierarchy
-    ├── federation.md        #   Tier 1: Federation Constitution
-    ├── ship.md              #   Tier 2: Ship Standing Orders
-    ├── engineering.md       #   Tier 3: Department protocols
-    ├── science.md
-    ├── medical.md
-    ├── security.md
-    ├── operations.md
-    ├── bridge.md
-    ├── builder.md           #   Tier 4: Agent standing orders
-    ├── architect.md
-    ├── counselor.md
-    └── ... (15+ agent files)
-
-ui/src/                      # HXI — Human Experience Interface (React + Three.js)
-├── canvas/                  #   WebGL cognitive mesh visualization
-├── components/              #   IntentSurface, MissionControl, SystemOrb, overlays
-├── audio/                   #   TTS, speech input, sound engine
-├── store/                   #   Zustand state management + TypeScript types
-└── hooks/                   #   WebSocket connection to runtime
+├── system.yaml          # Reference configuration (181 sections)
+├── standing_orders/     # Federation, ship, department and agent standing orders
+│   └── crew_profiles/   #   Crew personalities and seed callsigns
+├── ontology/            # Vessel ontology: organization, crew, communication, records, …
+├── skills/              # Cognitive skills (SKILL.md)
+├── manuals/             # Crew manuals
+├── profiles/, extension_profiles/, contracts/, task_orders/
 ```
 
-### Wave 3 Decomposition (AD-515/516/517/518/519)
+## Web Interface
 
-The three largest files in the codebase were decomposed into focused modules:
+```
+ui/src/
+├── components/          # React components: bridge, Ward Room, workstations, approvals, profiles, …
+├── canvas/              # WebGL cognitive mesh visualization
+├── chat/                # Chat surfaces
+├── audio/               # TTS, speech input, sound engine
+├── avatars/             # Avatar rendering
+├── store/               # Zustand state management + TypeScript types
+├── hooks/               # WebSocket connection to the runtime
+├── pwa/                 # Mobile PADD (progressive web app)
+└── __tests__/           # Vitest suites
+```
 
-| Original File | Before | After | Reduction | New Package |
-|--------------|--------|-------|-----------|-------------|
-| `runtime.py` | 5,321 lines | 2,762 lines | -48.1% | `startup/` (10 modules) |
-| `api.py` | 3,109 lines | 295 lines | -90.5% | `routers/` (21 modules) |
-| `shell.py` | 1,883 lines | 507 lines | -73.1% | `experience/commands/` (13 modules) |
+## History: Wave 3 Decomposition (AD-515 to AD-519)
+
+In March 2026 the three largest files were decomposed into focused modules:
+
+| Original File | Before | After | New Package |
+|--------------|--------|-------|-------------|
+| `runtime.py` | 5,321 lines | 2,762 lines | `startup/` |
+| `api.py` | 3,109 lines | 295 lines | `routers/` |
+| `shell.py` | 1,883 lines | 507 lines | `experience/commands/` |
+
+`runtime.py` has since grown back to about 6,100 lines as capabilities were added; the [AD-1270 Platform Maturity Program](platform-maturity-program.md) is moving ownership behind bounded facades.

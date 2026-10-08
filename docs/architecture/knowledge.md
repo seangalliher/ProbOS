@@ -58,6 +58,6 @@ ChromaDB collections provide vector-similarity search across different knowledge
 |------|---------|
 | `knowledge/store.py` | Git-backed operational state persistence |
 | `knowledge/semantic.py` | SemanticKnowledgeLayer (ChromaDB collections) |
-| `ships_records/notebooks.py` | Agent notebook management |
-| `ships_records/duty_log.py` | Duty log entries |
-| `ships_records/captains_log.py` | Captain's Log |
+| `knowledge/records_store.py` | Ship's Records — notebooks, duty logs and reports |
+| `knowledge/notebook_quality.py` | Notebook quality metrics |
+| `naval/captains_log.py` | Captain's Log |

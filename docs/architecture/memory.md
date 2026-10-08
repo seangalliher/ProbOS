@@ -82,14 +82,14 @@ Each agent's short-term scratchpad. Context windows, intermediate reasoning, too
 
 The vertical promotion mechanism. During dream cycles (offline consolidation), the system:
 1. Replays recent episodic memories (Layer 3)
-2. Extracts strategy patterns via LLM analysis
+2. Clusters episodes and extracts procedures from successful clusters (Cognitive JIT)
 3. Updates Hebbian weights and trust records (Layer 4b)
-4. Prunes low-value connections
+4. Prunes low-value connections and decays unreinforced memories
 5. Pre-warms routing for the next wake cycle
 
 Dream consolidation is biologically inspired — it mirrors how mammalian brains consolidate short-term memories into long-term storage during sleep. The "elevator" metaphor: experiences ride up from Layer 3 to become permanent knowledge in Layers 4-5.
 
-**ProbOS implementation:** `DreamingEngine` (`cognitive/dreaming.py`), strategy extraction, Hebbian weight consolidation, trust snapshot persistence.
+**ProbOS implementation:** `DreamingEngine` (`cognitive/dreaming.py`), episode clustering and procedure extraction, Hebbian weight consolidation, trust snapshot persistence. See [Dreaming](cognitive.md#dreaming) for the full cycle.
 
 ### Layer 3: Vector Store (Associative Cortex)
 
@@ -107,7 +107,7 @@ Persistent associative memory. Experiences, semantic embeddings, and contextual 
 Split into two sub-layers reflecting fundamentally different knowledge types:
 
 **4a. Formal Models (Constitutional)** — Authored, versioned, human-approved. Changes require deliberate design decisions.
-- Vessel Ontology (AD-429) — formal concept hierarchy across 8 domains
+- Vessel Ontology (AD-429) — formal concept hierarchy across 9 domains
 - Standing Orders (AD-339) — 4-tier behavioral constitution
 - Skill definitions — procedural templates
 - Alert condition definitions
@@ -135,8 +135,8 @@ Split into two sub-layers reflecting different persistence models:
 - Trust snapshots — serialized trust network state
 - Routing weights — Hebbian connection weights
 - Agent source code — self-designed agent configurations
+- Skills — designed skill source and quarantine state
 - QA reports — system quality assessment results
-- Extracted strategies — dream cycle outputs
 
 **Key distinction:** 5a is authored knowledge — agents and humans write documents that other agents can read and learn from. 5b is system state — machine-generated checkpoints for warm boot and recovery. An agent reads 5a like a library; an agent restores 5b like loading a save file.
 
@@ -173,11 +173,11 @@ ProbOS's memory architecture maps to Nonaka & Takeuchi's (1995) SECI knowledge c
 | Phase | Description | ProbOS Implementation | Status |
 |-------|-------------|----------------------|--------|
 | **Socialization** | Tacit → Tacit. Knowledge shared through shared experience | Ward Room discussions, agent-to-agent conversation | Implemented |
-| **Externalization** | Tacit → Explicit. Knowledge articulated into formal concepts | Ship's Records — agents write findings into notebooks/reports | AD-434 (planned) |
-| **Combination** | Explicit → Explicit. Formal knowledge recombined into new insights | Ship's Records cross-referencing, Oracle queries across tiers | AD-434 + Oracle (planned) |
+| **Externalization** | Tacit → Explicit. Knowledge articulated into formal concepts | Ship's Records — agents write findings into notebooks/reports | Implemented (AD-434) |
+| **Combination** | Explicit → Explicit. Formal knowledge recombined into new insights | Ship's Records cross-referencing, Oracle queries across tiers | Implemented (AD-434, Oracle Service AD-462e) |
 | **Internalization** | Explicit → Tacit. Formal knowledge absorbed through practice | SemanticKnowledgeLayer recall → agent behavior change | Partial (data is operational state, not authored knowledge) |
 
-**Gap analysis:** Before AD-434, ProbOS had Socialization (Ward Room) and partial Internalization (semantic recall), but Externalization and Combination were missing entirely. The duty-output pipeline (agents produce professional records as part of duties) had no place to store results — findings evaporated after each cognitive cycle.
+**Gap analysis:** Before AD-434, ProbOS had Socialization (Ward Room) and partial Internalization (semantic recall), but Externalization and Combination were missing entirely. The duty-output pipeline (agents produce professional records as part of duties) had no place to store results — findings evaporated after each cognitive cycle. Ship's Records closed that gap.
 
 ## Duty-Output Pipeline
 
@@ -195,38 +195,40 @@ Every crew member produces professional records as part of their duties. Ship's 
 
 ## Nooplex Paper Alignment
 
-The "Shared Memory" principle from "The Nooplex: A Planetary Cognitive Ecosystem" (Galliher, 2026) was initially listed as well-covered by ProbOS, but deeper analysis (AD-434 research) revealed the **shared knowledge fabric is not implemented**:
+The "Shared Memory" principle from "The Nooplex: A Planetary Cognitive Ecosystem" (Galliher, 2026) was initially listed as well-covered by ProbOS, but deeper analysis (AD-434 research) found that the **shared knowledge fabric was not implemented**:
 
 - KnowledgeStore was intended to be the "shared library" but evolved into operational state persistence
-- No agent writes knowledge to it — only system processes (dream consolidation, QA, trust snapshots)
-- Dream consolidation modifies in-memory weights but does not promote distilled insights to a shared corpus
+- No agent wrote knowledge to it — only system processes (dream consolidation, QA, trust snapshots)
+- Dream consolidation modified in-memory weights but did not promote distilled insights to a shared corpus
 
-**AD-434 (Ship's Records)** is designed to be the actual implementation of the Nooplex shared knowledge fabric:
+**AD-434 (Ship's Records)** now provides that fabric within a ship:
 - Captain's Log (human contributes) → agent notebooks (agents amplify & document) → Ward Room discussion (human refines) → dream consolidation → notebook entries (substrate evolves)
 - This four-phase cycle maps to the SECI knowledge creation model
 - It also implements the Nooplex paper's "Human-Agent Knowledge Feedback Loop" (Gap #10)
+
+Sharing knowledge *across* sovereign meshes — the Nooplex Core Fabric — is a separate, not-yet-started readiness tier; see the [Nooplex Readiness Map](../development/nooplex-readiness.md).
 
 ## Related Documents
 
 | Document | Scope |
 |----------|-------|
 | [Knowledge Layer](knowledge.md) | KnowledgeStore and SemanticKnowledgeLayer implementation details |
-| [Cognitive Architecture](cognitive.md) | Dream consolidation, strategy extraction |
-| [Experience Layer](experience.md) | EpisodicMemory, Selective Encoding Gate |
-| [AD-434 (Ship's Records)](../../docs/development/roadmap.md) | Detailed design for institutional memory |
-| [Roadmap — Research](../../docs/development/roadmap-research.md) | Nooplex paper alignment gaps |
+| [Cognitive Architecture](cognitive.md) | Episodic memory, dream consolidation, procedure extraction |
+| [Roadmap](../development/roadmap.md) | Ship's Records (AD-434) and related work |
+| [Roadmap — Research](../development/roadmap-research.md) | Nooplex paper alignment gaps |
 
 ## Source Files
 
 | File | Layer | Purpose |
 |------|-------|---------|
 | `knowledge/store.py` | 5b | Git-backed operational state persistence |
+| `knowledge/records_store.py` | 5a | Ship's Records |
 | `knowledge/semantic.py` | 3 | SemanticKnowledgeLayer (5 ChromaDB collections) |
-| `cognitive/episodic_memory.py` | 3 | Autobiographical episode storage |
+| `cognitive/episodic.py` | 2→3 | Autobiographical episode storage and the Selective Encoding Gate (`should_store`) |
 | `cognitive/dreaming.py` | Elevator | Dream consolidation engine |
-| `cognitive/strategy_extraction.py` | Elevator | Pattern extraction from episodes |
-| `cognitive/cognitive_journal.py` | 3 | Per-agent decision records |
-| `cognitive/encoding_gate.py` | 2→3 | Selective encoding (what gets remembered) |
-| `ward_room.py` | Bus | Social communication fabric |
+| `cognitive/procedures.py` | Elevator | Procedure extraction from episode clusters |
+| `cognitive/journal.py` | 3 | Per-agent decision records |
+| `cognitive/oracle_service.py` | 3–5 | Cross-tier unified memory query |
+| `ward_room/` | Bus | Social communication fabric |
 | `consensus/trust.py` | 4b | Bayesian trust records |
 | `mesh/routing.py` | 4b | Hebbian connection weights |

@@ -1,18 +1,77 @@
 # Agent Inventory
 
-ProbOS boots with ~60 agent instances across 36 pools organized in 9 pool groups (6 departments + core, utility, self-mod).
+With the shipped `config/system.yaml`, ProbOS boots **81 agents in 51 pools**: fifteen sovereign crew agents and the Captain's Yeoman, the Ship's Computer's infrastructure and service agents, and ten bundled utility pools. Smaller configurations — such as the one `probos setup` writes — boot fewer, because pools for disabled features are not created. `/agents` and `/manifest` show what is aboard a running ship.
 
 ## Three-Tier Agent Architecture
 
 ProbOS distinguishes three tiers of agents based on identity:
 
-| Tier | Identity | Example |
-|------|----------|---------|
-| **Infrastructure** | No identity — Ship's Computer services | IntrospectAgent, VitalsMonitor, RedTeamAgent |
-| **Utility** | No identity — bundled tools | WebSearch, Calculator, Translator |
-| **Crew** | Sovereign individuals with callsigns, personality, memory | Meridian (Architect), Echo (Counselor), Worf (Security) |
+| Tier | Identity | Examples |
+|------|----------|----------|
+| **Infrastructure** | No identity — Ship's Computer services | File and shell agents, introspection, vitals monitor, red team |
+| **Utility** | No identity — bundled tools | Web search, calculator, translator |
+| **Crew** | Sovereign individuals with callsigns, personality, memory | The First Officer, the Counselor, the department chiefs |
 
 The principle: *"If it doesn't have Character/Reason/Duty, it's not crew. A microwave with a name tag isn't a person."*
+
+---
+
+## Crew Agents (Sovereign Individuals)
+
+Each crew agent has a `did:probos` identity and birth certificate, a Big Five personality seed, an episodic memory shard, a trust reputation, and a rank — Ensign, Lieutenant, Commander or Senior — earned through demonstrated competence. Crew agents communicate through the Ward Room and form memories from their interactions.
+
+Posts, the chain of command and seed callsigns come from the vessel ontology (`config/ontology/organization.yaml`). On a vessel's first boot each crew agent takes part in a **naming ceremony** and may choose its own callsign; the seed callsign is the fallback, so names differ from ship to ship.
+
+### Bridge
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Captain | Human operator — final authority | — | — |
+| First Officer (also Chief Science Officer) | `architect` | Number One | `architect` |
+| Ship's Counselor | `counselor` | Troi | `counselor` |
+| Ship's Yeoman — the Captain's personal assistant | `yeoman` | Yeo | `yeoman` |
+
+### Engineering
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Chief Engineer | `engineering_officer` | LaForge | `engineering_officer` |
+| Builder | `builder` | Forge | `builder` |
+
+### Science
+
+Chief: the First Officer, dual-hatted as Chief Science Officer.
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Scout | `scout` | Wesley | `scout` |
+| Data Analyst | `data_analyst` | Rahda | `science_data_analyst` |
+| Systems Analyst | `systems_analyst` | Dax | `science_systems_analyst` |
+| Research Specialist | `research_specialist` | Brahms | `science_research_specialist` |
+
+The Science Analytical Pyramid: data flows up (Data Analyst → Systems Analyst → Research Specialist), questions flow down.
+
+### Medical
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Chief Medical Officer | `diagnostician` | Bones | `medical_diagnostician` |
+| Surgeon | `surgeon` | Pulaski | `medical_surgeon` |
+| Pharmacist | `pharmacist` | Ogawa | `medical_pharmacist` |
+| Pathologist | `pathologist` | Selar | `medical_pathologist` |
+
+### Security
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Chief of Security | `security_officer` | Worf | `security_officer` |
+
+### Operations
+
+| Post | Agent type | Seed callsign | Pool |
+|------|------------|---------------|------|
+| Chief of Operations | `operations_officer` | O'Brien | `operations_officer` |
+| Training Officer | `training_officer` | Tucker | `training_officer` |
 
 ---
 
@@ -20,25 +79,42 @@ The principle: *"If it doesn't have Character/Reason/Duty, it's not crew. A micr
 
 These agents provide system services. They may use LLMs but have no sovereign identity, personality, or episodic memory shard.
 
-| Pool | Count | Capabilities | Consensus Required |
+| Pool | Count | Capabilities | Consensus |
 |------|-------|-------------|-----------|
 | `system` | 2 | Heartbeat monitoring (CPU, load, PID) | No |
 | `filesystem` | 3 | `read_file`, `stat_file` | No |
-| `filesystem_writers` | 3 | `write_file` | Yes |
+| `filesystem_writers` | 3 | `write_file` | Propose, then commit on approval |
 | `directory` | 3 | `list_directory` | No |
 | `search` | 3 | `search_files` (recursive glob) | No |
-| `shell` | 3 | `run_command` (30s timeout) | Yes |
-| `http` | 3 | `http_fetch` (1MB cap, per-domain rate limiting) | No |
-| `introspect` | 2 | `explain_last`, `agent_info`, `system_health`, `why` | No |
-| `red_team` | 2 | Independent result verification, write verification | N/A |
-| `system_qa` | 1 | Smoke tests for designed agents | No |
+| `code_search` | 2 | `search_content` (content search) | No |
+| `shell` | 3 | `run_command` | Executes, then scored |
+| `http` | 3 | `http_fetch` (GET and HEAD, SSRF guard, per-domain rate limiting, 1 MB default cap) | No |
+| `code_runner` | 1 | `run_python`, `install_package` (governed code execution; opt-in) | Executes, then scored |
+| `introspect` | 2 | `explain_last`, `why`, `agent_info`, `team_info`, `system_health`, `system_anomalies`, `emergent_patterns`, `introspect_memory`, `introspect_system`, `introspect_design`, `search_knowledge` | No |
+| `medical_vitals` | 1 | Continuous health metrics | No |
+| `system_qa` | 1 | Smoke tests for self-designed agents | No |
+| red team | 2 | Independent result verification | — |
 
-!!! note "Consensus-gated operations"
-    Operations marked "Yes" require multi-agent agreement before execution. This includes file writes and shell commands — operations that modify state or execute arbitrary code.
+### Service Pools
+
+| Pool(s) | Purpose |
+|---------|---------|
+| `engineering_performance`, `engineering_maintenance`, `engineering_damage_control` | Engineering monitors: performance, maintenance and damage control |
+| `operations_resource_allocator`, `operations_scheduler`, `operations_coordinator` | Operations monitors: resources, scheduling and coordination |
+| `office_docx`, `office_pptx`, `office_xlsx` | Word, PowerPoint and Excel document work (`docx_create`, `docx_revise`, `pptx_create`, `xlsx_update`; executed, then scored) |
+| `quartermaster` | Work-board reconciliation |
+| `nl_graph_query` | Natural-language structural queries over the ship's graph ("who reports to the chief engineer?") |
+| `mcp_consensus` | Voters for MCP tool invocations that need consensus (propose only, never execute) |
+| `skills` | `SkillBasedAgent` — dynamic skill dispatch (self-modification) |
+
+Opt-in pools that the shipped configuration leaves off: SWE specialists (`backend_swe`, `frontend_swe`, `test_swe`, `infrastructure_swe`, `data_swe`) and device-actuation voters (`device_consensus`). Self-designed agents (`designed_*`) appear as `CognitiveAgent` subclasses when the self-modification pipeline creates them.
+
+!!! note "What a consensus vote buys"
+    "Propose, then commit on approval" intents are truly gated: nothing happens unless the quorum approves. "Executes, then scored" intents run on broadcast, and the vote scores the outcome for trust and learning without authorizing or undoing it. See [Consensus](../architecture/consensus.md).
 
 ## Utility Agents (10 pools)
 
-"Useful on Day 1" — bundled tools that ship with ProbOS.
+"Useful on Day 1" — bundled tools that ship with ProbOS, two agents per pool.
 
 | Pool | Capabilities |
 |------|-------------|
@@ -54,80 +130,6 @@ These agents provide system services. They may use LLMs but have no sovereign id
 | `scheduler` | Scheduling and reminders |
 
 All utility agents are `CognitiveAgent` subclasses with `IntentDescriptor` metadata for automatic discovery.
-
----
-
-## Crew Agents (Sovereign Individuals)
-
-Each crew agent has a callsign, Big Five personality traits, episodic memory shard, trust reputation, and rank (Ensign → Lieutenant → Commander → Senior). They communicate through the Ward Room and form memories from their interactions.
-
-### Bridge
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| Captain | — | Human operator — final authority | — |
-| **ArchitectAgent** | Meridian | First Officer — designs build specs from intent | `architect` |
-| **CounselorAgent** | Echo | Ship's Counselor — cognitive wellness, therapeutic intervention | `counselor` |
-
-### Engineering Department
-
-Chief: LaForge (EngineeringAgent)
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| **EngineeringAgent** | LaForge | Department Chief — system architecture + performance | `engineering_officer` |
-| **BuilderAgent** | — | Code generation via Transporter Pattern | `builder` |
-| **CodeReviewAgent** | — | Reviews Builder output against Standing Orders | `code_reviewer` |
-
-### Science Department
-
-Chief: Number One (ArchitectAgent, dual-hatted)
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| **DataAnalystAgent** | Kira | Data Analyst — quantitative analysis | `science_data_analyst` |
-| **SystemsAnalystAgent** | Lynx | Systems Analyst — cross-system pattern analysis | `science_systems_analyst` |
-| **ResearchSpecialistAgent** | Atlas | Research Specialist — deep domain research | `science_research_specialist` |
-| **ScoutAgent** | Horizon | Scout — external + internal research | `scout` |
-
-The Science Analytical Pyramid: Data flows up (Kira → Lynx → Atlas), questions flow down.
-
-### Medical Department
-
-Chief: Bones (DiagnosticianAgent)
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| **DiagnosticianAgent** | Bones | Chief Medical Officer — system diagnostics | `medical_diagnostician` |
-| **SurgeonAgent** | Chapel | Targeted remediation of degraded components | `medical_surgeon` |
-| **VitalsMonitorAgent** | Chapel | Continuous health metrics collection | `medical_vitals` |
-| **PharmacistAgent** | Keiko | Configuration remediation prescriptions | `medical_pharmacist` |
-| **PathologistAgent** | Cortez | Deep failure analysis + post-mortem | `medical_pathologist` |
-
-### Security Department
-
-Chief: Worf (SecurityAgent)
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| **SecurityAgent** | Worf | Trust integrity, threat detection | `security_officer` |
-
-### Operations Department
-
-Chief: O'Brien (OperationsAgent)
-
-| Agent | Callsign | Role | Pool |
-|-------|----------|------|------|
-| **OperationsAgent** | O'Brien | Resource management, scheduling, watch rotation | `operations_officer` |
-
----
-
-## System Agents (conditional)
-
-| Pool | Purpose | When Active |
-|------|---------|-------------|
-| `skills` | Dynamic skill execution (`SkillBasedAgent`) | Self-mod enabled |
-| `designed_*` | Self-designed agents (`CognitiveAgent` subclasses) | Created at runtime |
 
 ## Test Agent
 
