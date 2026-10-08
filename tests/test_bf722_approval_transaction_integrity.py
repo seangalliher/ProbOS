@@ -133,6 +133,14 @@ class _RecordingRouter:
     async def on_work_item_created(self, event: dict[str, Any]) -> None:
         self.dispatched.append(event)
 
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+        # BF-887: AD-855 re-dispatches through BF-810's outcome-returning entry.
+        self.dispatched.append({"type": "work_item_created", "data": {"work_item": wi}})
+        return True
+
+    def is_dispatchable(self, wi: dict[str, Any]) -> bool:
+        return True
+
 
 class _EventBus:
     """The runtime's local event dispatch, faithfully enough to prove the chain.

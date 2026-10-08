@@ -57,6 +57,7 @@ from probos.routers.capability_requests import (
 )
 from probos.runtime import ProbOSRuntime
 from probos.tools.permissions import ToolPermissionStore
+from probos.cognitive.turn_promotion import RESUME_STARTED
 from probos.tools.protocol import ToolPermission
 from probos.tools.registry import ToolRegistry
 from probos.workforce import WorkItemStore
@@ -69,13 +70,53 @@ _PKG = "feedparser"
 
 
 class _RecordingRouter:
-    """Stub WorkItemRouter that records re-dispatch calls (AD-855's shape)."""
+    """Stub WorkItemRouter that records re-dispatch calls (AD-855's shape).
+
+    BF-887: AD-855 now re-dispatches through ``dispatch_work_item`` -- BF-810's
+    entry, which says whether the item was admitted -- instead of
+    ``on_work_item_created``, which said nothing. Each call is recorded in the
+    envelope the assertions were written against, and admitted, as before.
+    """
 
     def __init__(self) -> None:
         self.dispatched: list[dict[str, Any]] = []
 
     async def on_work_item_created(self, event: dict[str, Any]) -> None:
         self.dispatched.append(event)
+
+    async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+        self.dispatched.append({"type": "work_item_created", "data": {"work_item": wi}})
+        return True
+
+    def is_dispatchable(self, wi: dict[str, Any]) -> bool:
+        return True
+
+
+class _ResumingAgent:
+    """BF-887: the consumer an approved ``continue`` hands a promoted turn to.
+
+    Records each work item it is asked to resume and starts nothing, so a chain
+    test sees the resume reach the agent that ran the turn -- and, by the router
+    double above recording nothing, not the router.
+    """
+
+    def __init__(self, agent_id: str) -> None:
+        self.id = agent_id
+        self.resumed: list[str] = []
+
+    def resume_promoted_turn(self, work_item_id: str, request_id: str) -> str:
+        self.resumed.append(work_item_id)
+        return RESUME_STARTED
+
+
+class _AgentRegistry:
+    """BF-887: ``runtime.registry`` as the resume reads it -- ``get(agent_id)``."""
+
+    def __init__(self, *agents: Any) -> None:
+        self._agents = {agent.id: agent for agent in agents}
+
+    def get(self, agent_id: str) -> Any:
+        return self._agents.get(agent_id)
 
 
 class _EventBus:

@@ -1691,4 +1691,8 @@ def test_stranded_reason_codes_match_their_producers() -> None:
 
     assert turn_promotion._UNCONFIRMED_EXPIRED_REASON in si.STRANDED_REASON_CODES
     assert '"stalled_not_dispatchable"' in quartermaster.read_text(encoding="utf-8")
-    assert si.STRANDED_REASON_CODES == {"stalled_not_dispatchable", "unconfirmed_grace_expired"}
+    # BF-887: a resumed promoted turn nothing could take is the third producer.
+    assert turn_promotion.RESUME_LOST_REASONS <= si.STRANDED_REASON_CODES
+    assert si.STRANDED_REASON_CODES == {
+        "stalled_not_dispatchable", "unconfirmed_grace_expired", *turn_promotion.RESUME_LOST_REASONS,
+    }

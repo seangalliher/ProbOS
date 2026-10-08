@@ -171,10 +171,12 @@ async def test_decide_continue_crosses_real_event_driver_router_and_execution_qu
     assert state["work_item"]["status"] == "in_progress"
     assert len(state["execution_calls"]) == 1
     delivered = state["execution_calls"][0]
-    assert delivered["intent"] == "work_item_dispatched"
+    # BF-887 (#1163): a promoted turn's approval is handed to the agent that ran
+    # it, never to the router. This asserted a router delivery, which only this
+    # fixture's ``dispatchable`` flag made possible: the production item carries
+    # none, and on the reference vessel the real router dropped it.
+    assert delivered["intent"] == "promoted_turn_resume"
     assert delivered["params"]["work_item_id"] == scenario["work_item_id"]
-    assert delivered["params"]["_source_type"] == "work_item_router"
-    assert delivered["params"]["routing_reason"] == "direct_assigned_hint"
     assert delivered["work_status"] == "in_progress"
     assert delivered["agent_id"] == scenario["agent_id"]
     assert state["decision_posts"] == [{
@@ -183,8 +185,8 @@ async def test_decide_continue_crosses_real_event_driver_router_and_execution_qu
     }]
     assert state["event_counts"][EventType.CAPABILITY_REQUEST_DECIDED.value] == 1
     assert state["event_counts"][EventType.CAPABILITY_REQUEST_FULFILLED.value] == 1
-    assert state["event_counts"][EventType.HYBRID_DISPATCH_DIRECT.value] == 1
-    assert state["event_counts"]["task_event_dispatched"] == 1
+    assert state["event_counts"].get(EventType.HYBRID_DISPATCH_DIRECT.value, 0) == 0
+    assert state["event_counts"].get("task_event_dispatched", 0) == 0
     assert len(state["trust_outcomes"]) == 1
     assert (await client.get("/api/capability-requests/actionable")).json()["requests"] == []
     assert state["action"]["approvals"] == []
@@ -481,7 +483,11 @@ async def test_real_router_nondispatchable_item_cannot_fake_execution_from_statu
     assert response.status_code == 200 and response.json()["fulfilled"]
     state = await _state(client)
     assert state["work_item"]["status"] == "in_progress"
-    assert state["execution_calls"] == []
+    # BF-887 (#1163): this is the production item's shape, and this asserted
+    # that approving it ran nothing -- the defect, pinned. The turn is now
+    # handed to its agent, once, and the router still dispatches nothing.
+    assert [call["intent"] for call in state["execution_calls"]] == ["promoted_turn_resume"]
+    assert state["execution_calls"][0]["params"]["work_item_id"] == scenario["work_item_id"]
     assert state["event_counts"].get("task_event_dispatched", 0) == 0
 
 

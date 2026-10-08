@@ -12,13 +12,25 @@ from probos.workforce import WorkItemStore
 
 
 class _RecordingRouter:
-    """Stub WorkItemRouter that records re-dispatch calls."""
+    """Stub WorkItemRouter that records re-dispatch calls.
+
+    BF-887: AD-855 re-dispatches through ``dispatch_work_item`` (BF-810), which
+    reports whether the item was admitted; recorded in the envelope these
+    assertions were written against, and admitted.
+    """
 
     def __init__(self) -> None:
         self.dispatched: list[dict] = []
 
     async def on_work_item_created(self, event: dict) -> None:
         self.dispatched.append(event)
+
+    async def dispatch_work_item(self, wi: dict) -> bool:
+        self.dispatched.append({"type": "work_item_created", "data": {"work_item": wi}})
+        return True
+
+    def is_dispatchable(self, wi: dict) -> bool:
+        return True
 
 
 @pytest.fixture

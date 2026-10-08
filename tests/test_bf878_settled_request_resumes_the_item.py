@@ -16,15 +16,16 @@ acts on an item since parked on another request (A-1). Parking writes the
 status and the request id in one write, so no event sees one without the other.
 
 On AD-1204's continue path the post-park check gives the item what the event
-handler would have: the same board move and the same router call. Whether that
-call continues the turn is #1163's question, not this file's: AD-1165's promoted
-items carry no dispatchable tag.
+handler would have: the same board move and the same hand-off. Since BF-887
+(#1163) that hand-off is to the agent that ran the turn, never the router: the
+router dropped AD-1165's promoted items, which carry no dispatchable tag, and
+the turn never ran again.
 
 Every chain test runs the real stores, the real driver and AD-1211's event-bus
 double (synchronous hook; a coroutine listener spawned as a task, as
-``runtime._emit_event_local`` does). Each one asserts the re-dispatch, because
-the router is the consumer that has to accept the resumed item. Checking only
-the status would miss that.
+``runtime._emit_event_local`` does). Each one asserts the consumer that has to
+accept the resumed item -- the router for an ordinary item, the agent for a
+promoted turn. Checking only the status would miss that.
 """
 
 from __future__ import annotations
@@ -48,8 +49,10 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission
 from probos.workforce import WorkItemStore, WorkTypeDefinition, WorkTypeTransition
 from tests.test_ad1211_approval_fulfils_every_kind import (
+    _AgentRegistry,
     _EventBus,
     _RecordingRouter,
+    _ResumingAgent,
     _Runtime,
     _SelfMod,
     _ToolRegistry,
@@ -196,10 +199,13 @@ async def make_rig(tmp_path: Path) -> AsyncIterator[Callable[..., Awaitable[_Rig
         requests = requests_cls(db_path=requests_db, emit_event=bus.emit)
         await requests.start()
         router = _RecordingRouter()
+        # BF-887: the agent a resumed promoted turn is handed to.
+        agent = _ResumingAgent("agent-1")
         runtime = _Runtime(
             work_item_router=router,
             work_item_store=work_items,
             capability_request_store=requests,
+            registry=_AgentRegistry(agent),
             tool_permission_store=perms,
             trust_network=SimpleNamespace(get_score=lambda _agent_id: 0.99),
             ontology=SimpleNamespace(get_agent_department=lambda _agent_id: "science"),
@@ -223,7 +229,7 @@ async def make_rig(tmp_path: Path) -> AsyncIterator[Callable[..., Awaitable[_Rig
         assert await work_items.transition_work_item(item.id, "in_progress", source="agent-1")
         rig = _Rig(
             work_items=work_items, perms=perms, bus=bus, requests=requests, requests_db=requests_db,
-            router=router, runtime=runtime, driver=driver, item=item,
+            router=router, runtime=runtime, driver=driver, item=item, agent=agent,
         )
         built.append(rig)
         return rig
@@ -294,17 +300,6 @@ async def _promoted_turn(rig: _Rig) -> Any:
     return turn
 
 
-def _redispatch_shape(event: dict[str, Any], item_id: str, request_id: str) -> dict[str, Any]:
-    """A router call with what differs between two rigs taken out: ids and clocks."""
-    item = dict(event["data"]["work_item"])
-    assert item.pop("id") == item_id
-    metadata = dict(item.pop("metadata"))
-    assert metadata.pop("capability_request_id") == request_id
-    item.pop("created_at")
-    item.pop("updated_at")
-    return {"type": event["type"], "item": item, "metadata": metadata}
-
-
 # -- Seam: the request is fulfilled at filing time ---------------------------
 
 
@@ -353,8 +348,9 @@ async def test_a_continue_ask_decided_before_parking_gets_what_its_event_would_h
     """The post-park check gives a turn's item what its FULFILLED event gives one parked first.
 
     Both items are made the way AD-1165 records a promoted turn. They end with the same board
-    move and the same router call, and that is all this asserts: whether the call continues the
-    turn is #1163's question, and AD-1165's items carry no dispatchable tag.
+    move and the same hand-off. BF-887: the hand-off is to the agent that ran the turn, and the
+    router is never handed it -- this asserted a router call, which on the reference vessel
+    dropped the item and ran nothing (#1163).
     """
     decided_first = await make_rig(requests_cls=_DecidedOnFiling)
     parked_first = await make_rig()
@@ -373,7 +369,7 @@ async def test_a_continue_ask_decided_before_parking_gets_what_its_event_would_h
         else:
             parked = await rig.work_items.get_work_item(turn.id)
             assert parked is not None and parked.status == "blocked", "premise: parked, then decided"
-            assert rig.router.dispatched == []
+            assert rig.agent.resumed == []
             await rig.requests.decide(request_id, True, reason="", decided_by="captain")
             await rig.requests.mark_fulfilled(request_id)
             await rig.bus.drain()
@@ -381,11 +377,14 @@ async def test_a_continue_ask_decided_before_parking_gets_what_its_event_would_h
         assert stored is not None and stored.status == "fulfilled" and stored.work_item_id == turn.id
         resumed = await rig.work_items.get_work_item(turn.id)
         assert resumed is not None and resumed.status == "in_progress"
-        assert len(rig.router.dispatched) == 1
-        shapes.append(_redispatch_shape(rig.router.dispatched[0], turn.id, request_id))
+        assert rig.router.dispatched == []
+        assert rig.agent.resumed == [turn.id]
+        metadata = dict(resumed.metadata)
+        assert metadata.pop("capability_request_id") == request_id
+        shapes.append({"status": resumed.status, "metadata": metadata, "tags": resumed.tags})
 
     assert shapes[0] == shapes[1]
-    assert shapes[0]["item"]["status"] == "in_progress"
+    assert shapes[0]["status"] == "in_progress"
 
 
 # -- Boundaries ---------------------------------------------------------------

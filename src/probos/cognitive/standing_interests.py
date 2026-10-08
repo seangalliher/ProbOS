@@ -98,8 +98,13 @@ MAX_TRANSPARENCY_PENDING = 8
 # [NO_RESPONSE] and an AD-672 shed look the same) is consumed as delivered.
 MAX_SILENT_DELIVERIES = 2
 # The closed stranding codes their producers write (quartermaster.py:339,
-# turn_promotion.py:239 ``_UNCONFIRMED_EXPIRED_REASON``).
-STRANDED_REASON_CODES: frozenset[str] = frozenset({"stalled_not_dispatchable", "unconfirmed_grace_expired"})
+# turn_promotion.py:239 ``_UNCONFIRMED_EXPIRED_REASON``, and BF-887's
+# ``turn_promotion.RESUME_LOST_REASONS``: a resumed turn nothing could take).
+STRANDED_REASON_CODES: frozenset[str] = frozenset({
+    "stalled_not_dispatchable", "unconfirmed_grace_expired",
+    "continue_resume_no_agent", "continue_resume_no_continuation",
+    "continue_resume_start_failed", "continue_resume_unidentified",
+})
 # The kind of the notice that tells a subject a cross-agent interest exists.
 TRANSPARENCY = "transparency"
 # C-1 (the Captain's open question), in-envelope default: the subject is told.
