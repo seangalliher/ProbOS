@@ -174,6 +174,11 @@ export function AgentProfilePanel() {
       .catch(() => {});
   }, []);
   const dragOffset = useRef({ x: 0, y: 0 });
+  // BF-888 (#1367): the chat composer's row, read when the avatar popout opens so that it opens clear of it.
+  // A-1: held in state through a callback ref, so a composer that mounts after the popout opened (Chat selected
+  // later) hands the popout a new reader.
+  const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null);
+  const readComposerRect = useCallback((): DOMRect | null => composerEl?.getBoundingClientRect() ?? null, [composerEl]);
 
   const agent = agentId ? agents.get(agentId) : null;
   const profileResource = useProfileResource({
@@ -732,7 +737,7 @@ export function AgentProfilePanel() {
                 [ProfileChatTab | ArtifactDrawer] row. The drawer is
                 self-contained (thread artifacts, collapsible rail). */}
             <div style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <ProfileChatTab agentId={agentId} onArtifactOpen={handleArtifactOpen} />
+              <ProfileChatTab agentId={agentId} onArtifactOpen={handleArtifactOpen} composerRef={setComposerEl} />
             </div>
             {!isWorkspaceFilesRoom && <ArtifactDrawer
               threadId={artifactThreadId ?? null}
@@ -758,6 +763,7 @@ export function AgentProfilePanel() {
           appearance={profileData?.appearance ?? null}
           departmentColor={deptColor}
           agentSignals={deriveAgentSignals(agentId, useStore.getState() as any)}
+          keepClear={readComposerRect}
           onClose={() => {
             setAvatarOpen(false);
             setProposedDsl(null);

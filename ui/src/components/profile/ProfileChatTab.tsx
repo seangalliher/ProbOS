@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type Ref } from 'react';
 import { useStore, type AD791aChatThreadView } from '../../store/useStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { isProgressIdentity } from '../../store/liveToolProgress';
@@ -98,6 +98,9 @@ interface Props {
    * thread. When unset, behavior is unchanged. */
   threadId?: string;
   onArtifactOpen?: ArtifactOpenCallback;
+  /** BF-888 (#1367): the composer row (attach, screen, message input, voice and Send), so that an owner
+   * can open floating windows clear of it. */
+  composerRef?: Ref<HTMLDivElement>;
 }
 
 type ScreenMode = 'once' | 'live';
@@ -287,7 +290,7 @@ async function requestProgressThread(
   }
 }
 
-export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
+export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef }: Props) {
   const conversation = useStore((s) => s.agentConversations.get(agentId));
   const activeThreadId = useStore((state) =>
     resolveProfileThreadId(threadId, state.activeProfileThreadId, state.threadIdByAgent, agentId),
@@ -2458,7 +2461,7 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen }: Props) {
       )}
 
       {/* Input */}
-      <div style={{
+      <div ref={composerRef} data-testid="profile-chat-composer" style={{
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
