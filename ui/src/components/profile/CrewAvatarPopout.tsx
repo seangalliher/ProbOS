@@ -8,6 +8,9 @@ import { CrewVRM } from './CrewVRM';
 import { CrewAvatarEditor } from './CrewAvatarEditor';
 import { ParametricAvatar } from './ParametricAvatar';
 import { diffAvatarDsl } from './avatarDslDiff';
+import {
+  avatarPopoutLateRect, avatarPopoutOpeningRect, isKeepClearRegion, type KeepClearRect,
+} from './avatarPopoutPlacement';
 import type { AgentSignals } from './avatarSignals';
 import type { AvatarDSLDict } from '../../store/types';
 
@@ -49,12 +52,20 @@ interface Props {
   onRenderPreview?: () => void | Promise<void>;
   previewInFlight?: boolean;
   previewError?: string | null;
+  // BF-888 (#1367): reads the region the popout must open clear of -- the chat composer. Read when the popout
+  // mounts and, until it finds a region, again for each new reader the owner hands over (A-1: a composer that
+  // mounted after the popout opened); a popout the user drags or resizes is never re-placed.
+  keepClear?: () => KeepClearRect | null;
 }
 
 const MIN_W = 220;
 const MIN_H = 320;
 const DEFAULT_W = 320;
 const DEFAULT_H = 480;
+
+function readViewport(): { w: number; h: number } {
+  return typeof window !== 'undefined' ? { w: window.innerWidth, h: window.innerHeight } : { w: 1024, h: 768 };
+}
 
 export function CrewAvatarPopout(props: Props): ReactElement {
   return <ParticipantAvatarPopout key={props.agentId} {...props} />;
@@ -79,6 +90,7 @@ function ParticipantAvatarPopout({
   onRenderPreview,
   previewInFlight,
   previewError,
+  keepClear,
 }: Props) {
   const [failedAttempt, setFailedAttempt] = useState<string | null>(null);
   const [retryAttempt, setRetryAttempt] = useState(0);
@@ -112,13 +124,31 @@ function ParticipantAvatarPopout({
   const [mediateError, setMediateError] = useState<string | null>(null);
   const [mediateIteration, setMediateIteration] = useState<number | null>(null);
 
-  // Window position + size state. Initialise to bottom-right (the previous fixed location).
-  const [pos, setPos] = useState(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
-    return { x: Math.max(0, vw - DEFAULT_W - 24), y: Math.max(0, vh - DEFAULT_H - 24) };
+  // Window position + size state. Opens at the bottom-right (the previous fixed location) unless that would
+  // cover the owner's keep-clear region (BF-888, #1367); a drag or resize is never re-placed.
+  const [opening] = useState(() => {
+    const region = keepClear?.() ?? null;
+    return {
+      rect: avatarPopoutOpeningRect(readViewport(), { w: DEFAULT_W, h: DEFAULT_H }, region),
+      placed: isKeepClearRegion(region),
+    };
   });
-  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H });
+  const [pos, setPos] = useState({ x: opening.rect.x, y: opening.rect.y });
+  const [size, setSize] = useState({ w: opening.rect.w, h: opening.rect.h });
+  // A-1: true once a placement has used a region, or once the user has moved or resized the popout.
+  const settled = useRef(opening.placed);
+  // A-1: opened before the region existed (another tab was showing), the popout completes its opening placement
+  // once, when a new reader first finds the region -- unless the user has moved or resized it since.
+  useEffect(() => {
+    if (settled.current || !keepClear) return;
+    const region = keepClear();
+    if (!isKeepClearRegion(region)) return;
+    settled.current = true;
+    const late = avatarPopoutLateRect(opening.rect, readViewport(), { w: DEFAULT_W, h: DEFAULT_H }, region);
+    if (!late) return;
+    setPos({ x: late.x, y: late.y });
+    setSize({ w: late.w, h: late.h });
+  }, [keepClear, opening]);
 
   // Drag/resize gesture state — kept in refs to avoid stale closures.
   const gesture = useRef<
@@ -130,6 +160,7 @@ function ParticipantAvatarPopout({
   const onMouseMove = useCallback((e: MouseEvent) => {
     const g = gesture.current;
     if (!g) return;
+    settled.current = true;
     if (g.kind === 'drag') {
       const vw = window.innerWidth;
       const vh = window.innerHeight;

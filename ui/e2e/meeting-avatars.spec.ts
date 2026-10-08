@@ -86,7 +86,12 @@ test.describe('issue #1367 controlled microphone and avatar transitions', () => 
           profileReads += 1;
           const participant = url.pathname.split('/')[3];
           return route.fulfill({ json: {
-            id: participant, callsign: participant === 'ezri' ? 'Ezri' : 'Yeo', isCrew: true,
+            // A complete AgentProfileData: validProfile (#1370) refuses a partial profile, appearance and all.
+            id: participant, agentType: 'crew', callsign: participant === 'ezri' ? 'Ezri' : 'Yeo',
+            displayName: participant === 'ezri' ? 'Ezri' : 'Yeo', rank: 'ensign', agencyLevel: 'reactive',
+            department: 'science', state: 'active', tier: 'domain', pool: 'bridge', isCrew: true,
+            trust: 0.5, confidence: 1, trustHistory: [], personality: {}, specialization: [], hebbianConnections: [],
+            proactiveCooldown: null, memoryCount: null, uptime: null,
             appearance: { vrm_url: `/api/system/avatars/missing-${participant}.vrm`, expression_overrides: {}, color_palette_hint: '' },
           } });
         }
@@ -469,4 +474,113 @@ test.describe('issue1367 ownership', () => {
       }
     });
   }
+});
+
+test.describe('issue #1367 avatar popout placement (BF-888)', () => {
+  type Box = { x: number; y: number; width: number; height: number };
+  const overlaps = (a: Box, b: Box): boolean =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  // Ezri's 1:1 chat with avatars on, browser voice and a recogniser that keeps listening once started.
+  async function openEzriChat(page: Page, viewport: { width: number; height: number }) {
+    await page.setViewportSize(viewport);
+    const isolation = await isolateAvatarBrowser(page);
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/config/avatars-enabled') return route.fulfill({ json: { enabled: true } });
+      if (path === '/api/voice/health') return route.fulfill({ json: { engine: 'browser', enabled: true } });
+      return route.fallback();
+    });
+    await page.addInitScript(() => {
+      const probe = { started: 0 };
+      (window as any).__placementProbe = probe;
+      class HeldRecognition {
+        onresult: ((event: unknown) => void) | null = null;
+        onend: (() => void) | null = null;
+        start(): void { probe.started += 1; }
+        stop(): void { this.onend?.(); }
+        abort(): void { this.onend?.(); }
+      }
+      (window as any).SpeechRecognition = HeldRecognition;
+      (window as any).webkitSpeechRecognition = HeldRecognition;
+      localStorage.setItem('hxi_chat_mic_mode_ezri', 'ptt');
+    });
+    await gotoApp(page);
+    await seedAgents(page, [EZRI, YEO]);
+    await page.evaluate(() => (window as any).__store.setState({ activeProfileAgent: 'ezri', activeProfileThreadId: null }));
+    // The composer row is the message input's parent; Send and voice are looked up inside it.
+    const composer = page.getByPlaceholder('Message...', { exact: true }).locator('..');
+    return {
+      isolation,
+      composer,
+      send: composer.getByRole('button', { name: 'Send', exact: true }),
+      voice: composer.getByRole('button', { name: 'Voice input', exact: true }),
+      popout: page.getByRole('dialog', { name: 'Avatar — ezri', exact: true }),
+    };
+  }
+
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 430, height: 932 }]) {
+    test(`opens clear of the composer, Send and voice at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+      const { isolation, composer, send, voice, popout } = await openEzriChat(page, viewport);
+      await expect(send).toBeVisible();
+      await expect(voice).toBeVisible();
+
+      await page.getByRole('button', { name: 'Show avatar', exact: true }).click();
+      await expect(popout).toBeVisible();
+      const box = (await popout.boundingBox())!;
+      const controls: Record<string, Box> = {
+        composer: (await composer.boundingBox())!,
+        send: (await send.boundingBox())!,
+        voice: (await voice.boundingBox())!,
+      };
+      for (const [name, control] of Object.entries(controls)) {
+        expect(control.width * control.height, `${name} has a box`).toBeGreaterThan(0);
+        expect(control.y + control.height, `${name} is on screen`).toBeLessThanOrEqual(viewport.height);
+        expect(overlaps(box, control), `${name} is under the popout`).toBe(false);
+      }
+      if (viewport.width === 1440) {
+        expect(box).toEqual({ x: 1096, y: 496, width: 320, height: 480 });
+      } else {
+        expect(box).toMatchObject({ x: 86, width: 320, height: 480 });
+        expect(Math.abs(box.y + box.height + 8 - controls.composer.y)).toBeLessThanOrEqual(1);
+      }
+      for (const control of [send, voice]) {
+        const target = (await control.boundingBox())!;
+        expect(await control.evaluate((button, point) => {
+          const hit = document.elementFromPoint(point.x, point.y);
+          return { onControl: !!hit && button.contains(hit), inPopout: !!hit?.closest('[role="dialog"]') };
+        }, { x: target.x + target.width / 2, y: target.y + target.height / 2 })).toEqual({ onControl: true, inPopout: false });
+      }
+
+      await voice.click();
+      await expect(composer.getByRole('button', { name: 'Stop listening', exact: true })).toBeVisible();
+      await expect(popout).toBeVisible();
+      expect(await page.evaluate(() => (window as any).__placementProbe.started)).toBeGreaterThan(0);
+      expect(isolation.rejected).toEqual([]);
+    });
+  }
+
+  test('opened on Work at 430x932, moves clear of the composer, Send and voice once Chat is selected (A-1)', async ({ page }) => {
+    const { isolation, composer, send, voice, popout } = await openEzriChat(page, { width: 430, height: 932 });
+    await expect(voice).toBeVisible();
+    await page.getByRole('button', { name: 'Work', exact: true }).click();
+    await expect(composer).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show avatar', exact: true }).click();
+    await expect(popout).toBeVisible();
+    expect(await popout.boundingBox()).toEqual({ x: 86, y: 428, width: 320, height: 480 });
+
+    await page.getByRole('button', { name: 'Chat', exact: true }).click();
+    await expect(voice).toBeVisible();
+    await expect.poll(async () => overlaps((await popout.boundingBox())!, (await composer.boundingBox())!),
+      { message: 'the composer is clear of the popout once Chat is selected' }).toBe(false);
+    const box = (await popout.boundingBox())!;
+    for (const control of [send, voice]) expect(overlaps(box, (await control.boundingBox())!)).toBe(false);
+    expect(box).toMatchObject({ x: 86, width: 320, height: 480 });
+    expect(Math.abs(box.y + box.height + 8 - (await composer.boundingBox())!.y)).toBeLessThanOrEqual(1);
+
+    await voice.click();
+    await expect(composer.getByRole('button', { name: 'Stop listening', exact: true })).toBeVisible();
+    await expect(popout).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__placementProbe.started)).toBeGreaterThan(0);
+    expect(isolation.rejected).toEqual([]);
+  });
 });
