@@ -53,7 +53,8 @@ from rich.text import Text
 
 from probos import provider_setup
 from probos.cognitive.episodic import EpisodicMemory
-from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, _LLM_TIERS
+from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, TEXT_TIERS, _LLM_TIERS
+from probos.cognitive.model_router import build_model_routing, ceiling_denials
 from probos.config import load_config
 from probos.runtime import ProbOSRuntime
 from probos.experience.shell import ProbOSShell
@@ -203,10 +204,19 @@ async def _ensure_ollama(config, console: Console) -> None:
     import httpx
 
     # Collect Ollama tier configs
+    # BF-886 A-1: a warm-up is a generation request, so a text tier the model
+    # routing cost ceiling leaves no model is not warmed up.
+    denied = ceiling_denials(config)
     ollama_tiers: list[dict] = []
     for tier in _LLM_TIERS:
         tc = config.cognitive.tier_config(tier)
         if tc.get("api_format") == "ollama":
+            if tier in denied:
+                console.print(
+                    f"  [dim]Not warming up the {tier} tier: the model routing "
+                    "cost ceiling admits none of its models[/dim]"
+                )
+                continue
             ollama_tiers.append(tc)
 
     if not ollama_tiers:
@@ -297,11 +307,19 @@ async def _ensure_ollama(config, console: Console) -> None:
 
 
 async def _create_llm_client(config, console: Console):
-    """Create an LLM client from config, falling back to MockLLMClient."""
+    """Create an LLM client from config, falling back to MockLLMClient.
+
+    BF-886 A-1: the model router, with its cost ceiling, is attached before the
+    first probe -- a probe is a generation request -- so a text tier the
+    ceiling leaves no model is not probed, is reported as excluded rather than
+    unreachable, and never on its own selects MockLLMClient.
+    """
     from rich.markup import escape
 
     cog = config.cognitive
-    client = OpenAICompatibleClient(config=cog, rate_config=config.llm_rate)
+    router = build_model_routing(config)
+    denied = {} if router is None else router.denials(TEXT_TIERS)
+    client = OpenAICompatibleClient(config=cog, rate_config=config.llm_rate, model_router=router)
 
     console.print("  Checking LLM endpoints...")
     connectivity = await client.check_connectivity()
@@ -314,13 +332,19 @@ async def _create_llm_client(config, console: Console):
             continue
         reachable = connectivity.get(tier, False)
         where = escape(provider_setup.shown_base_url(tc["base_url"], keys))  # AD-1137 A-2: as `probos doctor` shows it
+        if tier in denied:
+            reason = escape(provider_setup.redact_keys(denied[tier], keys))
+            console.print(f"  [yellow]\u2717[/yellow] LLM {tier}: not probed at {where}: {reason}")
+            continue
         if reachable:
             model = escape(provider_setup.redact_keys(tc["model"], keys))
             console.print(f"  [green]\u2713[/green] LLM {tier}: {model} at {where}")
         else:
             console.print(f"  [yellow]\u2717[/yellow] LLM {tier}: {where} unreachable")
 
-    if not any(connectivity.values()):
+    # BF-886 A-1: a tier the cost ceiling excludes was not probed. Its exclusion
+    # is a budget decision, not an outage, so it never selects the mock.
+    if not any(connectivity.values()) and not denied:
         # All endpoints unreachable — fall back to mock
         await client.close()
         console.print(
