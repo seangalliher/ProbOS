@@ -9,6 +9,10 @@ port, and its peer's ``api_url`` names that port. Per-node ``extras`` are merged
 ``a2a=True`` (AD-1198 slice 3b) each pinned node's A2A server is bound to its own reserved 127.0.0.1 port, and the
 node's extras decide whether that server is enabled. ``transfer`` and ``foreign`` (AD-1198 slice 2a) move a crew
 member between the ships with a transfer certificate and its chain, and read what each identity registry then holds.
+With ``recovery_public_keys`` (AD-1198 slice 2b-iii) every boot of a node, its mint included, configures the Captain's
+recovery public key, so that its inception commits it; ``fork`` copies a stopped node's data directory to a fresh root,
+from which that node then boots as itself until ``unfork`` -- one run per node, so the copy and the original never run
+together, and nothing on disk is shared; ``slot`` gives a transferred crew member a slot, as only a caller can.
 In the ``mitm`` topology each node's peer address is a ``WireProxy`` lane, a blocking-pyzmq relay that can drop,
 duplicate and replay whole payloads; in the ``direct`` topology (the shipped one) the nodes connect to each other.
 
@@ -27,6 +31,7 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -89,12 +94,15 @@ def derive_node_config(
     pinned_public_key: str | None = None,
     api_url: str | None = None,
     extra: Mapping[str, Mapping[str, Any]] | None = None,
+    recovery_public_key: str = "",
 ) -> Path:
     """The shipped ``config/<name>.yaml`` derived for one offline boot; written to ``<root>/<short>/<phase>.yaml``.
 
     ``mint`` boots with federation off, only to commission the ship key. ``pinned`` arms envelope signing under
     policy ``require`` and peer admission, with the one peer pinned to ``pinned_public_key``; ``api_url`` names
-    that peer's main API, and each ``extra`` section (a dotted path) is merged into the derived config.
+    that peer's main API, and each ``extra`` section (a dotted path) is merged into the derived config. In either
+    phase ``recovery_public_key`` (AD-1198 slice 2b-iii) configures the Captain's recovery public key, which the mint's
+    inception commits.
     """
     other = OTHER[name]
     data = yaml.safe_load((REPO / "config" / f"{name}.yaml").read_text(encoding="utf-8"))
@@ -109,6 +117,8 @@ def derive_node_config(
     federation["bind_address"] = f"tcp://127.0.0.1:{bind_port}"
     peers[0]["address"] = f"tcp://127.0.0.1:{peer_port}"
     federation.update(forward_timeout_ms=2000, identity_keys_enabled=True, identity_key_store="plaintext_dev")
+    if recovery_public_key:  # AD-1198 slice 2b-iii the Captain's recovery public key: the inception commits it
+        federation["identity_recovery_public_key"] = recovery_public_key
     if phase == "mint":
         assert api_url is None and extra is None, "a mint boot serves no API and takes no extras"
         federation["enabled"] = False
@@ -388,6 +398,7 @@ class ClusterHarness:
         http: bool = False,
         a2a: bool = False,
         extras: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
+        recovery_public_keys: Mapping[str, str] | None = None,
     ) -> None:
         if topology not in ("mitm", "direct"):
             raise ValueError(f"unknown topology {topology!r}")
@@ -404,6 +415,8 @@ class ClusterHarness:
         self._api_ports: dict[str, int] = {}
         self._a2a_ports: dict[str, int] = {}
         self._extras = dict(extras or {})
+        self._recovery_keys = dict(recovery_public_keys or {})  # AD-1198 slice 2b-iii configured in every boot of the node
+        self._forks: dict[str, Path] = {}  # AD-1198 slice 2b-iii a forked node boots from its copy's root until unforked
         self._runs: dict[str, _Run] = {}
         self._run_counts = {name: 0 for name in NODES}
         self._tokens: dict[str, str] = {}
@@ -470,8 +483,12 @@ class ClusterHarness:
             return self.proxy.front_port("1to2" if name == "node-1" else "2to1")
         return self._ports[OTHER[name]]
 
+    def _root_of(self, name: str) -> Path:
+        """The root ``name`` boots from: its copy's while it is forked (AD-1198 slice 2b-iii), the harness's otherwise."""
+        return self._forks.get(name, self.root)
+
     def _data_dir(self, name: str) -> Path:
-        return node_dir(self.root, name) / "d"
+        return node_dir(self._root_of(name), name) / "d"
 
     def _pinned_extra(self, name: str) -> dict[str, dict[str, Any]] | None:
         """``name``'s extras for a pinned boot; with ``a2a`` its A2A server binds its reserved 127.0.0.1 port."""
@@ -481,23 +498,27 @@ class ClusterHarness:
         return extra or None
 
     def _assert_isolated(self, name: str, config: Path, env: dict[str, str]) -> None:
-        own, other = node_dir(self.root, name), node_dir(self.root, OTHER[name])
-        assert not own.is_relative_to(other) and not other.is_relative_to(own), (own, other)
+        own = node_dir(self._root_of(name), name)
+        others = {node_dir(self.root, node) for node in NODES} - {own}  # AD-1198 slice 2b-iii a copy names neither node's directory
         text = config.read_text(encoding="utf-8")
-        for needle in {str(other), other.as_posix()}:  # no shared filesystem: nothing names the other node's root
-            assert needle not in text, f"{name}'s config names {other}"
-            assert not any(needle in value for value in env.values()), f"{name}'s environment names {other}"
+        for other in sorted(others):
+            assert not own.is_relative_to(other) and not other.is_relative_to(own), (own, other)
+            for needle in {str(other), other.as_posix()}:  # no shared filesystem: nothing names another node's directory
+                assert needle not in text, f"{name}'s config names {other}"
+                assert not any(needle in value for value in env.values()), f"{name}'s environment names {other}"
 
     def _spawn(self, name: str, phase: Literal["mint", "pinned"], pin: str | None) -> None:
         assert name not in self._runs, f"{name} is already running"
         serve_api = self.http and phase == "pinned"
+        root = self._root_of(name)  # AD-1198 slice 2b-iii a forked node boots from its copy's root
         config = derive_node_config(
-            name, self.root, bind_port=self._ports[name], peer_port=self._peer_port(name), phase=phase,
+            name, root, bind_port=self._ports[name], peer_port=self._peer_port(name), phase=phase,
             pinned_public_key=pin, api_url=self.api_url(OTHER[name]) if serve_api else None,
             extra=self._pinned_extra(name) if phase == "pinned" else None,
+            recovery_public_key=self._recovery_keys.get(name, ""),
         )
         data_dir = self._data_dir(name)
-        env = child_env(self.root, name, data_dir)
+        env = child_env(root, name, data_dir)
         self._assert_isolated(name, config, env)
         self.control.forget(name)
         self._run_counts[name] += 1
@@ -509,7 +530,7 @@ class ClusterHarness:
                     sys.executable, "-X", "utf8", "-u", str(NODE_RUNNER), str(config), str(data_dir),
                     str(self.control.port), name, *([str(self._api_ports[name])] if serve_api else []),
                 ],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(node_dir(self.root, name)),
+                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(node_dir(root, name)),
             )
         except BaseException:
             log.close()
@@ -627,6 +648,30 @@ class ClusterHarness:
         self.stop(name)
         return self.boot(name)[name]
 
+    def fork(self, name: str, root: Path) -> Path:
+        """The fork producer (AD-1198 slice 2b-iii): copy stopped ``name``'s data directory to the fresh ``root``, from which
+        ``name`` then boots until ``unfork``; the copy's data directory.
+
+        The copy holds ``name``'s ledger, its ship keys (``plaintext_dev`` keeps them in the data directory) and its envelope
+        store as they were when it stopped, so it boots as ``name`` -- the same node id, ports and pinned peer -- and its
+        next key event parts from the original's. One run per node, so the copy and the original never run together; the
+        copy's config, home, knowledge repo and working directory are under ``root``, and its boot is refused before any
+        process starts if its config or environment names either node's own directory (``_assert_isolated``). Its run
+        logs are the parent's, numbered on under the harness root.
+        """
+        assert name not in self._runs, f"{name} is running: only a stopped node is forked"
+        assert name not in self._forks, f"{name} is already forked"
+        source, copy = self._data_dir(name), node_dir(root, name)
+        assert source.is_dir() and not copy.exists(), (source, copy)  # a stopped node's data, copied to a fresh root
+        shutil.copytree(source, copy / "d")
+        self._forks[name] = root
+        return copy / "d"
+
+    def unfork(self, name: str) -> None:
+        """``name`` boots from its own data directory again (AD-1198 slice 2b-iii); the copy is kept, never booted with it."""
+        assert name not in self._runs, f"{name} is running: stop the copy before unforking it"
+        assert self._forks.pop(name, None) is not None, f"{name} is not forked"
+
     # -- operations -----------------------------------------------------------------------------------------
 
     def forward(self, path: str, sender: str = "node-1", *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -697,6 +742,13 @@ class ClusterHarness:
         origin ship's chain; the ``foreign`` event."""
         self.control.send(name, op="foreign", agent_uuid=agent_uuid, did=did, origin_ship_did=origin_ship_did)
         return self.control.wait(name, "foreign", OP_TIMEOUT_S)
+
+    def slot(self, name: str, agent_uuid: str, slot_id: str) -> dict[str, Any]:
+        """``name``'s identity registry gives ``agent_uuid`` the slot ``slot_id`` (AD-443d ``reassign_slot``); the
+        ``slotted`` event. A transferred crew member has no slot until a caller gives it one, and the agent identity
+        endpoint finds a record only by its slot (AD-1198 slice 2b-iii)."""
+        self.control.send(name, op="slot", agent_uuid=agent_uuid, slot_id=slot_id)
+        return self.control.wait(name, "slotted", OP_TIMEOUT_S)
 
     def put_attachment(self, name: str, data: bytes, mime: str) -> str:
         """Store ``data`` in ``name``'s production attachment store; its content hash."""
