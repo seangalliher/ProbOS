@@ -10,15 +10,20 @@ Unlike a single-agent assistant, ProbOS:
 
 - **Decomposes** your request into a directed-acyclic graph of typed intents.
 - **Routes** each intent to the agent best suited to handle it (learned weights).
-- **Gates** destructive operations behind multi-agent consensus voting.
+- **Governs** consequential operations through multi-agent consensus voting and
+  the Captain's approval; each intent declares whether its vote authorizes the
+  act beforehand or scores it afterwards.
 - **Records** every step in episodic memory for replay and continuous learning.
 
 ## Why It's Different
 
-- **Agent-native**: every component is an autonomous agent. There is no central
-  scheduler. Agents self-organize via capability matching.
-- **Probabilistic consensus**: destructive ops require multi-agent quorum
-  voting with confidence weighting and Shapley attribution.
+- **Agent-native**: every component is an autonomous agent. No central planner
+  decides which agent thinks about what — agents self-organize via capability
+  matching and learned routing — while deterministic services guarantee durable
+  workflow steps such as recovery and exactly-once delivery.
+- **Probabilistic consensus**: consequential operations go to a multi-agent
+  quorum vote with confidence weighting and Shapley attribution, and each
+  intent declares whether its vote authorizes the act or scores it afterwards.
 - **Bayesian trust**: each agent carries a Beta(alpha, beta) reputation that
   the runtime updates after every interaction.
 - **Self-modification**: capability gaps trigger LLM-based agent design,

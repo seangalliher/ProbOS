@@ -10,8 +10,15 @@ git clone https://github.com/seangalliher/ProbOS.git
 cd ProbOS
 uv sync
 
-# Run the test suite
-uv run pytest tests/ -v
+# Run focused tests while you work
+uv run pytest tests/test_trust.py -q
+
+# Run the full Python suite (~40,000 tests, parallel through pytest-xdist; takes a while)
+uv run pytest tests/ -q
+
+# HXI and desktop host tests
+npm --prefix ui test
+npm --prefix desktop test
 ```
 
 ## Development Workflow
@@ -162,24 +169,25 @@ When renaming, moving, or removing attributes during decomposition:
 
 - **Three capability tiers: Agents, Tools, Skills.** Agents are the unit of behavior (crew members who think and decide). Tools are the unit of action (instruments like tricorders — typed callables shared across agents). Skills are the unit of knowledge (data access attached to agents). Rule of thumb: if someone would ask for it, it's an agent. If it performs a specific action any agent might need, it's a tool. If an agent needs reference data to do its job, it's a skill.
 - **Self-describing agents.** Every agent declares `IntentDescriptor` metadata so the system discovers it automatically.
-- **Consensus for side effects.** Any operation that modifies external state must go through the consensus layer.
+- **Consensus for side effects.** An intent that modifies external state declares `requires_consensus=True` on its `IntentDescriptor`, together with a `consensus_mode` that states what the vote buys: `propose_commit` (agents propose; the runtime commits only on approval), `external_gate` (a human approval gates the effect) or `execute_then_vote` (the act runs first and the vote scores it). Prefer `propose_commit` wherever the agent can describe the effect without performing it.
 - **Test everything.** Each layer has comprehensive tests. New code should maintain coverage.
 
 ## Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| [pydantic](https://docs.pydantic.dev/) >=2.0 | Configuration validation |
-| [pyyaml](https://pyyaml.org/) >=6.0 | YAML config loading |
-| [aiosqlite](https://github.com/omnilib/aiosqlite) >=0.19 | Async SQLite |
-| [rich](https://rich.readthedocs.io/) >=13.0 | Terminal UI |
-| [httpx](https://www.python-httpx.org/) >=0.27 | HTTP client |
-| [pyzmq](https://pyzmq.readthedocs.io/) >=27.1 | ZeroMQ transport |
-| [chromadb](https://docs.trychroma.com/) >=1.0 | Vector database |
-| [fastapi](https://fastapi.tiangolo.com/) >=0.115 | API server |
-| [uvicorn](https://www.uvicorn.org/) >=0.34 | ASGI server |
+Python dependencies are declared in [`pyproject.toml`](https://github.com/seangalliher/ProbOS/blob/main/pyproject.toml):
 
-Dev: pytest >=8.0, pytest-asyncio >=0.23, vitest (UI)
+| Area | Packages |
+|------|----------|
+| Runtime and configuration | pydantic, pyyaml, python-dotenv, rich, croniter, tzdata |
+| Storage and memory | aiosqlite, chromadb, sentence-transformers, torch |
+| API and networking | fastapi, uvicorn, python-multipart, httpx, nats-py, pyzmq, jsonschema |
+| Identity and credentials | cryptography, keyring, msal |
+| Documents and data for agents | pypdf, python-docx, python-pptx, openpyxl, reportlab, matplotlib, pillow, numpy, pandas, beautifulsoup4, lxml, tabulate, requests |
+| Perception | facenet-pytorch |
+
+Optional extras: `dev`, `discord`, `slack`, `copilot`, `browser`, `discovery`, `crew-tools`. A tool may only advertise a library that is a declared dependency of the package shipping it.
+
+Dev: pytest >=8.0, pytest-asyncio >=0.23, pytest-xdist, pytest-timeout, pytest-cov; Vitest for `ui/` and `desktop/`.
 
 ## Windows Development
 
@@ -189,7 +197,7 @@ ProbOS is developed primarily on Windows. A few environment setup steps are need
 
 - **Python 3.12+** via [uv](https://docs.astral.sh/uv/) (recommended) or standalone install
 - **Git for Windows** — ensure `git` is on your system PATH (`where git` should resolve)
-- **Node.js 18+** — for the HXI/UI layer (`ui/`)
+- **Node.js 20+** — for the HXI (`ui/`) and the desktop host (`desktop/`)
 
 ### Shell Setup
 

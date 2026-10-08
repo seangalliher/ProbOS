@@ -31,7 +31,21 @@ Pools maintain a target number of agents for each capability. Key behaviors:
 
 ### Pool Groups
 
-Pools are organized into 7 department-level PoolGroups (Medical, Engineering, Science, Security, Operations, Communications, Bridge). Each group maintains health metrics and provides department-wide views via the `PoolGroupRegistry`.
+Pools are organized into PoolGroups, registered at boot by `startup/fleet_organization.py` and managed by the `PoolGroupRegistry`. Each group maintains health metrics and provides a department-wide view. A boot with the shipped `config/system.yaml` registers nine:
+
+| Pool group | Pools |
+|------------|-------|
+| Core Systems | `system`, `filesystem`, `filesystem_writers`, `directory`, `search`, `code_search`, `code_runner`, `shell`, `http`, `introspect`, `medical_vitals`, `system_qa` |
+| Bridge | `counselor`, `yeoman` |
+| Engineering | `builder`, `engineering_officer` |
+| Science | `architect`, `scout`, `science_data_analyst`, `science_systems_analyst`, `science_research_specialist` |
+| Medical | `medical_diagnostician`, `medical_surgeon`, `medical_pharmacist`, `medical_pathologist` |
+| Security | `security_officer` |
+| Operations | `operations_officer`, `training_officer` |
+| Self-Modification | `skills` |
+| Utility Agents | the ten bundled utility pools |
+
+Service pools outside the groups — engineering and operations monitors, office-document agents, the work-board quartermaster, graph queries and consensus proposers — and the red-team verifiers bring that boot to 81 agents in 51 pools. Pools for disabled features are not created, and the Utility, Medical and Self-Modification groups are registered only when their features are enabled.
 
 ### Registry
 
@@ -57,7 +71,7 @@ Persistent agent identity that survives restarts. Agents maintain a stable ID ti
 | `substrate/registry.py` | Async-safe agent index |
 | `substrate/spawner.py` | Template-based factory |
 | `substrate/pool.py` | Resource pools + health checks |
-| `substrate/pool_group.py` | PoolGroup + PoolGroupRegistry (7 departments) |
+| `substrate/pool_group.py` | PoolGroup + PoolGroupRegistry |
 | `substrate/scaler.py` | Demand-based pool scaling |
 | `substrate/heartbeat.py` | Periodic pulse loop |
 | `substrate/event_log.py` | Append-only SQLite audit log |

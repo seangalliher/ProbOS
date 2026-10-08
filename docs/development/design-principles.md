@@ -227,3 +227,31 @@ In a system where LLMs are the execution engine, standing orders, crew profiles,
 **Where it breaks down:** Markdown "code" is interpreted probabilistically. Python is deterministic. The same standing order can produce different behavior depending on context, model temperature, and prompt composition. This isn't a flaw — it's the design. Probabilistic agents, consensus governance. But it means "testing" markdown code requires statistical validation (does this instruction produce the desired behavior *most of the time*?), not assertion testing.
 
 **The deeper point:** ProbOS has three execution substrates: Python (deterministic infrastructure), YAML (structured configuration), and Markdown (behavioral programming). All three are code. The starship metaphor makes this intuitive — standing orders on a real ship ARE operational code. They just run on wetware instead of silicon.
+
+## Recent Principles (2026)
+
+### Hybrid Coordination (AD-1231)
+
+Every component is an autonomous agent, and coordination is **hybrid by design** — not because a central scheduler crept in, but because neither pure model is right for every kind of work.
+
+**Agents choose what to work on** wherever the work is cognitive, discretionary or discoverable: intent routing, capability matching, Hebbian-learned pairings, proactive attention, self-claiming from the work board. There is no central dispatcher deciding which agent thinks about what, and adding one would be a regression.
+
+**A deterministic service owns durable workflow time** where the requirement is a guarantee rather than a judgement: admission and concurrency bounds, compare-and-set state transitions, crash recovery, exactly-once delivery, cancellation and drain. `CrewOrchestrator` is the reference case. An emergent negotiation cannot promise those properties.
+
+**The boundary test is who decides *what*.** A service may decide when a durable step runs, in what order, and whether it may run twice. An agent decides what the work is, whether to take it, and how to do it. A service that starts choosing which agent is best suited, or ranking work by relevance, belongs back in the mesh; an agent that starts owning compare-and-set or exactly-once delivery belongs behind a service.
+
+The objection to conventional multi-agent orchestrators is that one planner becomes the single point of thought — every decision queues behind it. A service that sequences durable state while many agents reason concurrently is not that. Review the *scope* of what a central component decides, not merely its existence.
+
+### Composable Cognition — Agents Are Organisms
+
+The agent-native principle applied inward. A cognitive agent is an **organism**: a **spine** plus a set of **cognitive organs** — attention, memory, valuation, perception, dreaming. The spine is the agent's central nervous system: synchronous, in-process and private. The mesh is the ship's nervous system across agents: asynchronous and governed. Same pattern, scale-appropriate properties.
+
+Organs are **child components**, not mesh-registered agents: they are born and retired with their agent, and their identity is namespaced under it. A capability is an organ only if it has a distinct cognitive function, persistent cross-cycle state, a perceive → decide → act shape, one-to-one ownership, and introspectable state. Compose organs, not neurons. Migration to this model must be behavior-preserving. See [Composable Cognition](composable-cognition.md).
+
+### Secure but Not Limited — Governance Buys Autonomy
+
+A ProbOS agent should reach the same productive ceiling as a foreground coding agent while running unattended. Governance is not the tax paid for capability; it is what purchases the autonomy that makes capability worth having. A foreground assistant pays for its freedom with the human's continuous attention; a persistent agent pays with SSRF checks, rate limits, consensus and audit, and in exchange may act when nobody is watching.
+
+- **A capability ceiling must be a decision, never an inheritance.** Every constraint states what it defends and what it costs. A cap nobody chose is a defect, not a safeguard.
+- **Prefer a governed path over a removed one.** When an agent cannot do something a coding agent can, route the capability through the mesh's controls — for example, broker a sandbox's web fetch through the governed HTTP agent instead of opening the sandbox's network — rather than deleting the control or leaving the agent short.
+- **Authority routes capability; it does not ration it.** The chain of command decides who authorizes an action and who is accountable for it, not whether the capability exists. An agent whose rank cannot authorize something escalates it to one that can; a refusal that simply ends the work is a capability ceiling wearing a governance costume.

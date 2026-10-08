@@ -7,7 +7,8 @@
 ## What this is
 
 `desktop/` is an Electron-based native tray host that wraps the existing
-ProbOS HXI (browser UI at `http://127.0.0.1:8765`). It provides:
+ProbOS HXI (the browser UI that `probos serve` serves at
+`http://127.0.0.1:18900` by default). It provides:
 
 - A system-tray icon with menu (Open chat, Daily briefing, Quick capture,
   Pause/Resume proactive mode, Settings, Quit).
@@ -27,7 +28,7 @@ runtime is already running (via the AD-751 desktop-runtime primitives or
 
 Electron adds approximately **~80 MB to the installer** and **~150 MB
 installed**. The HXI bundle itself is ~3.3 MB. If installed footprint is a
-concern, continue using the browser HXI at `http://127.0.0.1:8765`.
+concern, continue using the browser HXI at `http://127.0.0.1:18900`.
 
 ### Unsigned binaries (when AD-759b ships)
 
@@ -63,12 +64,18 @@ npm install
 npm run dev
 ```
 
-This will launch the Electron host pointed at `http://127.0.0.1:8765`.
-Set `PROBOS_RUNTIME_URL` to override the runtime URL for non-default
-deployments. For example, if your runtime binds to port `18900`:
+This will launch the Electron host pointed at the ProbOS runtime. The
+runtime URL is resolved in this order (AD-817):
+
+1. the URL saved from the host's setup screen (`runtime-config.json` in
+   the Electron user-data directory);
+2. the `PROBOS_RUNTIME_URL` environment variable;
+3. the default, `http://127.0.0.1:18900` — the port `probos serve` binds.
+
+For example, to point a fresh install at a runtime on another port:
 
 ```pwsh
-$env:PROBOS_RUNTIME_URL = "http://127.0.0.1:18900"
+$env:PROBOS_RUNTIME_URL = "http://127.0.0.1:8765"
 npm run dev
 ```
 
