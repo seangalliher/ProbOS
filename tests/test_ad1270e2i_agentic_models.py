@@ -284,7 +284,10 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                            'token_budget': None,
                            'max_total_iterations': 100,
                            # AD-1156: default-OFF plan/execute modes (a bool, no bound).
-                           'agent_modes_enabled': False},
+                           'agent_modes_enabled': False,
+                           # AD-1320: default-OFF live budget awareness.
+                           'budget_awareness_enabled': False,
+                           'budget_awareness_thresholds': [0.5, 0.8]},
     'DmDeliberateConfig': {'enabled': False, 'tier': 'deep', 'max_tokens': 800},
     'DmSanityGateConfig': {   'enabled': True,
                               'length_floor': 5,
@@ -332,6 +335,7 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
 #: rather than counted with ``>=`` -- batches 6, 7 and 8 each shipped a weaker
 #: version of this guard, and a threshold lets coverage shrink silently.
 EXPECTED_MUTABLE_FIELDS: tuple[str, ...] = (
+    "DmAgenticConfig.budget_awareness_thresholds",
     "DmSanityGateConfig.retry_warnings",
     "RepairConfig.targets",
 )

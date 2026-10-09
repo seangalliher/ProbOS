@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 from probos import work_item_steps as owned_steps
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
+from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
 from probos.dm_reply import (  # AD-1248 / AD-1295
     ToolFailures,
@@ -73,7 +74,6 @@ from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage, LLMRequest
 
 if TYPE_CHECKING:
-    from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
     from probos.cognitive.tool_manifest import ToolManifestOffer
     from probos.mesh.intent import IntentBus
     from probos.substrate.agent import BaseAgent

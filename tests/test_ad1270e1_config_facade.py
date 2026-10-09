@@ -1540,7 +1540,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1270f P1.2 adds memory.shutdown_write_grace_s and shutdown_dispatch_grace_s (1820 -> 1822).
     # AD-1198 adds federation.peer_admission_enabled and peers[].pinned_public_key (1822 -> 1824).
     # AD-1198 slice 3a adds peers[].api_url (1824 -> 1825).
-    assert counts["field_definitions"] == 1825  # AD-1206 intentionally adds github_repository.
+    # AD-1320 adds dm_agentic.budget_awareness_enabled and thresholds (1825 -> 1827).
+    assert counts["field_definitions"] == 1827  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 304
     assert len(baseline["models"]) == 225
