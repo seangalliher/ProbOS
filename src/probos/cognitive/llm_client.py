@@ -12,11 +12,11 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -61,6 +61,89 @@ class CostCeilingExclusion(Exception):
     the ceiling excludes. The message carries the router's reason, which
     names the ceiling.
     """
+
+
+class TierFloorExclusion(Exception):
+    """AD-1324: the router found no admissible model at or above the stakes floor.
+
+    Raised by ``_resolve_model_for_tier`` and caught by the completion loop, which
+    treats the attempt as unavailable. Never a licence to send a lower tier.
+    """
+
+
+class TierRouteFault(Exception):
+    """AD-1324 amendment 2: a strict (floor or exact) route could not be verified.
+
+    Raised when ``ModelRouter.choose`` itself fails for a request that carries a stakes floor
+    or an exact tier. Falling back to the configured model there could send a model the router
+    excluded, so the attempt is refused instead.
+    """
+
+
+class RouteResult(NamedTuple):
+    """The model a route chose and the tier whose model serves the attempt (None = not stated).
+
+    Returned by value so provenance is request-local: nothing here lives on the client.
+    """
+
+    model: str | None
+    served_tier: str | None
+
+
+class TierExactExclusion(Exception):
+    """AD-1324 amendment 1: an exact-tier request found no model registered for its tier.
+
+    Never a licence to send another tier's model: the caller refuses the attempt.
+    """
+
+
+def _cache_put(client: Any, key: str, response: Any, served_tier: str | None) -> None:
+    """Store ``response`` with the tier that SERVED it (None = unknown); LRU-evict both maps together.
+
+    Works on a client built with ``__new__`` (no ``_cache_provenance`` yet).
+    """
+    provenance = getattr(client, "_cache_provenance", None)
+    if provenance is None:
+        provenance = client._cache_provenance = {}
+    client._cache[key] = response
+    if served_tier:
+        provenance[key] = served_tier
+    else:
+        provenance.pop(key, None)
+    client._cache.move_to_end(key)  # AD-617: LRU
+    limit = getattr(client, "_cache_max_entries", None)
+    if limit is not None:
+        while len(client._cache) > limit:
+            evicted, _ = client._cache.popitem(last=False)
+            provenance.pop(evicted, None)
+
+
+def _cache_get(client: Any, key: str, *, floor: str | None, exact: str | None) -> Any:
+    """The cached response for ``key``, or None when its provenance does not satisfy the request.
+
+    With neither a floor nor an exact tier this is the legacy lookup. A floor needs known
+    provenance at or above it; an exact tier needs provenance equal to it. Absent provenance
+    is a MISS for either: an entry of unknown origin must not satisfy a stakes-bound request.
+    """
+    cached = client._cache.get(key)
+    if cached is None or (floor is None and exact is None):
+        return cached
+    served = getattr(client, "_cache_provenance", {}).get(key, "")
+    if not served:
+        return None
+    if exact is not None and served != exact:
+        return None
+    return cached if _floor_ok(served, floor) else None
+
+
+def _floor_ok(tier_name: str, min_tier: str | None) -> bool:
+    """AD-1324: whether ``tier_name`` satisfies ``min_tier`` (None satisfies all)."""
+    if min_tier is None:
+        return True
+    try:
+        return TEXT_TIERS.index(tier_name) >= TEXT_TIERS.index(min_tier)
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +316,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         # Ephemeral fallback cache; nonempty system instructions are isolated.
         self._cache: OrderedDict[str, LLMResponse] = OrderedDict()  # AD-617: LRU eviction
         self._cache_max_entries: int = 500  # AD-617: default, overridden by rate_config
+        # AD-1324: the tier whose model actually answered a cached entry. The response's own
+        # ``tier`` is the requested one, so a floored lookup cannot trust it.
+        self._cache_provenance: dict[str, str] = {}
 
         # BF-069: Per-tier failure tracking for health monitoring
         self._consecutive_failures: dict[str, int] = {t: 0 for t in _LLM_TIERS}
@@ -825,20 +911,44 @@ class OpenAICompatibleClient(BaseLLMClient):
         await self._drain_retired_claims(client_key, state, claims)
         return installed
 
-    def _resolve_model_for_tier(self, tier: str) -> str | None:
-        """AD-463: consult ModelRouter if wired, else None (existing path).
+    def _resolve_model_for_tier(self, tier: str, **kwargs: Any) -> str | None:
+        """AD-463: the model name ``_resolve_route_for_tier`` chooses (see it for the contract)."""
+        return self._resolve_route_for_tier(tier, **kwargs).model
 
-        Returns:
-          - The chosen model name (str) when ModelRouter overrides the default
+    def _resolve_route_for_tier(
+        self,
+        tier: str,
+        *,
+        min_tier: str | None = None,
+        correlation: Mapping[str, Any] | None = None,
+        exact_tier: bool = False,
+        strict: bool = False,
+    ) -> RouteResult:
+        """AD-463: consult ModelRouter if wired, else a route naming no model (existing path).
+
+        Returns a ``RouteResult``:
+          - ``model``: the chosen model name (str) when ModelRouter overrides the default
             tier->model mapping. Empty-string responses from the router are
             converted to None so the existing ``tc["model"]`` path runs.
-          - None when no router is wired, the router fails, or the router
+            None when no router is wired, a non-strict router fails, or the router
             returns an empty model name.
+          - ``served_tier``: AD-1324 amendment 2 -- the tier whose model serves this
+            attempt: the router's ``chosen_tier`` when it decided, ``tier`` when no router
+            is wired, None when a router is wired but states nothing. It is a local value
+            the caller reads before any await, never instance state, so concurrent requests
+            cannot overwrite each other's provenance.
 
         Raises:
+          TierRouteFault: AD-1324 amendment 2 -- the router failed for a strict request
+            (``strict``, an exact tier, or a ``min_tier``): nothing may be sent, because
+            the configured model could be one the router excludes. A request with neither
+            keeps the legacy degrade-to-configured.
           CostCeilingExclusion: BF-886 -- the router reports that the
             operator's cost ceiling leaves the tier no admissible model. The
             caller must treat the tier attempt as unavailable.
+          TierFloorExclusion: AD-1324 -- the stakes floor leaves the attempt no
+            admissible model. ``min_tier`` and ``correlation`` reach the router
+            only when set, so a router that takes only ``tier`` still works.
 
         BF-886: startup wiring seeds the router's registry from the configured
         tier models, so for a text tier the router's choice is the configured
@@ -865,28 +975,50 @@ class OpenAICompatibleClient(BaseLLMClient):
             # for these tiers and would otherwise fall through to "pick first
             # available text model", routing requests to an endpoint that
             # cannot fulfill them.
-            return None
+            return RouteResult(None, None)
         # Defensive: tests that construct via __new__ (bypassing __init__) won't
         # have the model_router attribute. Treat that the same as not wired.
         router = getattr(self, "model_router", None)
         if router is None:
-            return None
+            return RouteResult(None, tier)
+        strict = strict or exact_tier or min_tier is not None
         try:
-            decision = router.choose(tier=tier)
+            if exact_tier:
+                decision = router.choose(
+                    tier=tier, min_tier=min_tier, correlation=correlation, exact_tier=True,
+                )
+            elif min_tier is None and correlation is None:
+                decision = router.choose(tier=tier)
+            else:
+                decision = router.choose(tier=tier, min_tier=min_tier, correlation=correlation)
             chosen = decision.chosen_model or None
+            served_tier = getattr(decision, "chosen_tier", "") or (tier if chosen is None else None)
+            exact_excluded = getattr(decision, "excluded_exact", False) is True
             # BF-886: the router is duck-typed (``model_router: Any``); only a
             # decision whose exclusion flag is the bool True excludes the tier.
             excluded = getattr(decision, "excluded_by_cost_ceiling", False) is True
-        except Exception:
+            floor_excluded = getattr(decision, "excluded_by_floor", False) is True
+        except Exception as exc:
+            if strict:
+                logger.warning(
+                    "AD-1324: ModelRouter.choose failed for a floor/exact request (tier=%s); "
+                    "nothing will be sent, because the configured model may be one the router excludes",
+                    tier, exc_info=True,
+                )
+                raise TierRouteFault(f"model routing failed: {type(exc).__name__}") from exc
             logger.warning(
                 "AD-463: ModelRouter.choose failed; falling back to default "
                 "tier mapping (tier=%s)",
                 tier, exc_info=True,
             )
-            return None
+            return RouteResult(None, None)
+        if exact_excluded:
+            raise TierExactExclusion(f"model routing: {decision.reason}")
+        if floor_excluded:
+            raise TierFloorExclusion(f"model routing: {decision.reason}")
         if excluded:
             raise CostCeilingExclusion(f"model routing: {decision.reason}")
-        return chosen
+        return RouteResult(chosen, served_tier)
 
     def _probe_model(self, tier: str) -> str | None:
         """BF-886 A-1: the model a connectivity probe of ``tier`` sends.
@@ -1313,6 +1445,22 @@ class OpenAICompatibleClient(BaseLLMClient):
     async def _complete_inner(self, request: LLMRequest) -> LLMResponse:
         """Inner completion logic (separated from semaphore for AD-636)."""
         tier = request.tier or self.default_tier
+        # AD-1324: the stakes floor binds text tiers only; None is today's path.
+        floor = request.min_tier if tier in TEXT_TIERS else None
+        # AD-1324 amendment 1: an exact request is served by ITS tier or refused.
+        exact = request.exact_tier is True and tier in TEXT_TIERS
+        exact_tier = tier if exact else None
+        correlation: dict[str, Any] | None = None
+        if any(
+            v is not None
+            for v in (request.agent_id, request.work_item_id, request.min_tier, request.tier_choice_reason)
+        ):
+            correlation = {
+                "request_id": request.id,
+                "agent_id": request.agent_id,
+                "work_item_id": request.work_item_id,
+                "tier_reason": request.tier_choice_reason,
+            }
 
         # AD-617: Rate limit check before dispatch
         if hasattr(self, '_rate_config') and self._rate_config:
@@ -1326,8 +1474,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                 # BF-272: multimodal requests bypass the cache (degenerate key).
                 if request.messages is None:
                     cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
-                    if cache_key in self._cache:
-                        cached = self._cache[cache_key]
+                    cached = _cache_get(self, cache_key, floor=floor, exact=exact_tier)
+                    if cached is not None:
                         return LLMResponse(
                             content=cached.content, model=cached.model, tier=tier,
                             tokens_used=cached.tokens_used, cached=True, request_id=request.id,
@@ -1359,8 +1507,16 @@ class OpenAICompatibleClient(BaseLLMClient):
             # unreachable, the deeper 27B narrative tier is still vision-
             # capable and produces a correct (slower) describe.
             fallback_tiers = ["vision_fast", "vision"]
+        elif exact:
+            fallback_tiers = [tier]
         else:
             fallback_tiers = [tier] + [t for t in _TIER_ORDER if t != tier]
+        floor_filtered = False
+        if floor is not None:
+            # AD-1324: the floor only removes tiers; order is preserved.
+            kept = [t for t in fallback_tiers if _floor_ok(t, floor)]
+            floor_filtered = len(kept) != len(fallback_tiers)
+            fallback_tiers = kept
 
         last_error = ""
         # BF-665: one refresh budget per shared endpoint generation. Sibling
@@ -1376,6 +1532,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         # BF-886 A-1: tiers the cost ceiling refused. When it refused every
         # tier of the chain, the exhaustion is a budget decision, not an outage.
         ceiling_refusals = 0
+        floor_refusals = 0
+        exact_refusals = 0
+        route_faults = 0
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             endpoint_key = self._client_key(attempt_tier)
@@ -1383,7 +1542,34 @@ class OpenAICompatibleClient(BaseLLMClient):
                 continue
             # AD-463: ModelRouter override (caller-optional; absent = existing path)
             try:
-                _override = self._resolve_model_for_tier(attempt_tier)
+                # AD-1324 amendment 2: the served tier is a local read with the route, before any await.
+                if exact:
+                    _override, _served = self._resolve_route_for_tier(
+                        attempt_tier, min_tier=floor, correlation=correlation, exact_tier=True,
+                    )
+                elif floor is None and correlation is None:
+                    _override = self._resolve_model_for_tier(attempt_tier)
+                    _served = attempt_tier if getattr(self, "model_router", None) is None else None
+                else:
+                    _override, _served = self._resolve_route_for_tier(
+                        attempt_tier, min_tier=floor, correlation=correlation,
+                    )
+            except TierRouteFault as exc:
+                # AD-1324 amendment 2: the route could not be verified, so nothing is sent for this
+                # attempt and the configured model is not tried in its place.
+                last_error = str(exc)
+                route_faults += 1
+                continue
+            except TierExactExclusion as exc:
+                last_error = str(exc)
+                exact_refusals += 1
+                continue
+            except TierFloorExclusion as exc:
+                # AD-1324: no admissible model at or above the floor for this
+                # attempt: nothing is sent, and no lower tier is substituted.
+                last_error = str(exc)
+                floor_refusals += 1
+                continue
             except CostCeilingExclusion as exc:
                 # BF-886: the operator's cost ceiling excludes this tier's
                 # model, so the attempt is unavailable: nothing is sent and the
@@ -1585,12 +1771,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                         # write-side guard catches any tier that returns empty.
                         if request.messages is None and response.content:
                             cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
-                            self._cache[cache_key] = response
-                            self._cache.move_to_end(cache_key)  # AD-617: LRU
-                            # AD-617: Evict oldest if over limit
-                            if hasattr(self, '_cache_max_entries'):
-                                while len(self._cache) > self._cache_max_entries:
-                                    self._cache.popitem(last=False)
+                            # Provenance is the tier whose model SERVED THIS request, read with its
+                            # route (never shared client state); None when a wired router did not say.
+                            _cache_put(self, cache_key, response, _served)
                         # BF-240: Dwell-time recovery — track consecutive successes
                         await self._record_endpoint_success(
                             attempt_tier,
@@ -1750,8 +1933,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         # response poisoning.
         if request.messages is None:
             cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
-            if cache_key in self._cache:
-                cached = self._cache[cache_key]
+            cached = _cache_get(self, cache_key, floor=floor, exact=exact_tier)
+            if cached is not None:
                 logger.debug("Using cached LLM response for request %s", request.id[:8])
                 return LLMResponse(
                     content=cached.content,
@@ -1761,6 +1944,53 @@ class OpenAICompatibleClient(BaseLLMClient):
                     cached=True,
                     request_id=request.id,
                 )
+
+        if route_faults and (floor is not None or exact):
+            # AD-1324 amendment 2: a route that could not be verified is an infrastructure fault,
+            # not a floor shortfall; nothing was sent for it and no other model stands in.
+            logger.warning(
+                "AD-1324: the model route for request %s could not be verified (%s); "
+                "nothing was sent for it and no other model was substituted",
+                request.id[:8], last_error or "route fault",
+            )
+            return LLMResponse(
+                content="", model="", tier=tier, error="tier route unverifiable",
+                error_kind="tier_route_unverifiable", refusal_cause="route_unverifiable",
+                request_id=request.id,
+            )
+
+        # AD-1324: nothing at or above the stakes floor answered, and no transport
+        # was attempted or breaker-refused: the floor, not an outage, is the cause.
+        if (
+            floor is not None
+            and (floor_filtered or floor_refusals or exact_refusals or ceiling_refusals)
+            and not attempted_transport and not breaker_refused_keys
+        ):
+            logger.warning(
+                "AD-1324: no model at or above the '%s' stakes floor is available for request %s "
+                "(%s); nothing was sent and no lower tier was substituted",
+                floor, request.id[:8], last_error or "no tier left after the floor",
+            )
+            return LLMResponse(
+                content="", model="", tier=tier, error="tier floor unmet",
+                error_kind="tier_floor_unmet", request_id=request.id,
+                refusal_cause=(
+                    "floor_unmet" if (floor_filtered or floor_refusals or not (exact_refusals or ceiling_refusals))
+                    else "exact_unavailable" if exact_refusals else "ceiling"
+                ),
+            )
+
+        if exact:
+            # AD-1324 amendment 1: the chosen tier could not serve (transport, breaker, 5xx, or no
+            # model, with no stakes floor to blame). No other tier is tried; the caller refuses.
+            logger.warning(
+                "AD-1324: exact tier '%s' could not serve request %s (%s); no other tier was tried",
+                tier, request.id[:8], last_error or "no response",
+            )
+            return LLMResponse(
+                content="", model="", tier=tier, error="tier unavailable",
+                error_kind="tier_unavailable", refusal_cause="exact_unavailable", request_id=request.id,
+            )
 
         # Final fallback: error response
         # BF-686: severity follows attribution, not outcome. When no tier ever

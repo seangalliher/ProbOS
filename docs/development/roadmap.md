@@ -11,6 +11,8 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 > pass flipped 27 entries that had drifted (AD-486, 510, 512, 520, 526, 543-549, 562,
 > 566, 567, 569, 571, 595, 597, 599, 601, 604, 607).
 
+**AD-1324 OPEN (2026-10-09) / [#1479](https://github.com/seangalliher/ProbOS/issues/1479):** agent-chosen model tier per step under a deterministic stakes floor; default OFF. See DECISIONS.md AD-1324.
+
 **AD-1323 OPEN (2026-10-09) / [#1478](https://github.com/seangalliher/ProbOS/issues/1478):** costed continue ask with a durable single-use extension permit; default OFF. See DECISIONS.md AD-1323.
 
 **AD-1187 OPEN (2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** ordinary governed work-discovery/claim implementation candidate with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Independent review, canonical frozen gate and release remain parent-owned; this is not a shipped/closure entry.

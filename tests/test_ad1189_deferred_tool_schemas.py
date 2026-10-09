@@ -313,6 +313,11 @@ def _request_fields(request: LLMRequest) -> dict[str, Any]:
     # ``LLMRequest.id`` is a fresh uuid4 per request, so it is the one field two
     # identical runs disagree on (measured in the capture log).
     fields["id"] = "<per-request uuid4>"
+    # AD-1324 appended four defaulted correlation fields to LLMRequest. Flag-off they
+    # must stay None, and dropping them keeps this digest pinned to the unmodified head.
+    for key in ("agent_id", "work_item_id", "min_tier", "tier_choice_reason"):
+        assert fields.pop(key) is None, key
+    assert fields.pop("exact_tier") is False  # AD-1324 amendment 1: default-off exact-tier flag
     return fields
 
 

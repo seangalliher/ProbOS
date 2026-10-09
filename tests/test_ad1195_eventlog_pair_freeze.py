@@ -91,6 +91,8 @@ _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     # AD-1156: /mode's transition record, through MODE_CHANGED_EVENT. Best effort:
     # the thread's record is authoritative, so a missing row is never evidence.
     ('cognitive', 'agent_mode_changed'),
+    # AD-1324: tier-decision audit through TierAuditSink; best effort, the loop result is authoritative.
+    ('cognitive', 'ad1324_tier_decision'),
     ('consensus', 'device_actuate_committed'),
     ('consensus', 'device_actuate_failed'),
     ('consensus', 'mcp_invoke_committed'),

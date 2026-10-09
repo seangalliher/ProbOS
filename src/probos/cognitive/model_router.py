@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.model_registry import ModelDescriptor, ModelRegistry, catalog
@@ -69,6 +69,33 @@ class RoutingDecision:
     # ``chosen_model`` is then "", and the caller must treat the tier attempt
     # as unavailable rather than send any model for it.
     excluded_by_cost_ceiling: bool = False
+    # AD-1324: the stakes floor leaves the tier no admissible model. Mirrors
+    # ``excluded_by_cost_ceiling``: ``chosen_model`` is "" and the caller must not
+    # send any model for the attempt.
+    excluded_by_floor: bool = False
+    # AD-1324: the tier of the chosen model ("" when none); excluded from equality
+    # so a decision compares as it did before this field existed.
+    chosen_tier: str = field(default="", compare=False)
+    # AD-1324 amendment 1: an exact-tier request found no model registered for ITS tier. The any-tier
+    # fallback is not taken; ``chosen_model`` is "" and the caller must not send any model.
+    excluded_exact: bool = field(default=False, compare=False)
+
+
+def _tier_rank(tier: str) -> int:
+    """AD-1324: rank of a text tier (higher = more capable); -1 for any other tier."""
+    from probos.cognitive.llm_client import TEXT_TIERS
+
+    try:
+        return TEXT_TIERS.index(tier)
+    except ValueError:
+        return -1
+
+
+def _meets_floor(descriptor_tier: str, min_tier: str | None) -> bool:
+    """AD-1324: whether a model registered at ``descriptor_tier`` satisfies ``min_tier``."""
+    if min_tier is None:
+        return True
+    return _tier_rank(descriptor_tier) >= _tier_rank(min_tier) >= 0
 
 
 def _within_ceiling(descriptor: ModelDescriptor, ceiling: float | None) -> bool:
@@ -131,23 +158,29 @@ class ModelRouter:
         *,
         tier: str,
         cost_ceiling: float | None = None,
+        min_tier: str | None = None,
+        correlation: dict[str, Any] | None = None,
+        exact_tier: bool = False,
     ) -> RoutingDecision:
-        decision, next_step = self._decide(tier, self._effective_ceiling(cost_ceiling))
+        decision, next_step = self._decide(
+            tier, self._effective_ceiling(cost_ceiling), min_tier=min_tier, exact_tier=exact_tier,
+        )
         if next_step:
             self._report(decision, next_step)
+        extra = _correlation_payload(correlation, decision, min_tier)
         if decision.fallback:
-            self._emit_fallback(decision)
+            self._emit_fallback(decision, extra)
         else:
-            self._emit_routed(decision)
+            self._emit_routed(decision, extra)
         return decision
 
-    def preview(self, *, tier: str) -> RoutingDecision:
+    def preview(self, *, tier: str, min_tier: str | None = None, exact_tier: bool = False) -> RoutingDecision:
         """BF-886 A-1: the decision ``choose`` makes under the configured ceiling.
 
         Logs nothing and emits no event, so a connectivity probe can ask which
         model it may send -- and whether it may send any -- before it does.
         """
-        decision, _ = self._decide(tier, self._cost_ceiling)
+        decision, _ = self._decide(tier, self._cost_ceiling, min_tier=min_tier, exact_tier=exact_tier)
         return decision
 
     def denials(self, tiers: Iterable[str]) -> dict[str, str]:
@@ -205,13 +238,25 @@ class ModelRouter:
                 )
         return report
 
-    def _decide(self, tier: str, ceiling: float | None) -> tuple[RoutingDecision, str]:
+    def _decide(
+        self, tier: str, ceiling: float | None, *, min_tier: str | None = None, exact_tier: bool = False,
+    ) -> tuple[RoutingDecision, str]:
         """The decision for ``tier`` under ``ceiling``, and what follows it.
 
         The second item is the next step a report should name, or "" for the
         tier's single registered model, which is not reported.
         """
         available = self._registry.by_tier(tier)
+        if min_tier is not None and not _meets_floor(tier, min_tier):
+            # AD-1324: the floor only removes candidates; a requested tier below it
+            # has none, and no other tier's model is substituted for it here.
+            return RoutingDecision(
+                chosen_model="",
+                requested_tier=tier,
+                reason=f"stakes floor '{min_tier}' excludes tier '{tier}'",
+                fallback=True,
+                excluded_by_floor=True,
+            ), _SKIPPED
         candidates = [d for d in available if _within_ceiling(d, ceiling)]
 
         if available and not candidates:
@@ -227,16 +272,34 @@ class ModelRouter:
                 excluded_by_cost_ceiling=True,
             ), _SKIPPED
 
+        if not candidates and exact_tier:
+            return RoutingDecision(
+                chosen_model="",
+                requested_tier=tier,
+                reason=f"no available model registered for tier '{tier}' (exact tier requested)",
+                fallback=True,
+                excluded_exact=True,
+            ), _SKIPPED
+
         if not candidates:
             # No available model in the tier -- emit fallback
             for d in self._registry.all():
-                if d.available and _within_ceiling(d, ceiling):
+                if d.available and _within_ceiling(d, ceiling) and _meets_floor(d.tier, min_tier):
                     return RoutingDecision(
                         chosen_model=d.name,
                         requested_tier=tier,
                         reason=f"no available models in tier '{tier}' (cost_ceiling={ceiling})",
                         fallback=True,
+                        chosen_tier=d.tier,
                     ), f"the request goes out as {d.name}, registered for tier '{d.tier}'"
+            if min_tier is not None:
+                return RoutingDecision(
+                    chosen_model="",
+                    requested_tier=tier,
+                    reason=f"no available model at or above stakes floor '{min_tier}'",
+                    fallback=True,
+                    excluded_by_floor=True,
+                ), _SKIPPED
             if ceiling is None:
                 return RoutingDecision(
                     chosen_model="",
@@ -260,6 +323,7 @@ class ModelRouter:
                 chosen_model=candidates[0].name,
                 requested_tier=tier,
                 reason="single candidate",
+                chosen_tier=candidates[0].tier,
             ), ""
 
         # Multi-candidate: cheapest by output cost, tiebreak by name (v1 default).
@@ -273,6 +337,7 @@ class ModelRouter:
             chosen_model=chosen.name,
             requested_tier=tier,
             reason="cheapest-by-output-cost",
+            chosen_tier=chosen.tier,
         ), (
             f"the request goes out as {chosen.name}, chosen among "
             f"{len(candidates)} registered candidates"
@@ -309,7 +374,7 @@ class ModelRouter:
             next_step,
         )
 
-    def _emit_routed(self, decision: RoutingDecision) -> None:
+    def _emit_routed(self, decision: RoutingDecision, extra: dict[str, Any] | None = None) -> None:
         if not self._emit_event:
             return
         try:
@@ -319,6 +384,7 @@ class ModelRouter:
                     "chosen_model": decision.chosen_model,
                     "tier": decision.requested_tier,
                     "reason": decision.reason,
+                    **(extra or {}),
                 },
             )
         except Exception:
@@ -327,7 +393,7 @@ class ModelRouter:
                 decision.chosen_model, decision.requested_tier, exc_info=True,
             )
 
-    def _emit_fallback(self, decision: RoutingDecision) -> None:
+    def _emit_fallback(self, decision: RoutingDecision, extra: dict[str, Any] | None = None) -> None:
         if not self._emit_event:
             return
         try:
@@ -337,6 +403,7 @@ class ModelRouter:
                     "chosen_model": decision.chosen_model,
                     "tier": decision.requested_tier,
                     "reason": decision.reason,
+                    **(extra or {}),
                 },
             )
         except Exception:
@@ -344,6 +411,29 @@ class ModelRouter:
                 "AD-463: MODEL_FALLBACK emit failed (model=%s, tier=%s)",
                 decision.chosen_model, decision.requested_tier, exc_info=True,
             )
+
+
+# AD-1324: the additive, armed-only keys a routing event may carry.
+_CORRELATION_KEYS = ("request_id", "agent_id", "work_item_id", "tier_reason")
+
+
+def _correlation_payload(
+    correlation: dict[str, Any] | None, decision: RoutingDecision, min_tier: str | None,
+) -> dict[str, Any]:
+    """AD-1324: extra routing-event keys; ``{}`` unless the caller armed correlation."""
+    if not correlation:
+        return {}
+    extra: dict[str, Any] = {
+        key: correlation[key]
+        for key in _CORRELATION_KEYS
+        if type(correlation.get(key)) is str and correlation[key]
+    }
+    extra["requested_tier"] = decision.requested_tier
+    if decision.chosen_tier:
+        extra["chosen_tier"] = decision.chosen_tier
+    if min_tier is not None:
+        extra["min_tier"] = min_tier
+    return extra
 
 
 def build_model_routing(

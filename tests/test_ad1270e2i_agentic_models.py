@@ -304,7 +304,12 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                                                                               'min_value_bands': [   'significant',
                                                                                                      'critical'],
                                                                               'ask_when_value_unrecorded': False,
-                                                                              'assumed_remaining_steps': 5}}},
+                                                                              'assumed_remaining_steps': 5},
+                                                    # AD-1324: default-OFF agent-chosen tier under a stakes floor.
+                                                    'tier_choice': {   'enabled': False,
+                                                                       'max_upward_moves_per_turn': 2,
+                                                                       'stakes_floor': {   'high': 'standard',
+                                                                                           'severe': 'deep'}}}},
     'DmDeliberateConfig': {'enabled': False, 'tier': 'deep', 'max_tokens': 800},
     'DmSanityGateConfig': {   'enabled': True,
                               'length_floor': 5,

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1845
+  canonical_dump_leaves: 1849
   field_definitions: 1828
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 1c9a5d41a3816c48595219f111f6b1b9fbc9aac22e92f294c4f121bfbb736035
+canonical_dump_sha256: fabc1cf956878d78c7cdf0027cd0e0b56a97100e382b78b50f6d9061502f91f4
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1446,7 +1446,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 0ce13943d64ae172238299ea4eca08f72ca8b313e283703df88f377a2685ae2f
+    schema_sha256: a6f58f60bc90d09be6a5c0f29415fabafadabdac9f0b8f26fb6c4a8f2a96ba6f
     fields:
     - {default: 'False', name: enabled}
     - {default: '5', name: max_iterations}
@@ -3329,7 +3329,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 42225557c1aec1edf2e793915dcd2fc083ba356bd4c0fc7739310f29de288c20
+    schema_sha256: 3850ab59689274603cfc9c257c14b6d67d4c2254584cfa2b9c7ff8ba93fb81e4
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -1793,6 +1793,16 @@ AD-1323: ask for a costed one-time token extension instead of stopping.
 | `ask_when_value_unrecorded` | `bool` | `False` | — | AD-1323: ask even when the linked item records no value band. Default False: an unrecorded value never justifies spending. |
 | `assumed_remaining_steps` | `int` | `5` | — | AD-1323: steps assumed left when estimating the extra tokens; the estimate is the recent mean step spend times this. Clamped to 1..50. |
 
+## `tier_choice`
+
+AD-1324: the agent names its next step's model tier under a stakes floor.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1324: let the agent state the model tier of its next step. Default OFF: no controller is built, no directive prompt is added and the loop is byte-identical. |
+| `max_upward_moves_per_turn` | `int` | `2` | — | AD-1324: upward tier moves the agent may make in one turn, each needing deterministic evidence. Clamped to 0..5. |
+| `stakes_floor` | `dict[str, str]` | `{'high': 'standard', 'severe': 'deep'}` | — | AD-1324: lowest tier a floor-bound step (a decision or verification step) may run at, by work-item stakes level. Unknown levels and tiers are dropped; a level without an entry has no floor. |
+
 ## `write_claim_guard`
 
 Whether a reply is checked against the turn's write ledger.

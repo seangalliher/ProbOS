@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 RATIONALE_MAX_CHARS: int = 280
 _RATIONALE_MAX = RATIONALE_MAX_CHARS
 
+
+def store_canonical_rationale(text: str | None) -> str:
+    """The rationale exactly as the store keeps it: the single truncation shared by writers and matchers."""
+    return (text or "")[:RATIONALE_MAX_CHARS]
+
+
 # AD-1154 / DD-1: exact-key validation for a ``kind="action"`` payload, applied
 # on write AND on read. A hand-edited DB row is an untrusted input, so the read
 # side re-validates rather than trusting what the write side once accepted.
@@ -737,7 +743,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             agent_id=agent_id,
             kind=kind,
             target=target,
-            rationale=(rationale or "")[:_RATIONALE_MAX],
+            rationale=store_canonical_rationale(rationale),
             work_item_id=work_item_id,
             status="pending",
             created_at=time.time(),

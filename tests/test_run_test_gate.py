@@ -1136,6 +1136,7 @@ def test_release_census_matches_default_ablation_collection_policy(
     assert gate._RELEASE_TEST_FILE_EXCLUSIONS == {
         "tests/ablation/test_ad1320_budget_awareness_ablation.py",
         "tests/ablation/test_ad1322_economic_judgment_ablation.py",
+        "tests/ablation/test_ad1324_tier_choice_ablation.py",
         "tests/ablation/test_sigma_ablation.py",
         "tests/ablation/test_sigma_harness_structural.py",
     }

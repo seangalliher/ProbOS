@@ -125,7 +125,13 @@ class _ScriptedClient:
         self.requests: list[dict[str, Any]] = []
 
     async def complete(self, request: LLMRequest, **kwargs: Any) -> LLMResponse:
-        self.requests.append({"request": asdict(request), "kwargs": _snapshot(kwargs)})
+        recorded = asdict(request)
+        # AD-1324 appended four defaulted fields (plus exact_tier); flag-off they stay None, and dropping
+        # them keeps the golden pinned to the pre-AD-1324 request shape.
+        for key in ("agent_id", "work_item_id", "min_tier", "tier_choice_reason"):
+            assert recorded.pop(key) is None, key
+        assert recorded.pop("exact_tier") is False  # AD-1324 amendment 1: default-off exact-tier flag
+        self.requests.append({"request": recorded, "kwargs": _snapshot(kwargs)})
         assert self.responses, "The scripted completion premise was exhausted"
         return self.responses.pop(0)
 

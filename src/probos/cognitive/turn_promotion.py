@@ -387,7 +387,7 @@ class ReportDelivery:
 # terminal transition and the row stays ``in_progress`` — which is exactly the
 # judgement the cancellation branch below already makes, for the same reason.
 _INCOMPLETE_STOP_REASONS: frozenset[str] = frozenset({
-    "max_iterations", "token_budget",
+    "max_iterations", "token_budget", "tier_floor_unavailable",
 })
 
 
