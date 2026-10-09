@@ -22,6 +22,7 @@ class TestCognitiveConfigTiers:
     def test_default_config_falls_back_to_shared(self):
         """Default config: all per-tier URLs are None, fall back to shared."""
         config = CognitiveConfig()
+        assert config.tier_config("deep")["model"] == "claude-sonnet-5.5"
         for tier in ("fast", "standard", "deep"):
             tc = config.tier_config(tier)
             assert tc["base_url"] == config.llm_base_url

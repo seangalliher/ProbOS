@@ -29,13 +29,13 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1305** | **AD-1306** | AD-1305 | _(none)_ |
-| BF | **BF-888** | **BF-889** | BF-873 | 875-888 |
+| BF | **BF-888** | **BF-889** | BF-886 | 887-888 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-08T20:38:47+00:00 at `c708a8c5` | 2729 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-09T05:08:44+00:00 at `c04cc8f3` | 2732 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 24 | assigned, issue open, no shipped code |
+| `allocated-open` | 68 | 23 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 0 | abandoned, number **not** reusable |
-| `shipped` | 951 | 531 | code in history |
+| `shipped` | 951 | 532 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-92 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+91 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -128,7 +128,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
 | `BF-888` | — | a tracker head marks it open |  |
 | `BF-887` | — | a tracker head marks it open |  |
-| `BF-886` | — | a tracker head marks it open |  |
 | `BF-885` | — | a tracker head marks it open |  |
 | `BF-884` | — | a tracker head marks it open |  |
 | `BF-883` | — | a tracker head marks it open |  |
@@ -177,7 +176,7 @@ _(none)_
 
 **AD** (951): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1185, 1192, 1201, 1203-1204, 1209-1212, 1216-1224, 1226-1227, 1230-1235, 1239, 1241-1245, 1247-1248, 1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1285, 1291-1305
 
-**BF** (531): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-808, 810-817, 819-837, 840-842, 844-866, 868-869, 871-873
+**BF** (532): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-808, 810-817, 819-837, 840-842, 844-866, 868-869, 871-873, 886
 
 ## Unaccounted — silent, **not** free
 

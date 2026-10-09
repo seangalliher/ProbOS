@@ -48,7 +48,7 @@ cognitive:
   # llm_api_format_fast: "ollama"
 
   llm_model_standard: "claude-sonnet-4-20250514"
-  llm_model_deep: "claude-opus-4-20250514"
+  llm_model_deep: "claude-sonnet-5.5"
 
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 30

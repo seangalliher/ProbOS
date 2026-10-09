@@ -33,7 +33,7 @@ cognitive:
   llm_timeout_seconds: 300.0
   llm_model_fast: claude-sonnet-4.6
   llm_model_standard: claude-sonnet-4.6
-  llm_model_deep: claude-opus-4.6
+  llm_model_deep: claude-sonnet-5.5
   llm_health_min_consecutive_healthy: 3
   llm_base_url_fast: http://127.0.0.1:8080/v1
   llm_api_key_fast: ''

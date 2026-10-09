@@ -228,6 +228,10 @@ class TestMCPToolHandlers:
         result = await adapter._handle_codebase_query(_make_invocation(concept="trust"))
         assert "not available" in result.text_result_for_llm.lower()
 
+    def test_default_model_uses_highest_available_model(self):
+        adapter = CopilotBuilderAdapter()
+        assert adapter._model == "claude-sonnet-5.5"
+
     @pytest.mark.asyncio
     async def test_handle_find_callers(self):
         mock_ci = MagicMock(spec=CodebaseIndex)

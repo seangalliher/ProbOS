@@ -27,7 +27,7 @@ model_tiers:
   - id: deep
     name: "Deep"
     description: "Complex reasoning — architecture decisions, deep analysis"
-    default_model: "claude-opus-4-6"
+    default_model: "claude-sonnet-5.5"
     use_cases: ["architecture review", "complex debugging", "self-modification proposals", "dream consolidation"]
     cost: high
     latency: high

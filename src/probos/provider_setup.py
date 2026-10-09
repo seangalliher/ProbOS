@@ -101,7 +101,7 @@ PRESETS: Mapping[str, ProviderPreset] = MappingProxyType({
         base_url="http://127.0.0.1:8080/v1",
         requires_key=False,
         # The shipped config/system.yaml model names; a test pins the two together.
-        models=MappingProxyType({"fast": "claude-sonnet-4.6", "standard": "claude-sonnet-4.6", "deep": "claude-opus-4.6"}),
+        models=MappingProxyType({"fast": "claude-sonnet-4.6", "standard": "claude-sonnet-4.6", "deep": "claude-sonnet-5.5"}),
     ),
     "custom": ProviderPreset(
         name="custom",

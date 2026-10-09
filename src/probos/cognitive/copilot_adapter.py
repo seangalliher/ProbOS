@@ -163,7 +163,7 @@ class CopilotBuilderAdapter:
         *,
         codebase_index: CodebaseIndex | None = None,
         runtime: ProbOSRuntime | None = None,
-        model: str = "claude-opus-4.6",
+        model: str = "claude-sonnet-5.5",
         cwd: str = "",
         github_token: str = "",
     ) -> None:

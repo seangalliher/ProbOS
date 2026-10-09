@@ -319,7 +319,7 @@ class CognitiveConfig(BaseModel):
     # Per-tier model names (existing)
     llm_model_fast: str = "claude-sonnet-4-6"
     llm_model_standard: str = "claude-sonnet-4-6"
-    llm_model_deep: str = "claude-opus-4-6"
+    llm_model_deep: str = "claude-sonnet-5.5"
 
     # BF-240: Dwell-time criterion for LLM health recovery
     llm_health_min_consecutive_healthy: int = 3  # Consecutive successes before tier transitions to operational

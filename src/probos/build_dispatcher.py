@@ -37,7 +37,7 @@ class BuildDispatcher:
         *,
         max_concurrent: int = 2,
         poll_interval: float = 5.0,
-        builder_model: str = "claude-opus-4.6",
+        builder_model: str = "claude-sonnet-5.5",
         builder_timeout: float = 300.0,
         run_tests: bool = True,
         on_build_complete: Callable[[QueuedBuild], Awaitable[None]] | None = None,

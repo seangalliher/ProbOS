@@ -82,7 +82,7 @@ Cognitive layer configuration.
 | `llm_timeout_seconds` | `float` | `30.0` | — |  |
 | `llm_model_fast` | `str` | `'claude-sonnet-4-6'` | — |  |
 | `llm_model_standard` | `str` | `'claude-sonnet-4-6'` | — |  |
-| `llm_model_deep` | `str` | `'claude-opus-4-6'` | — |  |
+| `llm_model_deep` | `str` | `'claude-sonnet-5.5'` | — |  |
 | `llm_health_min_consecutive_healthy` | `int` | `3` | — |  |
 | `llm_base_url_fast` | `str | None` | `None` | — |  |
 | `llm_api_key_fast` | `str | None` | `None` | — |  |
