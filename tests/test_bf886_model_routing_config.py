@@ -43,6 +43,11 @@ _NAMES = {
     "standard": "bf886-standard-model",
     "deep": "bf886-deep-model",
 }
+_PRICED_MODELS = {
+    "fast": "claude-sonnet-4-6-fast",
+    "standard": "claude-sonnet-4-6",
+    "deep": "claude-opus-4-6",
+}
 _ROUTER_LOGGER = "probos.cognitive.model_router"
 
 
@@ -114,6 +119,11 @@ def _config(
 
 def _named(**overrides: str) -> dict[str, str]:
     names = {**_NAMES, **overrides}
+    return {f"llm_model_{tier}": name for tier, name in names.items()}
+
+
+def _priced(**overrides: str) -> dict[str, str]:
+    names = {**_PRICED_MODELS, **overrides}
     return {f"llm_model_{tier}": name for tier, name in names.items()}
 
 
@@ -203,7 +213,7 @@ async def test_routing_disabled_sends_the_configured_model_unrouted(endpoint: _E
 async def test_ceiling_below_a_known_price_skips_the_tier_and_the_chain_continues(
     endpoint: _Endpoint,
 ) -> None:
-    config = _config(ceiling=20.0)
+    config = _config(ceiling=20.0, **_priced())
     deep = config.cognitive.llm_model_deep
     fast = config.cognitive.llm_model_fast
     assert _catalog_price(deep) > 20.0 >= _catalog_price(fast)  # premise
@@ -223,7 +233,7 @@ async def test_ceiling_below_a_known_price_skips_the_tier_and_the_chain_continue
 async def test_when_no_tier_qualifies_nothing_is_sent_and_the_error_names_the_ceiling(
     endpoint: _Endpoint,
 ) -> None:
-    config = _config(ceiling=1.0)
+    config = _config(ceiling=1.0, **_priced())
     for tier in _TEXT_TIERS:  # premise: every configured model is priced above it
         assert _catalog_price(config.cognitive.tier_config(tier)["model"]) > 1.0
     runtime, client = _wired(config)
@@ -245,7 +255,7 @@ async def test_an_unpriced_configured_model_fails_the_ceiling(
     caplog.set_level(logging.WARNING, logger=_ROUTER_LOGGER)
     unpriced = "bf886-unpriced-model"
     assert ModelRegistry().get(unpriced) is None  # premise: no known price
-    config = _config(ceiling=100.0, llm_model_fast=unpriced)
+    config = _config(ceiling=100.0, **_priced(fast=unpriced))
     standard = config.cognitive.llm_model_standard
     assert _catalog_price(standard) <= 100.0  # premise: the next tier in the chain is admissible
     runtime, client = _wired(config)
@@ -269,7 +279,7 @@ def test_wiring_logs_an_error_naming_each_tier_the_ceiling_excludes(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING)
-    config = _config(ceiling=20.0)
+    config = _config(ceiling=20.0, **_priced())
     assert _catalog_price(config.cognitive.llm_model_deep) > 20.0  # premise
     runtime = _Runtime(llm_client=None)
     assert _wire_model_routing(runtime=runtime, config=config) is True
@@ -606,7 +616,7 @@ def _text_tier_endpoints() -> dict[str, str]:
 async def test_a_connectivity_probe_never_sends_a_model_the_ceiling_denies(
     endpoint: _Endpoint, respect_cooldown: bool,
 ) -> None:
-    config = _config(ceiling=20.0, **_text_tier_endpoints())
+    config = _config(ceiling=20.0, **_text_tier_endpoints(), **_priced())
     deep = config.cognitive.llm_model_deep
     assert _catalog_price(deep) > 20.0  # premise: the ceiling denies the deep tier
     runtime, client = _wired(config)
@@ -618,7 +628,9 @@ async def test_a_connectivity_probe_never_sends_a_model_the_ceiling_denies(
         await client.close()
     assert deep not in endpoint.models
     assert not any(path.startswith("/deep/") for path in endpoint.paths)
-    assert sorted(m for m in endpoint.models if m) == ["claude-sonnet-4-6", "claude-sonnet-4-6"]
+    assert sorted(m for m in endpoint.models if m) == [
+        "claude-sonnet-4-6", "claude-sonnet-4-6-fast",
+    ]
     assert (results["fast"], results["standard"]) == (True, True)
     assert "deep" not in results  # an exclusion is neither reachable nor unreachable
     assert info["deep"]["reachable"] is None
@@ -627,7 +639,7 @@ async def test_a_connectivity_probe_never_sends_a_model_the_ceiling_denies(
 
 @pytest.mark.asyncio
 async def test_the_boot_factory_applies_the_ceiling_before_its_first_probe(endpoint: _Endpoint) -> None:
-    config = _config(ceiling=1.0)
+    config = _config(ceiling=1.0, **_priced())
     for tier in _TEXT_TIERS:  # premise: the ceiling denies every text tier
         assert _catalog_price(config.cognitive.tier_config(tier)["model"]) > 1.0
     buffer = StringIO()
