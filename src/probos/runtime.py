@@ -156,6 +156,7 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
+    from probos.continue_extension_permits import SqliteContinueExtensionPermitStore  # AD-1323
     from probos.cognitive.standing_interest_store import StandingInterestStore  # AD-1228
     from probos.cognitive.standing_interests import StandingInterestService  # AD-1228
     from probos.assignment import AssignmentService
@@ -481,6 +482,8 @@ class ProbOSRuntime:
     skill_request_store: SkillRequestStore | None
     approval_authority_store: ApprovalAuthorityStore | None  # AD-1213
     decision_pre_clearance_store: DecisionPreClearanceStore | None  # AD-1214
+    continue_extension_permit_store: SqliteContinueExtensionPermitStore | None  # AD-1323
+    continue_extension_reconciler: Callable[[str], Awaitable[bool]] | None  # AD-1323
     standing_interest_store: StandingInterestStore | None  # AD-1228
     standing_interests: StandingInterestService | None  # AD-1228
     delegated_approvals: DelegatedApprovalService | None  # AD-1213
@@ -1060,6 +1063,8 @@ class ProbOSRuntime:
         # --- Delegated approvals (AD-1213): set by startup only while enabled ---
         self.approval_authority_store: ApprovalAuthorityStore | None = None
         self.decision_pre_clearance_store: DecisionPreClearanceStore | None = None  # AD-1214
+        self.continue_extension_permit_store: SqliteContinueExtensionPermitStore | None = None  # AD-1323
+        self.continue_extension_reconciler: Callable[[str], Awaitable[bool]] | None = None  # AD-1323
         self.delegated_approvals: DelegatedApprovalService | None = None
 
         # --- Standing interests (AD-1228): set by finalize only while enabled ---
@@ -3184,6 +3189,7 @@ class ProbOSRuntime:
         self.skill_request_store = comm.skill_request_store
         self.approval_authority_store = comm.approval_authority_store  # AD-1213
         self.decision_pre_clearance_store = comm.decision_pre_clearance_store  # AD-1214
+        self.continue_extension_permit_store = comm.continue_extension_permit_store  # AD-1323
         self.tool_registry = comm.tool_registry
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal

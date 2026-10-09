@@ -66,11 +66,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass
 from types import CoroutineType
-from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
+from typing import Any, Awaitable, Callable, ClassVar, Protocol, runtime_checkable
 
 from probos.cognitive.dm.bypass_egress import compose_bypass_reply
 from probos.cognitive.promoted_report_delivery import promoted_report_metadata
@@ -258,6 +259,42 @@ RESUME_UNIDENTIFIED: str = "unidentified"
 # The item left ``in_progress`` on its ask between AD-855's resume and the hand-off
 # -- cancelled on the board, say -- so nothing runs it and nothing strands it.
 RESUME_MOVED_ON: str = "moved_on"
+# AD-1323 amendment 3: the permit was already claimed and its pass started (or is
+# held) by another actor. Not a loss: the winner owns the item, so nothing here may
+# close it, notify the Captain or write to it.
+RESUME_ALREADY_ADMITTED: str = "already_admitted"
+
+
+class PassNotAdmitted(Exception):
+    """A resumed pass lost its permit claim and must end without a model call or a report."""
+
+
+class PassAdmission:
+    """AD-1323 amendment 3: one-shot verdict on whether a run's reporter holds capacity.
+
+    The reporter settles it; the pass waits on it. ``begin_pass`` happens only after
+    ``ADMITTED``, so a pass that never gets its slot leaves a reclaimable permit.
+    """
+
+    ADMITTED: ClassVar[str] = "admitted"
+    DENIED: ClassVar[str] = "denied"
+
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
+        self._verdict: str = ""
+
+    def settle(self, verdict: str) -> None:
+        if not self._event.is_set():
+            self._verdict = verdict
+            self._event.set()
+
+    async def wait(self) -> str:
+        await self._event.wait()
+        return self._verdict
+
+    @property
+    def admitted(self) -> bool:
+        return self._event.is_set() and self._verdict == self.ADMITTED
 
 # BF-887: the ``stranded_reason`` of an item closed because nothing could
 # resume it -- the key the sweep's ``strand_terminal`` and BF-825 use, with a
@@ -1732,6 +1769,14 @@ async def _finish_promoted_turn(
             work_item_id,
         )
         raise
+    except PassNotAdmitted:
+        # AD-1323 amendment 3: another actor owns this permit and its pass. Nothing was run,
+        # so there is nothing to report, close, store or notify; the winner owns the item.
+        logger.info(
+            "AD-1323: the resumed pass for work item %s lost its permit claim; it ran "
+            "nothing and leaves the item to the actor that won it", work_item_id,
+        )
+        return
     except Exception:
         failed = True
         logger.warning(
@@ -1948,6 +1993,7 @@ async def _report_holding_slot(
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
     settle_expected: dict[str, Any] | None = None,
+    admission: PassAdmission | None = None,
 ) -> None:
     """BF-732: hold a concurrency slot for as long as the promoted run lives.
 
@@ -2000,6 +2046,7 @@ async def _report_holding_slot(
             strand_timeout_seconds=strand_timeout_seconds,
             plan_mode=plan_mode,
             settle_expected=settle_expected,
+            admission=admission,
         )
     except asyncio.CancelledError:
         # The reporter can be cancelled while QUEUED for a slot, i.e. before
@@ -2012,6 +2059,8 @@ async def _report_holding_slot(
         task.cancel()
         raise
     finally:
+        if admission is not None:
+            admission.settle(PassAdmission.DENIED)  # no-op once admitted
         supervisor.close()
 
 
@@ -2101,6 +2150,7 @@ async def _report_with_supervisor(
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
     settle_expected: dict[str, Any] | None = None,
+    admission: PassAdmission | None = None,
 ) -> None:
     """Acquire the BF-732 slot if there is one, then report under it."""
     slot = None
@@ -2125,6 +2175,12 @@ async def _report_with_supervisor(
             supervisor=supervisor,
             work_item_id=work_item_id,
             agent_id=agent_id,
+        )
+
+    if admission is not None:
+        # Admitted means the run really holds capacity, or has none to wait for.
+        admission.settle(
+            PassAdmission.ADMITTED if held or background_slot is None else PassAdmission.DENIED
         )
 
     try:
@@ -2159,6 +2215,84 @@ async def _report_with_supervisor(
                 )
 
 
+class OnDemandPromotion:
+    """AD-1323: promote a turn on demand, sharing one work item with the timer.
+
+    A turn that stops at its token budget inside the reply window has no work
+    item to park an ask on. ``promote()`` gives it one -- the same item
+    :func:`run_with_promotion`'s timer would have made -- and the lock and the
+    cell mean the two paths together create at most one. Log-and-degrade:
+    ``promote()`` returns ``None`` rather than raising.
+    """
+
+    def __init__(
+        self,
+        runtime: Any,
+        agent_id: str,
+        thread_id: str,
+        request_text: str,
+        on_promoted: Callable[[str], None] | None,
+    ) -> None:
+        self._runtime = runtime
+        self._agent_id = agent_id
+        self._thread_id = thread_id
+        self._request_text = request_text
+        self._on_promoted = on_promoted
+        self._lock = asyncio.Lock()
+        self._item: Any = None
+        self._published = False
+
+    async def get_or_create(self) -> Any:
+        """The one promoted item, created on first call; ``None`` when none could be made."""
+        async with self._lock:
+            if self._item is None and self._thread_id:
+                self._item = await _create_promoted_work_item(
+                    runtime=self._runtime,
+                    agent_id=self._agent_id,
+                    thread_id=self._thread_id,
+                    request_text=self._request_text,
+                )
+            return self._item
+
+    def claim_publish(self) -> bool:
+        """True exactly once: whoever gets it tells the caller the item's id."""
+        if self._published:
+            return False
+        self._published = True
+        return True
+
+    async def promote(self) -> str | None:
+        """Create-or-get the item and publish its id once. Never raises but on cancellation."""
+        try:
+            item = await self.get_or_create()
+            if item is None:
+                return None
+            if self._on_promoted is not None and self.claim_publish():
+                try:
+                    self._on_promoted(item.id)
+                except Exception:
+                    logger.warning(
+                        "AD-1323: promotion observer failed for work item %s; the item "
+                        "exists but the turn's association may be missing", item.id,
+                    )
+            return str(item.id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "AD-1323: on-demand promotion for agent %s failed; the turn stops at its "
+                "token budget without asking", self._agent_id[:12], exc_info=True,
+            )
+            return None
+
+
+@runtime_checkable
+class PromotedTurnRecoverer(Protocol):
+    """AD-1323: an agent that can restart a promoted turn from a durable permit."""
+
+    async def recover_promoted_turn(self, item: Any, request_id: str) -> str: ...
+
+
 async def run_with_promotion(
     work: Callable[[], Awaitable[str]],
     *,
@@ -2179,6 +2313,7 @@ async def run_with_promotion(
     trace_ref_provider: Callable[[], str | None] | None = None,
     plan_mode: bool = False,
     settle_expected: dict[str, Any] | None = None,
+    on_demand: OnDemandPromotion | None = None,
 ) -> str:
     """Run ``work``; promote it to a background task if it outlives the budget.
 
@@ -2314,7 +2449,9 @@ async def run_with_promotion(
 
     # The run has outlived a reply. Give it a durable home before saying so.
     work_item = None
-    if thread_id:
+    if on_demand is not None:
+        work_item = await on_demand.get_or_create()
+    elif thread_id:
         work_item = await _create_promoted_work_item(
             runtime=runtime,
             agent_id=agent_id,
@@ -2335,7 +2472,7 @@ async def run_with_promotion(
     # AD-1204: the run is still executing and can now name the item it belongs
     # to. Published before the reporter is spawned so the id is available for
     # as much of the remaining run as possible.
-    if on_promoted is not None:
+    if on_promoted is not None and (on_demand is None or on_demand.claim_publish()):
         try:
             published = on_promoted(work_item.id)
             if published is not None:
@@ -2599,6 +2736,7 @@ def start_resumed_run(
     strand_timeout_seconds: float = 0.0,
     plan_mode: bool = False,
     settle_expected: dict[str, Any] | None = None,
+    admission: PassAdmission | None = None,
 ) -> "asyncio.Task[None]":
     """BF-887: run the next pass of a promoted turn that an approval resumed.
 
@@ -2637,6 +2775,7 @@ def start_resumed_run(
             strand_timeout_seconds=strand_timeout_seconds,
             plan_mode=plan_mode,
             settle_expected=settle_expected,
+            admission=admission,
         ),
         name=f"bf887-report-{work_item_id[:8]}",
     )
@@ -2650,6 +2789,55 @@ def start_resumed_run(
     )
     return reporter
 
+
+def _bound_seconds(raw: Any) -> float:
+    """A finite positive number of seconds, else 0.0 (unbounded), as the first run reads it."""
+    if type(raw) not in (int, float):
+        return 0.0
+    value = float(raw)
+    return value if math.isfinite(value) and value > 0.0 else 0.0
+
+
+def start_recovered_run(
+    work: Callable[[], Awaitable[str]],
+    *,
+    runtime: Any,
+    agent_id: str,
+    thread_id: str,
+    work_item_id: str,
+    request_text: str,
+    hold: set["asyncio.Task[Any]"],
+    plan_mode: bool,
+    settle_expected: dict[str, Any],
+    background_slot: Callable[[], Any] | None = None,
+    admission: PassAdmission | None = None,
+) -> "asyncio.Task[None]":
+    """AD-1323: run the pass a durable permit recovered, under the bounds the first run had.
+
+    A recovered pass has no in-memory turn to read its bounds from, so the BF-733
+    deadline, the grace and the BF-825 strand timeout are read from the same
+    configuration the turn's own call sites read, with the same coercion.
+    """
+    cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
+    strand = getattr(getattr(runtime, "config", None), "work_board_reconciler", None)
+    return start_resumed_run(
+        work,
+        runtime=runtime,
+        agent_id=agent_id,
+        thread_id=thread_id,
+        work_item_id=work_item_id,
+        request_text=request_text,
+        hold=hold,
+        background_slot=background_slot,
+        deadline_seconds=_bound_seconds(getattr(cfg, "promoted_run_deadline_seconds", 0.0)),
+        unconfirmed_grace_seconds=_bound_seconds(
+            getattr(cfg, "promoted_run_unconfirmed_grace_seconds", 0.0)
+        ),
+        strand_timeout_seconds=_bound_seconds(getattr(strand, "strand_timeout_seconds", 0.0)),
+        plan_mode=plan_mode,
+        settle_expected=settle_expected,
+        admission=admission,
+    )
 
 async def _resumed_item_now(
     runtime: Any, item: Any, work_item_id: str, request_id: str,
@@ -2735,6 +2923,14 @@ async def resume_promoted_turn(runtime: Any, item: Any, request_id: str) -> str:
                 if isinstance(agent, _ResumesPromotedTurns)
                 else RESUME_NO_AGENT
             )
+            # AD-1323: after a restart the in-memory continuation is gone; with a
+            # permit store wired, a permit-holding agent restarts the pass itself.
+            if (
+                outcome == RESUME_NO_CONTINUATION
+                and getattr(runtime, "continue_extension_permit_store", None) is not None
+                and isinstance(agent, PromotedTurnRecoverer)
+            ):
+                outcome = await agent.recover_promoted_turn(item, request_id)
         except Exception:
             logger.warning(
                 "BF-887: handing promoted work item %s to agent %s raised",
@@ -2746,6 +2942,14 @@ async def resume_promoted_turn(runtime: Any, item: Any, request_id: str) -> str:
             "AD-855/BF-887: work item %s resumed on capability request %s: agent "
             "%s is running the turn's next pass, which reports into thread %s",
             work_item_id, request_id[:12], agent_id, thread_id,
+        )
+        return outcome
+    if outcome == RESUME_ALREADY_ADMITTED:
+        # Another resumer already claimed this ask's permit: it owns the item. Closing it,
+        # telling the Captain or writing to it here would clobber the live pass.
+        logger.info(
+            "AD-1323: work item %s's continue request %s was already admitted by another "
+            "resumer; leaving the item to it", work_item_id, request_id[:12],
         )
         return outcome
     # Logged BEFORE the close and the notice, so it says what is being done, not

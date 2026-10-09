@@ -63,6 +63,29 @@ SIGNAL_UNDERSPEND = "underspend"
 SIGNAL_FINISHED_UNVERIFIED = "finished_unverified"
 SIGNAL_VERIFICATION_UNAVAILABLE = "verification_unavailable"
 
+# AD-1323 amendment 3: who set a value or stakes figure, as a closed token (never free text).
+VALUE_PROVENANCE_TOKENS: tuple[str, ...] = (
+    "captain", "agent_captain_confirmed", "agent_chain_confirmed", "agent_unconfirmed", "unrecorded",
+)
+
+
+def classify_value_provenance(provenance: Any) -> str:
+    """Map a work item's recorded provenance mapping onto a closed token. Never raises."""
+    try:
+        source = provenance.get("source_kind")
+        confirmation = provenance.get("confirmation_kind")
+        if source == "captain":
+            return "captain"
+        if source == "agent":
+            if confirmation == "captain":
+                return "agent_captain_confirmed"
+            if confirmation == "chain_of_command":
+                return "agent_chain_confirmed"
+            return "agent_unconfirmed"
+    except Exception:
+        return "unrecorded"
+    return "unrecorded"
+
 
 @runtime_checkable
 class InnerLoopHook(Protocol):
@@ -79,6 +102,8 @@ class InnerLoopHook(Protocol):
         input_price_per_million: float | None = None,
         price_weight: float | None = None,
         verification_tool_ids: Collection[str] = (),
+        value_provenance: str | None = None,
+        stakes_provenance: str | None = None,
     ) -> None: ...
 
     def before_model_call(
@@ -378,6 +403,8 @@ class _TurnState:
     active: bool = False
     value_band: str | None = None
     stakes: str | None = None
+    value_provenance: str = "unrecorded"
+    stakes_provenance: str = "unrecorded"
     tier: str = ""
     pass_budget: int | None = None
     input_price: float | None = None
@@ -652,6 +679,21 @@ class EconomicJudgmentOrgan(BaseCognitiveOrgan):
         return block
 
 
+@dataclass(frozen=True)
+class CostedCase:
+    """AD-1323: what a stopped turn has spent and what it is worth. Counts and enum tokens only."""
+
+    spent: int
+    budget: int | None
+    value_band: str | None
+    stakes: str | None
+    verified: bool
+    signals: tuple[str, ...]
+    recent_step_deltas: tuple[int, ...]
+    value_provenance: str = "unrecorded"
+    stakes_provenance: str = "unrecorded"
+
+
 class EconomicTurnHandle:
     """One turn's inner-loop hook: owns ALL per-turn state, dropped with the turn (AD-1322).
 
@@ -681,6 +723,8 @@ class EconomicTurnHandle:
         input_price_per_million: float | None = None,
         price_weight: float | None = None,
         verification_tool_ids: Collection[str] = (),
+        value_provenance: str | None = None,
+        stakes_provenance: str | None = None,
     ) -> None:
         if not self._organ.attached:
             return
@@ -702,6 +746,8 @@ class EconomicTurnHandle:
         state.pass_cumulative = 0
         state.value_band = value_band if value_band in VALUE_BANDS else None
         state.stakes = stakes if stakes in STAKES_LEVELS else None
+        state.value_provenance = value_provenance if value_provenance in VALUE_PROVENANCE_TOKENS else "unrecorded"
+        state.stakes_provenance = stakes_provenance if stakes_provenance in VALUE_PROVENANCE_TOKENS else "unrecorded"
         state.pass_budget = budget if type(budget) is int and budget > 0 else None
         state.tier = str(tier or "")
         state.input_price = input_price_per_million
@@ -782,6 +828,30 @@ class EconomicTurnHandle:
         if type(cumulative_tokens) is not int or cumulative_tokens < 0:
             return
         state.pass_cumulative = max(state.pass_cumulative, cumulative_tokens)
+
+    def costed_case(self) -> CostedCase:
+        """AD-1323: a read-only snapshot of what this turn has spent against what it is worth.
+
+        Pure counts and enum tokens, taken from state the organ already holds; it
+        never raises and changes nothing.
+        """
+        state = self._state
+        history = list(state.spend_history)
+        deltas = tuple(
+            b - a for a, b in zip([0] + history[:-1], history) if type(a) is int and b >= a
+        )
+        return CostedCase(
+            spent=state.carry + state.pass_cumulative,
+            budget=state.pass_budget,
+            value_band=state.value_band,
+            stakes=state.stakes,
+            verified=state.verification_recorded,
+            signals=tuple(state.signals),
+            recent_step_deltas=deltas[-3:],
+            value_provenance=state.value_provenance,
+            stakes_provenance=state.stakes_provenance,
+        )
+
     def _publish(self) -> None:
         state = self._state
         if state.turn_key is None:

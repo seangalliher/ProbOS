@@ -857,6 +857,11 @@ def _fault_request_text(observation: dict[str, Any]) -> str:
     return raw if type(raw) is str else ""
 
 
+async def _no_promotion() -> str | None:
+    """AD-1323: the promote hook of a turn that has none; the costed ask then stops."""
+    return None
+
+
 def _promotion_request_text(observation: dict[str, Any], fallback: str) -> str:
     """AD-1165: the text a promoted turn's work item records as the request.
 
@@ -4816,6 +4821,23 @@ class CognitiveAgent(BaseAgent):
                 {"inner_loop_hook": _economic_hook} if _economic_hook is not None else {}
             )
 
+            # AD-1323: default-OFF. The permit store exists only when the whole
+            # arming predicate held at startup, so an unarmed turn imports nothing.
+            _ext_armed = False
+            _ext_promote: dict[str, Any] = {"promote": None}
+            if (
+                getattr(runtime, "continue_extension_permit_store", None) is not None
+                and _turn_cost is not None
+                and callable(getattr(_economic_hook, "costed_case", None))
+            ):
+                from probos.cognitive.costed_continue_ask import continue_extension_armed
+
+                _ext_armed = continue_extension_armed(
+                    cfg,
+                    promote_after_seconds=getattr(cfg, "promote_to_task_after_seconds", 0),
+                    token_budget=getattr(cfg, "token_budget", None),
+                )
+
             async def _run_pass(task_text: str) -> Any:
                 stop, trace = _segment["stop"], _segment["trace"]
                 trace["ref"] = None
@@ -4937,6 +4959,33 @@ class CognitiveAgent(BaseAgent):
                 # promoted alike; nothing is filed (continue_or_ask gate 2).
                 if _turn_cost is not None and stop["reason"] == "token_budget":
                     turn_text = _turn_cost.render_stop(turn_text)
+                    # AD-1323: a turn worth more than it has cost asks, with its
+                    # costed case, for ONE bounded extension; any failure leaves
+                    # today's stop untouched.
+                    if _ext_armed and not _turn_cost.extended:
+                        from probos.cognitive.costed_continue_ask import file_costed_continue
+
+                        _asked = await file_costed_continue(
+                            runtime,
+                            agent_id=self.id,
+                            thread_id=thread_id,
+                            base_task_text=user_message,
+                            display_task_text=_promotion_request_text(observation, user_message),
+                            case=_economic_hook.costed_case(),
+                            config=cfg,
+                            promote=_ext_promote["promote"] or _no_promotion,
+                            work_item_id=_promoted["work_item_id"] or None,
+                            passes=1,
+                            stop_text=stop["text"],
+                            plan_mode=_plan_mode_promotion.get("plan_mode") is True,
+                            configured_budget=_turn_cost.configured_budget,
+                            parked=parked,
+                        )
+                        if _asked:
+                            turn_text = (
+                                f"{turn_text}\n\nI have asked for a one-time extension "
+                                f"of the token budget (request {_asked[:8]})."
+                            )
                 return turn_text
 
             # BF-887: a segment of this turn -- the first is the turn's own run,
@@ -5092,8 +5141,13 @@ class CognitiveAgent(BaseAgent):
                     # This segment's watchdog starts now, with no promotion wait
                     # in front of it.
                     _grant_long_runs(time.monotonic() - promote_after)
+                    _admission = None
+                    if _ext_armed:
+                        from probos.cognitive.turn_promotion import PassAdmission
+
+                        _admission = PassAdmission()
                     start_resumed_run(
-                        lambda: _resumed_segment(task_text, segment),
+                        lambda: _resumed_segment(task_text, segment, request_id, _admission),
                         runtime=runtime,
                         agent_id=self.id,
                         thread_id=thread_id,
@@ -5127,11 +5181,40 @@ class CognitiveAgent(BaseAgent):
                         # The ask whose approval admitted this segment: it ends the
                         # item only while the item is still on it.
                         settle_expected={"capability_request_id": request_id},
+                        admission=_admission,
                     )
                     _hold_next_pass(segment, stop)
 
-                async def _resumed_segment(task_text: str, segment: dict[str, Any]) -> str:
+                async def _resumed_segment(
+                    task_text: str, segment: dict[str, Any], request_id: str = "",
+                    admission: Any = None,
+                ) -> str:
                     try:
+                        if _ext_armed and request_id:
+                            from probos.cognitive.costed_continue_ask import (
+                                PermitOutcome,
+                                apply_permit,
+                            )
+                            from probos.cognitive.turn_promotion import PassNotAdmitted
+
+                            applied = await apply_permit(
+                                runtime.continue_extension_permit_store,
+                                request_id=request_id,
+                                agent_id=self.id,
+                                work_item_id=_promoted["work_item_id"],
+                                thread_id=thread_id,
+                                turn_cost=_turn_cost,
+                                await_admission=(
+                                    admission.wait if admission is not None else None
+                                ),
+                            )
+                            if applied.outcome == PermitOutcome.CLAIM_LOST:
+                                # Another actor holds this permit and its pass: run no model.
+                                raise PassNotAdmitted(request_id)
+                            if applied.outcome in (
+                                PermitOutcome.NOT_ADMITTED, PermitOutcome.FAILED,
+                            ):
+                                raise RuntimeError("continue extension not admitted")
                         return await _settle_turn(
                             await _run_pass(task_text), segment["parked"],
                         )
@@ -5141,6 +5224,19 @@ class CognitiveAgent(BaseAgent):
                 def _on_promoted(work_item_id: str) -> None:
                     _record_promotion(work_item_id)
                     _hold_next_pass(_first_segment, _last_stop)
+
+                _on_demand = None
+                if _ext_armed:
+                    from probos.cognitive.turn_promotion import OnDemandPromotion
+
+                    _on_demand = OnDemandPromotion(
+                        runtime, self.id, thread_id,
+                        _promotion_request_text(observation, user_message), _on_promoted,
+                    )
+                    _ext_promote["promote"] = _on_demand.promote
+                _on_demand_kwargs: dict[str, Any] = (
+                    {"on_demand": _on_demand} if _on_demand is not None else {}
+                )
 
                 text = await run_with_promotion(
                     _agentic_turn,
@@ -5199,6 +5295,7 @@ class CognitiveAgent(BaseAgent):
                         if getattr(cfg, "continue_or_ask_enabled", False) is True
                         else None
                     ),
+                    **_on_demand_kwargs,
                 )
             text = text.strip()
             if text and not _promoted["work_item_id"]:
@@ -5236,6 +5333,163 @@ class CognitiveAgent(BaseAgent):
         if continuations is None:
             return RESUME_NO_CONTINUATION
         return continuations.resume(work_item_id, request_id)
+
+    async def recover_promoted_turn(self, item: Any, request_id: str) -> str:
+        """AD-1323: restart a promoted turn after a restart, from a durable permit.
+
+        Called by ``turn_promotion.resume_promoted_turn`` only when this agent
+        holds no in-memory continuation. Spends the ACTIVE permit for
+        ``request_id`` exactly once (compare-and-set) and runs one pass whose
+        token budget is the extension, never the standing budget. With no active
+        permit, or no snapshot to continue from, nothing runs and the result is
+        ``no_continuation`` so the item is closed as before. Never files another
+        ask. Never raises apart from cancellation.
+        """
+        from probos.cognitive.turn_promotion import (
+            RESUME_ALREADY_ADMITTED,
+            RESUME_NO_CONTINUATION,
+            RESUME_START_FAILED,
+            RESUME_STARTED,
+            PassAdmission,
+            PassNotAdmitted,
+            start_recovered_run,
+        )
+
+        runtime = getattr(self, "_runtime", None)
+        store = getattr(runtime, "continue_extension_permit_store", None)
+        if store is None:
+            return RESUME_NO_CONTINUATION
+        work_item_id = str(getattr(item, "id", "") or "")
+        metadata = getattr(item, "metadata", None)
+        thread_id = str((metadata or {}).get("thread_id") or "") if type(metadata) is dict else ""
+        try:
+            from probos.cognitive.continue_or_ask import continuation_task_text
+            from probos.cognitive.costed_continue_ask import extension_amount, validate_snapshot
+
+            # Validate BEFORE claiming: an invalid snapshot is voided, never spent.
+            before = await store.get(request_id)
+            if before is not None and before.state == "active" and before.bound:
+                invalid = validate_snapshot(before)
+                if invalid is not None:
+                    logger.warning(
+                        "AD-1323: permit for request %s has an invalid %s; it is voided and "
+                        "the item is closed as before", request_id[:12], invalid,
+                    )
+                    await store.void(request_id)
+                    return RESUME_NO_CONTINUATION
+            permit = await store.consume(
+                request_id, agent_id=self.id, work_item_id=work_item_id, thread_id=thread_id,
+            )
+            if permit is None:
+                row = await store.get(request_id)
+                if row is not None and row.state == "consumed":
+                    return RESUME_ALREADY_ADMITTED  # the winner owns the item
+                return RESUME_NO_CONTINUATION
+            invalid = validate_snapshot(permit)
+            if invalid is not None:
+                # A consumed row cannot be voided; spending it is what stops a reclaim.
+                await store.begin_pass(request_id)
+                logger.warning(
+                    "AD-1323: permit for request %s has an invalid %s; it is spent and the "
+                    "item is closed as before", request_id[:12], invalid,
+                )
+                return RESUME_NO_CONTINUATION
+            amount = extension_amount(permit)
+            task_text = continuation_task_text(
+                str(getattr(item, "description", "") or ""), permit.stop_text,
+            )
+            if amount < 1 or not task_text:
+                logger.warning(
+                    "AD-1323: permit for request %s has no usable snapshot (grant=%s); the "
+                    "turn is not restarted and its item is closed as before",
+                    request_id[:12], amount,
+                )
+                return RESUME_NO_CONTINUATION
+            instructions = str(getattr(self, "instructions", "") or "")
+            plan_kwargs: dict[str, Any] = {}
+            plan_mode = permit.plan_mode
+            if plan_mode is True:
+                # The persisted floor holds whatever the live flag says; the flag-on block
+                # below can only strengthen it.
+                from probos.cognitive.agent_mode import PLAN_MODE_TOOL_IDS as _FLOOR_TOOLS
+
+                plan_kwargs["plan_mode_tool_ids"] = _FLOOR_TOOLS
+            cfg = getattr(getattr(runtime, "config", None), "dm_agentic", None)
+            if getattr(cfg, "agent_modes_enabled", False) is True:
+                from probos.cognitive.agent_mode import (
+                    PLAN_MODE_TOOL_IDS,
+                    floor_turn_agent_mode,
+                    read_turn_agent_mode,
+                    render_agent_mode_instructions,
+                )
+                from probos.threads.agent_mode import AGENT_MODE_PLAN
+
+                mode = floor_turn_agent_mode(
+                    read_turn_agent_mode(
+                        getattr(runtime, "chat_thread_store", None), thread_id, agent_id=self.id,
+                    ),
+                    AGENT_MODE_PLAN if plan_mode else None,
+                )
+                if mode is not None:
+                    instructions += render_agent_mode_instructions(mode)
+                    if mode.mode == AGENT_MODE_PLAN:
+                        plan_kwargs["plan_mode_tool_ids"] = PLAN_MODE_TOOL_IDS
+                        plan_mode = True
+            from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+
+            executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
+
+            admission = PassAdmission()
+
+            async def _recovered_pass() -> str:
+                # Only once the reporter holds the slot, immediately before the first model
+                # call: a crash or refusal earlier is provably unspent and is reclaimed once.
+                if await admission.wait() != PassAdmission.ADMITTED:
+                    raise RuntimeError("continue extension not admitted")
+                if not await store.begin_pass(request_id):
+                    raise PassNotAdmitted(request_id)
+                outcome = await executor.run(
+                    agent_id=self.id,
+                    instructions=instructions,
+                    task_text=task_text,
+                    runtime=runtime,
+                    thread_id=thread_id,
+                    max_iterations=getattr(cfg, "max_iterations", 5),
+                    tier=getattr(cfg, "tier", "standard"),
+                    compose_disposition=True,
+                    failure_scope=work_item_id,
+                    token_budget=amount,
+                    **plan_kwargs,
+                )
+                text = getattr(outcome, "final_text", "")
+                return text if type(text) is str else ""
+
+            _cm = getattr(self, "_concurrency_manager", None)
+            start_recovered_run(
+                _recovered_pass,
+                runtime=runtime,
+                agent_id=self.id,
+                thread_id=thread_id,
+                work_item_id=work_item_id,
+                request_text=str(getattr(item, "description", "") or ""),
+                hold=self._promoted_turn_tasks,
+                plan_mode=plan_mode,
+                settle_expected={"capability_request_id": request_id},
+                admission=admission,
+                background_slot=(
+                    (lambda: _cm.slot("direct_message_promoted", _PROMOTED_RUN_PRIORITY))
+                    if _cm is not None else None
+                ),
+            )
+            return RESUME_STARTED
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "AD-1323: restarting promoted work item %s from its permit failed; the item "
+                "is closed as before", work_item_id, exc_info=True,
+            )
+            return RESUME_START_FAILED
 
     async def _run_llm_fallback(self, observation: dict[str, Any]) -> dict[str, Any] | None:
         """AD-534b: Re-run through LLM path, skipping procedural memory and decision cache."""

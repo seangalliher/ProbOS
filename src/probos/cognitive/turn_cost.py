@@ -140,6 +140,7 @@ class TurnCostBudget:
         self._max_total_iterations = max_total_iterations
         self._agent_id = agent_id
         self._spent = 0
+        self._extended = False
         self._sources: list[str] = []
         # AD-1320: transient presentation state shared by reference across passes.
         self._awareness = awareness
@@ -202,6 +203,29 @@ class TurnCostBudget:
     @property
     def spent(self) -> int:
         return self._spent
+
+    @property
+    def extended(self) -> bool:
+        """AD-1323: whether this turn has already used its one extension."""
+        return self._extended
+
+    def extend(self, tokens: int) -> int:
+        """AD-1323: raise this turn's ceiling by ``tokens``, once. Returns the grant (0 = refused).
+
+        Only the live ceiling moves: ``configured_budget`` is the standing
+        configuration and never changes, and a second call is refused.
+        """
+        if self._extended or type(tokens) is not int or tokens < 1:
+            return 0
+        self._extended = True
+        self._budget += tokens
+        if self._awareness is not None:
+            self._awareness.extend_total(tokens)
+        logger.info(
+            "AD-1323: agent %s turn budget extended by %d tokens to %d (configured %d unchanged)",
+            self._agent_id[:12], tokens, self._budget, self._configured_budget,
+        )
+        return tokens
 
     def loop_kwargs(self) -> dict[str, Any]:
         """What the next pass passes to ``WorkItemAgenticExecutor.run``.

@@ -995,6 +995,21 @@ class AgenticBudgetAwarenessState:
     def transition_count(self) -> int:
         return self._transitions
 
+    def extend_total(self, tokens: int) -> None:
+        """AD-1323: the turn's one extension raised the total; re-arm the thresholds.
+
+        Presentation state only. Used thresholds and the current note are
+        cleared because they described the old ceiling; the transition count
+        and token sources are history and stay.
+        """
+        if type(tokens) is not int or tokens < 1:
+            return
+        self._total += tokens
+        self._used.clear()
+        self._current_threshold = None
+        self._current_note = None
+        self._current_spent = None
+
     def observe_response(self, cumulative_spent: int, token_source: str) -> bool:
         """Fold one charged response in; True when the current note changed.
 

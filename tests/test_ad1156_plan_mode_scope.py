@@ -1215,7 +1215,8 @@ _READER_CALLS: dict[tuple[str, str], int] = {
     ("cognitive/agent_mode.py", "open_plan_mode_reply_gate"): 1,
     ("cognitive/agent_mode.py", "read_turn_agent_mode"): 3,
     ("cognitive/agent_mode.py", "turn_agent_mode_of_thread"): 1,
-    ("cognitive/cognitive_agent.py", "read_turn_agent_mode"): 1,
+    # AD-1323: live turns and restart recovery each read the agent-scoped mode.
+    ("cognitive/cognitive_agent.py", "read_turn_agent_mode"): 2,
     ("cognitive/commands/mode_command.py", "turn_agent_mode_of_thread"): 2,
     ("cognitive/turn_promotion.py", "PlanModeReplyGate"): 1,
     ("experience/commands/session.py", "open_plan_mode_session_gate"): 1,

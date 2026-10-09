@@ -20,6 +20,7 @@ from probos.types import Priority
 if TYPE_CHECKING:
     from probos.approval_authority import ApprovalAuthorityStore
     from probos.config import SystemConfig
+    from probos.continue_extension_permits import SqliteContinueExtensionPermitStore
     from probos.decision_pre_clearance import DecisionPreClearanceStore
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
@@ -270,6 +271,32 @@ async def _start_decision_pre_clearance_store(
     store = DecisionPreClearanceStore(db_path=str(data_dir / "decision_pre_clearances.db"))
     await store.start()
     logger.info("AD-1214: decision pre-clearance store started")
+    return store
+
+
+async def _start_continue_extension_permit_store(
+    config: "SystemConfig", data_dir: Path,
+) -> "SqliteContinueExtensionPermitStore | None":
+    """AD-1323: the costed continue-extension permits; None unless fully armed."""
+    agentic = config.dm_agentic
+    if getattr(agentic, "enabled", False) is not True:
+        return None
+    from probos.cognitive.costed_continue_ask import continue_extension_armed
+
+    if not continue_extension_armed(
+        agentic,
+        promote_after_seconds=agentic.promote_to_task_after_seconds,
+        token_budget=agentic.token_budget,
+    ):
+        return None
+    from probos.continue_extension_permits import SqliteContinueExtensionPermitStore
+
+    store = SqliteContinueExtensionPermitStore(
+        db_path=str(data_dir / "continue_extension_permits.db"),
+        ttl_seconds=agentic.economic_judgment.continue_extension.permit_ttl_seconds,
+    )
+    await store.start()
+    logger.info("AD-1323: continue-extension permit store started")
     return store
 
 
@@ -607,6 +634,7 @@ async def init_communication(
     # needs delegated_approvals_enabled (both default False): when off, no store
     # exists, every delegated decision notifies the Captain, and the routes 503.
     decision_pre_clearance_store = await _start_decision_pre_clearance_store(config, data_dir)
+    continue_extension_permit_store = await _start_continue_extension_permit_store(config, data_dir)  # AD-1323
 
     # --- Tool Registry (AD-423a) ---
     from probos.tools.registry import ToolRegistry
@@ -902,4 +930,5 @@ async def init_communication(
         hook_bus=hook_bus,
         approval_authority_store=approval_authority_store,
         decision_pre_clearance_store=decision_pre_clearance_store,
+        continue_extension_permit_store=continue_extension_permit_store,  # AD-1323
     )

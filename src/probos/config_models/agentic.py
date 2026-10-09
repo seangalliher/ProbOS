@@ -210,6 +210,93 @@ class DmDeliberateConfig(BaseModel):  # AD-934
     max_tokens: int = 800
 
 
+def _clamp_int(value: object, default: int, low: int, high: int) -> int:
+    """AD-1323: a bounded int; anything unusable falls back to ``default`` (never raises)."""
+    if type(value) is not int:
+        return default
+    return max(low, min(high, value))
+
+
+class ContinueExtensionConfig(BaseModel):  # AD-1323
+    """AD-1323: ask for a costed one-time token extension instead of stopping.
+
+    Default OFF. Effective only while ``economic_judgment.enabled``,
+    ``dm_agentic.continue_or_ask_enabled``, a turn ``token_budget`` and a
+    positive ``promote_after_seconds`` are all set. Out-of-range values are
+    clamped, never rejected, so a typo cannot stop the system starting.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1323: when a valuable turn stops at its token budget, promote it and file "
+            "ONE linked kind='continue' request carrying a costed case. Approval alone "
+            "grants a single bounded extension. Default OFF: nothing is imported, stored "
+            "or filed and the stop is byte-identical."
+        ),
+    )
+    max_extension_tokens: int = Field(
+        default=0,
+        description=(
+            "AD-1323: cap on the one extension, in tokens. 0 means the turn's own "
+            "configured budget. Negative values clamp to 0."
+        ),
+    )
+    permit_ttl_seconds: int = Field(
+        default=3600,
+        description=(
+            "AD-1323: how long an approved extension stays usable, counted from "
+            "approval. Clamped to 60..86400."
+        ),
+    )
+    min_value_bands: list[str] = Field(
+        default_factory=lambda: ["significant", "critical"],
+        description=(
+            "AD-1323: value bands that justify asking. Unknown names are dropped; "
+            "an empty result restores the default."
+        ),
+    )
+    ask_when_value_unrecorded: bool = Field(
+        default=False,
+        description=(
+            "AD-1323: ask even when the linked item records no value band. Default "
+            "False: an unrecorded value never justifies spending."
+        ),
+    )
+    assumed_remaining_steps: int = Field(
+        default=5,
+        description=(
+            "AD-1323: steps assumed left when estimating the extra tokens; the "
+            "estimate is the recent mean step spend times this. Clamped to 1..50."
+        ),
+    )
+
+    @field_validator("max_extension_tokens", mode="before")
+    @classmethod
+    def _clamp_max_extension(cls, value: object) -> int:
+        return _clamp_int(value, 0, 0, 10**9)
+
+    @field_validator("permit_ttl_seconds", mode="before")
+    @classmethod
+    def _clamp_ttl(cls, value: object) -> int:
+        return _clamp_int(value, 3600, 60, 86400)
+
+    @field_validator("assumed_remaining_steps", mode="before")
+    @classmethod
+    def _clamp_steps(cls, value: object) -> int:
+        return _clamp_int(value, 5, 1, 50)
+
+    @field_validator("min_value_bands", mode="before")
+    @classmethod
+    def _normalise_bands(cls, value: object) -> list[str]:
+        known = ("minor", "moderate", "significant", "critical")  # workforce.VALUE_BANDS
+        default = ["significant", "critical"]
+        if not isinstance(value, (list, tuple)):
+            return default
+        kept = [b for b in known if b in {x.strip().lower() for x in value if isinstance(x, str)}]
+        return kept or default
+
+
 class EconomicJudgmentConfig(BaseModel):  # AD-1322
     """AD-1322: opt-in economic judgment organ for agentic turns.
 
@@ -293,6 +380,11 @@ class EconomicJudgmentConfig(BaseModel):  # AD-1322
             "strictly grows that count as rising spend on a minor or "
             "moderate value item."
         ),
+    )
+
+    continue_extension: ContinueExtensionConfig = Field(
+        default_factory=ContinueExtensionConfig,
+        description="AD-1323: costed one-time continue extension. Default OFF.",
     )
 
     @field_validator("verification_tool_ids")

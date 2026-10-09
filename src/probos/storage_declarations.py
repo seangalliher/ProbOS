@@ -119,6 +119,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         ),
     ),
     StoreDeclaration(
+        id="approvals.continue-extension-permits",
+        title="Costed continue-extension permits (AD-1323)",
+        owner_module="probos.continue_extension_permits",
+        owner_symbol="SqliteContinueExtensionPermitStore",
+        canonical_path="continue_extension_permits.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.continue_extension_permits.SqliteContinueExtensionPermitStore",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM: a permit moves requested -> active -> consumed or void by "
+            "compare-and-set, so every extension stays on the record. Growth is bounded "
+            "by one permit per promoted work item."
+        ),
+        backup="included",
+        restore="point-in-time",
+        notes=(
+            "Constructed only when dm_agentic, economic_judgment, continue_extension and "
+            "continue_or_ask are all enabled with a token budget and promotion. A permit "
+            "is activated only by an approver other than the asking agent and spent once."
+        ),
+    ),
+    StoreDeclaration(
         id="identity.key-binding",
         title="Ship DID key events and certificate signatures (AD-1196), and incoming transfer certificate marks (AD-1198)",
         owner_module="probos.identity_key_binding",

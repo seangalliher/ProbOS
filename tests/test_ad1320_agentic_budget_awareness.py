@@ -611,17 +611,43 @@ async def test_executor_omits_state_when_absent_and_forwards_unchanged_when_pres
 
 
 def test_native_builder_and_continue_or_ask_are_untouched_negative_pins() -> None:
-    # Git blob ids from the contract (the contract's sha256 of continue_or_ask.py
-    # does not match its own blob; the blob id is the authoritative pin).
-    pins = {
-        "cognitive/swe_harness/native_builder.py": "764d0f86d2fc339e83ec8f3a71cc3631c26876b3",
-        "cognitive/continue_or_ask.py": "31c6a9d3b0879d477fa69f8a84ec58529fdda348",
-    }
-    for rel, blob in pins.items():
-        data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
-        assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
-        assert b"budget_awareness" not in data
+    # Git blob id from the contract; native_builder.py is still pinned byte-exact.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "764d0f86d2fc339e83ec8f3a71cc3631c26876b3"
+    data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
+    assert b"budget_awareness" not in data
 
+    # AD-1323 amendment 3 (D9): continue_or_ask.py used to be pinned by blob id
+    # (31c6a9d3...). That pinned the exact bytes, so a docstring-only note about
+    # cancellation in the filing path could not land. What the pin protected is that
+    # AD-1320's budget-awareness state never reaches the ask and that the ask still has
+    # no knowledge of the costed extension, so those are now asserted structurally:
+    # no budget_awareness anywhere, the three AD-1323 hooks default to None (a call with
+    # none is the call it always was), and no import of the extension modules (the
+    # dependency points from costed_continue_ask to continue_or_ask, never back).
+    import ast
+
+    source = (_SRC / "cognitive/continue_or_ask.py").read_bytes().replace(b"\r\n", b"\n")
+    assert b"budget_awareness" not in source
+    tree = ast.parse(source)
+    func = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "file_continue_request"
+    )
+    args = func.args.kwonlyargs
+    defaults = {a.arg: d for a, d in zip(args, func.args.kw_defaults, strict=True)}
+    for name in ("rationale", "before_file", "after_park"):
+        default = defaults[name]
+        assert isinstance(default, ast.Constant) and default.value is None, name
+    imported = {
+        (node.module or "") if isinstance(node, ast.ImportFrom) else alias.name
+        for node in ast.walk(tree)
+        for alias in (node.names if isinstance(node, (ast.Import, ast.ImportFrom)) else [])
+    }
+    imported |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+    assert not any(
+        "costed_continue_ask" in name or "continue_extension_permits" in name for name in imported
+    )
 
 def test_only_the_turn_budget_arms_the_loop_in_production_source() -> None:
     hits = sorted(
