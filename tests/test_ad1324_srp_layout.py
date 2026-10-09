@@ -7,16 +7,16 @@ byte-identical to the base commit's, so no SRP trigger was grandfathered to pass
 from __future__ import annotations
 
 import ast
-import subprocess
+import hashlib
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "probos" / "cognitive"
-BASE = "d811d8a30782ddf099eadfcdfefd0c7f7c8e790d"
 MAX_METHODS = 15
 MAX_LINES = 500
+ARCHITECTURE_BASELINE_SHA256 = "62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1"
 
 TARGETS = [
     ("swe_harness/agentic_loop.py", "AgenticLoop", 13),
@@ -47,19 +47,11 @@ def test_class_stays_within_srp_limits(path: str, name: str, cap: int | None) ->
             assert node.end_lineno - node.lineno + 1 <= MAX_LINES
 
 
-def test_agentic_loop_gained_no_methods_over_base() -> None:
-    base_src = subprocess.run(
-        ["git", "show", f"{BASE}:src/probos/cognitive/swe_harness/agentic_loop.py"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
-    ).stdout
-    base = next(n for n in ast.walk(ast.parse(base_src)) if isinstance(n, ast.ClassDef) and n.name == "AgenticLoop")
-    now = _class("swe_harness/agentic_loop.py", "AgenticLoop")
-    assert _methods(now) <= _methods(base)
+def test_agentic_loop_keeps_the_pre_ad1324_method_ceiling() -> None:
+    assert _methods(_class("swe_harness/agentic_loop.py", "AgenticLoop")) <= 13
 
 
-def test_architecture_baseline_is_byte_identical_to_base() -> None:
-    out = subprocess.run(
-        ["git", "diff", "--exit-code", BASE, "--", "docs/development/architecture-baseline.yaml"],
-        cwd=ROOT, capture_output=True, text=True,
-    )
-    assert out.returncode == 0, out.stdout[:500]
+def test_architecture_baseline_is_byte_identical_to_the_reviewed_base() -> None:
+    baseline = (ROOT / "docs" / "development" / "architecture-baseline.yaml").read_bytes()
+    normalized = baseline.replace(b"\r\n", b"\n")
+    assert hashlib.sha256(normalized).hexdigest() == ARCHITECTURE_BASELINE_SHA256
