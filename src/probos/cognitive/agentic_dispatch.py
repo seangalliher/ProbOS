@@ -1947,7 +1947,10 @@ class WorkItemAgenticExecutor:
         "unknown", which suppresses the dependent signals rather than raising.
         """
         try:
-            from probos.cognitive.economic_judgment_organ import resolve_tier_pricing
+            from probos.cognitive.economic_judgment_organ import (
+                classify_value_provenance,
+                resolve_tier_pricing,
+            )
 
             work_item_id = (extra_context or {}).get("_crew_work_item_id")
             if not work_item_id and work_item_id_provider is not None:
@@ -1960,11 +1963,16 @@ class WorkItemAgenticExecutor:
             )
             value_band: str | None = None
             stakes: str | None = None
+            value_provenance = stakes_provenance = "unrecorded"
             store = getattr(runtime, "work_item_store", None)
             if work_item_id and store is not None:
                 item = await store.get_work_item(work_item_id)
                 value_band = getattr(item, "value_band", None)
                 stakes = getattr(item, "stakes", None)
+                if type(value_band) is str:
+                    value_provenance = classify_value_provenance(getattr(item, "value_band_provenance", None))
+                if type(stakes) is str:
+                    stakes_provenance = classify_value_provenance(getattr(item, "stakes_provenance", None))
             verification: set[str] = set()
             if registry is not None:
                 for reg in registry.list_tools(tag="verification"):
@@ -1984,6 +1992,8 @@ class WorkItemAgenticExecutor:
                 input_price_per_million=price,
                 price_weight=weight,
                 verification_tool_ids=verification,
+                value_provenance=value_provenance,
+                stakes_provenance=stakes_provenance,
             )
         except Exception:
             logger.warning(

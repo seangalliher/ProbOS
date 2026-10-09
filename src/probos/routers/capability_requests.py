@@ -28,6 +28,12 @@ from probos.cognitive.capability_triage import (
     fulfil_grant,
     fulfil_install,
 )
+from probos.continue_extension_permits import (
+    STATE_ACTIVE,
+    STATE_CONSUMED,
+    STATE_REQUESTED,
+    STATE_VOIDED,
+)
 from probos.delegated_approvals import (
     RequestClass,
     audit_captain_decision,
@@ -267,7 +273,56 @@ ApprovalFulfiller = Callable[
 async def _fulfil_by_approval_itself(
     _runtime: Any, store: Any, decided: CapabilityRequest
 ) -> CapabilityRequest | None:
-    """AD-1204: ``continue`` — approval is the whole of the fulfilment."""
+    """AD-1204: ``continue`` — approval is the whole of the fulfilment.
+
+    AD-1323: a request that reserved a costed extension permit first activates it,
+    by the decider, BEFORE the fulfilment event can start any pass. A permit not
+    yet bound to its request (filing is still parking the item) is neither
+    activated nor fulfilled: the approval stands and fulfilment is retried when
+    filing completes. A refused or failed activation (the asker approving itself,
+    a blank decider, a store error) fulfils nothing, so the Captain can retry. A
+    request with no permit is fulfilled exactly as before.
+    """
+    permits = getattr(_runtime, "continue_extension_permit_store", None)
+    if permits is not None:
+        try:
+            permit = await permits.get_for_request(
+                decided.id, getattr(decided, "work_item_id", None),
+            )
+            if permit is not None:
+                if not permit.bound:
+                    logger.warning(
+                        "AD-1323: request %s was approved while its extension permit is "
+                        "still being bound; the approval is recorded and fulfilment is "
+                        "retried when filing completes",
+                        decided.id[:12],
+                    )
+                    return None
+                if permit.state in (STATE_VOIDED, STATE_CONSUMED):
+                    logger.info(
+                        "AD-1323: request %s has a %s extension permit; no extension conveyed, "
+                        "fulfilling the ordinary continue", decided.id[:12], permit.state,
+                    )
+                elif await permits.activate(decided.id, decided_by=decided.decided_by or "") is None:
+                    # A lost race to a legitimate void or an identical approval is settled by the
+                    # state on re-read; a blank decider or the asker itself leaves it requested.
+                    settled = await permits.get(decided.id)
+                    if settled is None or settled.state == STATE_REQUESTED or (
+                        settled.state == STATE_ACTIVE and settled.decided_by != decided.decided_by
+                    ):
+                        logger.warning(
+                            "AD-1323: extension permit for request %s was not activated by %r; "
+                            "the request is not fulfilled",
+                            decided.id[:12], decided.decided_by,
+                        )
+                        return None
+        except Exception:
+            logger.warning(
+                "AD-1323: activating the extension permit for request %s failed; the "
+                "request is not fulfilled and can be approved again",
+                decided.id[:12], exc_info=True,
+            )
+            return None
     return await store.mark_fulfilled(decided.id)
 
 

@@ -3090,6 +3090,39 @@ def _wire_capability_request_notifier(*, runtime: Any, config: "SystemConfig") -
     return True
 
 
+def _wire_continue_extension_reconciler(*, runtime: Any) -> bool:
+    """AD-1323: bind the reconciler that finishes an approval which landed mid-filing.
+
+    Only while the permit store exists, which is only while the feature is armed.
+    The reconciler re-reads the request and runs the same fulfilment the approval
+    route runs, so activation is still by the recorded decider and the asking
+    agent still cannot approve itself. Never raises.
+    """
+    try:
+        if getattr(runtime, "continue_extension_permit_store", None) is None:
+            return False
+        from probos.routers.capability_requests import fulfil_on_approval
+
+        async def reconcile(request_id: str) -> bool:
+            requests = getattr(runtime, "capability_request_store", None)
+            if requests is None:
+                return False
+            request = await requests.get(request_id)
+            if request is None or getattr(request, "status", "") != "approved":
+                return False
+            return await fulfil_on_approval(runtime, requests, request, approve=True)
+
+        runtime.continue_extension_reconciler = reconcile
+        return True
+    except Exception:
+        logger.warning(
+            "AD-1323: wiring the continue extension reconciler failed; an approval that "
+            "lands mid-filing is settled by the startup sweep or by approving again",
+            exc_info=True,
+        )
+        return False
+
+
 def _wire_delegated_approvals(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-1213: chiefs and the First Officer decide requests under the Captain's rules.
 
@@ -5370,6 +5403,12 @@ async def finalize_startup(
             if _wire_delegated_approvals(runtime=runtime, config=config):
                 logger.info("AD-1213: delegated approvals wired during finalization")
 
+            # AD-1323: after a restart, finish costed continue extensions whose
+            # approval was decided or in flight; needs the driver wired above. Never raises.
+            if _wire_continue_extension_reconciler(runtime=runtime):
+                from probos.cognitive.promoted_turn_recovery import recover_continue_permits
+
+                await recover_continue_permits(runtime)
             # AD-907: skill-request holodeck-training completion subscriber --
             # advances an in-training skill request to completed when its linked
             # team simulation finishes. Independent of the orchestrator being

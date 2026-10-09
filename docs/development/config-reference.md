@@ -1780,6 +1780,19 @@ AD-1322: opt-in economic judgment organ for agentic turns.
 | `repeat_attempt_threshold` | `int` | `3` | ≥ 2 | AD-1322: consecutive failed calls of one tool with identical arguments that raise the overspend signal. |
 | `rising_spend_steps` | `int` | `2` | ≥ 2 | AD-1322: consecutive model calls whose per-step token spend strictly grows that count as rising spend on a minor or moderate value item. |
 
+## `continue_extension`
+
+AD-1323: ask for a costed one-time token extension instead of stopping.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1323: when a valuable turn stops at its token budget, promote it and file ONE linked kind='continue' request carrying a costed case. Approval alone grants a single bounded extension. Default OFF: nothing is imported, stored or filed and the stop is byte-identical. |
+| `max_extension_tokens` | `int` | `0` | — | AD-1323: cap on the one extension, in tokens. 0 means the turn's own configured budget. Negative values clamp to 0. |
+| `permit_ttl_seconds` | `int` | `3600` | — | AD-1323: how long an approved extension stays usable, counted from approval. Clamped to 60..86400. |
+| `min_value_bands` | `list[str]` | `['significant', 'critical']` | — | AD-1323: value bands that justify asking. Unknown names are dropped; an empty result restores the default. |
+| `ask_when_value_unrecorded` | `bool` | `False` | — | AD-1323: ask even when the linked item records no value band. Default False: an unrecorded value never justifies spending. |
+| `assumed_remaining_steps` | `int` | `5` | — | AD-1323: steps assumed left when estimating the extra tokens; the estimate is the recent mean step spend times this. Clamped to 1..50. |
+
 ## `write_claim_guard`
 
 Whether a reply is checked against the turn's write ledger.

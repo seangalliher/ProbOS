@@ -475,8 +475,18 @@ async def file_continue_request(
     display_task_text: str = "",
     work_item_id: str | None = None,
     parked: dict[str, str] | None = None,
+    rationale: str | None = None,
+    before_file: Callable[[], Awaitable[bool]] | None = None,
+    after_park: Callable[[str], Awaitable[bool]] | None = None,
 ) -> str:
     """File the ``kind="continue"`` ask. Returns its id, or ``""`` on any failure.
+
+    AD-1323: ``rationale`` replaces the stock text with a costed case, and
+    ``before_file`` is awaited before the request is filed (falsy or raising
+    files nothing and returns ``""``), and ``after_park`` is awaited with the
+    request id after a SUCCESSFUL park (its verdict is the hook's own concern:
+    the hook voids what it must, and the ask stands either way). Both default
+    to ``None``, which leaves the call sequence exactly as before.
 
     The Captain's card renders ``kind``, ``target`` and ``rationale`` and does
     NOT render ``payload``, so the human-readable context lives in ``target``
@@ -519,12 +529,25 @@ async def file_continue_request(
         return ""
     excerpt = _task_excerpt(_display_task_text(display_task_text, base_task_text))
     target = f"continue: {excerpt}" if excerpt else "continue"
+    if before_file is not None:
+        try:
+            allowed = await before_file()
+        except Exception:
+            logger.warning(
+                "AD-1323: the pre-filing hook for agent %s raised; nothing is filed and "
+                "the turn stops as it would have", agent_id[:12], exc_info=True,
+            )
+            return ""
+        if not allowed:
+            return ""
     try:
         request = await store.file_request(
             agent_id=agent_id,
             kind=CONTINUE_REQUEST_KIND,
             target=target,
-            rationale=_CONTINUE_RATIONALE.format(passes=passes),
+            rationale=(
+                rationale if rationale is not None else _CONTINUE_RATIONALE.format(passes=passes)
+            ),
             work_item_id=work_item_id,
             payload=continue_payload(thread_id),
         )
@@ -546,6 +569,15 @@ async def file_continue_request(
         )
         if was_parked and parked is not None:
             parked["request_id"] = request_id
+        if was_parked and after_park is not None:
+            try:
+                await after_park(request_id)
+            except Exception:
+                logger.warning(
+                    "AD-1323: the post-park hook for request %s raised; the item stays "
+                    "parked and an approval resumes it on its standing budget",
+                    request_id[:12], exc_info=True,
+                )
     logger.info(
         "AD-1164: conversational turn for agent %s stopped at its step limit "
         "after %d pass(es); filed continue request %s and returned the partial "

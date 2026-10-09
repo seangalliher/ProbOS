@@ -535,6 +535,27 @@ flags:
   requires:
   - dm_agentic.economic_judgment.enabled
   conflicts_with: []
+- path: dm_agentic.economic_judgment.continue_extension.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1323_continue_extension_e2e.py -- the real chain proves a
+    valuable token-budget stop files one costed ask and, only after another party approves,
+    one single-use permit lifts that turn's budget once, while OFF files nothing and creates
+    no store.
+  external_dependency: null
+  requires:
+  - dm_agentic.economic_judgment.enabled
+  - dm_agentic.continue_or_ask_enabled
+  conflicts_with: []
+- path: dm_agentic.economic_judgment.continue_extension.ask_when_value_unrecorded
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1323_continue_extension_costed_continue_ask.py -- a turn
+    with no recorded value band asks only when this is set; unset it stops as before.
+  external_dependency: null
+  requires:
+  - dm_agentic.economic_judgment.continue_extension.enabled
+  conflicts_with: []
 ci_divergences:
 - id: nats-forced-off-in-tests
   mechanism: config-field-validator
