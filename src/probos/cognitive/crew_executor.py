@@ -1923,6 +1923,14 @@ class CrewTaskExecutor:
         }
         if fault_observer_for(self._runtime) is not None:
             base_kwargs["fault_turn"] = ToolFaultTurn()
+        # AD-1322: only an agent that exposes the accessor AND returns a real hook
+        # contributes the kwarg; every other agent keeps today's exact kwargs.
+        if callable(getattr(type(agent), "economic_inner_loop_hook", None)):
+            from probos.cognitive.economic_judgment_organ import InnerLoopHook
+
+            _economic_hook = agent.economic_inner_loop_hook()
+            if _economic_hook is not None and isinstance(_economic_hook, InnerLoopHook):
+                base_kwargs["inner_loop_hook"] = _economic_hook
         if owned_lease is not None:
             base_kwargs.update(
                 owned_steps_execution_port=execution_port, owned_steps_execution_lease=owned_lease,

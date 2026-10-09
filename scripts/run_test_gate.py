@@ -99,6 +99,7 @@ _PYTEST_CONFIG_OVERRIDES = (
 _RELEASE_TEST_FILE_EXCLUSIONS = frozenset(
     {
         "tests/ablation/test_ad1320_budget_awareness_ablation.py",
+        "tests/ablation/test_ad1322_economic_judgment_ablation.py",
         "tests/ablation/test_sigma_ablation.py",
         "tests/ablation/test_sigma_harness_structural.py",
     }

@@ -48,6 +48,7 @@ from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
+    from probos.cognitive.economic_judgment_organ import InnerLoopHook
     from probos.cognitive.llm_client import BaseLLMClient
     from probos.tools.executor import ToolExecutor
 
@@ -1066,6 +1067,7 @@ class AgenticLoop:
         ] | None = None,
         max_total_iterations: int | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
+        inner_loop_hook: "InnerLoopHook | None" = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1130,6 +1132,92 @@ class AgenticLoop:
             if self._awareness is not None and token_budget is not None else 0
         )
         self._tasks: set[asyncio.Task] = set()
+        # AD-1322: the economic organ's inner-loop hook. None => every hook call
+        # below is skipped and the loop is the AD-545 loop verbatim.
+        self._inner_hook = inner_loop_hook
+
+    def _hook_before_model_call(
+        self, *, iteration: int, messages: list[Any], cumulative_tokens: int,
+    ) -> str | None:
+        """AD-1322: the economic block for the next request, or ``None``. Informs only."""
+        hook = self._inner_hook
+        if hook is None:
+            return None
+        try:
+            block = hook.before_model_call(
+                iteration=iteration,
+                prompt_tokens_estimate=_estimate_context_tokens(messages),
+                tier=self._tier,
+                cumulative_tokens=cumulative_tokens,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1322: inner-loop hook failed before a model call; the request "
+                "goes out without an economic block", exc_info=True,
+            )
+            return None
+        return block if type(block) is str and block else None
+
+    def _hook_after_tools(
+        self, *, iteration: int, tool_uses: list[Any], results: list[Any],
+        cumulative_tokens: int,
+    ) -> None:
+        hook = self._inner_hook
+        if hook is None:
+            return
+        try:
+            hook.after_tools(
+                iteration=iteration,
+                tool_names=[u.tool_call.name for u in tool_uses],
+                results_is_error=[bool(getattr(r, "is_error", False)) for r in results],
+                cumulative_tokens=cumulative_tokens,
+                arguments=[u.tool_call.arguments for u in tool_uses],
+            )
+        except Exception:
+            logger.warning(
+                "AD-1322: inner-loop hook failed after tool results; the loop "
+                "continues unchanged", exc_info=True,
+            )
+
+    def _hook_signal(self, method: str, stopped_reason: str) -> None:
+        hook = self._inner_hook
+        if hook is None:
+            return
+        try:
+            getattr(hook, method)(stopped_reason)
+        except Exception:
+            logger.warning(
+                "AD-1322: inner-loop hook %s failed; the loop result is unchanged",
+                method, exc_info=True,
+            )
+
+    def _hook_note_charge(self, cumulative_tokens: int) -> None:
+        """AD-1322: tell the hook the cumulative charge synchronously, before any await."""
+        hook = self._inner_hook
+        if hook is None:
+            return
+        notify = getattr(hook, "note_charge", None)
+        if not callable(notify):
+            return
+        try:
+            notify(cumulative_tokens)
+        except Exception:
+            logger.warning(
+                "AD-1322: inner-loop hook note_charge failed; the loop result is unchanged",
+                exc_info=True,
+            )
+    def _hook_close(self, close_reason: str, final_tokens: int | None) -> None:
+        """AD-1322: close the hook's pass with the loop's authoritative total charge."""
+        hook = self._inner_hook
+        if hook is None:
+            return
+        try:
+            hook.close_run(close_reason, final_tokens)
+        except Exception:
+            logger.warning(
+                "AD-1322: inner-loop hook close_run failed; the loop result is unchanged",
+                exc_info=True,
+            )
 
     async def run(
         self,
@@ -1171,16 +1259,24 @@ class AgenticLoop:
                         "may be unavailable while execution continues",
                     )
         with tool_recording_scope():
-            return await self._run_scoped(
-                system_prompt=system_prompt, user_message=user_message,
-                tools=tools, context=run_context,
-                **({"run_id": run_id} if run_id is not None else {}),
-                **(
-                    {"repository_instructions": repository_instructions}
-                    if repository_instructions is not None else {}
-                ),
-                **({"fault_capture": fault_capture} if fault_capture is not None else {}),
-            )
+            hook_close_reason = "error"
+            hook_final_tokens: int | None = None
+            try:
+                result = await self._run_scoped(
+                    system_prompt=system_prompt, user_message=user_message,
+                    tools=tools, context=run_context,
+                    **({"run_id": run_id} if run_id is not None else {}),
+                    **(
+                        {"repository_instructions": repository_instructions}
+                        if repository_instructions is not None else {}
+                    ),
+                    **({"fault_capture": fault_capture} if fault_capture is not None else {}),
+                )
+                hook_close_reason = str(getattr(result, "stopped_reason", "") or "")
+                hook_final_tokens = getattr(result, "total_tokens", None)
+                return result
+            finally:
+                self._hook_close(hook_close_reason, hook_final_tokens)
 
     async def _run_scoped(
         self,
@@ -1296,6 +1392,14 @@ class AgenticLoop:
                 request_system_prompt = (
                     f"{effective_system_prompt}\n\n{self._awareness.current_note}"
                 )
+            # AD-1322: informs only; appended to the outbound prompt, never to ``messages``.
+            if self._inner_hook is not None:
+                economic_block = self._hook_before_model_call(
+                    iteration=iteration, messages=messages,
+                    cumulative_tokens=result.total_tokens,
+                )
+                if economic_block is not None:
+                    request_system_prompt = f"{request_system_prompt}\n\n{economic_block}"
 
             # AD-1146: when structured tool messages are enabled, hand the real
             # multi-turn array to the client (which posts it verbatim). The
@@ -1408,6 +1512,7 @@ class AgenticLoop:
                 token_sources.add(TOKEN_SOURCE_MEASURED)
             result.total_tokens += charged
             result.token_source = _token_source_label(token_sources)
+            self._hook_note_charge(result.total_tokens)
             if self._awareness is not None:
                 self._awareness.observe_response(
                     self._awareness_offset + result.total_tokens, result.token_source,
@@ -1501,6 +1606,7 @@ class AgenticLoop:
             if not tool_uses:
                 result.final_text = assistant_text or response.content or ""
                 result.stopped_reason = "complete"
+                self._hook_signal("finished", "complete")
                 return result
 
             tool_results = await self._execute_tool_uses(
@@ -1525,6 +1631,10 @@ class AgenticLoop:
             for use in tool_uses:
                 result.tool_calls.append(use.tool_call)
                 tool_id_history.append(use.tool_call.name)
+            self._hook_after_tools(
+                iteration=iteration, tool_uses=tool_uses, results=tool_results,
+                cumulative_tokens=result.total_tokens,
+            )
             # AD-1151 / DD-1: capture the outputs alongside the requests,
             # before AD-1148 bounding is applied to message content below.
             # BF-760 (#1218): these are NOT the tool's full outputs for a STRUCTURED

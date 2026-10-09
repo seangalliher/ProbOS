@@ -1135,6 +1135,7 @@ def test_release_census_matches_default_ablation_collection_policy(
 
     assert gate._RELEASE_TEST_FILE_EXCLUSIONS == {
         "tests/ablation/test_ad1320_budget_awareness_ablation.py",
+        "tests/ablation/test_ad1322_economic_judgment_ablation.py",
         "tests/ablation/test_sigma_ablation.py",
         "tests/ablation/test_sigma_harness_structural.py",
     }
@@ -1165,6 +1166,7 @@ def test_release_census_matches_default_ablation_collection_policy(
 
     assert completed.returncode == 5
     assert "test_ad1320_budget_awareness_ablation" not in completed.stdout
+    assert "test_ad1322_economic_judgment_ablation" not in completed.stdout
     assert "test_sigma_ablation" not in completed.stdout
     assert "test_sigma_harness_structural" not in completed.stdout
 

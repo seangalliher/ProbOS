@@ -287,7 +287,16 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                            'agent_modes_enabled': False,
                            # AD-1320: default-OFF live budget awareness.
                            'budget_awareness_enabled': False,
-                           'budget_awareness_thresholds': [0.5, 0.8]},
+                           'budget_awareness_thresholds': [0.5, 0.8],
+                           # AD-1322: default-OFF economic judgment organ.
+                           'economic_judgment': {   'enabled': False,
+                                                    'summary_turns': 3,
+                                                    'verification_tool_ids': [],
+                                                    'currency_is_marginal': False,
+                                                    'block_max_chars': 400,
+                                                    'overspend_spend_fraction': 0.5,
+                                                    'repeat_attempt_threshold': 3,
+                                                    'rising_spend_steps': 2}},
     'DmDeliberateConfig': {'enabled': False, 'tier': 'deep', 'max_tokens': 800},
     'DmSanityGateConfig': {   'enabled': True,
                               'length_floor': 5,

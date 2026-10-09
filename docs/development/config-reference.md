@@ -1765,6 +1765,21 @@ AD-1065: flag-gated conversational agentic turn. When enabled, a 1:1     ``direc
 | `budget_awareness_enabled` | `bool` | `False` | — | AD-1320: enables threshold-triggered live AD-1208 spend notes for conversational turns. No note appears before the first threshold in budget_awareness_thresholds is crossed; the note then rides the system prompt of the turn's existing model requests. Adds no model call, and is inert without an armed token_budget. |
 | `budget_awareness_thresholds` | `list[float]` | `[0.5, 0.8]` | — | AD-1320: fractions of the turn's effective token budget at which the spend note is raised, strictly ascending and inside (0, 1). Only consulted when budget_awareness_enabled is true. One response crossing several of them raises only the most severe note. |
 
+## `economic_judgment`
+
+AD-1322: opt-in economic judgment organ for agentic turns.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1322: compose the economic judgment organ for conversational and crew agentic turns. Default OFF: no organ is attached and the loop is byte-identical. Effective only while dm_agentic.enabled. |
+| `summary_turns` | `int` | `3` | ≥ 1, ≤ 20 | AD-1322: how many finished turns the organ keeps as raw counts (spend by value band, signals raised, verified flag). In memory only; cleared when the agent stops. |
+| `verification_tool_ids` | `list[str]` | `[]` | — | AD-1322: exact tool-call names that count as a verification step when they return successfully, unioned with registry tools tagged 'verification'. Empty by default and nothing is inferred: with no verification tool the underspend signal is suppressed. Matching is by the name the model called, so a browser or MCP tool whose call name differs from its registry id must be listed by call name. |
+| `currency_is_marginal` | `bool` | `False` | — | AD-1322: show a currency estimate beside tokens. Leave False when tiers are subscription-billed: catalog prices are then not marginal cost. Even when True the figure is an input-side estimate and only for a tier with one unambiguous positive price. |
+| `block_max_chars` | `int` | `400` | ≥ 160, ≤ 2000 | AD-1322: hard cap on the context block appended to the system prompt. The floor of 160 keeps every actionable message (compact form) whole. |
+| `overspend_spend_fraction` | `float` | `0.5` | > 0.0, ≤ 1.0 | AD-1322: fraction of the turn token budget at which spend on a minor or moderate value item counts as high. Needs an armed dm_agentic.token_budget; without one only rising spend and repeated failed attempts raise the overspend signal. |
+| `repeat_attempt_threshold` | `int` | `3` | ≥ 2 | AD-1322: consecutive failed calls of one tool with identical arguments that raise the overspend signal. |
+| `rising_spend_steps` | `int` | `2` | ≥ 2 | AD-1322: consecutive model calls whose per-step token spend strictly grows that count as rising spend on a minor or moderate value item. |
+
 ## `write_claim_guard`
 
 Whether a reply is checked against the turn's write ledger.
