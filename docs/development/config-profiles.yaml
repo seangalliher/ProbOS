@@ -16,11 +16,11 @@ census:
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 438
-  default_false: 213
+  boolean_fields_reachable: 439
+  default_false: 214
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 128
+  default_false_never_armed: 129
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -498,6 +498,17 @@ flags:
     reads it. In plan mode the model is offered only read-only tools and a withheld call
     is refused without running; /mode execute restores the full offer. The OFF test
     proves a stored record inert and the model's request unchanged.
+  external_dependency: null
+  requires:
+  - dm_agentic.enabled
+  conflicts_with: []
+- path: dm_agentic.budget_awareness_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1320_agentic_budget_awareness.py::test_loop_awareness_adds_no_calls_and_leaves_outcomes_identical
+    -- paired real loops prove awareness preserves call count, tools, iterations, final
+    text and spend; the threshold tests prove only the current note survives, and the
+    OFF tests prove request bytes and turn accounting remain unchanged.
   external_dependency: null
   requires:
   - dm_agentic.enabled
