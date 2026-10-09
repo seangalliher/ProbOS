@@ -661,7 +661,9 @@ def test_the_incomplete_reasons_match_the_loop_vocabulary() -> None:
 
     assert AgenticResult().stopped_reason == "complete"
     assert "complete" not in _INCOMPLETE_STOP_REASONS
-    assert _INCOMPLETE_STOP_REASONS == {"max_iterations", "token_budget"}
+    # AD-1324 amendment 1: this used to pin exactly {max_iterations, token_budget}. A promoted DM turn that stops on the
+    # tier-floor ask must park and resume like those two, so "tier_floor_unavailable" joins the set.
+    assert _INCOMPLETE_STOP_REASONS == {"max_iterations", "token_budget", "tier_floor_unavailable"}
 
 
 # ── AD-1166: the real outcome reaches episodic memory ─────────────

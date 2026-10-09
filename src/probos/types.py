@@ -305,6 +305,14 @@ class LLMRequest:
     # The OpenAI-compatible client posts the array verbatim as the request's
     # ``messages`` field. None preserves the existing prompt-shape behaviour.
     messages: list[dict] | None = None
+    # AD-1324: armed-only routing correlation and stakes floor. All None keeps
+    # today's request byte-for-byte; ``min_tier`` only removes lower tiers.
+    agent_id: str | None = None
+    work_item_id: str | None = None
+    min_tier: str | None = None
+    tier_choice_reason: str | None = None
+    # AD-1324 amendment 1: serve ONLY ``tier`` -- no fallback chain, no any-tier router fallback.
+    exact_tier: bool = False
 
 
 @dataclass
@@ -323,6 +331,11 @@ class LLMResponse:
     # AD-543: Structured content blocks when tools are active (empty when text-only).
     content_blocks: list = field(default_factory=list)
     stop_reason: str = "stop"
+    # AD-1324: machine-readable cause of ``error`` (None = unclassified, as before).
+    error_kind: str | None = None
+    # AD-1324 amendment 2: closed token naming WHY a tier refusal happened (floor_unmet, ceiling,
+    # exact_unavailable, ineligible, route_unverifiable, redo_floor_unmet); None = unclassified.
+    refusal_cause: str | None = None
 
 
 class EscalationTier(Enum):

@@ -10,6 +10,22 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1324 OPEN -- Agent-chosen model tier per step under a deterministic stakes floor
+
+**Status:** OPEN candidate (#1479), default OFF (`dm_agentic.economic_judgment.tier_choice.enabled`, also needs economic judgment, `dm_agentic.enabled` and `model_routing.enabled`).
+
+**The split.** The model states the next step's tier with one closed directive (`@@next_tier {"tier":"fast|standard|deep","reason":"<closed token>"}`). Deterministic code validates the tier and reason, enforces limits and raises to a stakes floor; it never chooses among valid tiers and never cascades to a higher tier on its own. The directive is stripped from user and history output immediately after the model call, before token accounting; malformed, duplicate or unknown directives are dropped safely.
+
+**Floor.** The floor applies to a floor-bound step only (the first step, or one after a non-tier-1 call, a verification tool or an error). A sub-floor observation step that answers or decides is re-issued once at the floor; the discarded response is charged. The floor never lowers within a turn. Upward moves are capped (default 2 per turn) and need evidence; overspend is not evidence. The floor is carried to the client as `min_tier`, filtering the router chain and both cache fallbacks. `_TIER_ORDER` and `_LLM_TIERS` are unchanged and special tiers (vision) are never routed.
+
+**Unavailable floor.** With nothing attempted, the client returns `error_kind="tier_floor_unmet"`; the loop stops with `stopped_reason="tier_floor_unavailable"` (not a retry loop, not a silent downgrade) and a linked chain-of-command ask is filed through the existing continue request (park for a promoted DM item, unparked for a crew child). The ask text is built from closed tokens and integers only.
+
+**Correlation.** `LLMRequest` gains defaulted `agent_id`, `work_item_id`, `min_tier`, `tier_choice_reason`; `MODEL_ROUTED` gains the correlation keys only when armed. Flag-off requests, events and fallbacks are byte-identical; the BF-886 configured-model and cost-ceiling controls are retained.
+
+**Compatibility and rollback.** Additive; the AD-1152 golden config hash and the AD-1189 head digest were refreshed for the new config field and request fields. Rollback is a Git revert. Known residuals: `file_request` has no dedupe, a crew child is terminal `error` and its ask is not resumed by blocked-item resume, and the ablation is structural only.
+
+Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
 ### AD-1323 -- Costed continue ask: ask with a case instead of stopping at the token budget
 
 **Existing issue:** #1478 (epic #1473; depends on AD-1322 #1477). Default OFF (`dm_agentic.economic_judgment.continue_extension.enabled`); implementation candidate, not yet reviewed or gated when this entry was written.

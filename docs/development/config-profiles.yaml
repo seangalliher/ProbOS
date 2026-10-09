@@ -17,10 +17,10 @@ census:
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
   boolean_fields_reachable: 443
-  default_false: 218
+  default_false: 219
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 133
+  default_false_never_armed: 134
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -538,8 +538,8 @@ flags:
 - path: dm_agentic.economic_judgment.continue_extension.enabled
   kind: product-feature
   profiles: []
-  evidence_to_promote: tests/test_ad1323_continue_extension_e2e.py -- the real chain proves a
-    valuable token-budget stop files one costed ask and, only after another party approves,
+  evidence_to_promote: tests/test_ad1323_continue_extension_e2e.py -- the real chain proves
+    a valuable token-budget stop files one costed ask and, only after another party approves,
     one single-use permit lifts that turn's budget once, while OFF files nothing and creates
     no store.
   external_dependency: null
@@ -700,6 +700,7 @@ unclassified_flags:
 - discovery.enabled
 - dm_agentic.compaction_enabled
 - dm_agentic.continue_or_ask_enabled
+- dm_agentic.economic_judgment.tier_choice.enabled
 - dm_agentic.enabled
 - dm_agentic.hold_degraded_turns
 - dm_deliberate.enabled

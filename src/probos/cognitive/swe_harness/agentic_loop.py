@@ -16,7 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal
 from types import CoroutineType
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, ClassVar, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
@@ -33,6 +33,13 @@ from probos.crew_execution_usage import (
     TOKEN_SOURCE_MEASURED,
     TOKEN_SOURCE_MIXED,
     merge_token_sources as _token_source_label,
+)
+from probos.cognitive.swe_harness.loop_tier_steps import (
+    GuardVerdict,
+    LoopTierSteps,
+    Refusal,
+    TierStop,
+    response_refusal,
 )
 from probos.fault_detection import ToolFaultCapture
 from probos.fault_report import canonical_tool_id, error_signature
@@ -724,6 +731,20 @@ def build_tool_result_messages(
     ]
 
 
+def _charge_discarded_response(
+    response: Any, *, messages: list[Any], result: "AgenticResult", token_sources: set[str],
+) -> None:
+    """AD-1324: charge a response discarded by a floor re-issue; spend is spend."""
+    reported = max(int(getattr(response, "tokens_used", 0) or 0), 0)
+    if reported == 0 and _completion_is_non_empty(response):
+        reported = _estimate_call_tokens(messages, response)
+        token_sources.add(TOKEN_SOURCE_ESTIMATED)
+    else:
+        token_sources.add(TOKEN_SOURCE_MEASURED)
+    result.total_tokens += reported
+    result.token_source = _token_source_label(token_sources)
+
+
 def _estimate_context_tokens(messages: list[dict]) -> int:
     """AD-1142 / DD-3: approximate the tokens currently OCCUPYING the context.
 
@@ -897,6 +918,10 @@ class AgenticResult:
     # Appended last and defaulted, under the same rule AD-1151 used, so existing
     # field ordering and both zero-argument construction sites are untouched.
     token_source: str = TOKEN_SOURCE_MEASURED
+    # AD-1324 amendment 4: why an armed run stopped on a tier decision or call failure; None unarmed.
+    # Class-level default so dataclass fields()/asdict() (and the unarmed golden) are unchanged;
+    # the armed terminal sets it per instance.
+    tier_stop: ClassVar[TierStop | None] = None
 
 
 _BUDGET_SOURCE_WORDING: dict[str, str] = {
@@ -1083,6 +1108,7 @@ class AgenticLoop:
         max_total_iterations: int | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
         inner_loop_hook: "InnerLoopHook | None" = None,
+        tier_controller: Any | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1150,6 +1176,12 @@ class AgenticLoop:
         # AD-1322: the economic organ's inner-loop hook. None => every hook call
         # below is skipped and the loop is the AD-545 loop verbatim.
         self._inner_hook = inner_loop_hook
+        # AD-1324: the agent-chosen-tier controller. None => every tier branch below
+        # is an ``is None`` check and the loop is unchanged.
+        self._tier_ctl = (
+            LoopTierSteps(tier_controller, estimate_context=_estimate_context_tokens, is_tier1=is_tier_1_tool_call)
+            if tier_controller is not None else None
+        )
 
     def _hook_before_model_call(
         self, *, iteration: int, messages: list[Any], cumulative_tokens: int,
@@ -1348,8 +1380,12 @@ class AgenticLoop:
         iteration_ceiling = (
             self._max_iter if self._max_total_iter is None else self._max_total_iter
         )
+        # AD-1324 amendment 2: floor re-issues are outbound requests; they count against the same ceiling.
+        redo_calls = 0
         for iteration in range(1, iteration_ceiling + 1):
-            result.iterations = iteration
+            if iteration + redo_calls > iteration_ceiling:
+                break
+            result.iterations = iteration + redo_calls
             self._fire_event(
                 "AGENTIC_LOOP_ITERATION",
                 {
@@ -1416,6 +1452,21 @@ class AgenticLoop:
                 if economic_block is not None:
                     request_system_prompt = f"{request_system_prompt}\n\n{economic_block}"
 
+            # AD-1324: armed, the controller names this step's tier (and floor); its
+            # block rides the outbound prompt only. Unarmed, ``_tier_extra`` is empty
+            # and ``tier`` stays ``self._tier``.
+            _tier_extra: dict[str, Any] = {}
+            _guard_refusal = None
+            _req_tier = self._tier
+            tier_decision = None
+            if self._tier_ctl is not None:
+                _plan = self._tier_ctl.plan(messages, context, agent_id)
+                if _plan.refusal is not None:
+                    return self._tier_ctl.finish(result, _plan.refusal, None, None)
+                tier_decision, _req_tier, _tier_extra = _plan.decision, _plan.tier, _plan.extra
+                if _plan.block is not None:
+                    request_system_prompt = f"{request_system_prompt}\n\n{_plan.block}"
+
             # AD-1146: when structured tool messages are enabled, hand the real
             # multi-turn array to the client (which posts it verbatim). The
             # system entry is EXCLUDED — ``_call_openai`` inserts
@@ -1431,10 +1482,11 @@ class AgenticLoop:
                     prompt="",
                     messages=outbound,
                     system_prompt=request_system_prompt,
-                    tier=self._tier,
+                    tier=_req_tier,
                     tools=tools,
                     tool_choice="auto",
                     max_tokens=4096,
+                    **_tier_extra,
                 )
             else:
                 # Assemble single-turn LLMRequest by packing the multi-turn
@@ -1445,11 +1497,16 @@ class AgenticLoop:
                 req = LLMRequest(
                     prompt=assembled_user_prompt,
                     system_prompt=request_system_prompt,
-                    tier=self._tier,
+                    tier=_req_tier,
                     tools=tools,
                     tool_choice="auto",
                     max_tokens=4096,
+                    **_tier_extra,
                 )
+            if self._tier_ctl is not None:
+                _admit = self._tier_ctl.admit(req, tier_decision)
+                if _admit is not None:
+                    return self._tier_ctl.finish(result, _admit, tier_decision, req.id)
             try:
                 request_snapshot = None
                 presented_results: tuple[PresentedToolResult, ...] = ()
@@ -1473,9 +1530,64 @@ class AgenticLoop:
                     agent_id[:12],
                     exc_info=True,
                 )
+                if self._tier_ctl is not None:
+                    return self._tier_ctl.call_failed(result, exc, tier_decision, req.id, redo=False)
                 result.stopped_reason = "error"
                 result.error = str(exc)
                 return result
+
+            if self._tier_ctl is not None:
+                # AD-1324: strip the directive FIRST -- before token accounting, the
+                # presentation ack, the budget-stop text, blocks and history -- so it
+                # reaches none of them.
+                from probos.cognitive.tier_policy import split_directive
+
+                response, tier_parse = split_directive(response)
+                verdict, redo, _guard_refusal = self._tier_ctl.guard(tier_decision, response)
+                if verdict is GuardVerdict.REDO:
+                    _charge_discarded_response(
+                        response, messages=messages, result=result, token_sources=token_sources,
+                    )
+                    self._hook_note_charge(result.total_tokens)
+                    if self._budget is not None and result.total_tokens >= self._budget:
+                        # The discarded answer is never offered, and no re-issue is dispatched.
+                        return self._tier_ctl.finish(
+                            result,
+                            Refusal("token_budget", "", last_assistant_text, evidence="redo_blocked_token_budget"),
+                            redo, req.id,
+                        )
+                    if iteration + redo_calls + 1 > iteration_ceiling:
+                        # The re-issue would be one more outbound request than the run may make.
+                        return self._tier_ctl.finish(
+                            result,
+                            Refusal("max_iterations", "", last_assistant_text, evidence="redo_blocked_iteration_limit"),
+                            redo, req.id,
+                        )
+                    req = replace(
+                        req, tier=redo.tier, min_tier=redo.floor, tier_choice_reason="floor_redo",
+                    )
+                    _admit = self._tier_ctl.admit(req, redo)
+                    if _admit is not None:
+                        return self._tier_ctl.finish(result, _admit, redo, req.id)
+                    redo_calls += 1
+                    result.iterations = iteration + redo_calls
+                    try:
+                        if self._on_model_request_presented is not None:
+                            request_snapshot = copy.deepcopy(req)
+                        if self._priority is None:
+                            response = await self._llm.complete(req)
+                        else:
+                            response = await self._llm.complete(req, priority=self._priority)
+                    except Exception as exc:
+                        logger.warning(
+                            "AD-1324: LLM complete() failed on the floor re-issue at iteration=%d "
+                            "agent=%s; stopping with stopped_reason=error", iteration, agent_id[:12],
+                            exc_info=True,
+                        )
+                        return self._tier_ctl.call_failed(result, exc, redo, req.id, redo=True)
+                    response, tier_parse = split_directive(response)
+                    tier_decision = redo
+                    verdict, _none, _guard_refusal = self._tier_ctl.guard(redo, response, redo_pass=True)
 
             # BF-680: a provider-reported usage figure is TRUSTED verbatim; an
             # ABSENT one is substituted with a client-side estimate. AD-1190:
@@ -1532,6 +1644,15 @@ class AgenticLoop:
                 self._awareness.observe_response(
                     self._awareness_offset + result.total_tokens, result.token_source,
                 )
+
+            if self._tier_ctl is not None:
+                # AD-1324: the response was charged above. A guard fault or a missing exact
+                # tier ends the run; nothing is retried lower and the response is not applied.
+                _refusal = _guard_refusal or response_refusal(response, tier_decision)
+                if _refusal is not None:
+                    return self._tier_ctl.finish(
+                        result, _refusal, tier_decision, getattr(response, "request_id", None) or req.id,
+                    )
 
             if self._on_model_request_presented is not None:
                 if getattr(response, "error", None) is not None:
@@ -1650,6 +1771,8 @@ class AgenticLoop:
                 iteration=iteration, tool_uses=tool_uses, results=tool_results,
                 cumulative_tokens=result.total_tokens,
             )
+            if self._tier_ctl is not None:
+                self._tier_ctl.observe(tier_decision, tier_parse, tool_uses, tool_results, messages)
             # AD-1151 / DD-1: capture the outputs alongside the requests,
             # before AD-1148 bounding is applied to message content below.
             # BF-760 (#1218): these are NOT the tool's full outputs for a STRUCTURED

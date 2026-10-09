@@ -256,6 +256,18 @@ def _fingerprint(value: Any, fixture: Path) -> dict[str, Any]:
     return {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
+_AD1324_NONE_FIELDS = ("agent_id", "work_item_id", "min_tier", "tier_choice_reason")
+
+
+def _request_dict(req: Any) -> dict[str, Any]:
+    """AD-1324: the four additive request fields are None here; drop them so the pinned base holds."""
+    data = asdict(req)
+    for name in _AD1324_NONE_FIELDS:
+        assert data.pop(name) is None
+    assert data.pop("exact_tier") is False  # AD-1324 amendment 1: default-off exact-tier flag
+    return data
+
+
 async def _capture_no_instructions(
     fixture: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Any]:
@@ -282,9 +294,9 @@ async def _capture_no_instructions(
             assert len(llm.requests) == (2 if location == "repository" else 1)
             assert not llm.responses
             if location == "repository":
-                assert "alpha" in _normalized(asdict(llm.requests[1]), fixture)
+                assert "alpha" in _normalized(_request_dict(llm.requests[1]), fixture)
             cases[f"native/{location}/{mode}"] = {
-                "requests": [_fingerprint(asdict(req), fixture) for req in llm.requests],
+                "requests": [_fingerprint(_request_dict(req), fixture) for req in llm.requests],
                 "result": _fingerprint(result, fixture),
             }
         for tool in ("read_file", "codebase_read_source"):
@@ -295,7 +307,7 @@ async def _capture_no_instructions(
             assert tool in {d["function"]["name"] for d in llm.requests[0].tools or []}
             assert "alpha" in _normalized(asdict(llm.requests[1]), fixture)
             cases[f"work_item/{tool}/{mode}"] = {
-                "requests": [_fingerprint(asdict(req), fixture) for req in llm.requests],
+                "requests": [_fingerprint(_request_dict(req), fixture) for req in llm.requests],
                 "trace": _fingerprint(runtime.attachment_store.blobs[0].decode("utf-8"), fixture),
             }
     return {

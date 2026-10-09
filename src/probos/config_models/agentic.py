@@ -297,6 +297,59 @@ class ContinueExtensionConfig(BaseModel):  # AD-1323
         return kept or default
 
 
+class TierChoiceConfig(BaseModel):  # AD-1324
+    """AD-1324: the agent names its next step's model tier under a stakes floor.
+
+    Default OFF. Effective only while ``economic_judgment.enabled``,
+    ``dm_agentic.enabled`` and ``model_routing.enabled`` are all True. The model
+    states a tier; deterministic code only enforces limits and the stakes floor
+    and never chooses among valid tiers. Out-of-range values are clamped, never
+    rejected, so a typo cannot stop the system starting.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1324: let the agent state the model tier of its next step. Default OFF: "
+            "no controller is built, no directive prompt is added and the loop is "
+            "byte-identical."
+        ),
+    )
+    max_upward_moves_per_turn: int = Field(
+        default=2,
+        description=(
+            "AD-1324: upward tier moves the agent may make in one turn, each needing "
+            "deterministic evidence. Clamped to 0..5."
+        ),
+    )
+    stakes_floor: dict[str, str] = Field(
+        default_factory=lambda: {"high": "standard", "severe": "deep"},
+        description=(
+            "AD-1324: lowest tier a floor-bound step (a decision or verification step) "
+            "may run at, by work-item stakes level. Unknown levels and tiers are dropped; "
+            "a level without an entry has no floor."
+        ),
+    )
+
+    @field_validator("max_upward_moves_per_turn", mode="before")
+    @classmethod
+    def _clamp_upward(cls, value: object) -> int:
+        return _clamp_int(value, 2, 0, 5)
+
+    @field_validator("stakes_floor", mode="before")
+    @classmethod
+    def _normalise_floor(cls, value: object) -> dict[str, str]:
+        default = {"high": "standard", "severe": "deep"}
+        if not isinstance(value, dict):
+            return default
+        levels = ("low", "moderate", "high", "severe")  # economic_judgment_organ.STAKES_LEVELS
+        tiers = ("fast", "standard", "deep")  # llm_client.TEXT_TIERS
+        return {
+            k: v for k, v in value.items()
+            if type(k) is str and k in levels and type(v) is str and v in tiers
+        }
+
+
 class EconomicJudgmentConfig(BaseModel):  # AD-1322
     """AD-1322: opt-in economic judgment organ for agentic turns.
 
@@ -385,6 +438,10 @@ class EconomicJudgmentConfig(BaseModel):  # AD-1322
     continue_extension: ContinueExtensionConfig = Field(
         default_factory=ContinueExtensionConfig,
         description="AD-1323: costed one-time continue extension. Default OFF.",
+    )
+    tier_choice: TierChoiceConfig = Field(
+        default_factory=TierChoiceConfig,
+        description="AD-1324: agent-chosen model tier per step under a stakes floor. Default OFF.",
     )
 
     @field_validator("verification_tool_ids")

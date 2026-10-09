@@ -4917,6 +4917,10 @@ class CognitiveAgent(BaseAgent):
                 # BF-887: read before any await -- an approval landing while this
                 # segment files its ask can already start the next segment.
                 stop = _segment["stop"]
+                # AD-1324: a tier-floor stop files and parks its own ask in the executor.
+                _tier_ask = getattr(outcome, "parked_request_id", "")
+                if type(_tier_ask) is str and _tier_ask:
+                    parked["request_id"] = _tier_ask
                 turn_text = getattr(outcome, "final_text", "") or ""
                 # AD-1164: a turn that hit the step limit continues under a
                 # standing rule or files an ask, and says so either way. Gated

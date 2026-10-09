@@ -1853,6 +1853,9 @@ class WorkItemAgenticOutcome:
     # untouched.
     tool_invocations: ToolInvocations | None = None
     delegation_evidence: DelegationEvidence | None = None
+    # AD-1324: the id of the ask the item was parked on after a tier-floor stop; empty otherwise.
+    # Placed before ``iterations`` because AD-1190 pins that field last (kw_only: order is inert).
+    parked_request_id: str = ""
     # AD-1190: this loop's iteration count; appended last and defaulted.
     iterations: int = 0
 
@@ -1928,6 +1931,102 @@ class WorkItemAgenticExecutor:
             return
         self._browser_egress_warned = True
         logger.warning(_BROWSER_EGRESS_WARNING)
+
+    def _build_tier_controller(
+        self, *, runtime: Any, registry: Any, agent_id: str, tier: str | None,
+        inner_loop_hook: Any, extra_context: dict[str, Any] | None,
+        work_item_id_provider: Callable[[], str | None] | None, thread_id: str = "",
+    ) -> Any:
+        """AD-1324: the per-run tier controller, or ``None`` (unarmed => byte-identical).
+
+        Armed is decided outside the guarded construction: once armed, a construction fault yields a
+        ``FailedTierController`` (the run stops with a stated error), never a silently unarmed run.
+        """
+        from probos.cognitive.tier_audit import TierAuditSink
+        from probos.cognitive.tier_policy import (
+            FailedTierController,
+            RouterEligibility,
+            TierChoiceController,
+            tier_choice_armed,
+        )
+
+        if inner_loop_hook is None or not hasattr(inner_loop_hook, "costed_case"):
+            return None
+        if not tier_choice_armed(runtime):
+            return None
+        sink = None
+        try:
+            sink = TierAuditSink(getattr(runtime, "event_log", None), agent_id=agent_id, thread_id=thread_id or "")
+            econ = runtime.config.dm_agentic.economic_judgment
+            choice = econ.tier_choice
+            verification: set[str] = set(econ.verification_tool_ids)
+            if registry is not None:
+                for reg in registry.list_tools(tag="verification"):
+                    if "verification" in getattr(reg, "tags", ()):
+                        verification.add(reg.tool.tool_id)
+            crew_id = (extra_context or {}).get("_crew_work_item_id")
+
+            def _work_item() -> str | None:
+                if type(crew_id) is str and crew_id:
+                    return crew_id
+                return work_item_id_provider() if work_item_id_provider is not None else None
+
+            return TierChoiceController(
+                call_site_tier=tier if tier is not None else AGENTIC_DEFAULT_TIER,
+                stakes_floor=choice.stakes_floor,
+                max_upward_moves=choice.max_upward_moves_per_turn,
+                eligibility=RouterEligibility(getattr(runtime, "model_router", None)),
+                case_provider=inner_loop_hook.costed_case,
+                verification_ids=verification,
+                agent_id=agent_id,
+                work_item_id=_work_item,
+                audit=sink.emit,
+                audit_drain=sink.drain,
+                audit_sink=sink,
+            )
+        except Exception:
+            logger.error(
+                "AD-1324: the tier controller could not be built for an armed run; the run stops "
+                "before any model call rather than proceeding unarmed", exc_info=True,
+            )
+            return FailedTierController("controller_construction_failed", audit_sink=sink)
+
+    async def _file_tier_floor_ask(
+        self, *, runtime: Any, agent_id: str, thread_id: str, controller: Any, hook: Any,
+        extra_context: dict[str, Any] | None,
+        work_item_id_provider: Callable[[], str | None] | None, task_text: str,
+        parked: dict[str, str] | None = None, cause: str | None = None,
+    ) -> str:
+        """AD-1324: escalate an unavailable stakes floor to the chain of command (never raises)."""
+        try:
+            from probos.cognitive.tier_floor_ask import file_tier_floor_request
+
+            crew_id = (extra_context or {}).get("_crew_work_item_id")
+            is_crew = type(crew_id) is str and bool(crew_id)
+            work_item_id = crew_id if is_crew else (
+                work_item_id_provider() if work_item_id_provider is not None else None
+            )
+            case = hook.costed_case()
+            return await file_tier_floor_request(
+                runtime,
+                agent_id=agent_id,
+                thread_id=thread_id,
+                work_item_id=work_item_id or None,
+                floor=controller.last_floor or "",
+                stakes=getattr(case, "stakes", None),
+                stakes_provenance=getattr(case, "stakes_provenance", None),
+                tried=controller.steps,
+                display_task_text=(task_text or "")[:200],
+                park=not is_crew and bool(work_item_id),
+                parked=parked,
+                cause=cause,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1324: filing the tier-floor ask failed for agent %s; the run has already "
+                "stopped without a lower-tier answer", agent_id[:12], exc_info=True,
+            )
+            return ""
 
     async def _open_economic_run(
         self,
@@ -3086,6 +3185,15 @@ class WorkItemAgenticExecutor:
         # AD-1322: the economic organ's inner-loop hook; absent => never passed.
         if inner_loop_hook is not None:
             _loop_kwargs["inner_loop_hook"] = inner_loop_hook
+        # AD-1324: armed only when every flag is strictly on AND the economic hook (the
+        # stakes source) exists; otherwise the kwarg is never passed.
+        tier_controller = self._build_tier_controller(
+            runtime=runtime, registry=registry, agent_id=agent_id, tier=tier,
+            inner_loop_hook=inner_loop_hook, extra_context=extra_context,
+            work_item_id_provider=work_item_id_provider, thread_id=thread_id,
+        )
+        if tier_controller is not None:
+            _loop_kwargs["tier_controller"] = tier_controller
         # BF-731: same additive shape. Absent => the kwarg is never passed to
         # AgenticLoop, which in turn never passes it to complete(), so the task
         # path and every test double keep the exact call they had before.
@@ -3401,6 +3509,43 @@ class WorkItemAgenticExecutor:
                 token_source,
             )
 
+        _tier_parked: dict[str, str] = {}
+        if tier_controller is not None and agentic_result.stopped_reason == "tier_floor_unavailable":
+            _stop = getattr(agentic_result, "tier_stop", None)
+            _stop_cause = getattr(_stop, "cause", None)
+            _ask_id = await self._file_tier_floor_ask(
+                runtime=runtime, agent_id=agent_id, thread_id=thread_id,
+                controller=tier_controller, hook=inner_loop_hook, extra_context=extra_context,
+                work_item_id_provider=work_item_id_provider, task_text=task_text, parked=_tier_parked,
+                cause=_stop_cause,
+            )
+            _sink = getattr(tier_controller, "audit_sink", None)
+            if _sink is not None:
+                _ctx: dict[str, Any] = {
+                    "step": getattr(_stop, "step", None) if _stop is not None else tier_controller.steps,
+                    "floor": getattr(_stop, "floor", None) or tier_controller.last_floor,
+                    "request_id": getattr(_stop, "request_id", None),
+                    "error_kind": (getattr(_stop, "error_kind", "") if _stop is not None else agentic_result.error) or None,
+                    "work_item_id": getattr(_stop, "work_item_id", None),
+                    "requested_tier": getattr(_stop, "requested_tier", None),
+                    "effective_tier": getattr(_stop, "effective_tier", None),
+                }
+                if _ask_id:
+                    _sink.emit_terminal(
+                        outcome="asked", cause=_stop_cause, ask_request_id=_ask_id,
+                        parked=bool(_tier_parked.get("request_id")), **_ctx,
+                    )
+                else:
+                    _sink.emit_terminal(outcome="refused", evidence="ask_not_filed", cause=_stop_cause, **_ctx)
+            if _ask_id:
+                agentic_result.final_text = (
+                    f"{agentic_result.final_text or ''}\n\nI have asked the chain of command "
+                    f"to make a model at that tier available (request {_ask_id[:8]})."
+                )
+
+        if tier_controller is not None:
+            await tier_controller.drain_audit()
+
         final_text = agentic_result.final_text or ""
         if (
             owned_steps_turn_id is not None
@@ -3421,6 +3566,7 @@ class WorkItemAgenticExecutor:
             total_tokens=total_tokens,
             artifact_refs=artifact_refs,
             token_source=token_source,
+            parked_request_id=_tier_parked.get("request_id", ""),
             # AD-1248: correlated HERE because this is the only scope holding
             # the raw call/result pairs -- ``WorkItemAgenticOutcome`` is the
             # projection callers see, and the pairs do not survive it.
