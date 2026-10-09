@@ -29,13 +29,13 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
 | AD | **AD-1305** | **AD-1306** | AD-1305 | _(none)_ |
-| BF | **BF-888** | **BF-889** | BF-873 | 875-885, 887-888 |
+| BF | **BF-888** | **BF-889** | BF-873 | 875-888 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-08T17:20:10+00:00 at `270fa842` | 2727 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-08T20:38:47+00:00 at `c708a8c5` | 2729 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 23 | assigned, issue open, no shipped code |
+| `allocated-open` | 68 | 24 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 0 | abandoned, number **not** reusable |
@@ -54,7 +54,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-91 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+92 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -128,6 +128,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
 | `BF-888` | — | a tracker head marks it open |  |
 | `BF-887` | — | a tracker head marks it open |  |
+| `BF-886` | — | a tracker head marks it open |  |
 | `BF-885` | — | a tracker head marks it open |  |
 | `BF-884` | — | a tracker head marks it open |  |
 | `BF-883` | — | a tracker head marks it open |  |
@@ -184,7 +185,7 @@ Numbers below the ceiling that no authority mentions. The issue layer is a snaps
 
 **AD** (278): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1286-1290
 
-**BF** (334): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 870, 874, 886
+**BF** (333): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 870, 874
 
 ## Inconsistencies — reported, deliberately not fixed
 
@@ -362,8 +363,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1225 head-shaped line yielded no AD/BF token
-PROGRESS.md:1231 head-shaped line yielded no AD/BF token
+PROGRESS.md:1227 head-shaped line yielded no AD/BF token
+PROGRESS.md:1233 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

@@ -21,6 +21,7 @@ from probos.config import (
     AgenticDispatchConfig,
     DiscoveryLearningConfig,
     MCPConfig,
+    ModelRoutingConfig,
     WorkstationsConfig,
 )
 
@@ -217,6 +218,7 @@ class TestAutoWelcome:
         config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
+        config.model_routing = ModelRoutingConfig(enabled=False)  # BF-886 wirer opt-out
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
@@ -290,6 +292,7 @@ class TestAutoWelcome:
         config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
+        config.model_routing = ModelRoutingConfig(enabled=False)  # BF-886 wirer opt-out
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
@@ -353,6 +356,7 @@ class TestAutoWelcome:
         config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
+        config.model_routing = ModelRoutingConfig(enabled=False)  # BF-886 wirer opt-out
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
 
         from probos.startup.finalize import finalize_startup
@@ -415,6 +419,7 @@ class TestAutoWelcome:
         config.agentic_dispatch = AgenticDispatchConfig(orchestrator_enabled=False)
         config.discovery_learning = DiscoveryLearningConfig(enabled=False)  # AD-512 wirer opt-out
         config.mcp = MCPConfig(enabled=False)  # skip MCP wiring (AD-1015 store opens sqlite; unrelated to auto-welcome)
+        config.model_routing = ModelRoutingConfig(enabled=False)  # BF-886 wirer opt-out
         config.workstations = WorkstationsConfig(enabled=False)  # AD-1022 wirer opt-out
 
         from probos.startup.finalize import finalize_startup

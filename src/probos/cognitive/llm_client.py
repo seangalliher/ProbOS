@@ -46,6 +46,21 @@ _LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "vision_fas
 # and image generation has no text-tier substitute. Module-level so
 # source-scan tests can assert membership without scanning function bodies.
 _TIER_ORDER: tuple[str, ...] = ("fast", "standard", "deep")
+# BF-886 A-1: the public name for the text tiers -- the ones the model router
+# governs. An alias of ``_TIER_ORDER``, never a copy of its literal.
+TEXT_TIERS: tuple[str, ...] = _TIER_ORDER
+
+
+class CostCeilingExclusion(Exception):
+    """BF-886: the model router excluded a text tier under the operator's cost ceiling.
+
+    Raised by ``OpenAICompatibleClient._resolve_model_for_tier`` and caught by
+    the completion loop, which treats the tier attempt as unavailable and
+    continues its fallback chain, and (A-1) by ``_probe_model`` for the
+    connectivity probe, which then is not sent -- so no request goes to a model
+    the ceiling excludes. The message carries the router's reason, which
+    names the ceiling.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -820,6 +835,15 @@ class OpenAICompatibleClient(BaseLLMClient):
           - None when no router is wired, the router fails, or the router
             returns an empty model name.
 
+        Raises:
+          CostCeilingExclusion: BF-886 -- the router reports that the
+            operator's cost ceiling leaves the tier no admissible model. The
+            caller must treat the tier attempt as unavailable.
+
+        BF-886: startup wiring seeds the router's registry from the configured
+        tier models, so for a text tier the router's choice is the configured
+        model unless the cost ceiling excludes it.
+
         v1 only overrides the model NAME; ``base_url``, ``api_key``, ``timeout``,
         and ``rate_config`` remain the existing per-tier values.
         Provider-routing (different base_url per provider) is deferred to AD-463b.
@@ -849,7 +873,10 @@ class OpenAICompatibleClient(BaseLLMClient):
             return None
         try:
             decision = router.choose(tier=tier)
-            return decision.chosen_model or None
+            chosen = decision.chosen_model or None
+            # BF-886: the router is duck-typed (``model_router: Any``); only a
+            # decision whose exclusion flag is the bool True excludes the tier.
+            excluded = getattr(decision, "excluded_by_cost_ceiling", False) is True
         except Exception:
             logger.warning(
                 "AD-463: ModelRouter.choose failed; falling back to default "
@@ -857,6 +884,45 @@ class OpenAICompatibleClient(BaseLLMClient):
                 tier, exc_info=True,
             )
             return None
+        if excluded:
+            raise CostCeilingExclusion(f"model routing: {decision.reason}")
+        return chosen
+
+    def _probe_model(self, tier: str) -> str | None:
+        """BF-886 A-1: the model a connectivity probe of ``tier`` sends.
+
+        A probe is a generation request, so for a text tier it obeys the wired
+        router's cost ceiling as a completion does: it sends the model the
+        router would choose, previewed without logging or events. Other tiers,
+        no router, or a router without ``preview`` keep the configured model.
+
+        Raises:
+          CostCeilingExclusion: the ceiling leaves the tier no admissible
+            model, or the preview failed -- the probe is then not sent, and
+            the tier is neither reachable nor unreachable for it.
+        """
+        configured = self._tier_configs[tier]["model"]
+        if tier not in TEXT_TIERS:
+            return configured
+        preview = getattr(getattr(self, "model_router", None), "preview", None)
+        if preview is None:
+            return configured
+        refusal = ""
+        try:
+            decision = preview(tier=tier)
+            if getattr(decision, "excluded_by_cost_ceiling", False) is True:
+                refusal = decision.reason
+            chosen = decision.chosen_model or configured
+        except Exception:
+            logger.warning(
+                "BF-886: ModelRouter.preview failed for tier=%s; its connectivity "
+                "probe is withheld, because the cost ceiling could not be checked",
+                tier, exc_info=True,
+            )
+            refusal = f"the cost ceiling could not be checked for tier '{tier}'"
+        if refusal:
+            raise CostCeilingExclusion(f"model routing refused the probe: {refusal}")
+        return chosen
 
     def _cache_key(
         self, tier: str, prompt: str, system_prompt: str | None = None,
@@ -925,9 +991,18 @@ class OpenAICompatibleClient(BaseLLMClient):
         ``respect_cooldown`` is reserved for the periodic BF-246 recovery loop.
         Boot/doctor checks remain observational; the periodic loop shares the
         BF-674 half-open claim so it cannot race a completion recovery probe.
+
+        BF-886 A-1: a text tier the model router's cost ceiling leaves no
+        admissible model is not probed and is absent from the result -- a
+        budget exclusion is not an outage -- and a probed text tier sends the
+        model the router would choose (``_probe_model``). A tier with no model
+        of its own does not probe, in their place, an endpoint whose text tiers
+        were withheld.
         """
         results: dict[str, bool] = {}
         checked_endpoints: dict[str, bool] = {}
+        # BF-886 A-1: endpoints whose text tiers the cost ceiling kept from probing.
+        denied_endpoints: set[str] = set()
 
         for tier in _LLM_TIERS:
             tc = self._tier_configs[tier]
@@ -940,9 +1015,21 @@ class OpenAICompatibleClient(BaseLLMClient):
                 results[tier] = False
                 self._tier_status[tier] = False
                 continue
+            # BF-886 A-1: a probe is a generation request. A tier the cost
+            # ceiling leaves no model is not probed, and its exclusion is not
+            # an outage: it gets no result here and keeps its status.
+            try:
+                probe_model = self._probe_model(tier)
+            except CostCeilingExclusion:
+                denied_endpoints.add(self._client_key(tier))
+                continue
             endpoint_key = self._client_key(tier)
             if endpoint_key in checked_endpoints:
                 results[tier] = checked_endpoints[endpoint_key]
+            elif not probe_model and endpoint_key in denied_endpoints:
+                # BF-886 A-1: a tier with no model of its own does not probe,
+                # with no model, an endpoint whose text tiers were withheld.
+                continue
             else:
                 if respect_cooldown:
                     reachable = await self._check_endpoint(
@@ -1053,8 +1140,16 @@ class OpenAICompatibleClient(BaseLLMClient):
         timeout is the right ceiling — operators who run slow local models
         already set llm_timeout_vision high enough; capping at 30s keeps
         unreachable cloud endpoints from holding the probe forever.
+
+        BF-886 A-1: the probe sends ``_probe_model(tier)``; when the cost
+        ceiling leaves the tier no admissible model it sends nothing and
+        returns False (``check_connectivity`` never asks for such a tier).
         """
         tc = self._tier_configs[tier]
+        try:
+            model = self._probe_model(tier)
+        except CostCeilingExclusion:
+            return False
         api_format = tc.get("api_format", "openai")
         probe_timeout = min(float(tc.get("timeout") or 5.0), 30.0)
         governance_token = _ENDPOINT_GOVERNED.set(True)
@@ -1071,7 +1166,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                             resp = await lease.client.post(
                                 "api/chat",
                                 json={
-                                    "model": tc["model"],
+                                    "model": model,
                                     "messages": [
                                         {"role": "user", "content": "ping"}
                                     ],
@@ -1085,7 +1180,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                             resp = await lease.client.post(
                                 "chat/completions",
                                 json={
-                                    "model": tc["model"],
+                                    "model": model,
                                     "messages": [
                                         {"role": "user", "content": "ping"}
                                     ],
@@ -1105,7 +1200,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "with %s: %s; the tier remains degraded and the next "
                         "probe will retry",
                         tier,
-                        tc["model"],
+                        model,
                         tc["base_url"],
                         type(exc).__name__,
                         exc,
@@ -1124,7 +1219,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "status=%d; the tier remains degraded and the next "
                         "probe will retry",
                         tier,
-                        tc["model"],
+                        model,
                         resp.status_code,
                     )
                     return False
@@ -1156,7 +1251,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         "tier=%s model=%s; the tier remains degraded and the "
                         "next probe will retry",
                         tier,
-                        tc["model"],
+                        model,
                         exc_info=True,
                     )
                     return False
@@ -1175,7 +1270,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     "model=%s; the tier remains degraded and the next probe "
                     "will retry",
                     tier,
-                    tc["model"],
+                    model,
                 )
                 return False
         finally:
@@ -1278,13 +1373,25 @@ class OpenAICompatibleClient(BaseLLMClient):
         # exactly its job, not a new fault.
         breaker_refused_keys: set[str] = set()
         attempted_transport = False
+        # BF-886 A-1: tiers the cost ceiling refused. When it refused every
+        # tier of the chain, the exhaustion is a budget decision, not an outage.
+        ceiling_refusals = 0
         for attempt_tier in fallback_tiers:
             tc = self._tier_configs.get(attempt_tier, self._tier_configs["standard"])
             endpoint_key = self._client_key(attempt_tier)
             if endpoint_key in stopped_endpoint_keys:
                 continue
             # AD-463: ModelRouter override (caller-optional; absent = existing path)
-            _override = self._resolve_model_for_tier(attempt_tier)
+            try:
+                _override = self._resolve_model_for_tier(attempt_tier)
+            except CostCeilingExclusion as exc:
+                # BF-886: the operator's cost ceiling excludes this tier's
+                # model, so the attempt is unavailable: nothing is sent and the
+                # existing fallback chain continues. The router has already
+                # logged the choice and emitted MODEL_FALLBACK.
+                last_error = str(exc)
+                ceiling_refusals += 1
+                continue
             model = _override or tc["model"]
             api_format = tc.get("api_format", "openai")
             tier_timeout = tc["timeout"]
@@ -1673,6 +1780,16 @@ class OpenAICompatibleClient(BaseLLMClient):
         if breaker_refused_keys and not attempted_transport:
             self._report_breaker_suppressed_exhaustion(
                 breaker_refused_keys, request.id[:8], last_error,
+            )
+        elif ceiling_refusals == len(fallback_tiers):
+            # BF-886 A-1: the cost ceiling refused every tier this call could
+            # use, so nothing was sent and no endpoint failed. The router
+            # reported each refusal (the first at WARNING) and wiring logged
+            # each such tier at ERROR, so the call itself adds DEBUG only.
+            logger.debug(
+                "BF-886: request %s refused by the model routing cost ceiling on "
+                "every tier it could use (%s); no request was sent",
+                request.id[:8], last_error,
             )
         else:
             logger.error("All LLM tiers unavailable and no cached response for request %s", request.id[:8])

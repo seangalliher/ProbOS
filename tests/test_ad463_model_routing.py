@@ -119,6 +119,11 @@ def test_router_cost_ceiling_filters_candidates():
     decision = router.choose(tier="standard", cost_ceiling=1.0)
     # No candidates left in standard under ceiling -> fallback
     assert decision.fallback is True
+    # BF-886: and no model at all. This test used to stop at ``fallback``,
+    # which let the router hand back a model from another tier priced above
+    # the ceiling (claude-sonnet-4-6-fast at $15/M) -- the ceiling ignored.
+    assert decision.chosen_model == ""
+    assert decision.excluded_by_cost_ceiling is True
 
 
 def test_router_no_candidates_emits_fallback():
@@ -157,6 +162,10 @@ def test_llm_client_resolve_model_for_tier_when_router_absent_returns_none():
 
 
 def test_llm_client_resolve_model_for_tier_with_router_returns_chosen():
+    # BF-886: a bare ModelRegistry() still holds the built-in catalog as
+    # candidates, so this pins only the override mechanism. Production wiring
+    # seeds the registry from the configured tier models instead, and the
+    # configured name is what goes out (tests/test_bf886_model_routing_config.py).
     reg = ModelRegistry()
     router = ModelRouter(registry=reg)
     client = OpenAICompatibleClient(model_router=router)

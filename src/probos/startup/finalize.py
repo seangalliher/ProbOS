@@ -3744,6 +3744,60 @@ async def _wire_standing_interests(*, runtime: Any, config: "SystemConfig", proa
     return True
 
 
+def _wire_model_routing(*, runtime: Any, config: "SystemConfig") -> bool:
+    """AD-463 / BF-886: wire the model registry and router from the configured tier models.
+
+    Extracted from ``finalize_startup`` so the config -> router -> client
+    crossing has a testable seam. ``build_model_routing`` seeds the registry
+    with exactly the models the operator configured for the text tiers
+    (``TEXT_TIERS``; the vision tiers bypass the router, BF-273), priced from
+    the built-in catalog where a name matches, and hands the router the
+    configured cost ceiling, which it applies on every text-tier routing call.
+    The boot factory attached an identical router before its first probe
+    (BF-886 A-1); this one replaces it to add routing events. With routing
+    disabled both runtime attributes are None and the client sends its
+    configured tier models unrouted. Returns True when routing is wired.
+    """
+    from probos.cognitive.llm_client import TEXT_TIERS
+    from probos.cognitive.model_router import build_model_routing
+
+    router = build_model_routing(config, emit_event=runtime.emit_event)
+    if router is None:
+        runtime.model_registry = None
+        runtime.model_router = None
+        return False
+    runtime.model_registry = router.registry
+    runtime.model_router = router
+    router.report_cost_ceiling(TEXT_TIERS)
+    # Wire ModelRouter into the existing LLM client (real consumer, not theater).
+    # The client's `model_router` public attribute is consulted at every
+    # _complete_inner() iteration via _resolve_model_for_tier(). Existing
+    # tier->model defaults remain when ModelRouter is absent.
+    llm_client = getattr(runtime, "llm_client", None)
+    if llm_client is not None:
+        try:
+            llm_client.model_router = router
+        except Exception:
+            logger.warning(
+                "AD-463: failed to wire ModelRouter into runtime.llm_client; "
+                "LLM calls keep any router the client already had, without "
+                "routing events, or else go out unrouted and without the "
+                "configured cost ceiling",
+                exc_info=True,
+            )
+    ceiling = router.cost_ceiling
+    logger.info(
+        "AD-463: ModelRegistry + ModelRouter wired from the configured tier models "
+        "(%s; cost ceiling %s)",
+        ", ".join(
+            f"{tier}={config.cognitive.tier_config(tier)['model'] or '<none>'}"
+            for tier in TEXT_TIERS
+        ),
+        "unset" if ceiling is None else f"{ceiling:.2f} USD per million output tokens",
+    )
+    return True
+
+
 async def finalize_startup(
     *,
     runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
@@ -4462,35 +4516,9 @@ async def finalize_startup(
         runtime.ground_truth_rejection_gate = None
         runtime.ground_truth_trust_feedback = None
 
-    # AD-463: Model Diversity & Neural Routing (v1 foundation)
-    if config.model_routing.enabled:
-        from probos.cognitive.model_registry import ModelRegistry
-        from probos.cognitive.model_router import ModelRouter
-        runtime.model_registry = ModelRegistry()
-        runtime.model_router = ModelRouter(
-            registry=runtime.model_registry,
-            emit_event=runtime.emit_event,
-        )
-        # Wire ModelRouter into the existing LLM client (real consumer, not theater).
-        # The client's `model_router` public attribute is consulted at every
-        # _complete_inner() iteration via _resolve_model_for_tier(). Existing
-        # tier->model defaults remain when ModelRouter is absent.
-        llm_client = getattr(runtime, "llm_client", None)
-        if llm_client is not None:
-            try:
-                llm_client.model_router = runtime.model_router
-            except Exception:
-                logger.warning(
-                    "AD-463: failed to wire ModelRouter into runtime.llm_client",
-                    exc_info=True,
-                )
-        logger.info(
-            "AD-463: ModelRegistry + ModelRouter wired (%d models)",
-            len(runtime.model_registry.all()),
-        )
-    else:
-        runtime.model_registry = None
-        runtime.model_router = None
+    # AD-463: Model Diversity & Neural Routing (v1 foundation). BF-886 seeds it
+    # from the configured tier models and hands it the configured cost ceiling.
+    _wire_model_routing(runtime=runtime, config=config)
 
     # AD-475: Captain's Ready Room (Idea Capture + Session Manager)
     if config.ready_room.enabled:

@@ -13,8 +13,11 @@ as configured (``provider_setup.TIER_CONFIGURED_CHECKS``). Reported but not
 verified (WARN): ``api_format: ollama`` tiers, whose API the probes do not speak,
 image_gen, whose runtime call creates an image, a tier whose probe would not fit
 in what is left of ``LLM_CHECK_BUDGET_S``, and one whose probe is still running
-when that runs out. Every message has each configured key's forms redacted, and a
-URL is shown as ``provider_setup.shown_base_url`` shows it.
+when that runs out. BF-886 A-1: a text tier the model routing cost ceiling
+leaves no admissible model is reported as not checked (WARN) and never probed,
+since the runtime never sends it a request. Every message has each configured
+key's forms redacted, and a URL is shown as ``provider_setup.shown_base_url``
+shows it.
 """
 
 from __future__ import annotations
@@ -23,11 +26,12 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from probos import provider_setup as ps
+from probos.cognitive.model_router import ceiling_denials
 from probos.doctor.protocol import CheckOutcome, CheckResult, DoctorContext
 from probos.doctor.registry import register_check
 
@@ -219,7 +223,10 @@ def _probe_tier(
 
 
 def check_tiers(
-    cognitive: Any, transport: httpx.BaseTransport | None = None, stop: threading.Event | None = None,
+    cognitive: Any,
+    transport: httpx.BaseTransport | None = None,
+    stop: threading.Event | None = None,
+    denied: Mapping[str, str] | None = None,
 ) -> list[TierFinding]:
     """Probe every tier the runtime calls, in tier order; blocking, so the check runs it in a thread.
 
@@ -232,9 +239,11 @@ def check_tiers(
     doctor's own limit is never reported as the provider's TIMEOUT.
     A tier that shares a probe already made needs no time, so it is always resolved. The findings of a stopped
     check read as if its budget had run out; the cancelled check that stopped it returns none of them.
+    BF-886 A-1: a tier in ``denied`` (tier -> reason, from ``ceiling_denials``) is reported WARN and never probed.
     """
     deadline = _clock() + LLM_CHECK_BUDGET_S
     stopped = stop if stop is not None else threading.Event()
+    excluded = denied or {}
 
     def admits(wait: float) -> bool:
         return not stopped.is_set() and _clock() + wait <= deadline
@@ -260,6 +269,14 @@ def check_tiers(
             findings.append(TierFinding(
                 tier, CheckOutcome.FAIL, f"{where}: no model is configured",
                 f"Rerun `probos setup`, or set llm_model_{tier} in the config.",
+            ))
+        elif tier in excluded:
+            # BF-886 A-1: the runtime never sends this tier a request, so neither does doctor.
+            findings.append(TierFinding(
+                tier, CheckOutcome.WARN, f"{where}: not checked: {excluded[tier]}",
+                "Unset model_routing.cost_ceiling_per_million_output_tokens, or configure a model the built-in "
+                "catalog prices at or under it, raising the ceiling first if no catalog model fits (raising it "
+                "alone never admits a model with no known price).",
             ))
         else:
             try:
@@ -323,9 +340,10 @@ class _LLMCheck:
                 message="LLM tiers: skipped (config unavailable)",
             )
         cognitive = ctx.config.cognitive
+        denied = ceiling_denials(ctx.config)  # BF-886 A-1
         stop = threading.Event()
         checking = asyncio.get_running_loop().run_in_executor(
-            None, check_tiers, cognitive, ctx.provider_transport, stop,
+            None, check_tiers, cognitive, ctx.provider_transport, stop, denied,
         )
         try:
             while not checking.done():
