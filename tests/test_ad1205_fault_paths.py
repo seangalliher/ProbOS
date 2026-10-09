@@ -735,8 +735,8 @@ def test_base_fields_and_defaults_stay_frozen_and_subtype_is_shallow() -> None:
         "final_text", "stopped_reason", "denied_tools", "tool_trace_ref",
         "total_tokens", "artifact_refs", "token_source", "tool_failures",
         "tool_defect", "tool_defect_evaluated", "tool_invocations", "delegation_evidence",
-        # AD-1190 appends `iterations` last; fault_observation still must not leak into the base.
-        "iterations",
+        # AD-1324 appends the parked floor-ask id before AD-1190's iteration count.
+        "parked_request_id", "iterations",
     ]
     base = WorkItemAgenticOutcome()
     assert [field.name for field in dataclasses.fields(base)] == names
