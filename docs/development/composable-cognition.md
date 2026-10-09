@@ -145,6 +145,7 @@ already has seeds of most of them:
 | **Attention / gating** | thalamus | AttentionFaculty (#977, being built) |
 | **Memory** | hippocampus | working memory (AD-573) + the episodic shard |
 | **Valuation / affect** | amygdala | cognitive zones / arousal (AD-588) + affective salience (#908) |
+| **Economic judgment** | orbitofrontal cortex | `EconomicJudgmentOrgan` (AD-1322, opt-in, default OFF): weighs what an agentic turn spends against what the work is worth, driven per step through an explicit inner-loop hook; informs only, distinct from valuation/affect |
 | **Metacognition / self-monitoring** | prefrontal | self-monitoring (AD-504), confab guard (AD-592), source attribution (AD-568) |
 | **Interoception / body sense** | insula | avatar self-observation (AD-722) |
 | **Consolidation / reflection** | default-mode network | dreaming → **becoming a personal organ** (decided; AD-1035) so agents dream independently |

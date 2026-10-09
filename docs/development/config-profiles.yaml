@@ -16,11 +16,11 @@ census:
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 439
-  default_false: 214
+  boolean_fields_reachable: 441
+  default_false: 216
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 129
+  default_false_never_armed: 131
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -100,8 +100,8 @@ flags:
   profiles: []
   evidence_to_promote: tests/test_ad1152_agentic_correlation.py::test_concurrent_same_instance_duplicate_ids_reach_runtime_listener
     -- overlapping same-tool calls with duplicate provider IDs retain fresh run identities
-    and original request indices through the real public runtime listener; activation
-    across startup-owned consumers requires a restart.
+    and original request indices through the real public runtime listener; activation across
+    startup-owned consumers requires a restart.
   external_dependency: null
   requires: []
   conflicts_with: []
@@ -152,9 +152,9 @@ flags:
   profiles: []
   evidence_to_promote: tests/test_ad1214_decision_pre_clearance.py::test_e2e_notify_then_pre_clear_then_same_class_silent_then_other_class_notifies
     -- the real permission chain, stores, notification queue and route carry one delegated
-    decision from its offer to the Captain's pre-clearance; the same class then decides
-    silently and audited while a different class still notifies; the OFF tests prove the
-    AD-1213 notification, audit entry and tool receipt unchanged.
+    decision from its offer to the Captain's pre-clearance; the same class then decides silently
+    and audited while a different class still notifies; the OFF tests prove the AD-1213 notification,
+    audit entry and tool receipt unchanged.
   external_dependency: null
   requires:
   - approval_inbox.delegated_approvals_enabled
@@ -164,9 +164,9 @@ flags:
   profiles: []
   evidence_to_promote: tests/test_ad1228_standing_interest_e2e.py::test_e2e_register_own_work_item_then_it_finishes_then_notified_in_an_accounted_think
     -- register through the real tool; a BF-730-shaped stranding through a real work-item
-    store; the real runtime emit, service and proactive think; the notice reaches a real
-    agent's model while its ConcurrencyManager holds the proactive_think slot; the OFF tests
-    prove the proactive params, tool list and wiring unchanged.
+    store; the real runtime emit, service and proactive think; the notice reaches a real agent's
+    model while its ConcurrencyManager holds the proactive_think slot; the OFF tests prove
+    the proactive params, tool list and wiring unchanged.
   external_dependency: null
   requires:
   - proactive_cognitive.enabled
@@ -301,20 +301,21 @@ flags:
 - path: federation.identity_keys_enabled
   kind: security-control
   profiles: []
-  evidence_to_promote: 'AD-1196. tests/test_ad1196_did_key_binding.py::test_m1_thin_chain_signs_rotates_revokes_persists_reloads_and_verifies
-    proves an armed vessel signs what it anchors and a peer verifies it after restart. supported arms it
-    only with federation.enabled, once AD-1198 proves admission on the two-node cluster with both nodes
-    armed; arming key binding alone signs credentials no peer yet requires.'
+  evidence_to_promote: AD-1196. tests/test_ad1196_did_key_binding.py::test_m1_thin_chain_signs_rotates_revokes_persists_reloads_and_verifies
+    proves an armed vessel signs what it anchors and a peer verifies it after restart. supported
+    arms it only with federation.enabled, once AD-1198 proves admission on the two-node cluster
+    with both nodes armed; arming key binding alone signs credentials no peer yet requires.
   external_dependency: null
   requires: []
   conflicts_with: []
 - path: federation.envelope_signing_enabled
   kind: security-control
   profiles: []
-  evidence_to_promote: 'AD-1197. tests/test_ad1197_signed_envelopes.py::test_m1_thin_chain_signs_verifies_and_refuses_a_replay_and_an_altered_field
-    proves two armed vessels sign, verify and refuse replays and altered fields through the real bridge.
-    supported arms it (policy sign, then require) only with federation.enabled and identity keys, once
-    AD-1198 proves admission on the two-node cluster with both nodes armed.'
+  evidence_to_promote: AD-1197. tests/test_ad1197_signed_envelopes.py::test_m1_thin_chain_signs_verifies_and_refuses_a_replay_and_an_altered_field
+    proves two armed vessels sign, verify and refuse replays and altered fields through the
+    real bridge. supported arms it (policy sign, then require) only with federation.enabled
+    and identity keys, once AD-1198 proves admission on the two-node cluster with both nodes
+    armed.
   external_dependency: null
   requires:
   - federation.identity_keys_enabled
@@ -322,11 +323,12 @@ flags:
 - path: federation.peer_admission_enabled
   kind: security-control
   profiles: []
-  evidence_to_promote: 'AD-1198 slice 1. tests/test_ad1198_cluster_gate.py::test_m6_pinned_cluster_does_cross_ship_work_with_signed_provenance
-    proves two real nodes from the shipped node configs admit only their pinned peer and do signed cross-ship
-    work over real ZeroMQ; the module''s other gate tests prove partition, restart, stale key, duplicate and
-    malicious-peer behaviour. supported arms it with federation.enabled, identity keys and envelope signing
-    (policy require, every peer pinned) once the Captain promotes the authenticated-federation profile.'
+  evidence_to_promote: AD-1198 slice 1. tests/test_ad1198_cluster_gate.py::test_m6_pinned_cluster_does_cross_ship_work_with_signed_provenance
+    proves two real nodes from the shipped node configs admit only their pinned peer and do
+    signed cross-ship work over real ZeroMQ; the module's other gate tests prove partition,
+    restart, stale key, duplicate and malicious-peer behaviour. supported arms it with federation.enabled,
+    identity keys and envelope signing (policy require, every peer pinned) once the Captain
+    promotes the authenticated-federation profile.
   external_dependency: null
   requires:
   - federation.envelope_signing_enabled
@@ -483,9 +485,9 @@ flags:
   kind: product-feature
   profiles: []
   evidence_to_promote: tests/test_ad1229_message_receipts_e2e.py::test_e2e_proactive_dm_then_reply_then_receipt_through_the_offered_tool
-    -- a real proactive DM and a Captain DM, a real reply, and the receipts read back
-    through the tool the real executor registered and offered; the OFF tests prove the
-    offered tool list unchanged.
+    -- a real proactive DM and a Captain DM, a real reply, and the receipts read back through
+    the tool the real executor registered and offered; the OFF tests prove the offered tool
+    list unchanged.
   external_dependency: null
   requires:
   - ward_room.enabled
@@ -494,10 +496,10 @@ flags:
   kind: product-feature
   profiles: []
   evidence_to_promote: tests/test_ad1156_plan_execute_mode.py::test_m1_the_mode_command_governs_the_next_real_dm_turn
-    -- the Captain's /mode command writes the thread's record and the next real DM turn
-    reads it. In plan mode the model is offered only read-only tools and a withheld call
-    is refused without running; /mode execute restores the full offer. The OFF test
-    proves a stored record inert and the model's request unchanged.
+    -- the Captain's /mode command writes the thread's record and the next real DM turn reads
+    it. In plan mode the model is offered only read-only tools and a withheld call is refused
+    without running; /mode execute restores the full offer. The OFF test proves a stored record
+    inert and the model's request unchanged.
   external_dependency: null
   requires:
   - dm_agentic.enabled
@@ -506,12 +508,32 @@ flags:
   kind: product-feature
   profiles: []
   evidence_to_promote: tests/test_ad1320_agentic_budget_awareness.py::test_loop_awareness_adds_no_calls_and_leaves_outcomes_identical
-    -- paired real loops prove awareness preserves call count, tools, iterations, final
-    text and spend; the threshold tests prove only the current note survives, and the
-    OFF tests prove request bytes and turn accounting remain unchanged.
+    -- paired real loops prove awareness preserves call count, tools, iterations, final text
+    and spend; the threshold tests prove only the current note survives, and the OFF tests
+    prove request bytes and turn accounting remain unchanged.
   external_dependency: null
   requires:
   - dm_agentic.enabled
+  conflicts_with: []
+- path: dm_agentic.economic_judgment.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1322_economic_judgment_integration.py -- real DM and crew
+    loop seams prove the organ is absent and request bytes are unchanged when OFF, while enabled
+    turns emit deterministic context and audit without extra calls.
+  external_dependency: null
+  requires:
+  - dm_agentic.enabled
+  conflicts_with: []
+- path: dm_agentic.economic_judgment.currency_is_marginal
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1322_economic_judgment_organ.py -- currency appears only
+    when the operator explicitly declares catalog price to be a real marginal cost; token
+    and relative-weight context remain available without it.
+  external_dependency: null
+  requires:
+  - dm_agentic.economic_judgment.enabled
   conflicts_with: []
 ci_divergences:
 - id: nats-forced-off-in-tests

@@ -539,6 +539,7 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "max_total_iterations",  # AD-1208: a spend/step control, not continuation policy
         "plan_mode_tool_ids",  # AD-1156: narrows the offer; forwarded only when set
         "budget_awareness_state",  # AD-1320: transient presentation state only
+        "inner_loop_hook",  # AD-1322: optional economic-organ hook only
     ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params

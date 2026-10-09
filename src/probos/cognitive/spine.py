@@ -47,9 +47,12 @@ the organ protocol stays unchanged.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.organ import CognitiveOrgan
+
+if TYPE_CHECKING:
+    from probos.cognitive.economic_judgment_organ import InnerLoopHook
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +63,31 @@ logger = logging.getLogger(__name__)
 EXOGENOUS_SIGNAL_KIND = "exogenous"
 
 
-class CognitiveSpine:
+class _InnerLoopHookOpener:
+    """Open a turn-bound hook from one named organ without driving its peers."""
+
+    _organs: dict[str, CognitiveOrgan]
+
+    def open_inner_loop_hook(
+        self, name: str, *, trust_headroom: float | None = None
+    ) -> InnerLoopHook | None:
+        """AD-1322: open a NEW turn-bound inner-loop hook from the organ named ``name``.
+
+        The single entry point the agentic loop's caller uses to resolve ONE named
+        organ for per-step driving. It runs nothing else and touches no other organ,
+        and ``drive_cycle`` is unchanged. Every call returns a fresh per-turn handle
+        (amendment 2: the organ itself is never the hook); an organ that does not
+        satisfy :class:`InnerLoopHookSource` (or is absent) yields ``None``.
+        """
+        from probos.cognitive.economic_judgment_organ import InnerLoopHookSource
+
+        organ = self._organs.get(name)
+        if organ is not None and isinstance(organ, InnerLoopHookSource):
+            return organ.open_turn_hook(trust_headroom=trust_headroom)
+        return None
+
+
+class CognitiveSpine(_InnerLoopHookOpener):
     """The synchronous in-process nervous system owned by one ``CognitiveAgent``.
 
     Owns organ composition, drives the organ cognitive cycle, carries the intra-organ

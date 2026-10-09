@@ -29,7 +29,10 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 from probos import work_item_steps as owned_steps
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
-from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
+from probos.cognitive.swe_harness.agentic_loop import (
+    AGENTIC_DEFAULT_TIER,
+    AgenticBudgetAwarenessState,
+)
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
 from probos.dm_reply import (  # AD-1248 / AD-1295
     ToolFailures,
@@ -1926,6 +1929,69 @@ class WorkItemAgenticExecutor:
         self._browser_egress_warned = True
         logger.warning(_BROWSER_EGRESS_WARNING)
 
+    async def _open_economic_run(
+        self,
+        hook: Any,
+        *,
+        runtime: Any,
+        registry: Any,
+        extra_context: dict[str, Any] | None,
+        failure_scope: str | None,
+        work_item_id_provider: Callable[[], str | None] | None,
+        tier: str | None,
+        token_budget: int | None,
+    ) -> None:
+        """AD-1322: tell the economic organ what this pass is worth, before the loop runs.
+
+        Informational only: every read is best-effort and any failure degrades to
+        "unknown", which suppresses the dependent signals rather than raising.
+        """
+        try:
+            from probos.cognitive.economic_judgment_organ import resolve_tier_pricing
+
+            work_item_id = (extra_context or {}).get("_crew_work_item_id")
+            if not work_item_id and work_item_id_provider is not None:
+                work_item_id = work_item_id_provider()
+            turn_key = str(
+                (extra_context or {}).get("_crew_work_item_id")
+                or failure_scope
+                or work_item_id
+                or ""
+            )
+            value_band: str | None = None
+            stakes: str | None = None
+            store = getattr(runtime, "work_item_store", None)
+            if work_item_id and store is not None:
+                item = await store.get_work_item(work_item_id)
+                value_band = getattr(item, "value_band", None)
+                stakes = getattr(item, "stakes", None)
+            verification: set[str] = set()
+            if registry is not None:
+                for reg in registry.list_tools(tag="verification"):
+                    if "verification" in getattr(reg, "tags", ()):
+                        verification.add(reg.tool.tool_id)
+            # The tier the loop is left with when the executor is given none (G3).
+            effective_tier = tier if tier is not None else AGENTIC_DEFAULT_TIER
+            price, weight = resolve_tier_pricing(
+                getattr(runtime, "model_registry", None), effective_tier
+            )
+            hook.open_run(
+                turn_key=turn_key,
+                value_band=value_band if type(value_band) is str else None,
+                stakes=stakes if type(stakes) is str else None,
+                tier=effective_tier,
+                budget=token_budget,
+                input_price_per_million=price,
+                price_weight=weight,
+                verification_tool_ids=verification,
+            )
+        except Exception:
+            logger.warning(
+                "AD-1322: economic run context could not be opened; the organ stays "
+                "idle for this pass and the loop proceeds unchanged",
+                exc_info=True,
+            )
+
     async def run(
         self, *, agent_id: str, instructions: str, task_text: str, runtime: Any,
         department: str = "", rank: str = "ensign", thread_id: str = "",
@@ -1946,6 +2012,7 @@ class WorkItemAgenticExecutor:
         max_total_iterations: int | None = None,
         plan_mode_tool_ids: frozenset[str] | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
+        inner_loop_hook: Any = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
         if any(value is not None for value in (
@@ -1985,6 +2052,9 @@ class WorkItemAgenticExecutor:
         # AD-1320: transported unchanged; absent => the arguments are unchanged.
         if budget_awareness_state is not None:
             arguments["budget_awareness_state"] = budget_awareness_state
+        # AD-1322: transported unchanged; absent => the arguments are unchanged.
+        if inner_loop_hook is not None:
+            arguments["inner_loop_hook"] = inner_loop_hook
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -2057,6 +2127,7 @@ class WorkItemAgenticExecutor:
         # plan-mode conversational turn -- leaves the offer and invoke unchanged.
         plan_mode_tool_ids: frozenset[str] | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
+        inner_loop_hook: Any = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -3002,6 +3073,9 @@ class WorkItemAgenticExecutor:
         # AD-1320: typed pass-through of the turn's shared threshold state.
         if budget_awareness_state is not None:
             _loop_kwargs["budget_awareness_state"] = budget_awareness_state
+        # AD-1322: the economic organ's inner-loop hook; absent => never passed.
+        if inner_loop_hook is not None:
+            _loop_kwargs["inner_loop_hook"] = inner_loop_hook
         # BF-731: same additive shape. Absent => the kwarg is never passed to
         # AgenticLoop, which in turn never passes it to complete(), so the task
         # path and every test double keep the exact call they had before.
@@ -3223,6 +3297,18 @@ class WorkItemAgenticExecutor:
                 registry, resolve_tool_id=_fault_tool_id_resolver,
             )
             diagnostic_kwargs["fault_capture"] = fault_capture
+
+        if inner_loop_hook is not None:
+            await self._open_economic_run(
+                inner_loop_hook,
+                runtime=runtime,
+                registry=registry,
+                extra_context=extra_context,
+                failure_scope=failure_scope,
+                work_item_id_provider=work_item_id_provider,
+                tier=tier,
+                token_budget=token_budget,
+            )
 
         agentic_result = await loop.run(
             system_prompt=_system_prompt,

@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from probos.cognitive.economic_judgment_organ import EconomicJudgmentOrgan
 from probos.cognitive.organ import BaseCognitiveOrgan
 from probos.cognitive.spine import EXOGENOUS_SIGNAL_KIND, CognitiveSpine
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -236,6 +237,22 @@ async def test_agent_stop_detaches_all_organs() -> None:
     assert fake.attached is False
     assert fake.detach_count == 1
     assert agent._spine.has_organs is False
+
+
+def test_open_inner_loop_hook_inherited_api_returns_fresh_named_handles() -> None:
+    assert "open_inner_loop_hook" not in CognitiveSpine.__dict__
+    assert callable(CognitiveSpine.open_inner_loop_hook)
+
+    spine = CognitiveSpine(_StubParent("agent-economic"))
+    spine.attach_organ(EconomicJudgmentOrgan())
+
+    first = spine.open_inner_loop_hook("economic_judgment")
+    second = spine.open_inner_loop_hook("economic_judgment")
+
+    assert first is not None
+    assert second is not None
+    assert first is not second
+    assert spine.open_inner_loop_hook("missing") is None
 
 
 # ----------------------------------------------------------------------------

@@ -210,6 +210,104 @@ class DmDeliberateConfig(BaseModel):  # AD-934
     max_tokens: int = 800
 
 
+class EconomicJudgmentConfig(BaseModel):  # AD-1322
+    """AD-1322: opt-in economic judgment organ for agentic turns.
+
+    Default OFF. When enabled (and ``dm_agentic.enabled``), a deterministic,
+    no-LLM organ reads each step of the agentic loop and appends a compact
+    context block to the outbound system prompt. It informs only: it never
+    blocks, vetoes, reroutes or charges, and persists no derived scores.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1322: compose the economic judgment organ for conversational "
+            "and crew agentic turns. Default OFF: no organ is attached and the "
+            "loop is byte-identical. Effective only while dm_agentic.enabled."
+        ),
+    )
+    summary_turns: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description=(
+            "AD-1322: how many finished turns the organ keeps as raw counts "
+            "(spend by value band, signals raised, verified flag). In memory "
+            "only; cleared when the agent stops."
+        ),
+    )
+    verification_tool_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "AD-1322: exact tool-call names that count as a verification step "
+            "when they return successfully, unioned with registry tools tagged "
+            "'verification'. Empty by default and nothing is inferred: with no "
+            "verification tool the underspend signal is suppressed. Matching is "
+            "by the name the model called, so a browser or MCP tool whose "
+            "call name differs from its registry id must be listed by call name."
+        ),
+    )
+    currency_is_marginal: bool = Field(
+        default=False,
+        description=(
+            "AD-1322: show a currency estimate beside tokens. Leave False when "
+            "tiers are subscription-billed: catalog prices are then not "
+            "marginal cost. Even when True the figure is an input-side estimate "
+            "and only for a tier with one unambiguous positive price."
+        ),
+    )
+    block_max_chars: int = Field(
+        default=400,
+        ge=160,
+        le=2000,
+        description=(
+            "AD-1322: hard cap on the context block appended to the system prompt. "
+            "The floor of 160 keeps every actionable message (compact form) whole."
+        ),
+    )
+    overspend_spend_fraction: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "AD-1322: fraction of the turn token budget at which spend on a "
+            "minor or moderate value item counts as high. Needs an armed "
+            "dm_agentic.token_budget; without one only rising spend and "
+            "repeated failed attempts raise the overspend signal."
+        ),
+    )
+    repeat_attempt_threshold: int = Field(
+        default=3,
+        ge=2,
+        description=(
+            "AD-1322: consecutive failed calls of one tool with identical "
+            "arguments that raise the overspend signal."
+        ),
+    )
+    rising_spend_steps: int = Field(
+        default=2,
+        ge=2,
+        description=(
+            "AD-1322: consecutive model calls whose per-step token spend "
+            "strictly grows that count as rising spend on a minor or "
+            "moderate value item."
+        ),
+    )
+
+    @field_validator("verification_tool_ids")
+    @classmethod
+    def _validate_verification_tool_ids(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for item in value:
+            if type(item) is not str or not item.strip():
+                raise ValueError("verification_tool_ids entries must be non-empty strings")
+            cleaned.append(item.strip())
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("verification_tool_ids entries must be unique")
+        return cleaned
+
+
 class DmAgenticConfig(BaseModel):  # AD-1065
     """AD-1065: flag-gated conversational agentic turn. When enabled, a 1:1
     ``direct_message`` reply runs the AgenticLoop (tool-calling) instead of a
@@ -526,6 +624,14 @@ class DmAgenticConfig(BaseModel):  # AD-1065
                 )
             previous = item
         return [float(item) for item in value]
+
+    economic_judgment: EconomicJudgmentConfig = Field(
+        default_factory=EconomicJudgmentConfig,
+        description=(
+            "AD-1322: opt-in economic judgment organ (default OFF). "
+            "Informs the agent's next model request; never blocks or reroutes."
+        ),
+    )
 
 
 class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)

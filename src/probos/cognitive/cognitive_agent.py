@@ -1429,6 +1429,77 @@ class CognitiveAgent(BaseAgent):
         """
         self._compose_attention_organ()
         self._compose_dreaming_organ()
+        self._compose_economic_judgment_organ()
+
+    def _economic_judgment_config(self) -> Any:
+        """AD-1322: the enabled ``dm_agentic.economic_judgment`` config, or ``None``.
+
+        Both flags must be literally True, so a mock or partial config never arms it.
+        ``_runtime`` may still be unset at construction; the accessor re-checks lazily.
+        """
+        _rt = getattr(self, "_runtime", None)
+        _dm = getattr(getattr(_rt, "config", None), "dm_agentic", None) if _rt else None
+        _cfg = getattr(_dm, "economic_judgment", None)
+        if getattr(_dm, "enabled", False) is not True or getattr(_cfg, "enabled", False) is not True:
+            return None
+        return _cfg
+
+    def _compose_economic_judgment_organ(self) -> None:
+        """AD-1322: compose the opt-in :class:`EconomicJudgmentOrgan` when its flag is ON.
+
+        Default-OFF ⇒ NO organ attached ⇒ ``has_organs`` stays False ⇒ byte-identical.
+        Idempotent: a second call once composed is a no-op.
+        """
+        from probos.cognitive.economic_judgment_organ import (
+            ECONOMIC_JUDGMENT_ORGAN_NAME,
+            EconomicJudgmentOrgan,
+        )
+
+        if self._spine.get_organ(ECONOMIC_JUDGMENT_ORGAN_NAME) is not None:
+            return
+        cfg = self._economic_judgment_config()
+        if cfg is None:
+            return
+        organ = EconomicJudgmentOrgan(
+            summary_turns=cfg.summary_turns,
+            block_max_chars=cfg.block_max_chars,
+            overspend_spend_fraction=cfg.overspend_spend_fraction,
+            repeat_attempt_threshold=cfg.repeat_attempt_threshold,
+            rising_spend_steps=cfg.rising_spend_steps,
+            verification_tool_ids=cfg.verification_tool_ids,
+            currency_is_marginal=cfg.currency_is_marginal,
+        )
+        organ.set_audit_emit(self._emit_economic_audit)
+        self._spine.attach_organ(organ)
+
+    def economic_inner_loop_hook(self, *, trust_headroom: float | None = None) -> Any:
+        """AD-1322: a NEW per-turn economic hook handle, or ``None`` when OFF.
+
+        Composes lazily (``_runtime`` may be set after construction) through the same
+        idempotent composer. Only the organ named ``economic_judgment`` is resolved,
+        and each call yields a distinct turn-bound handle (amendment 2, G1/G5): the
+        headroom is fixed on the handle, never stored on the shared organ.
+        """
+        from probos.cognitive.economic_judgment_organ import ECONOMIC_JUDGMENT_ORGAN_NAME
+
+        _spine = getattr(self, "_spine", None)
+        if _spine is None:
+            return None
+        self._compose_economic_judgment_organ()
+        return _spine.open_inner_loop_hook(
+            ECONOMIC_JUDGMENT_ORGAN_NAME, trust_headroom=trust_headroom
+        )
+
+    def _emit_economic_audit(self, trace: Mapping[str, Any]) -> None:
+        """AD-1322: synchronous debug-log sink for the economic organ's audit trace."""
+        try:
+            logger.debug(
+                "AD-1322 economic audit [%s]: %s",
+                getattr(self, "id", "?"),
+                dict(trace),
+            )
+        except Exception:  # log-and-degrade: audit must never break the loop
+            logger.debug("AD-1322: economic audit sink failed", exc_info=True)
 
     def _compose_attention_organ(self) -> None:
         """AD-1029: compose the deterministic :class:`AttentionFaculty` when attention is ON.
@@ -4724,6 +4795,27 @@ class CognitiveAgent(BaseAgent):
                     trust_source=getattr(runtime, "trust_network", None),
                 )
 
+            # AD-1322: default-OFF -> None -> no kwarg, byte-identical loop kwargs.
+            # The type-level check keeps duck-typed agents (no accessor) untouched.
+            _economic_hook = None
+            if callable(getattr(type(self), "economic_inner_loop_hook", None)):
+                # Headroom is effective / configured budget (not the trust
+                # multiplier, which the MIN_TURN_TOKEN_BUDGET floor can decouple
+                # from it); unknown when unarmed or not a usable ratio.
+                _headroom = None
+                if _turn_cost is not None:
+                    _effective = getattr(_turn_cost, "budget", None)
+                    _configured = getattr(_turn_cost, "configured_budget", None)
+                    if (
+                        type(_effective) is int and type(_configured) is int
+                        and _configured > 0
+                    ):
+                        _headroom = _effective / _configured
+                _economic_hook = self.economic_inner_loop_hook(trust_headroom=_headroom)
+            _economic_kwargs: dict[str, Any] = (
+                {"inner_loop_hook": _economic_hook} if _economic_hook is not None else {}
+            )
+
             async def _run_pass(task_text: str) -> Any:
                 stop, trace = _segment["stop"], _segment["trace"]
                 trace["ref"] = None
@@ -4764,6 +4856,7 @@ class CognitiveAgent(BaseAgent):
                     **_long_run_kwargs,
                     **(_turn_cost.loop_kwargs() if _turn_cost is not None else {}),
                     **_plan_mode_kwargs,
+                    **_economic_kwargs,
                 )
                 if _turn_cost is not None:
                     _turn_cost.record(outcome)

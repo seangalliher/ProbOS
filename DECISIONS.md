@@ -10,6 +10,30 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1322 -- Opt-in economic judgment organ with an explicit inner-loop hook
+
+**Existing issue:** #1477 (epic #1473; depends on AD-1320 #1475 and AD-1321 #1476). Default OFF; implementation candidate, not validated in the build tree when this entry was written.
+
+A deterministic, synchronous, no-LLM `EconomicJudgmentOrgan` (`dm_agentic.economic_judgment`, requires `dm_agentic.enabled`) weighs what an agentic turn is spending against what the work is worth. It informs only: a compact capped block appended to the outbound system prompt (never to `messages`, after any AD-1320 note) plus an audit trace on every emission. It never blocks, vetoes, reroutes, charges tokens or persists a derived score.
+
+Ranked decisions (selected first):
+- **D1 hook shape and concurrency.** A narrow `InnerLoopHook` Protocol is passed as `AgenticLoop(inner_loop_hook=None)`. The one agent-owned organ retains only immutable configuration and a bounded cross-turn summary; `CognitiveSpine.open_inner_loop_hook(name)` opens a distinct turn-bound handle whose mutable state cannot be reset or deactivated by an overlapping turn. Rejected: one shared mutable hook, serializing cognition, rerunning every organ per step through `drive_cycle`, or an async event-bus subscription.
+- **D2 `drive_cycle`.** The organ's `perceive`/`decide`/`act` accept only its own typed step objects, so the unchanged per-cycle path leaves it inert. Handles publish one idempotent raw-count summary on close; detach clears summaries and makes outstanding handles inert.
+- **D3 pre-finish underspend and accounting.** A structurally budgeted reminder rides every request while stakes are high or severe and no verification has succeeded; actionable text is retained before optional descriptive cost text. The no-tool-call finish emits an audit signal, and the loop closes the handle once with its authoritative final cumulative usage. Rejected: intercepting finish and re-prompting.
+- **D4 verification and audit.** A closed config list of tool call names plus registry tools tagged `verification`, counted only on a successful result. An empty set suppresses underspend and audits `verification_unavailable`; nothing is inferred. Audit inputs include tier, resolved price, marginal-price flag, headroom, thresholds and kept/dropped render segments so the block is reproducible.
+- **Cost.** Input-side prompt-token estimate and a relative price weight use the same tier the loop requests; currency appears only when `currency_is_marginal` and one positive price resolves. A mismatch drops pricing rather than inventing a figure.
+- **Value, stakes and headroom.** The executor reads value and stakes from the AD-1321 work item. Headroom is the effective/configured token-budget ratio, not the trust multiplier, and unknown input resets for every handle.
+
+Review found and the successor design repaired six defects before commit: shared concurrent-turn state, missing final-response usage, crew tier/price drift, truncation that removed the verification reminder, stale/misdefined headroom and non-reproducible audit pricing.
+
+**Amendment 3 (findings H1-H4).** A3-D1: an optional synchronous `note_charge(cumulative_tokens)` (`InnerLoopChargeObserver`, not part of `InnerLoopHook`) fires immediately after the loop's authoritative `result.total_tokens += charged`, with no await between, so a cancellation or exception after a charged response no longer loses that spend; the handle only `max`-assigns its per-pass cumulative figure and the one `close_run` fold stays exactly-once. Rejected: catching `BaseException` in `run()`, try/finally inside `_run_scoped`, folding into carry at note time. A3-D2..D4: concurrency tests force real overlap with a test-local rendezvous and compare full per-turn artifacts to solo runs (shared-handle and shared-state mutations must fail the same comparator); the escaping-exception test proves via a `_run_scoped` spy that the exception left it after an observed charge; the changed-key reset is tested on one kept handle with a disabled-reset mutation and a same-key continuation contrast.
+
+**Amendment 4 (preflight SRP fitness).** The new opener made `CognitiveSpine` exceed the repository's 15-direct-method review threshold. The opener alone moves verbatim to a stateless same-module `_InnerLoopHookOpener` mixin inherited by `CognitiveSpine`; the public API, named-organ-only lookup, fresh-handle semantics and `drive_cycle` remain unchanged. New architecture debt, an allowlist, a new source module and post-class patching were rejected.
+
+Known limits, stated: the token figure excludes tool definitions and the block itself; verification matches the name the model called; raw bounded summaries are in-memory and cleared on detach.
+
+Exclusions: no change to `drive_cycle`, `organ.py`, `turn_cost.py`, `workforce.py`, `model_registry.py`, `config.py`, crew eligibility, authority or gating. The AD-1152 golden changes only for the new default-off config shape. Rollback: revert the commit; the flag defaults OFF.
+
 ### AD-1192 -- Evidence-owned crew steps with viewed-state commands
 
 **Existing issue:** #1129. The old empty-checklist harm was already defended; retain the existing empty/malformed/submitted and `open_todos` predicates rather than rebuilding them. This change supplies ownership and durable CAS across both canonical `run`/`resume` and supported legacy execution. Standalone consultation remains a separate population. No planner, judge, event type, scheduler, default flag or package is added.
