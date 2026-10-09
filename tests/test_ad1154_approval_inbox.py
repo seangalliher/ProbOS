@@ -234,10 +234,49 @@ def _canonical(value: Any) -> str:
 class _FakeRuntime:
     """Minimal runtime double for the router's standing-rule branch."""
 
-    def __init__(self, *, store: Any, approvals: Any = None, config: Any = None) -> None:
+    def __init__(
+        self, *, store: Any, approvals: Any = None, config: Any = None,
+        work_item_store: Any = None,
+    ) -> None:
         self.capability_request_store = store
         self.action_approval_store = approvals
         self.config = config
+        self.work_item_store = work_item_store
+
+
+class _ConfirmedValueWorkItems:
+    """AD-1321: the standing-rule gate needs a confirmed value/stakes item."""
+
+    async def get_work_item(self, work_item_id: str) -> Any:
+        from probos.workforce import WorkItem, build_value_provenance
+
+        provenance = build_value_provenance(
+            source_kind="captain", source_id="captain", confirmed=True,
+        )
+        return WorkItem(
+            id=work_item_id, title="t", value_band="moderate",
+            value_band_provenance=dict(provenance), stakes="low",
+            stakes_provenance=dict(provenance),
+        )
+
+
+class _UnconfirmedValueWorkItems:
+    """AD-1321: an agent-proposed value that nobody has confirmed."""
+
+    async def get_work_item(self, work_item_id: str) -> Any:
+        from probos.workforce import WorkItem, build_value_provenance
+
+        provenance = build_value_provenance(source_kind="agent", source_id="agent-a")
+        return WorkItem(
+            id=work_item_id, title="t", value_band="moderate",
+            value_band_provenance=dict(provenance), stakes="low",
+            stakes_provenance=dict(provenance),
+        )
+
+
+class _RaisingWorkItems:
+    async def get_work_item(self, work_item_id: str) -> Any:
+        raise RuntimeError("store down")
 
 
 # -- Headline: park, refuse honestly, never enter the tool ----------------
@@ -280,6 +319,39 @@ class TestHeadline:
                 # HEAD's behaviour: a SUCCESS-shaped intervention_required no-op.
                 assert result.error is None
                 assert result.output["intervention_required"] is True
+        finally:
+            await store.stop()
+            await tool.stop()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("context", "expected"),
+        [
+            ({"_crew_work_item_id": "child-42"}, "child-42"),
+            ({"_crew_work_item_id": "bad id; drop"}, None),
+            ({"_crew_work_item_id": 7}, None),
+            ({"_crew_work_item_id": "x" * 300}, None),
+            ({}, None),
+        ],
+    )
+    async def test_dispatch_files_the_crew_work_item_on_the_ask(
+        self, tmp_path, context, expected
+    ):
+        # Arrange
+        page = _FakePage(list_elements=[{"role": "button", "text": "Pay now"}])
+        executor, tool, store = await _armed(tmp_path, page=page)
+        try:
+            sid = await _open_session(executor, tool, _TIER_3_URL)
+            # Act
+            await executor.invoke(
+                "agent-a", "browser", {"action": "click", "index": 0, "session_id": sid},
+                agent_department="engineering", agent_rank="commander",
+                context=context,
+            )
+            pending = await store.list_pending()
+            # Assert
+            assert len(pending) == 1
+            assert pending[0].work_item_id == expected
         finally:
             await store.stop()
             await tool.stop()
@@ -932,8 +1004,13 @@ class TestResolution:
         approvals = await _approvals(tmp_path)
         config = SystemConfig()
         config.approval_inbox = _cfg(standing_rules_enabled=True)
-        runtime = _FakeRuntime(store=store, approvals=approvals, config=config)
-        request = await store.file_action_request("agent-a", _payload())
+        runtime = _FakeRuntime(
+            store=store, approvals=approvals, config=config,
+            work_item_store=_ConfirmedValueWorkItems(),
+        )
+        request = await store.file_action_request(
+            "agent-a", _payload(), work_item_id="wi-1",
+        )
         before = time.time()
         try:
             # Act
@@ -961,6 +1038,48 @@ class TestResolution:
             await store.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("work_item_store", "work_item_id"),
+        [
+            (_UnconfirmedValueWorkItems(), "wi-1"),
+            (_RaisingWorkItems(), "wi-1"),
+            (_ConfirmedValueWorkItems(), None),
+            (None, "wi-1"),
+        ],
+    )
+    async def test_grant_standing_without_confirmed_value_issues_no_rule(
+        self, tmp_path, work_item_store, work_item_id
+    ):
+        # Arrange
+        store = await _store(tmp_path)
+        approvals = await _approvals(tmp_path)
+        config = SystemConfig()
+        config.approval_inbox = _cfg(standing_rules_enabled=True)
+        runtime = _FakeRuntime(
+            store=store, approvals=approvals, config=config,
+            work_item_store=work_item_store,
+        )
+        request = await store.file_action_request(
+            "agent-a", _payload(), work_item_id=work_item_id,
+        )
+        try:
+            # Act
+            response = await decide_capability_request(
+                request.id,
+                CapabilityRequestDecideRequest(
+                    approve=True, reason="ok", grant_standing=True
+                ),
+                runtime=runtime,
+            )
+            # Assert: the one-time approval stands; no standing rule exists
+            assert response["standing_rule"] is None
+            assert await approvals.list_approvals(active_only=True) == []
+            assert (await store.get(request.id)).status != "pending"
+        finally:
+            await approvals.stop()
+            await store.stop()
+
+    @pytest.mark.asyncio
     async def test_an_oversized_ttl_is_clamped_to_the_max(self, tmp_path):
         # Arrange
         store = await _store(tmp_path)
@@ -969,8 +1088,13 @@ class TestResolution:
         config.approval_inbox = _cfg(
             standing_rules_enabled=True, standing_rule_max_ttl_hours=2
         )
-        runtime = _FakeRuntime(store=store, approvals=approvals, config=config)
-        request = await store.file_action_request("agent-a", _payload())
+        runtime = _FakeRuntime(
+            store=store, approvals=approvals, config=config,
+            work_item_store=_ConfirmedValueWorkItems(),
+        )
+        request = await store.file_action_request(
+            "agent-a", _payload(), work_item_id="wi-1",
+        )
         ceiling = time.time() + 2 * 3600 + 5
         try:
             # Act
@@ -1845,6 +1969,7 @@ class TestSeamAndOffPath:
             "tool_id",
             "params",
             "disposition_sink",
+            "work_item_id",  # AD-1321: the executing crew item rides on the filed ask
         ]
         assert (
             signature.parameters["disposition_sink"].kind

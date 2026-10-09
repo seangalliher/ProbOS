@@ -1193,18 +1193,27 @@ async def test_agents_never_issue_standing_rules(rig: _Rig) -> None:
         delegated_approvals_enabled=True, enabled=True, standing_rules_enabled=True,
     )
     service = rig.service()
+    # AD-1321: a standing rule needs the ask linked to a work item whose value
+    # and stakes the Captain confirmed (Captain-created items are confirmed).
+    valued = await rig.work_items.create_work_item(
+        title="Calibrate the array", created_by="captain",
+        value_band="moderate", stakes="low",
+    )
 
     async def file_continue() -> Any:
         return await rig.requests.file_request(
             agent_id=BUILDER.id, kind=CONTINUE_REQUEST_KIND, target="continue: calibrate the array",
             rationale="step limit", payload=continue_payload("thread-1"),
+            work_item_id=valued.id,
         )
 
     # Premise: the same rig issues a standing rule when the CAPTAIN asks for one.
     captains = await file_continue()
+    captain_runtime = rig.captain_runtime(service)
+    captain_runtime.work_item_store = rig.work_items
     body = await decide_capability_request(
         captains.id, CapabilityRequestDecideRequest(approve=True, grant_standing=True),
-        runtime=rig.captain_runtime(service),
+        runtime=captain_runtime,
     )
     assert body["standing_rule"] is not None
     assert len(await rig.actions.list_approvals(active_only=False)) == 1

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, DragEvent } from 'react';
 import { useStore } from '../../store/useStore';
-import type { WorkItemView, WorkItemTemplateView } from '../../store/types';
+import type { WorkItemView, WorkItemTemplateView, ValueProvenanceView } from '../../store/types';
 import {
   WORK_ITEM_BUCKETS, WORK_ITEM_BUCKET_CAPS, bucketKey, isScaffoldWorkItem, useWorkItemInterest,
   useWorkItemScopes, workItemCacheState, type WorkItemBucket, type WorkItemCacheState,
@@ -122,6 +122,23 @@ function ContinuationBadge() {
 }
 
 // ── Work Card ──────────────────────────────────────────────────────
+const VALUE_BANDS = ['minor', 'moderate', 'significant', 'critical'] as const;
+const STAKES_LEVELS = ['low', 'moderate', 'high', 'severe'] as const;
+
+function valueConfirmed(provenance: ValueProvenanceView | null | undefined): boolean {
+  return !!provenance && provenance.confirmation_kind !== null;
+}
+
+function describeValueProvenance(provenance: ValueProvenanceView | null | undefined): string {
+  if (!provenance) return '';
+  const parts = [`proposed by ${provenance.source_id}`];
+  if (provenance.inherited_template_id) parts.push(`from template ${provenance.inherited_template_id}`);
+  parts.push(provenance.confirmation_kind
+    ? `confirmed by ${provenance.confirmed_by ?? 'unknown'} (${provenance.confirmation_kind})`
+    : 'unconfirmed');
+  return parts.join(', ');
+}
+
 function WorkCard({ item, assigneeLabel, onDragStart, onOpen }: {
   item: WorkItemView;
   assigneeLabel: string | null;
@@ -165,6 +182,16 @@ function WorkCard({ item, assigneeLabel, onDragStart, onOpen }: {
           color: WORK_TYPE_COLORS[item.work_type] || '#888',
         }}>{item.work_type}</span>
         {workItemOrigin(item) === 'continuation' && <ContinuationBadge />}
+        {item.value_band && (
+          <span data-testid="work-card-value-band" style={{ fontSize: 9, color: valueConfirmed(item.value_band_provenance) ? '#c0a060' : '#777' }}>
+            value {item.value_band}{valueConfirmed(item.value_band_provenance) ? '' : ' (unconfirmed)'}
+          </span>
+        )}
+        {item.stakes && (
+          <span data-testid="work-card-stakes" style={{ fontSize: 9, color: valueConfirmed(item.stakes_provenance) ? '#c0a060' : '#777' }}>
+            stakes {item.stakes}{valueConfirmed(item.stakes_provenance) ? '' : ' (unconfirmed)'}
+          </span>
+        )}
         {assigneeLabel ? (
           <span style={{ fontSize: 9, color: '#8888a0', display: 'flex', alignItems: 'center', gap: 2 }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#50b0a0', display: 'inline-block' }} />
@@ -214,6 +241,7 @@ export default function WorkBoard() {
   const workTemplates = useStore(s => s.workTemplates);
   const moveWorkItem = useStore(s => s.moveWorkItem);
   const createWorkItem = useStore(s => s.createWorkItem);
+  const confirmValueContext = useStore(s => s.confirmWorkItemValueContext);
   const assignWorkItem = useStore(s => s.assignWorkItem);
   const createFromTemplate = useStore(s => s.createFromTemplate);
   const fetchWorkTemplates = useStore(s => s.fetchWorkTemplates);
@@ -233,6 +261,9 @@ export default function WorkBoard() {
   const [wipWarning, setWipWarning] = useState<string | null>(null);
   const [showBlocked, setShowBlocked] = useState(false);
   const [quickWorkType, setQuickWorkType] = useState('card');
+  const [quickValueBand, setQuickValueBand] = useState('');
+  const [quickStakes, setQuickStakes] = useState('');
+  const [confirmError, setConfirmError] = useState('');
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<WorkItemTemplateView | null>(null);
   const [templateVars, setTemplateVars] = useState<Record<string, string>>({});
@@ -306,6 +337,7 @@ export default function WorkBoard() {
 
   const openDetail = useCallback(async (item: WorkItemView): Promise<void> => {
     setOwnershipError('');
+    setConfirmError('');
     setOwnershipActions([]);
     setDetailOwnedView(null);
     try {
@@ -442,12 +474,24 @@ export default function WorkBoard() {
   // Quick create
   const handleQuickCreate = useCallback(async () => {
     if (!quickTitle.trim()) return;
-    await createWorkItem({ title: quickTitle.trim(), priority: quickPriority, work_type: quickWorkType });
+    await createWorkItem({
+      title: quickTitle.trim(), priority: quickPriority, work_type: quickWorkType,
+      ...(quickValueBand ? { value_band: quickValueBand } : {}),
+      ...(quickStakes ? { stakes: quickStakes } : {}),
+    });
     setQuickTitle('');
     setQuickPriority(3);
     setQuickWorkType('card');
+    setQuickValueBand('');
+    setQuickStakes('');
     setShowQuickCreate(false);
-  }, [quickTitle, quickPriority, quickWorkType, createWorkItem]);
+  }, [quickTitle, quickPriority, quickWorkType, quickValueBand, quickStakes, createWorkItem]);
+
+  const handleConfirmValue = useCallback(async (itemId: string) => {
+    setConfirmError('');
+    const result = await confirmValueContext(itemId);
+    if (!result.ok) setConfirmError(result.error ?? 'Confirmation failed');
+  }, [confirmValueContext]);
 
   const handleTemplateCreate = useCallback(async () => {
     if (!selectedTemplate) return;
@@ -636,6 +680,16 @@ export default function WorkBoard() {
             style={{ fontSize: 10, padding: '3px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
             {[1,2,3,4,5].map(p => <option key={p} value={p}>P{p}</option>)}
           </select>
+          <select aria-label="Value band" value={quickValueBand} onChange={e => setQuickValueBand(e.target.value)}
+            style={{ fontSize: 10, padding: '3px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
+            <option value="">Value: unset</option>
+            {VALUE_BANDS.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select aria-label="Stakes" value={quickStakes} onChange={e => setQuickStakes(e.target.value)}
+            style={{ fontSize: 10, padding: '3px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#aaa', borderRadius: 3 }}>
+            <option value="">Stakes: unset</option>
+            {STAKES_LEVELS.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
           <button onClick={handleQuickCreate} style={{ ...toolbarBtn, color: '#50b0a0' }}>Add</button>
           <button onClick={() => setShowQuickCreate(false)} style={toolbarBtn}>&#10005;</button>
         </div>
@@ -667,6 +721,13 @@ export default function WorkBoard() {
           ) : (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <span style={{ color: '#9070c0', fontWeight: 600 }}>{selectedTemplate.name}</span>
+              {(selectedTemplate.value_band || selectedTemplate.stakes) && (
+                <span data-testid="template-value-preview" style={{ fontSize: 10, color: '#8888a0' }}>
+                  {selectedTemplate.value_band ? `value ${selectedTemplate.value_band}` : ''}
+                  {selectedTemplate.value_band && selectedTemplate.stakes ? ', ' : ''}
+                  {selectedTemplate.stakes ? `stakes ${selectedTemplate.stakes}` : ''}
+                </span>
+              )}
               {selectedTemplate.variables.map(v => (
                 <input key={v} placeholder={v} value={templateVars[v] || ''} onChange={e => setTemplateVars(prev => ({ ...prev, [v]: e.target.value }))}
                   onKeyDown={e => e.key === 'Enter' && handleTemplateCreate()}
@@ -807,6 +868,30 @@ export default function WorkBoard() {
               )}
             </>} />
             {detailItem.due_at ? <DetailRow label="Due" value={new Date(detailItem.due_at * 1000).toLocaleString()} /> : null}
+            {detailItem.value_band ? (
+              <DetailRow label="Value" testId="work-board-value-band"
+                value={<>{detailItem.value_band} <span style={{ color: '#777' }}>({describeValueProvenance(detailItem.value_band_provenance)})</span></>} />
+            ) : null}
+            {detailItem.stakes ? (
+              <DetailRow label="Stakes" testId="work-board-stakes"
+                value={<>{detailItem.stakes} <span style={{ color: '#777' }}>({describeValueProvenance(detailItem.stakes_provenance)})</span></>} />
+            ) : null}
+            {(detailItem.value_band || detailItem.stakes)
+              && !((detailItem.value_band ? valueConfirmed(detailItem.value_band_provenance) : true)
+                && (detailItem.stakes ? valueConfirmed(detailItem.stakes_provenance) : true)) && (
+              <div style={{ margin: '4px 0 6px' }}>
+                <button type="button" data-testid="work-board-confirm-value"
+                  style={{ ...toolbarBtn, color: '#f0b060' }}
+                  onClick={() => handleConfirmValue(detailItem.id)}>
+                  Confirm value and stakes
+                </button>
+                {confirmError && (
+                  <div role="alert" data-testid="work-board-confirm-error" style={{ marginTop: 4, color: '#f08b8b' }}>
+                    {confirmError}
+                  </div>
+                )}
+              </div>
+            )}
             {ownershipError && (
               <div role="alert" data-testid="work-board-ownership-error"
                 style={{ marginTop: 8, color: '#f08b8b' }}>

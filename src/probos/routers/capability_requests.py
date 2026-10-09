@@ -468,6 +468,26 @@ fulfil_on_approval = _maybe_fulfil_on_approval
 _STANDING_RULE_KINDS: frozenset[str] = frozenset({"action", "continue"})
 
 
+async def _work_item_value_confirmed(runtime: Any, decided: CapabilityRequest) -> bool:
+    from probos.workforce import value_context_standing_eligible
+
+    work_item_id = getattr(decided, "work_item_id", None)
+    work_items = getattr(runtime, "work_item_store", None)
+    if type(work_item_id) is not str or not work_item_id or work_items is None:
+        return False
+    try:
+        item = await work_items.get_work_item(work_item_id)
+    except Exception:
+        logger.warning(
+            "AD-1321: could not load work item for capability request %s; "
+            "treating its value context as unconfirmed",
+            decided.id[:12],
+            exc_info=True,
+        )
+        return False
+    return item is not None and value_context_standing_eligible(item)
+
+
 async def _maybe_issue_standing_rule(
     runtime: Any,
     decided: CapabilityRequest,
@@ -544,6 +564,17 @@ async def _maybe_issue_standing_rule(
             decided.id[:12],
             "no action-approval store is wired" if store is None
             else "the request carries no decoded action payload",
+        )
+        return None
+
+    # AD-1321: a durable standing rule needs a work item whose value and stakes
+    # are both declared and confirmed. Fail closed; the one-time approval stands.
+    if not await _work_item_value_confirmed(runtime, decided):
+        logger.info(
+            "AD-1321: standing rule withheld for capability request %s - its "
+            "work item has no confirmed value and stakes; the approval stands "
+            "and the Captain will be asked again next run",
+            decided.id[:12],
         )
         return None
 

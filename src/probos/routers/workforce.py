@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["workforce"])
 
 
+_VALUE_PROVENANCE_KEYS = ("value_band_provenance", "stakes_provenance")
+
+
+def _reject_forged_value_provenance(body: Any) -> None:
+    """AD-1321: provenance is minted by the server, never accepted from a caller."""
+    if isinstance(body, dict) and any(key in body for key in _VALUE_PROVENANCE_KEYS):
+        raise HTTPException(422, "value_context_provenance_forbidden")
+
+
+def _raise_if_value_context_invalid(exc: ValueError) -> None:
+    if str(exc).startswith("value_context"):
+        raise HTTPException(422, str(exc)) from exc
+
+
 def _raise_if_crew_session_write_reserved(exc: ValueError) -> None:
     if str(exc) == "crew_session_write_reserved":
         raise HTTPException(409, "crew_session_write_reserved") from exc
@@ -177,6 +191,7 @@ async def create_from_template(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
+    _reject_forged_value_provenance(body.get("overrides"))
     try:
         item = await runtime.work_item_store.create_from_template(
             template_id,
@@ -186,6 +201,7 @@ async def create_from_template(
         )
     except ValueError as e:
         _raise_if_crew_session_write_reserved(e)
+        _raise_if_value_context_invalid(e)
         raise HTTPException(404, str(e))
     return {"work_item": item.to_dict()}
 
@@ -202,10 +218,12 @@ async def create_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
+    _reject_forged_value_provenance(body)
     try:
         item = await runtime.work_item_store.create_work_item(**body)
     except ValueError as exc:
         _raise_if_crew_session_write_reserved(exc)
+        _raise_if_value_context_invalid(exc)
         raise
     return {"work_item": item.to_dict()}
 
@@ -254,13 +272,65 @@ async def update_work_item(
     if not runtime.work_item_store:
         raise HTTPException(503, "Workforce engine not enabled")
     body = await request.json()
+    _reject_forged_value_provenance(body)
+    if any(key in body for key in ("value_band", "stakes")):
+        from probos.workforce import (
+            build_value_provenance,
+            normalize_value_text,
+            value_provenance_field,
+        )
+
+        current = await runtime.work_item_store.get_work_item(work_item_id)
+        if current is None:
+            raise HTTPException(404, "Work item not found")
+        body = dict(body)
+        for key in ("value_band", "stakes"):
+            if key not in body:
+                continue
+            try:
+                body[key] = normalize_value_text(key, body[key])
+            except ValueError as exc:
+                _raise_if_value_context_invalid(exc)
+                raise
+            if body[key] is not None and body[key] != getattr(current, key):
+                body[value_provenance_field(key)] = build_value_provenance(
+                    source_kind="captain", source_id="captain", confirmed=True,
+                )
     try:
         item = await runtime.work_item_store.update_work_item(work_item_id, **body)
     except ValueError as exc:
         _raise_if_crew_session_write_reserved(exc)
+        _raise_if_value_context_invalid(exc)
         raise
     if not item:
         raise HTTPException(404, "Work item not found")
+    return {"work_item": item.to_dict()}
+
+
+@router.post("/work-items/{work_item_id}/value-context/confirm")
+async def confirm_work_item_value_context(
+    work_item_id: str,
+    request: Request,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1321: Captain confirmation of a work item's declared value and stakes."""
+    if not runtime.work_item_store:
+        raise HTTPException(503, "Workforce engine not enabled")
+    if await request.body():
+        raise HTTPException(422, "value_context_confirmation_body_forbidden")
+    service = getattr(runtime, "crew_session_service", None)
+    if service is None:
+        raise HTTPException(503, "Crew session service not available")
+    try:
+        item = await service.confirm_value_context(
+            service.captain_principal(), work_item_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(404, "Work item not found") from exc
+    except ValueError as exc:
+        message = str(exc)
+        status = 409 if message == "value_context_confirmation_conflict" else 422
+        raise HTTPException(status, message) from exc
     return {"work_item": item.to_dict()}
 
 

@@ -2628,6 +2628,8 @@ async def test_status_id_domain_owned_raw_exact_precedes_collisions(item_id: str
     assert set(result.output) == {
         "found", "work_item_id", "title", "status", "is_final", "created_at",
         "updated_at", "age_seconds", "seconds_since_last_change", "summary",
+        # AD-1321: read-only declared value/stakes and their provenance.
+        "value_band", "value_band_provenance", "stakes", "stakes_provenance",
     }
     assert "private-description" not in str(result.output)
     assert "private-metadata" not in str(result.output)

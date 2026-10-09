@@ -296,3 +296,27 @@ async def test_the_tool_is_actually_offered_to_the_loop(tmp_path: Any) -> None:
     assert "work_item_status" in offered, (
         f"the status tool was not offered to the loop; offered={sorted(offered)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ad1321_reports_value_and_stakes_with_provenance(tmp_path: Any) -> None:
+    store = await _store(tmp_path)
+    try:
+        item = await store.create_work_item(
+            title="valued", work_type="task", assigned_to=AGENT,
+            created_by=AGENT, value_band="critical", stakes="severe",
+        )
+        bare = await store.create_work_item(
+            title="plain", work_type="task", assigned_to=AGENT,
+        )
+        valued = await _tool(store).invoke({"work_item_id": item.id}, {"agent_id": AGENT})
+        plain = await _tool(store).invoke({"work_item_id": bare.id}, {"agent_id": AGENT})
+    finally:
+        await store.stop()
+
+    assert valued.output["value_band"] == "critical"
+    assert valued.output["stakes"] == "severe"
+    assert valued.output["stakes_provenance"]["source_id"] == AGENT
+    assert valued.output["stakes_provenance"]["confirmation_kind"] is None
+    assert plain.output["value_band"] is None
+    assert plain.output["value_band_provenance"] is None

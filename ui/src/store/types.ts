@@ -666,6 +666,20 @@ export interface ScheduledTaskView {
 
 // AD-497: Workforce types (mirrors workforce.py to_dict() shapes)
 
+// AD-1321: fixed value/stakes vocabularies and per-field provenance
+export type ValueBand = 'minor' | 'moderate' | 'significant' | 'critical';
+export type StakesLevel = 'low' | 'moderate' | 'high' | 'severe';
+
+export interface ValueProvenanceView {
+  readonly source_kind: 'captain' | 'agent';
+  readonly source_id: string;
+  readonly recorded_at: number | null;
+  readonly inherited_template_id: string | null;
+  readonly confirmed_by: string | null;
+  readonly confirmed_at: number | null;
+  readonly confirmation_kind: 'captain' | 'chain_of_command' | null;
+}
+
 export interface WorkItemView {
   id: string;
   title: string;
@@ -692,6 +706,10 @@ export interface WorkItemView {
   schedule: string | null;
   ttl_seconds: number | null;
   template_id: string | null;
+  value_band?: ValueBand | null;       // AD-1321
+  value_band_provenance?: ValueProvenanceView | null;
+  stakes?: StakesLevel | null;
+  stakes_provenance?: ValueProvenanceView | null;
 }
 
 export type CrewSessionState =
@@ -742,6 +760,10 @@ export interface LegacyCrewWorkItemView {
   readonly schedule: Readonly<Record<string, unknown>>;
   readonly ttl_seconds: number | null;
   readonly template_id: string | null;
+  readonly value_band?: ValueBand | null;  // AD-1321
+  readonly value_band_provenance?: ValueProvenanceView | null;
+  readonly stakes?: StakesLevel | null;
+  readonly stakes_provenance?: ValueProvenanceView | null;
 }
 
 export interface LegacyCrewChildView extends LegacyCrewWorkItemView {
@@ -1036,6 +1058,10 @@ export interface WorkItemTemplateView {
   default_steps: Array<{ label: string; status: string }>;
   variables: string[];
   ttl_seconds: number | null;
+  value_band?: ValueBand | null;       // AD-1321
+  value_band_provenance?: ValueProvenanceView | null;
+  stakes?: StakesLevel | null;
+  stakes_provenance?: ValueProvenanceView | null;
 }
 
 // Service status (AD-436)

@@ -3356,6 +3356,8 @@ class CrewSessionService:
         owner_ids: list[str] | None = None,
         requested_thread_id: str | None = None,
         retry_blocked: bool = False,
+        value_band: str | None = None,
+        stakes: str | None = None,
     ) -> CrewSessionOpenResult:
         if (
             type(principal) is not CrewSessionPrincipal
@@ -3364,6 +3366,15 @@ class CrewSessionService:
             raise ValueError("crew_session_principal_invalid")
         if self._admission_port is None:
             raise ValueError("crew_session_ingress_unwired")
+        from probos.workforce import normalize_value_text
+
+        try:
+            requested_values = (
+                normalize_value_text("value_band", value_band),
+                normalize_value_text("stakes", stakes),
+            )
+        except ValueError as exc:
+            raise ValueError("crew_session_value_context_invalid") from exc
         request = _normalize_ingress_values(
             goal=goal,
             success_criteria=success_criteria,
@@ -3479,6 +3490,7 @@ class CrewSessionService:
                 ):
                     raise ValueError("crew_session_thread_task_incompatible")
                 return await self._resume_equivalent(
+                    requested_values=requested_values,
                     principal=principal,
                     agent_identity=agent_identity,
                     expected_session=session,
@@ -3494,6 +3506,7 @@ class CrewSessionService:
             )
             if match is not None:
                 return await self._resume_equivalent(
+                    requested_values=requested_values,
                     principal=principal,
                     agent_identity=agent_identity,
                     expected_session=match,
@@ -3551,6 +3564,7 @@ class CrewSessionService:
                         ):
                             raise ValueError("crew_session_thread_task_incompatible")
                         return await self._resume_equivalent(
+                            requested_values=requested_values,
                             principal=principal,
                             agent_identity=agent_identity,
                             expected_session=session,
@@ -3566,6 +3580,7 @@ class CrewSessionService:
                 )
                 if match is not None:
                     return await self._resume_equivalent(
+                        requested_values=requested_values,
                         principal=principal,
                         agent_identity=agent_identity,
                         expected_session=match,
@@ -3584,6 +3599,7 @@ class CrewSessionService:
                     plan_specs=plan_specs,
                     agent_identity=agent_identity,
                     requested_crew_identities=requested_crew_identities,
+                    requested_values=requested_values,
                 )
                 parent, marker, adopted_room_snapshot = created
                 return await self._complete_new_provisioning(
@@ -3648,6 +3664,81 @@ class CrewSessionService:
                     raise ValueError("crew_session_thread_not_found")
         return tuple(repaired)
 
+    def _value_provenance_for(
+        self,
+        principal: CrewSessionPrincipal,
+        value: str | None,
+        build: Callable[..., dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Server-mint provenance: Captain declarations are born confirmed."""
+        if value is None:
+            return None
+        return build(
+            source_kind=principal.origin,
+            source_id=principal.originator_id,
+            recorded_at=self._clock(),
+            confirmed=principal.origin == "captain",
+        )
+
+    async def confirm_value_context(
+        self,
+        principal: CrewSessionPrincipal,
+        work_item_id: str,
+    ) -> WorkItem:
+        """AD-1321: confirm the declared value/stakes of a work item.
+
+        The Captain confirms anything. An agent confirms only when it is a
+        live crew agent that is not the proposer and holds AD-1213 chain-of-
+        command authority over the proposing agent.
+        """
+        from probos.cognitive.orders import agent_has_authority_over
+
+        if (
+            type(principal) is not CrewSessionPrincipal
+            or principal._authority is not self._principal_authority
+        ):
+            raise ValueError("crew_session_principal_invalid")
+        item = await self._work_items.get_work_item(work_item_id)
+        if item is None:
+            raise LookupError("work_item_not_found")
+        agent_identity = self._validate_principal(principal)
+        if principal.origin == "agent":
+            declared = tuple(
+                provenance
+                for provenance in (item.value_band_provenance, item.stakes_provenance)
+                if provenance is not None and provenance["source_kind"] == "agent"
+            )
+            # Authority is judged against the fields this call can change; an
+            # already-confirmed declaration only matters for an idempotent repeat.
+            pending = tuple(p for p in declared if p["confirmation_kind"] is None)
+            sources = {provenance["source_id"] for provenance in (pending or declared)}
+            if not sources or any(
+                not agent_has_authority_over(
+                    self._ontology, self._registry,
+                    principal.originator_id, source,
+                )
+                for source in sources
+            ):
+                raise PermissionError("value_context_confirmation_unauthorized")
+            self._revalidate_principal(principal, agent_identity)
+        expected = {
+            "value_band": item.value_band,
+            "value_band_provenance": item.value_band_provenance,
+            "stakes": item.stakes,
+            "stakes_provenance": item.stakes_provenance,
+        }
+        confirmed = await self._work_items.confirm_value_context(
+            work_item_id,
+            confirmed_by=principal.originator_id,
+            confirmation_kind=(
+                "captain" if principal.origin == "captain" else "chain_of_command"
+            ),
+            expected_declaration=expected,
+        )
+        if confirmed is None:
+            raise LookupError("work_item_not_found")
+        return confirmed
+
     async def _create_provisioning_parent(
         self,
         *,
@@ -3660,8 +3751,12 @@ class CrewSessionService:
         plan_specs: list[dict[str, Any]],
         agent_identity: Any | None,
         requested_crew_identities: dict[str, Any],
+        requested_values: tuple[str | None, str | None] = (None, None),
     ) -> tuple[WorkItem, CrewSessionProvisioningContract, dict[str, Any] | None]:
-        from probos.workforce import CrewSessionParentCreate
+        from probos.workforce import (
+            CrewSessionParentCreate,
+            build_value_provenance,
+        )
 
         if len(owner_ids) > 16:
             raise ValueError("crew_session_owner_ids_invalid")
@@ -3717,6 +3812,14 @@ class CrewSessionService:
             assigned_to=facilitator_id,
             created_by=principal.created_by,
             metadata=metadata,
+            value_band=requested_values[0],
+            value_band_provenance=self._value_provenance_for(
+                principal, requested_values[0], build_value_provenance,
+            ),
+            stakes=requested_values[1],
+            stakes_provenance=self._value_provenance_for(
+                principal, requested_values[1], build_value_provenance,
+            ),
         )
         create_error: BaseException | None = None
         self._revalidate_principal(principal, agent_identity)
@@ -4677,11 +4780,17 @@ class CrewSessionService:
         requested_owner_ids: tuple[str, ...],
         retry_blocked: bool,
         requested_crew_identities: dict[str, Any],
+        requested_values: tuple[str | None, str | None] = (None, None),
     ) -> CrewSessionOpenResult:
         self._revalidate_principal(principal, agent_identity)
         parent = await self._work_items.get_work_item(expected_session.task_id)
         if parent is None:
             raise ValueError("crew_session_parent_not_found")
+        for existing, requested in zip(
+            (parent.value_band, parent.stakes), requested_values,
+        ):
+            if existing is not None and requested is not None and existing != requested:
+                raise ValueError("crew_session_value_context_conflict")
         raw = (parent.metadata or {}).get("crew_session", _MISSING)
         if raw is _MISSING:
             raise ValueError("crew_session_candidate_integrity_invalid")

@@ -85,6 +85,24 @@ async def resolve_owned_work_item(store: Any, wanted: str, agent_id: str) -> Any
     return None
 
 
+
+_PROVENANCE_KEYS = (
+    "source_kind", "source_id", "recorded_at", "inherited_template_id",
+    "confirmed_by", "confirmed_at", "confirmation_kind",
+)
+
+
+def _value_text(value: Any) -> str | None:
+    """AD-1321: read-only band text; anything non-string reports as absent."""
+    return value if type(value) is str else None
+
+
+def _value_provenance(value: Any) -> dict[str, Any] | None:
+    """AD-1321: copy only the bounded provenance keys, explicit nulls included."""
+    if type(value) is not dict:
+        return None
+    return {key: value.get(key) for key in _PROVENANCE_KEYS}
+
 class WorkItemStatusTool:
     """AD-1209: look up the state of a work item this agent owns.
 
@@ -250,4 +268,12 @@ class WorkItemStatusTool:
             "age_seconds": round(max(0.0, now - created), 1) if created else 0.0,
             "seconds_since_last_change": round(idle, 1),
             "summary": summary,
+            "value_band": _value_text(getattr(item, "value_band", None)),
+            "value_band_provenance": _value_provenance(
+                getattr(item, "value_band_provenance", None),
+            ),
+            "stakes": _value_text(getattr(item, "stakes", None)),
+            "stakes_provenance": _value_provenance(
+                getattr(item, "stakes_provenance", None),
+            ),
         }

@@ -372,6 +372,12 @@ class OrderManager:
         self._prune_expired()
         return list(self._orders.values())
 
+    def has_authority_over(self, superior_agent_id: str, subordinate_agent_id: str) -> bool:
+        """AD-1321: see :func:`agent_has_authority_over`."""
+        return agent_has_authority_over(
+            self._ontology, self._registry, superior_agent_id, subordinate_agent_id,
+        )
+
     def _agent_type_for_id(self, agent_id: str) -> str | None:
         for agent in self._registry.all():
             if getattr(agent, "id", "") == agent_id:
@@ -399,3 +405,42 @@ class OrderManager:
         except Exception:
             logger.warning("AD-440: ORDER_REJECTED emit failed", exc_info=True)
         logger.info("AD-440: order rejected (%s) %s -> %s", reason, from_agent_id, to_post_id)
+
+
+def agent_has_authority_over(
+    ontology: Any, registry: Any, superior_agent_id: str, subordinate_agent_id: str,
+) -> bool:
+    """AD-1321: True when the superior may decide for the subordinate.
+
+    Uses the AD-1213 ``authority_route`` walk over the subordinate's chain of
+    command, so a chief confirms only inside their own department and a peer,
+    the subordinate itself, or an unknown agent never qualifies.
+    """
+    from probos.delegated_approvals import authority_route
+
+    if (
+        ontology is None
+        or registry is None
+        or not isinstance(superior_agent_id, str)
+        or not isinstance(subordinate_agent_id, str)
+        or superior_agent_id == subordinate_agent_id
+    ):
+        return False
+    types: dict[str, str | None] = {}
+    for agent in registry.all():
+        agent_id = getattr(agent, "id", "")
+        if agent_id in (superior_agent_id, subordinate_agent_id):
+            types[agent_id] = getattr(agent, "agent_type", None)
+    superior_type = types.get(superior_agent_id)
+    subordinate_type = types.get(subordinate_agent_id)
+    if superior_type is None or subordinate_type is None:
+        return False
+    superior_assignment = ontology.get_assignment_for_agent(superior_type)
+    subordinate_assignment = ontology.get_assignment_for_agent(subordinate_type)
+    if superior_assignment is None or subordinate_assignment is None:
+        return False
+    superior_post = ontology.get_post(superior_assignment.post_id)
+    if superior_post is None:
+        return False
+    chain = ontology.get_chain_of_command(subordinate_assignment.post_id)
+    return authority_route(chain, superior_post) is not None
