@@ -83,6 +83,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
+_CREW_WORK_ITEM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
     {
         "agent_id",
@@ -861,6 +862,7 @@ class DispatchToolExecutor(ToolExecutor):
         params: dict[str, Any],
         *,
         disposition_sink: list[str] | None = None,
+        work_item_id: str | None = None,
     ) -> ToolResult | None:
         """AD-1154 / DD-10: file a durable ask instead of acting, or admit.
 
@@ -955,7 +957,7 @@ class DispatchToolExecutor(ToolExecutor):
                 agent_id,
                 payload,
                 rationale=f"unattended tier-3 {tool_id}.{action}",
-                work_item_id=None,
+                work_item_id=work_item_id,
             )
         except Exception:
             logger.warning(
@@ -1122,8 +1124,16 @@ class DispatchToolExecutor(ToolExecutor):
         # as non-allowlisted is never also filed as an ask — a refusal is not a
         # request. Unarmed ⇒ ``_park_or_admit`` returns None on its first line.
         dispositions: list[str] = []
+        # AD-1321: the executing crew work item (when dispatch context names one)
+        # is recorded on the ask so standing-rule eligibility can read its value.
+        crew_item = context.get("_crew_work_item_id") if type(context) is dict else None
         parked = await self._park_or_admit(
-            agent_id, tool_id, params, disposition_sink=dispositions
+            agent_id, tool_id, params, disposition_sink=dispositions,
+            work_item_id=(
+                crew_item
+                if type(crew_item) is str and _CREW_WORK_ITEM_ID_RE.fullmatch(crew_item)
+                else None
+            ),
         )
         if parked is not None:
             return parked

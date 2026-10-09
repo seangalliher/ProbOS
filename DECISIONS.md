@@ -10682,6 +10682,7 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** No configuration field, schema, persisted state or wire change, so a Git revert needs no migration.
 
+
 ## AD-1320 (2026-10-08), #1475 -- live spend-awareness notes for conversational agentic turns (implementation candidate, default OFF)
 
 **Decision.** `DmAgenticConfig.budget_awareness_enabled` (default false) and `budget_awareness_thresholds` (default `[0.5, 0.8]`, validated strictly ascending finite floats in (0, 1)) let an AgenticLoop request carry one short note once the turn's cumulative AD-1208 spend first reaches a band. Nothing is shown before the first band, and with the flag off every request is byte-identical to before.
@@ -10697,3 +10698,16 @@ After its first slash command, its "approval" was a console prompt on the server
 **Evidence.** Paired structural ablation (fixed goal, budget 1000, cumulative 300/550/600/700/850/860): control markers 0x6; treatment markers [0,0,1,1,1,1], 2 transitions, identical calls, stop reason, iterations, tokens, source, final-text digest and request bodies. A jump response crossing both bands shows only the severe line. Mutation campaign: 13 of 13 runnable mutants killed.
 
 **Exclusions.** `config.py`, `system.yaml`, `continue_or_ask.py` and `native_builder.py` are untouched; NativeBuilderHarness is not armed. Rollback is a Git revert with no migration.
+### AD-1321 (2026-10-08) - Work item value band and stakes with per-field provenance (#1476)
+
+**Decision.** `value_band` (minor|moderate|significant|critical) and `stakes` (low|moderate|high|severe) are first-class optional fields on `WorkItemTemplate`, `WorkItem` and CrewSession goals, each with its own provenance record (source kind and id, recorded time, inherited template id, confirmer and confirmation kind). They are columns, not metadata, so a null is a real null and a legacy row is never backfilled with a guess.
+
+**Vocabulary.** The contract said "normalized bounded strings"; the issue prescribes the fixed bands above, so the enum is enforced (trimmed, no case-folding). An out-of-vocabulary value is a 422 / `ValueError`, never coerced.
+
+**Provenance and confirmation.** Provenance is written by the service, never accepted from a caller: REST rejects caller-supplied provenance with 422. A Captain-authored value is born confirmed; an agent-authored one is unconfirmed. A proposer cannot confirm its own bands. Confirmation is a compare-and-set in `WorkItemStore.confirm_value_context` inside the booking transaction, idempotent for the same confirmer and a conflict for a different one. The Captain confirms through `POST /api/work-items/{id}/value-context/confirm`; an agent confirms through `CrewSessionService.confirm_value_context`, which requires AD-1213 chain-of-command authority over every agent source (`orders.agent_has_authority_over`, a module function because `CrewSessionService` holds the ontology and registry but no `OrderManager`, and startup wiring is outside this build's files).
+
+**Inheritance.** A template snapshots its values with the template id; an explicit override wins and records the creator. Children installed by plan adoption or replan copy the parent's values and provenance. A later template edit never rewrites an existing item.
+
+**Authority.** Values never grant authority. The only consumer is `_maybe_issue_standing_rule`: a Captain-issued standing rule is issued only when the executing work item carries both values and both are confirmed. Absent, errored or unconfirmed context fails closed and the one-time approval stands. Dispatch carries the validated `_crew_work_item_id` onto the filed capability request so the gate can read it.
+
+**Compatibility.** Additive ALTER migration, idempotent; legacy rows decode with nulls. `WorkItem.to_dict()` gains four keys, so pins on that shape in other test files (AD-1124, AD-1126, AD-1152, AD-1176, AD-1187, AD-1192, AD-1212/1216, AD-1213, BF-822, #1375) need updating by the owner of those files. Rollback is a Git revert; the four columns are ignored by older code.

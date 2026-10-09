@@ -1548,8 +1548,14 @@ class CrewOrchestrator:
         origin_agent_id: str,
         goal: str,
         work_type: str = "task",
+        value_band: str | None = None,
+        stakes: str | None = None,
     ) -> str | None:
-        """Compatibility delegate to the unified AD-1128 ingress authority."""
+        """Compatibility delegate to the unified AD-1128 ingress authority.
+
+        AD-1321: optional ``value_band``/``stakes`` are forwarded as an
+        unconfirmed agent proposal; omitted values leave the call unchanged.
+        """
         if work_type != "task" or self._crew_session_service is None:
             logger.warning(
                 "AD-1128: self-originated CrewSession from agent=%s was not "
@@ -1558,6 +1564,11 @@ class CrewOrchestrator:
                 origin_agent_id,
             )
             return None
+        value_kwargs: dict[str, str] = {}
+        if value_band is not None:
+            value_kwargs["value_band"] = value_band
+        if stakes is not None:
+            value_kwargs["stakes"] = stakes
         try:
             result = await self._crew_session_service.open_or_resume(
                 principal=self._crew_session_service.agent_principal(
@@ -1570,6 +1581,7 @@ class CrewOrchestrator:
                 expected_deliverable=(
                     "A verified result for the stated goal."
                 ),
+                **value_kwargs,
             )
         except Exception:
             logger.warning(

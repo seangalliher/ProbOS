@@ -62,6 +62,25 @@ async def _scenario(client: httpx.AsyncClient, **options: Any) -> dict[str, Any]
     return response.json()
 
 
+async def _declare_confirmed_value(app: FastAPI, scenario: dict[str, Any]) -> None:
+    """AD-1321: a standing rule needs the ask's work item to carry confirmed value and stakes."""
+    from probos.workforce import build_value_provenance
+
+    def captain_confirmed() -> dict[str, Any]:
+        return dict(build_value_provenance(
+            source_kind="captain", source_id="captain", confirmed=True,
+        ))
+
+    item = await app.state.runtime.work_item_store.update_work_item(
+        scenario["work_item_id"],
+        value_band="moderate", value_band_provenance=captain_confirmed(),
+        stakes="low", stakes_provenance=captain_confirmed(),
+    )
+    assert item is not None
+    for provenance in (item.value_band_provenance, item.stakes_provenance):
+        assert provenance is not None and provenance["confirmation_kind"] == "captain"
+
+
 async def _state(client: httpx.AsyncClient) -> dict[str, Any]:
     response = await client.get("/__approval_ui__/state")
     assert response.status_code == 200, response.text
@@ -257,8 +276,9 @@ async def test_decide_settled_request_rejects_second_post_without_duplicate_effe
 async def test_decide_ordinary_action_never_replays_and_future_reads_real_standing_store(
     bridge_client: Any, grant_standing: bool,
 ) -> None:
-    _, client = bridge_client
+    app, client = bridge_client
     scenario = await _scenario(client, kind="action")
+    await _declare_confirmed_value(app, scenario)
     before = await _state(client)
     assert before["request"]["status"] == "pending"
     assert before["request"]["work_item_id"] == before["work_item"]["id"] == scenario["work_item_id"]
@@ -298,8 +318,9 @@ async def test_decide_ordinary_action_never_replays_and_future_reads_real_standi
 
 
 async def test_future_changed_params_session_and_thread_do_not_narrow_standing_scope(bridge_client: Any) -> None:
-    _, client = bridge_client
+    app, client = bridge_client
     scenario = await _scenario(client, kind="action")
+    await _declare_confirmed_value(app, scenario)
     response = await _decide(client, scenario["request_id"], grant_standing=True, standing_ttl_hours=1)
     assert response.status_code == 200
     changed = {"x": 91, "y": 37, "selector": "#different", "text": "<img src=x onerror=alert(1)>"}
@@ -325,8 +346,9 @@ async def test_future_changed_params_session_and_thread_do_not_narrow_standing_s
 async def test_future_mismatch_or_expiry_reasks_without_reaching_execution(
     bridge_client: Any, change: dict[str, Any],
 ) -> None:
-    _, client = bridge_client
+    app, client = bridge_client
     scenario = await _scenario(client, kind="action")
+    await _declare_confirmed_value(app, scenario)
     response = await _decide(client, scenario["request_id"], grant_standing=True, standing_ttl_hours=1)
     assert response.status_code == 200
     original_receipt = response.json()["standing_rule"]
@@ -362,6 +384,7 @@ async def test_future_continue_uses_real_resolver_on_new_thread(
 ) -> None:
     app, client = bridge_client
     scenario = await _scenario(client)
+    await _declare_confirmed_value(app, scenario)
     extras = {"grant_standing": True, "standing_ttl_hours": 1} if grant_standing else {}
     response = await _decide(client, scenario["request_id"], **extras)
     assert response.status_code == 200 and response.json()["fulfilled"]
@@ -386,8 +409,9 @@ async def test_future_continue_uses_real_resolver_on_new_thread(
 
 
 async def test_decide_standing_ttl_is_clamped_by_real_settings_route(bridge_client: Any) -> None:
-    _, client = bridge_client
+    app, client = bridge_client
     scenario = await _scenario(client, kind="action")
+    await _declare_confirmed_value(app, scenario)
     settings = await client.get("/api/config")
     assert settings.status_code == 200
     policy = settings.json()["config"]["approval_inbox"]

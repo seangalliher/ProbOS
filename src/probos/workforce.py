@@ -368,6 +368,250 @@ class WorkTypeRegistry:
 
 
 # ---------------------------------------------------------------------------
+# AD-1321: value and stakes context
+# ---------------------------------------------------------------------------
+
+VALUE_BANDS: tuple[str, ...] = ("minor", "moderate", "significant", "critical")
+STAKES_LEVELS: tuple[str, ...] = ("low", "moderate", "high", "severe")
+VALUE_CONTEXT_FIELDS: tuple[str, ...] = ("value_band", "stakes")
+_VALUE_CONTEXT_VOCABULARY: dict[str, tuple[str, ...]] = {
+    "value_band": VALUE_BANDS,
+    "stakes": STAKES_LEVELS,
+}
+VALUE_SOURCE_KINDS = frozenset({"captain", "agent"})
+VALUE_CONFIRMATION_KINDS = frozenset({"captain", "chain_of_command"})
+CAPTAIN_VALUE_IDENTITY = "captain"
+_VALUE_PROVENANCE_KEYS = frozenset({
+    "source_kind",
+    "source_id",
+    "recorded_at",
+    "inherited_template_id",
+    "confirmed_by",
+    "confirmed_at",
+    "confirmation_kind",
+})
+_MAX_VALUE_IDENTITY_CHARS = 128
+
+
+def value_provenance_field(field_name: str) -> str:
+    """Return the provenance attribute paired with a value attribute."""
+    if field_name not in _VALUE_CONTEXT_VOCABULARY:
+        raise ValueError("value_context_invalid")
+    return f"{field_name}_provenance"
+
+
+def _valid_value_identity(value: Any) -> bool:
+    return (
+        type(value) is str
+        and 0 < len(value) <= _MAX_VALUE_IDENTITY_CHARS
+        and value == value.strip()
+        and value.isprintable()
+    )
+
+
+def _valid_value_timestamp(value: Any) -> bool:
+    return (
+        type(value) in (int, float)
+        and math.isfinite(float(value))
+        and 0.0 <= float(value) <= 253_402_300_799.0
+    )
+
+
+def normalize_value_text(field_name: str, value: Any) -> str | None:
+    """Validate one band against the fixed AD-1321 vocabulary (trimmed)."""
+    vocabulary = _VALUE_CONTEXT_VOCABULARY.get(field_name)
+    if vocabulary is None:
+        raise ValueError("value_context_invalid")
+    if value is None:
+        return None
+    if type(value) is not str or value.strip() not in vocabulary:
+        raise ValueError("value_context_invalid")
+    return value.strip()
+
+
+def normalize_value_provenance(raw: Any) -> dict[str, Any] | None:
+    """Validate the exact provenance wire shape and return a detached copy."""
+    if raw is None:
+        return None
+    error = "value_context_provenance_invalid"
+    if type(raw) is not dict or set(raw) != _VALUE_PROVENANCE_KEYS:
+        raise ValueError(error)
+    source_kind = raw["source_kind"]
+    source_id = raw["source_id"]
+    if (
+        type(source_kind) is not str
+        or source_kind not in VALUE_SOURCE_KINDS
+        or not _valid_value_identity(source_id)
+        or (source_kind == "captain" and source_id != CAPTAIN_VALUE_IDENTITY)
+        or not _valid_value_timestamp(raw["recorded_at"])
+    ):
+        raise ValueError(error)
+    inherited = raw["inherited_template_id"]
+    if inherited is not None and not _valid_value_identity(inherited):
+        raise ValueError(error)
+    confirmed_by = raw["confirmed_by"]
+    confirmed_at = raw["confirmed_at"]
+    kind = raw["confirmation_kind"]
+    if confirmed_by is None and confirmed_at is None and kind is None:
+        return dict(raw)
+    if (
+        confirmed_by is None
+        or confirmed_at is None
+        or kind is None
+        or type(kind) is not str
+        or kind not in VALUE_CONFIRMATION_KINDS
+        or not _valid_value_identity(confirmed_by)
+        or not _valid_value_timestamp(confirmed_at)
+    ):
+        raise ValueError(error)
+    if kind == "captain":
+        if confirmed_by != CAPTAIN_VALUE_IDENTITY:
+            raise ValueError(error)
+    elif (
+        source_kind != "agent"
+        or confirmed_by == source_id
+        or confirmed_by == CAPTAIN_VALUE_IDENTITY
+    ):
+        # A proposing agent never confirms its own value, and a chain
+        # confirmation is only meaningful for an agent-proposed value.
+        raise ValueError(error)
+    return dict(raw)
+
+
+def normalize_value_context(
+    value_band: Any,
+    value_band_provenance: Any,
+    stakes: Any,
+    stakes_provenance: Any,
+) -> tuple[str | None, dict[str, Any] | None, str | None, dict[str, Any] | None]:
+    """Validate both values and pair each with its own provenance."""
+    normalized: list[Any] = []
+    for name, value, provenance in (
+        ("value_band", value_band, value_band_provenance),
+        ("stakes", stakes, stakes_provenance),
+    ):
+        text = normalize_value_text(name, value)
+        detached = normalize_value_provenance(provenance)
+        if (text is None) != (detached is None):
+            raise ValueError("value_context_provenance_invalid")
+        normalized.extend((text, detached))
+    return normalized[0], normalized[1], normalized[2], normalized[3]
+
+
+def build_value_provenance(
+    *,
+    source_kind: str,
+    source_id: str,
+    recorded_at: float | None = None,
+    inherited_template_id: str | None = None,
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    """Build one provenance record; only Captain-sourced values may be born confirmed."""
+    now = time.time() if recorded_at is None else recorded_at
+    raw: dict[str, Any] = {
+        "source_kind": source_kind,
+        "source_id": source_id,
+        "recorded_at": now,
+        "inherited_template_id": inherited_template_id,
+        "confirmed_by": None,
+        "confirmed_at": None,
+        "confirmation_kind": None,
+    }
+    if confirmed:
+        if source_kind != "captain":
+            raise ValueError("value_context_provenance_invalid")
+        raw.update(
+            confirmed_by=CAPTAIN_VALUE_IDENTITY,
+            confirmed_at=now,
+            confirmation_kind="captain",
+        )
+    result = normalize_value_provenance(raw)
+    assert result is not None
+    return result
+
+
+def default_value_provenance_for_creator(
+    created_by: str,
+    recorded_at: float | None = None,
+) -> dict[str, Any]:
+    """Captain creation is confirmed; any other creator proposes unconfirmed."""
+    if created_by == CAPTAIN_VALUE_IDENTITY:
+        return build_value_provenance(
+            source_kind="captain",
+            source_id=CAPTAIN_VALUE_IDENTITY,
+            recorded_at=recorded_at,
+            confirmed=True,
+        )
+    return build_value_provenance(
+        source_kind="agent",
+        source_id=created_by,
+        recorded_at=recorded_at,
+    )
+
+
+def with_value_confirmation(
+    provenance: dict[str, Any],
+    *,
+    confirmed_by: str,
+    confirmation_kind: str,
+    confirmed_at: float | None = None,
+) -> dict[str, Any]:
+    """Return provenance with confirmation filled in; original fields never change."""
+    result = dict(provenance)
+    result.update(
+        confirmed_by=confirmed_by,
+        confirmed_at=time.time() if confirmed_at is None else confirmed_at,
+        confirmation_kind=confirmation_kind,
+    )
+    normalized = normalize_value_provenance(result)
+    assert normalized is not None
+    return normalized
+
+
+def value_context_standing_eligible(item: Any) -> bool:
+    """Fail-closed predicate: both values present with confirmed provenance."""
+    try:
+        band, band_prov, stakes, stakes_prov = normalize_value_context(
+            getattr(item, "value_band", None),
+            getattr(item, "value_band_provenance", None),
+            getattr(item, "stakes", None),
+            getattr(item, "stakes_provenance", None),
+        )
+    except ValueError:
+        return False
+    return (
+        band is not None
+        and stakes is not None
+        and band_prov is not None
+        and stakes_prov is not None
+        and band_prov["confirmation_kind"] is not None
+        and stakes_prov["confirmation_kind"] is not None
+    )
+
+
+def _copy_value_provenance(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    return None if value is None else dict(value)
+
+
+def _decode_value_provenance(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if type(raw) is not str:
+        raise ValueError("value_context_provenance_invalid")
+    try:
+        decoded = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError("value_context_provenance_invalid") from exc
+    if decoded is None:
+        raise ValueError("value_context_provenance_invalid")
+    return normalize_value_provenance(decoded)
+
+
+def _encode_value_provenance(value: dict[str, Any] | None) -> str | None:
+    return None if value is None else json.dumps(value, sort_keys=True)
+
+
+# ---------------------------------------------------------------------------
 # Work Item Templates (AD-498)
 # ---------------------------------------------------------------------------
 
@@ -389,6 +633,35 @@ class WorkItemTemplate:
     metadata: dict = field(default_factory=dict)
     ttl_seconds: int | None = None
     category: str = "general"
+    # AD-1321: optional value/stakes defaults, snapshotted at instantiation.
+    value_band: str | None = None
+    value_band_provenance: dict[str, Any] | None = None
+    stakes: str | None = None
+    stakes_provenance: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        # Template catalogs are Captain-configured, so a template value with
+        # no explicit provenance is recorded as Captain-sourced and confirmed.
+        provenances = {
+            "value_band": self.value_band_provenance,
+            "stakes": self.stakes_provenance,
+        }
+        for name, provenance in provenances.items():
+            if getattr(self, name) is not None and provenance is None:
+                provenances[name] = build_value_provenance(
+                    source_kind="captain",
+                    source_id=CAPTAIN_VALUE_IDENTITY,
+                    confirmed=True,
+                )
+        (
+            self.value_band,
+            self.value_band_provenance,
+            self.stakes,
+            self.stakes_provenance,
+        ) = normalize_value_context(
+            self.value_band, provenances["value_band"],
+            self.stakes, provenances["stakes"],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         # Parse variables from patterns
@@ -410,6 +683,10 @@ class WorkItemTemplate:
             "min_trust": self.min_trust,
             "variables": variables,
             "ttl_seconds": self.ttl_seconds,
+            "value_band": self.value_band,
+            "value_band_provenance": _copy_value_provenance(self.value_band_provenance),
+            "stakes": self.stakes,
+            "stakes_provenance": _copy_value_provenance(self.stakes_provenance),
         }
 
 
@@ -598,11 +875,26 @@ class TemplateStore:
         }
         if template.ttl_seconds:
             kwargs["ttl_seconds"] = template.ttl_seconds
+        # AD-1321: snapshot each configured value with its own provenance,
+        # recording the template id as inheritance. A missing value stays null.
+        for name in VALUE_CONTEXT_FIELDS:
+            if getattr(template, name) is not None:
+                kwargs[name] = getattr(template, name)
+                kwargs[value_provenance_field(name)] = {
+                    **getattr(template, value_provenance_field(name)),
+                    "inherited_template_id": template.template_id,
+                }
 
         if overrides:
             for key in ("priority", "assigned_to", "due_at", "tags", "description"):
                 if key in overrides:
                     kwargs[key] = overrides[key]
+            # An explicit override wins; the creator, not the template, then
+            # authors the value (create_work_item records that provenance).
+            for name in VALUE_CONTEXT_FIELDS:
+                if name in overrides:
+                    kwargs[name] = normalize_value_text(name, overrides[name])
+                    kwargs.pop(value_provenance_field(name), None)
             if "metadata" in overrides:
                 kwargs["metadata"].update(overrides["metadata"])
 
@@ -662,6 +954,22 @@ class WorkItem:
     schedule: dict[str, Any] = field(default_factory=dict)
     ttl_seconds: int | None = None
     template_id: str | None = None
+    # AD-1321: optional value/stakes, each with independent provenance.
+    value_band: str | None = None
+    value_band_provenance: dict[str, Any] | None = None
+    stakes: str | None = None
+    stakes_provenance: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        (
+            self.value_band,
+            self.value_band_provenance,
+            self.stakes,
+            self.stakes_provenance,
+        ) = normalize_value_context(
+            self.value_band, self.value_band_provenance,
+            self.stakes, self.stakes_provenance,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -690,6 +998,10 @@ class WorkItem:
             "schedule": self.schedule,
             "ttl_seconds": self.ttl_seconds,
             "template_id": self.template_id,
+            "value_band": self.value_band,
+            "value_band_provenance": _copy_value_provenance(self.value_band_provenance),
+            "stakes": self.stakes,
+            "stakes_provenance": _copy_value_provenance(self.stakes_provenance),
         }
 
 
@@ -710,6 +1022,10 @@ class CrewSessionParentCreate:
     metadata: dict[str, Any]
     created_at: float | None = None
     steps: list[dict[str, Any]] = field(default_factory=list)
+    value_band: str | None = None
+    value_band_provenance: dict[str, Any] | None = None
+    stakes: str | None = None
+    stakes_provenance: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -718,6 +1034,18 @@ class CrewSessionParentCreate:
             for value in (self.id, self.assigned_to, self.created_by)
         ):
             raise ValueError("crew_session_parent_create_invalid")
+        try:
+            value_context = normalize_value_context(
+                self.value_band, self.value_band_provenance,
+                self.stakes, self.stakes_provenance,
+            )
+        except ValueError as exc:
+            raise ValueError("crew_session_parent_create_invalid") from exc
+        for attribute, value in zip(
+            ("value_band", "value_band_provenance", "stakes", "stakes_provenance"),
+            value_context,
+        ):
+            object.__setattr__(self, attribute, value)
         text_fields = (
             (self.title, 4_096, 16_384),
             (self.description, 32_768, 131_072),
@@ -1069,7 +1397,12 @@ CREATE TABLE IF NOT EXISTS work_items (
     -- AD-1176: appended last so a fresh CREATE TABLE and the ALTER TABLE
     -- migration below produce an identical column order.
     project_id TEXT,
-    steps_control TEXT
+    steps_control TEXT,
+    -- AD-1321: nullable value/stakes context, appended after steps_control.
+    value_band TEXT,
+    value_band_provenance TEXT,
+    stakes TEXT,
+    stakes_provenance TEXT
 );
 
 CREATE TABLE IF NOT EXISTS owned_steps_journal (
@@ -1246,6 +1579,7 @@ _JSON_FIELDS = frozenset({
     "depends_on", "required_capabilities", "tags",
     "metadata", "steps", "verification", "schedule",
     "required_characteristics", "resource_preference",
+    "value_band_provenance", "stakes_provenance",
 })
 
 _WORK_ITEM_PUBLIC_COLUMNS = ", ".join(item.name for item in dataclasses.fields(WorkItem))
@@ -1366,6 +1700,10 @@ _WORK_ITEM_CHILD_SNAPSHOT_KEYS = frozenset({
     "schedule",
     "ttl_seconds",
     "template_id",
+    "value_band",
+    "value_band_provenance",
+    "stakes",
+    "stakes_provenance",
 })
 # The plan-adoption barrier compares whole ``to_dict()`` payloads, so this set
 # must equal ``set(WorkItem().to_dict())``.
@@ -1789,6 +2127,10 @@ def _build_crew_session_parent(
         schedule={},
         ttl_seconds=None,
         template_id=None,
+        value_band=request.value_band,
+        value_band_provenance=request.value_band_provenance,
+        stakes=request.stakes,
+        stakes_provenance=request.stakes_provenance,
     )
 
 
@@ -1963,6 +2305,13 @@ def _detach_direct_child_snapshots(
             )
         ):
             raise ValueError(error)
+        try:
+            normalize_value_context(
+                raw["value_band"], raw["value_band_provenance"],
+                raw["stakes"], raw["stakes_provenance"],
+            )
+        except ValueError:
+            raise ValueError(error) from None
         for key in ("created_at", "trust_requirement"):
             numeric = raw[key]
             if type(numeric) not in (int, float) or not math.isfinite(float(numeric)):
@@ -2074,6 +2423,10 @@ def _work_item_child_snapshot(item: WorkItem) -> dict[str, Any]:
         "schedule": item.schedule,
         "ttl_seconds": item.ttl_seconds,
         "template_id": item.template_id,
+        "value_band": item.value_band,
+        "value_band_provenance": _copy_value_provenance(item.value_band_provenance),
+        "stakes": item.stakes,
+        "stakes_provenance": _copy_value_provenance(item.stakes_provenance),
     }
 
 
@@ -2750,6 +3103,17 @@ class WorkItemStore(EventEmitterMixin):
                         )
                     elif columns["steps_control"]["type"].upper() != "TEXT":
                         raise owned_steps.OwnedStepsError("owned_steps_schema_invalid")
+                    # AD-1321: additive nullable columns; legacy rows stay NULL.
+                    for column in (
+                        "value_band", "value_band_provenance",
+                        "stakes", "stakes_provenance",
+                    ):
+                        if column not in columns:
+                            await self._db.execute(
+                                f"ALTER TABLE work_items ADD COLUMN {column} TEXT",
+                            )
+                        elif columns[column]["type"].upper() != "TEXT":
+                            raise ValueError("work_item_value_schema_invalid")
                 await self._migrate_promoted_report_trace()
                 await self._migrate_owned_steps_history()
             await self._refresh_snapshot_cache()
@@ -5084,6 +5448,10 @@ class WorkItemStore(EventEmitterMixin):
                 trust_requirement=insert.trust_requirement,
                 required_capabilities=list(insert.required_capabilities),
                 metadata=dict(insert.metadata),
+                value_band=parent.value_band,
+                value_band_provenance=_copy_value_provenance(parent.value_band_provenance),
+                stakes=parent.stakes,
+                stakes_provenance=_copy_value_provenance(parent.stakes_provenance),
             )
             await self._db.execute(
                 """INSERT INTO work_items (
@@ -5091,8 +5459,9 @@ class WorkItemStore(EventEmitterMixin):
                     depends_on,assigned_to,created_by,created_at,updated_at,
                     due_at,estimated_tokens,actual_tokens,trust_requirement,
                     required_capabilities,tags,metadata,steps,verification,
-                    schedule,ttl_seconds,template_id,project_id
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    schedule,ttl_seconds,template_id,project_id,
+                    value_band,value_band_provenance,stakes,stakes_provenance
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     child.id,
                     child.title,
@@ -5119,6 +5488,10 @@ class WorkItemStore(EventEmitterMixin):
                     child.ttl_seconds,
                     child.template_id,
                     child.project_id,
+                    child.value_band,
+                    _encode_value_provenance(child.value_band_provenance),
+                    child.stakes,
+                    _encode_value_provenance(child.stakes_provenance),
                 ),
             )
             requirement = ResourceRequirement(
@@ -7179,6 +7552,35 @@ class WorkItemStore(EventEmitterMixin):
         now = time.time()
         kwargs.setdefault("created_at", now)
         kwargs.setdefault("updated_at", now)
+        # AD-1321: an omitted value under a parent is snapshotted from that
+        # parent (value and provenance together); later parent edits never
+        # reach the child, and an explicit child value wins.
+        parent_id = kwargs.get("parent_id")
+        if type(parent_id) is str and any(
+            name not in kwargs and value_provenance_field(name) not in kwargs
+            for name in VALUE_CONTEXT_FIELDS
+        ):
+            parent = await self.get_work_item(parent_id)
+            if parent is not None:
+                for name in VALUE_CONTEXT_FIELDS:
+                    provenance_key = value_provenance_field(name)
+                    if (
+                        name not in kwargs
+                        and provenance_key not in kwargs
+                        and getattr(parent, name) is not None
+                    ):
+                        kwargs[name] = getattr(parent, name)
+                        kwargs[provenance_key] = _copy_value_provenance(
+                            getattr(parent, provenance_key),
+                        )
+        # AD-1321: a value with no supplied provenance is attributed to its
+        # creator; only a Captain creator is born confirmed.
+        for name in VALUE_CONTEXT_FIELDS:
+            provenance_key = value_provenance_field(name)
+            if kwargs.get(name) is not None and kwargs.get(provenance_key) is None:
+                kwargs[provenance_key] = default_value_provenance_for_creator(
+                    kwargs.get("created_by", "captain"), kwargs["created_at"],
+                )
         # AD-498: Set initial status from work type registry if not explicitly provided
         work_type = kwargs.get("work_type", "task")
         if "status" not in kwargs:
@@ -7200,8 +7602,10 @@ class WorkItemStore(EventEmitterMixin):
                             created_at, updated_at, due_at, estimated_tokens,
                             actual_tokens, trust_requirement, required_capabilities,
                             tags, metadata, steps, verification, schedule,
-                            ttl_seconds, template_id, project_id
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ttl_seconds, template_id, project_id,
+                            value_band, value_band_provenance, stakes,
+                            stakes_provenance
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             item.id, item.title, item.description, item.work_type,
                             item.status, item.priority, item.parent_id,
@@ -7214,6 +7618,10 @@ class WorkItemStore(EventEmitterMixin):
                             json.dumps(item.steps), json.dumps(item.verification),
                             json.dumps(item.schedule), item.ttl_seconds,
                             item.template_id, item.project_id,
+                            item.value_band,
+                            _encode_value_provenance(item.value_band_provenance),
+                            item.stakes,
+                            _encode_value_provenance(item.stakes_provenance),
                         ),
                     )
                     req = ResourceRequirement(
@@ -7882,6 +8290,14 @@ class WorkItemStore(EventEmitterMixin):
                             child_insert.required_capabilities,
                         ),
                         metadata=dict(child_insert.metadata),
+                        value_band=parent.value_band,
+                        value_band_provenance=_copy_value_provenance(
+                            parent.value_band_provenance,
+                        ),
+                        stakes=parent.stakes,
+                        stakes_provenance=_copy_value_provenance(
+                            parent.stakes_provenance,
+                        ),
                     )
                     await self._db.execute(
                         """INSERT INTO work_items (
@@ -7890,8 +8306,9 @@ class WorkItemStore(EventEmitterMixin):
                             created_at, updated_at, due_at, estimated_tokens,
                             actual_tokens, trust_requirement, required_capabilities,
                             tags, metadata, steps, verification, schedule,
-                            ttl_seconds, template_id
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            ttl_seconds, template_id, value_band,
+                            value_band_provenance, stakes, stakes_provenance
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             child.id, child.title, child.description,
                             child.work_type, child.status, child.priority,
@@ -7903,7 +8320,10 @@ class WorkItemStore(EventEmitterMixin):
                             json.dumps(child.tags), json.dumps(child.metadata),
                             json.dumps(child.steps), json.dumps(child.verification),
                             json.dumps(child.schedule), child.ttl_seconds,
-                            child.template_id,
+                            child.template_id, child.value_band,
+                            _encode_value_provenance(child.value_band_provenance),
+                            child.stakes,
+                            _encode_value_provenance(child.stakes_provenance),
                         ),
                     )
                     requirement = ResourceRequirement(
@@ -8249,6 +8669,8 @@ class WorkItemStore(EventEmitterMixin):
                 await self._guard_owned_write(updates["parent_id"])
             if item.work_type == "crew_session":
                 raise ValueError("crew_session_write_reserved")
+            updates = dict(updates)
+            value_columns = self._prepare_value_context_update(item, updates)
             set_clauses: list[str] = []
             params: list[Any] = []
             for key, value in updates.items():
@@ -8258,6 +8680,9 @@ class WorkItemStore(EventEmitterMixin):
                     value = json.dumps(value)
                 set_clauses.append(f"{key} = ?")
                 params.append(value)
+            for column, column_value in value_columns.items():
+                set_clauses.append(f"{column} = ?")
+                params.append(column_value)
             if not set_clauses:
                 return item
             set_clauses.append("updated_at = ?")
@@ -8267,6 +8692,134 @@ class WorkItemStore(EventEmitterMixin):
                 f"UPDATE work_items SET {', '.join(set_clauses)} WHERE id = ?",
                 params,
             )
+            updated = await self.get_work_item(work_item_id)
+        await self._refresh_snapshot_cache()
+        self._emit(
+            EventType.WORK_ITEM_UPDATED,
+            {"work_item": self._event_work_item_projection(updated)},
+        )
+        return updated
+
+    @staticmethod
+    def _prepare_value_context_update(
+        item: WorkItem, updates: dict[str, Any],
+    ) -> dict[str, Any]:
+        """AD-1321: pop value/stakes keys from ``updates`` and return SQL columns.
+
+        A changed non-null value must arrive with its own provenance (the REST
+        layer mints Captain provenance); provenance alone never rewrites an
+        existing declaration, and clearing a value clears its provenance.
+        """
+        columns: dict[str, Any] = {}
+        for name in VALUE_CONTEXT_FIELDS:
+            provenance_key = value_provenance_field(name)
+            has_value = name in updates
+            has_provenance = provenance_key in updates
+            if not has_value and not has_provenance:
+                continue
+            current = getattr(item, name)
+            current_provenance = getattr(item, provenance_key)
+            requested = updates.pop(name, current)
+            requested_provenance = updates.pop(provenance_key, None)
+            requested = normalize_value_text(name, requested)
+            if requested == current:
+                if has_provenance and requested_provenance != current_provenance:
+                    raise ValueError("value_context_provenance_immutable")
+                continue
+            if requested is None:
+                new_provenance = None
+            elif requested_provenance is None:
+                raise ValueError("value_context_provenance_required")
+            else:
+                new_provenance = normalize_value_provenance(requested_provenance)
+            columns[name] = requested
+            columns[provenance_key] = _encode_value_provenance(new_provenance)
+        return columns
+
+    async def confirm_value_context(
+        self,
+        work_item_id: str,
+        *,
+        confirmed_by: str,
+        confirmation_kind: str,
+        expected_declaration: dict[str, Any] | None = None,
+    ) -> WorkItem | None:
+        """AD-1321: atomically record a confirmation of the pending value fields.
+
+        The caller (``CrewSessionService``) has already established authority;
+        this store contract only fills the confirmation fields of declarations
+        still pending and never rewrites a declared value, its source or
+        recording time, or an already-confirmed declaration. When
+        ``expected_declaration`` is given it must carry all four declaration
+        fields (``value_band``, ``value_band_provenance``, ``stakes``,
+        ``stakes_provenance``, nulls included) and is compared exactly inside
+        the transaction. With nothing pending, the same confirmation twice is a
+        no-op and a different confirmer raises.
+        """
+        if not self._db:
+            return None
+        if confirmation_kind not in VALUE_CONFIRMATION_KINDS:
+            raise ValueError("value_context_confirmation_invalid")
+        declaration_keys = {
+            key
+            for name in VALUE_CONTEXT_FIELDS
+            for key in (name, value_provenance_field(name))
+        }
+        if expected_declaration is not None and (
+            type(expected_declaration) is not dict
+            or set(expected_declaration) != declaration_keys
+        ):
+            raise ValueError("value_context_confirmation_invalid")
+        async with self._booking_transaction():
+            item = await self.get_work_item(work_item_id)
+            if item is None:
+                return None
+            if expected_declaration is not None and any(
+                not _json_values_exactly_equal(
+                    getattr(item, key), expected_declaration[key],
+                )
+                for key in declaration_keys
+            ):
+                raise ValueError("value_context_confirmation_conflict")
+            changes: dict[str, str] = {}
+            present = 0
+            matching_confirmation = False
+            foreign = False
+            for name in VALUE_CONTEXT_FIELDS:
+                provenance = getattr(item, value_provenance_field(name))
+                if getattr(item, name) is None or provenance is None:
+                    continue
+                present += 1
+                if provenance["confirmation_kind"] is not None:
+                    if (
+                        provenance["confirmed_by"] == confirmed_by
+                        and provenance["confirmation_kind"] == confirmation_kind
+                    ):
+                        matching_confirmation = True
+                    else:
+                        foreign = True
+                    continue
+                changes[value_provenance_field(name)] = _encode_value_provenance(
+                    with_value_confirmation(
+                        provenance,
+                        confirmed_by=confirmed_by,
+                        confirmation_kind=confirmation_kind,
+                    ),
+                )
+            if present == 0:
+                raise ValueError("value_context_absent")
+            if not changes:
+                if foreign and not matching_confirmation:
+                    raise ValueError("value_context_confirmation_conflict")
+                return item
+            cursor = await self._db.execute(
+                "UPDATE work_items SET "
+                + ", ".join(f"{column} = ?" for column in changes)
+                + ", updated_at = ? WHERE id = ?",
+                [*changes.values(), time.time(), work_item_id],
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("value_context_confirmation_conflict")
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
         self._emit(
@@ -11142,6 +11695,10 @@ class WorkItemStore(EventEmitterMixin):
             schedule=json.loads(row["schedule"]) if row["schedule"] and row["schedule"] != "{}" else {},
             ttl_seconds=row["ttl_seconds"],
             template_id=row["template_id"],
+            value_band=row["value_band"],
+            value_band_provenance=_decode_value_provenance(row["value_band_provenance"]),
+            stakes=row["stakes"],
+            stakes_provenance=_decode_value_provenance(row["stakes_provenance"]),
         )
 
     @staticmethod

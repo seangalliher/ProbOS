@@ -921,7 +921,9 @@ export interface HXIState {
   setWorkItemReadState: (key: string, state: WorkItemReadState | null) => void;
   moveWorkItem: (itemId: string, newStatus: string) => Promise<void>;
   assignWorkItem: (itemId: string, resourceId: string) => Promise<void>;
-  createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) => Promise<void>;
+  createWorkItem: (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown>; value_band?: string; stakes?: string }) => Promise<void>;
+  // AD-1321: Captain confirmation of a declared value/stakes; resolves with the API error text on refusal
+  confirmWorkItemValueContext: (itemId: string) => Promise<{ ok: boolean; error?: string }>;
   // AD-498: Template actions
   fetchWorkTypes: () => Promise<void>;
   fetchWorkTemplates: () => Promise<void>;
@@ -2901,7 +2903,27 @@ export const useStore = create<HXIState>((set, get) => ({
       console.error('Failed to assign work item:', e);
     }
   },
-  createWorkItem: async (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) => {
+  confirmWorkItemValueContext: async (itemId: string) => {
+    try {
+      const resp = await fetch(`/api/work-items/${encodeURIComponent(itemId)}/value-context/confirm`, { method: 'POST' });
+      if (!resp.ok) {
+        let detail = `Confirmation failed (${resp.status})`;
+        try {
+          const body = await resp.json();
+          if (typeof body?.detail === 'string') detail = body.detail;
+        } catch { /* keep the status text */ }
+        return { ok: false, error: detail };
+      }
+      const data = await resp.json();
+      if (data?.work_item) get().applyWorkItemRecords([data.work_item as WorkItemView]);
+      workItemReconciler.invalidate(itemId);
+      return { ok: true };
+    } catch (e) {
+      console.error('Failed to confirm work item value context:', e);
+      return { ok: false, error: 'Confirmation request failed' };
+    }
+  },
+  createWorkItem: async (item: { title: string; priority?: number; work_type?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown>; value_band?: string; stakes?: string }) => {
     try {
       const resp = await fetch('/api/work-items', {
         method: 'POST',

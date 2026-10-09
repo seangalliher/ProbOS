@@ -418,6 +418,9 @@ async def test_migration_is_idempotent_across_restarts(tmp_path: Path) -> None:
             await store.stop()
 
 
+_AD1321_COLUMNS = ("value_band", "value_band_provenance", "stakes", "stakes_provenance")
+
+
 async def test_fresh_and_migrated_schemas_have_identical_columns(
     tmp_path: Path,
 ) -> None:
@@ -439,16 +442,21 @@ async def test_fresh_and_migrated_schemas_have_identical_columns(
 
     assert _work_item_columns(fresh_path) == _work_item_columns(legacy_path)
     # The old last-column pin predated the private owned-steps control suffix.
-    assert _work_item_columns(fresh_path) == original_columns + ["steps_control"]
+    expected_columns = original_columns + ["steps_control", *_AD1321_COLUMNS]
+    assert _work_item_columns(fresh_path) == expected_columns
     assert original_columns[-1] == "project_id"
     for path in (fresh_path, legacy_path):
         store = _new_store(path)
         await store.start()
         try:
-            assert _work_item_columns(path) == original_columns + ["steps_control"]
+            assert _work_item_columns(path) == expected_columns
             with sqlite3.connect(path) as conn:
-                suffix = conn.execute("PRAGMA table_info(work_items)").fetchall()[-1]
-            assert suffix[1:] == ("steps_control", "TEXT", 0, None, 0)
+                suffix = conn.execute("PRAGMA table_info(work_items)").fetchall()[-5:]
+            # AD-1321 appends four nullable TEXT columns after the private suffix.
+            assert [row[1:] for row in suffix] == [
+                ("steps_control", "TEXT", 0, None, 0),
+                *((name, "TEXT", 0, None, 0) for name in _AD1321_COLUMNS),
+            ]
         finally:
             await store.stop()
 

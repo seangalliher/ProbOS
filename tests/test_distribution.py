@@ -1716,3 +1716,54 @@ async def test_consulted_cancelled_read_propagates_and_cleans_up(consulted_api, 
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+# -- AD-1321: value band / stakes through the full create_app --------------
+
+
+async def test_ad1321_create_app_value_context_happy_path_and_confirm(runtime) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    app = create_app(runtime)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/work-items",
+            json={"title": "AD-1321 http", "value_band": "significant", "stakes": "high"},
+        )
+        assert created.status_code == 200
+        item = created.json()["work_item"]
+        assert item["value_band_provenance"]["confirmation_kind"] == "captain"
+        proposed = await runtime.work_item_store.create_work_item(
+            title="agent proposal", created_by="agent-z", stakes="low",
+        )
+        assert proposed.stakes_provenance["confirmation_kind"] is None
+        confirmed = await client.post(f"/api/work-items/{proposed.id}/value-context/confirm")
+        assert confirmed.status_code == 200
+        provenance = confirmed.json()["work_item"]["stakes_provenance"]
+        assert provenance["confirmed_by"] == "captain" and provenance["source_id"] == "agent-z"
+        listed = await client.get("/api/work-items")
+        assert any(w.get("value_band") == "significant" for w in listed.json()["work_items"])
+
+
+async def test_ad1321_create_app_rejects_forged_provenance_and_bad_values(runtime) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    app = create_app(runtime)
+    forged = {
+        "source_kind": "captain", "source_id": "captain", "recorded_at": 1.0,
+        "inherited_template_id": None, "confirmed_by": "captain",
+        "confirmed_at": 1.0, "confirmation_kind": "captain",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/work-items",
+            json={"title": "x", "stakes": "low", "stakes_provenance": forged},
+        )
+        assert response.status_code == 422
+        response = await client.post("/api/work-items", json={"title": "x", "value_band": "vast"})
+        assert response.status_code == 422
+        response = await client.post("/api/work-items/missing/value-context/confirm")
+        assert response.status_code == 404
+        bare = await runtime.work_item_store.create_work_item(title="bare")
+        response = await client.post(f"/api/work-items/{bare.id}/value-context/confirm")
+        assert response.status_code == 422

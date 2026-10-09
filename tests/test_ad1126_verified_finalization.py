@@ -6065,6 +6065,8 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "bind_worker_resolver",
         "captain_principal",
         "compare_and_set_recovery",
+        # AD-1321: authenticated value/stakes confirmation entry point.
+        "confirm_value_context",
         "correction_execution_lease",
         "expire_owned_steps",
         "fail_verified_outcome",
@@ -6206,6 +6208,12 @@ _WORK_ITEM_SEMANTIC_KEYS = (
     "schedule",
     "ttl_seconds",
     "template_id",
+    # AD-1321: the child barrier compares every public field, including the
+    # service-authored value/stakes context and its provenance.
+    "value_band",
+    "value_band_provenance",
+    "stakes",
+    "stakes_provenance",
 )
 
 

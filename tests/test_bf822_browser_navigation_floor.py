@@ -1513,6 +1513,22 @@ async def test_filing_survives_a_store_that_raises(tmp_path) -> None:
     assert filed == 0
 
 
+class _ConfirmedValueWorkItems:
+    """AD-1321: a standing rule needs a work item with confirmed value and stakes."""
+
+    async def get_work_item(self, work_item_id: str) -> Any:
+        from probos.workforce import WorkItem, build_value_provenance
+
+        provenance = build_value_provenance(
+            source_kind="captain", source_id="captain", confirmed=True,
+        )
+        return WorkItem(
+            id=work_item_id, title="t", value_band="moderate",
+            value_band_provenance=dict(provenance), stakes="low",
+            stakes_provenance=dict(provenance),
+        )
+
+
 async def test_approving_the_ask_grants_exactly_what_the_guard_consults(
     tmp_path,
 ) -> None:
@@ -1524,8 +1540,11 @@ async def test_approving_the_ask_grants_exactly_what_the_guard_consults(
     the one that crosses the seams, because a shape mismatch anywhere between
     them leaves the Captain approving something no guard will ever match.
     """
-    from probos.api_models import CapabilityRequestDecideRequest
-    from probos.routers.capability_requests import _maybe_issue_standing_rule
+    import httpx
+    from fastapi import FastAPI
+
+    from probos.routers import capability_requests as cap_router
+    from probos.routers.deps import get_runtime
     from probos.tools.action_approvals import ActionApprovalStore
     from probos.tools.browser.url_route_guard import (
         file_redirect_escalations,
@@ -1539,6 +1558,7 @@ async def test_approving_the_ask_grants_exactly_what_the_guard_consults(
         runtime = SimpleNamespace(
             capability_request_store=request_store,
             action_approval_store=approval_store,
+            work_item_store=_ConfirmedValueWorkItems(),
             config=SimpleNamespace(
                 approval_inbox=SimpleNamespace(
                     standing_rules_enabled=True,
@@ -1547,6 +1567,9 @@ async def test_approving_the_ask_grants_exactly_what_the_guard_consults(
                 )
             ),
         )
+        app = FastAPI()
+        app.include_router(cap_router.router)
+        app.dependency_overrides[get_runtime] = lambda: runtime
         check = make_redirect_grant_check(runtime, "a1")
         assert check("target.test") is False, "premise: no rule exists yet"
 
@@ -1554,24 +1577,57 @@ async def test_approving_the_ask_grants_exactly_what_the_guard_consults(
             runtime, [_record()], session_id="sess-1", thread_id="",
         )
         ask = (await request_store.list_pending())[0]
-        decided = await request_store.decide(ask.id, approve=True, decided_by="captain")
+        # AD-1321: the real redirect filer carries no crew work item.
+        assert ask.work_item_id is None
 
-        rule = await _maybe_issue_standing_rule(
-            runtime,
-            decided,
-            CapabilityRequestDecideRequest(approve=True, grant_standing=True),
-        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t",
+        ) as client:
+            response = await client.post(
+                f"/api/capability-requests/{ask.id}/decide",
+                json={"approve": True, "grant_standing": True},
+            )
+            assert response.status_code == 200
+            body = response.json()
+
+            # Discriminator: everything else is valid and enabled, so only the
+            # missing work-item linkage withholds standing authority. The
+            # linked ask is filed through the store's own API, not by editing
+            # the real one.
+            linked_record = type(_record())(
+                agent_id="a1", origin="http://origin.test/start",
+                target="http://other.test/next", method="POST", status=307,
+                scope_key="other.test",
+            )
+            await file_redirect_escalations(
+                runtime, [linked_record], session_id="sess-1", thread_id="",
+            )
+            other = next(
+                r for r in await request_store.list_pending()
+                if r.payload["scope_key"] == "other.test"
+            )
+            linked = await request_store.file_action_request(
+                "a1", dict(other.payload), rationale=other.rationale,
+                work_item_id="wi-linked",
+            )
+            linked_response = await client.post(
+                f"/api/capability-requests/{linked.id}/decide",
+                json={"approve": True, "grant_standing": True},
+            )
+        stored = await request_store.get(ask.id)
     finally:
         await request_store.stop()
 
-    assert rule is not None, "approving with grant_standing issued no rule"
-    assert rule["tool_id"] == "browser"
-    assert rule["action"] == "follow_method_preserving_redirect"
-    assert rule["scope_key"] == "target.test"
-    assert check("target.test") is True, (
-        "the Captain approved an ask the guard will never match"
-    )
-    assert check("elsewhere.test") is False
+    assert body["request"]["status"] == "approved"
+    assert body["request"]["decided_by"] == "captain"
+    assert body["request"]["work_item_id"] is None
+    assert stored.status == "approved" and stored.decided_by == "captain"
+    assert body["standing_rule"] is None, "a standalone redirect ask must not mint standing authority"
+    assert check("target.test") is False
+    assert linked_response.status_code == 200
+    assert linked_response.json()["standing_rule"] is not None
+    assert check("other.test") is True
+    assert check("target.test") is False
 
 
 # ── the tool files what the guard recorded ───────────────────────

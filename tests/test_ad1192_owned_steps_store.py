@@ -645,8 +645,22 @@ async def test_public_work_item_projection_matches_all_wide_fields(
         "schedule": '{"cron":"0 0 * * *","optional":null}',
         "ttl_seconds": None if nullable else 86400,
         "template_id": None if nullable else "template-\u03bb",
+        # AD-1321: legacy-null context for the nullable case, otherwise a value
+        # whose provenance is Captain-sourced and agent-confirmed.
+        "value_band": None if nullable else "significant",
+        "value_band_provenance": None if nullable else (
+            '{"source_kind":"captain","source_id":"captain","recorded_at":1200.5,'
+            '"inherited_template_id":"template-\\u03bb","confirmed_by":"captain",'
+            '"confirmed_at":1300.5,"confirmation_kind":"captain"}'
+        ),
+        "stakes": None if nullable else "high",
+        "stakes_provenance": None if nullable else (
+            '{"source_kind":"agent","source_id":"agent-\\u03bb","recorded_at":1210.5,'
+            '"inherited_template_id":null,"confirmed_by":"chief-\\u96ea",'
+            '"confirmed_at":1310.5,"confirmation_kind":"chain_of_command"}'
+        ),
     }
-    assert len(fields) == len(values) == 25 and set(values) == set(fields)
+    assert len(fields) == len(values) == 29 and set(values) == set(fields)
     with sqlite3.connect(stores.path) as db:
         db.row_factory = sqlite3.Row
         db.execute(

@@ -110,6 +110,9 @@ _WORK_ITEM_COLUMNS = [
     # migration, so fresh and upgraded databases share this exact order.
     "project_id",
 ]
+# AD-1321: private steps_control stays the nullable suffix it was; the four
+# value/stakes columns are appended after it by CREATE TABLE and ALTER migration.
+_AD1321_COLUMNS = ["value_band", "value_band_provenance", "stakes", "stakes_provenance"]
 _CREW_PARENT_IDS = itertools.count(1)
 
 
@@ -1763,8 +1766,8 @@ async def test_legacy_reopen_keeps_columns_and_values_then_session_reopens(tmp_p
         schema = await cursor.fetchall()
         after_columns = [row["name"] for row in schema]
         # The old whole-list pin rejected the admitted private nullable suffix.
-        assert before_columns == after_columns == _WORK_ITEM_COLUMNS + ["steps_control"]
-        assert tuple(schema[-1][key] for key in ("name", "type", "notnull", "dflt_value", "pk")) == (
+        assert before_columns == after_columns == _WORK_ITEM_COLUMNS + ["steps_control"] + _AD1321_COLUMNS
+        assert tuple(schema[-1 - len(_AD1321_COLUMNS)][key] for key in ("name", "type", "notnull", "dflt_value", "pk")) == (
             "steps_control", "TEXT", 0, None, 0,
         )
         reloaded = await second.get_work_item(ordinary.id)
@@ -1807,7 +1810,7 @@ async def test_legacy_reopen_keeps_columns_and_values_then_session_reopens(tmp_p
         assert reopened is not None and reopened.revision == 1
         cursor = await third._db.execute("PRAGMA table_info(work_items)")
         # Reopen preserves the entire original sequence and exactly one suffix.
-        assert [row["name"] for row in await cursor.fetchall()] == _WORK_ITEM_COLUMNS + ["steps_control"]
+        assert [row["name"] for row in await cursor.fetchall()] == _WORK_ITEM_COLUMNS + ["steps_control"] + _AD1321_COLUMNS
     finally:
         await third.stop()
 
@@ -1896,7 +1899,8 @@ def test_public_service_api_and_annotations_are_exact() -> None:
     }
     admitted_public = {
         "admit", "admit_correction", "authorize_owned_steps", "authorize_owned_store_write",
-        "bind_owned_legacy_authorizer", "bind_owned_steps_view_authorizer", "correction_execution_lease",
+        "bind_owned_legacy_authorizer", "bind_owned_steps_view_authorizer", "confirm_value_context",
+        "correction_execution_lease",
         "expire_owned_steps", "get_owned_steps_execution_port", "get_owned_steps_snapshot",
         "owned_human_steps_authority", "owned_manual_gate_released", "owned_read_steps_authority",
         "owned_steps_authority", "owned_store_binding", "owns_store", "read_correction",
@@ -1904,7 +1908,7 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "register_owned_steps_component", "start", "submit", "validate",
     }
     # The former 17-method-only pin masked the admitted owned execution ports.
-    assert len(original_public) == 17 and len(admitted_public) == 24
+    assert len(original_public) == 17 and len(admitted_public) == 25
     assert original_public.isdisjoint(admitted_public)
     assert public == original_public | admitted_public
     expected_parameters = {
@@ -1959,10 +1963,17 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         signature = inspect.signature(getattr(CrewSessionService, method_name))
         # Only this existing method gained an optional owned finalization receipt.
         additions = {"steps_finalize"} if method_name == "publish_verified_result" else set()
+        # AD-1321: open_or_resume gained optional keyword-only declared value/stakes.
+        if method_name == "open_or_resume":
+            additions = {"value_band", "stakes"}
         assert set(signature.parameters) == parameter_names | additions
-        if additions:
+        if method_name == "publish_verified_result":
             assert signature.parameters["steps_finalize"].default is None
             assert tuple(signature.parameters)[-1] == "steps_finalize"
+        if method_name == "open_or_resume":
+            assert tuple(signature.parameters)[-2:] == ("value_band", "stakes")
+            assert signature.parameters["value_band"].default is None
+            assert signature.parameters["stakes"].default is None
         assert signature.return_annotation is not inspect.Signature.empty
         assert all(
             parameter.annotation is not inspect.Signature.empty
@@ -2002,8 +2013,9 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "clock",
     }
     request_fields = tuple(CrewSessionParentCreate.__dataclass_fields__)
-    # Preserve the admission request prefix; only the owned manual-step seed is new.
-    assert request_fields[:-1] == (
+    # Preserve the admission request prefix; only the owned manual-step seed and
+    # the AD-1321 value/stakes context (with provenance) are new.
+    assert request_fields[:-5] == (
         "id",
         "title",
         "description",
@@ -2012,7 +2024,9 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "metadata",
         "created_at",
     )
-    assert request_fields[-1:] == ("steps",)
+    assert request_fields[-5:] == (
+        "steps", "value_band", "value_band_provenance", "stakes", "stakes_provenance",
+    )
     assert CrewSessionParentCreate.__dataclass_fields__["steps"].default_factory is list
     admission_signatures = {
         CrewSessionParentReservation.create_parent: {
