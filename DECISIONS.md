@@ -10681,3 +10681,19 @@ After its first slash command, its "approval" was a console prompt on the server
 **Operational amendment (2026-10-08).** Opus models are no longer available to the Captain. The shipped, Pydantic, provider-setup, LLM-client, Copilot-builder, build-dispatcher, node-example and ontology deep-tier defaults therefore use `claude-sonnet-5.5`, the highest available model. The built-in Opus catalog entry remains price metadata for operators who configure that name and still have provider access; it is not a runtime candidate because BF-886 seeds production routing from configuration. Sonnet 5.5 has no asserted catalog price here, so an operator who enables a cost ceiling must configure a catalog-priced accessible model or leave the ceiling unset.
 
 **Ownership and rollback.** No configuration field, schema, persisted state or wire change, so a Git revert needs no migration.
+
+## AD-1320 (2026-10-08), #1475 -- live spend-awareness notes for conversational agentic turns (implementation candidate, default OFF)
+
+**Decision.** `DmAgenticConfig.budget_awareness_enabled` (default false) and `budget_awareness_thresholds` (default `[0.5, 0.8]`, validated strictly ascending finite floats in (0, 1)) let an AgenticLoop request carry one short note once the turn's cumulative AD-1208 spend first reaches a band. Nothing is shown before the first band, and with the flag off every request is byte-identical to before.
+
+**Ownership.** `TurnCostBudget` creates one `AgenticBudgetAwarenessState` per turn and shares it by reference across every AD-1164 pass, so a continuation inherits the used set, the current note and the observed token sources. The state holds presentation facts only; it never counts, charges or enforces tokens. The loop reports cumulative spend after each BF-680 charge (spent before the pass is the turn budget minus the pass budget).
+
+**Severe-only, persistence, replacement.** A response may cross several bands at once: all become used, only the most severe is presented, so one response makes at most one transition. The note persists on every later request without accumulating, is replaced (never appended) by a later more severe crossing, and is rebuilt from the state each request, never from a prior annotated prompt. It rides only the outbound `system_prompt`, never `messages`, so compaction and token estimates are unchanged and both the flattened and structured (AD-1146) shapes carry it.
+
+**Wording.** BF-680 labels select the source wording: measured, estimated or mixed (a union across the turn). Only two options are offered: finish now within the remaining budget, or stop and report the partial work. The note never asks to continue or extend and carries no approval language.
+
+**No extra call, unchanged stops.** No model call, event, persistence or UI is added. Token-budget stops, the final-answer budget exception, iteration limits and error exits are unchanged; a crossing on the terminal response adds no request.
+
+**Evidence.** Paired structural ablation (fixed goal, budget 1000, cumulative 300/550/600/700/850/860): control markers 0x6; treatment markers [0,0,1,1,1,1], 2 transitions, identical calls, stop reason, iterations, tokens, source, final-text digest and request bodies. A jump response crossing both bands shows only the severe line. Mutation campaign: 13 of 13 runnable mutants killed.
+
+**Exclusions.** `config.py`, `system.yaml`, `continue_or_ask.py` and `native_builder.py` are untouched; NativeBuilderHarness is not armed. Rollback is a Git revert with no migration.

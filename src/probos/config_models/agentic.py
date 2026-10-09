@@ -8,6 +8,7 @@ which re-exports them.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Literal
 
@@ -486,6 +487,45 @@ class DmAgenticConfig(BaseModel):  # AD-1065
             "ordinary message text and every turn runs exactly as before."
         ),
     )
+    budget_awareness_enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1320: enables threshold-triggered live AD-1208 spend notes for "
+            "conversational turns. No note appears before the first threshold in "
+            "budget_awareness_thresholds is crossed; the note then rides the "
+            "system prompt of the turn's existing model requests. Adds no model "
+            "call, and is inert without an armed token_budget."
+        ),
+    )
+    budget_awareness_thresholds: list[float] = Field(
+        default_factory=lambda: [0.5, 0.8],
+        description=(
+            "AD-1320: fractions of the turn's effective token budget at which "
+            "the spend note is raised, strictly ascending and inside (0, 1). "
+            "Only consulted when budget_awareness_enabled is true. One response "
+            "crossing several of them raises only the most severe note."
+        ),
+    )
+
+    @field_validator("budget_awareness_thresholds", mode="before")
+    @classmethod
+    def validate_budget_awareness_thresholds(cls, value: object) -> object:
+        if type(value) not in (list, tuple) or not value:
+            raise ValueError("budget_awareness_thresholds must be a non-empty list")
+        previous = 0.0
+        for item in value:
+            if (
+                type(item) not in (int, float)
+                or not math.isfinite(item)
+                or not 0 < item < 1
+                or item <= previous
+            ):
+                raise ValueError(
+                    "budget_awareness_thresholds must be strictly ascending "
+                    "numeric fractions inside (0, 1)"
+                )
+            previous = item
+        return [float(item) for item in value]
 
 
 class WriteClaimGuardConfig(BaseModel):  # AD-1285 (#1087 / BF-687)

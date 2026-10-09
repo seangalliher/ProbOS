@@ -73,6 +73,7 @@ from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage, LLMRequest
 
 if TYPE_CHECKING:
+    from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
     from probos.cognitive.tool_manifest import ToolManifestOffer
     from probos.mesh.intent import IntentBus
     from probos.substrate.agent import BaseAgent
@@ -1934,6 +1935,7 @@ class WorkItemAgenticExecutor:
         owned_steps_initial_view: owned_steps.OwnedStepsViewReference | None = None,
         max_total_iterations: int | None = None,
         plan_mode_tool_ids: frozenset[str] | None = None,
+        budget_awareness_state: AgenticBudgetAwarenessState | None = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization."""
         if any(value is not None for value in (
@@ -1970,6 +1972,9 @@ class WorkItemAgenticExecutor:
         # AD-1156: forwarded only in plan mode, for the same reason.
         if plan_mode_tool_ids is not None:
             arguments["plan_mode_tool_ids"] = plan_mode_tool_ids
+        # AD-1320: transported unchanged; absent => the arguments are unchanged.
+        if budget_awareness_state is not None:
+            arguments["budget_awareness_state"] = budget_awareness_state
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -2041,6 +2046,7 @@ class WorkItemAgenticExecutor:
         # AD-1156: plan mode's read-only allowlist. None -- every caller but a
         # plan-mode conversational turn -- leaves the offer and invoke unchanged.
         plan_mode_tool_ids: frozenset[str] | None = None,
+        budget_awareness_state: AgenticBudgetAwarenessState | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -2983,6 +2989,9 @@ class WorkItemAgenticExecutor:
         # Absent => never passed, so AgenticLoop counts every step (AD-545).
         if max_total_iterations is not None:
             _loop_kwargs["max_total_iterations"] = max_total_iterations
+        # AD-1320: typed pass-through of the turn's shared threshold state.
+        if budget_awareness_state is not None:
+            _loop_kwargs["budget_awareness_state"] = budget_awareness_state
         # BF-731: same additive shape. Absent => the kwarg is never passed to
         # AgenticLoop, which in turn never passes it to complete(), so the task
         # path and every test double keep the exact call they had before.

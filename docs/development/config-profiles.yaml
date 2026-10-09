@@ -502,6 +502,17 @@ flags:
   requires:
   - dm_agentic.enabled
   conflicts_with: []
+- path: dm_agentic.budget_awareness_enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1320_agentic_budget_awareness.py::test_loop_awareness_adds_no_calls_and_leaves_outcomes_identical
+    -- paired real loops prove awareness preserves call count, tools, iterations, final
+    text and spend; the threshold tests prove only the current note survives, and the
+    OFF tests prove request bytes and turn accounting remain unchanged.
+  external_dependency: null
+  requires:
+  - dm_agentic.enabled
+  conflicts_with: []
 ci_divergences:
 - id: nats-forced-off-in-tests
   mechanism: config-field-validator

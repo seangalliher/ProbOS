@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1828
-  field_definitions: 1825
+  canonical_dump_leaves: 1831
+  field_definitions: 1827
   incidental: 13
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: d3f804169cfbe9b3054f96175ff06cd339d587af68a98bb266f801741a8de9fd
+canonical_dump_sha256: b0e20eb37bbaf56c83f8f734d1f9d68a2720f6a1377fc00c25a902ce6422db5c
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1446,7 +1446,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 661c828b83321ecaf53ebb7410cde02e008c40056a4293cda124ae99d27a3ea9
+    schema_sha256: d6bbf897c146f6c3d59f86e7cf9f74c9cbf9dc57926c9a53de8f5cd1c6852ead
     fields:
     - {default: 'False', name: enabled}
     - {default: '5', name: max_iterations}
@@ -1464,6 +1464,8 @@ models:
     - {default: None, name: token_budget}
     - {default: '100', name: max_total_iterations}
     - {default: 'False', name: agent_modes_enabled}
+    - {default: 'False', name: budget_awareness_enabled}
+    - {default: <required>, has_default_factory: true, name: budget_awareness_thresholds}
   DmDeliberateConfig:
     qualname: DmDeliberateConfig
     bases:
@@ -3326,7 +3328,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6b72ea4fe53538d082fe58903174b718d4c1c3cfb568ec6da1dc7dfc189ecb46
+    schema_sha256: d931f0b193308185caa5db6ea632a58056c89b4e5dcacacb2b23a0e71ec0435b
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

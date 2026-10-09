@@ -10,9 +10,11 @@ import asyncio
 import copy
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
+from decimal import Decimal
 from types import CoroutineType
 from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
@@ -896,6 +898,139 @@ class AgenticResult:
     token_source: str = TOKEN_SOURCE_MEASURED
 
 
+_BUDGET_SOURCE_WORDING: dict[str, str] = {
+    TOKEN_SOURCE_MEASURED: "provider-measured usage",
+    TOKEN_SOURCE_ESTIMATED: "estimated, not measured",
+    TOKEN_SOURCE_MIXED: "a mix of provider measurements and estimates",
+}
+# From this fraction up the note says the budget is nearly spent.
+_BUDGET_SEVERE_FRACTION = 0.8
+_BUDGET_NOTE_OPTIONS = (
+    "Choose one of two options: finish now within the remaining budget, or "
+    "stop and report the partial work done so far."
+)
+_BUDGET_NOTE_STANDARD = (
+    "Budget notice: this turn has used {spent:,} of its {budget:,}-token budget "
+    "({percent} crossed; {source}), leaving {remaining:,} tokens. "
+)
+_BUDGET_NOTE_SEVERE = (
+    "Budget notice: the turn budget is nearly spent. This turn has used "
+    "{spent:,} of its {budget:,}-token budget ({percent} crossed; {source}), "
+    "leaving {remaining:,} tokens. "
+)
+
+
+def _budget_threshold_crossed(spent: int, budget: int, fraction: float) -> bool:
+    numerator, denominator = Decimal(str(fraction)).as_integer_ratio()
+    return spent * denominator >= budget * numerator
+
+
+class AgenticBudgetAwarenessState:
+    """AD-1320 (#1475): transient threshold awareness for one conversational turn.
+
+    Presentation state only: it never counts, charges or enforces tokens.
+    ``TurnCostBudget`` owns it for the turn's lifetime and shares the one
+    object by reference across every AD-1164 pass; the loop supplies the
+    authoritative cumulative spend after each charged response.
+    """
+
+    def __init__(self, total_turn_budget: int, thresholds: tuple[float, ...]) -> None:
+        if type(total_turn_budget) is not int or total_turn_budget < 1:
+            raise ValueError("total_turn_budget must be an int >= 1")
+        if type(thresholds) is not tuple or not thresholds:
+            raise ValueError("thresholds must be a non-empty tuple")
+        previous = 0.0
+        for fraction in thresholds:
+            if (
+                type(fraction) is not float
+                or not math.isfinite(fraction)
+                or not 0.0 < fraction < 1.0
+                or fraction <= previous
+            ):
+                raise ValueError(
+                    "thresholds must be strictly ascending floats inside (0, 1)"
+                )
+            previous = fraction
+        self._total = total_turn_budget
+        self._thresholds = thresholds
+        self._used: set[float] = set()
+        self._current_threshold: float | None = None
+        self._current_note: str | None = None
+        self._current_spent: int | None = None
+        self._sources: set[str] = set()
+        self._transitions = 0
+
+    @property
+    def total_turn_budget(self) -> int:
+        return self._total
+
+    @property
+    def thresholds(self) -> tuple[float, ...]:
+        return self._thresholds
+
+    @property
+    def used_thresholds(self) -> frozenset[float]:
+        return frozenset(self._used)
+
+    @property
+    def current_threshold(self) -> float | None:
+        return self._current_threshold
+
+    @property
+    def current_note(self) -> str | None:
+        return self._current_note
+
+    @property
+    def current_spent(self) -> int | None:
+        return self._current_spent
+
+    @property
+    def current_remaining(self) -> int | None:
+        if self._current_spent is None:
+            return None
+        return max(self._total - self._current_spent, 0)
+
+    @property
+    def transition_count(self) -> int:
+        return self._transitions
+
+    def observe_response(self, cumulative_spent: int, token_source: str) -> bool:
+        """Fold one charged response in; True when the current note changed.
+
+        Every newly crossed threshold becomes used, but only the most severe
+        one is presented, so one response makes at most one transition.
+        """
+        if token_source in _BUDGET_SOURCE_WORDING:
+            self._sources.add(token_source)
+        if type(cumulative_spent) is not int or cumulative_spent < 0:
+            return False
+        crossed = [
+            fraction for fraction in self._thresholds
+            if fraction not in self._used
+            and _budget_threshold_crossed(cumulative_spent, self._total, fraction)
+        ]
+        if not crossed:
+            return False
+        self._used.update(crossed)
+        severe = crossed[-1]
+        label = _token_source_label(self._sources) if self._sources else TOKEN_SOURCE_ESTIMATED
+        template = (
+            _BUDGET_NOTE_SEVERE if severe >= _BUDGET_SEVERE_FRACTION
+            else _BUDGET_NOTE_STANDARD
+        )
+        self._current_threshold = severe
+        self._current_spent = cumulative_spent
+        self._current_note = template.format(
+            spent=cumulative_spent,
+            budget=self._total,
+            percent=f"{severe * 100:g}%",
+            source=_BUDGET_SOURCE_WORDING[label],
+            remaining=max(self._total - cumulative_spent, 0),
+        ) + _BUDGET_NOTE_OPTIONS
+        self._transitions += 1
+        return True
+
+
 @dataclass(frozen=True)
 class PresentedToolResult:
     tool_call_id: str
@@ -930,6 +1065,7 @@ class AgenticLoop:
             [LLMRequest, tuple[PresentedToolResult, ...]], Awaitable[None]
         ] | None = None,
         max_total_iterations: int | None = None,
+        budget_awareness_state: AgenticBudgetAwarenessState | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -986,6 +1122,13 @@ class AgenticLoop:
         self._refresh_tools = refresh_tools
         self._event_correlation_enabled = event_correlation_enabled
         self._on_model_request_presented = on_model_request_presented
+        # AD-1320: inert without a token budget, which is what the thresholds
+        # are fractions of and what supplies the spent-before-pass offset.
+        self._awareness = budget_awareness_state if token_budget is not None else None
+        self._awareness_offset = (
+            max(budget_awareness_state.total_turn_budget - token_budget, 0)
+            if self._awareness is not None and token_budget is not None else 0
+        )
         self._tasks: set[asyncio.Task] = set()
 
     async def run(
@@ -1144,6 +1287,16 @@ class AgenticLoop:
                 else:
                     messages.insert(0, {"role": "system", "content": effective_system_prompt})
 
+            # AD-1320: the current note is rebuilt from shared state each request and
+            # only ever lives on the outbound system prompt -- never in ``messages``
+            # (so compaction and token estimates are untouched), never from a
+            # previous request's annotated prompt.
+            request_system_prompt = effective_system_prompt
+            if self._awareness is not None and self._awareness.current_note is not None:
+                request_system_prompt = (
+                    f"{effective_system_prompt}\n\n{self._awareness.current_note}"
+                )
+
             # AD-1146: when structured tool messages are enabled, hand the real
             # multi-turn array to the client (which posts it verbatim). The
             # system entry is EXCLUDED — ``_call_openai`` inserts
@@ -1158,7 +1311,7 @@ class AgenticLoop:
                 req = LLMRequest(
                     prompt="",
                     messages=outbound,
-                    system_prompt=effective_system_prompt,
+                    system_prompt=request_system_prompt,
                     tier=self._tier,
                     tools=tools,
                     tool_choice="auto",
@@ -1172,7 +1325,7 @@ class AgenticLoop:
                 )
                 req = LLMRequest(
                     prompt=assembled_user_prompt,
-                    system_prompt=effective_system_prompt,
+                    system_prompt=request_system_prompt,
                     tier=self._tier,
                     tools=tools,
                     tool_choice="auto",
@@ -1255,6 +1408,10 @@ class AgenticLoop:
                 token_sources.add(TOKEN_SOURCE_MEASURED)
             result.total_tokens += charged
             result.token_source = _token_source_label(token_sources)
+            if self._awareness is not None:
+                self._awareness.observe_response(
+                    self._awareness_offset + result.total_tokens, result.token_source,
+                )
 
             if self._on_model_request_presented is not None:
                 if getattr(response, "error", None) is not None:

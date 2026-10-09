@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from probos.config import TRUST_DEFAULT, TRUST_SENIOR
 from probos.crew_execution_usage import (
@@ -36,6 +36,9 @@ from probos.crew_execution_usage import (
     TOKEN_SOURCE_MIXED,
     merge_token_sources,
 )
+
+if TYPE_CHECKING:
+    from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +132,7 @@ class TurnCostBudget:
         configured_budget: int | None = None,
         trust_multiplier: float = 1.0,
         agent_id: str = "",
+        awareness: AgenticBudgetAwarenessState | None = None,
     ) -> None:
         self._budget = budget
         self._configured_budget = budget if configured_budget is None else configured_budget
@@ -137,6 +141,8 @@ class TurnCostBudget:
         self._agent_id = agent_id
         self._spent = 0
         self._sources: list[str] = []
+        # AD-1320: transient presentation state shared by reference across passes.
+        self._awareness = awareness
 
     @classmethod
     def from_config(
@@ -165,12 +171,20 @@ class TurnCostBudget:
             "trust multiplier %.3f) and max_total_iterations=%d",
             agent_id[:12], effective, budget, multiplier, total,
         )
+        awareness = None
+        if getattr(cfg, "budget_awareness_enabled", False) is True:
+            from probos.cognitive.swe_harness.agentic_loop import AgenticBudgetAwarenessState
+
+            awareness = AgenticBudgetAwarenessState(
+                effective, tuple(float(f) for f in cfg.budget_awareness_thresholds),
+            )
         return cls(
             budget=effective,
             configured_budget=budget,
             trust_multiplier=multiplier,
             max_total_iterations=total,
             agent_id=agent_id,
+            awareness=awareness,
         )
 
     @property
@@ -189,17 +203,20 @@ class TurnCostBudget:
     def spent(self) -> int:
         return self._spent
 
-    def loop_kwargs(self) -> dict[str, int]:
+    def loop_kwargs(self) -> dict[str, Any]:
         """What the next pass passes to ``WorkItemAgenticExecutor.run``.
 
         The remainder, never below 1. A further pass starts only after a
         ``max_iterations`` stop, which the budget check did not end, so the floor
         is a guard rather than a path.
         """
-        return {
+        kwargs: dict[str, Any] = {
             "token_budget": max(self._budget - self._spent, 1),
             "max_total_iterations": self._max_total_iterations,
         }
+        if self._awareness is not None:
+            kwargs["budget_awareness_state"] = self._awareness
+        return kwargs
 
     def record(self, outcome: Any) -> None:
         """Fold one pass's spend in. A malformed count or source adds nothing."""
