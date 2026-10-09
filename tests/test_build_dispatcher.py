@@ -55,6 +55,10 @@ def _make_dispatcher(**kwargs):
 
 
 class TestBuildDispatcher:
+    def test_default_builder_uses_highest_available_model(self) -> None:
+        dispatcher = _make_dispatcher()
+        assert dispatcher._builder_model == "claude-sonnet-5.5"
+
     def test_find_dispatchable_returns_highest_priority(self) -> None:
         """Highest priority non-conflicting build is selected."""
         from probos.build_dispatcher import BuildDispatcher

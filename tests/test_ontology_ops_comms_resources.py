@@ -186,6 +186,9 @@ class TestModelTiers:
         fast = service.get_model_tier("fast")
         assert fast is not None
         assert fast.default_model == "claude-sonnet-4-6"
+        deep = service.get_model_tier("deep")
+        assert deep is not None
+        assert deep.default_model == "claude-sonnet-5.5"
 
     @pytest.mark.asyncio
     async def test_model_tier_unknown(self, service: VesselOntologyService) -> None:

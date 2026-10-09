@@ -53,7 +53,7 @@ surface_counts:
   own_models: 224
   owned: 291
   public_names: 304
-canonical_dump_sha256: 50754621347e57b1cc78a3a92c08487756caab23b0556502991acff4877421b4
+canonical_dump_sha256: d3f804169cfbe9b3054f96175ff06cd339d587af68a98bb266f801741a8de9fd
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1034,14 +1034,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 66ff2e9a3a18d7fe3a34e5475bcaa7080e811b27552bde50833f17c916767df0
+    schema_sha256: 80580fb229f0caf6bdbfd3df8753eef12cfb2ad17b98e41156fecc66205dfb1b
     fields:
     - {default: '''http://127.0.0.1:8080/v1''', name: llm_base_url}
     - {default: '''''', name: llm_api_key}
     - {default: '30.0', name: llm_timeout_seconds}
     - {default: '''claude-sonnet-4-6''', name: llm_model_fast}
     - {default: '''claude-sonnet-4-6''', name: llm_model_standard}
-    - {default: '''claude-opus-4-6''', name: llm_model_deep}
+    - {default: '''claude-sonnet-5.5''', name: llm_model_deep}
     - {default: '3', name: llm_health_min_consecutive_healthy}
     - {default: None, name: llm_base_url_fast}
     - {default: None, name: llm_api_key_fast}
@@ -3326,7 +3326,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: c64259ae18e27dc0b0fa50478e6331656acb04990a1ee9cfb3c60ca6eaeffa78
+    schema_sha256: 6b72ea4fe53538d082fe58903174b718d4c1c3cfb568ec6da1dc7dfc189ecb46
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -189,14 +189,14 @@ class OpenAICompatibleClient(BaseLLMClient):
             models = models or {
                 "fast": "claude-sonnet-4-6",
                 "standard": "claude-sonnet-4-6",
-                "deep": "claude-opus-4-6",
+                "deep": "claude-sonnet-5.5",
             }
             self._config = CognitiveConfig(
                 llm_base_url=base_url,
                 llm_api_key=api_key,
                 llm_model_fast=models.get("fast", "claude-sonnet-4-6"),
                 llm_model_standard=models.get("standard", "claude-sonnet-4-6"),
-                llm_model_deep=models.get("deep", "claude-opus-4-6"),
+                llm_model_deep=models.get("deep", "claude-sonnet-5.5"),
                 llm_timeout_seconds=timeout,
             )
 
