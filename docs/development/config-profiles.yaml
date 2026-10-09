@@ -16,11 +16,11 @@ census:
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 441
-  default_false: 216
+  boolean_fields_reachable: 443
+  default_false: 218
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 131
+  default_false_never_armed: 133
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
