@@ -37,6 +37,11 @@ Prefer running something over reading something. In order of value:
    trips, allocations, calls. Do not accept a cost stated in a comment.
 4. Only then read.
 
+Do not rerun the Builder's focused test matrix — its passing result is the
+author's evidence. Spend execution on novel discriminating probes: what the
+consumer actually receives, the reverted-fix check for each new test, and paths
+the existing tests don't reach.
+
 ## Checklist
 
 Work through these explicitly and report each one.
