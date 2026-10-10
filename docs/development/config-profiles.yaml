@@ -171,6 +171,16 @@ flags:
   requires:
   - proactive_cognitive.enabled
   conflicts_with: []
+- path: protected_execution.enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: tests/test_ad1315_protected_execution_authority.py::test_runtime_strict_phase_one_exposes_and_closes_authority
+    -- the armed strict profile constructs and starts the runtime-owned authority during
+    Phase 1, exposes its protocol, and closes the witness; the default config test proves
+    the ordinary profile remains off.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
 - path: memory.hybrid_recall_enabled
   kind: product-feature
   profiles:

@@ -105,6 +105,14 @@ cognitive:
   captain_card_max_tokens: 500
   captain_card_refresh_min_interval_seconds: 3600
 health_probe_interval_seconds: 30.0
+protected_execution:
+  enabled: false
+  profile: ordinary
+  witness_filename: execution_authority.db
+  witness_busy_timeout_ms: 5000
+  protected_installation_root: ''
+  policy_path: ''
+  worker_write_roots: []
 memory:
   collection_name: probos_episodes
   max_episodes: 100000

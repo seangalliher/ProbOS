@@ -522,6 +522,20 @@ AD-993/994: sandboxed code execution (tiered isolation).
 | `pip_index_url` | `str` | `'https://pypi.org/simple'` | — |  |
 | `install_timeout_seconds` | `float` | `180.0` | — |  |
 
+## `protected_execution`
+
+Default-off strict protected-execution authority configuration.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — |  |
+| `profile` | `Literal['ordinary', 'strict']` | `'ordinary'` | — |  |
+| `witness_filename` | `str` | `'execution_authority.db'` | — |  |
+| `witness_busy_timeout_ms` | `int` | `5000` | ≥ 1, ≤ 60000 |  |
+| `protected_installation_root` | `str` | `''` | — |  |
+| `policy_path` | `str` | `''` | — |  |
+| `worker_write_roots` | `list[str]` | `[]` | — |  |
+
 ## `hooks`
 
 AD-1004: lifecycle-hook bus (deterministic interception at agent-loop     points — the VS Code / Claude / Copilot hook model).

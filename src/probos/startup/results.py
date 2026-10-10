@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from probos.dream_adapter import DreamAdapter
     from probos.identity import AgentIdentityRegistry
     from probos.identity_key_binding import IdentityKeyBinding
+    from probos.execution.authority import ProtectedExecutionAuthorityProtocol
     from probos.initiative import InitiativeEngine
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.semantic import SemanticKnowledgeLayer
@@ -78,6 +79,7 @@ class InfrastructureResult:
     identity_registry: "AgentIdentityRegistry"
     event_prune_task: asyncio.Task[None]
     identity_key_binding: "IdentityKeyBinding | None" = None  # AD-1196
+    execution_authority: "ProtectedExecutionAuthorityProtocol | None" = None
 
 
 @dataclass

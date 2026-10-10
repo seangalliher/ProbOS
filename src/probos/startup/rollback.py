@@ -10,6 +10,8 @@ process raises the AD-766 error), and, when the failure is the ``started`` event
 teardown (``startup.shutdown.shutdown`` with ``rollback=True``) when the body raises, then
 re-raises. The decorator is the only change to ``start``: its body is not moved or edited,
 so ``inspect.getsource(ProbOSRuntime.start)`` still reads the body (six tests rely on it).
+The owned teardown includes any Phase-1 protected-execution authority, so a later
+startup failure closes its witness through the same ordered lifecycle.
 
 Module-level imports are the standard library only: ``runtime`` imports this module, and
 the teardown module imports back from the runtime package.
