@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from probos.events import EventType
 from probos.integrations.mcp_bridge.client import MCPClient, MCPProtocolError
 from probos.integrations.mcp_bridge.session import MCPSession
 from probos.integrations.mcp_bridge.transport import StdioTransport
+
+if TYPE_CHECKING:
+    from probos.execution.effect_types import ExternalEffectContext
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +257,19 @@ class MCPBridge:
         return True
 
     async def invoke(
-        self, server_url: str, tool_name: str, arguments: dict[str, Any],
+        self,
+        server_url: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        effect_context: "ExternalEffectContext | None" = None,
     ) -> dict:
         client = self._clients.get(server_url)
         if client is None:
             raise MCPProtocolError(f"unknown server: {server_url}")
-        return await client.call_tool(tool_name, arguments)
+        return await client.call_tool(
+            tool_name, arguments, effect_context=effect_context
+        )
 
     async def close_all(self) -> None:
         for client in list(self._clients.values()):

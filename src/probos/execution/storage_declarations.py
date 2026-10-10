@@ -11,7 +11,7 @@ from probos.storage.declarations import (
 STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
     StoreDeclaration(
         id="execution.protected-authority",
-        title="Protected execution manifests and admission witness",
+        title="Protected execution authority and governed effect witness",
         owner_module="probos.execution.authority",
         owner_symbol="ProtectedExecutionAuthority",
         canonical_path="execution_authority.db",
@@ -21,8 +21,8 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         backup="included",
         restore="point-in-time",
         retention_note=(
-            "No DELETE statements: attempts, manifests, generations, and revoked "
-            "grants are governance evidence."
+            "No DELETE statements: admissions, grants, effect operations, attempts, "
+            "and transitions are governance evidence."
         ),
     ),
 )

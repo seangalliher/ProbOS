@@ -275,6 +275,11 @@ async def _off_observation(
     # defaults are the pre-field waits (and their maximums), so production shutdown is unchanged.
     assert config["memory"].pop("shutdown_write_grace_s") == 1.0
     assert config["memory"].pop("shutdown_dispatch_grace_s") == 2.0
+    # AD-1316's authority broker is default-off. Its inert lease/attempt
+    # defaults do not change this historical ordinary-mode observation.
+    assert config["protected_execution"].pop("effect_broker_enabled") is False
+    assert config["protected_execution"].pop("effect_lease_seconds") == 120
+    assert config["protected_execution"].pop("effect_max_attempts") == 3
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

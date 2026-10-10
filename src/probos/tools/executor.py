@@ -23,12 +23,17 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import islice
 from types import CoroutineType
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Protocol
 
 if TYPE_CHECKING:
+    from probos.execution.effect_types import (
+        EffectOperationHandle,
+        EffectPermit,
+        GovernedEffectBrokerProtocol,
+    )
     from probos.tools.protocol import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -468,6 +473,8 @@ class InvocationContext:
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
     invocation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    operation_id: str | None = None
+    attempt_id: str | None = None
     record_durable: bool = field(default=False, init=False)
     record_tool_id: str | None = field(default=None, init=False)
     record_metadata: dict[str, Any] = field(default_factory=dict, init=False)
@@ -492,8 +499,14 @@ class ToolExecutor:
     - Timing: elapsed time is recorded on InvocationContext.
     """
 
-    def __init__(self, *, registry: Any) -> None:
+    def __init__(
+        self,
+        *,
+        registry: Any,
+        effect_broker: "GovernedEffectBrokerProtocol | None" = None,
+    ) -> None:
         self._registry = registry
+        self._effect_broker = effect_broker
         self._pre_hooks: list[PreHook] = []
         self._post_hooks: list[PostHook] = []
         self._terminal_hooks: list[PostHook] = []
@@ -524,11 +537,25 @@ class ToolExecutor:
                 if inspect.isawaitable(observed):
                     await observed
             except Exception:
-                logger.warning(
-                    "AD-1224: terminal observer failed for tool=%s; execution "
-                    "semantics are preserved and recorded completion may be missing",
-                    _retained_metadata(hook_context)["tool_id"],
-                )
+                invocation = hook_context.get("invocation")
+                if (
+                    isinstance(invocation, InvocationContext)
+                    and invocation.operation_id is not None
+                    and invocation.attempt_id is not None
+                ):
+                    logger.warning(
+                        "Strict terminal observer failed operation_id=%s "
+                        "attempt_id=%s operation=terminal_hook "
+                        "reason_code=observer_failed",
+                        invocation.operation_id,
+                        invocation.attempt_id,
+                    )
+                else:
+                    logger.warning(
+                        "AD-1224: terminal observer failed for tool=%s; execution "
+                        "semantics are preserved and recorded completion may be missing",
+                        _retained_metadata(hook_context)["tool_id"],
+                    )
 
     def _resolve_tool_id(self, tool_id: str) -> str | None:
         """BF-754: accept the provider-safe alias the model was actually shown.
@@ -578,11 +605,13 @@ class ToolExecutor:
             return None
         return claimants[0] if claimants else tool_id
 
-    async def invoke(
+    async def _invoke_once(
         self,
         agent_id: str,
         tool_id: str,
         params: dict[str, Any],
+        *,
+        effect_permit: "EffectPermit | None" = None,
         **kwargs: Any,
     ) -> "ToolResult":
         """Execute a tool call with pre/post hooks.
@@ -615,10 +644,23 @@ class ToolExecutor:
                 ),
             )
         tool_id = resolved
+        call_context = kwargs.get("context")
+        if type(call_context) is not dict:
+            call_context = {}
         ctx = InvocationContext(
             agent_id=agent_id,
             tool_id=tool_id,
             params=params,
+            operation_id=(
+                call_context.get("_effect_operation_id")
+                if isinstance(call_context.get("_effect_operation_id"), str)
+                else None
+            ),
+            attempt_id=(
+                call_context.get("_effect_attempt_id")
+                if isinstance(call_context.get("_effect_attempt_id"), str)
+                else None
+            ),
         )
         ctx.record_tool_id = record_tool_id
         hook_context = {
@@ -635,32 +677,87 @@ class ToolExecutor:
                 if inspect.isawaitable(admitted):
                     admitted = await admitted
             except Exception:
-                logger.warning(
-                    "AD-448: pre-hook failed for tool=%s; continuing to the "
-                    "registry permission chain without retaining hook diagnostics",
-                    record_tool_id,
-                )
+                if ctx.operation_id is not None and ctx.attempt_id is not None:
+                    logger.warning(
+                        "Strict pre-hook failed operation_id=%s attempt_id=%s "
+                        "operation=pre_hook reason_code=observer_failed; "
+                        "continuing to the registry permission chain",
+                        ctx.operation_id,
+                        ctx.attempt_id,
+                    )
+                else:
+                    logger.warning(
+                        "AD-448: pre-hook failed for tool=%s; continuing to the "
+                        "registry permission chain without retaining hook diagnostics",
+                        record_tool_id,
+                    )
                 continue
             if not admitted:
-                logger.debug(
-                    "AD-448: pre-hook aborted tool=%s; returning the refusal "
-                    "and notifying terminal observers",
-                    record_tool_id,
-                )
+                if ctx.operation_id is not None and ctx.attempt_id is not None:
+                    logger.debug(
+                        "Strict pre-hook refused operation_id=%s attempt_id=%s "
+                        "operation=pre_hook reason_code=pre_hook_refused",
+                        ctx.operation_id,
+                        ctx.attempt_id,
+                    )
+                else:
+                    logger.debug(
+                        "AD-448: pre-hook aborted tool=%s; returning the refusal "
+                        "and notifying terminal observers",
+                        record_tool_id,
+                    )
                 aborted = ToolResult(error=f"Pre-hook aborted invocation of {tool_id}")
                 ctx.duration_ms = max(0.0, (time.perf_counter() - ctx.start_time) * 1000)
                 await self._run_terminal_hooks(hook_context, aborted)
+                if effect_permit is not None:
+                    from probos.execution.effect_broker import EffectDenied
+
+                    raise EffectDenied("pre_hook_refused", result=aborted)
                 return aborted
 
         try:
-            result = await self._registry.check_and_invoke(
-                agent_id, tool_id, params, **kwargs,
-            )
+            if effect_permit is None:
+                result = await self._registry.check_and_invoke(
+                    agent_id, tool_id, params, **kwargs,
+                )
+            else:
+                result = await self._registry.check_and_invoke(
+                    agent_id,
+                    tool_id,
+                    params,
+                    effect_permit=effect_permit,
+                    **kwargs,
+                )
         except Exception as exc:
             ctx.duration_ms = max(0.0, (time.perf_counter() - ctx.start_time) * 1000)
             await self._run_terminal_hooks(
                 hook_context, ToolResult(error=_exception_category(exc)),
             )
+            if effect_permit is not None:
+                from probos.execution.effect_broker import (
+                    EffectDenied,
+                    ProtectedEffectBypassDenied,
+                )
+                from probos.tools.registry import ToolLockedDenied, ToolPermissionDenied
+
+                if isinstance(
+                    exc,
+                    (ToolLockedDenied, ToolPermissionDenied, ProtectedEffectBypassDenied),
+                ):
+                    reason = (
+                        "loto_refused"
+                        if isinstance(exc, ToolLockedDenied)
+                        else (
+                            "permission_denied"
+                            if isinstance(exc, ToolPermissionDenied)
+                            else "effect_bypass_denied"
+                        )
+                    )
+                    raise EffectDenied(
+                        reason,
+                        result=exc.result if isinstance(exc, ToolLockedDenied) else None,
+                        cause=None if isinstance(exc, ToolLockedDenied) else exc,
+                    ) from exc
             raise
 
         ctx.duration_ms = max(0.0, (time.perf_counter() - ctx.start_time) * 1000)
@@ -671,18 +768,200 @@ class ToolExecutor:
                 if inspect.isawaitable(observed):
                     await observed
             except Exception:
-                logger.warning(
-                    "AD-448: post-hook failed for tool=%s; returning the "
-                    "original tool result without retaining hook diagnostics",
-                    record_tool_id,
-                )
+                if ctx.operation_id is not None and ctx.attempt_id is not None:
+                    logger.warning(
+                        "Strict post-hook failed operation_id=%s attempt_id=%s "
+                        "operation=post_hook reason_code=observer_failed; "
+                        "returning the original tool result",
+                        ctx.operation_id,
+                        ctx.attempt_id,
+                    )
+                else:
+                    logger.warning(
+                        "AD-448: post-hook failed for tool=%s; returning the "
+                        "original tool result without retaining hook diagnostics",
+                        record_tool_id,
+                    )
 
         return result
+
+    async def _invoke_reserved_body(
+        self,
+        agent_id: str,
+        requested_tool_id: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> "ToolResult":
+        return await self._invoke_once(
+            agent_id, requested_tool_id, params, **kwargs
+        )
+
+    async def invoke(
+        self,
+        agent_id: str,
+        tool_id: str,
+        params: dict[str, Any],
+        *,
+        protected_logical_key: str | None = None,
+        protected_provider_call_id: str | None = None,
+        protected_operation_handle: "EffectOperationHandle | None" = None,
+        **kwargs: Any,
+    ) -> "ToolResult":
+        """Invoke directly in ordinary mode or cross the strict durable boundary."""
+        broker = self._effect_broker
+        if broker is None:
+            return await self._invoke_once(
+                agent_id, tool_id, params, **kwargs
+            )
+        from probos.execution.effect_broker import EffectDenied
+        from probos.execution.effect_types import EffectDispatchContext
+        from probos.tools.protocol import ToolPermission
+
+        resolved = self._resolve_tool_id(tool_id)
+        call_context = dict(kwargs.get("context") or {})
+        call_context.update(
+            {
+                "_protected_logical_key": protected_logical_key,
+                "_protected_provider_call_id": protected_provider_call_id,
+                "_protected_agent_id": agent_id,
+                "_protected_parameter_shape_sha256": digest_params(params)[
+                    "shape_sha256"
+                ],
+            }
+        )
+        required = kwargs.get("required", ToolPermission.READ)
+        concrete = None
+        if resolved is not None and self._registry is not None:
+            getter = getattr(self._registry, "get_tool", None)
+            if getter is not None:
+                concrete = getter(resolved)
+        prepare = getattr(broker, "prepare_tool", None)
+        if prepare is None:
+            request = broker.classify_tool(
+                resolved or tool_id, params, required, call_context
+            )
+        else:
+            request = await prepare(
+                tool=concrete,
+                requested_tool_id=tool_id,
+                resolved_tool_id=resolved or tool_id,
+                params=params,
+                context=call_context,
+            )
+
+        async def invoke_reserved(
+            dispatch: EffectDispatchContext,
+        ) -> "ToolResult":
+            if resolved is None:
+                refusal = await self._invoke_once(
+                    agent_id, tool_id, params, **kwargs
+                )
+                raise EffectDenied("ambiguous_tool_alias", result=refusal)
+            context = dict(kwargs.get("context") or {})
+            context.update(
+                {
+                    "_effect_operation_id": dispatch.operation_id,
+                    "_effect_attempt_id": dispatch.attempt_id,
+                    "_parent_operation_id": dispatch.parent_operation_id,
+                    "_effect_dispatch_context": dispatch,
+                }
+            )
+            if request.adapter_kind == "native_file":
+                context["_strict_native_target"] = request.target_identity
+                context["_strict_native_root"] = request.authorized_root
+            if dispatch.provider_idempotency_key is not None:
+                context["_provider_idempotency_key"] = (
+                    dispatch.provider_idempotency_key
+                )
+            reserved_kwargs = dict(kwargs)
+            reserved_kwargs["context"] = context
+            return await self._invoke_reserved_body(
+                agent_id,
+                resolved,
+                params,
+                effect_permit=dispatch.permit,
+                **reserved_kwargs,
+            )
+
+        dispatch_result = await broker.dispatch(
+            request,
+            invoke_reserved,
+            operation_handle=protected_operation_handle,
+        )
+        result = dispatch_result.result
+        if result is None:
+            from probos.tools.protocol import ToolResult
+
+            result = ToolResult(error=dispatch_result.reason_code)
+        metadata = dict(result.metadata)
+        metadata.update(
+            {
+                "operation_id": dispatch_result.operation_id,
+                "attempt_id": dispatch_result.attempt_id,
+                "effect_outcome": dispatch_result.outcome,
+                "duplicate_suppressed": dispatch_result.duplicate_suppressed,
+                "reason_code": dispatch_result.reason_code,
+                "retry_disposition": dispatch_result.retry_disposition,
+                "continuation_token": dispatch_result.continuation_token,
+                "adapter_kind": request.adapter_kind,
+            }
+        )
+        return replace(result, metadata=metadata)
+
+    async def match_operation_handle(
+        self,
+        *,
+        agent_id: str,
+        tool_id: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+        handles: tuple["EffectOperationHandle", ...],
+    ) -> "EffectOperationHandle | None":
+        broker = self._effect_broker
+        prepare = getattr(broker, "prepare_tool", None)
+        if broker is None or prepare is None:
+            return None
+        resolved = self._resolve_tool_id(tool_id)
+        if resolved is None:
+            return None
+        getter = getattr(self._registry, "get_tool", None)
+        tool = getter(resolved) if getter is not None else None
+        trusted = dict(context)
+        trusted.update(
+            {
+                "_protected_agent_id": agent_id,
+                "_protected_parameter_shape_sha256": digest_params(params)[
+                    "shape_sha256"
+                ],
+                "_protected_logical_key": "",
+            }
+        )
+        request = await prepare(
+            tool=tool,
+            requested_tool_id=tool_id,
+            resolved_tool_id=resolved,
+            params=params,
+            context=trusted,
+        )
+        matches = tuple(
+            handle for handle in handles
+            if handle.adapter_kind == request.adapter_kind
+            and hmac.compare_digest(
+                handle.continuation_token,
+                request.continuation_binding_sha256,
+            )
+        )
+        return matches[0] if len(matches) == 1 else None
 
     @property
     def hook_count(self) -> int:
         """Total registered hooks."""
         return len(self._pre_hooks) + len(self._post_hooks) + len(self._terminal_hooks)
+
+    @property
+    def protected_effects_enabled(self) -> bool:
+        """Whether this executor crosses the strict governed-effect boundary."""
+        return self._effect_broker is not None
 
 
 def _invocation(ctx: dict[str, Any]) -> InvocationContext | None:
@@ -728,6 +1007,104 @@ def _retained_metadata(
     return metadata
 
 
+def _strict_dispatch_context(ctx: dict[str, Any]) -> Any:
+    from probos.execution.effect_types import EffectDispatchContext
+
+    call_context = ctx.get("context")
+    if type(call_context) is not dict:
+        return None
+    dispatch = call_context.get("_effect_dispatch_context")
+    invocation = _invocation(ctx)
+    if (
+        type(dispatch) is not EffectDispatchContext
+        or invocation is None
+        or invocation.operation_id != dispatch.operation_id
+        or invocation.attempt_id != dispatch.attempt_id
+    ):
+        return None
+    return dispatch
+
+
+def _strict_parameter_names(params: object) -> tuple[str, ...]:
+    if type(params) is not dict:
+        return ()
+    return tuple(
+        sorted(
+            key[:64]
+            for key in islice(params, 10)
+            if type(key) is str
+        )
+    )
+
+
+def _strict_tool_record(
+    ctx: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    phase: Literal["started", "completed", "budget_exhausted"],
+    duration_ms: float | None = None,
+    is_error: bool | None = None,
+    error_code: str = "",
+    record_count: int | None = None,
+) -> dict[str, Any] | None:
+    from probos.execution.effect_adapters import StrictEffectPrivacyProjector
+    from probos.execution.effect_types import EffectCorrelation
+
+    dispatch = _strict_dispatch_context(ctx)
+    if dispatch is None:
+        return None
+    outcome = (
+        "failed"
+        if phase == "completed" and is_error
+        else "result"
+        if phase == "completed"
+        else "unknown"
+    )
+    if phase == "completed":
+        reason_code = (error_code or "tool_failed") if is_error else "tool_completed"
+    elif phase == "budget_exhausted":
+        reason_code = "tool_record_budget_exhausted"
+    else:
+        reason_code = "tool_started"
+    return StrictEffectPrivacyProjector().project_tool_record(
+        phase=phase,
+        correlation=EffectCorrelation(
+            dispatch.operation_id,
+            dispatch.attempt_id,
+            outcome,
+            reason_code,
+        ),
+        agent_id=str(metadata.get("agent_id") or ""),
+        tool_id=str(metadata.get("tool_id") or ""),
+        run_id=str(metadata.get("run_id") or ""),
+        thread_id=str(metadata.get("thread_id") or ""),
+        work_item_id=str(metadata.get("work_item_id") or ""),
+        invocation_id=str(metadata.get("invocation_id") or ""),
+        parameter_names=_strict_parameter_names(ctx.get("params")),
+        duration_ms=duration_ms,
+        is_error=is_error,
+        error_code=error_code,
+        record_count=record_count,
+    )
+
+
+def _owner_record_fields(
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+) -> tuple[str | None, str, str | None]:
+    if "operation_id" in payload:
+        return (
+            payload["agent_digest"],
+            payload["tool_digest"],
+            payload["operation_id"],
+        )
+    return (
+        metadata["agent_id"],
+        metadata["tool_id"],
+        metadata.get("invocation_id"),
+    )
+
+
 def _record_size(payload: dict[str, Any]) -> int:
     """Conservative serialized envelope, including EventLog-owned columns."""
     return _json_size({
@@ -764,11 +1141,20 @@ def _emit_record(
     try:
         emit_fn(event, payload)
     except Exception:
-        logger.warning(
-            "AD-1224: lifecycle event emission failed for tool=%s; durable "
-            "writes are independent and tool execution is unaffected",
-            payload["tool_id"],
-        )
+        if "operation_id" in payload and "attempt_id" in payload:
+            logger.warning(
+                "Strict lifecycle event emission failed operation_id=%s "
+                "attempt_id=%s operation=tool_record_emit "
+                "reason_code=event_emit_failed; durable writes remain independent",
+                payload["operation_id"],
+                payload["attempt_id"],
+            )
+        else:
+            logger.warning(
+                "AD-1224: lifecycle event emission failed for tool=%s; durable "
+                "writes are independent and tool execution is unaffected",
+                payload["tool_id"],
+            )
 
 
 def make_audit_hook(
@@ -799,18 +1185,33 @@ def make_audit_hook(
         if not math.isfinite(duration) or duration < 0:
             duration = 0.0
         category = classify_tool_error(result.error)
-        payload = _bounded_record({
-            **_retained_metadata(
-                ctx, catalog,
-                work_item_id_provider=work_item_id_provider if event_log is not None else None,
-            ),
-            "duration_ms": duration,
-            "timestamp": time.time(), "is_error": result.error is not None,
-            "error_category": category,
-        })
+        metadata = _retained_metadata(
+            ctx, catalog,
+            work_item_id_provider=work_item_id_provider if event_log is not None else None,
+        )
+        payload = _strict_tool_record(
+            ctx,
+            metadata,
+            phase="completed",
+            duration_ms=duration,
+            is_error=result.error is not None,
+            error_code=category or "",
+        )
+        if payload is None:
+            payload = _bounded_record({
+                **metadata,
+                "duration_ms": duration,
+                "timestamp": time.time(), "is_error": result.error is not None,
+                "error_category": category,
+            })
 
         def emit() -> None:
-            _emit_record(emit_fn, EventType.TOOL_INVOKED, {**payload, "error": category})
+            emitted = (
+                payload
+                if "operation_id" in payload
+                else {**payload, "error": category}
+            )
+            _emit_record(emit_fn, EventType.TOOL_INVOKED, emitted)
 
         if event_log is None:
             emit()
@@ -823,25 +1224,45 @@ def make_audit_hook(
             ):
                 invocation.record_completed = True
                 try:
+                    owner_agent, detail, correlation_id = _owner_record_fields(
+                        payload, metadata
+                    )
                     row_id = await event_log.log(
                         category=_TOOL_EVENT_CATEGORY,
                         event=EventType.TOOL_INVOKED.value,
-                        agent_id=payload["agent_id"], detail=payload["tool_id"],
-                        correlation_id=payload["invocation_id"],
+                        agent_id=owner_agent, detail=detail,
+                        correlation_id=correlation_id,
                         parent_event_id=invocation.start_event_id, data=payload,
                     )
                     if type(row_id) is not int or row_id <= 0:
+                        if "operation_id" in payload:
+                            logger.warning(
+                                "Strict completion was not acknowledged "
+                                "operation_id=%s attempt_id=%s "
+                                "operation=tool_record_complete "
+                                "reason_code=record_unacknowledged; the start remains incomplete",
+                                payload["operation_id"], payload["attempt_id"],
+                            )
+                        else:
+                            logger.warning(
+                                "AD-1224: completion was not acknowledged for tool=%s; "
+                                "the start remains an incomplete recorded attempt",
+                                payload["tool_id"],
+                            )
+                except Exception:
+                    if "operation_id" in payload:
                         logger.warning(
-                            "AD-1224: completion was not acknowledged for tool=%s; "
-                            "the start remains an incomplete recorded attempt",
+                            "Strict completion write failed operation_id=%s "
+                            "attempt_id=%s operation=tool_record_complete "
+                            "reason_code=record_write_failed; the result is preserved",
+                            payload["operation_id"], payload["attempt_id"],
+                        )
+                    else:
+                        logger.warning(
+                            "AD-1224: completion write failed for tool=%s; the "
+                            "original result is preserved and the start may be unpaired",
                             payload["tool_id"],
                         )
-                except Exception:
-                    logger.warning(
-                        "AD-1224: completion write failed for tool=%s; the "
-                        "original result is preserved and the start may be unpaired",
-                        payload["tool_id"],
-                    )
             emit()
 
         return complete()
@@ -887,37 +1308,58 @@ def make_start_hook(
         if announce:
             await _log_budget_exhausted(
                 event_log=event_log, emit_fn=emit_fn, metadata=metadata,
-                run_key=run_key, max_per_run=budget.max_per_run,
+                run_key=run_key, max_per_run=budget.max_per_run, ctx=ctx,
             )
         if not record:
             return True
-        payload = _bounded_record({
-            **metadata, "params": digest_params(ctx.get("params")),
-            "timestamp": time.time(),
-        })
+        payload = _strict_tool_record(ctx, metadata, phase="started")
+        if payload is None:
+            payload = _bounded_record({
+                **metadata, "params": digest_params(ctx.get("params")),
+                "timestamp": time.time(),
+            })
         if event_log is not None:
             try:
+                owner_agent, detail, correlation_id = _owner_record_fields(
+                    payload, metadata
+                )
                 row_id = await event_log.log(
                     category=_TOOL_EVENT_CATEGORY, event=EventType.TOOL_STARTED.value,
-                    agent_id=metadata["agent_id"], detail=metadata["tool_id"],
-                    correlation_id=metadata["invocation_id"], data=payload,
+                    agent_id=owner_agent, detail=detail,
+                    correlation_id=correlation_id, data=payload,
                 )
                 if type(row_id) is int and row_id > 0:
                     if invocation is not None:
                         invocation.start_event_id = row_id
                         invocation.record_durable = True
                 else:
+                    if "operation_id" in payload:
+                        logger.warning(
+                            "Strict start was not acknowledged operation_id=%s "
+                            "attempt_id=%s operation=tool_record_start "
+                            "reason_code=record_unacknowledged; execution continues",
+                            payload["operation_id"], payload["attempt_id"],
+                        )
+                    else:
+                        logger.warning(
+                            "AD-1224: start was not acknowledged for tool=%s; "
+                            "execution continues without a durable completion row",
+                            metadata["tool_id"],
+                        )
+            except Exception:
+                if "operation_id" in payload:
                     logger.warning(
-                        "AD-1224: start was not acknowledged for tool=%s; "
+                        "Strict start write failed operation_id=%s attempt_id=%s "
+                        "operation=tool_record_start reason_code=record_write_failed; "
                         "execution continues without a durable completion row",
+                        payload["operation_id"], payload["attempt_id"],
+                    )
+                else:
+                    logger.warning(
+                        "AD-1224: start write failed for tool=%s; execution continues "
+                        "without a durable completion row or retained error text",
                         metadata["tool_id"],
                     )
-            except Exception:
-                logger.warning(
-                    "AD-1224: start write failed for tool=%s; execution continues "
-                    "without a durable completion row or retained error text",
-                    metadata["tool_id"],
-                )
         _emit_record(emit_fn, EventType.TOOL_STARTED, payload)
         return True
 
@@ -931,38 +1373,73 @@ async def _log_budget_exhausted(
     metadata: dict[str, Any],
     run_key: str,
     max_per_run: int,
+    ctx: dict[str, Any],
 ) -> None:
     from probos.events import EventType
 
-    payload = _bounded_record({
-        **metadata, "run_key": run_key, "max_records_per_run": max_per_run,
-        "reason": "disabled" if max_per_run == 0 else "exhausted",
-        "timestamp": time.time(),
-    })
-    logger.warning(
-        "AD-1224: recording pair cap %d reached for tool=%s; subsequent pairs "
-        "are omitted in this run while tool execution continues",
-        max_per_run, metadata["tool_id"],
+    payload = _strict_tool_record(
+        ctx,
+        metadata,
+        phase="budget_exhausted",
+        record_count=max_per_run,
     )
+    if payload is None:
+        payload = _bounded_record({
+            **metadata, "run_key": run_key, "max_records_per_run": max_per_run,
+            "reason": "disabled" if max_per_run == 0 else "exhausted",
+            "timestamp": time.time(),
+        })
+        logger.warning(
+            "AD-1224: recording pair cap %d reached for tool=%s; subsequent pairs "
+            "are omitted in this run while tool execution continues",
+            max_per_run, metadata["tool_id"],
+        )
+    else:
+        logger.warning(
+            "Strict recording pair cap reached operation_id=%s attempt_id=%s "
+            "operation=tool_record_budget reason_code=tool_record_budget_exhausted "
+            "record_count=%d; tool execution continues",
+            payload["operation_id"], payload["attempt_id"], payload["record_count"],
+        )
     if event_log is not None:
         try:
+            owner_agent, detail, correlation_id = _owner_record_fields(
+                payload, metadata
+            )
             row_id = await event_log.log(
                 category=_TOOL_EVENT_CATEGORY,
                 event=EventType.TOOL_RECORD_BUDGET_EXHAUSTED.value,
-                agent_id=metadata["agent_id"], detail=metadata["tool_id"], data=payload,
+                agent_id=owner_agent, detail=detail,
+                correlation_id=correlation_id, data=payload,
             )
             if type(row_id) is not int or row_id <= 0:
+                if "operation_id" in payload:
+                    logger.warning(
+                        "Strict budget explanation was not acknowledged "
+                        "operation_id=%s attempt_id=%s "
+                        "operation=tool_record_budget reason_code=record_unacknowledged",
+                        payload["operation_id"], payload["attempt_id"],
+                    )
+                else:
+                    logger.warning(
+                        "AD-1224: budget explanation was not acknowledged for "
+                        "tool=%s; omitted pairs remain unavailable in durable history",
+                        metadata["tool_id"],
+                    )
+        except Exception:
+            if "operation_id" in payload:
                 logger.warning(
-                    "AD-1224: budget explanation was not acknowledged for "
-                    "tool=%s; omitted pairs remain unavailable in durable history",
+                    "Strict budget explanation write failed operation_id=%s "
+                    "attempt_id=%s operation=tool_record_budget "
+                    "reason_code=record_write_failed; tool execution continues",
+                    payload["operation_id"], payload["attempt_id"],
+                )
+            else:
+                logger.warning(
+                    "AD-1224: budget explanation write failed for tool=%s; omitted "
+                    "pairs remain unavailable and tool execution continues",
                     metadata["tool_id"],
                 )
-        except Exception:
-            logger.warning(
-                "AD-1224: budget explanation write failed for tool=%s; omitted "
-                "pairs remain unavailable and tool execution continues",
-                metadata["tool_id"],
-            )
     _emit_record(emit_fn, EventType.TOOL_RECORD_BUDGET_EXHAUSTED, payload)
 
 

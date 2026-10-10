@@ -10,7 +10,10 @@ AD-423b's permission ladder.
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import os
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -36,6 +39,165 @@ logger = logging.getLogger(__name__)
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+_FILE_READ_ATTRIBUTES = 0x80
+_DELETE = 0x00010000
+_GENERIC_READ = 0x80000000
+_GENERIC_WRITE = 0x40000000
+_FILE_SHARE_READ = 0x1
+_FILE_SHARE_WRITE = 0x2
+_OPEN_EXISTING = 3
+_OPEN_ALWAYS = 4
+_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+
+
+class _FileTime(ctypes.Structure):
+    _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+
+
+class _ByHandleFileInformation(ctypes.Structure):
+    _fields_ = [
+        ("file_attributes", ctypes.c_uint32),
+        ("creation_time", _FileTime),
+        ("last_access_time", _FileTime),
+        ("last_write_time", _FileTime),
+        ("volume_serial_number", ctypes.c_uint32),
+        ("file_size_high", ctypes.c_uint32),
+        ("file_size_low", ctypes.c_uint32),
+        ("number_of_links", ctypes.c_uint32),
+        ("file_index_high", ctypes.c_uint32),
+        ("file_index_low", ctypes.c_uint32),
+    ]
+
+
+@contextmanager
+def _locked_native_target(
+    path: Path,
+    expected: Path,
+    root: Path,
+    *,
+    create: bool = True,
+) -> Any:
+    if os.name != "nt":
+        raise OSError("strict native file locking is unsupported on this platform")
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    )
+    create_file.restype = ctypes.c_void_p
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (ctypes.c_void_p,)
+    close_handle.restype = ctypes.c_int
+    get_attributes = kernel32.GetFileAttributesW
+    get_attributes.argtypes = (ctypes.c_wchar_p,)
+    get_attributes.restype = ctypes.c_uint32
+    get_file_information = kernel32.GetFileInformationByHandle
+    get_file_information.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(_ByHandleFileInformation),
+    )
+    get_file_information.restype = ctypes.c_int
+    get_final_path = kernel32.GetFinalPathNameByHandleW
+    get_final_path.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+    )
+    get_final_path.restype = ctypes.c_uint32
+
+    handles: list[int] = []
+    target_file: Any | None = None
+    try:
+        relative_parent = expected.parent.relative_to(root)
+        chain = [root]
+        current = root
+        for part in relative_parent.parts:
+            current /= part
+            chain.append(current)
+        for directory in chain:
+            attributes = get_attributes(str(directory))
+            if attributes == 0xFFFFFFFF:
+                raise OSError(ctypes.get_last_error(), "directory attributes unavailable")
+            if attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                raise OSError("strict native path crosses a reparse point")
+            handle = create_file(
+                str(directory),
+                _FILE_READ_ATTRIBUTES | _DELETE,
+                _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+                None,
+                _OPEN_EXISTING,
+                _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            )
+            if handle == _INVALID_HANDLE_VALUE:
+                raise OSError(ctypes.get_last_error(), "directory lock unavailable")
+            handles.append(int(handle))
+        if path.exists():
+            attributes = get_attributes(str(path))
+            if attributes == 0xFFFFFFFF:
+                raise OSError(ctypes.get_last_error(), "target attributes unavailable")
+            if attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                raise OSError("strict native target is a reparse point")
+        if path.resolve(strict=False) != expected:
+            raise OSError("strict native target changed after authorization")
+        target_handle = create_file(
+            str(expected),
+            _GENERIC_READ | _GENERIC_WRITE | _FILE_READ_ATTRIBUTES,
+            _FILE_SHARE_READ,
+            None,
+            _OPEN_ALWAYS if create else _OPEN_EXISTING,
+            _FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        if target_handle == _INVALID_HANDLE_VALUE:
+            error = ctypes.get_last_error()
+            if not create and error in {2, 3}:
+                raise FileNotFoundError(error, "target file not found", str(expected))
+            raise OSError(error, "target handle unavailable")
+        information = _ByHandleFileInformation()
+        if not get_file_information(target_handle, ctypes.byref(information)):
+            close_handle(target_handle)
+            raise OSError(ctypes.get_last_error(), "target identity unavailable")
+        if information.file_attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+            close_handle(target_handle)
+            raise OSError("strict native target is a reparse point")
+        if information.number_of_links != 1:
+            close_handle(target_handle)
+            raise OSError("strict native target has multiple filesystem links")
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_final_path(target_handle, buffer, len(buffer), 0)
+        if length == 0 or length >= len(buffer):
+            close_handle(target_handle)
+            raise OSError(ctypes.get_last_error(), "target final path unavailable")
+        final_path = buffer.value
+        if final_path.startswith("\\\\?\\"):
+            final_path = final_path[4:]
+        if Path(final_path).resolve(strict=False) != expected:
+            close_handle(target_handle)
+            raise OSError("opened target does not match authorized target")
+        fd = msvcrt.open_osfhandle(
+            int(target_handle), os.O_RDWR | os.O_BINARY
+        )
+        target_file = os.fdopen(fd, "r+b")
+        yield target_file
+    finally:
+        if target_file is not None:
+            target_file.close()
+        for handle in reversed(handles):
+            close_handle(handle)
 
 
 def _resolve_path(path: str) -> Path:
@@ -180,12 +342,25 @@ class ListFilesTool:
             return ToolResult(output={"files": matches})
         except Exception as exc:
             logger.warning(
-                "AD-544 ListFilesTool failed for pattern=%s path=%s: %s",
-                pattern,
-                path,
-                exc,
+                (
+                    "Strict list-files operation failed reason_code=consumer_failed "
+                    "error_type=%s; returning a bounded error"
+                    if (context or {}).get("_effect_dispatch_context") is not None
+                    else "AD-544 ListFilesTool failed for pattern=%s path=%s: %s"
+                ),
+                *(
+                    (type(exc).__name__,)
+                    if (context or {}).get("_effect_dispatch_context") is not None
+                    else (pattern, path, exc)
+                ),
             )
-            return ToolResult(error=f"list_files failed: {exc}")
+            return ToolResult(
+                error=(
+                    "list_files_failed"
+                    if (context or {}).get("_effect_dispatch_context") is not None
+                    else f"list_files failed: {exc}"
+                )
+            )
 
 
 class CodebaseQueryTool:
@@ -539,6 +714,10 @@ class WriteFileTool:
     def __init__(self, runtime: "ProbOSRuntime") -> None:
         self._runtime = runtime
 
+    def resolve_effect_target(self, path: str) -> Path:
+        """Resolve the concrete path this tool will write."""
+        return _resolve_path(path).resolve(strict=False)
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
@@ -553,12 +732,37 @@ class WriteFileTool:
             return ToolResult(error="content is required")
         try:
             target = _resolve_path(str(path))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(str(content), encoding="utf-8")
+            strict_target = (context or {}).get("_strict_native_target")
+            strict_root = (context or {}).get("_strict_native_root")
+            if (
+                isinstance(strict_target, str)
+                and strict_target
+                and isinstance(strict_root, str)
+                and strict_root
+            ):
+                with _locked_native_target(
+                    target,
+                    Path(strict_target),
+                    Path(strict_root),
+                ) as locked:
+                    locked.seek(0)
+                    locked.write(str(content).encode("utf-8"))
+                    locked.truncate()
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(str(content), encoding="utf-8")
             return ToolResult(
                 output={"path": str(path), "bytes_written": len(str(content))}
             )
         except Exception as exc:
+            if (context or {}).get("_effect_dispatch_context") is not None:
+                logger.warning(
+                    "Strict native file write failed operation=write_file "
+                    "reason_code=consumer_failed error_type=%s; broker will "
+                    "retain correlation",
+                    type(exc).__name__,
+                )
+                raise
             logger.warning("AD-544 WriteFileTool failed for path=%s: %s", path, exc)
             return ToolResult(error=f"write_file failed: {exc}")
 
@@ -588,6 +792,10 @@ class EditFileTool:
     def __init__(self, runtime: "ProbOSRuntime") -> None:
         self._runtime = runtime
 
+    def resolve_effect_target(self, path: str) -> Path:
+        """Resolve the concrete path this tool will edit."""
+        return _resolve_path(path).resolve(strict=False)
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
@@ -602,25 +810,73 @@ class EditFileTool:
         if old is None or new is None:
             return ToolResult(error="old_text and new_text are required")
         replace_all = bool(params.get("replace_all", False))
+        mutation_started = False
         try:
             target = _resolve_path(str(path))
-            text = target.read_text(encoding="utf-8")
-            if replace_all:
-                count = text.count(str(old))
-                updated = text.replace(str(old), str(new))
-            else:
-                if str(old) not in text:
-                    count = 0
-                    updated = text
+            strict_target = (context or {}).get("_strict_native_target")
+            strict_root = (context or {}).get("_strict_native_root")
+            lock = (
+                _locked_native_target(
+                    target,
+                    Path(strict_target),
+                    Path(strict_root),
+                    create=False,
+                )
+                if (
+                    isinstance(strict_target, str)
+                    and strict_target
+                    and isinstance(strict_root, str)
+                    and strict_root
+                )
+                else nullcontext(target)
+            )
+            with lock as locked:
+                if (
+                    isinstance(strict_target, str)
+                    and strict_target
+                    and isinstance(strict_root, str)
+                    and strict_root
+                ):
+                    locked.seek(0)
+                    text = locked.read().decode("utf-8")
                 else:
-                    updated = text.replace(str(old), str(new), 1)
-                    count = 1
-            if count > 0:
-                target.write_text(updated, encoding="utf-8")
+                    text = locked.read_text(encoding="utf-8")
+                if replace_all:
+                    count = text.count(str(old))
+                    updated = text.replace(str(old), str(new))
+                else:
+                    if str(old) not in text:
+                        count = 0
+                        updated = text
+                    else:
+                        updated = text.replace(str(old), str(new), 1)
+                        count = 1
+                if count > 0:
+                    if (
+                        isinstance(strict_target, str)
+                        and strict_target
+                        and isinstance(strict_root, str)
+                        and strict_root
+                    ):
+                        locked.seek(0)
+                        mutation_started = True
+                        locked.write(updated.encode("utf-8"))
+                        locked.truncate()
+                    else:
+                        mutation_started = True
+                        locked.write_text(updated, encoding="utf-8")
             return ToolResult(output={"replacements": count, "path": str(path)})
         except FileNotFoundError:
+            if (context or {}).get("_effect_dispatch_context") is not None:
+                if mutation_started:
+                    raise
+                from probos.execution.effect_broker import NoEffectFailure
+
+                raise NoEffectFailure("file_not_found")
             return ToolResult(error=f"File not found: {path}")
         except Exception as exc:
+            if (context or {}).get("_effect_dispatch_context") is not None:
+                raise
             return ToolResult(error=f"edit_file failed: {exc}")
 
 

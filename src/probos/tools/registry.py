@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from probos.events import EventType
 from probos.tools.protocol import (
@@ -25,6 +25,12 @@ from probos.tools.protocol import (
     _PERMISSION_ORDER,
     permission_includes,
 )
+
+if TYPE_CHECKING:
+    from probos.execution.effect_types import (
+        EffectPermit,
+        GovernedEffectBrokerProtocol,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,14 @@ class ToolPermissionDenied(Exception):
         super().__init__(self.reason)
 
 
+class ToolLockedDenied(Exception):
+    """Structured pre-effect LOTO refusal for protected dispatch."""
+
+    def __init__(self, result: ToolResult) -> None:
+        self.result = result
+        super().__init__("tool_loto_refused")
+
+
 class ToolRegistry:
     """Ship's Computer service — manages the runtime catalog of available tools.
 
@@ -98,6 +112,8 @@ class ToolRegistry:
 
         # AD-423b: Event callback (late-bound)
         self._emit_event: Callable[..., Any] | None = None
+        self._effect_broker: "GovernedEffectBrokerProtocol | None" = None
+        self._effect_broker_required = False
 
     def set_permission_store(self, store: Any) -> None:
         """Late-bind the ToolPermissionStore (available after startup)."""
@@ -106,6 +122,17 @@ class ToolRegistry:
     def set_event_callback(self, fn: Callable[..., Any]) -> None:
         """Late-bind event emission."""
         self._emit_event = fn
+
+    def arm_effect_broker(
+        self, broker: "GovernedEffectBrokerProtocol"
+    ) -> None:
+        """Require one-use broker permits before concrete tool invocation."""
+        self._effect_broker = broker
+        self._effect_broker_required = True
+
+    def disarm_effect_broker(self) -> None:
+        """Stop strict permit enforcement during ordered shutdown."""
+        self._effect_broker = None
 
     def register(
         self,
@@ -322,6 +349,7 @@ class ToolRegistry:
         agent_rank: str = "ensign",
         agent_types: list[str] | None = None,
         context: dict[str, Any] | None = None,
+        effect_permit: "EffectPermit | None" = None,
     ) -> ToolResult:
         """Permission-checked tool invocation.
 
@@ -329,6 +357,20 @@ class ToolRegistry:
         Raises ToolPermissionDenied if permission insufficient.
         Returns ToolResult with error if tool is locked by another agent.
         """
+        if self._effect_broker_required and self._effect_broker is None:
+            from probos.execution.effect_broker import ProtectedEffectBypassDenied
+
+            raise ProtectedEffectBypassDenied("effect_broker_closed")
+        if self._effect_broker is not None:
+            if effect_permit is None:
+                from probos.execution.effect_broker import (
+                    ProtectedEffectBypassDenied,
+                )
+
+                raise ProtectedEffectBypassDenied(
+                    "protected_effect_permit_missing"
+                )
+
         # #1214: existence BEFORE permission. This ran the other way round, so
         # an unregistered id resolved to NONE, failed the permission check, and
         # raised ToolPermissionDenied -- the agent was told it lacked access to
@@ -367,10 +409,28 @@ class ToolRegistry:
                         tool_id,
                     )
             if self._emit_event:
-                self._emit_event(EventType.TOOL_PERMISSION_DENIED, {
-                    "agent_id": agent_id, "tool_id": tool_id,
-                    "required": required.value, "held": held.value,
-                })
+                if effect_permit is not None:
+                    from probos.execution.effect_adapters import (
+                        StrictEffectPrivacyProjector,
+                    )
+                    from probos.execution.effect_types import EffectPermit
+
+                    if type(effect_permit) is not EffectPermit:
+                        raise ValueError("strict permission event requires a permit")
+                    payload = StrictEffectPrivacyProjector().project_permission_denial(
+                        permit=effect_permit,
+                        agent_id=agent_id,
+                        tool_id=tool_id,
+                        required=required,
+                        held=held,
+                        parameter_names=_bounded_parameter_names(params),
+                    )
+                else:
+                    payload = {
+                        "agent_id": agent_id, "tool_id": tool_id,
+                        "required": required.value, "held": held.value,
+                    }
+                self._emit_event(EventType.TOOL_PERMISSION_DENIED, payload)
             raise ToolPermissionDenied(agent_id, tool_id, required, held)
 
         # LOTO check
@@ -380,14 +440,23 @@ class ToolRegistry:
             if lock.get("timeout") and (time.monotonic() - lock["locked_at"]) > lock["timeout"]:
                 self._release_lock(tool_id)
             else:
-                return ToolResult(
+                refused = ToolResult(
                     error=f"Tool '{tool_id}' is locked by {lock['holder']}: {lock.get('reason', '')}",
                 )
+                if effect_permit is not None:
+                    raise ToolLockedDenied(refused)
+                return refused
 
         # Invoke
         tool = self.get_tool(tool_id)
         if not tool:
             return ToolResult(error=f"Tool '{tool_id}' not found")
+
+        if self._effect_broker is not None:
+            assert effect_permit is not None
+            await self._effect_broker.start_permitted_effect(
+                effect_permit, tool_id
+            )
 
         ctx = dict(context or {})
         ctx["agent_id"] = agent_id

@@ -175,6 +175,8 @@ class HttpTransport:
         except httpx.HTTPError as exc:
             raise MCPProtocolError(
                 f"transport error: {exc}", reason="transport_error",
+                delivery_state="sent_unconfirmed",
+                request_id=str(payload.get("id") or ""),
             ) from exc
 
         # Capture response headers (response-direction metadata) and self-manage
@@ -187,6 +189,8 @@ class HttpTransport:
         if response.status_code >= 400:
             raise MCPProtocolError(
                 f"HTTP {response.status_code} from {url}", reason="http_error",
+                delivery_state="completed",
+                request_id=str(payload.get("id") or ""),
             )
 
         # BF-746: Streamable HTTP lets the server answer with EITHER a JSON body
@@ -198,14 +202,24 @@ class HttpTransport:
         # text/event-stream, body framed `event: message\ndata: {...}`.
         ctype = (self.last_metadata.get("content-type") or "").split(";")[0].strip()
         if ctype.lower() == "text/event-stream":
-            return _json_rpc_from_sse(
-                response.text, url=url, expect_id=payload.get("id")
-            )
+            try:
+                return _json_rpc_from_sse(
+                    response.text, url=url, expect_id=payload.get("id")
+                )
+            except MCPProtocolError as exc:
+                exc.delivery_state = "sent_unconfirmed"
+                exc.request_id = str(payload.get("id") or "")
+                raise
 
         try:
             return response.json()
         except json.JSONDecodeError as exc:
-            raise MCPProtocolError(f"bad JSON from {url}", reason="bad_json") from exc
+            raise MCPProtocolError(
+                f"bad JSON from {url}",
+                reason="bad_json",
+                delivery_state="completed",
+                request_id=str(payload.get("id") or ""),
+            ) from exc
 
     async def close(self) -> None:
         http = self._http
@@ -307,6 +321,8 @@ class StdioTransport:
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             raise MCPProtocolError(
                 f"stdio write failed: {exc}", reason="closed_pipe",
+                delivery_state="sent_unconfirmed",
+                request_id=str(payload.get("id") or ""),
             ) from exc
 
         want_id = payload.get("id")
@@ -317,7 +333,13 @@ class StdioTransport:
         except asyncio.TimeoutError as exc:
             raise MCPProtocolError(
                 f"stdio timeout after {self._timeout}s", reason="timeout",
+                delivery_state="sent_unconfirmed",
+                request_id=str(want_id or ""),
             ) from exc
+        except MCPProtocolError as exc:
+            exc.delivery_state = "sent_unconfirmed"
+            exc.request_id = str(want_id or "")
+            raise
 
     async def _read_matching(self, want_id: Any) -> dict:
         proc = self._proc

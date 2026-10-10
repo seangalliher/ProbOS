@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from probos.identity import AgentIdentityRegistry
     from probos.identity_key_binding import IdentityKeyBinding
     from probos.execution.authority import ProtectedExecutionAuthorityProtocol
+    from probos.execution.effect_types import GovernedEffectBrokerProtocol
     from probos.initiative import InitiativeEngine
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.semantic import SemanticKnowledgeLayer
@@ -80,6 +81,7 @@ class InfrastructureResult:
     event_prune_task: asyncio.Task[None]
     identity_key_binding: "IdentityKeyBinding | None" = None  # AD-1196
     execution_authority: "ProtectedExecutionAuthorityProtocol | None" = None
+    effect_broker: "GovernedEffectBrokerProtocol | None" = None
 
 
 @dataclass

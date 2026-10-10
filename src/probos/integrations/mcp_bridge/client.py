@@ -13,12 +13,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from probos.events import EventType
 from probos.integrations.mcp_bridge.session import MCPSession
 
 if TYPE_CHECKING:
+    from probos.execution.effect_types import ExternalEffectContext
     from probos.integrations.mcp_bridge.transport import Transport
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,19 @@ logger = logging.getLogger(__name__)
 # string distinct from JSON-RPC; we send the MCP-protocol-version constant in
 # the initialize payload.
 JSONRPC_VERSION = "2.0"
+_STRICT_FAILURE_REASONS = frozenset(
+    {
+        "bad_envelope",
+        "bad_json",
+        "bad_result",
+        "client_closed",
+        "egress_blocked",
+        "http_error",
+        "rpc_error",
+        "session_closed",
+        "transport_error",
+    }
+)
 MCP_PROTOCOL_VERSION = "2025-03-26"
 
 
@@ -41,9 +55,20 @@ class MCPProtocolError(Exception):
     still works (``reason`` defaults to ``""``).
     """
 
-    def __init__(self, *args: Any, reason: str = "") -> None:
-        super().__init__(*args)
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str = "",
+        delivery_state: Literal[
+            "not_started", "sent_unconfirmed", "completed"
+        ] = "not_started",
+        request_id: str = "",
+    ) -> None:
+        super().__init__(message)
         self.reason = reason
+        self.delivery_state = delivery_state
+        self.request_id = request_id
 
 
 class MCPClient:
@@ -146,10 +171,17 @@ class MCPClient:
         tools = result.get("tools") or []
         return list(tools) if isinstance(tools, list) else []
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict:
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        effect_context: "ExternalEffectContext | None" = None,
+    ) -> dict:
         result = await self._call(
             method="tools/call",
             params={"name": name, "arguments": arguments},
+            effect_context=effect_context,
         )
         return result if isinstance(result, dict) else {}
 
@@ -169,7 +201,13 @@ class MCPClient:
         if transport is not None:
             await transport.close()
 
-    async def _call(self, *, method: str, params: dict[str, Any]) -> dict:
+    async def _call(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any],
+        effect_context: "ExternalEffectContext | None" = None,
+    ) -> dict:
         url = self._session.server_url
         request_id = uuid.uuid4().hex
         payload = {
@@ -190,61 +228,139 @@ class MCPClient:
                 reason=exc.reason or "transport_error",
                 url=url,
                 detail=str(exc),
+                effect_context=effect_context,
             )
+            if effect_context is not None and not exc.request_id:
+                exc.request_id = request_id
             raise
 
         if not isinstance(envelope, dict):
-            self._emit_failed(method, reason="bad_envelope", url=url)
-            raise MCPProtocolError(f"bad envelope from {url}", reason="bad_envelope")
+            self._emit_failed(
+                method,
+                reason="bad_envelope",
+                url=url,
+                effect_context=effect_context,
+            )
+            raise MCPProtocolError(
+                f"bad envelope from {url}",
+                reason="bad_envelope",
+                delivery_state="sent_unconfirmed",
+                request_id=request_id,
+            )
 
         if "error" in envelope:
             err = envelope.get("error") or {}
             msg = err.get("message", "unknown") if isinstance(err, dict) else "unknown"
             code = err.get("code", 0) if isinstance(err, dict) else 0
-            self._emit_failed(method, reason="rpc_error", url=url, detail=f"{code}:{msg}")
-            raise MCPProtocolError(f"rpc error {code}: {msg}", reason="rpc_error")
+            self._emit_failed(
+                method,
+                reason="rpc_error",
+                url=url,
+                detail=f"{code}:{msg}",
+                effect_context=effect_context,
+            )
+            raise MCPProtocolError(
+                f"rpc error {code}: {msg}",
+                reason="rpc_error",
+                delivery_state="completed",
+                request_id=request_id,
+            )
 
         result = envelope.get("result")
         if not isinstance(result, dict):
-            self._emit_failed(method, reason="bad_result", url=url)
-            raise MCPProtocolError(f"bad result from {url}", reason="bad_result")
+            self._emit_failed(
+                method,
+                reason="bad_result",
+                url=url,
+                effect_context=effect_context,
+            )
+            raise MCPProtocolError(
+                f"bad result from {url}",
+                reason="bad_result",
+                delivery_state="sent_unconfirmed",
+                request_id=request_id,
+            )
 
-        self._emit_invoke(method, url=url)
+        self._emit_invoke(method, url=url, effect_context=effect_context)
         return result
 
-    def _emit_invoke(self, method: str, *, url: str) -> None:
-        if self._emit_event is None:
-            return
-        try:
-            self._emit_event(
-                EventType.MCP_BRIDGE_INVOKE,
-                {
-                    "server_url": url,
-                    "method": method,
-                    "session_id": self._session.session_id,
-                },
-            )
-        except Exception:
-            logger.warning(
-                "AD-449: MCP_BRIDGE_INVOKE emit failed (method=%s)", method, exc_info=True,
-            )
-
-    def _emit_failed(
-        self, method: str, *, reason: str, url: str, detail: str = "",
+    def _emit_invoke(
+        self,
+        method: str,
+        *,
+        url: str,
+        effect_context: "ExternalEffectContext | None" = None,
     ) -> None:
         if self._emit_event is None:
             return
         try:
-            self._emit_event(
-                EventType.MCP_BRIDGE_FAILED,
+            payload = (
                 {
+                    "operation_id": effect_context.operation_id,
+                    "attempt_id": effect_context.attempt_id,
+                    "reason": "completed",
+                }
+                if effect_context is not None
+                else {
+                    "server_url": url,
+                    "method": method,
+                    "session_id": self._session.session_id,
+                }
+            )
+            self._emit_event(EventType.MCP_BRIDGE_INVOKE, payload)
+        except Exception:
+            if effect_context is not None:
+                logger.warning(
+                    "Strict MCP invoke event failed operation=mcp_event "
+                    "reason_code=event_emit_failed; continuing without the event"
+                )
+            else:
+                logger.warning(
+                    "AD-449: MCP_BRIDGE_INVOKE emit failed (method=%s)",
+                    method,
+                    exc_info=True,
+                )
+
+    def _emit_failed(
+        self,
+        method: str,
+        *,
+        reason: str,
+        url: str,
+        detail: str = "",
+        effect_context: "ExternalEffectContext | None" = None,
+    ) -> None:
+        if self._emit_event is None:
+            return
+        try:
+            payload = (
+                {
+                    "operation_id": effect_context.operation_id,
+                    "attempt_id": effect_context.attempt_id,
+                    "reason": (
+                        reason
+                        if reason in _STRICT_FAILURE_REASONS
+                        else "provider_error"
+                    ),
+                }
+                if effect_context is not None
+                else {
                     "server_url": url,
                     "method": method,
                     "reason": reason,
                     "detail": detail[:200] if detail else "",
-                },
+                }
             )
+            self._emit_event(EventType.MCP_BRIDGE_FAILED, payload)
         except Exception:
-            logger.warning(
-                "AD-449: MCP_BRIDGE_FAILED emit failed (method=%s)", method, exc_info=True,
-            )
+            if effect_context is not None:
+                logger.warning(
+                    "Strict MCP failure event failed operation=mcp_event "
+                    "reason_code=event_emit_failed; continuing without the event"
+                )
+            else:
+                logger.warning(
+                    "AD-449: MCP_BRIDGE_FAILED emit failed (method=%s)",
+                    method,
+                    exc_info=True,
+                )

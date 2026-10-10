@@ -175,9 +175,9 @@ flags:
   kind: security-control
   profiles: []
   evidence_to_promote: tests/test_ad1315_protected_execution_authority.py::test_runtime_strict_phase_one_exposes_and_closes_authority
-    -- the armed strict profile constructs and starts the runtime-owned authority during
-    Phase 1, exposes its protocol, and closes the witness; the default config test proves
-    the ordinary profile remains off.
+    -- the armed strict profile constructs and starts the runtime-owned authority during Phase
+    1, exposes its protocol, and closes the witness; the default config test proves the ordinary
+    profile remains off.
   external_dependency: null
   requires: []
   conflicts_with: []
@@ -540,7 +540,8 @@ flags:
   profiles: []
   evidence_to_promote: tests/test_ad1325_economic_calibration.py tests/test_ad1325_completion_chain.py
     tests/test_ad1325_boundaries.py -- immutable raw completion and price evidence crosses
-    the producer/store/consumer seam while OFF preserves schema, rows, requests and result shapes.
+    the producer/store/consumer seam while OFF preserves schema, rows, requests and result
+    shapes.
   external_dependency: null
   requires:
   - workforce.enabled
@@ -805,6 +806,7 @@ unclassified_flags:
 - proactive_cognitive.enabled
 - proactive_scan.calendar.include_declined
 - proactive_scan.inbox.unread_only
+- protected_execution.effect_broker_enabled
 - qa.auto_remove_on_total_fail
 - qualification.peer_observation_certification_required
 - query_planner.enabled

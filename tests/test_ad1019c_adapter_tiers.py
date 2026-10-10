@@ -23,6 +23,7 @@ from probos.cognitive.agentic_dispatch import (
 )
 from probos.integrations.mcp_bridge import MCPBridge
 from probos.integrations.mcp_bridge.risk import McpToolRisk, McpToolRiskStore
+from probos.execution.effect_types import EffectDispatchContext, EffectPermit
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "echo_mcp_server.py")
 
@@ -189,6 +190,157 @@ async def test_confirm_tier_with_token_invokes():
     assert result.metadata["mcp_tier"] == "confirm"
     assert recorder.calls[0]["tier"] == "confirm"
     await bridge.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("risk", "extra"),
+    [
+        ("open", {}),
+        ("confirm", {MCP_CONFIRM_TOKEN_KEY: "ok"}),
+    ],
+)
+async def test_strict_open_and_confirm_forward_exact_episode_correlation(
+    risk: str,
+    extra: dict[str, str],
+) -> None:
+    class _StrictBridge:
+        async def invoke(self, *_: Any, **kwargs: Any) -> dict[str, Any]:
+            context = kwargs["effect_context"]
+            assert context.operation_id == "operation-exact"
+            assert context.attempt_id == "attempt-exact"
+            assert context.provider_idempotency_key is None
+            return {"ok": True}
+
+    recorder = _EpisodeRecorder()
+    tool = _make_tool(
+        _StrictBridge(),  # type: ignore[arg-type]
+        risk=risk,
+        episode_writer=recorder,
+    )
+    dispatch = EffectDispatchContext(
+        operation_id="operation-exact",
+        attempt_id="attempt-exact",
+        permit=EffectPermit(
+            operation_id="operation-exact",
+            attempt_id="attempt-exact",
+            tool_id_sha256="0" * 64,
+            generation=1,
+            nonce="nonce",
+            signature="signature",
+        ),
+        provider_idempotency_key=None,
+        parent_operation_id=None,
+    )
+
+    result = await tool.invoke(
+        {"q": "strict"},
+        {
+            "agent_id": "slot-agent",
+            "_effect_dispatch_context": dispatch,
+            **extra,
+        },
+    )
+
+    assert result.error is None
+    assert recorder.calls[0]["effect_context"].operation_id == "operation-exact"
+    assert recorder.calls[0]["effect_context"].attempt_id == "attempt-exact"
+
+
+@pytest.mark.asyncio
+async def test_strict_episode_writer_failure_logs_only_safe_correlation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _StrictBridge:
+        async def invoke(self, *_: Any, **__: Any) -> dict[str, Any]:
+            return {"ok": True}
+
+    async def failing_writer(**_: Any) -> None:
+        raise RuntimeError("SENTINEL_EPISODE_EXCEPTION")
+
+    tool = _make_tool(
+        _StrictBridge(),  # type: ignore[arg-type]
+        episode_writer=failing_writer,
+        tool_name="SENTINEL_EPISODE_TOOL",
+    )
+    dispatch = EffectDispatchContext(
+        operation_id="operation-exact",
+        attempt_id="attempt-exact",
+        permit=EffectPermit(
+            operation_id="operation-exact",
+            attempt_id="attempt-exact",
+            tool_id_sha256="0" * 64,
+            generation=1,
+            nonce="nonce",
+            signature="signature",
+        ),
+        provider_idempotency_key=None,
+        parent_operation_id=None,
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await tool.invoke(
+            {},
+            {
+                "agent_id": "SENTINEL_SLOT_AGENT",
+                "_effect_dispatch_context": dispatch,
+            },
+        )
+
+    assert result.error is None
+    assert "operation_id=operation-exact" in caplog.text
+    assert "attempt_id=attempt-exact" in caplog.text
+    assert "reason_code=episode_write_failed" in caplog.text
+    for sentinel in (
+        "SENTINEL_EPISODE_EXCEPTION",
+        "SENTINEL_EPISODE_TOOL",
+        "SENTINEL_SLOT_AGENT",
+    ):
+        assert sentinel not in caplog.text
+    assert not any(record.exc_info for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_strict_invalid_risk_log_omits_raw_config_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def consensus(*_: Any, **__: Any) -> dict[str, Any]:
+        return {"committed": False, "consensus": None}
+
+    tool = _make_tool(
+        MCPBridge(),
+        risk="SENTINEL_PRIVATE_RISK",
+        consensus_invoke=consensus,
+    )
+    dispatch = EffectDispatchContext(
+        operation_id="operation-exact",
+        attempt_id="attempt-exact",
+        permit=EffectPermit(
+            operation_id="operation-exact",
+            attempt_id="attempt-exact",
+            tool_id_sha256="0" * 64,
+            generation=1,
+            nonce="nonce",
+            signature="signature",
+        ),
+        provider_idempotency_key=None,
+        parent_operation_id=None,
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await tool.invoke(
+            {},
+            {
+                "agent_id": "slot-agent",
+                "_effect_dispatch_context": dispatch,
+            },
+        )
+
+    assert result.error == "consensus_blocked"
+    assert "operation_id=operation-exact" in caplog.text
+    assert "attempt_id=attempt-exact" in caplog.text
+    assert "reason_code=risk_tier_invalid" in caplog.text
+    assert "SENTINEL_PRIVATE_RISK" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #

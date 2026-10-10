@@ -1544,7 +1544,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1322 adds dm_agentic.economic_judgment (1827 -> 1828); its nested
     # leaves are covered by canonical_dump_leaves rather than this model-field count.
     # AD-1315 adds ProtectedExecutionConfig and its eight fields (1828 -> 1836).
-    assert counts["field_definitions"] == 1836  # AD-1206 intentionally adds github_repository.
+    # AD-1316 adds three default-off effect-broker controls (1836 -> 1839).
+    assert counts["field_definitions"] == 1839  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 305
     assert len(baseline["models"]) == 226

@@ -309,7 +309,7 @@ def _child_values(layout: dict[str, Any], marker: Path) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_start_fresh_database_creates_schema_v1(tmp_path: Path) -> None:
+async def test_start_fresh_database_creates_schema_v2(tmp_path: Path) -> None:
     layout, authority = await _started_authority(tmp_path)
     await authority.stop()
     with sqlite3.connect(layout["db"]) as db:
@@ -337,12 +337,20 @@ async def test_start_fresh_database_creates_schema_v1(tmp_path: Path) -> None:
         "manifest_sources",
         "admission_attempts",
         "execution_grants",
+        "effect_operations",
+        "effect_attempts",
+        "effect_transitions",
     }.issubset(tables)
     assert {
         "idx_admission_attempts_outcome_requested",
         "idx_execution_grants_generation_state",
+        "idx_effect_operations_state_updated",
+        "idx_effect_operations_generation_state",
+        "idx_effect_attempts_operation_ordinal",
+        "idx_effect_attempts_state_lease",
+        "idx_effect_transitions_operation_transition",
     }.issubset(indexes)
-    assert (version, journal, synchronous) == (1, "wal", 2)
+    assert (version, journal, synchronous) == (2, "wal", 2)
     assert host
 
 
@@ -357,7 +365,7 @@ async def test_start_version_zero_migrates_seeded_database(tmp_path: Path) -> No
     await authority.stop()
     with sqlite3.connect(layout["db"]) as db:
         assert db.execute("SELECT value FROM seed").fetchone() == ("preserved",)
-        assert db.execute("PRAGMA user_version").fetchone() == (1,)
+        assert db.execute("PRAGMA user_version").fetchone() == (2,)
 
 
 @pytest.mark.asyncio
@@ -1771,6 +1779,7 @@ async def test_runtime_strict_phase_one_exposes_and_closes_authority(
             profile="strict",
             protected_installation_root=str(package_root),
             policy_path=str(policy),
+            effect_broker_enabled=True,
         )
     )
     try:
@@ -1786,6 +1795,8 @@ async def test_runtime_strict_phase_one_exposes_and_closes_authority(
             runtime_session_id="runtime-phase-one",
         )
         assert result.execution_authority is not None
+        assert result.effect_broker is not None
+        await result.effect_broker.stop()
         await result.execution_authority.stop()  # type: ignore[attr-defined]
         result.event_prune_task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import math
@@ -16,7 +17,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal
 from types import CoroutineType
-from typing import Any, Awaitable, Callable, ClassVar, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, ClassVar, Literal, Mapping, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
@@ -53,6 +54,11 @@ from probos.tools.executor import recording_identity, tool_recording_scope
 from probos.tools.protocol import ToolResultPresentation
 from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
+from probos.execution.effect_types import (
+    EffectCorrelation,
+    EffectOperationHandle,
+)
+from probos.execution.effect_adapters import StrictEffectPrivacyProjector
 
 if TYPE_CHECKING:
     from probos.cognitive.economic_judgment_organ import InnerLoopHook
@@ -60,6 +66,29 @@ if TYPE_CHECKING:
     from probos.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
+
+_STRICT_TRACE_PARAMETER_NAMES = frozenset(
+    {
+        "arguments",
+        "body",
+        "code",
+        "command",
+        "content",
+        "headers",
+        "intent",
+        "method",
+        "new_text",
+        "old_text",
+        "params",
+        "path",
+        "replace_all",
+        "task",
+        "timeout",
+        "tool_name",
+        "url",
+        "working_directory",
+    }
+)
 
 # Defaults — AD-549 NativeSWEHarnessConfig overrides at runtime.
 AGENTIC_MAX_ITERATIONS = 25
@@ -290,6 +319,28 @@ def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int,
     return head, budget - head
 
 
+def _join_strict_trace_results(
+    tool_calls: list[ToolCallRequest],
+    tool_results: list[ToolCallResult],
+) -> list[tuple[ToolCallRequest, int, ToolCallResult | None]]:
+    result_queues: dict[str, list[ToolCallResult]] = {}
+    for result in tool_results:
+        if type(result.id) is str:
+            result_queues.setdefault(result.id, []).append(result)
+    occurrences: dict[str, int] = {}
+    joined: list[tuple[ToolCallRequest, int, ToolCallResult | None]] = []
+    for call in tool_calls:
+        if type(call.id) is not str:
+            joined.append((call, 0, None))
+            continue
+        occurrence = occurrences.get(call.id, 0)
+        occurrences[call.id] = occurrence + 1
+        matches = result_queues.get(call.id, [])
+        result = matches[occurrence] if occurrence < len(matches) else None
+        joined.append((call, occurrence, result))
+    return joined
+
+
 def build_tool_trace_payload(
     tool_calls: list[ToolCallRequest],
     tool_results: list[ToolCallResult],
@@ -297,6 +348,10 @@ def build_tool_trace_payload(
     output_max_chars: int,
     blob_max_bytes: int,
     resolve_tool_id: Callable[[str], str] | None = None,
+    privacy_profile: Literal["ordinary", "strict"] = "ordinary",
+    effect_correlations: Mapping[
+        str | tuple[str, int], EffectCorrelation
+    ] | None = None,
 ) -> tuple[list[dict[str, Any]], bytes]:
     """AD-1151: render the durable tool trace — call requests AND their outputs.
 
@@ -382,6 +437,62 @@ def build_tool_trace_payload(
     blob byte-identical to the pre-AD-1151 trace. ``blob_max_bytes == 0``
     disables the total cap.
     """
+    if privacy_profile == "strict":
+        strict_entries: list[dict[str, Any]] = []
+        privacy = StrictEffectPrivacyProjector()
+        call_counts: dict[str, int] = {}
+        result_counts: dict[str, int] = {}
+        for call in tool_calls:
+            if type(call.id) is str:
+                call_counts[call.id] = call_counts.get(call.id, 0) + 1
+        for result in tool_results:
+            if type(result.id) is str:
+                result_counts[result.id] = result_counts.get(result.id, 0) + 1
+        for call, occurrence, result in _join_strict_trace_results(
+            tool_calls, tool_results
+        ):
+            correlation = None
+            if result is not None:
+                correlation = privacy.sanitize_diagnostic_correlation(
+                    getattr(result, "effect_correlation", None)
+                )
+                if correlation is None and type(call.id) is str:
+                    fallback = effect_correlations or {}
+                    correlation = privacy.sanitize_diagnostic_correlation(
+                        fallback.get((call.id, occurrence))
+                    )
+                    if (
+                        correlation is None
+                        and call_counts.get(call.id) == 1
+                        and result_counts.get(call.id) == 1
+                    ):
+                        correlation = privacy.sanitize_diagnostic_correlation(
+                            fallback.get(call.id)
+                        )
+            strict_entries.append(
+                {
+                    "tool_digest": privacy.tool_digest(str(call.name)),
+                    "operation_id": correlation.operation_id if correlation else "",
+                    "attempt_id": correlation.attempt_id if correlation else "",
+                    "outcome": correlation.outcome if correlation else "failed",
+                    "reason_code": (
+                        correlation.reason_code
+                        if correlation else "correlation_unavailable"
+                    ),
+                    "output_type": (
+                        type(result.output).__name__ if result is not None else "none"
+                    ),
+                    "output_size": (
+                        len(result.output)
+                        if result is not None and isinstance(result.output, str)
+                        else 0
+                    ),
+                    "is_error": result.is_error if result is not None else True,
+                }
+            )
+        strict_blob = _encode_tool_trace(strict_entries)
+        return strict_entries, strict_blob
+
     results_by_id: dict[str, ToolCallResult] = {}
     if output_max_chars > 0:
         for tcr in tool_results:
@@ -1237,6 +1348,7 @@ class AgenticLoop:
             if self._awareness is not None and token_budget is not None else 0
         )
         self._tasks: set[asyncio.Task] = set()
+        self._effect_handles: dict[str, EffectOperationHandle] = {}
         # AD-1322: the economic organ's inner-loop hook. None => every hook call
         # below is skipped and the loop is the AD-545 loop verbatim.
         self._inner_hook = inner_loop_hook
@@ -1346,7 +1458,20 @@ class AgenticLoop:
         """Run with one recording budget, restoring the parent scope on every exit."""
         if repository_instructions is not None and type(repository_instructions) is not InstructionObservation:
             raise TypeError("agentic repository guidance requires a typed observation")
-        run_id = uuid.uuid4().hex if self._event_correlation_enabled else None
+        delegated_run_id = context.get("_delegated_child_run_id")
+        run_id = (
+            delegated_run_id
+            if (
+                getattr(self._executor, "protected_effects_enabled", False)
+                and isinstance(delegated_run_id, str)
+                and delegated_run_id
+            )
+            else uuid.uuid4().hex
+            if self._event_correlation_enabled
+            or getattr(self._executor, "protected_effects_enabled", False)
+            else None
+        )
+        self._effect_handles.clear()
         run_context = {
             **context,
             "_agentic_run_id": (
@@ -1455,18 +1580,33 @@ class AgenticLoop:
             if iteration + redo_calls > iteration_ceiling:
                 break
             result.iterations = iteration + redo_calls
+            strict_events = getattr(
+                self._executor, "protected_effects_enabled", False
+            )
             self._fire_event(
                 "AGENTIC_LOOP_ITERATION",
-                {
-                    "agent_id": agent_id,
-                    "iteration": iteration,
-                    "tools_used_so_far": list(tool_id_history),
-                    "total_tokens": result.total_tokens,
-                    **(
-                        {"run_id": run_id, "token_source": result.token_source}
-                        if run_id is not None else {}
-                    ),
-                },
+                (
+                    StrictEffectPrivacyProjector().project_iteration(
+                        agent_id=agent_id,
+                        run_id=run_id,
+                        iteration=iteration,
+                        tool_ids=tuple(tool_id_history),
+                        total_tokens=result.total_tokens,
+                        token_source=result.token_source,
+                    )
+                    if strict_events
+                    else {
+                        "agent_id": agent_id,
+                        "iteration": iteration,
+                        "tools_used_so_far": list(tool_id_history),
+                        "total_tokens": result.total_tokens,
+                        **(
+                            {"run_id": run_id, "token_source": result.token_source}
+                            if run_id is not None else {}
+                        ),
+                    }
+                ),
+                strict=strict_events,
             )
 
             effective_system_prompt = append_repository_instructions(system_prompt, instruction_state)
@@ -2176,6 +2316,10 @@ class AgenticLoop:
                         # into a result. Siblings are already done at this
                         # point, so re-raising strands nothing.
                         raise outcome
+                    if getattr(
+                        self._executor, "protected_effects_enabled", False
+                    ):
+                        raise outcome
                     # Defence in depth: ``_execute_one_tool`` already converts
                     # every Exception itself, so reaching here means the failure
                     # came from outside its instrumented window (scheduler or
@@ -2241,6 +2385,8 @@ class AgenticLoop:
             }
             if run_id is not None else {}
         )
+        effect_correlation: dict[str, str] = {}
+        trace_correlation: EffectCorrelation | None = None
         if run_id is not None:
             thread_id = context.get("thread_id")
             if type(thread_id) is str and thread_id.strip() and len(thread_id) <= 128:
@@ -2250,14 +2396,28 @@ class AgenticLoop:
                     thread_bytes = b""
                 if 1 <= len(thread_bytes) <= 128:
                     correlation["thread_id"] = thread_id
+        strict = getattr(self._executor, "protected_effects_enabled", False)
+        privacy = StrictEffectPrivacyProjector()
         self._fire_event(
             "AGENTIC_TOOL_CALL_STARTED",
-            {
-                "agent_id": agent_id,
-                "tool_id": use.tool_call.name,
-                "iteration": iteration,
-                **correlation,
-            },
+            (
+                privacy.project_event(
+                    phase="started",
+                    tool_id=use.tool_call.name,
+                    iteration=iteration,
+                    correlation=None,
+                    is_error=None,
+                    duration_ms=None,
+                )
+                if strict
+                else {
+                    "agent_id": agent_id,
+                    "tool_id": use.tool_call.name,
+                    "iteration": iteration,
+                    **correlation,
+                }
+            ),
+            strict=strict,
         )
         start = time.perf_counter()
         try:
@@ -2307,10 +2467,82 @@ class AgenticLoop:
                 agent_id=str(context.get("agent_id", "")),
                 tool_id=use.tool_call.name,
                 params=use.tool_call.arguments,
+                **(
+                    {
+                        "protected_logical_key": uuid.uuid4().hex,
+                        "protected_provider_call_id": use.tool_call.id,
+                        "protected_operation_handle": (
+                            await self._executor.match_operation_handle(
+                                agent_id=str(context.get("agent_id", "")),
+                                tool_id=use.tool_call.name,
+                                params=use.tool_call.arguments,
+                                context=invocation_context,
+                                handles=tuple(self._effect_handles.values()),
+                            )
+                        ),
+                    }
+                    if getattr(
+                        self._executor, "protected_effects_enabled", False
+                    )
+                    else {}
+                ),
                 agent_department=context.get("department", "engineering"),
                 agent_rank=context.get("rank", "ensign"),
                 context=invocation_context,
             )
+            if getattr(self._executor, "protected_effects_enabled", False):
+                operation_id = raw_result.metadata.get("operation_id")
+                attempt_id = raw_result.metadata.get("attempt_id")
+                if isinstance(operation_id, str) and isinstance(attempt_id, str):
+                    effect_correlation = {
+                        "effect_operation_id": operation_id,
+                        "effect_attempt_id": attempt_id,
+                    }
+                    continuation = raw_result.metadata.get("continuation_token")
+                    adapter_kind = raw_result.metadata.get("adapter_kind")
+                    outcome = raw_result.metadata.get("effect_outcome")
+                    reason_code = raw_result.metadata.get("reason_code")
+                    disposition = raw_result.metadata.get("retry_disposition")
+                    if (
+                        outcome in {
+                            "result", "denied", "failed", "cancelled", "unknown"
+                        }
+                        and isinstance(reason_code, str)
+                        and reason_code
+                    ):
+                        trace_correlation = EffectCorrelation(
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                            outcome=outcome,
+                            reason_code=reason_code,
+                        )
+                    if (
+                        isinstance(continuation, str)
+                        and continuation
+                        and adapter_kind in {
+                            "native_file", "code_backend", "mcp", "mesh",
+                            "browser", "delegation", "opaque",
+                        }
+                        and outcome in {
+                            "result", "denied", "failed", "cancelled", "unknown"
+                        }
+                        and disposition in {
+                            "terminal", "reconcile",
+                            "retry_same_operation", "blocked",
+                        }
+                    ):
+                        handle = EffectOperationHandle(
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                            adapter_kind=adapter_kind,
+                            continuation_token=continuation,
+                            outcome=outcome,
+                            retry_disposition=disposition,
+                        )
+                        if disposition == "terminal":
+                            self._effect_handles.pop(operation_id, None)
+                        else:
+                            self._effect_handles[operation_id] = handle
             duration_ms = (time.perf_counter() - start) * 1000.0
             if fault_capture is not None:
                 try:
@@ -2358,31 +2590,98 @@ class AgenticLoop:
                     max_chars=self._tool_result_max_chars,
                 )
         except Exception as exc:
-            duration_ms = (time.perf_counter() - start) * 1000.0
-            logger.warning(
-                "AD-545: Tool execution raised for tool=%s agent=%s; "
-                "feeding error result back to LLM",
-                use.tool_call.name,
-                agent_id[:12],
-                exc_info=True,
+            failure = getattr(exc, "failure", None)
+            unresolved_handle = getattr(exc, "operation_handle", None)
+            if isinstance(unresolved_handle, EffectOperationHandle):
+                self._effect_handles[
+                    unresolved_handle.operation_id
+                ] = unresolved_handle
+            trusted_correlation = getattr(
+                exc,
+                "effect_correlation",
+                getattr(failure, "correlation", None),
             )
+            if strict and not isinstance(trusted_correlation, EffectCorrelation):
+                raise
+            operation_id = (
+                trusted_correlation.operation_id
+                if isinstance(trusted_correlation, EffectCorrelation)
+                else getattr(exc, "effect_operation_id", None)
+            )
+            attempt_id = (
+                trusted_correlation.attempt_id
+                if isinstance(trusted_correlation, EffectCorrelation)
+                else getattr(exc, "effect_attempt_id", None)
+            )
+            if isinstance(operation_id, str) and isinstance(attempt_id, str):
+                effect_correlation = {
+                    "effect_operation_id": operation_id,
+                    "effect_attempt_id": attempt_id,
+                }
+                if isinstance(trusted_correlation, EffectCorrelation):
+                    trace_correlation = trusted_correlation
+            duration_ms = (time.perf_counter() - start) * 1000.0
+            if strict:
+                logger.warning(
+                    "Strict tool execution failed operation_id=%s attempt_id=%s "
+                    "outcome=%s operation=agentic_tool reason_code=%s; "
+                    "returning the correlated bounded error",
+                    trusted_correlation.operation_id,
+                    trusted_correlation.attempt_id,
+                    trusted_correlation.outcome,
+                    trusted_correlation.reason_code,
+                )
+            else:
+                logger.warning(
+                    "AD-545: Tool execution raised for tool=%s agent=%s; "
+                    "feeding error result back to LLM",
+                    use.tool_call.name,
+                    agent_id[:12],
+                    exc_info=True,
+                )
             tcr = ToolCallResult(
                 id=use.tool_call.id,
-                output=f"Tool {use.tool_call.name} failed: {exc}",
+                output=(
+                    getattr(failure, "error_code", "tool_execution_failed")
+                    if strict
+                    else f"Tool {use.tool_call.name} failed: {exc}"
+                ),
                 is_error=True,
                 duration_ms=duration_ms,
             )
-        self._fire_event(
-            "AGENTIC_TOOL_CALL_COMPLETED",
-            {
-                "agent_id": agent_id,
-                "tool_id": use.tool_call.name,
-                "iteration": iteration,
-                "is_error": tcr.is_error,
-                "duration_ms": tcr.duration_ms,
-                **correlation,
-            },
-        )
+        if trace_correlation is not None:
+            if strict and tcr.is_error:
+                tcr = replace(
+                    tcr,
+                    output=privacy.project_refusal(correlation=trace_correlation),
+                )
+            object.__setattr__(tcr, "effect_correlation", trace_correlation)
+        if not strict or trace_correlation is not None:
+            self._fire_event(
+                "AGENTIC_TOOL_CALL_COMPLETED",
+                (
+                    privacy.project_event(
+                        phase="completed",
+                        tool_id=use.tool_call.name,
+                        iteration=iteration,
+                        correlation=trace_correlation,
+                        is_error=tcr.is_error,
+                        duration_ms=tcr.duration_ms,
+                    )
+                    if strict
+                    else {
+                        "agent_id": agent_id,
+                        "tool_id": use.tool_call.name,
+                        "iteration": iteration,
+                        "is_error": tcr.is_error,
+                        "duration_ms": tcr.duration_ms,
+                        **correlation,
+                        **effect_correlation,
+                    }
+                ),
+                strict=strict,
+                strict_correlation=trace_correlation,
+            )
         return tcr
 
     def _bound_tool_output(self, output: str) -> str:
@@ -2394,7 +2693,14 @@ class AgenticLoop:
             tail_chars=self._tool_result_tail_chars,
         )
 
-    def _fire_event(self, event_name: str, payload: dict[str, Any]) -> None:
+    def _fire_event(
+        self,
+        event_name: str,
+        payload: dict[str, Any],
+        *,
+        strict: bool = False,
+        strict_correlation: EffectCorrelation | None = None,
+    ) -> None:
         """AD-545: Fire-and-forget event emission. Mirrors TRANSPORTER_DECOMPOSED pattern."""
         if self._emit is None:
             return
@@ -2406,12 +2712,53 @@ class AgenticLoop:
                 return
             maybe_coro = self._emit(event_type, payload)
             if asyncio.iscoroutine(maybe_coro):
-                task = asyncio.create_task(maybe_coro)
+                if strict:
+                    async def guarded_emit() -> None:
+                        try:
+                            await maybe_coro
+                        except Exception:
+                            if strict_correlation is not None:
+                                logger.debug(
+                                    "Strict event emission failed operation_id=%s "
+                                    "attempt_id=%s outcome=%s "
+                                    "operation=agentic_event "
+                                    "reason_code=event_emit_failed; "
+                                    "continuing without the event",
+                                    strict_correlation.operation_id,
+                                    strict_correlation.attempt_id,
+                                    strict_correlation.outcome,
+                                )
+                            else:
+                                logger.debug(
+                                    "Strict event emission failed "
+                                    "operation=agentic_event "
+                                    "reason_code=event_emit_failed; "
+                                    "continuing without the event"
+                                )
+
+                    task = asyncio.create_task(guarded_emit())
+                else:
+                    task = asyncio.create_task(maybe_coro)
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
         except Exception:
-            logger.debug(
-                "AD-545: Event emission failed for %s; degrading silently",
-                event_name,
-                exc_info=True,
-            )
+            if strict and strict_correlation is not None:
+                logger.debug(
+                    "Strict event emission failed operation_id=%s attempt_id=%s "
+                    "outcome=%s operation=agentic_event "
+                    "reason_code=event_emit_failed; continuing without the event",
+                    strict_correlation.operation_id,
+                    strict_correlation.attempt_id,
+                    strict_correlation.outcome,
+                )
+            elif strict:
+                logger.debug(
+                    "Strict event emission failed operation=agentic_event "
+                    "reason_code=event_emit_failed; continuing without the event"
+                )
+            else:
+                logger.debug(
+                    "AD-545: Event emission failed for %s; degrading silently",
+                    event_name,
+                    exc_info=True,
+                )
