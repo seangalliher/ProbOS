@@ -20,7 +20,7 @@ When given a build prompt (a file path to a markdown spec in `prompts/`):
 1. **Read the entire prompt** before writing any code. Understand all sections.
 2. **Summarize** what you will build — list the `###` section headers and confirm your understanding.
 3. **Implement each `###` section in order.** After each logical step, run the targeted tests specified in the prompt.
-4. **After all sections are complete**, run the full test suite.
+4. **After all sections are complete**, run the focused tests for every changed slice and its immediate consumers. Do NOT run the full repository suite — it runs once per issue or batch, after the Diff Reviewer, through the canonical wrapper (see Test Commands).
 5. **Post-build section audit**: Verify every `###` section header in the build prompt maps to implemented code. If a section has no corresponding change, that is an omission — report it before marking complete.
 6. **Update trackers** as specified in the prompt's Tracking section.
 7. **Report test count** at each step.
@@ -156,12 +156,15 @@ ProbOS's tracker files (`PROGRESS.md`, `roadmap.md`, `DECISIONS.md`) are append-
 # Targeted tests (run after each step)
 d:/ProbOS/.venv/Scripts/pytest.exe tests/test_<specific>.py -v
 
-# Full suite (run after all steps complete)
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -x -q
-
-# Parallel full suite
-d:/ProbOS/.venv/Scripts/pytest.exe tests/ -n auto
 ```
+
+**Do not run the full suite yourself.** The broad gate runs once per issue (or per batch of up to three issues), after the Diff Reviewer's findings are repaired and the reviewed tree is committed locally, before push:
+
+```bash
+d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave>
+```
+
+Run it only when the caller explicitly asks you to. Never invoke `pytest tests/` directly for the broad gate.
 
 These paths are for the Captain's Windows checkout. In another environment (Linux, a cloud session), use the interpreter that environment actually has and say which one you used.
 

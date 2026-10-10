@@ -224,11 +224,11 @@ The current canonical example is `prompts/BUILDER-EXECUTION-PLAN.md`.
 
 | Mode | Command | When |
 |---|---|---|
-| Full parallel gate | `pytest tests/ -q -n 4 --dist=loadfile` | Pre-flight, inter-prompt, post-sweep |
-| Focused per-prompt gate | `pytest tests/test_<adNNN>_*.py -v -n 0` | Single-file verification |
+| Focused per-prompt gate | `pytest tests/test_<adNNN>_*.py -v -n 0` | After each build step: the changed slice and its immediate consumers |
 | Triage gate | `pytest tests/<failing_file> -q -n 0` | Confirm parallel failure is environmental |
+| Broad gate | `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave>` | Once per issue or batch (up to three issues): after the Diff Reviewer's findings are repaired and the reviewed tree is committed locally, before push |
 
-`-n auto` is forbidden until AD-682 lands.
+Do not prescribe the full suite after every prompt, and never invoke `pytest tests/` directly for the broad gate. `-n auto` is forbidden until AD-682 lands.
 
 ## Tracking and Audit
 
