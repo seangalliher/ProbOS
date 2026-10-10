@@ -29,6 +29,10 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "AD-1192 owned-step operation receipts, immutable evidence, "
             "proposal/observation records, retired-child lineage and "
             "effect-attempt claims in workforce.db are retained indefinitely. "
+            "AD-1325 completion_value_resolutions, "
+            "completion_calibration_outcomes, completion_calibration_stats and "
+            "completion_calibration_spends are likewise retained indefinitely "
+            "as immutable raw calibration evidence and raw Beta counts. "
             "Deleting or compacting these identities could replay execution, "
             "forget retired membership or lose an uncertain effect. Control, "
             "proposal manifests/acknowledgements and individual journal records "
@@ -46,7 +50,13 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "Merging these two databases would make that escape path "
             "impossible, because SQLite takes one writer per file. Any future "
             "consolidation proposal must answer this note first."
+            " The four AD-1325 calibration tables are companion tables in this "
+            "same store, created only when "
+            "dm_agentic.economic_judgment.completion_calibration.enabled is "
+            "true and owned by WorkItemStore's existing connection and "
+            "lifecycle."
         ),
+        companion_schema_modules=("probos.economic_calibration",),
     ),
     StoreDeclaration(
         id="fault.issue-filings",

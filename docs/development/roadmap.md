@@ -11,6 +11,8 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 > pass flipped 27 entries that had drifted (AD-486, 510, 512, 520, 526, 543-549, 562,
 > 566, 567, 569, 571, 595, 597, 599, 601, 604, 607).
 
+**AD-1325 OPEN (2026-10-09) / [#1480](https://github.com/seangalliher/ProbOS/issues/1480):** default-off completion calibration with immutable spend snapshots, raw Beta counts and descriptive-only mature evidence. Depends on AD-1320 / #1475, AD-1321 / #1476, AD-1322 / #1477 and AD-1324 / #1479. See DECISIONS.md AD-1325.
+
 **AD-1324 OPEN (2026-10-09) / [#1479](https://github.com/seangalliher/ProbOS/issues/1479):** agent-chosen model tier per step under a deterministic stakes floor; default OFF. See DECISIONS.md AD-1324.
 
 **AD-1323 OPEN (2026-10-09) / [#1478](https://github.com/seangalliher/ProbOS/issues/1478):** costed continue ask with a durable single-use extension permit; default OFF. See DECISIONS.md AD-1323.

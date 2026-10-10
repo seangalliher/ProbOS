@@ -176,6 +176,7 @@ class TierDecision:
     floor_bound: bool
     outcome: str  # call_site | agent_choice | floor_raise | floor_redo
     requested: str
+    evidence: str | None = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,8 @@ class TierChoiceController:
         self._last_stakes: str | None = None
         self._last_floor: str | None = None
         self._counts: dict[str, int] = {}
+        self._accepted_reason: str | None = None
+        self._accepted_evidence: str | None = None
 
     # -- reading -------------------------------------------------------------
     def _read_case(self) -> tuple[str | None, frozenset[str]]:
@@ -334,10 +337,25 @@ class TierChoiceController:
         floor_bound = self._ledger.floor_bound(first_step=self._step == 0)
         base = self._agent_tier
         if floor is not None and floor_bound and TIER_RANK[floor] > TIER_RANK[base]:
-            decision = TierDecision(floor, None, floor, floor_bound, "floor_raise", base)
+            decision = TierDecision(floor, None, floor, floor_bound, "floor_raise", base, None)
         else:
-            outcome = "call_site" if base == self._call_site and self._up_moves == 0 else "agent_choice"
-            decision = TierDecision(base, None, floor, floor_bound, outcome, base)
+            outcome = (
+                "call_site"
+                if base == self._call_site and self._up_moves == 0
+                else "agent_choice"
+            )
+            decision = TierDecision(
+                base,
+                self._accepted_reason,
+                floor,
+                floor_bound,
+                outcome,
+                base,
+                self._accepted_evidence,
+            )
+            if self._accepted_reason is not None:
+                self._accepted_reason = None
+                self._accepted_evidence = None
         self._step += 1
         self._record(decision.outcome, requested=decision.requested, effective=decision.tier, floor=decision.floor)
         return decision
@@ -354,7 +372,10 @@ class TierChoiceController:
         decided = (not tool_names) or (not all_tier1) or any(self._ledger.is_verification(n) for n in tool_names)
         if not decided:
             return None
-        redo = TierDecision(decision.floor, None, decision.floor, True, "floor_redo", decision.tier)
+        redo = TierDecision(
+            decision.floor, None, decision.floor, True, "floor_redo",
+            decision.tier, "sub_floor_response",
+        )
         self._record(redo.outcome, requested=redo.requested, effective=redo.tier, floor=redo.floor, evidence="sub_floor_response")
         return redo
 
@@ -388,6 +409,8 @@ class TierChoiceController:
         self._agent_tier = tier
         if up:
             self._up_moves += 1
+        self._accepted_reason = directive.reason
+        self._accepted_evidence = evidence or None
         self._record(
             "agent_choice", requested=tier, effective=self._agent_tier, floor=decision.floor,
             evidence=evidence, model_reason=directive.reason,

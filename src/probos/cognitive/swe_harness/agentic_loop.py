@@ -731,18 +731,47 @@ def build_tool_result_messages(
     ]
 
 
+def _execution_response_charge(
+    response: Any,
+    *,
+    messages: list[Any],
+    budgeted: bool,
+) -> tuple[int, str]:
+    reported = int(getattr(response, "tokens_used", 0) or 0)
+    if reported < 0 and budgeted:
+        reported = 0
+    if reported == 0 and _completion_is_non_empty(response):
+        return _estimate_call_tokens(messages, response), TOKEN_SOURCE_ESTIMATED
+    return reported, TOKEN_SOURCE_MEASURED
+
+
+def _calibration_response_charge(
+    response: Any,
+    *,
+    execution_charge: int,
+    execution_source: str,
+    budgeted: bool,
+) -> tuple[int, str]:
+    reported = int(getattr(response, "tokens_used", 0) or 0)
+    if reported < 0 and not budgeted:
+        return 0, "unavailable"
+    return execution_charge, execution_source
+
+
 def _charge_discarded_response(
     response: Any, *, messages: list[Any], result: "AgenticResult", token_sources: set[str],
-) -> None:
+) -> tuple[int, str]:
     """AD-1324: charge a response discarded by a floor re-issue; spend is spend."""
-    reported = max(int(getattr(response, "tokens_used", 0) or 0), 0)
-    if reported == 0 and _completion_is_non_empty(response):
-        reported = _estimate_call_tokens(messages, response)
-        token_sources.add(TOKEN_SOURCE_ESTIMATED)
+    charged = max(int(getattr(response, "tokens_used", 0) or 0), 0)
+    if charged == 0 and _completion_is_non_empty(response):
+        charged = _estimate_call_tokens(messages, response)
+        source = TOKEN_SOURCE_ESTIMATED
     else:
-        token_sources.add(TOKEN_SOURCE_MEASURED)
-    result.total_tokens += reported
+        source = TOKEN_SOURCE_MEASURED
+    token_sources.add(source)
+    result.total_tokens += charged
     result.token_source = _token_source_label(token_sources)
+    return charged, source
 
 
 def _estimate_context_tokens(messages: list[dict]) -> int:
@@ -922,6 +951,7 @@ class AgenticResult:
     # Class-level default so dataclass fields()/asdict() (and the unarmed golden) are unchanged;
     # the armed terminal sets it per instance.
     tier_stop: ClassVar[TierStop | None] = None
+    completion_spends: ClassVar[tuple[Any, ...]] = ()
 
 
 _BUDGET_SOURCE_WORDING: dict[str, str] = {
@@ -1079,6 +1109,37 @@ class PresentedToolResult:
     output: str
 
 
+def _observe_completion_spend(
+    observer: Any,
+    result: AgenticResult,
+    spends: list[Any],
+    request: LLMRequest,
+    response: LLMResponse,
+    decision: Any,
+    charged_total: int,
+    charged_source: str,
+) -> None:
+    if observer is None:
+        return
+    try:
+        snapshot = observer(
+            request,
+            response,
+            decision,
+            charged_total,
+            charged_source,
+        )
+        if snapshot is not None:
+            spends.append(snapshot)
+            result.completion_spends = tuple(spends)
+    except Exception:
+        logger.warning(
+            "AD-1325: completion spend observation failed; the model response "
+            "continues with no snapshot for this call",
+            exc_info=True,
+        )
+
+
 class AgenticLoop:
     """Multi-turn agentic tool-calling loop."""
 
@@ -1109,6 +1170,9 @@ class AgenticLoop:
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
         inner_loop_hook: "InnerLoopHook | None" = None,
         tier_controller: Any | None = None,
+        spend_observer: Callable[
+            [LLMRequest, LLMResponse, Any, int, str], Any
+        ] | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1176,6 +1240,7 @@ class AgenticLoop:
         # AD-1322: the economic organ's inner-loop hook. None => every hook call
         # below is skipped and the loop is the AD-545 loop verbatim.
         self._inner_hook = inner_loop_hook
+        self._spend_observer = spend_observer
         # AD-1324: the agent-chosen-tier controller. None => every tier branch below
         # is an ``is None`` check and the loop is unchanged.
         self._tier_ctl = (
@@ -1253,6 +1318,7 @@ class AgenticLoop:
                 "AD-1322: inner-loop hook note_charge failed; the loop result is unchanged",
                 exc_info=True,
             )
+
     def _hook_close(self, close_reason: str, final_tokens: int | None) -> None:
         """AD-1322: close the hook's pass with the loop's authoritative total charge."""
         hook = self._inner_hook
@@ -1351,6 +1417,9 @@ class AgenticLoop:
     and other lifecycle exceptions propagate to the run owner.
         """
         result = AgenticResult()
+        completion_spends: list[Any] = []
+        if self._spend_observer is not None:
+            result.completion_spends = ()
         instruction_state = repository_instructions or InstructionObservation()
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
@@ -1535,7 +1604,6 @@ class AgenticLoop:
                 result.stopped_reason = "error"
                 result.error = str(exc)
                 return result
-
             if self._tier_ctl is not None:
                 # AD-1324: strip the directive FIRST -- before token accounting, the
                 # presentation ack, the budget-stop text, blocks and history -- so it
@@ -1545,8 +1613,18 @@ class AgenticLoop:
                 response, tier_parse = split_directive(response)
                 verdict, redo, _guard_refusal = self._tier_ctl.guard(tier_decision, response)
                 if verdict is GuardVerdict.REDO:
-                    _charge_discarded_response(
+                    discarded_charge, discarded_source = _charge_discarded_response(
                         response, messages=messages, result=result, token_sources=token_sources,
+                    )
+                    _observe_completion_spend(
+                        self._spend_observer,
+                        result,
+                        completion_spends,
+                        req,
+                        response,
+                        tier_decision,
+                        discarded_charge,
+                        discarded_source,
                     )
                     self._hook_note_charge(result.total_tokens)
                     if self._budget is not None and result.total_tokens >= self._budget:
@@ -1564,7 +1642,11 @@ class AgenticLoop:
                             redo, req.id,
                         )
                     req = replace(
-                        req, tier=redo.tier, min_tier=redo.floor, tier_choice_reason="floor_redo",
+                        req,
+                        id=uuid.uuid4().hex,
+                        tier=redo.tier,
+                        min_tier=redo.floor,
+                        tier_choice_reason="floor_redo",
                     )
                     _admit = self._tier_ctl.admit(req, redo)
                     if _admit is not None:
@@ -1598,8 +1680,8 @@ class AgenticLoop:
             # rather than inferred. Otherwise, when the provider does report
             # usage this branch is byte-identical to the AD-545 accumulation it
             # replaced.
-            reported = int(response.tokens_used or 0)
-            if reported < 0 and self._budget is not None:
+            raw_reported = int(response.tokens_used or 0)
+            if raw_reported < 0 and self._budget is not None:
                 logger.warning(
                     "AD-1190: provider model=%r on tier=%s reported negative token "
                     "usage (%d) at iteration=%d agent=%s; treating it as absent, so "
@@ -1608,13 +1690,16 @@ class AgenticLoop:
                     "being refunded.",
                     getattr(response, "model", ""),
                     self._tier,
-                    reported,
+                    raw_reported,
                     iteration,
                     agent_id[:12],
                 )
-                reported = 0
-            if reported == 0 and _completion_is_non_empty(response):
-                charged = _estimate_call_tokens(messages, response)
+            charged, charged_source = _execution_response_charge(
+                response,
+                messages=messages,
+                budgeted=self._budget is not None,
+            )
+            if charged_source == TOKEN_SOURCE_ESTIMATED:
                 token_sources.add(TOKEN_SOURCE_ESTIMATED)
                 if estimated_iterations == 0:
                     # Once per run, not once per iteration: the provider either
@@ -1634,11 +1719,27 @@ class AgenticLoop:
                         TOKEN_SOURCE_ESTIMATED,
                     )
                 estimated_iterations += 1
-            else:
-                charged = reported
+            elif charged_source == TOKEN_SOURCE_MEASURED:
                 token_sources.add(TOKEN_SOURCE_MEASURED)
             result.total_tokens += charged
-            result.token_source = _token_source_label(token_sources)
+            if token_sources:
+                result.token_source = _token_source_label(token_sources)
+            calibration_charge, calibration_source = _calibration_response_charge(
+                response,
+                execution_charge=charged,
+                execution_source=charged_source,
+                budgeted=self._budget is not None,
+            )
+            _observe_completion_spend(
+                self._spend_observer,
+                result,
+                completion_spends,
+                req,
+                response,
+                tier_decision,
+                calibration_charge,
+                calibration_source,
+            )
             self._hook_note_charge(result.total_tokens)
             if self._awareness is not None:
                 self._awareness.observe_response(

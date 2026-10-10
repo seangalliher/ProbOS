@@ -1780,6 +1780,17 @@ AD-1322: opt-in economic judgment organ for agentic turns.
 | `repeat_attempt_threshold` | `int` | `3` | ≥ 2 | AD-1322: consecutive failed calls of one tool with identical arguments that raise the overspend signal. |
 | `rising_spend_steps` | `int` | `2` | ≥ 2 | AD-1322: consecutive model calls whose per-step token spend strictly grows that count as rising spend on a minor or moderate value item. |
 
+## `completion_calibration`
+
+Default-off completion cost and value calibration.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — | AD-1325: collect immutable completion cost and confirmed-value evidence. Default OFF: no sidecar schema, outcome identity or model-call observer. |
+| `cost_tolerance_percent` | `int` | `20` | ≥ 0, ≤ 100 | AD-1325: integer percentage tolerance used to classify completed token estimates. Must be between 0 and 100. |
+| `minimum_samples` | `int` | `8` | ≥ 1, ≤ 1000 | AD-1325: eligible completions required for an agent/work-type calibration summary. Must be between 1 and 1000. |
+| `feed_cost_estimates_to_organ` | `bool` | `False` | — | AD-1325: include an in-memory calibrated token estimate in descriptive economic context when mature evidence exists. Default OFF. |
+
 ## `continue_extension`
 
 AD-1323: ask for a costed one-time token extension instead of stopping.

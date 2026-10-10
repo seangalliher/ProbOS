@@ -9,11 +9,13 @@ than documentation: an inventory nobody can fail is prose.
 
 It runs in **both** directions.
 
-1.  **Declared -> exists.** Every ``owner_module``/``owner_symbol`` must resolve
-    by AST against ``src/probos/``. A declaration naming a deleted store fails.
+1.  **Declared -> exists.** Every ``owner_module``/``owner_symbol`` and every
+    ``companion_schema_modules`` entry must resolve by AST against
+    ``src/probos/``. A declaration naming a deleted owner or companion fails.
 2.  **Exists -> declared.** Any module that builds a ``CREATE TABLE`` and is
-    named by neither a declaration nor the reviewed baseline is an *undeclared
-    store* and fails. The existing inventory is frozen into
+    named by neither an ``owner_module`` nor ``companion_schema_modules`` nor
+    the reviewed baseline is an *undeclared store* and fails. The existing
+    inventory is frozen into
     ``docs/development/store-baseline.yaml``, so a **new** store fails on day
     one while the pre-existing ones do not.
 
@@ -35,18 +37,22 @@ Gating rules
     ``canonical_path``. A store has exactly one canonical spelling.
 4.  ``declaration-owner-unresolved`` -- ``owner_module.owner_symbol`` does not
     resolve against ``src/probos/``.
-5.  ``declaration-module-unregistered`` -- a ``storage_declarations.py`` exists
+5.  ``declaration-companion-unresolved`` -- a companion module does not resolve
+    against ``src/probos/``.
+6.  ``declaration-duplicate-module-claim`` -- two declarations claim one module
+    as an owner or companion. Declaration order must never choose its store.
+7.  ``declaration-module-unregistered`` -- a ``storage_declarations.py`` exists
     under ``src/probos/`` that ``DECLARATION_MODULES`` does not name, or names
     a module that does not exist. The explicit-tuple pattern is chosen over a
     glob deliberately; this rule is what stops it falling silently behind.
-6.  ``baseline-schema`` -- the baseline document is malformed, or its
+8.  ``baseline-schema`` -- the baseline document is malformed, or its
     ``review`` block has a blank ``owner``/``rationale``/``review_by``.
-7.  ``undeclared-store`` -- a module holding a detected ``CREATE TABLE`` that
+9.  ``undeclared-store`` -- a module holding a detected ``CREATE TABLE`` that
     is in neither the declarations nor the baseline.
-8.  ``stale-baseline-row`` -- a baseline row whose module no longer holds a
+10. ``stale-baseline-row`` -- a baseline row whose module no longer holds a
     detected schema, or which a declaration now covers. Either way the row must
     be deleted in the same commit.
-9.  ``baseline-table-drift`` -- a baselined module's table set changed. Mirrors
+11. ``baseline-table-drift`` -- a baselined module's table set changed. Mirrors
     the architecture baseline's count drift: touching an undeclared store's
     schema is the moment to declare it.
 
@@ -179,6 +185,8 @@ GATING_RULES: tuple[str, ...] = (
     "declaration-duplicate-id",
     "declaration-duplicate-path",
     "declaration-owner-unresolved",
+    "declaration-companion-unresolved",
+    "declaration-duplicate-module-claim",
     "declaration-module-unregistered",
     "baseline-schema",
     "undeclared-store",
@@ -892,7 +900,55 @@ def declaration_schema_errors(
             f"restore is {restore!r}; a reconstruction method only means "
             "something when restore is 'reconstructed'."
         )
+    companions = declaration.get("companion_schema_modules", ())
+    if not isinstance(companions, tuple):
+        problems.append(
+            f"[declaration-schema] {origin} {where}: "
+            "'companion_schema_modules' must be a literal tuple of dotted "
+            "module strings."
+        )
+    else:
+        seen_companions: set[str] = set()
+        owner_module = declaration.get("owner_module")
+        for companion in companions:
+            if not isinstance(companion, str) or not companion.strip():
+                problems.append(
+                    f"[declaration-schema] {origin} {where}: "
+                    "'companion_schema_modules' members must be non-blank "
+                    "strings."
+                )
+                continue
+            if companion in seen_companions:
+                problems.append(
+                    f"[declaration-schema] {origin} {where}: duplicate "
+                    f"companion schema module {companion!r}."
+                )
+            seen_companions.add(companion)
+            if companion == owner_module:
+                problems.append(
+                    f"[declaration-schema] {origin} {where}: owner_module "
+                    f"{companion!r} cannot also be its own companion schema "
+                    "module."
+                )
     return problems
+
+
+def _valid_companion_schema_modules(
+    declaration: dict[str, Any],
+) -> tuple[str, ...] | None:
+    """Return locally valid companion metadata, or ``None`` when malformed."""
+    companions = declaration.get("companion_schema_modules", ())
+    owner_module = declaration.get("owner_module")
+    if not isinstance(companions, tuple):
+        return None
+    if any(
+        not isinstance(companion, str) or not companion.strip()
+        for companion in companions
+    ):
+        return None
+    if len(companions) != len(set(companions)) or owner_module in companions:
+        return None
+    return companions
 
 
 def load_baseline(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
@@ -1078,8 +1134,10 @@ def check(
     )
     errors.extend(declaration_errors_found)
 
+    detected = detect_stores(index)
     seen_ids: dict[str, str] = {}
     seen_paths: dict[str, str] = {}
+    module_claims: dict[str, tuple[str, str]] = {}
     declared_modules: set[str] = set()
     for declaration in declarations:
         errors.extend(declaration_schema_errors(declaration, vocabulary))
@@ -1118,9 +1176,50 @@ def check(
                     "or delete the declaration if the store is gone."
                 )
             else:
-                declared_modules.add(owner_module)
+                previous_claim = module_claims.get(owner_module)
+                if previous_claim is not None:
+                    previous_id, previous_origin = previous_claim
+                    errors.append(
+                        f"[declaration-duplicate-module-claim] {origin} "
+                        f"{store_id!r} claims owner module {owner_module!r}, "
+                        f"already claimed by {previous_id!r} at "
+                        f"{previous_origin}. One module may belong to only one "
+                        "store declaration."
+                    )
+                else:
+                    module_claims[owner_module] = (str(store_id), origin)
+                    declared_modules.add(owner_module)
 
-    detected = detect_stores(index)
+        companions = _valid_companion_schema_modules(declaration)
+        if companions is None:
+            continue
+        for companion in companions:
+            if companion not in index.sources:
+                errors.append(
+                    f"[declaration-companion-unresolved] {origin} "
+                    f"{store_id!r} names companion module {companion!r}, "
+                    f"which is not a tracked module under {src_root.as_posix()}."
+                )
+                continue
+            if companion not in detected:
+                errors.append(
+                    f"[declaration-schema] {origin} {store_id!r} names "
+                    f"companion module {companion!r}, but it contains no "
+                    "detected CREATE TABLE schema."
+                )
+                continue
+            previous_claim = module_claims.get(companion)
+            if previous_claim is not None:
+                previous_id, previous_origin = previous_claim
+                errors.append(
+                    f"[declaration-duplicate-module-claim] {origin} "
+                    f"{store_id!r} claims companion module {companion!r}, "
+                    f"already claimed by {previous_id!r} at {previous_origin}. "
+                    "One module may belong to only one store declaration."
+                )
+                continue
+            module_claims[companion] = (str(store_id), origin)
+            declared_modules.add(companion)
 
     document, baseline_load_errors = load_baseline(baseline_path)
     errors.extend(baseline_load_errors)
@@ -1212,14 +1311,25 @@ def render_baseline(
 def _declared_modules_for_baseline(
     src_root: Path, index: SymbolIndex
 ) -> set[str]:
-    """Owner modules named by declarations, for baseline rendering."""
+    """Valid owner and companion modules, for baseline rendering."""
     module_names, _ = read_declaration_modules(src_root)
     declarations, _ = read_declarations(module_names, index, src_root)
-    return {
+    declared = {
         declaration["owner_module"]
         for declaration in declarations
         if isinstance(declaration.get("owner_module"), str)
     }
+    detected = detect_stores(index)
+    for declaration in declarations:
+        companions = _valid_companion_schema_modules(declaration)
+        if companions is None:
+            continue
+        declared.update(
+            companion
+            for companion in companions
+            if companion in index.sources and companion in detected
+        )
+    return declared
 
 
 def main(argv: list[str] | None = None) -> int:

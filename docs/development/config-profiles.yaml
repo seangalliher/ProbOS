@@ -16,11 +16,11 @@ census:
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 443
-  default_false: 219
+  boolean_fields_reachable: 445
+  default_false: 221
   default_true: 225
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 134
+  default_false_never_armed: 136
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -524,6 +524,28 @@ flags:
   external_dependency: null
   requires:
   - dm_agentic.enabled
+  conflicts_with: []
+- path: dm_agentic.economic_judgment.completion_calibration.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1325_economic_calibration.py tests/test_ad1325_completion_chain.py
+    tests/test_ad1325_boundaries.py -- immutable raw completion and price evidence crosses
+    the producer/store/consumer seam while OFF preserves schema, rows, requests and result shapes.
+  external_dependency: null
+  requires:
+  - workforce.enabled
+  conflicts_with: []
+- path: dm_agentic.economic_judgment.completion_calibration.feed_cost_estimates_to_organ
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1325_completion_chain.py tests/test_ad1325_boundaries.py
+    -- mature evidence adds only a bounded in-memory descriptive estimate; absent or immature
+    evidence preserves the existing hook kwargs and prompt.
+  external_dependency: null
+  requires:
+  - dm_agentic.enabled
+  - dm_agentic.economic_judgment.enabled
+  - dm_agentic.economic_judgment.completion_calibration.enabled
   conflicts_with: []
 - path: dm_agentic.economic_judgment.currency_is_marginal
   kind: product-feature

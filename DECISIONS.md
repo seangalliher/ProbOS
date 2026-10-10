@@ -10,6 +10,18 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1325 OPEN -- Default-off completion calibration with immutable spend evidence
+
+**Status:** OPEN candidate (#1480), default OFF (`dm_agentic.economic_judgment.completion_calibration.enabled`; the independent descriptive estimate feed is also default OFF).
+
+**Decision.** Successful owned crew-child completion records calibration in four WorkItemStore-owned sidecar tables, atomically with terminal status, token accounting and the owned submission. The completion row stores only raw work-item outcome fields. Each successful model call contributes an immutable snapshot of request/provider identity, requested/effective tier, AD-1324 outcome/evidence/reason, provider token splits, resolved model and the registry prices effective at capture time. Historical price snapshots are never recalculated after catalog changes.
+
+**Statistics and maturity.** Cost observations use exact integer +/-20 percent tolerance against the existing `WorkItem.estimated_tokens` and `actual_tokens`. Cost-within, underestimate, overestimate and authorized value-match distributions each persist only raw Beta counts with alpha=2, beta=2 priors. Evidence is mature after eight eligible outcomes for the same agent and work type. No posterior mean, ratio, currency total or calibrated estimate is persisted; the optional estimate is derived in memory, bounded to 0.80x..1.20x and added only to descriptive economic context.
+
+**Value authority and replay.** Caller evidence carries no value bands. On the first atomic completion commit, the ledger freezes the already-normalized proposed/confirmed pair from the authoritative `completion_value_resolutions` row, or permanently freezes null/null when unresolved. Captain and chain-of-command provenance must come from the existing authorized confirmation path. The `(work_item_id, outcome_id)` pair is the completion idempotency barrier; exact replay and recovery require the same raw outcome plus the complete order-independent spend set, while omission, addition or divergence fails closed.
+
+**Boundary.** Collection is independent of whether the economic organ is enabled. With calibration off, no schema, observer, outcome identity or versioned calibrated submission exists. With no mature data, hook arguments and prompt bytes are unchanged. Calibration does not change trust, authority, assignment, technical verification, budget headroom, model routing, AD-1324 tier policy or the frozen 14-key `crew_execution` record. The public crew path keeps its intentional deep default; legitimate floor-redo capture is exercised through `WorkItemAgenticExecutor.run(tier="fast")`, the public owner of that input.
+
 ### AD-1324 OPEN -- Agent-chosen model tier per step under a deterministic stakes floor
 
 **Status:** OPEN candidate (#1479), default OFF (`dm_agentic.economic_judgment.tier_choice.enabled`, also needs economic judgment, `dm_agentic.enabled` and `model_routing.enabled`).

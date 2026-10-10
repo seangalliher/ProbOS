@@ -26,6 +26,7 @@ import json
 import logging
 import math
 import re
+import secrets
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -42,6 +43,13 @@ from probos.crew_execution_usage import (
 )
 from probos.crew_utils import CREW_EXECUTION_KEYS, is_crew_agent
 from probos.events import EventType
+from probos.economic_calibration import (
+    MAX_SPENDS_PER_OUTCOME,
+    CompletionCalibrationEvidence,
+    SpendPriceSnapshot,
+    completion_calibration_payload,
+    completion_calibration_armed,
+)
 from probos.fault_detection import ToolFaultTurn, fault_observer_for
 
 if TYPE_CHECKING:
@@ -1886,6 +1894,7 @@ class CrewTaskExecutor:
         execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
         execution_permit: owned_steps.OwnedStepExecutionPermit | None = None,
         validated_token_sources: set[str] | None = None,
+        calibration_outcome_id: str | None = None,
     ) -> Any:
         """AD-1155 / DD-1: run the child, and re-invoke it while it is unfinished.
 
@@ -1921,6 +1930,8 @@ class CrewTaskExecutor:
                 "_crew_work_item_id": child_id,
             },
         }
+        if calibration_outcome_id is not None:
+            base_kwargs["extra_context"]["_crew_outcome_id"] = calibration_outcome_id
         if fault_observer_for(self._runtime) is not None:
             base_kwargs["fault_turn"] = ToolFaultTurn()
         # AD-1322: only an agent that exposes the accessor AND returns a real hook
@@ -1954,6 +1965,7 @@ class CrewTaskExecutor:
         outcome: Any = None
         spent = 0
         token_sources: set[str] = set()
+        completion_spends: list[SpendPriceSnapshot] = []
         previous_text_hash: str | None = None
         previous_actionable: int | None = None
         no_progress_streak = 0
@@ -1997,6 +2009,14 @@ class CrewTaskExecutor:
                     ),
                 )
             outcome = next_outcome
+            if calibration_outcome_id is not None:
+                pass_spends = tuple(
+                    getattr(outcome, "completion_spends", ())
+                )
+                if len(completion_spends) + len(pass_spends) > MAX_SPENDS_PER_OUTCOME:
+                    raise ValueError("completion_calibration_spend_limit")
+                completion_spends.extend(pass_spends)
+                outcome.completion_spends = tuple(completion_spends)
             spent += _bounded_spend(getattr(outcome, "total_tokens", 0))
             if self._event_correlation_enabled:
                 source = merge_token_sources((outcome.token_source,))
@@ -2201,6 +2221,20 @@ class CrewTaskExecutor:
         active = await self._store.get_work_item(child.id)
         if active is None:
             raise owned_steps.OwnedStepsError("owned_steps_source_conflict", parent_id=parent_id)
+        calibration_config = getattr(
+            getattr(
+                getattr(getattr(self._runtime, "config", None), "dm_agentic", None),
+                "economic_judgment",
+                None,
+            ),
+            "completion_calibration",
+            None,
+        )
+        calibration_outcome_id = (
+            secrets.token_hex(32)
+            if completion_calibration_armed(calibration_config)
+            else None
+        )
         validated_token_sources: set[str] = set()
         outcome_has_provenance = False
         try:
@@ -2216,6 +2250,10 @@ class CrewTaskExecutor:
                     agent=agent, task_text=task_text, thread_id=thread_id, parent_id=parent_id, child_id=child.id,
                     owned_lease=lease, execution_port=port, execution_permit=permit,
                     validated_token_sources=validated_token_sources,
+                    **(
+                        {"calibration_outcome_id": calibration_outcome_id}
+                        if calibration_outcome_id is not None else {}
+                    ),
                 )
                 outcome_has_provenance = bool(validated_token_sources)
             except owned_steps.OwnedStepsError:
@@ -2266,10 +2304,31 @@ class CrewTaskExecutor:
             )).decode("utf-8")
             if self._event_correlation_enabled and outcome_has_provenance else None
         )
-        submission = owned_steps.OwnedExecutionSubmission(
-            permit=permit, execution_json=owned_steps.owned_json_bytes(execution).decode("utf-8"),
-            output=output_ref if status == "done" else None, token_usage_json=usage, result=exact,
-        )
+        submission_kwargs = {
+            "permit": permit,
+            "execution_json": owned_steps.owned_json_bytes(execution).decode("utf-8"),
+            "output": output_ref if status == "done" else None,
+            "token_usage_json": usage,
+            "result": exact,
+        }
+        if status == "done" and calibration_outcome_id is not None:
+            calibration = CompletionCalibrationEvidence(
+                outcome_id=calibration_outcome_id,
+                agent_id=agent.id,
+                work_type=active.work_type,
+                estimated_tokens=active.estimated_tokens,
+                actual_tokens=active.actual_tokens + tokens,
+                completed_at=execution["finished_at"],
+                spends=tuple(getattr(outcome, "completion_spends", ())),
+            )
+            submission = owned_steps.OwnedCalibratedExecutionSubmission(
+                **submission_kwargs,
+                completion_calibration_json=owned_steps.owned_json_bytes(
+                    completion_calibration_payload(calibration)
+                ).decode("utf-8"),
+            )
+        else:
+            submission = owned_steps.OwnedExecutionSubmission(**submission_kwargs)
         checkpoint = asyncio.create_task(port.submit(lease, submission))
         try:
             committed = await asyncio.shield(checkpoint)
@@ -2508,6 +2567,20 @@ class CrewTaskExecutor:
             task_text, child=active_child, agent_id=agent.id,
         )
         validated_token_sources: set[str] = set()
+        calibration_config = getattr(
+            getattr(
+                getattr(getattr(self._runtime, "config", None), "dm_agentic", None),
+                "economic_judgment",
+                None,
+            ),
+            "completion_calibration",
+            None,
+        )
+        calibration_outcome_id = (
+            secrets.token_hex(32)
+            if completion_calibration_armed(calibration_config)
+            else None
+        )
         try:
             outcome = await self._run_agentic_with_outer_loop(
                 agent=agent,
@@ -2516,6 +2589,10 @@ class CrewTaskExecutor:
                 parent_id=parent_id,
                 child_id=child_id,
                 validated_token_sources=validated_token_sources,
+                **(
+                    {"calibration_outcome_id": calibration_outcome_id}
+                    if calibration_outcome_id is not None else {}
+                ),
             )
         except Exception:
             logger.warning(
@@ -2553,6 +2630,20 @@ class CrewTaskExecutor:
                 else "error"
             )
 
+        terminal_kwargs: dict[str, Any] = {}
+        if status == "done" and calibration_outcome_id is not None:
+            terminal_kwargs["completion_calibration"] = CompletionCalibrationEvidence(
+                outcome_id=calibration_outcome_id,
+                agent_id=assigned_to,
+                work_type=active_child.work_type,
+                estimated_tokens=active_child.estimated_tokens,
+                actual_tokens=(
+                    active_child.actual_tokens
+                    + _normalize_tokens(outcome.total_tokens)
+                ),
+                completed_at=max(started_at, time.time()),
+                spends=tuple(getattr(outcome, "completion_spends", ())),
+            )
         checkpoint = asyncio.create_task(self._persist_terminal_result(
             parent_id=parent_id,
             child=active_child,
@@ -2571,6 +2662,7 @@ class CrewTaskExecutor:
             finished_at=max(started_at, time.time()),
             blocked_dependency_ids=[],
             expected_status="in_progress",
+            **terminal_kwargs,
         ))
         try:
             return await asyncio.shield(checkpoint)
@@ -2728,6 +2820,7 @@ class CrewTaskExecutor:
         token_source: str | None = None,
         owned_lease: owned_steps.OwnedExecutionLease | None = None,
         execution_port: owned_steps.OwnedStepsExecutionPort | None = None,
+        completion_calibration: CompletionCalibrationEvidence | None = None,
     ) -> SubtaskResult:
         if owned_lease is not None:
             if execution_port is None or status != "blocked":
@@ -2854,6 +2947,10 @@ class CrewTaskExecutor:
                     new_status=status,
                     actual_tokens_delta=tokens,
                     source="crew_executor",
+                    **(
+                        {"completion_calibration": completion_calibration}
+                        if completion_calibration is not None else {}
+                    ),
                     **state_preconditions,
                 )
             except asyncio.CancelledError as exc:
@@ -2867,6 +2964,7 @@ class CrewTaskExecutor:
                         expected_status=status,
                         metadata_patch=metadata_patch,
                         actual_tokens_delta=tokens,
+                        completion_calibration=completion_calibration,
                         initial_cancellation=(
                             commit_error
                             if isinstance(commit_error, asyncio.CancelledError)
@@ -2894,6 +2992,20 @@ class CrewTaskExecutor:
                     finished_at=evidence["finished_at"],
                 )
         except Exception as exc:
+            if (
+                completion_calibration is not None
+                and isinstance(exc, ValueError)
+                and str(exc).startswith("completion_calibration")
+            ):
+                logger.error(
+                    "AD-1325: completion calibration persistence failed for "
+                    "work_item_id=%s outcome_id=%s; atomic completion is rolled "
+                    "back and the integrity error propagates",
+                    child.id,
+                    completion_calibration.outcome_id,
+                    exc_info=True,
+                )
+                raise
             if (
                 guard_admission_fallback
                 and isinstance(exc, ValueError)
@@ -3087,6 +3199,7 @@ class CrewTaskExecutor:
         expected_status: str,
         metadata_patch: dict[str, Any],
         actual_tokens_delta: int,
+        completion_calibration: CompletionCalibrationEvidence | None,
         initial_cancellation: asyncio.CancelledError | None,
     ) -> tuple[WorkItem | None, asyncio.CancelledError | None]:
         current_task = asyncio.current_task()
@@ -3111,6 +3224,14 @@ class CrewTaskExecutor:
                 or not _json_dicts_exactly_equal(
                     authoritative.metadata,
                     expected_metadata,
+                )
+            ):
+                return None
+            if (
+                completion_calibration is not None
+                and not await self._store.matches_completion_calibration(
+                    child.id,
+                    completion_calibration,
                 )
             ):
                 return None

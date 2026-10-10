@@ -12,9 +12,9 @@
     "src/probos/cognitive/crew_finalizer.py": "887f7585df95a27a644b048dbbbdd5d3d0e8b4bd",
     "src/probos/workforce.py": "737604e845d27d9cef30d3ea9561ea938423817a"
   },
-  "observation_sha256": "397b23c5a6024ab6682f091b43c98e90a78d76ee3117102ec05282d049213029",
+  "observation_sha256": "bebfbe06191d6d69dc186830c21393dfd81a5a38ae982940ebb4c82de23e1d6c",
   "observation": {
-    "default_config_sha256": "9b53253d4719fd3d28efc87110ca0c524c8eb4324515cda0262ecfc632da8a0d",
+    "default_config_sha256": "b55c70883b6d8624577d5fd7360d72e31833e320d0847c60252dcfe8471d5cfa",
     "direct": [
       {
         "requests": [

@@ -297,6 +297,43 @@ class ContinueExtensionConfig(BaseModel):  # AD-1323
         return kept or default
 
 
+class CompletionCalibrationConfig(BaseModel):  # AD-1325
+    """Default-off completion cost and value calibration."""
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "AD-1325: collect immutable completion cost and confirmed-value evidence. "
+            "Default OFF: no sidecar schema, outcome identity or model-call observer."
+        ),
+    )
+    cost_tolerance_percent: int = Field(
+        default=20,
+        ge=0,
+        le=100,
+        description=(
+            "AD-1325: integer percentage tolerance used to classify completed token "
+            "estimates. Must be between 0 and 100."
+        ),
+    )
+    minimum_samples: int = Field(
+        default=8,
+        ge=1,
+        le=1000,
+        description=(
+            "AD-1325: eligible completions required for an agent/work-type calibration "
+            "summary. Must be between 1 and 1000."
+        ),
+    )
+    feed_cost_estimates_to_organ: bool = Field(
+        default=False,
+        description=(
+            "AD-1325: include an in-memory calibrated token estimate in descriptive "
+            "economic context when mature evidence exists. Default OFF."
+        ),
+    )
+
+
 class TierChoiceConfig(BaseModel):  # AD-1324
     """AD-1324: the agent names its next step's model tier under a stakes floor.
 
@@ -365,6 +402,13 @@ class EconomicJudgmentConfig(BaseModel):  # AD-1322
             "AD-1322: compose the economic judgment organ for conversational "
             "and crew agentic turns. Default OFF: no organ is attached and the "
             "loop is byte-identical. Effective only while dm_agentic.enabled."
+        ),
+    )
+    completion_calibration: CompletionCalibrationConfig = Field(
+        default_factory=CompletionCalibrationConfig,
+        description=(
+            "AD-1325: default-off completion calibration collection and optional "
+            "descriptive cost-estimate feed."
         ),
     )
     summary_turns: int = Field(

@@ -297,6 +297,11 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgenticDispatchConfig': {   
                                                     'overspend_spend_fraction': 0.5,
                                                     'repeat_attempt_threshold': 3,
                                                     'rising_spend_steps': 2,
+                                                    # AD-1325: default-OFF completion calibration.
+                                                    'completion_calibration': {   'enabled': False,
+                                                                                  'cost_tolerance_percent': 20,
+                                                                                  'minimum_samples': 8,
+                                                                                  'feed_cost_estimates_to_organ': False},
                                                     # AD-1323: default-OFF costed continue extension.
                                                     'continue_extension': {   'enabled': False,
                                                                               'max_extension_tokens': 0,

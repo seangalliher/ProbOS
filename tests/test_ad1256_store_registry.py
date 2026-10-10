@@ -59,6 +59,8 @@ _DOCUMENTED_RULES = frozenset(
         "declaration-duplicate-id",
         "declaration-duplicate-path",
         "declaration-owner-unresolved",
+        "declaration-companion-unresolved",
+        "declaration-duplicate-module-claim",
         "declaration-module-unregistered",
         "baseline-schema",
         "undeclared-store",
@@ -132,7 +134,13 @@ def _entry(
     restore: str = '"point-in-time"',
     retention_note: str = '""',
     reconstruction: str = '""',
+    companion_schema_modules: str | None = None,
 ) -> str:
+    companion_line = (
+        f"        companion_schema_modules={companion_schema_modules},\n"
+        if companion_schema_modules is not None
+        else ""
+    )
     return (
         "    StoreDeclaration(\n"
         f'        id="{store_id}",\n'
@@ -147,6 +155,7 @@ def _entry(
         f"        restore={restore},\n"
         f"        retention_note={retention_note},\n"
         f"        reconstruction={reconstruction},\n"
+        f"{companion_line}"
         "    ),\n"
     )
 
@@ -261,6 +270,53 @@ def test_declaration_to_dict_is_json_safe() -> None:
     assert json.loads(json.dumps(payload)) == payload
     assert payload["criticality"] == "optional"
     assert payload["retention"] == "bounded"
+
+
+def test_declaration_without_companion_preserves_exact_mapping() -> None:
+    assert _declaration().to_dict() == {
+        "id": "layer.example",
+        "title": "Example store",
+        "owner_module": "probos.example",
+        "owner_symbol": "ExampleStore",
+        "canonical_path": "example.db",
+        "criticality": "optional",
+        "lifecycle_owner": "unowned",
+        "retention": "bounded",
+        "backup": "included",
+        "restore": "point-in-time",
+        "retention_note": "",
+        "reconstruction": "",
+        "notes": "",
+    }
+
+
+def test_declaration_with_companion_serializes_list_without_moving_owner() -> None:
+    declaration = _declaration(
+        companion_schema_modules=("probos.example_schema",)
+    )
+    payload = declaration.to_dict()
+    assert payload["companion_schema_modules"] == ["probos.example_schema"]
+    assert declaration.owner_path == "probos.example.ExampleStore"
+    assert payload["canonical_path"] == "example.db"
+
+
+@pytest.mark.parametrize(
+    "companions",
+    [
+        ["probos.example_schema"],
+        ("",),
+        (7,),
+        ("probos.example_schema", "probos.example_schema"),
+        ("probos.example",),
+    ],
+)
+def test_declaration_errors_rejects_invalid_companion_shape(
+    companions: object,
+) -> None:
+    problems = declaration_errors(
+        _declaration(companion_schema_modules=companions)
+    )
+    assert problems, companions
 
 
 def test_owner_path_joins_module_and_symbol() -> None:
@@ -885,6 +941,10 @@ def test_the_ast_and_import_paths_agree_on_every_declaration(
                 raw = row[key]
                 assert isinstance(raw, tuple) and raw[2]
                 continue
+            if key == "companion_schema_modules":
+                assert isinstance(value, list)
+                assert row.get(key) == tuple(value), f"{row['id']}.{key}"
+                continue
             assert row.get(key, "") == value, f"{row['id']}.{key}"
 
 
@@ -1050,6 +1110,119 @@ def test_a_new_undeclared_store_fires(
     _write_baseline(baseline)
     result = checker.check(baseline_path=baseline, src_root=src)
     assert "undeclared-store" in _rules_fired(result.errors), result.errors
+
+
+def test_companion_schema_module_covers_owner_connection_schema(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
+    companion_source = '_SCHEMA = """CREATE TABLE companion_rows (id TEXT)"""\n'
+    baseline = tmp_path / "store-baseline.yaml"
+    src = _build_tree(
+        tmp_path,
+        extra_modules={"companion.py": companion_source},
+    )
+    _write_baseline(baseline)
+    without_companion = checker.check(baseline_path=baseline, src_root=src)
+    assert without_companion.detected["probos.companion"] == ("companion_rows",)
+    assert "undeclared-store" in _rules_fired(without_companion.errors)
+
+    declaration_path = src / "probos" / "alpha_pkg" / "storage_declarations.py"
+    declaration_path.write_text(
+        _DECL_TEMPLATE.format(
+            entries=_entry(
+                companion_schema_modules='("probos.companion",)'
+            )
+        ),
+        encoding="utf-8",
+    )
+    with_companion = checker.check(baseline_path=baseline, src_root=src)
+    assert with_companion.errors == [], with_companion.errors
+
+
+@pytest.mark.parametrize(
+    "raw_companions",
+    [
+        '["probos.companion"]',
+        '("",)',
+        "(7,)",
+        '("probos.companion", "probos.companion")',
+        '("probos.alpha",)',
+        'tuple(["probos.companion"])',
+    ],
+)
+def test_malformed_companion_metadata_fires_declaration_schema(
+    checker: types.ModuleType, tmp_path: Path, raw_companions: str
+) -> None:
+    src = _build_tree(
+        tmp_path,
+        entries=_entry(companion_schema_modules=raw_companions),
+        extra_modules={
+            "companion.py": '_SCHEMA = """CREATE TABLE companion_rows (id TEXT)"""\n'
+        },
+    )
+    baseline = tmp_path / "store-baseline.yaml"
+    _write_baseline(baseline)
+    result = checker.check(baseline_path=baseline, src_root=src)
+    assert "declaration-schema" in _rules_fired(result.errors), result.errors
+
+
+def test_nonexistent_companion_fires_and_does_not_cover_detected_schema(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
+    src = _build_tree(
+        tmp_path,
+        entries=_entry(companion_schema_modules='("probos.missing",)'),
+        extra_modules={
+            "companion.py": '_SCHEMA = """CREATE TABLE companion_rows (id TEXT)"""\n'
+        },
+    )
+    baseline = tmp_path / "store-baseline.yaml"
+    _write_baseline(baseline)
+    result = checker.check(baseline_path=baseline, src_root=src)
+    fired = _rules_fired(result.errors)
+    assert "declaration-companion-unresolved" in fired, result.errors
+    assert "undeclared-store" in fired, result.errors
+
+
+def test_two_declarations_claiming_one_companion_fires(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
+    companion = '("probos.companion",)'
+    entries = _entry(companion_schema_modules=companion) + _entry(
+        store_id="layer.beta",
+        owner_module="probos.beta",
+        owner_symbol="BetaStore",
+        canonical_path="beta.db",
+        companion_schema_modules=companion,
+    )
+    src = _build_tree(
+        tmp_path,
+        entries=entries,
+        extra_modules={
+            "beta.py": "class BetaStore:\n    pass\n",
+            "companion.py": '_SCHEMA = """CREATE TABLE companion_rows (id TEXT)"""\n',
+        },
+    )
+    baseline = tmp_path / "store-baseline.yaml"
+    _write_baseline(baseline)
+    result = checker.check(baseline_path=baseline, src_root=src)
+    assert (
+        "declaration-duplicate-module-claim" in _rules_fired(result.errors)
+    ), result.errors
+
+
+def test_tracked_companion_without_schema_fires_declaration_schema(
+    checker: types.ModuleType, tmp_path: Path
+) -> None:
+    src = _build_tree(
+        tmp_path,
+        entries=_entry(companion_schema_modules='("probos.helper",)'),
+        extra_modules={"helper.py": "VALUE = 1\n"},
+    )
+    baseline = tmp_path / "store-baseline.yaml"
+    _write_baseline(baseline)
+    result = checker.check(baseline_path=baseline, src_root=src)
+    assert "declaration-schema" in _rules_fired(result.errors), result.errors
 
 
 @pytest.mark.parametrize(

@@ -148,6 +148,48 @@ async def test_sub_floor_final_answer_is_reissued_once_at_the_floor() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unbudgeted_signed_provider_totals_preserve_historic_execution_accounting() -> None:
+    responses = [
+        read(tokens=100),
+        Resp([TextBlock(text="done")], content="done", tokens=-1),
+    ]
+    assert [response.tokens_used for response in responses] == [100, -1]
+
+    result, client, _tools = await run(responses)
+
+    assert len(client.requests) == 2
+    assert result.stopped_reason == "complete"
+    assert result.total_tokens == 99
+    assert result.token_source == "measured"
+    assert result.completion_spends == ()
+
+
+@pytest.mark.asyncio
+async def test_unbudgeted_discarded_negative_preserves_historic_floor_redo_accounting() -> None:
+    responses = [
+        read(DIRECTIVE, tokens=100),
+        Resp([TextBlock(text="quick guess")], content="quick guess", tokens=-1),
+        Resp([TextBlock(text="careful answer")], content="careful answer", tokens=1406),
+    ]
+    assert responses[1].tokens_used == -1
+    assert responses[1].content.strip()
+
+    result, client, _tools = await run(responses, controller("high"))
+
+    assert len(client.requests) == 3
+    assert [request.tier for request in client.requests] == [
+        "standard",
+        "fast",
+        "standard",
+    ]
+    assert result.stopped_reason == "complete"
+    assert result.total_tokens - 100 - 1406 == 26
+    assert result.total_tokens == 1532
+    assert result.token_source == "mixed"
+    assert result.completion_spends == ()
+
+
+@pytest.mark.asyncio
 async def test_redo_does_not_advance_the_iteration_counter() -> None:
     result, client, _t = await run([read(DIRECTIVE), answer("g"), answer("ok")], controller("high"), max_total_iterations=None)
     assert result.stopped_reason == "complete"

@@ -432,6 +432,21 @@ class OwnedExecutionSubmission(OwnedStepSubmission):
         return self
 
 
+class OwnedCalibratedExecutionSubmission(OwnedExecutionSubmission):
+    version: Literal[3] = 3
+    completion_calibration_json: str
+
+    @model_validator(mode="after")
+    def _calibration_binding(self) -> Self:
+        if owned_json_bytes(owned_json_loads(self.completion_calibration_json)).decode(
+            "utf-8"
+        ) != self.completion_calibration_json:
+            raise ValueError("owned_steps_calibration_invalid")
+        if owned_json_loads(self.execution_json)["status"] != "done":
+            raise ValueError("owned_steps_calibration_invalid")
+        return self
+
+
 class OwnedCorrectionResult(_OwnedFormat):
     version: Literal[1] = 1
     permit: OwnedStepExecutionPermit
@@ -1682,7 +1697,11 @@ class StartOwnedStepCommand(_OwnedFormat):
 
 class SubmitOwnedStepCommand(_OwnedFormat):
     kind: Literal["submit_execution"] = "submit_execution"
-    submission: OwnedStepSubmission | OwnedExecutionSubmission
+    submission: (
+        OwnedStepSubmission
+        | OwnedExecutionSubmission
+        | OwnedCalibratedExecutionSubmission
+    )
 
 
 class UnstartedOwnedStepCommand(_OwnedFormat):
