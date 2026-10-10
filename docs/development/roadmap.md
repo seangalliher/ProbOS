@@ -15,6 +15,26 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 
 **AD-1187 OPEN (2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** ordinary governed work-discovery/claim implementation candidate with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Independent review, canonical frozen gate and release remain parent-owned; this is not a shipped/closure entry.
 
+## Strong Supervision Host (In Progress)
+
+The Captain-approved 2026-09-08 split prioritizes a usable GitHub Copilot/VS Code
+Supervised Worker plugin with explicit local-scoped assurance. The original strong
+vision is retained separately in [AD-1314/#1379](https://github.com/seangalliher/ProbOS/issues/1379)
+and [Supervised Worker #11](https://github.com/seangalliher/supervised-worker/issues/11).
+See [the host program](supervised-worker-host-program.md) for the full contract.
+
+| AD | Scope | Owner | Status |
+| --- | --- | --- | --- |
+| AD-1315 | Protected host authority and durable admission witness. | [#1381](https://github.com/seangalliher/ProbOS/issues/1381) | implemented candidate, default OFF (`protected_execution.enabled=false`); #1381 closed, OSS |
+| AD-1316 | Governed effect broker, correlation and reconciliation. | [#1383](https://github.com/seangalliher/ProbOS/issues/1383) | in progress, OSS |
+| AD-1317 | Versioned adapter, immutable activation/rollback and strong canary. | [#1380](https://github.com/seangalliher/ProbOS/issues/1380) | planned, OSS |
+| AD-1318 | Optional VS Code or equivalently governed Copilot-assisted surface. | [#1382](https://github.com/seangalliher/ProbOS/issues/1382) | planned, OSS |
+
+ProbOS must own the actual governed execution and protected witness; launching an
+opaque Copilot process is not sufficient. Preserve one campaign owner, AD-1231,
+exact-source review/gates, ordinary behavior outside the strict profile, and
+separate host/provider/external evidence. No runtime activation is implied here.
+
 ## Design Principles
 
 See [Design Principles](design-principles.md) for the full design philosophy — architectural and philosophical principles that govern how ProbOS thinks about what it builds. Engineering practices (SOLID, DRY, Fail Fast) live in [contributing.md](contributing.md).
@@ -338,12 +358,106 @@ waive release gates, or declare a readiness tier passed. The
    and [governed self-maintenance / #1352](https://github.com/seangalliher/ProbOS/issues/1352)
    with independent evidence and promotion authority. Goal validity and recovery
    from external side effects must precede broader unattended consequential work.
-   Keep VR and Blender integration behind these outcomes unless a concrete user
-   task makes them necessary. Do not add another generic echo/dissent subsystem;
+   The Captain's spatial HXI request now admits the shared interaction contract
+   alongside dependable desktop work; the bounded VR pilot remains
+   [AD-721c / #530](https://github.com/seangalliher/ProbOS/issues/530), gated on
+   ready desktop contracts and separate headset evidence. Blender and wider
+   immersive integration remain behind concrete outcomes. Do not add another generic echo/dissent subsystem;
    AD-583 and [the mission blackboard / #1336](https://github.com/seangalliher/ProbOS/issues/1336)
    already own those concepts.
 
 ### Backlog (queued, awaiting wave-plan slot)
+
+#### HXI Spatial Collaboration Program (2026-09-07)
+
+**Planned, not implemented or activated.**
+[AD-1307 / #1360](https://github.com/seangalliher/ProbOS/issues/1360) turns the
+[24-finding live review](hxi-live-ux-review-2026-09-07.md) into a cohesive,
+intuitive, futuristic workspace for people and autonomous crew. Agents are
+collaborators, not tools; the canvas is the place for shared work, evidence,
+artifacts, questions and decisions. Preserve the luminous orbs, connections,
+department identity and direct crew access. Redesign the surrounding menus,
+forms, navigation, media controls and recovery rather than replacing the mesh.
+
+The [program contract](hxi-spatial-collaboration-program.md) owns detailed scope,
+the complete finding-to-issue matrix, dependencies, compatibility and milestones.
+Glass is the material/depth language; LCARS is the contextual behavior. New users
+can ask a simple question immediately, and develop complex work progressively
+with the crew without mandatory tool selection or formal-plan ceremony.
+
+| AD | Outcome | Issue |
+| --- | --- | --- |
+| AD-1307 | Spatial collaboration program and release acceptance | [#1360](https://github.com/seangalliher/ProbOS/issues/1360) |
+| AD-1308 | Shared spatial workspace host and semantic navigation | [#1363](https://github.com/seangalliher/ProbOS/issues/1363) |
+| AD-1309 | Progressive intake and explicit fresh/resumed conversation context | [#1362](https://github.com/seangalliher/ProbOS/issues/1362) |
+| AD-1310 | Shared evidence and artifact handback canvas | [#1361](https://github.com/seangalliher/ProbOS/issues/1361) |
+| AD-1311 | Embodied co-presence and explicit multimodal sessions | [#1364](https://github.com/seangalliher/ProbOS/issues/1364) |
+| AD-1312 | Contextual crew, knowledge and administration | [#1366](https://github.com/seangalliher/ProbOS/issues/1366) |
+| AD-1313 | Authentic digital visual language and spatial continuity | [#1365](https://github.com/seangalliher/ProbOS/issues/1365) |
+| AD-1202, existing | Shared controls plus a complete Bridge exemplar | [#1142](https://github.com/seangalliher/ProbOS/issues/1142) |
+| AD-721c, existing | Bounded WebXR collaboration pilot over the same contracts | [#530](https://github.com/seangalliher/ProbOS/issues/530) |
+
+**Independent repairs:** geometry [#1369](https://github.com/seangalliher/ProbOS/issues/1369),
+telemetry [#1370](https://github.com/seangalliher/ProbOS/issues/1370),
+readiness [#1368](https://github.com/seangalliher/ProbOS/issues/1368),
+avatar lifecycle [#1367](https://github.com/seangalliher/ProbOS/issues/1367),
+group delivery [#1372](https://github.com/seangalliher/ProbOS/issues/1372),
+input-to-agent read [#1371](https://github.com/seangalliher/ProbOS/issues/1371),
+crew execution identity [#1374](https://github.com/seangalliher/ProbOS/issues/1374),
+notification navigation [#1373](https://github.com/seangalliher/ProbOS/issues/1373),
+work-state consistency [#1375](https://github.com/seangalliher/ProbOS/issues/1375),
+coherent global answers [#1378](https://github.com/seangalliher/ProbOS/issues/1378),
+recreation turns [#1376](https://github.com/seangalliher/ProbOS/issues/1376), and
+browser session lifecycle [#1377](https://github.com/seangalliher/ProbOS/issues/1377).
+These do not mint additional ADs or wait for a complete redesign. All twelve are
+closed as of 2026-10-10.
+
+**Delivery order:** M0 trustworthy paths and shared controls; M1 first successful
+simple/complex collaboration; M2 evidence, human contribution and verified artifact
+handback; M3 cohesive desktop presence, contextual forms and spatial continuity;
+M4 separately validated headset pilot. Design/prototyping may proceed alongside
+repairs. M3 requires no unresolved Critical/High supported-journey defect and
+explicit ownership of accepted Medium/Low residuals. A complete desktop program
+does not imply a VR pass or completion of every existing platform/fleet issue.
+
+Reuse [AD-1202](https://github.com/seangalliher/ProbOS/issues/1142),
+[streaming](https://github.com/seangalliher/ProbOS/issues/1130),
+[live progress](https://github.com/seangalliher/ProbOS/issues/1105),
+[consulted evidence](https://github.com/seangalliher/ProbOS/issues/1236),
+[human claims](https://github.com/seangalliher/ProbOS/issues/1136),
+[mission blackboard](https://github.com/seangalliher/ProbOS/issues/1336),
+[goal revision](https://github.com/seangalliher/ProbOS/issues/1353), existing
+approval/authority owners and [Ship Trials](https://github.com/seangalliher/ProbOS/issues/1123).
+Their scope and parentage remain intact. Preserve AD-1231, sovereign memory,
+classification, consensus, audit and canonical release gates. No second task,
+approval, memory or cognitive-dispatch engine; no gaze/proximity-based authority.
+
+#### Codebase Review Follow-Up (2026-09-07)
+
+**Planning only.** The source-and-test review of commit `2c761b6a` reproduced
+evidence loss and inaccurate write reporting despite 127 passing focused tests.
+Those passes are a baseline, not repair evidence. Prioritize the behavioral
+defects before using their outcomes to judge learning or expanding their affected
+workflows; implementation remains bounded by the existing repository gates.
+Evidence, reproduction limits, acceptance and non-goals:
+[Codebase Review Follow-Through](codebase-review-follow-through.md).
+
+| Work | Owner | Priority | Status (2026-10-10) |
+|------|-------|----------|--------|
+| Group write-outcome evidence from execution through transcript and episode | [AD-1305 / #1358](https://github.com/seangalliher/ProbOS/issues/1358) | High | closed |
+| Crew tool evidence reaches both judge paths | [AD-1242 / #1234](https://github.com/seangalliher/ProbOS/issues/1234) | High | closed |
+| Mixed write successes and failures receive truthful disclosure | [AD-1306 / #1359](https://github.com/seangalliher/ProbOS/issues/1359) | Medium | closed |
+| Complete responsibility extraction and behavioral crossing coverage | [AD-1270 / #1324](https://github.com/seangalliher/ProbOS/issues/1324) | Medium | open |
+
+AD-1306's small shared-rendering repair precedes AD-1305's group integration;
+AD-1242 can proceed independently. Completed #1087/#1338 fixes remain closed;
+AD-1305 re-files only the group residual whose reachability the review established.
+
+Preserve task-execution success separately from durable-write outcomes. Continue
+the accepted AD-1270 ownership extractions and source-text-test classification;
+do not create a replacement architecture program, waive existing debt, or treat
+file splitting as proof that responsibility moved. No readiness status changes
+and no runtime implementation are part of this planning update.
 
 #### Nooplex Follow-Through (AD-1300 to AD-1304)
 
@@ -729,7 +843,7 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 | AD-705c-3 | EfficientWord-Net few-shot trainer | (forward marker, planned Wave 179) | 4 |
 | AD-705c-4 | Multi-Captain wake words | (forward marker, planned Wave 179) | 4 |
 | AD-705c-5 | Counselor-suggested retrain on FAR spike (agentic-first) | (forward marker, planned Wave 179) | 4 |
-| AD-721c | VR / spatial-scene avatar mode | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4 |
+| AD-721c | Bounded VR spatial collaboration pilot over the shared HXI workspace; separate headset evidence, not a popout or desktop completion claim | [#530](https://github.com/seangalliher/ProbOS/issues/530) | 4, after ready HXI contracts |
 | AD-721d | Agent-authored appearance pipeline | [#531](https://github.com/seangalliher/ProbOS/issues/531) | 3 |
 | AD-721e | Skeletal animation library (Mixamo) | [#532](https://github.com/seangalliher/ProbOS/issues/532) | 4 |
 | AD-721f | Cognitive-canvas avatar replacement | [#533](https://github.com/seangalliher/ProbOS/issues/533) | 4 |
