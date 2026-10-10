@@ -7,6 +7,7 @@ import logging
 import multiprocessing
 import os
 import sqlite3
+import stat
 import subprocess
 import time
 from dataclasses import asdict, replace
@@ -593,6 +594,7 @@ async def test_publish_repository_binding_never_executes_configured_fsmonitor(
         "#!/bin/sh\necho invoked > .git/fsmonitor-executed\nexit 1\n",
         encoding="utf-8",
     )
+    callback.chmod(callback.stat().st_mode | stat.S_IXUSR)
     _git(repository, "config", "core.fsmonitor", callback.as_posix())
     callback_environment = os.environ.copy()
     for name in tuple(callback_environment):
