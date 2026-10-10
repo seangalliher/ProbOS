@@ -103,15 +103,15 @@ Apply this decision tree:
 1. **Working tree shows tracked changes the Builder didn't make.**
    - Architect-authored prompt/review/doc artifacts under `prompts/`, `Reviews/`, `DECISIONS.md`: commit on architect's behalf with a descriptive message; resume.
    - Source code under `src/probos/` or test code under `tests/` you can't identify: hard stop. Surface to user.
-2. **Test failure under parallel xdist (`-n 4` or higher).**
+2. **Test failure under parallel xdist (any `-n` above 0 — the repo default is `-n 16`, and the broad gate runs parallel).**
    - Rerun the failing file at `-n 0`. If it passes, classify as environmental; document and continue.
    - If it fails serially, proceed to step 3.
 3. **Test failure reproduces under `-n 0`.**
    - `git stash` the Builder's pending changes. Rerun the failing test. Does it still fail?
      - **No (passes after stash)** → Builder's source change broke it. Triage which change. Apply minimal source fix; surface to user only if architectural change required.
-     - **Yes (fails after stash)** → pre-existing baseline rot. Quarantine with `pytest.mark.skip(reason="BF-NNN: <one-line cause>; resolve via AD-682")`. File BF entry. Resume the wave. Don't surface unless quarantine count exceeds budget (5 per sweep).
+     - **Yes (fails after stash)** → pre-existing baseline rot. Quarantine with `pytest.mark.skip(reason="BF-NNN: <one-line cause>")`, where BF-NNN is the BF entry you file for it. File the BF entry. Resume the wave. Don't surface unless quarantine count exceeds budget (5 per sweep).
 4. **Test failure passes in file isolation but fails in full gate.**
-   - Order-dependent test pollution. Quarantine with BF entry pointing at AD-682. Don't block the wave.
+   - Order-dependent test pollution (AD-682's per-worker isolation has landed, so this is a new leak, not a known gap). Quarantine with a BF entry naming the suspected shared state. Don't block the wave.
 5. **Prompt section references X parameter on Y function that doesn't exist.**
    - Check if the same prompt also modifies Y to add X. If yes, apply the prompt as written.
    - If no, the prompt has a real gap. Revise the prompt — usually the fix is to follow the existing pattern (e.g., return values via a Result dataclass, not new function parameters).
