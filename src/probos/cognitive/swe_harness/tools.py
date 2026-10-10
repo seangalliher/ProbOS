@@ -54,6 +54,10 @@ _FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 
+def _strict_native_target_supported() -> bool:
+    return os.name == "nt"
+
+
 class _FileTime(ctypes.Structure):
     _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
 
@@ -718,6 +722,9 @@ class WriteFileTool:
         """Resolve the concrete path this tool will write."""
         return _resolve_path(path).resolve(strict=False)
 
+    def supports_strict_effect_target(self) -> bool:
+        return _strict_native_target_supported()
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
@@ -795,6 +802,9 @@ class EditFileTool:
     def resolve_effect_target(self, path: str) -> Path:
         """Resolve the concrete path this tool will edit."""
         return _resolve_path(path).resolve(strict=False)
+
+    def supports_strict_effect_target(self) -> bool:
+        return _strict_native_target_supported()
 
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None

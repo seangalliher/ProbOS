@@ -177,7 +177,8 @@ def _create_junction(link: Path, target: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_real_write_file_manifest_isolation(
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file locking")
+async def test_real_write_file_manifest_isolation_windows(
     strict_runtime: Any,
 ) -> None:
     layout, authority, _, registry, executor = strict_runtime
@@ -217,7 +218,65 @@ async def test_real_write_file_manifest_isolation(
 
 
 @pytest.mark.asyncio
-async def test_real_write_file_rejects_reparse_and_target_swap(
+@pytest.mark.skipif(os.name != "posix", reason="POSIX refusal behavior")
+async def test_posix_real_write_manifest_target_refused_before_start(
+    strict_runtime: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, authority, broker, registry, executor = strict_runtime
+    target = Path(layout["worker"]) / "inside.txt"
+    tool = WriteFileTool(SimpleNamespace())
+    assert target.is_relative_to(Path(layout["worker"]))
+    assert tool.supports_strict_effect_target() is False
+    _register(registry, tool)  # type: ignore[arg-type]
+    starts = 0
+    invokes = 0
+    original_start = broker.start_permitted_effect
+    original_invoke = tool.invoke
+
+    async def count_start(*args: Any, **kwargs: Any) -> Any:
+        nonlocal starts
+        starts += 1
+        return await original_start(*args, **kwargs)
+
+    async def count_invoke(*args: Any, **kwargs: Any) -> Any:
+        nonlocal invokes
+        invokes += 1
+        return await original_invoke(*args, **kwargs)
+
+    monkeypatch.setattr(broker, "start_permitted_effect", count_start)
+    monkeypatch.setattr(tool, "invoke", count_invoke)
+
+    denied = await executor.invoke(
+        "selected-agent-canary",
+        "write_file",
+        {"path": str(target), "content": "blocked"},
+        protected_logical_key="posix-real-write-inside",
+        required=ToolPermission.READ,
+        context={},
+    )
+
+    assert denied.error == "native_file_locking_unsupported"
+    assert denied.metadata["effect_outcome"] == "denied"
+    assert starts == invokes == 0
+    assert not target.exists()
+    operations = await authority.query_effect_operations(
+        denied.metadata["operation_id"]
+    )
+    attempts = await authority.query_effect_attempts(
+        denied.metadata["operation_id"]
+    )
+    assert len(operations) == len(attempts) == 1
+    assert operations[0].state == "denied"
+    assert operations[0].reason_code == "native_file_locking_unsupported"
+    assert attempts[0].state == "denied"
+    assert attempts[0].reason_code == "native_file_locking_unsupported"
+    assert attempts[0].started_at_ms is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file locking")
+async def test_real_write_file_rejects_windows_reparse_and_target_swap(
     strict_runtime: Any,
 ) -> None:
     layout, _, broker, registry, executor = strict_runtime
@@ -2830,6 +2889,7 @@ async def test_post_start_permission_failure_is_unknown(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file locking")
 async def test_native_post_mutation_failure_is_unknown(
     strict_runtime: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -2881,6 +2941,7 @@ async def test_native_post_mutation_failure_is_unknown(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file locking")
 async def test_native_edit_post_mutation_file_not_found_is_unknown(
     strict_runtime: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -2941,10 +3002,11 @@ async def test_native_edit_post_mutation_file_not_found_is_unknown(
 
 
 @pytest.mark.asyncio
-async def test_strict_edit_missing_target_does_not_create_file(
+@pytest.mark.skipif(os.name != "nt", reason="Windows native file locking")
+async def test_windows_strict_edit_missing_target_is_known_not_applied(
     strict_runtime: Any,
 ) -> None:
-    layout, _, _, registry, executor = strict_runtime
+    layout, authority, _, registry, executor = strict_runtime
     target = layout["worker"] / "missing-edit.txt"
     _register(registry, EditFileTool(runtime=SimpleNamespace()))  # type: ignore[arg-type]
 
@@ -2961,8 +3023,149 @@ async def test_strict_edit_missing_target_does_not_create_file(
             context={},
         )
     assert not target.exists()
+    assert caught.value.failure.correlation.outcome == "failed"
+    assert caught.value.failure.error_code == "file_not_found"
     assert caught.value.failure.delivery_state == "not_started"
     assert caught.value.failure.retry_disposition == "retry_same_operation"
+    operation_id = caught.value.failure.correlation.operation_id
+    operations = await authority.query_effect_operations(operation_id)
+    attempts = await authority.query_effect_attempts(operation_id)
+    assert len(operations) == len(attempts) == 1
+    assert operations[0].state == "ready"
+    assert operations[0].reason_code == "receipt_not_applied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name != "posix", reason="POSIX refusal behavior")
+async def test_posix_strict_edit_missing_target_refused_before_start(
+    strict_runtime: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout, authority, broker, registry, executor = strict_runtime
+    target = layout["worker"] / "missing-edit.txt"
+    tool = EditFileTool(runtime=SimpleNamespace())
+    assert not target.exists()
+    assert tool.supports_strict_effect_target() is False
+    _register(registry, tool)  # type: ignore[arg-type]
+    starts = 0
+    invokes = 0
+    original_start = broker.start_permitted_effect
+    original_invoke = tool.invoke
+
+    async def count_start(*args: Any, **kwargs: Any) -> Any:
+        nonlocal starts
+        starts += 1
+        return await original_start(*args, **kwargs)
+
+    async def count_invoke(*args: Any, **kwargs: Any) -> Any:
+        nonlocal invokes
+        invokes += 1
+        return await original_invoke(*args, **kwargs)
+
+    monkeypatch.setattr(broker, "start_permitted_effect", count_start)
+    monkeypatch.setattr(tool, "invoke", count_invoke)
+
+    denied = await executor.invoke(
+        "selected-agent-canary",
+        "edit_file",
+        {
+            "path": str(target),
+            "old_text": "old",
+            "new_text": "new",
+        },
+        protected_logical_key="posix-missing-edit",
+        context={},
+    )
+
+    assert denied.error == "native_file_locking_unsupported"
+    assert denied.metadata["effect_outcome"] == "denied"
+    assert starts == invokes == 0
+    assert not target.exists()
+    operations = await authority.query_effect_operations(
+        denied.metadata["operation_id"]
+    )
+    attempts = await authority.query_effect_attempts(
+        denied.metadata["operation_id"]
+    )
+    assert len(operations) == len(attempts) == 1
+    assert operations[0].state == "denied"
+    assert operations[0].reason_code == "native_file_locking_unsupported"
+    assert attempts[0].state == "denied"
+    assert attempts[0].reason_code == "native_file_locking_unsupported"
+    assert attempts[0].started_at_ms is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "capability",
+    ["false", "non_bool", "raises", "absent"],
+)
+async def test_native_file_unsupported_host_denied_before_consumer(
+    strict_runtime: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capability: str,
+) -> None:
+    layout, authority, broker, registry, executor = strict_runtime
+    target = layout["worker"] / "unsupported.txt"
+    tool = WriteFileTool(SimpleNamespace())
+    _register(registry, tool)  # type: ignore[arg-type]
+    starts = 0
+    invokes = 0
+    original_start = broker.start_permitted_effect
+    original_invoke = tool.invoke
+
+    async def count_start(*args: Any, **kwargs: Any) -> Any:
+        nonlocal starts
+        starts += 1
+        return await original_start(*args, **kwargs)
+
+    async def count_invoke(*args: Any, **kwargs: Any) -> Any:
+        nonlocal invokes
+        invokes += 1
+        return await original_invoke(*args, **kwargs)
+
+    if capability == "false":
+        monkeypatch.setattr(tool, "supports_strict_effect_target", lambda: False)
+    elif capability == "non_bool":
+        monkeypatch.setattr(tool, "supports_strict_effect_target", lambda: None)
+    elif capability == "raises":
+
+        def raise_capability_error() -> bool:
+            raise OSError("SENTINEL_PRIVATE_PLATFORM_DETAIL")
+
+        monkeypatch.setattr(
+            tool,
+            "supports_strict_effect_target",
+            raise_capability_error,
+        )
+    else:
+        monkeypatch.delattr(WriteFileTool, "supports_strict_effect_target")
+    monkeypatch.setattr(tool, "invoke", count_invoke)
+    monkeypatch.setattr(broker, "start_permitted_effect", count_start)
+
+    denied = await executor.invoke(
+        "selected-agent-canary",
+        "write_file",
+        {"path": str(target), "content": "blocked"},
+        protected_logical_key="native-file-unsupported",
+        context={},
+    )
+
+    assert denied.error == "native_file_locking_unsupported"
+    assert denied.metadata["effect_outcome"] == "denied"
+    assert starts == invokes == 0
+    assert not target.exists()
+    operations = await authority.query_effect_operations(
+        denied.metadata["operation_id"]
+    )
+    attempts = await authority.query_effect_attempts(
+        denied.metadata["operation_id"]
+    )
+    assert len(operations) == len(attempts) == 1
+    assert operations[0].state == "denied"
+    assert operations[0].reason_code == "native_file_locking_unsupported"
+    assert attempts[0].state == "denied"
+    assert attempts[0].started_at_ms is None
 
 
 @pytest.mark.asyncio

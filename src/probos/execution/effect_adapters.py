@@ -103,6 +103,16 @@ class _NativeFileEffectAdapter(_BaseEffectAdapter):
             except (OSError, RuntimeError, ValueError):
                 canonical = ""
                 denial = "file_target_resolution_failed"
+        if not denial:
+            try:
+                capability = getattr(
+                    self._tool, "supports_strict_effect_target", None
+                )
+                supported = capability() if capability is not None else None
+            except Exception:
+                supported = None
+            if type(supported) is not bool or not supported:
+                denial = "native_file_locking_unsupported"
         if self._edit:
             continuation = _digest(
                 "probos.native-file-edit-continuation.v1",
