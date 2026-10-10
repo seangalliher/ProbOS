@@ -148,6 +148,26 @@ def repo_root(cwd: Path, run: Runner | None = None) -> Path:
     return Path(completed.stdout.strip())
 
 
+def find_cli(which: Callable[[str], str | None], home: Path) -> str | None:
+    """Locate the Claude Code CLI: PATH first, then the native installer's location.
+
+    Measured 2026-10-10: the native installer put `claude.exe` in
+    `~/.local/bin` without adding that directory to the user PATH, and VS Code
+    (running since before the install) could not have seen it anyway, so the
+    Copilot orchestrator's preflight refused with "not on PATH".
+    """
+    found = which("claude")
+    if found:
+        return found
+    # On Windows only the .exe is executable; an extensionless file would fail
+    # with WinError 193 instead of a clean refusal.
+    for name in ("claude.exe",) if os.name == "nt" else ("claude",):
+        candidate = home / ".local" / "bin" / name
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _redirecting(env: dict) -> list[str]:
     """Names in `env` that would move the run off the claude.ai login."""
     return [
@@ -184,6 +204,7 @@ def preflight(
     """Verify the environment, the CLI, the claude.ai login and the agent file; return the CLI path."""
     run = run or subprocess.run
     which = which or shutil.which
+    home = home or Path.home()
     redirecting = _redirecting(env)
     if redirecting:
         raise PreflightError(
@@ -191,7 +212,7 @@ def preflight(
             + " is set, so the call could bill an API key or another provider instead of"
             " the Claude plan; unset it for this command"
         )
-    from_settings = settings_env(root, home or Path.home())
+    from_settings = settings_env(root, home)
     redirecting = _redirecting({name: value for name, (value, _) in from_settings.items()})
     if redirecting:
         raise PreflightError(
@@ -199,9 +220,12 @@ def preflight(
             + " is set in a Claude Code settings `env` block, so the call could bill an API key or"
             " another provider instead of the Claude plan"
         )
-    cli = which("claude")
+    cli = find_cli(which, home)
     if not cli:
-        raise PreflightError("the Claude Code CLI (`claude`) is not on PATH")
+        raise PreflightError(
+            f"the Claude Code CLI (`claude`) is not on PATH or in {home / '.local' / 'bin'};"
+            " the Captain must install it and run `claude` then `/login`"
+        )
     if not (root / ".claude" / "agents" / f"{AGENT}.md").is_file():
         raise PreflightError(f"{root}/.claude/agents/{AGENT}.md is missing in this checkout")
     try:
@@ -211,6 +235,8 @@ def preflight(
         )
     except subprocess.TimeoutExpired as exc:
         raise PreflightError("`claude auth status` did not answer within 60s") from exc
+    except OSError as exc:
+        raise PreflightError(f"the Claude Code CLI at {cli} could not be executed: {exc}") from exc
     try:
         status = json.loads(completed.stdout)
     except (json.JSONDecodeError, TypeError) as exc:
