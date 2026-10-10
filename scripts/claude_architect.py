@@ -1,0 +1,394 @@
+"""Run the Claude Code `claude-architect` agent headless and return its answer.
+
+Why this exists (2026-10-10): the Copilot orchestrator needs an Architect it can
+call without the Captain relaying messages, and the Captain wants that Architect
+to be the Claude Code `claude-architect` (Opus 5.5) billed to the Claude plan.
+Copilot cannot launch Claude Code subagents, and picking `claude-architect`
+from the Copilot agent picker runs the file under Copilot instead. A terminal
+call to the Claude Code CLI is the bridge: the orchestrator runs this script the
+way it runs `run_test_gate.py`, synchronously, and reads the answer from stdout.
+
+The design property that matters: **a run that did not happen on the Claude plan
+must never look like one that did.** So the script refuses to start when the CLI
+is missing, not logged in through claude.ai, or could be redirected to an API
+key or another provider by the environment, and it exits non-zero whenever the
+agent did not complete. A permission the agent was denied is reported, not
+hidden: an answer written without the evidence it tried to gather is a weaker
+answer, and the caller must know.
+
+Usage:
+    python scripts/claude_architect.py --task-file prompts/_architect_request.md
+    python scripts/claude_architect.py --task "Triage this hard stop: ..." --read-only
+    python scripts/claude_architect.py --resume <session_id> --task "Follow-up: ..."
+
+`--resume` finds the session by working directory: resume from the same worktree.
+
+Exit codes: 0 completed, 1 agent error or incomplete run, 2 preflight refused,
+3 timed out, 4 completed but the agent was denied a tool call (read the answer
+and the listed denials: it may rest on evidence the agent could not gather).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable
+
+AGENT = "claude-architect"
+MODEL = "claude-opus-5-5"
+DEFAULT_TIMEOUT_SECONDS = 3600
+
+# Any of these redirects the CLI away from the claude.ai login: an API key or
+# token bills the API account, and the provider switches leave Anthropic
+# entirely. Their presence means the run could not be guaranteed to land on the
+# Claude plan, so preflight refuses rather than stripping them silently.
+_REDIRECTING_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    # A base URL sends model traffic to any gateway while `auth status` still
+    # reports claude.ai (measured 2026-10-10: preflight accepted it).
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_PROFILE",
+    "ANTHROPIC_ORGANIZATION_ID",
+    "ANTHROPIC_FEDERATION_RULE_ID",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+)
+# The desktop app sets the base URL to the official endpoint for its own child
+# sessions; only a different endpoint redirects the traffic.
+_OFFICIAL_BASE_URL = "https://api.anthropic.com"
+_AUTH_STATUS_TIMEOUT_SECONDS = 60
+
+_READ_TOOLS = ("Read", "Grep", "Glob", "WebFetch", "WebSearch")
+_WRITE_TOOLS = ("Edit", "Write")
+# Shell access is the Architect's evidence-gathering surface: history, issues
+# and the AD ceiling. No rule pushes, merges, commits, deletes or edits GitHub
+# state; those stay with the orchestrator. The run uses `--permission-mode
+# dontAsk`, so a command outside these rules is denied rather than prompted
+# (measured 2026-10-10: an unlisted `rm` was denied; `acceptEdits` would have
+# auto-approved rm/mv/cp inside the worktree).
+_BASH_RULES = (
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(git diff:*)",
+    "Bash(git status:*)",
+    "Bash(git grep:*)",
+    "Bash(git ls-files:*)",
+    "Bash(git ls-tree:*)",
+    "Bash(git rev-parse:*)",
+    "Bash(git blame:*)",
+    "Bash(git branch --list:*)",
+    "Bash(gh issue view:*)",
+    "Bash(gh issue list:*)",
+    "Bash(gh pr view:*)",
+    "Bash(gh pr list:*)",
+    "Bash(gh pr diff:*)",
+    "Bash(gh search:*)",
+    # A prefix rule, not an exact command: measured 2026-10-10, the agent chained
+    # `cd ... && <python> scripts/ad_ceiling.py; echo ...` and an exact rule
+    # denied it. Relative path only, so the ceiling reads this worktree's prompts/.
+    "Bash(d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py:*)",
+    "Bash(cd:*)",
+    "Bash(echo:*)",
+    "Bash(ls:*)",
+    "Bash(head:*)",
+    "Bash(tail:*)",
+    "Bash(wc:*)",
+)
+# Focused tests execute repository code (conftest, fixtures), so they are
+# granted only to runs that may also edit: triage, not read-only consults.
+_TEST_RULES = ("Bash(d:/ProbOS/.venv/Scripts/pytest.exe:*)",)
+# `git log`/`git diff` accept `--output=<file>`, which writes a file; deny it so
+# the read rules stay read-only (measured 2026-10-10: this rule denied it).
+# Shell redirection needs no rule: measured 2026-10-10 under dontAsk, `echo x >
+# a.txt`, `git log -1 > b.txt`, `git show ... >> c.txt` and `ls > d.txt` were all
+# denied although their commands are allowed, and no file was written.
+_DENIED_RULES = ("Bash(git *--output*)",)
+# Claude Code also applies an `env` block from these settings files, so a
+# redirecting variable set there counts as set.
+_SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+
+Runner = Callable[..., subprocess.CompletedProcess]
+
+
+class PreflightError(RuntimeError):
+    """The run cannot be guaranteed to execute as claude-architect on the Claude plan."""
+
+
+@dataclass
+class ArchitectResult:
+    """The outcome of one headless claude-architect run."""
+
+    exit_code: int
+    text: str
+    session_id: str | None = None
+    models: list[str] = field(default_factory=list)
+    denials: list[dict] = field(default_factory=list)
+    log_path: Path | None = None
+
+
+def repo_root(cwd: Path, run: Runner | None = None) -> Path:
+    """Return the git top level of `cwd`, so a call from a worktree reviews that worktree."""
+    run = run or subprocess.run
+    completed = run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=cwd, capture_output=True, text=True, check=False,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise PreflightError(f"{cwd} is not inside a git checkout; run from the ProbOS worktree")
+    return Path(completed.stdout.strip())
+
+
+def _redirecting(env: dict) -> list[str]:
+    """Names in `env` that would move the run off the claude.ai login."""
+    return [
+        name for name in _REDIRECTING_ENV
+        if env.get(name)
+        and not (name == "ANTHROPIC_BASE_URL" and str(env[name]).strip().rstrip("/") == _OFFICIAL_BASE_URL)
+    ]
+
+
+def settings_env(root: Path, home: Path) -> dict[str, tuple[str, Path]]:
+    """Collect `env` entries from the user and project settings files: name -> (value, file)."""
+    found: dict[str, tuple[str, Path]] = {}
+    for path in [home / ".claude" / "settings.json"] + [root / rel for rel in _SETTINGS_FILES]:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PreflightError(f"{path} is unreadable, so its `env` block cannot be checked") from exc
+        block = data.get("env") if isinstance(data, dict) else None
+        if isinstance(block, dict):
+            for name, value in block.items():
+                found[name] = (str(value), path)
+    return found
+
+
+def preflight(
+    root: Path,
+    env: dict[str, str],
+    run: Runner | None = None,
+    which: Callable[[str], str | None] | None = None,
+    home: Path | None = None,
+) -> str:
+    """Verify the environment, the CLI, the claude.ai login and the agent file; return the CLI path."""
+    run = run or subprocess.run
+    which = which or shutil.which
+    redirecting = _redirecting(env)
+    if redirecting:
+        raise PreflightError(
+            "refusing to run: " + ", ".join(redirecting)
+            + " is set, so the call could bill an API key or another provider instead of"
+            " the Claude plan; unset it for this command"
+        )
+    from_settings = settings_env(root, home or Path.home())
+    redirecting = _redirecting({name: value for name, (value, _) in from_settings.items()})
+    if redirecting:
+        raise PreflightError(
+            "refusing to run: " + ", ".join(f"{name} (in {from_settings[name][1]})" for name in redirecting)
+            + " is set in a Claude Code settings `env` block, so the call could bill an API key or"
+            " another provider instead of the Claude plan"
+        )
+    cli = which("claude")
+    if not cli:
+        raise PreflightError("the Claude Code CLI (`claude`) is not on PATH")
+    if not (root / ".claude" / "agents" / f"{AGENT}.md").is_file():
+        raise PreflightError(f"{root}/.claude/agents/{AGENT}.md is missing in this checkout")
+    try:
+        completed = run(
+            [cli, "auth", "status"], cwd=root, capture_output=True, text=True, check=False, env=env,
+            encoding="utf-8", errors="replace", timeout=_AUTH_STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PreflightError("`claude auth status` did not answer within 60s") from exc
+    try:
+        status = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise PreflightError(
+            f"`claude auth status` returned no readable status (exit {completed.returncode})"
+        ) from exc
+    if not isinstance(status, dict):
+        raise PreflightError("`claude auth status` returned JSON that is not an object")
+    if not status.get("loggedIn") or status.get("authMethod") != "claude.ai":
+        raise PreflightError(
+            "the Claude Code CLI is not logged in through claude.ai"
+            f" (loggedIn={status.get('loggedIn')}, authMethod={status.get('authMethod')});"
+            " the Captain must run `claude` and `/login` with the Claude account"
+        )
+    return cli
+
+
+def build_command(cli: str, *, read_only: bool, resume: str | None) -> list[str]:
+    """Return the headless CLI invocation; the task itself is sent on stdin."""
+    tools = list(_READ_TOOLS) + list(_BASH_RULES)
+    if not read_only:
+        tools += list(_WRITE_TOOLS) + list(_TEST_RULES)
+    command = [
+        cli, "-p",
+        "--agent", AGENT,
+        "--model", MODEL,
+        "--output-format", "json",
+        # Listed tools run without a prompt; everything else is denied, and no
+        # host is waited on for an answer that will never come.
+        "--permission-mode", "dontAsk",
+        "--permission-prompts", "none",
+        "--allowedTools", *tools,
+        "--disallowedTools", *_DENIED_RULES,
+    ]
+    if resume:
+        command += ["--resume", resume]
+    return command
+
+
+def interpret(raw: str | None) -> ArchitectResult:
+    """Turn the CLI's JSON result into an ArchitectResult; never report an unusable run as success."""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        data = None
+    if not isinstance(data, dict):
+        return ArchitectResult(exit_code=1, text="claude-architect returned no readable JSON result:\n" + (raw or "")[-2000:])
+    completed = data.get("terminal_reason") == "completed" and not data.get("is_error")
+    raw_text = data.get("result")
+    text = raw_text if isinstance(raw_text, str) else ""
+    usage = data.get("modelUsage")
+    models = sorted(usage.keys()) if isinstance(usage, dict) else []
+    raw_denials = data.get("permission_denials")
+    denials = [
+        item if isinstance(item, dict) else {"tool_name": repr(item), "tool_input": None}
+        for item in (raw_denials if isinstance(raw_denials, list) else [])
+    ]
+    failure = None
+    if raw_text is not None and not isinstance(raw_text, str):
+        failure = f"claude-architect returned a non-text result ({type(raw_text).__name__})."
+    elif not completed:
+        failure = (
+            f"claude-architect did not complete (terminal_reason={data.get('terminal_reason')},"
+            f" is_error={data.get('is_error')})."
+        )
+    elif not text.strip():
+        failure = "claude-architect completed but returned an empty answer."
+    elif raw_denials is not None and not isinstance(raw_denials, list):
+        failure = "claude-architect returned permission_denials that are not a list."
+    elif MODEL not in models:
+        # The answer did not come from the pinned model; helper models alongside it are fine.
+        failure = f"claude-architect answered without {MODEL} (models used: {', '.join(models) or 'none'})."
+    if failure:
+        text = failure + (f"\n{text}" if text else "")
+    return ArchitectResult(
+        exit_code=1 if failure else (4 if denials else 0),
+        text=text,
+        session_id=data.get("session_id"),
+        models=models,
+        denials=denials,
+    )
+
+
+def _write_log(root: Path, session_id: str | None, record: dict) -> Path:
+    """Keep every run's raw outcome, including timeouts, so its spend can be traced."""
+    log_dir = root / "logs" / "architect"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = log_dir / f"{stamp}-{session_id or 'no-session'}.json"
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return path
+
+
+def run_architect(
+    task: str,
+    *,
+    root: Path,
+    cli: str,
+    read_only: bool,
+    resume: str | None,
+    timeout: float,
+    env: dict[str, str],
+    run: Runner | None = None,
+) -> ArchitectResult:
+    """Run claude-architect once, log the raw outcome under logs/architect/, and interpret it."""
+    run = run or subprocess.run
+    command = build_command(cli, read_only=read_only, resume=resume)
+    try:
+        completed = run(
+            command, cwd=root, input=task, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=False, timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        result = ArchitectResult(exit_code=3, text=f"claude-architect timed out after {timeout:.0f}s; no answer was produced.")
+        partial = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        result.log_path = _write_log(root, None, {"command": command, "timeout_seconds": timeout, "stdout": partial})
+        return result
+    result = interpret(completed.stdout)
+    if result.exit_code in (0, 4) and completed.returncode != 0:
+        result.exit_code = 1
+        result.text = f"claude CLI exited {completed.returncode} after reporting completion.\n{result.text}"
+    result.log_path = _write_log(root, result.session_id, {
+        "command": command, "returncode": completed.returncode,
+        "stdout": completed.stdout, "stderr": (completed.stderr or "")[-4000:],
+    })
+    return result
+
+
+def render(result: ArchitectResult) -> str:
+    """Format the answer with a short header the orchestrator can quote."""
+    header = [
+        f"agent (requested): {AGENT}",
+        f"session_id: {result.session_id or 'none'}",
+        f"models: {', '.join(result.models) or 'none'}",
+        f"permission_denials: {len(result.denials)}",
+        f"exit: {result.exit_code}",
+    ]
+    for denial in result.denials:
+        header.append(f"  denied: {denial.get('tool_name')} {json.dumps(denial.get('tool_input'))[:200]}")
+    if result.log_path:
+        header.append(f"log: {result.log_path}")
+    return "\n".join(header) + "\n----\n" + result.text
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--task", help="the request for the Architect")
+    source.add_argument("--task-file", type=Path, help="a UTF-8 file holding the request")
+    parser.add_argument("--read-only", action="store_true", help="no Edit/Write and no test runs: consults and option ranking")
+    parser.add_argument("--resume", metavar="SESSION_ID", help="continue an earlier claude-architect session")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="seconds (default 3600)")
+    args = parser.parse_args(argv)
+
+    try:
+        task = args.task if args.task is not None else args.task_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"claude_architect: cannot read the task file: {exc}", file=sys.stderr)
+        return 2
+    if not task.strip():
+        print("claude_architect: the task is empty", file=sys.stderr)
+        return 2
+    env = dict(os.environ)
+    try:
+        root = repo_root(Path.cwd())
+        cli = preflight(root, env)
+    except PreflightError as exc:
+        print(f"claude_architect: preflight refused: {exc}", file=sys.stderr)
+        return 2
+    result = run_architect(
+        task, root=root, cli=cli, read_only=args.read_only, resume=args.resume,
+        timeout=args.timeout, env=env,
+    )
+    # The answer may contain any Unicode; never let the console code page turn a good run into a crash.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    print(render(result))
+    return result.exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -23,15 +23,17 @@ For current state (latest AD/BF, test counts, what's next) read `PROGRESS.md` an
 5. **Broad gate, once** for the issue or batch: `scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json`. Always pass `--receipt`: without it the gate writes no receipt and the run does not count as evidence. Merge the base branch into the work *before* this step, not after — a base that moves after the gate invalidates it. It refuses an index that differs from `HEAD`, which is why step 4 comes first. The main session runs it, not the Builder. A change after the gate invalidates it — rerun.
 6. **Push and verify closure** only after a green gate.
 
-If the Builder hits a hard stop, hand its report to the Architect for triage; relay any question that needs the Captain.
+If the Builder hits a hard stop, hand its report to the Architect for triage; relay any question that needs the Captain. (This is the all-Claude workflow; under the split workflow below, the Copilot orchestrator calls the Architect itself.)
 
 ## Split workflow (Claude Architect, Copilot build)
 
-An alternative to the all-Claude workflow above, for when the Captain wants the build and gate to run under Copilot:
+An alternative to the all-Claude workflow above, for when the build and gate run under the Copilot orchestrator:
 
-1. **`claude-architect`** drafts or reviews the build prompt and saves it in `prompts/`, with its dated **Verified Against Codebase** section and its **Drafted by** / **Revised by** provenance line (see `.claude/agents/claude-architect.md`, Prompt Drafting Standards). It stops there: no `claude-builder`, no `claude-diff-reviewer`, no gate in this session.
-2. **The Captain starts the Copilot orchestrator** with "Build `prompts/<file>.md`". The Copilot Builder, the GPT-6.1 Sol Diff Reviewer and the single receipted broad gate run there, per `.github/copilot-instructions.md`.
-3. **Builder hard stops come back to `claude-architect`** for triage. The Captain brings the Builder's report here; the Architect answers or revises the prompt in place, and the Captain resumes the Copilot build.
+1. **`claude-architect`** drafts or reviews the build prompt and saves it in `prompts/`, with its dated **Verified Against Codebase** section and its **Drafted by** / **Revised by** provenance line (see `.claude/agents/claude-architect.md`, Prompt Drafting Standards). It does not build, review the diff or run the gate.
+2. **The Copilot orchestrator builds it.** The Copilot Builder, the GPT-6.1 Sol Diff Reviewer and the single receipted broad gate run there, per `.github/copilot-instructions.md`.
+3. **The orchestrator calls `claude-architect` itself** for every Architect step — drafting, option ranking, hard-stop and test-failure triage — through `scripts/claude_architect.py`, which runs the Claude Code CLI headless (`claude -p --agent claude-architect --model claude-opus-5-5`) on the Captain's claude.ai login. No relay by the Captain is needed. The script refuses to run unless the CLI is logged in through claude.ai with no API-key, token, non-official base-URL, profile or provider variable set (environment or settings `env` block); the Copilot `Architect` is the reported fallback.
+
+The Captain can still run `claude-architect` directly from a Claude Code session; the prompt and provenance rules are the same. Headless runs log their raw JSON to `logs/architect/` (gitignored).
 
 Use `claude-architect` for this role. The Copilot `Architect` and `Builder` definitions also live (gitignored) in `.claude/agents/` and are not for use from Claude Code. To list the prompts `claude-architect` touched: `git grep -l -E "^\*\*(Drafted|Revised) by:\*\* .claude-architect." -- prompts/`.
 
