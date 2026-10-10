@@ -58,6 +58,8 @@ The reviewer's advantage is stance, not intelligence: it asks *does the next com
 
 ## Delegation and Waiting (Standing Order)
 
+**Delegate only to the Copilot agents.** The agent picker also lists `claude-architect`, `claude-builder` and `claude-diff-reviewer` from `.claude/agents/`; they belong to Claude Code and must never be invoked from a Copilot session. Use `Architect`, `Builder` and `Diff Reviewer`. Work for the Claude Architect goes through the Captain (see `CLAUDE.md`, "Split workflow").
+
 **Delegate synchronously when the next step needs the result.** Run Diff Reviewer calls and bounded Builder milestones with `mode: "sync"`: a failure then returns to the caller as a tool result and is handled at once (2026-09-19: the orchestrator acted on a failed sync review 44 seconds later). Sync delegations of up to two hours have completed reliably; split longer work, such as a full Architect contract, into bounded milestones, or run it in the background with a watchdog.
 
 **A background agent that fails sends no notification.** Completion produces an "is now idle" notification that wakes the waiting caller; failure produces nothing. Measured twice: on 2026-10-02 a model-response failure left the orchestrator idle for 6.0 hours, and on 2026-10-05 a review refused with a 422 thirteen minutes after launch left it idle for 6.5 hours. Both ended only when the Captain typed. "Using the wait productively" does not justify that risk — in the 2026-10-05 session the orchestrator was active for 40 minutes of 18.5 hours.

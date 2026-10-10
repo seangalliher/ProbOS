@@ -1,6 +1,6 @@
 ---
 name: claude-architect
-description: "ProbOS Architect. Reviews ProbOS build prompts, triages failures, makes architectural decisions, drafts and revises prompts, and updates DECISIONS/PROGRESS trackers. Use when drafting or reviewing an AD/BF prompt, when the Builder hits a hard-stop, for test-failure triage, for wave execution plans, or for project direction and status summaries. Does not write production code — that is the Builder's job."
+description: "Claude Code only: never invoke from GitHub Copilot. ProbOS Architect. Reviews ProbOS build prompts, triages failures, makes architectural decisions, drafts and revises prompts, and updates DECISIONS/PROGRESS trackers. Use when drafting or reviewing an AD/BF prompt, when the Builder hits a hard-stop, for test-failure triage, for wave execution plans, or for project direction and status summaries. Does not write production code — that is the Builder's job."
 tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch
 model: claude-opus-5-5
 memory: project
