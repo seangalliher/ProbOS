@@ -161,7 +161,7 @@ d:/ProbOS/.venv/Scripts/pytest.exe tests/test_<specific>.py -v
 **Do not run the full suite yourself.** The broad gate runs once per issue (or per batch of up to three issues), after the Diff Reviewer's findings are repaired and the reviewed tree is committed locally, before push:
 
 ```bash
-d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave>
+d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json
 ```
 
 Run it only when the caller explicitly asks you to. Never invoke `pytest tests/` directly for the broad gate.

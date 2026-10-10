@@ -20,7 +20,7 @@ For current state (latest AD/BF, test counts, what's next) read `PROGRESS.md` an
 2. **Builder** implements it section by section, running only the **focused tests** for each changed slice and its immediate consumers. No full suite.
 3. **Diff Reviewer** reviews the staged or working-tree diff. Tell it what the change claims to do and name the consumer that must accept it. Repair its findings before committing; anything that would break the next run is a blocker.
 4. **Commit locally** — after the pre-commit deletion check (`git diff --cached --stat`; stop on any unexpected file with more than 200 deletions). Never `git add -A`.
-5. **Broad gate, once** for the issue or batch: `scripts/run_test_gate.py --label <issue-or-wave>`. It refuses an index that differs from `HEAD`, which is why step 4 comes first. The main session runs it, not the Builder. A change after the gate invalidates it — rerun.
+5. **Broad gate, once** for the issue or batch: `scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json`. Always pass `--receipt`: without it the gate writes no receipt and the run does not count as evidence. Merge the base branch into the work *before* this step, not after — a base that moves after the gate invalidates it. It refuses an index that differs from `HEAD`, which is why step 4 comes first. The main session runs it, not the Builder. A change after the gate invalidates it — rerun.
 6. **Push and verify closure** only after a green gate.
 
 If the Builder hits a hard stop, hand its report to the Architect for triage; relay any question that needs the Captain.
@@ -35,4 +35,4 @@ If the Builder hits a hard stop, hand its report to the Architect for triage; re
 
 ## Environment
 
-The test commands in `.github/copilot-instructions.md` and `.github/supervised-worker.json` use the Captain's Windows paths (`d:/ProbOS/.venv/Scripts/...`). In any other environment (Linux, a cloud session), use the interpreter that environment has and say which one you used. The running vessel's data lives under `%LOCALAPPDATA%\ProbOS\data` on the Captain's machine; live-system claims must come from the live system, never from the repo's `data/`.
+The test commands in `.github/copilot-instructions.md` use the Captain's Windows paths (`d:/ProbOS/.venv/Scripts/...`). In any other environment (Linux, a cloud session), use the interpreter that environment has and say which one you used. The running vessel's data lives under `%LOCALAPPDATA%\ProbOS\data` on the Captain's machine; live-system claims must come from the live system, never from the repo's `data/`.
