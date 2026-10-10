@@ -267,6 +267,8 @@ class MCPBridge:
         client = self._clients.get(server_url)
         if client is None:
             raise MCPProtocolError(f"unknown server: {server_url}")
+        if effect_context is None:
+            return await client.call_tool(tool_name, arguments)
         return await client.call_tool(
             tool_name, arguments, effect_context=effect_context
         )
