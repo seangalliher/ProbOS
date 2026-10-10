@@ -1,5 +1,5 @@
 ---
-name: diff-reviewer
+name: claude-diff-reviewer
 description: "Adversarial pre-commit code review of a staged or working-tree diff. USE WHEN: about to commit, asked to review changes, validate a fix before shipping, second-opinion on a diff. Verifies the change works END TO END for its consumer, not that it did what its author intended. Point it at the diff (staged, a SHA, or a file set) and name the consumer that should accept the change."
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 model: claude-haiku-5-5

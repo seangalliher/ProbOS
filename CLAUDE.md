@@ -8,9 +8,9 @@ For current state (latest AD/BF, test counts, what's next) read `PROGRESS.md` an
 
 | Agent | File | Model | Role |
 |---|---|---|---|
-| `probos-architect` | `.claude/agents/probos-architect.md` | Opus 5.5 | Drafts and reviews build prompts, triages failures, makes architectural decisions, updates trackers. Does not write production code. |
-| `probos-builder` | `.claude/agents/probos-builder.md` | Sonnet 5.5 | Executes one build prompt from `prompts/`: code, focused tests, section audit, tracker updates. Makes no architectural decisions. |
-| `diff-reviewer` | `.claude/agents/diff-reviewer.md` | Haiku 5.5 | Adversarial pre-commit review: does the next component accept this change? Read-only. |
+| `claude-architect` | `.claude/agents/claude-architect.md` | Opus 5.5 | Drafts and reviews build prompts, triages failures, makes architectural decisions, updates trackers. Does not write production code. |
+| `claude-builder` | `.claude/agents/claude-builder.md` | Sonnet 5.5 | Executes one build prompt from `prompts/`: code, focused tests, section audit, tracker updates. Makes no architectural decisions. |
+| `claude-diff-reviewer` | `.claude/agents/claude-diff-reviewer.md` | Haiku 5.5 | Adversarial pre-commit review: does the next component accept this change? Read-only. |
 
 `.gitignore` excludes `.claude/`; these agent files are force-added. Add new agent files with `git add -f`.
 
@@ -31,7 +31,7 @@ If the Builder hits a hard stop, hand its report to the Architect for triage; re
 
 **Watchdog for background agents** (Copilot `Start-Sleep` + `read_agent`): never end a turn waiting on a background agent without a watchdog. Start a background Bash command such as `sleep 900` (`run_in_background: true`); its exit wakes the idle session. On wake, check the agent: if it failed, recover at once; if it is still running, start another `sleep`. Report a failure by when it happened, not by elapsed time since launch.
 
-**Reviewer model independence.** The Copilot `Diff Reviewer` pins GPT models so the reviewer is a different model family from a Claude author. Claude Code subagents run Claude models only, so `diff-reviewer` runs Haiku against a Sonnet Builder: a fresh read, not a different family. For security, data-integrity or other high-risk changes, also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`). Brief either reviewer with properties to verify, not attack scenarios.
+**Reviewer model independence.** The Copilot `Diff Reviewer` pins GPT models so the reviewer is a different model family from a Claude author. Claude Code subagents run Claude models only, so `claude-diff-reviewer` runs Haiku against a Sonnet Builder: a fresh read, not a different family. For security, data-integrity or other high-risk changes, also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`). Brief either reviewer with properties to verify, not attack scenarios.
 
 ## Environment
 

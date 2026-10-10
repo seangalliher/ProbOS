@@ -1,6 +1,6 @@
 ---
-name: probos-builder
-description: "ProbOS Builder. Executes ProbOS build prompts (a markdown spec in prompts/). Writes code, runs tests, updates trackers. Use after the probos-architect has drafted or approved a prompt. Does not make architectural decisions."
+name: claude-builder
+description: "ProbOS Builder. Executes ProbOS build prompts (a markdown spec in prompts/). Writes code, runs tests, updates trackers. Use after the claude-architect has drafted or approved a prompt. Does not make architectural decisions."
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: claude-sonnet-5-5
 ---
