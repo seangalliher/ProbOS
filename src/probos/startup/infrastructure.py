@@ -33,6 +33,7 @@ async def boot_infrastructure(
     config: "SystemConfig",
     event_log_prune_loop_fn: Callable[[], asyncio.Future[None]],
     *,
+    runtime_session_id: str = "",
     background_register: Callable[[asyncio.Task], None] | None = None,
 ) -> InfrastructureResult:
     """Start core infrastructure services and create the identity registry.
@@ -52,43 +53,74 @@ async def boot_infrastructure(
     # Start infrastructure
     data_dir.mkdir(parents=True, exist_ok=True)
     await event_log.start()
-    event_prune_task = asyncio.create_task(
-        event_log_prune_loop_fn(), name="event-log-prune-loop"
-    )
-    if background_register is not None:
-        background_register(event_prune_task)
-    await hebbian_router.start()
-    await signal_manager.start()
-    await gossip.start()
-    await trust_network.start()
+    execution_authority = None
+    try:
+        protected_config = config.protected_execution
+        if protected_config.enabled and protected_config.profile == "strict":
+            from probos.execution.authority import ProtectedExecutionAuthority
 
-    # --- Sovereign Agent Identity (AD-441) ---
-    from probos.identity import AgentIdentityRegistry
+            execution_authority = ProtectedExecutionAuthority(
+                db_path=data_dir / protected_config.witness_filename,
+                runtime_session_id=runtime_session_id,
+                witness_busy_timeout_ms=protected_config.witness_busy_timeout_ms,
+                protected_installation_root=Path(
+                    protected_config.protected_installation_root
+                ),
+                policy_path=Path(protected_config.policy_path),
+                worker_write_roots=tuple(
+                    Path(root) for root in protected_config.worker_write_roots
+                ),
+            )
+            await execution_authority.start()
+        event_prune_task = asyncio.create_task(
+            event_log_prune_loop_fn(), name="event-log-prune-loop"
+        )
+        if background_register is not None:
+            background_register(event_prune_task)
+        await hebbian_router.start()
+        await signal_manager.start()
+        await gossip.start()
+        await trust_network.start()
 
-    # AD-1196: the ship DID's key binding, built only when armed (off is byte-identical).
-    identity_key_binding = None
-    if config.federation.identity_keys_enabled:
-        from probos.identity_key_binding import build_identity_key_binding
+        # --- Sovereign Agent Identity (AD-441) ---
+        from probos.identity import AgentIdentityRegistry
 
-        identity_key_binding = build_identity_key_binding(config.federation, data_dir)
+        # AD-1196: the ship DID's key binding, built only when armed (off is byte-identical).
+        identity_key_binding = None
+        if config.federation.identity_keys_enabled:
+            from probos.identity_key_binding import build_identity_key_binding
 
-    # AD-1198 slice 2b-ii: stored incoming transfer certificates judged again by every chain stored, only while peer
-    # admission is armed (off is byte-identical: no table, no re-check).
-    transfer_marks = None
-    if config.federation.peer_admission_enabled is True:
-        from probos.identity_transfer_marks import TransferMarks
+            identity_key_binding = build_identity_key_binding(config.federation, data_dir)
 
-        transfer_marks = TransferMarks()
+        # AD-1198 slice 2b-ii: stored incoming transfer certificates judged again by every chain stored, only while peer
+        # admission is armed (off is byte-identical: no table, no re-check).
+        transfer_marks = None
+        if config.federation.peer_admission_enabled is True:
+            from probos.identity_transfer_marks import TransferMarks
 
-    identity_registry = AgentIdentityRegistry(
-        data_dir=data_dir, key_binding=identity_key_binding, transfer_marks=transfer_marks,
-    )
-    await identity_registry.start()
-    logger.info("identity registry started")
+            transfer_marks = TransferMarks()
 
-    logger.info("Startup [infrastructure]: complete")
-    return InfrastructureResult(
-        identity_registry=identity_registry,
-        event_prune_task=event_prune_task,
-        identity_key_binding=identity_key_binding,
-    )
+        identity_registry = AgentIdentityRegistry(
+            data_dir=data_dir, key_binding=identity_key_binding, transfer_marks=transfer_marks,
+        )
+        await identity_registry.start()
+        logger.info("identity registry started")
+
+        logger.info("Startup [infrastructure]: complete")
+        return InfrastructureResult(
+            identity_registry=identity_registry,
+            event_prune_task=event_prune_task,
+            identity_key_binding=identity_key_binding,
+            execution_authority=execution_authority,
+        )
+    except BaseException:
+        if execution_authority is not None:
+            try:
+                await execution_authority.stop()
+            except BaseException:
+                logger.error(
+                    "protected authority cleanup failed operation=boot_infrastructure "
+                    "attempt_id=none manifest_id=none generation=none "
+                    "reason_code=phase_one_unwind_failed; startup remains failed"
+                )
+        raise

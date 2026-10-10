@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1853
-  field_definitions: 1828
+  canonical_dump_leaves: 1859
+  field_definitions: 1836
   incidental: 13
-  own_models: 224
-  owned: 291
-  public_names: 304
-canonical_dump_sha256: dcde3d8a1b9e95bd75e73e2f2726f779e6b06ff9fdd7164049d5f6ac6b3731de
+  own_models: 225
+  owned: 292
+  public_names: 305
+canonical_dump_sha256: f5a01f6682310d2730507cb1b51df69049fd6ca854b206515ece15552f6d61f4
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -350,6 +350,7 @@ names:
   ProactiveScanConfig: {kind: model, tier: owned}
   ProactiveScanInboxConfig: {kind: model, tier: owned}
   ProcessChainRegistryConfig: {kind: model, tier: owned}
+  ProtectedExecutionConfig: {kind: model, tier: owned}
   QAConfig: {kind: model, tier: owned}
   QualificationConfig: {kind: model, tier: owned}
   QualityRouterConfig: {kind: model, tier: owned}
@@ -2823,6 +2824,20 @@ models:
     schema_sha256: 3c6fff8f997345ab5f762f3c8f837afadc664faa5a3bfe1da111a2e8a276f8a6
     fields:
     - {default: 'True', name: enabled}
+  ProtectedExecutionConfig:
+    qualname: ProtectedExecutionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8db5b741740145f39dd95d9089ca4a48feec4617c64b0d299a8b4a235578fb0f
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '''ordinary''', name: profile}
+    - {default: '''execution_authority.db''', name: witness_filename}
+    - {default: '5000', name: witness_busy_timeout_ms}
+    - {default: '''''', name: protected_installation_root}
+    - {default: '''''', name: policy_path}
+    - {default: <required>, has_default_factory: true, name: worker_write_roots}
   QAConfig:
     qualname: QAConfig
     bases:
@@ -3329,7 +3344,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1e3195b78cd8378764ebcd7c52e1f274031c5b4e742b1caf5da669931b9eb4b2
+    schema_sha256: 323bbdcb0659fcdc6bd23b5a89ec945e9b2b4c889ac0d5921f7c01302857596d
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3348,6 +3363,7 @@ models:
     - {default: <required>, has_default_factory: true, name: grounding}
     - {default: <required>, has_default_factory: true, name: dependency}
     - {default: ExecutionConfig(...), name: execution}
+    - {default: <required>, has_default_factory: true, name: protected_execution}
     - {default: HooksConfig(...), name: hooks}
     - {default: <required>, has_default_factory: true, name: packs}
     - {default: <required>, has_default_factory: true, name: skills_marketplace}

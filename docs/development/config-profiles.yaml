@@ -17,7 +17,7 @@ census:
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
   boolean_fields_reachable: 445
-  default_false: 221
+  default_false: 222
   default_true: 225
   default_false_armed_by_system_yaml: 85
   default_false_never_armed: 136
@@ -170,6 +170,16 @@ flags:
   external_dependency: null
   requires:
   - proactive_cognitive.enabled
+  conflicts_with: []
+- path: protected_execution.enabled
+  kind: security-control
+  profiles: []
+  evidence_to_promote: tests/test_ad1315_protected_execution_authority.py::test_runtime_strict_phase_one_exposes_and_closes_authority
+    -- the armed strict profile constructs and starts the runtime-owned authority during
+    Phase 1, exposes its protocol, and closes the witness; the default config test proves
+    the ordinary profile remains off.
+  external_dependency: null
+  requires: []
   conflicts_with: []
 - path: memory.hybrid_recall_enabled
   kind: product-feature

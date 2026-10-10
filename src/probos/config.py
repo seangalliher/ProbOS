@@ -3758,6 +3758,48 @@ class DeviceConfig(BaseModel):
     probationary_beta: float = Field(default=3.0, gt=0.0)
 
 
+class ProtectedExecutionConfig(BaseModel):
+    """Default-off strict protected-execution authority configuration."""
+
+    enabled: bool = False
+    profile: Literal["ordinary", "strict"] = "ordinary"
+    witness_filename: str = "execution_authority.db"
+    witness_busy_timeout_ms: int = Field(default=5000, ge=1, le=60000)
+    protected_installation_root: str = ""
+    policy_path: str = ""
+    worker_write_roots: list[str] = Field(default_factory=list)
+
+    @field_validator("witness_filename")
+    @classmethod
+    def validate_witness_filename(cls, value: str) -> str:
+        candidate = Path(value)
+        if (
+            not value
+            or candidate.is_absolute()
+            or candidate.name != value
+            or not value.endswith(".db")
+            or ".." in candidate.parts
+        ):
+            raise ValueError(
+                "witness_filename must be a basename ending in .db"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_strict_profile(self) -> "ProtectedExecutionConfig":
+        if self.profile != "strict":
+            return self
+        if not self.enabled:
+            raise ValueError("strict protected execution requires enabled=true")
+        for field_name in ("protected_installation_root", "policy_path"):
+            value = getattr(self, field_name)
+            if not value or not Path(value).is_absolute():
+                raise ValueError(
+                    f"strict protected execution requires absolute {field_name}"
+                )
+        return self
+
+
 class SystemConfig(BaseModel):
     """Root configuration model."""
 
@@ -3778,6 +3820,9 @@ class SystemConfig(BaseModel):
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)  # AD-1119 (default OFF)
     dependency: DependencyConfig = Field(default_factory=DependencyConfig)  # AD-838c
     execution: ExecutionConfig = ExecutionConfig()  # AD-993/994 (default OFF)
+    protected_execution: ProtectedExecutionConfig = Field(
+        default_factory=ProtectedExecutionConfig
+    )
     hooks: HooksConfig = HooksConfig()  # AD-1004 (default OFF)
     packs: PacksConfig = Field(default_factory=lambda: PacksConfig())  # AD-1003c (default OFF)
     skills_marketplace: SkillsMarketplaceConfig = Field(default_factory=SkillsMarketplaceConfig)  # AD-813 (default OFF)

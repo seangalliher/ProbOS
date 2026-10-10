@@ -2014,6 +2014,24 @@ async def shutdown(
                 exc_info=True,
             )
 
+    # AD-1315: disable strict admission immediately before the EventLog's
+    # terminal row. All effect-producing and background services have already
+    # stopped, and rollback uses this same owned shutdown path.
+    execution_authority = getattr(runtime, "execution_authority", None)
+    if execution_authority is not None:
+        try:
+            await execution_authority.stop()
+        except Exception:
+            logger.error(
+                "protected authority close failed operation=shutdown "
+                "attempt_id=none manifest_id=none generation=unknown "
+                "reason_code=close_failed; admission remains disabled and "
+                "ordinary resource shutdown continues",
+                exc_info=True,
+            )
+        finally:
+            runtime.execution_authority = None
+
     try:
         await runtime.event_log.log(category="system", event="stopped")
     except (asyncio.CancelledError, Exception):

@@ -57,6 +57,7 @@ __all__ = [
 DECLARATION_MODULES: tuple[str, ...] = (
     "probos.storage_declarations",
     "probos.cognitive.storage_declarations",
+    "probos.execution.storage_declarations",
     "probos.security.storage_declarations",
     "probos.threads.storage_declarations",
     "probos.tools.storage_declarations",

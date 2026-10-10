@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1315 -- Protected ProbOS host authority and durable admission witness
+
+**Status:** IMPLEMENTED candidate (#1381), default OFF (`protected_execution.enabled=false`, profile `ordinary`). Parent #1379 remains open; #1383 / AD-1316 is still required for governed effect routing.
+
+**Decision.** A runtime-owned `ProtectedExecutionAuthority` uses a dedicated `ConnectionFactory`-backed `execution_authority.db` with additive schema version 1. It persists immutable execution manifests, complete enforcement-source snapshots, one append-preserving row per admission attempt, and active/revoked grants. Strict publication binds repository HEAD/tree/dirty state, durable host identity, process incarnation, runtime session, selected-agent identity/source, policy, issuer generation, and all required effective-enforcement kinds with canonical metadata-only SHA-256 digests. Duplicate effective operation or handler claims fail publication rather than shadowing.
+
+**Durability and lifecycle.** Each strict admission commits its pending attempt before validation and commits an admitted terminal row and grant atomically before returning. A restart or changed effective manifest advances generation and revokes older grants; interrupted pending attempts recover as failed evidence. Witness absence, closure, schema drift, bounded-lock expiry, and unconfirmed commits fail closed. The strict service starts after EventLog in Phase 1, participates in ordinary startup rollback, and closes immediately before EventLog's stopped row after effect-producing/background services have stopped.
+
+**Boundary.** The witness stores and logs IDs, counts, reason codes, and hashes only—never prompts, source or policy contents, tool parameters/results, credentials, or environment values. Strict activation rejects protected installation, issuer, policy, witness, WAL, or SHM overlap with Worker-writable roots. This is local-host evidence, not a provider seal, signature, TPM proof, remote attestation, or defense against administrator/root/kernel compromise. AD-1315 does not retrofit ToolRegistry, browser, MCP, subprocess, filesystem, network, device, or code-execution paths and therefore makes no global effect-completeness claim.
+
 ### AD-1325 OPEN -- Default-off completion calibration with immutable spend evidence
 
 **Status:** OPEN candidate (#1480), default OFF (`dm_agentic.economic_judgment.completion_calibration.enabled`; the independent descriptive estimate feed is also default OFF).

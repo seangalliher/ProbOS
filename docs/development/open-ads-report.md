@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-10T00:07:23+00:00 at `a6ec4d0e` | 2751 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-10T05:06:18+00:00 at `faa3208d` | 2759 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -50,7 +50,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 0 | abandoned, number **not** reusable |
-| `shipped` | 955 | 532 | code in history |
+| `shipped` | 956 | 532 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
@@ -176,7 +176,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (955): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1185, 1192, 1201, 1203-1204, 1209-1212, 1216-1224, 1226-1227, 1230-1235, 1239, 1241-1245, 1247-1248, 1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1285, 1291-1305, 1320-1323
+**AD** (956): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1185, 1192, 1201, 1203-1204, 1209-1212, 1216-1224, 1226-1227, 1230-1235, 1239, 1241-1245, 1247-1248, 1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1285, 1291-1305, 1315, 1320-1323
 
 **BF** (532): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-808, 810-817, 819-837, 840-842, 844-866, 868-869, 871-873, 886
 
@@ -184,7 +184,7 @@ _(none)_
 
 Numbers below the ceiling that no authority mentions. The issue layer is a snapshot and audits allocate before writing code, so silence here is absence of evidence. Confirm against live issues before minting.
 
-**AD** (292): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1286-1290, 1306-1319
+**AD** (291): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1286-1290, 1306-1314, 1316-1319
 
 **BF** (333): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 870, 874
 
@@ -364,8 +364,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1231 head-shaped line yielded no AD/BF token
-PROGRESS.md:1237 head-shaped line yielded no AD/BF token
+PROGRESS.md:1233 head-shaped line yielded no AD/BF token
+PROGRESS.md:1239 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

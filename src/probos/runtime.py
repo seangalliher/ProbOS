@@ -153,6 +153,7 @@ from probos.build_pipeline import BuildPipeline
 from probos.warm_boot import WarmBootService
 
 if TYPE_CHECKING:
+    from probos.execution.authority import ProtectedExecutionAuthorityProtocol
     from probos.acm import AgentCapitalService
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
@@ -453,6 +454,7 @@ class ProbOSRuntime:
 
     # Event / Credential / Callsign
     event_log: EventLog
+    execution_authority: "ProtectedExecutionAuthorityProtocol | None"
     credential_store: CredentialStore
     callsign_registry: CallsignRegistry
 
@@ -671,6 +673,7 @@ class ProbOSRuntime:
 
         # --- Event log ---
         self.event_log = EventLog(db_path=self._data_dir / "events.db")
+        self.execution_authority = None
         # AD-1195: persists DURABLE EventType members to the event log.
         self.durable_events = DurableEventRouter(self.event_log)
 
@@ -2696,11 +2699,13 @@ class ProbOSRuntime:
             trust_network=self.trust_network,
             data_dir=self._data_dir,
             config=self.config,
+            runtime_session_id=self._session_id,
             event_log_prune_loop_fn=self._event_log_prune_loop,
             background_register=self._background_tasks.add,
         )
         self.identity_registry = infra.identity_registry
         self.identity_key_binding = infra.identity_key_binding  # AD-1196
+        self.execution_authority = infra.execution_authority
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
         self.durable_events.bind_loop(self._dispatch_loop)
 
