@@ -1,11 +1,17 @@
 ---
-description: "Adversarial pre-commit code review of a staged or working-tree diff. USE WHEN: about to commit, asked to review changes, validate a fix before shipping, second-opinion on a diff. Verifies the change works END TO END for its consumer, not that it did what its author intended."
-name: "Diff Reviewer"
-model: ['GPT-6.1 Sol (copilot)', 'GPT-5.6 Sol (copilot)', 'GPT-5.6 Terra (copilot)', 'GPT-5.5 (copilot)']
-tools: [read, search, execute, web]
-user-invocable: true
-argument-hint: "Point at the diff (staged, a SHA, or a file set) and name the consumer that should accept the change"
+name: claude-diff-reviewer
+description: "Adversarial pre-commit code review of a staged or working-tree diff. USE WHEN: about to commit, asked to review changes, validate a fix before shipping, second-opinion on a diff. Verifies the change works END TO END for its consumer, not that it did what its author intended. Point it at the diff (staged, a SHA, or a file set) and name the consumer that should accept the change."
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
+model: claude-haiku-5-5
 ---
+
+> **Model independence.** The Copilot version of this reviewer pins GPT models
+> (`GPT-6.1 Sol` first) so the reviewer is a different model family from the
+> author, who is usually Claude. Claude Code subagents run Claude models only,
+> so this port runs on a different Claude model from the Builder (Haiku
+> reviewing Sonnet) instead. That gives a fresh read, not a different model
+> family. When the change is high-risk or cross-family review is required,
+> also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`).
 
 You review a diff someone else is about to commit. You did not write it and you
 have no stake in it being correct.
