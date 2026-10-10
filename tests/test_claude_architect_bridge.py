@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -163,8 +164,47 @@ def test_preflight_unreadable_settings_refuses(bridge, tmp_path):
 
 
 def test_preflight_missing_cli_refuses(bridge, tmp_path):
-    with pytest.raises(bridge.PreflightError, match="not on PATH"):
-        bridge.preflight(_checkout(tmp_path), {}, run=_FakeRun(auth=_PLAN_LOGIN), which=lambda _: None)
+    with pytest.raises(bridge.PreflightError, match="not on PATH or in .*empty-home"):
+        bridge.preflight(_checkout(tmp_path), {}, run=_FakeRun(auth=_PLAN_LOGIN), which=lambda _: None,
+                         home=tmp_path / "empty-home")
+
+
+_CLI_NAME = "claude.exe" if os.name == "nt" else "claude"
+
+
+def test_preflight_finds_cli_in_local_bin_when_not_on_path(bridge, tmp_path):
+    # A home distinct from the autouse fixture's, so ignoring `home` cannot pass.
+    home = tmp_path / "explicit-home"
+    cli = home / ".local" / "bin" / _CLI_NAME
+    assert not (Path.home() / ".local" / "bin" / _CLI_NAME).exists()
+    cli.parent.mkdir(parents=True)
+    cli.write_bytes(b"")
+    fake = _FakeRun(auth=_PLAN_LOGIN)
+    found = bridge.preflight(_checkout(tmp_path), {}, run=fake, which=lambda _: None, home=home)
+    assert found == str(cli)
+    assert fake.calls[0][0][0] == str(cli)  # auth status ran through the found CLI
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows executes only .exe")
+def test_find_cli_ignores_extensionless_file_on_windows(bridge, tmp_path):
+    home = tmp_path / "explicit-home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    (home / ".local" / "bin" / "claude").write_bytes(b"")
+    assert bridge.find_cli(lambda _: None, home) is None
+
+
+def test_preflight_unexecutable_cli_refuses(bridge, tmp_path):
+    def run(command, **kwargs):
+        raise OSError(193, "%1 is not a valid Win32 application")
+    with pytest.raises(bridge.PreflightError, match="could not be executed"):
+        bridge.preflight(_checkout(tmp_path), {}, run=run, which=lambda _: "/bin/claude")
+
+
+def test_find_cli_prefers_path(bridge, tmp_path):
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    (home / ".local" / "bin" / _CLI_NAME).write_bytes(b"")
+    assert bridge.find_cli(lambda _: "/on/path/claude", home) == "/on/path/claude"
 
 
 def test_preflight_missing_agent_file_refuses(bridge, tmp_path):
