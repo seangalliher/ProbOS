@@ -1,0 +1,2896 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/hxi-spatial-collaboration-program/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>HXI Spatial Collaboration Program - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hxi-spatial-collaboration-program" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              HXI Spatial Collaboration Program
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What ProbOS Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/self-perception-framing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Perception Framing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/hxi-glass-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HXI Glass Bridge (Design)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nooplex-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nooplex Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../platform-maturity-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Maturity Program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable-cognition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composable Cognition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#product-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Product contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-and-design-authorities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence and design authorities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#experience-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Experience decisions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Experience decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#collaborators-work-objects-and-instruments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collaborators, work objects, and instruments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-light-beginning-and-progressive-complexity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A light beginning and progressive complexity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-spatial-workspace-several-compatible-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One spatial workspace, several compatible views
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#glass-material-contextual-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Glass material, contextual behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#authority-remains-explicit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authority remains explicit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delivery-register" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery register
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Delivery register">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ad-1308-spatial-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1308: Spatial host
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1309-progressive-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1309: Progressive collaboration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1310-shared-evidence-and-handback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1310: Shared evidence and handback
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1311-embodied-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1311: Embodied sessions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1312-contextual-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1312: Contextual management
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ad-1313-visual-and-spatial-continuity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AD-1313: Visual and spatial continuity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#focused-repair-register" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Focused repair register
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-to-owner-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review-to-owner coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existing-owners-retained" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing owners retained
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#milestones-and-closure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Milestones and closure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Milestones and closure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#m0-trustworthy-working-baseline-and-control-exemplar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M0: Trustworthy working baseline and control exemplar
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#m1-first-successful-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M1: First successful collaboration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#m2-shared-work-through-verified-outcome" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M2: Shared work through verified outcome
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#m3-cohesive-immersive-desktop-experience" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M3: Cohesive, immersive desktop experience
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#m4-independent-immersive-pilot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        M4: Independent immersive pilot
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-and-compatibility-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation and compatibility gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#duplicate-and-allocation-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Duplicate and allocation evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hxi-spatial-collaboration-program">HXI Spatial Collaboration Program<a class="headerlink" href="#hxi-spatial-collaboration-program" title="Permanent link">&para;</a></h1>
+<p>Status: planned, issue-backed; not implemented or activated. Parent program:
+<a href="https://github.com/seangalliher/ProbOS/issues/1360">AD-1307 / #1360</a>. GitHub
+issues and their release evidence remain the completion authority. This program
+does not promote a Nooplex readiness tier or start a build campaign.</p>
+<h2 id="product-contract">Product contract<a class="headerlink" href="#product-contract" title="Permanent link">&para;</a></h2>
+<p>ProbOS is a workspace in which people and autonomous crew collaborate on work,
+not a chat interface for selecting tools. A new user should be able to ask a simple
+question immediately, or develop a complex objective with the crew, without first
+learning the ship's implementation taxonomy.</p>
+<p>The experience should be futuristic, beautiful, engaging, and authentically
+digital. Spatial relationships, light, motion, voice, and persistent context should
+communicate actual collaboration. They must not hide work, fabricate progress, or
+make the user arrange windows before obtaining a result.</p>
+<p>Preserve the luminous agent orbs, departmental relationships, visible connections,
+and direct access to collaborators. The surrounding menus, forms, navigation,
+foreground work, and recovery paths may change substantially. The mesh remains
+the recognizable spatial environment, not decoration behind a conventional
+dashboard.</p>
+<h2 id="architectural-boundaries">Architectural boundaries<a class="headerlink" href="#architectural-boundaries" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Agents are collaborators with identity, expertise, memory boundaries, initiative,
+  and accountable contributions. Tools are instruments those agents may use.</li>
+<li>The human can contribute evidence, edit an artifact, challenge a claim, refine an
+  objective, or request help. Collaboration is not reduced to approving commands.</li>
+<li>Preserve AD-1231: agents decide what work matters, whether to take it, and how to
+  reason; deterministic services own durable ordering, admission, recovery, and
+  exactly-once effects. The HXI must not become a central cognitive dispatcher.</li>
+<li>Project existing room, task, artifact, knowledge, and authority identities into
+  the workspace. Do not introduce a second task engine, memory store, approval
+  inbox, or server state authority for the UI.</li>
+<li>Desktop, mobile, and eventual immersive views must share semantic objects and
+  commands. Screen coordinates, ray hits, gaze, or visual proximity never grant
+  authority or decide which agent should think.</li>
+<li>Spatial readiness begins with stable object identity, explicit selection and
+  focus, coordinate-independent actions, reversible presentation layout, privacy,
+  and accessible input alternatives. It does not require shipping VR before a
+  dependable desktop experience.</li>
+<li>Preserve consensus, authorization, audit, knowledge classification, sovereign
+  memory, and compatibility. A denial should offer a governed path where one
+  exists, not a bypass or an invented claim of completion.</li>
+</ul>
+<h2 id="evidence-and-design-authorities">Evidence and design authorities<a class="headerlink" href="#evidence-and-design-authorities" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../hxi-live-ux-review-2026-09-07/">Live HXI review</a>: 24 measured or explicitly
+  qualified issue candidates, working capabilities, and untested boundaries.</li>
+<li><a href="../../design/hxi-glass-bridge/">Original Glass Bridge design</a>: the mesh stays;
+  current work is foregrounded; decisions rise; input and return paths stay usable.</li>
+<li><a href="../../.github/copilot-instructions.md">Repository principles</a>: agent-native
+  hybrid coordination, governance, HXI, tests, and release obligations.</li>
+<li><a href="../roadmap/">Roadmap</a>: existing programs and work ownership.</li>
+<li><a href="../nooplex-readiness/">Nooplex readiness</a>: evidence tiers are not advanced by
+  this experience-planning exercise.</li>
+</ul>
+<p>Local planning hypothesis: the reviewed capabilities can become a coherent
+experience by repairing their real producer-to-consumer paths and introducing a
+shared spatial presentation contract over existing authorities, rather than
+replacing the mesh or copying a terminal/chat product.</p>
+<p>The discriminating acceptance journey is: a new user identifies the crew, asks a
+simple question, opens a bounded multi-person room, shares a real input, develops
+and revises work with the crew, handles a governed blocker, receives a verified
+artifact, and resumes the same work after reconnect. The desktop and accessible
+input paths must complete that journey before immersive claims are made.</p>
+<h2 id="experience-decisions">Experience decisions<a class="headerlink" href="#experience-decisions" title="Permanent link">&para;</a></h2>
+<h3 id="collaborators-work-objects-and-instruments">Collaborators, work objects, and instruments<a class="headerlink" href="#collaborators-work-objects-and-instruments" title="Permanent link">&para;</a></h3>
+<p>The primary spatial objects are collaborators, purposes, ongoing work, evidence,
+artifacts, questions, and decisions. A conversation is one view of that work.
+Tools and workstations are instruments within the context, not substitutes for
+the agents or the whole application model.</p>
+<p>Reuse existing identities for crew, room/project, CrewSession/WorkItem, artifact
+revision, Records entry, mission-blackboard entry and approval. Presentation
+references may expose those identities through a typed, versioned view contract;
+they must not become a second durable authority. A view's geometry, selection,
+focus, pinning and camera are presentation state. Layout recovery cannot delete
+work, grant permissions, change task status or expose another scope's content.</p>
+<p>People can contribute a source, revise a document, challenge an assertion, refine
+an objective, or ask for help. Preserve human versus agent provenance. Neither
+visually adjacent objects nor a majority of agreeing avatars establish truth.
+Agents retain instructions-first cognition and the existing governance paths;
+the presentation host does not rank which agent should think about the work.</p>
+<h3 id="a-light-beginning-and-progressive-complexity">A light beginning and progressive complexity<a class="headerlink" href="#a-light-beginning-and-progressive-complexity" title="Permanent link">&para;</a></h3>
+<p>A new user enters a usable workspace, sees crew identity and a clear input, and
+can ask immediately. Do not make a marketing landing page, mandatory tour, tool
+picker or formal project setup the first interaction. Genuine installation,
+provider and readiness prerequisites remain visible and owned by existing setup
+work; do not imply that a configured-off feature is ready.</p>
+<p>A simple request can remain a single exchange. Complex work grows a shared brief
+through conversation: objective, inputs, collaborators, constraints, success
+evidence, deliverable and authority. The user reviews the meaningful decisions,
+not three redundant forms or a sequence of implementation statuses. Clarification
+is contextual; no blanket complexity classifier or compulsory multi-agent room.</p>
+<p>Resume and New conversation are different actions. A new transcript does not
+erase sovereign memory. The interface identifies recipient, room/project scope,
+retained context, and whether input is a draft or an authorized request. Behavioral
+plan/execute mechanics stay with AD-1156; goal revisions stay with AD-1300.</p>
+<h3 id="one-spatial-workspace-several-compatible-views">One spatial workspace, several compatible views<a class="headerlink" href="#one-spatial-workspace-several-compatible-views" title="Permanent link">&para;</a></h3>
+<p>Keep the mesh's orbs, learned connections, department organization and direct
+selection. Work comes forward in a consistent spatial layer rather than a pile
+of independently positioned forms. On desktop, default to one primary work area
+and contextual detail, with deliberate pinning/comparison for expert work. Do not
+require manual resizing or window placement for the first successful task.</p>
+<p>Use stable navigation and the existing searchable palette for crew, conversations,
+work, knowledge, Bridge attention and settings. These are destinations into one
+workspace, not separate applications. User-facing labels will be tested; preserve
+ship/department names as context without requiring familiarity with them.</p>
+<p>Phone and tablet views project the same objects into reachable single-column or
+adaptive layouts. CompactApp and MobileShell are real consumers, not merely small
+desktop screenshots. The future XR view projects the same semantic selections
+and actions into spatial interaction. It is not a texture of today's desktop
+forms and not a second execution system.</p>
+<h3 id="glass-material-contextual-behavior">Glass material, contextual behavior<a class="headerlink" href="#glass-material-contextual-behavior" title="Permanent link">&para;</a></h3>
+<p>AD-1202's accepted choice is <strong>primitives plus one complete Bridge exemplar</strong>.
+Glass supplies material and depth; LCARS supplies attention-driven behavior.
+Use precise geometry, geometric-sans human text, monospace technical detail,
+legible contrast, restrained translucency, and state-bearing light/motion. Preserve
+the existing mesh palette and HXI stroke-SVG conventions.</p>
+<p>Define coherent transitions for arrival, selecting a collaborator, a contribution,
+work beginning, an artifact arriving, a blocker, verification, completion and
+return. Each expressive state must be grounded in actual runtime evidence or
+explicitly pending/unknown. No simulated thought stream, fabricated progress,
+decorative activity, or celebration before a result is verified.</p>
+<p>Spatial continuity matters more than visual spectacle: preserve selected crew,
+task identity, useful placement, camera orientation and the route back. Separate
+actual routing edges from presentation tethers or proposed collaborations.
+Reduce bloom locally behind reading without replacing the mesh. Reduced motion
+must retain every action and state. Sound remains preference/consent controlled.</p>
+<h3 id="authority-remains-explicit">Authority remains explicit<a class="headerlink" href="#authority-remains-explicit" title="Permanent link">&para;</a></h3>
+<p>Bridge leads with Needs you, Active work and Recent results. A notification opens
+the exact task/room; acknowledgement is not resolution. Approval is not navigation
+or a side effect of looking at an object. Existing decision identities, scope,
+expiry and reconciliation remain shared across inline and Bridge surfaces.</p>
+<p>Preserve the Captain's confirmed #1166 decision: a scoped action standing rule
+authorizes a future re-decided attempt; it does not replay a stale browser action.
+Change of goal, collaborator or device never silently widens authority. Cancellation
+stops permitted future work but does not claim that past/unknown effects vanished.</p>
+<p>Separate inspection from permission editing, qualification from effective access,
+and trust from service readiness. Clinical/private data and sovereign memory retain
+their access boundaries. A graceful unavailable state cannot conceal a defect.</p>
+<h2 id="delivery-register">Delivery register<a class="headerlink" href="#delivery-register" title="Permanent link">&para;</a></h2>
+<p>All entries are planned. Numbers identify decisions, not shipped capability.</p>
+<table>
+<thead>
+<tr>
+<th>AD</th>
+<th>Outcome</th>
+<th>Primary issue</th>
+<th>Dependency boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AD-1307</td>
+<td>Program, collaborator-first design contract and release acceptance</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1360">#1360</a></td>
+<td>Integrates the slices below; no second runtime authority</td>
+</tr>
+<tr>
+<td>AD-1308</td>
+<td>Spatial workspace host and semantic navigation</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1363">#1363</a></td>
+<td>AD-1202 primitive slice; existing workspace/host identities</td>
+</tr>
+<tr>
+<td>AD-1309</td>
+<td>Progressive intake and explicit conversation context</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1362">#1362</a></td>
+<td>AD-1308 host slice; existing modes, goal revision and live-progress owners</td>
+</tr>
+<tr>
+<td>AD-1310</td>
+<td>Shared evidence and artifact handback canvas</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1361">#1361</a></td>
+<td>AD-1308; input/execution repairs; human-claim/blackboard contracts for the typed-evidence slice</td>
+</tr>
+<tr>
+<td>AD-1311</td>
+<td>Embodied co-presence and explicit multimodal sessions</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1364">#1364</a></td>
+<td>AD-1308, AD-1202 and avatar stability; existing streaming/media owners</td>
+</tr>
+<tr>
+<td>AD-1312</td>
+<td>Contextual crew, knowledge and administration</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1366">#1366</a></td>
+<td>AD-1308, AD-1202; existing effective-authority, evidence and approval APIs</td>
+</tr>
+<tr>
+<td>AD-1313</td>
+<td>Authentic digital visual language and spatial continuity</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1365">#1365</a></td>
+<td>AD-1202 tokens and real AD-1308/1310/1311 projections</td>
+</tr>
+<tr>
+<td>AD-1202, existing</td>
+<td>Shared controls and complete Bridge exemplar</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1142">#1142</a></td>
+<td>Exemplar may use current public navigation; no dependency on completing AD-1308</td>
+</tr>
+<tr>
+<td>AD-721c, existing</td>
+<td>Bounded WebXR collaboration pilot</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/530">#530</a></td>
+<td>Ready AD-1308/1310/1311/1313 contracts and declared headset validation</td>
+</tr>
+</tbody>
+</table>
+<p>AD-1308 can consume AD-1202's independently validated primitive slice before its
+entire adoption is complete. AD-1202's Bridge exemplar can use the existing public
+opening actions, so these two items must not wait for each other's closure.
+The same rule applies to other explicit contract-slice dependencies: a consumer
+starts on a verified compatible contract, never a fictional future API.</p>
+<h3 id="ad-1308-spatial-host">AD-1308: Spatial host<a class="headerlink" href="#ad-1308-spatial-host" title="Permanent link">&para;</a></h3>
+<p>Extend the existing workspace registry/host with stable semantic references,
+selection, focus, reveal, open/return and intent actions. Route orb selection,
+navigation, palette, deep links and notifications through one initialized
+destination path. Migrate one real room first, then the remaining full/compact/
+mobile hosts. Version presentation state and preserve old routes/drafts/context.</p>
+<p>Acceptance crosses multiple real entry points into the same object and back,
+with no stale hydration, lost draft, offscreen focus or authority derived from
+coordinates. Do not introduce a server task store, new cognitive dispatcher,
+renderer replacement, headset runtime or unused abstract registry.</p>
+<h3 id="ad-1309-progressive-collaboration">AD-1309: Progressive collaboration<a class="headerlink" href="#ad-1309-progressive-collaboration" title="Permanent link">&para;</a></h3>
+<p>Unify simple exchange, explicit fresh/resumed conversation and progressively
+briefed work. The proposed typed interaction intent distinguishes response-only,
+planning and authorized execution, consuming AD-1156 mode semantics rather than
+duplicating them. Slow-turn continuation retains one run and result identity;
+no cancel-and-redispatch to manufacture an acknowledgement. AD-1193 streaming
+and AD-1174 progress remain separate owners.</p>
+<p>Acceptance requires both the no-ceremony simple task and a complex revised
+objective with meaningful consent, current goal revision, bounded continuation,
+honest cancellation and restart/reconnect. A new thread is never advertised as
+erasing memory. Do not parse arbitrary prose into new security semantics.</p>
+<h3 id="ad-1310-shared-evidence-and-handback">AD-1310: Shared evidence and handback<a class="headerlink" href="#ad-1310-shared-evidence-and-handback" title="Permanent link">&para;</a></h3>
+<p>Expose task-linked inputs, artifact revisions, claims, evidence, questions, dissent
+and decisions through existing data owners. Start with real input -&gt; artifact -&gt;
+preview/edit -&gt; governed save -&gt; handback -&gt; agent read of that exact revision.
+Then consume AD-1199 human claims and AD-1289 mission-blackboard contracts,
+including AD-1289's existing AD-1286 dependency. Do not implement parallel claim
+records while waiting for those dependencies.</p>
+<p>Accept a human challenge and revised artifact without overwriting history or
+private memory. Guard version conflicts, classification, cross-room references
+and malformed/oversized content. Consulted evidence is not proof that an external
+effect succeeded. Reuse safe declarative A2UI where appropriate; agent-authored
+forms do not gain arbitrary script execution or decision authority.</p>
+<h3 id="ad-1311-embodied-sessions">AD-1311: Embodied sessions<a class="headerlink" href="#ad-1311-embodied-sessions" title="Permanent link">&para;</a></h3>
+<p>Unify participant identity, speaker/contribution state, captions, input/output
+devices, capture mode and End/return. Separate microphone, speaker, camera,
+screen, recording and ambient sensing consent. A call releases only its owned
+resources; independent ambient sensing cannot be silently misrepresented as off.
+Distinguish typed, dictated and explicitly enabled open-conversation input.</p>
+<p>Accept actual speech -&gt; transcript -&gt; intended recipient -&gt; reply -&gt; playback -&gt;
+terminal state, plus failures, interruption, supersession, device loss and
+reconnection. Preserve per-participant voice and no-history-replay behavior.
+Hardware accuracy/privacy/comfort evidence is distinct from media-event tests.
+No default raw recordings, gaze/pose retention or second media engine.</p>
+<h3 id="ad-1312-contextual-management">AD-1312: Contextual management<a class="headerlink" href="#ad-1312-contextual-management" title="Permanent link">&para;</a></h3>
+<p>Lead with a collaborator's identity, expertise, availability, current work and
+attributable contributions. Distinguish effective capability, permission,
+qualification, proficiency, readiness and unmeasured research signals. Coordinate
+with existing authority/wellness/qualification/maturity owners; do not reimplement
+their engines or infer that no explicit grant means incapable.</p>
+<p>Unify knowledge search/read/filter context while keeping privacy and service
+availability honest. Use contextual settings links, labeled adaptive fields and
+explicit save/impact state. Preserve inline/Bridge decision reconciliation and
+scoped standing-rule semantics. No new approval inbox, enterprise-only management
+feature or automatic enabling of optional integrations.</p>
+<h3 id="ad-1313-visual-and-spatial-continuity">AD-1313: Visual and spatial continuity<a class="headerlink" href="#ad-1313-visual-and-spatial-continuity" title="Permanent link">&para;</a></h3>
+<p>Make the shared semantic states feel like one environment: consistent typography,
+depth, focus, motion, participant cues, artifact arrival and attention. Deliver an
+integrated production journey plus bounded adoption, not a static style guide or
+screenshot-only scene. Preserve orbs/connections and camera context; visually
+differentiate evidence, current action, proposal and unknown state.</p>
+<p>Measure readability, input response, frame behavior and reduced-motion parity on
+declared devices. Initial engineering targets are local action feedback within
+100 ms and stable 60 Hz desktop motion under the declared supported scene load;
+they are proposed acceptance budgets, not measured current performance. Provider
+latency is reported separately. No decorative progress, compulsory sound,
+gaze-driven scheduling, unrelated avatar-generation pipeline or mesh replacement.</p>
+<h2 id="focused-repair-register">Focused repair register<a class="headerlink" href="#focused-repair-register" title="Permanent link">&para;</a></h2>
+<p>These issues are children of #1360 and can ship independently of the host redesign.
+They do not allocate additional AD numbers. Every uncertain cause must be
+reproduced before a build selects a mechanism; the report's caveats are retained.</p>
+<table>
+<thead>
+<tr>
+<th>Repair</th>
+<th>Issue</th>
+<th>Priority</th>
+<th>Discriminating result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Foreground geometry and drawer/launcher interference</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1369">#1369</a></td>
+<td>High</td>
+<td>Actual composer/Send/Close hit targets fit at supported sizes</td>
+</tr>
+<tr>
+<td>Fresh, scoped agent telemetry</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1370">#1370</a></td>
+<td>Medium</td>
+<td>Same identity/time/scope agrees; legitimate different populations are labeled</td>
+</tr>
+<tr>
+<td>Readiness versus empty/failed views</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1368">#1368</a></td>
+<td>Medium</td>
+<td>503/disabled/denied are not empty data or healthy capability</td>
+</tr>
+<tr>
+<td>Avatar telemetry/render lifecycle</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1367">#1367</a></td>
+<td>High</td>
+<td>Bounded subscriptions and correct rendered participant after mic/room changes</td>
+</tr>
+<tr>
+<td>Group message reconciliation</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1372">#1372</a></td>
+<td>High</td>
+<td>One persisted message renders once in either HTTP/event ordering</td>
+</tr>
+<tr>
+<td>Input reference through actual agent read</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1371">#1371</a></td>
+<td>High</td>
+<td>Uploaded CSV yields discriminating IDs, scoped provenance and correct name/readiness</td>
+</tr>
+<tr>
+<td>Native crew worker identity/admission</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1374">#1374</a></td>
+<td>High</td>
+<td>Eligible work produces a result; unresolved authority blocks usefully without bypass</td>
+</tr>
+<tr>
+<td>Failure notification opens its exact work</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1373">#1373</a></td>
+<td>High</td>
+<td>Badge -&gt; notification -&gt; room/task; acknowledgement is not resolution</td>
+</tr>
+<tr>
+<td>Canonical task state in every projection</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1375">#1375</a></td>
+<td>High</td>
+<td>One failed identity is failed in API, room, board, detail and Bridge</td>
+</tr>
+<tr>
+<td>Coherent global answer from redundant results</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1378">#1378</a></td>
+<td>Medium</td>
+<td>Equivalent results yield one answer without deleting disagreement/evidence</td>
+</tr>
+<tr>
+<td>Recreation opponent-turn progression</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1376">#1376</a></td>
+<td>Medium, optional</td>
+<td>Real opponent acts and game terminates, or bounded failure/forfeit is explicit</td>
+</tr>
+<tr>
+<td>Public managed-browser end lifecycle</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1377">#1377</a></td>
+<td>Medium</td>
+<td>End selected session releases its resources without deleting other work/recordings</td>
+</tr>
+</tbody>
+</table>
+<p>Browser End session is a bounded new lifecycle affordance, not proof an existing
+close endpoint is broken. Equivalent global-answer aggregation is separate from
+duplicate group rendering. Input arrival after refresh does not invalidate the
+measured failed agent-read task, nor prove permanent data loss. A missing opponent
+turn and a solid avatar image are observations, not established root causes.</p>
+<h2 id="review-to-owner-coverage">Review-to-owner coverage<a class="headerlink" href="#review-to-owner-coverage" title="Permanent link">&para;</a></h2>
+<p>One primary owner per finding. Secondary integrations are not alternative
+closure owners or permission to count a partially delivered path twice.</p>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Primary owner</th>
+<th>Secondary integration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UX-01</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1369">#1369</a></td>
+<td>AD-1308 host adoption</td>
+</tr>
+<tr>
+<td>UX-02</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1362">AD-1309 / #1362</a></td>
+<td>Existing default DM/thread compatibility</td>
+</tr>
+<tr>
+<td>UX-03</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1370">#1370</a></td>
+<td>Completed AD-1259 and contextual crew views</td>
+</tr>
+<tr>
+<td>UX-04</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1362">AD-1309 / #1362</a></td>
+<td>AD-1193 streaming, AD-1174 progress</td>
+</tr>
+<tr>
+<td>UX-05</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1368">#1368</a></td>
+<td>Existing maturity/doctor contracts</td>
+</tr>
+<tr>
+<td>UX-06</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1142">AD-1202 / #1142</a></td>
+<td>Safe rich content and AD-1313 visual adoption</td>
+</tr>
+<tr>
+<td>UX-07</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1364">AD-1311 / #1364</a></td>
+<td>Existing media/streaming owners</td>
+</tr>
+<tr>
+<td>UX-08</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1367">#1367</a></td>
+<td>AD-1311 sessions; AD-721c pilot prerequisite</td>
+</tr>
+<tr>
+<td>UX-09</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1372">#1372</a></td>
+<td>All transcript hosts and speech consumers</td>
+</tr>
+<tr>
+<td>UX-10</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1371">#1371</a></td>
+<td>AD-1310 handback</td>
+</tr>
+<tr>
+<td>UX-11</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1374">#1374</a></td>
+<td>AD-1309/1310 work journey</td>
+</tr>
+<tr>
+<td>UX-12</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1362">AD-1309 / #1362</a></td>
+<td>AD-1308 layout; AD-1310 work objects</td>
+</tr>
+<tr>
+<td>UX-13</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1363">AD-1308 / #1363</a></td>
+<td>Current-route repairs can land first</td>
+</tr>
+<tr>
+<td>UX-14</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1373">#1373</a></td>
+<td>Existing inline approval owner remains separate</td>
+</tr>
+<tr>
+<td>UX-15</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1375">#1375</a></td>
+<td>No second WorkItem lifecycle</td>
+</tr>
+<tr>
+<td>UX-16</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1368">#1368</a></td>
+<td>AD-1312 knowledge/admin states</td>
+</tr>
+<tr>
+<td>UX-17</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1363">AD-1308 / #1363</a></td>
+<td>AD-1309 novice entry; AD-1313 continuity</td>
+</tr>
+<tr>
+<td>UX-18</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1366">AD-1312 / #1366</a></td>
+<td>Existing maturity/qualification/evidence owners</td>
+</tr>
+<tr>
+<td>UX-19</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1366">AD-1312 / #1366</a></td>
+<td>AD-1202 fields; existing approval semantics</td>
+</tr>
+<tr>
+<td>UX-20</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1361">AD-1310 / #1361</a></td>
+<td>Existing workstation/ArtifactStore APIs</td>
+</tr>
+<tr>
+<td>UX-21</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1378">#1378</a></td>
+<td>Distinct from UX-09 delivery reconciliation</td>
+</tr>
+<tr>
+<td>UX-22</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1142">AD-1202 / #1142</a></td>
+<td>AD-1308 host and AD-1312 form migration</td>
+</tr>
+<tr>
+<td>UX-23</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1376">#1376</a></td>
+<td>Optional recreation, not a required work engine</td>
+</tr>
+<tr>
+<td>UX-24</td>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1377">#1377</a></td>
+<td>AD-1310 workstation lifecycle</td>
+</tr>
+</tbody>
+</table>
+<p>The user's positive goals beyond individual defects have explicit owners:
+collaborator-first contract AD-1307, spatial semantics AD-1308, novice/simple/complex
+entry AD-1309, human contribution AD-1310, presence AD-1311, contextual forms
+AD-1312/AD-1202, beauty/engagement/continuity AD-1313, and real VR AD-721c.</p>
+<h2 id="existing-owners-retained">Existing owners retained<a class="headerlink" href="#existing-owners-retained" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Owner</th>
+<th>Reused contract and scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1142">AD-1202 / #1142</a></td>
+<td>Tokens, accessible controls, safe content and one Bridge exemplar; not another full HXI program</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1083">AD-1156 / #1083</a></td>
+<td>Behavioral planning/execution modes; no new suspended-loop gate</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1130">AD-1193 / #1130</a></td>
+<td>Safe streaming transport and partial-text semantics; structured tool execution stays guarded</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1105">AD-1174 / #1105</a></td>
+<td>Real live progress in every active shell</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1236">AD-1243 / #1236</a></td>
+<td>Consulted-evidence affordance outside reply prose/TTS</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1136">AD-1199 / #1136</a></td>
+<td>Human epistemic provenance, consent, revision, challenge and erasure</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1336">AD-1289 / #1336</a></td>
+<td>Typed mission blackboard; keep AD-1286/#1333 prerequisite and existing parent</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1353">AD-1300 / #1353</a></td>
+<td>Durable goal revisions and supersession</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1166">AD-1212 / #1166</a></td>
+<td>Inspectable action payload and scoped standing-rule-only future attempts</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1170">AD-1213 / #1170</a></td>
+<td>Chain-of-command authority in the approval path</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1175">AD-1216 / #1175</a></td>
+<td>Same decision from inline/Bridge surfaces, shared reconciliation</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1311">AD-1261 / #1311</a></td>
+<td>Effective authority domain, distinct from new AD-1311 media design</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1310">AD-1260 / #1310</a></td>
+<td>Wellness-domain boundaries, distinct from new AD-1310 work canvas</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1334">AD-1287 / #1334</a></td>
+<td>Evidence-bound qualification, not inferred from UI labels</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1234">AD-1242 / #1234</a> and <a href="https://github.com/seangalliher/ProbOS/issues/1238">AD-1245 / #1238</a></td>
+<td>Actual verifier evidence and judged/refused/unavailable distinctions</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1358">AD-1305 / #1358</a> and <a href="https://github.com/seangalliher/ProbOS/issues/1359">AD-1306 / #1359</a></td>
+<td>Group write evidence and mixed-write truth; not duplicated by input-read repairs</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1123">AD-1186 / #1123</a></td>
+<td>HXI journey pack and release/usability evidence on the existing trial framework</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1324">AD-1270 / #1324</a></td>
+<td>Accepted maturity scope and supported configuration, not a dependency on completing all architecture work</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/1053">#1053</a>, <a href="https://github.com/seangalliher/ProbOS/issues/1054">#1054</a>, <a href="https://github.com/seangalliher/ProbOS/issues/1056">#1056</a></td>
+<td>Installation, provider setup and doctor/quickstart</td>
+</tr>
+<tr>
+<td><a href="https://github.com/seangalliher/ProbOS/issues/530">AD-721c / #530</a></td>
+<td>Bounded headset pilot, separate release claim and no reparenting</td>
+</tr>
+</tbody>
+</table>
+<p>No existing issues are reparented or closed by this program. Completed #965
+workspace/workstation foundations, #873 stations, #1161 refresh repairs and #1309
+AD-1259 telemetry consolidation stay completed. New regressions/residuals carry
+their own measured reproductions, not a presumption that those changes never
+shipped. Older issue-body absence claims require re-verification before building.</p>
+<h2 id="milestones-and-closure">Milestones and closure<a class="headerlink" href="#milestones-and-closure" title="Permanent link">&para;</a></h2>
+<h3 id="m0-trustworthy-working-baseline-and-control-exemplar">M0: Trustworthy working baseline and control exemplar<a class="headerlink" href="#m0-trustworthy-working-baseline-and-control-exemplar" title="Permanent link">&para;</a></h3>
+<p>Repair independent High failures, add producer-asserting journey fixtures and
+complete the first AD-1202 primitive/exemplar slices. Prioritize input -&gt; agent
+read, native identity eligibility, same-ID work state, message reconciliation,
+notification navigation, focus and geometry. Visual design/prototyping may proceed
+alongside those repairs; a reskin does not close them.</p>
+<p>Use the existing supported configuration and isolate test data from the live ship.
+Classify optional services honestly; do not enable every feature to satisfy a
+misleading all-online headline. Receipt/progress/streaming work can proceed under
+its existing owner as its real consumers become ready.</p>
+<h3 id="m1-first-successful-collaboration">M1: First successful collaboration<a class="headerlink" href="#m1-first-successful-collaboration" title="Permanent link">&para;</a></h3>
+<p>Deliver AD-1308's primary host and AD-1309's simple/fresh/resumed/progressive paths.
+A new user identifies the crew and completes a simple task, then develops a
+bounded two-agent objective with real inputs and clear scope. No manual window
+arrangement or internal terminology is required. Preserve global navigation in
+conversation and full views, and verify desktop/compact/mobile entry separately.</p>
+<h3 id="m2-shared-work-through-verified-outcome">M2: Shared work through verified outcome<a class="headerlink" href="#m2-shared-work-through-verified-outcome" title="Permanent link">&para;</a></h3>
+<p>Deliver the AD-1310 input/artifact handback slice and consume ready human-claim,
+blackboard, goal-revision, verification and approval contracts. Require a real
+artifact consumer, human revision/challenge, an explicit authorized blocker, and
+resume after reconnect/restart. Show current disposition and dissent, not a
+fictional unanimous agent team. Structured-content boundaries remain intact.</p>
+<h3 id="m3-cohesive-immersive-desktop-experience">M3: Cohesive, immersive desktop experience<a class="headerlink" href="#m3-cohesive-immersive-desktop-experience" title="Permanent link">&para;</a></h3>
+<p>Complete AD-1311 sessions, AD-1312 contextual management and AD-1313 visual/spatial
+continuity against the same journeys. Calls have real media/teardown evidence;
+workstations hand back the correct revision; the navigation/field/state grammar
+is consistent across supported surfaces. Validate keyboard/screen reader, phone,
+tablet, ordinary desktop, wide desktop, reduced motion and declared frame budgets.</p>
+<p>Bank the HXI journey pack with AD-1186/#1123 rather than a new evaluator. Run an
+initial bounded formative study with at least five representative new users:
+simple query, collaborative input-to-artifact work, and blocker/resume. Proposed
+exit target: at least four of five complete the simple task within five minutes
+with at most one orientation hint, and complete the collaborative journey with
+at most one navigation hint. Record every failure, abandonment, wrong turn and
+assistance. This small study is usability evidence, not statistical proof of
+general adoption or intelligence; declare targets before measuring them.</p>
+<p>Program #1360 closes on the scoped desktop journeys and its release criteria:
+all six architectural slices accepted, required existing contract slices integrated,
+no unresolved Critical/High supported-journey defect, and all 24 findings traced.
+Medium/Low residuals, including optional recreation, may remain separately open
+only with explicit accepted scope, owner and scheduled follow-up; they cannot be
+marked passed or silently removed from the coverage ledger. Remaining unrelated
+work in existing parent programs does not become an HXI closure condition.</p>
+<h3 id="m4-independent-immersive-pilot">M4: Independent immersive pilot<a class="headerlink" href="#m4-independent-immersive-pilot" title="Permanent link">&para;</a></h3>
+<p>Existing AD-721c/#530 owns a one-workspace/two-crew WebXR pilot on one declared
+headset/browser, reusing Three.js and the shared semantic host. Enter, orient,
+identify collaborators, inspect/contribute to a shared object, inspect a governed
+decision, and return to the same desktop work. Head/controller pose is transient
+by default; gaze, proximity and ray hover never authorize work.</p>
+<p>Require stationary/seated defaults, explicit recenter, no forced camera motion,
+comfortable reach/text, captions, non-immersive alternatives, device-specific
+frame measurements, sensor revocation and headset-loss recovery. Desktop and
+emulator tests do not establish headset comfort, legibility or sensor privacy.
+No hardware purchase, metaverse integration, multi-human spatial synchronization,
+biometric profiling, or universal headset support is authorized by this plan.</p>
+<p>M4 begins on ready shared contracts, not on completion of all fleet/Nooplex work.
+It remains open until hardware acceptance is recorded. M3 does not claim VR
+delivery, and the VR pilot does not delay independent desktop release.</p>
+<h2 id="implementation-and-compatibility-gates">Implementation and compatibility gates<a class="headerlink" href="#implementation-and-compatibility-gates" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Bound work to one issue or up to three tightly coupled issues. Reproduce on
+  the current candidate; the live review's counts/timings are not fresh baselines.</li>
+<li>Every new public API/branch needs boundary tests. Every UI change needs Vitest;
+  cross-surface contracts need real browser and production-consumer crossings.</li>
+<li>Assert the premise before an absence claim: new room identity, actual uploaded
+  bytes, correct model/read path, event receipt, terminal record or media playback.</li>
+<li>Preserve canonical state, schema, protocol and public APIs, or ship tested
+  compatible migration. Legacy data/layouts/links must reopen without data loss.</li>
+<li>Context-carrying generated UI is bounded declarative data, never instructions,
+  script authority, arbitrary markup, or a substitute approval identity.</li>
+<li>Accessibility and resource lifetimes are acceptance criteria, not optional
+  polish. Test stale replies, reconnect, cancellation and end-session behavior.</li>
+<li>Use the repository's focused tests, scoped adversarial review and canonical
+  frozen-tree release gate. Changing source/test state invalidates broad evidence.</li>
+<li>Verify all changes comply with the Engineering Principles in
+  <code>.github/copilot-instructions.md</code>.</li>
+</ul>
+<p>This document is a roadmap contract, not a set of ready-to-run implementation
+prompts. Before each build, verify controlling APIs, constructors, current flags,
+and consumers, then draft one bounded spec and its execution instructions per
+repository policy. No live credentials, spending, production mutation, or relaxed
+security controls are implicit in these issue allocations.</p>
+<h2 id="duplicate-and-allocation-evidence">Duplicate and allocation evidence<a class="headerlink" href="#duplicate-and-allocation-evidence" title="Permanent link">&para;</a></h2>
+<p>The authenticated GitHub account was the repository owner. The complete open
+queue enumeration returned 70 issues with hasNextPage=false before filing. Two
+successful canonical <code>scripts/ad_ceiling.py</code> runs reported:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Highest AD</th>
+<th>Enumeration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Git subjects, all refs</td>
+<td>AD-1304</td>
+<td>1,979 AD references</td>
+</tr>
+<tr>
+<td>GitHub titles, all states</td>
+<td>AD-1306</td>
+<td>1,359 issues, 999 AD-titled; below 4,000 cap</td>
+</tr>
+<tr>
+<td>In-flight prompt filenames</td>
+<td>AD-1298</td>
+<td>61 matching prompt files</td>
+</tr>
+</tbody>
+</table>
+<p>Prior ceiling: AD-1306, from GitHub. Allocated sequentially: AD-1307 through
+AD-1313. GitHub issue numbers were returned in concurrent creation order and are
+not assumed to equal AD order; the delivery register records each actual pair.</p>
+<p>All-state repository-scoped searches were run for these concepts:</p>
+<table>
+<thead>
+<tr>
+<th>Search</th>
+<th>Returned candidates</th>
+<th>Ownership use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HXI spatial workspace Glass Bridge navigation responsive mobile VR experience onboarding</td>
+<td>6</td>
+<td>Completed #965/#873 and design/control lineage</td>
+</tr>
+<tr>
+<td>HXI group chat duplicate replies attachments CSV room inputs native crew work identity unresolved live state</td>
+<td>12</td>
+<td>Completed context/projection/group foundations</td>
+</tr>
+<tr>
+<td>HXI voice calls microphone avatar telemetry browser session close recreation game</td>
+<td>13</td>
+<td>Existing #1105; completed voice/avatar foundations</td>
+</tr>
+<tr>
+<td>agentic_identity_unresolved crew summarizer child execution identity HXI work board stale status attachment fanout duplicate replies</td>
+<td>17</td>
+<td>Completed #834/#1047/#1051/#1301 versus new residuals</td>
+</tr>
+<tr>
+<td>duplicate group replies transcript</td>
+<td>1</td>
+<td>#884 marker stripping is not duplicate rendering</td>
+</tr>
+<tr>
+<td>CSV attachment group room inputs</td>
+<td>2</td>
+<td>#514/#549 uploaded-file foundations</td>
+</tr>
+<tr>
+<td>browser session end close cleanup</td>
+<td>0</td>
+<td>Candidate search only; actual route enumeration established the observed missing end operation</td>
+</tr>
+<tr>
+<td>recreation tic tac toe opponent turn</td>
+<td>1</td>
+<td>Completed #125 versus current opponent-turn failure</td>
+</tr>
+</tbody>
+</table>
+<p>Semantic searches identify candidates, not exhaustive proof of absence. Direct
+reads verified the relevant active and completed owners, including #1142, #530,</p>
+<h1 id="965-1161-1309-1083-1105-1123-1130-1136-1236-1336-1175-and">965, #1161, #1309, #1083, #1105, #1123, #1130, #1136, #1236, #1336, #1175 and<a class="headerlink" href="#965-1161-1309-1083-1105-1123-1130-1136-1236-1336-1175-and" title="Permanent link">&para;</a></h1>
+<h1 id="1166-the-1166-comment-records-the-already-accepted-standing-rule-only-decision">1166. The #1166 comment records the already-accepted standing-rule-only decision;<a class="headerlink" href="#1166-the-1166-comment-records-the-already-accepted-standing-rule-only-decision" title="Permanent link">&para;</a></h1>
+<p>the older body alone would have wrongly suggested it still needed that decision.</p>
+<p>New publication: 19 issues total, comprising one program, six architectural
+children and twelve focused repair/lifecycle children. Existing AD-1202 and
+AD-721c were refined, not duplicated. No issue was closed, no code was shipped,
+and no readiness status was changed by this planning exercise.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
