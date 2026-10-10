@@ -17,7 +17,7 @@ census:
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
   boolean_fields_reachable: 445
-  default_false: 221
+  default_false: 222
   default_true: 225
   default_false_armed_by_system_yaml: 85
   default_false_never_armed: 136

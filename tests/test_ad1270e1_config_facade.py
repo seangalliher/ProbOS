@@ -1518,10 +1518,10 @@ def test_committed_baseline_records_the_measured_surface(
     """The numbers AD-1270e1 was drafted against, re-measured on this tree."""
     counts = baseline["surface_counts"]
 
-    assert counts["public_names"] == 304
-    assert counts["owned"] == 291
+    assert counts["public_names"] == 305
+    assert counts["owned"] == 292
     assert counts["incidental"] == 13
-    assert counts["own_models"] == 224
+    assert counts["own_models"] == 225
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
     # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
     # AD-1189 adds the default-0 deferred_tool_schema_threshold_bytes (1791 -> 1792).
@@ -1543,10 +1543,11 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1320 adds dm_agentic.budget_awareness_enabled and thresholds (1825 -> 1827).
     # AD-1322 adds dm_agentic.economic_judgment (1827 -> 1828); its nested
     # leaves are covered by canonical_dump_leaves rather than this model-field count.
-    assert counts["field_definitions"] == 1828  # AD-1206 intentionally adds github_repository.
+    # AD-1315 adds ProtectedExecutionConfig and its eight fields (1828 -> 1836).
+    assert counts["field_definitions"] == 1836  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
-    assert len(baseline["names"]) == 304
-    assert len(baseline["models"]) == 225
+    assert len(baseline["names"]) == 305
+    assert len(baseline["models"]) == 226
 
 
 def test_committed_baseline_records_the_awkward_models(
@@ -1779,7 +1780,7 @@ def test_check_is_green_on_the_committed_baseline() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
-    assert "names=304" in proc.stdout
+    assert "names=305" in proc.stdout
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:
