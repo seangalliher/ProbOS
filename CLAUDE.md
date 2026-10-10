@@ -25,6 +25,16 @@ For current state (latest AD/BF, test counts, what's next) read `PROGRESS.md` an
 
 If the Builder hits a hard stop, hand its report to the Architect for triage; relay any question that needs the Captain.
 
+## Split workflow (Claude Architect, Copilot build)
+
+An alternative to the all-Claude workflow above, for when the Captain wants the build and gate to run under Copilot:
+
+1. **`claude-architect`** drafts or reviews the build prompt and saves it in `prompts/`, with its dated **Verified Against Codebase** section and its **Drafted by** / **Revised by** provenance line (see `.claude/agents/claude-architect.md`, Prompt Drafting Standards). It stops there: no `claude-builder`, no `claude-diff-reviewer`, no gate in this session.
+2. **The Captain starts the Copilot orchestrator** with "Build `prompts/<file>.md`". The Copilot Builder, the GPT-6.1 Sol Diff Reviewer and the single receipted broad gate run there, per `.github/copilot-instructions.md`.
+3. **Builder hard stops come back to `claude-architect`** for triage. The Captain brings the Builder's report here; the Architect answers or revises the prompt in place, and the Captain resumes the Copilot build.
+
+Use `claude-architect` for this role. The Copilot `Architect` and `Builder` definitions also live (gitignored) in `.claude/agents/` and are not for use from Claude Code. To list the prompts `claude-architect` touched: `git grep -l -E "^\*\*(Drafted|Revised) by:\*\* .claude-architect." -- prompts/`.
+
 ## Claude Code equivalents of Copilot-only rules
 
 **Running a subagent when the next step needs the result** (Copilot `mode: "sync"`): launch it with `run_in_background: false`. A failure then comes back as the tool result and is handled at once.

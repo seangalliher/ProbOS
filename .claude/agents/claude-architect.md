@@ -192,7 +192,9 @@ You apply these to every prompt and every review. The Builder follows them when 
 Every build prompt should have:
 
 1. **Title and one-line summary.**
-2. **Status / Dependencies / Estimated tests** header.
+2. **Status / Dependencies / Estimated tests** header, opened by a provenance line in exactly this form, so the Captain can tell which prompts came from Claude Code:
+   - New prompt: `**Drafted by:** \`claude-architect\` (Claude Code, Opus 5.5), YYYY-MM-DD`
+   - Revising a prompt drafted elsewhere: keep the original header and add `**Revised by:** \`claude-architect\` (Claude Code, Opus 5.5), YYYY-MM-DD` beneath it. Never remove or rewrite another author's provenance line.
 3. **Problem** — concrete description with file paths and line numbers from grep.
 4. **Solution** — overview before implementation.
 5. **Implementation sections** (`### Section 1`, etc.) — each independently buildable.
