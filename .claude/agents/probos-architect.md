@@ -125,8 +125,10 @@ Apply this decision tree:
 Before proposing ANY new AD or BF:
 
 1. Read `PROGRESS.md`.
-2. Find the actual highest AD/BF number in use.
-3. State it explicitly in your response: "Current highest: AD-NNN, BF-NNN."
+2. Find the actual highest AD/BF number in use — never from `PROGRESS.md`, `docs/development/open-ads-report.md`, or `ad-ledger-snapshot.json` alone; they lag (the report was measured 51 ADs stale on 2026-08-25).
+   - **AD:** run `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py`. It enumerates `git log --all` subjects, GitHub issue titles in **all** states, and in-flight `prompts/ad-*.md` filenames. If it exits nonzero, do not allocate from the partial sources: leave the number unresolved and continue only work that does not depend on numbering.
+   - **BF:** `ad_ceiling.py` does not cover BF numbers. Enumerate the same three sources yourself — `git log --all --format='%s'` subjects, GitHub issue titles in all states, and `prompts/bf-*.md` filenames — plus the Bug Tracker in `docs/development/roadmap.md`, and paste what you ran.
+3. State it explicitly in your response, with the source that produced it: "Current highest: AD-NNN (source), BF-NNN (source)."
 4. Assign the next sequential number.
 
 **Never guess. Never reuse. Never assume a number is free without checking.** A near-collision was caught during the Phase 8 review — this is now a hard rule.
