@@ -1,7 +1,7 @@
 ---
 description: "Adversarial pre-commit code review of a staged or working-tree diff. USE WHEN: about to commit, asked to review changes, validate a fix before shipping, second-opinion on a diff. Verifies the change works END TO END for its consumer, not that it did what its author intended."
 name: "Diff Reviewer"
-model: ['GPT-5.6 Sol (copilot)', 'GPT-5.6 Terra (copilot)', 'GPT-5.5 (copilot)']
+model: ['GPT-6.1 Sol (copilot)', 'GPT-5.6 Sol (copilot)', 'GPT-5.6 Terra (copilot)', 'GPT-5.5 (copilot)']
 tools: [read, search, execute, web]
 user-invocable: true
 argument-hint: "Point at the diff (staged, a SHA, or a file set) and name the consumer that should accept the change"
@@ -93,3 +93,4 @@ Finish with an explicit verdict, and state plainly what you did NOT check.
 - DO NOT soften a finding you have evidence for. An unclear report costs more
   than a blunt one.
 - If you cannot verify something, say so rather than implying you did.
+- Word probes, probe names and findings as the property under test and how it fails ("an unsigned snapshot is accepted as start-up proof"), not as step-by-step attack recipes. Some reviewer models stop a review partway with a 422 content flag when the work reads as attack development, and the review then delivers nothing (measured 2026-10-05). The scope and rigor do not change — only the wording.
