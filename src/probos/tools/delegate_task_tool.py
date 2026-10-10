@@ -51,8 +51,9 @@ becomes an honest-degrade ``ToolResult`` the loop can reason over (AD-592).
 from __future__ import annotations
 
 import logging
+import uuid
 import time
-from typing import Any
+from typing import Any, NoReturn
 
 from probos.tools.delegation_budget import (
     DELEGATION_TREE_BUDGET_KEY,
@@ -68,6 +69,18 @@ from probos.tools.delegation_evidence import (
     unobserved_delegation_evidence,
 )
 from probos.tools.protocol import ToolResult, ToolType, refuse_undeclared_params
+from probos.execution.effect_adapters import StrictEffectPrivacyProjector
+from probos.execution.effect_broker import (
+    CorrelatedEffectError,
+    InvalidEffectRequest,
+)
+from probos.execution.effect_types import (
+    EffectCorrelation,
+    EffectDispatchContext,
+    EffectFailureEnvelope,
+    EffectOperationHandle,
+    EffectOutcome,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,12 +158,137 @@ class DelegateTaskTool:
     def output_schema(self) -> dict[str, Any]:
         return {"type": "object"}
 
+    @staticmethod
+    def _strict_dispatch_context(
+        context: dict[str, Any],
+    ) -> EffectDispatchContext | None:
+        dispatch = context.get("_effect_dispatch_context")
+        if dispatch is None:
+            return None
+        if type(dispatch) is not EffectDispatchContext:
+            raise InvalidEffectRequest("delegation_dispatch_context_invalid")
+        handle = dispatch.operation_handle
+        if (
+            type(handle) is not EffectOperationHandle
+            or handle.operation_id != dispatch.operation_id
+            or handle.attempt_id != dispatch.attempt_id
+            or handle.adapter_kind != "delegation"
+        ):
+            raise InvalidEffectRequest("delegation_operation_handle_invalid")
+        return dispatch
+
+    @staticmethod
+    def _strict_log_fields(
+        dispatch: EffectDispatchContext,
+        *,
+        outcome: EffectOutcome,
+        reason_code: str,
+        operation: str,
+    ) -> dict[str, Any]:
+        return StrictEffectPrivacyProjector().project_failure_log(
+            operation=operation,
+            reason_code=reason_code,
+            correlations=(
+                EffectCorrelation(
+                    dispatch.operation_id,
+                    dispatch.attempt_id,
+                    outcome,
+                    reason_code,
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _is_exact_parent_correlated_error(
+        exc: CorrelatedEffectError,
+        dispatch: EffectDispatchContext,
+    ) -> bool:
+        try:
+            failure = exc.failure
+            correlation = (
+                failure.correlation
+                if type(failure) is EffectFailureEnvelope
+                else None
+            )
+            trusted = (
+                StrictEffectPrivacyProjector.sanitize_diagnostic_correlation(
+                    correlation
+                )
+            )
+            trusted_error = (
+                StrictEffectPrivacyProjector.sanitize_diagnostic_correlation(
+                    EffectCorrelation(
+                        correlation.operation_id,
+                        correlation.attempt_id,
+                        correlation.outcome,
+                        failure.error_code,
+                    )
+                )
+                if type(correlation) is EffectCorrelation
+                else None
+            )
+            envelope_fields_are_valid = (
+                trusted_error is not None
+                and failure.error_code == trusted.reason_code
+                and type(failure.delivery_state) is str
+                and failure.delivery_state
+                in {"not_started", "started", "sent_unconfirmed", "completed"}
+                and type(failure.retry_disposition) is str
+                and failure.retry_disposition
+                in {"terminal", "reconcile", "retry_same_operation", "blocked"}
+            )
+            handle = exc.operation_handle
+        except Exception:
+            return False
+        return (
+            trusted is not None
+            and trusted is correlation
+            and envelope_fields_are_valid
+            and trusted.operation_id == dispatch.operation_id
+            and trusted.attempt_id == dispatch.attempt_id
+            and handle is dispatch.operation_handle
+            and type(handle) is EffectOperationHandle
+            and handle.operation_id == dispatch.operation_id
+            and handle.attempt_id == dispatch.attempt_id
+            and handle.adapter_kind == "delegation"
+        )
+
+    @staticmethod
+    def _raise_parent_uncertainty(
+        dispatch: EffectDispatchContext,
+    ) -> NoReturn:
+        correlation = EffectCorrelation(
+            dispatch.operation_id,
+            dispatch.attempt_id,
+            "unknown",
+            "delegate_nested_run_failed",
+        )
+        logger.warning(
+            "Strict delegation nested run failed fields=%s; "
+            "propagating correlated uncertainty for reconciliation",
+            StrictEffectPrivacyProjector().project_failure_log(
+                operation="delegate_nested_run",
+                reason_code="delegate_nested_run_failed",
+                correlations=(correlation,),
+            ),
+        )
+        raise CorrelatedEffectError(
+            EffectFailureEnvelope(
+                correlation=correlation,
+                error_code="delegate_nested_run_failed",
+                delivery_state="started",
+                retry_disposition="reconcile",
+            ),
+            operation_handle=dispatch.operation_handle,
+        ) from None
+
     # ── Execution ─────────────────────────────────────────────────
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None,
     ) -> ToolResult:
         t0 = time.monotonic()
         ctx = context or {}
+        strict_dispatch = self._strict_dispatch_context(ctx)
 
         # AD-1179: ahead of the depth guard. This constructs nothing, so it
         # cannot weaken the recursion bound, and a malformed call named as
@@ -232,13 +370,25 @@ class DelegateTaskTool:
             budget = ctx.get(DELEGATION_TREE_BUDGET_KEY)
             grant: TreeGrant | None = None
             if budget is not None and type(budget) is not DelegationTreeBudget:
-                logger.warning(
-                    "AD-1190: delegation from agent=%s to=%r (target %s) carried a "
-                    "%s where its tree budget belongs; refused as "
-                    "delegation_tree_budget_invalid with no nested run started, "
-                    "because running it unbudgeted would bypass the tree's ceilings",
-                    ctx.get("agent_id", "?"), to, target.id, type(budget).__name__,
-                )
+                if strict_dispatch is not None:
+                    logger.warning(
+                        "Strict delegation tree budget refused fields=%s; "
+                        "no nested run was started",
+                        self._strict_log_fields(
+                            strict_dispatch,
+                            outcome="denied",
+                            reason_code="delegation_tree_budget_invalid",
+                            operation="delegate_tree_budget",
+                        ),
+                    )
+                else:
+                    logger.warning(
+                        "AD-1190: delegation from agent=%s to=%r (target %s) carried a "
+                        "%s where its tree budget belongs; refused as "
+                        "delegation_tree_budget_invalid with no nested run started, "
+                        "because running it unbudgeted would bypass the tree's ceilings",
+                        ctx.get("agent_id", "?"), to, target.id, type(budget).__name__,
+                    )
                 return DelegatedToolResult(
                     output={"delegated": False, "reason": "delegation_tree_budget_invalid"},
                     duration_ms=(time.monotonic() - t0) * 1000.0,
@@ -251,13 +401,28 @@ class DelegateTaskTool:
                     per_child_iterations=self._max_iterations,
                 )
                 if isinstance(admission, TreeRefusal):
-                    logger.info(
-                        "AD-1190: delegation from agent=%s to=%r (target %s) "
-                        "refused by the tree budget: limit=%s ceiling=%d used=%d "
-                        "required=%d; no nested run started",
-                        ctx.get("agent_id", "?"), to, target.id, admission.limit,
-                        admission.ceiling, admission.used, admission.required,
-                    )
+                    if strict_dispatch is not None:
+                        logger.info(
+                            "Strict delegation tree budget refused fields=%s "
+                            "ceiling=%d used=%d required=%d; no nested run was started",
+                            self._strict_log_fields(
+                                strict_dispatch,
+                                outcome="denied",
+                                reason_code="delegation_tree_budget_refused",
+                                operation="delegate_tree_budget",
+                            ),
+                            max(0, admission.ceiling),
+                            max(0, admission.used),
+                            max(0, admission.required),
+                        )
+                    else:
+                        logger.info(
+                            "AD-1190: delegation from agent=%s to=%r (target %s) "
+                            "refused by the tree budget: limit=%s ceiling=%d used=%d "
+                            "required=%d; no nested run started",
+                            ctx.get("agent_id", "?"), to, target.id, admission.limit,
+                            admission.ceiling, admission.used, admission.required,
+                        )
                     return DelegatedToolResult(
                         output=admission.to_output(),
                         duration_ms=(time.monotonic() - t0) * 1000.0,
@@ -283,6 +448,23 @@ class DelegateTaskTool:
 
                 executor = WorkItemAgenticExecutor(llm_client=self._llm_client)
                 nested_context: dict[str, Any] = {"_delegation_depth": depth + 1}
+                effect_dispatch = ctx.get("_effect_dispatch_context")
+                effect_broker = getattr(self._runtime, "effect_broker", None)
+                if effect_dispatch is not None and effect_broker is not None:
+                    child_run_id = uuid.uuid4().hex
+                    binding = await effect_broker.bind_delegated_run(
+                        parent=effect_dispatch,
+                        child_agent_id=agent_id,
+                        child_run_id=child_run_id,
+                    )
+                    nested_context.update(
+                        {
+                            "_parent_operation_id": binding.parent_operation_id,
+                            "_parent_attempt_id": binding.parent_attempt_id,
+                            "_delegation_binding_token": binding.binding_token,
+                            "_delegated_child_run_id": child_run_id,
+                        }
+                    )
                 max_iterations = self._max_iterations
                 # Only a token grant adds a kwarg, so an unbudgeted call is unchanged.
                 grant_kwargs: dict[str, Any] = {}
@@ -335,19 +517,42 @@ class DelegateTaskTool:
                     tree_limit = "iterations"
             if tree_limit is not None:
                 output["tree_limit"] = tree_limit
-                logger.info(
-                    "AD-1190: delegated run from agent=%s to=%r (target %s) stopped "
-                    "at its tree %s grant (max_iterations=%d, token_budget=%s); "
-                    "returning its partial result to the delegating agent",
-                    ctx.get("agent_id", "?"), to, target.id, tree_limit,
-                    max_iterations, grant_kwargs.get("token_budget"),
-                )
+                if strict_dispatch is not None:
+                    logger.info(
+                        "Strict delegated run reached its tree limit fields=%s "
+                        "max_iterations=%d token_budget=%d; returning its partial result",
+                        self._strict_log_fields(
+                            strict_dispatch,
+                            outcome="result",
+                            reason_code="delegation_tree_limit",
+                            operation="delegate_nested_run",
+                        ),
+                        max(0, max_iterations),
+                        max(0, grant_kwargs.get("token_budget") or 0),
+                    )
+                else:
+                    logger.info(
+                        "AD-1190: delegated run from agent=%s to=%r (target %s) stopped "
+                        "at its tree %s grant (max_iterations=%d, token_budget=%s); "
+                        "returning its partial result to the delegating agent",
+                        ctx.get("agent_id", "?"), to, target.id, tree_limit,
+                        max_iterations, grant_kwargs.get("token_budget"),
+                    )
             return DelegatedToolResult(
                 output=output,
                 duration_ms=(time.monotonic() - t0) * 1000.0,
                 evidence=evidence,
             )
+        except CorrelatedEffectError as exc:
+            if (
+                strict_dispatch is None
+                or self._is_exact_parent_correlated_error(exc, strict_dispatch)
+            ):
+                raise
+            self._raise_parent_uncertainty(strict_dispatch)
         except Exception as exc:
+            if strict_dispatch is not None:
+                self._raise_parent_uncertainty(strict_dispatch)
             logger.warning(
                 "AD-1072: delegation failed for agent=%s to=%r: %s",
                 ctx.get("agent_id", "?"), to, exc, exc_info=True,

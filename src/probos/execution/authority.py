@@ -11,18 +11,30 @@ import re
 import subprocess
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol, TypeAlias
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.execution.effect_types import (
+    DelegationRunBinding,
+    EffectAttemptView,
+    EffectFinishRequest,
+    EffectOperationView,
+    EffectPermit,
+    EffectTargetDecision,
+    EffectTargetRequest,
+    EffectReserveDecision,
+    EffectReserveRequest,
+    ReconciliationEvidence,
+)
 from probos.storage.sqlite_factory import default_factory
 
 logger = logging.getLogger(__name__)
 
 EXECUTION_MANIFEST_VERSION = 1
-EXECUTION_WITNESS_SCHEMA_VERSION = 1
+EXECUTION_WITNESS_SCHEMA_VERSION = 2
 REQUIRED_ENFORCEMENT_KINDS = (
     "agent_source",
     "tool_catalog",
@@ -46,7 +58,7 @@ _SQLITE_INTEGER_MAX = (1 << 63) - 1
 _SQLITE_INTEGER_FIELDS = {
     "authority_meta": (
         ("singleton", 1, 1, False),
-        ("schema_version", 1, 1, False),
+        ("schema_version", 2, 2, False),
         ("current_generation", 0, _SQLITE_INTEGER_MAX - 1, False),
         ("updated_at_ms", 0, _SQLITE_INTEGER_MAX, False),
     ),
@@ -71,6 +83,25 @@ _SQLITE_INTEGER_FIELDS = {
         ("generation", 0, _SQLITE_INTEGER_MAX, False),
         ("issued_at_ms", 0, _SQLITE_INTEGER_MAX, False),
         ("revoked_at_ms", 0, _SQLITE_INTEGER_MAX, True),
+    ),
+    "effect_operations": (
+        ("generation", 0, _SQLITE_INTEGER_MAX, False),
+        ("created_at_ms", 0, _SQLITE_INTEGER_MAX, False),
+        ("updated_at_ms", 0, _SQLITE_INTEGER_MAX, False),
+    ),
+    "effect_attempts": (
+        ("ordinal", 1, _SQLITE_INTEGER_MAX, False),
+        ("lease_expires_at_ms", 0, _SQLITE_INTEGER_MAX, True),
+        ("started_at_ms", 0, _SQLITE_INTEGER_MAX, True),
+        ("finished_at_ms", 0, _SQLITE_INTEGER_MAX, True),
+    ),
+    "effect_transitions": (
+        ("transition_id", 1, _SQLITE_INTEGER_MAX, False),
+        ("recorded_at_ms", 0, _SQLITE_INTEGER_MAX, False),
+    ),
+    "effect_delegation_bindings": (
+        ("created_at_ms", 0, _SQLITE_INTEGER_MAX, False),
+        ("closed_at_ms", 0, _SQLITE_INTEGER_MAX, True),
     ),
 }
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -104,6 +135,31 @@ _TABLE_COLUMNS = {
         "runtime_session_sha256", "issued_at_ms", "state", "revoked_at_ms",
         "revoked_reason",
     ),
+    "effect_operations": (
+        "operation_id", "logical_key_sha256", "manifest_id", "generation",
+        "runtime_session_sha256", "agent_id_sha256", "requested_tool_id_sha256",
+        "resolved_tool_id_sha256", "effect_class", "adapter_kind",
+        "target_sha256", "parameter_shape_sha256",
+        "continuation_binding_sha256", "isolation_binding_sha256", "idempotency",
+        "parent_operation_id", "parent_attempt_id", "child_run_sha256",
+        "provider_call_id_sha256",
+        "state", "reason_code", "result_sha256", "receipt_sha256",
+        "created_at_ms", "updated_at_ms",
+    ),
+    "effect_attempts": (
+        "attempt_id", "operation_id", "ordinal", "admission_attempt_id",
+        "grant_id", "state", "reason_code", "lease_expires_at_ms",
+        "started_at_ms", "finished_at_ms", "result_sha256", "receipt_sha256",
+    ),
+    "effect_transitions": (
+        "transition_id", "operation_id", "attempt_id", "from_state",
+        "to_state", "reason_code", "recorded_at_ms",
+    ),
+    "effect_delegation_bindings": (
+        "parent_operation_id", "parent_attempt_id", "child_agent_id_sha256",
+        "child_run_sha256", "binding_sha256", "state", "created_at_ms",
+        "closed_at_ms",
+    ),
 }
 _REQUIRED_INDEXES = {
     "idx_admission_attempts_outcome_requested": (
@@ -114,12 +170,38 @@ _REQUIRED_INDEXES = {
         "execution_grants",
         ("generation", "state"),
     ),
+    "idx_effect_operations_state_updated": (
+        "effect_operations", ("state", "updated_at_ms"),
+    ),
+    "idx_effect_operations_generation_state": (
+        "effect_operations", ("generation", "state"),
+    ),
+    "idx_effect_attempts_operation_ordinal": (
+        "effect_attempts", ("operation_id", "ordinal"),
+    ),
+    "idx_effect_attempts_state_lease": (
+        "effect_attempts", ("state", "lease_expires_at_ms"),
+    ),
+    "idx_effect_transitions_operation_transition": (
+        "effect_transitions", ("operation_id", "transition_id"),
+    ),
+    "idx_effect_operations_session_agent_adapter_state": (
+        "effect_operations",
+        ("runtime_session_sha256", "agent_id_sha256", "adapter_kind", "state"),
+    ),
+    "idx_effect_operations_parent_attempt": (
+        "effect_operations", ("parent_operation_id", "parent_attempt_id"),
+    ),
+    "idx_effect_delegation_child_state": (
+        "effect_delegation_bindings",
+        ("child_agent_id_sha256", "child_run_sha256", "state"),
+    ),
 }
 
 _SCHEMA = """
 CREATE TABLE authority_meta(
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-    schema_version INTEGER NOT NULL CHECK(schema_version=1),
+    schema_version INTEGER NOT NULL CHECK(schema_version=2),
     host_instance_id TEXT NOT NULL,
     current_generation INTEGER NOT NULL CHECK(current_generation>=0),
     process_id TEXT NOT NULL,
@@ -184,6 +266,84 @@ CREATE INDEX idx_admission_attempts_outcome_requested
     ON admission_attempts(outcome, requested_at_ms);
 CREATE INDEX idx_execution_grants_generation_state
     ON execution_grants(generation, state);
+CREATE TABLE effect_operations(
+    operation_id TEXT PRIMARY KEY,
+    logical_key_sha256 TEXT NOT NULL UNIQUE,
+    manifest_id TEXT NOT NULL REFERENCES execution_manifests(manifest_id),
+    generation INTEGER NOT NULL,
+    runtime_session_sha256 TEXT NOT NULL,
+    agent_id_sha256 TEXT NOT NULL,
+    requested_tool_id_sha256 TEXT NOT NULL,
+    resolved_tool_id_sha256 TEXT NOT NULL,
+    effect_class TEXT NOT NULL,
+    adapter_kind TEXT NOT NULL,
+    target_sha256 TEXT NOT NULL,
+    parameter_shape_sha256 TEXT NOT NULL,
+    continuation_binding_sha256 TEXT NOT NULL,
+    isolation_binding_sha256 TEXT NOT NULL,
+    idempotency TEXT NOT NULL,
+    parent_operation_id TEXT REFERENCES effect_operations(operation_id),
+    parent_attempt_id TEXT REFERENCES effect_attempts(attempt_id),
+    child_run_sha256 TEXT NOT NULL,
+    provider_call_id_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','ready','running','result','denied','failed','cancelled','unknown','blocked')),
+    reason_code TEXT NOT NULL,
+    result_sha256 TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+CREATE TABLE effect_attempts(
+    attempt_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES effect_operations(operation_id),
+    ordinal INTEGER NOT NULL CHECK(ordinal>=1),
+    admission_attempt_id TEXT REFERENCES admission_attempts(attempt_id),
+    grant_id TEXT REFERENCES execution_grants(grant_id),
+    state TEXT NOT NULL CHECK(state IN ('reserved','intent_committed','running','result','denied','failed','cancelled','unknown')),
+    reason_code TEXT NOT NULL,
+    lease_expires_at_ms INTEGER,
+    started_at_ms INTEGER,
+    finished_at_ms INTEGER,
+    result_sha256 TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    UNIQUE(operation_id, ordinal)
+);
+CREATE TABLE effect_transitions(
+    transition_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation_id TEXT NOT NULL REFERENCES effect_operations(operation_id),
+    attempt_id TEXT REFERENCES effect_attempts(attempt_id),
+    from_state TEXT NOT NULL,
+    to_state TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL
+);
+CREATE TABLE effect_delegation_bindings(
+    parent_operation_id TEXT NOT NULL REFERENCES effect_operations(operation_id),
+    parent_attempt_id TEXT NOT NULL REFERENCES effect_attempts(attempt_id),
+    child_agent_id_sha256 TEXT NOT NULL,
+    child_run_sha256 TEXT NOT NULL,
+    binding_sha256 TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK(state IN ('active','closed')),
+    created_at_ms INTEGER NOT NULL,
+    closed_at_ms INTEGER,
+    PRIMARY KEY(parent_operation_id,parent_attempt_id,child_run_sha256)
+);
+CREATE INDEX idx_effect_operations_state_updated
+    ON effect_operations(state, updated_at_ms);
+CREATE INDEX idx_effect_operations_generation_state
+    ON effect_operations(generation, state);
+CREATE INDEX idx_effect_attempts_operation_ordinal
+    ON effect_attempts(operation_id, ordinal);
+CREATE INDEX idx_effect_attempts_state_lease
+    ON effect_attempts(state, lease_expires_at_ms);
+CREATE INDEX idx_effect_transitions_operation_transition
+    ON effect_transitions(operation_id, transition_id);
+CREATE INDEX idx_effect_operations_session_agent_adapter_state
+    ON effect_operations(runtime_session_sha256,agent_id_sha256,adapter_kind,state);
+CREATE INDEX idx_effect_operations_parent_attempt
+    ON effect_operations(parent_operation_id,parent_attempt_id);
+CREATE INDEX idx_effect_delegation_child_state
+    ON effect_delegation_bindings(child_agent_id_sha256,child_run_sha256,state);
 """
 _SCHEMA_STATEMENTS = tuple(
     statement.strip() for statement in _SCHEMA.split(";") if statement.strip()
@@ -214,6 +374,24 @@ _EXPECTED_FOREIGN_KEYS = {
     "execution_grants": {
         ("admission_attempts", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION"),
         ("execution_manifests", "manifest_id", "manifest_id", "NO ACTION", "NO ACTION"),
+    },
+    "effect_operations": {
+        ("execution_manifests", "manifest_id", "manifest_id", "NO ACTION", "NO ACTION"),
+        ("effect_operations", "parent_operation_id", "operation_id", "NO ACTION", "NO ACTION"),
+        ("effect_attempts", "parent_attempt_id", "attempt_id", "NO ACTION", "NO ACTION"),
+    },
+    "effect_attempts": {
+        ("effect_operations", "operation_id", "operation_id", "NO ACTION", "NO ACTION"),
+        ("admission_attempts", "admission_attempt_id", "attempt_id", "NO ACTION", "NO ACTION"),
+        ("execution_grants", "grant_id", "grant_id", "NO ACTION", "NO ACTION"),
+    },
+    "effect_transitions": {
+        ("effect_operations", "operation_id", "operation_id", "NO ACTION", "NO ACTION"),
+        ("effect_attempts", "attempt_id", "attempt_id", "NO ACTION", "NO ACTION"),
+    },
+    "effect_delegation_bindings": {
+        ("effect_operations", "parent_operation_id", "operation_id", "NO ACTION", "NO ACTION"),
+        ("effect_attempts", "parent_attempt_id", "attempt_id", "NO ACTION", "NO ACTION"),
     },
 }
 
@@ -341,6 +519,32 @@ class ProtectedExecutionAuthorityProtocol(Protocol):
     async def mark_start_failed(
         self, grant: ExecutionGrant, *, reason_code: str
     ) -> None: ...
+
+    async def reserve_effect(
+        self, request: EffectReserveRequest
+    ) -> EffectReserveDecision: ...
+
+    async def mark_effect_started(self, permit: EffectPermit) -> None: ...
+
+    async def finish_effect(
+        self, request: EffectFinishRequest
+    ) -> EffectOperationView: ...
+
+    async def reconcile_effect(
+        self, evidence: ReconciliationEvidence, *, receipt_sha256: str
+    ) -> EffectOperationView: ...
+
+    async def recover_effects(self, *, now_ms: int | None = None) -> int: ...
+
+    async def shutdown_effects(self) -> int: ...
+
+    async def query_effect_operations(
+        self, operation_id: str | None = None
+    ) -> tuple[EffectOperationView, ...]: ...
+
+    async def query_effect_attempts(
+        self, operation_id: str
+    ) -> tuple[EffectAttemptView, ...]: ...
 
 
 def _now_ms() -> int:
@@ -671,10 +875,11 @@ class _WitnessSchema:
                 for statement in _SCHEMA_STATEMENTS:
                     await db.execute(statement)
                 await db.execute(
-                    "INSERT INTO authority_meta VALUES (1,1,?,?,?,?)",
+                    "INSERT INTO authority_meta VALUES (1,2,?,?,?,?)",
                     (str(uuid.uuid4()), 0, "", _now_ms()),
                 )
-                await db.execute("PRAGMA user_version=1")
+                await db.execute("PRAGMA user_version=2")
+                await self._validate(db)
                 await db.commit()
             except BaseException:
                 try:
@@ -686,11 +891,155 @@ class _WitnessSchema:
                         "reason_code=rollback_failed; startup remains failed"
                     )
                 raise
+        elif version == 1:
+            await self._migrate_v1_to_v2(db)
         elif version != EXECUTION_WITNESS_SCHEMA_VERSION:
             raise WitnessSchemaError("unsupported protected witness schema version")
         await self._validate(db)
 
+    async def _migrate_v1_to_v2(self, db: DatabaseConnection) -> None:
+        await self._validate_v1(db)
+        required_v1 = {
+            "authority_meta",
+            "execution_manifests",
+            "manifest_sources",
+            "admission_attempts",
+            "execution_grants",
+        }
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        observed = {str(row[0]) for row in await cursor.fetchall()}
+        if not required_v1.issubset(observed):
+            raise WitnessSchemaError("protected witness v1 is partial")
+        meta = await self._fetchone(
+            db, "SELECT schema_version FROM authority_meta WHERE singleton=1"
+        )
+        if meta is None or int(meta[0]) != 1:
+            raise WitnessSchemaError("protected witness v1 metadata drift")
+        effect_statements = tuple(
+            statement for statement in _SCHEMA_STATEMENTS
+            if statement.startswith("CREATE TABLE effect_")
+            or statement.startswith("CREATE INDEX idx_effect_")
+        )
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute("ALTER TABLE authority_meta RENAME TO authority_meta_v1")
+            await db.execute(_TABLE_SQL["authority_meta"])
+            await db.execute(
+                "INSERT INTO authority_meta "
+                "(singleton,schema_version,host_instance_id,current_generation,"
+                "process_id,updated_at_ms) "
+                "SELECT singleton,2,host_instance_id,current_generation,"
+                "process_id,updated_at_ms FROM authority_meta_v1"
+            )
+            await db.execute("DROP TABLE authority_meta_v1")
+            for statement in effect_statements:
+                await db.execute(statement)
+            await db.execute("PRAGMA user_version=2")
+            await self._validate(db)
+            await db.commit()
+        except BaseException:
+            try:
+                await db.execute("ROLLBACK")
+            except BaseException:
+                logger.error(
+                    "protected witness migration rollback failed operation=migrate "
+                    "attempt_id=none manifest_id=none generation=0 "
+                    "reason_code=rollback_failed; startup remains failed"
+                )
+            raise
+
+    async def _validate_v1(self, db: DatabaseConnection) -> None:
+        v1_tables = (
+            "authority_meta",
+            "execution_manifests",
+            "manifest_sources",
+            "admission_attempts",
+            "execution_grants",
+        )
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'"
+        )
+        observed_tables = {str(row[0]) for row in await cursor.fetchall()}
+        if observed_tables != set(v1_tables):
+            raise WitnessSchemaError("protected witness v1 table drift")
+        for table in v1_tables:
+            cursor = await db.execute(f"PRAGMA table_info({table})")
+            columns = tuple(str(row[1]) for row in await cursor.fetchall())
+            if columns != _TABLE_COLUMNS[table]:
+                raise WitnessSchemaError("protected witness v1 column drift")
+            schema_row = await self._fetchone(
+                db,
+                "SELECT sql FROM sqlite_master WHERE type='table' "
+                f"AND name='{table}'",
+            )
+            expected_sql = _TABLE_SQL[table]
+            if table == "authority_meta":
+                expected_sql = expected_sql.replace(
+                    "CHECK(schema_version=2)", "CHECK(schema_version=1)"
+                )
+            if schema_row is None or _normalize_schema_sql(
+                str(schema_row[0])
+            ) != _normalize_schema_sql(expected_sql):
+                raise WitnessSchemaError("protected witness v1 definition drift")
+            cursor = await db.execute(f"PRAGMA foreign_key_list({table})")
+            foreign_keys = {
+                (
+                    str(row[2]),
+                    str(row[3]),
+                    str(row[4]),
+                    str(row[5]),
+                    str(row[6]),
+                )
+                for row in await cursor.fetchall()
+            }
+            if foreign_keys != _EXPECTED_FOREIGN_KEYS[table]:
+                raise WitnessSchemaError("protected witness v1 foreign key drift")
+        expected_indexes = {
+            name: value
+            for name, value in _REQUIRED_INDEXES.items()
+            if value[0] in v1_tables
+        }
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name NOT LIKE 'sqlite_%'"
+        )
+        if {str(row[0]) for row in await cursor.fetchall()} != set(expected_indexes):
+            raise WitnessSchemaError("protected witness v1 index drift")
+        for index, (table, expected_columns) in expected_indexes.items():
+            schema_row = await self._fetchone(
+                db,
+                "SELECT tbl_name,sql FROM sqlite_master WHERE type='index' "
+                f"AND name='{index}'",
+            )
+            if (
+                schema_row is None
+                or str(schema_row[0]) != table
+                or _normalize_schema_sql(str(schema_row[1]))
+                != _normalize_schema_sql(_INDEX_SQL[index])
+            ):
+                raise WitnessSchemaError("protected witness v1 index drift")
+            cursor = await db.execute(f"PRAGMA index_info({index})")
+            if tuple(str(row[2]) for row in await cursor.fetchall()) != expected_columns:
+                raise WitnessSchemaError("protected witness v1 index drift")
+        cursor = await db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' LIMIT 1"
+        )
+        if await cursor.fetchone() is not None:
+            raise WitnessSchemaError("protected witness v1 triggers are not allowed")
+        meta = await self._fetchone(
+            db,
+            "SELECT schema_version FROM authority_meta WHERE singleton=1"
+        )
+        if meta is None or type(meta[0]) is not int or int(meta[0]) != 1:
+            raise WitnessSchemaError("protected witness v1 metadata drift")
+
     async def _validate(self, db: DatabaseConnection) -> None:
+        user_version = await self._fetchone(db, "PRAGMA user_version")
+        if user_version is None or int(user_version[0]) != 2:
+            raise WitnessSchemaError("protected witness schema version drift")
         for table, expected in _TABLE_COLUMNS.items():
             cursor = await db.execute(f"PRAGMA table_info({table})")
             rows = await cursor.fetchall()
@@ -719,6 +1068,12 @@ class _WitnessSchema:
             }
             if foreign_keys != _EXPECTED_FOREIGN_KEYS[table]:
                 raise WitnessSchemaError("protected witness foreign key drift")
+        meta = await self._fetchone(
+            db,
+            "SELECT schema_version FROM authority_meta WHERE singleton=1"
+        )
+        if meta is None or type(meta[0]) is not int or int(meta[0]) != 2:
+            raise WitnessSchemaError("protected witness metadata version drift")
         for index, (table, expected_columns) in _REQUIRED_INDEXES.items():
             schema_row = await self._fetchone(
                 db,
@@ -1041,7 +1396,7 @@ class _AdmissionTransactions:
             raise StaleGrantError("grant is not active for the current issuer")
 
 
-class ProtectedExecutionAuthority:
+class _ProtectedExecutionAuthorityCore:
     """Runtime-owned strict issuer backed by one durable SQLite witness."""
 
     def __init__(
@@ -1470,3 +1825,954 @@ class ProtectedExecutionAuthority:
                 "SELECT * FROM execution_grants ORDER BY issued_at_ms, grant_id"
             )
             return tuple(await cursor.fetchall())
+
+
+class _EffectDelegationMixin:
+    async def authorize_effect_target(
+        self, request: EffectTargetRequest
+    ) -> EffectTargetDecision:
+        if request.adapter_kind != "native_file" or request.effect_class != "filesystem":
+            return EffectTargetDecision(False, "target_adapter_unsupported", "")
+        try:
+            target = Path(request.canonical_target).resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return EffectTargetDecision(False, "file_target_resolution_failed", "")
+        protected = (
+            self._protected_installation_root,
+            self._db_path,
+            self._policy_path,
+            self._issuer_module_path,
+        )
+        if any(target == path or _path_is_within(target, path) for path in protected):
+            return EffectTargetDecision(False, "file_target_protected", "")
+        root = next(
+            (candidate for candidate in self._worker_write_roots
+             if target == candidate or _path_is_within(target, candidate)),
+            None,
+        )
+        if root is None:
+            return EffectTargetDecision(False, "file_target_outside_worker_root", "")
+        manifest = self._active_manifest
+        if manifest is None:
+            raise StaleGrantError("target authorization requires an active manifest")
+        binding = _sha256_json(
+            "probos.effect-isolation-binding.v1",
+            {
+                "manifest": manifest.manifest_id,
+                "generation": self._generation,
+                "root": str(root),
+                "target": str(target),
+            },
+        )
+        return EffectTargetDecision(
+            True, "target_authorized", binding, authorized_root=str(root)
+        )
+
+    async def bind_delegated_run(self, binding: DelegationRunBinding) -> None:
+        if (
+            _issued_identifier(binding.parent_operation_id) is None
+            or _issued_identifier(binding.parent_attempt_id) is None
+            or not binding.child_agent_id
+            or not binding.child_run_id
+            or not binding.binding_token
+        ):
+            raise ValueError("delegation binding contains invalid trusted fields")
+        async with self._lock:
+            db = self._require_db()
+            now = _now_ms()
+            expected = _sha256_json(
+                "probos.effect-delegation-binding.v1",
+                {
+                    "operation": binding.parent_operation_id,
+                    "attempt": binding.parent_attempt_id,
+                    "agent": binding.child_agent_id,
+                    "run": binding.child_run_id,
+                    "token": binding.binding_token,
+                },
+            )
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                parent = await self._transactions.fetchone(
+                    db,
+                    "SELECT o.effect_class,o.state,o.manifest_id,o.generation,a.state "
+                    "FROM effect_operations o JOIN effect_attempts a "
+                    "ON a.operation_id=o.operation_id "
+                    "WHERE o.operation_id=? AND a.attempt_id=?",
+                    (binding.parent_operation_id, binding.parent_attempt_id),
+                )
+                manifest = self._active_manifest
+                if (
+                    parent is None
+                    or manifest is None
+                    or str(parent[0]) != "delegation"
+                    or str(parent[1]) != "running"
+                    or str(parent[2]) != manifest.manifest_id
+                    or int(parent[3]) != self._generation
+                    or str(parent[4]) != "running"
+                ):
+                    raise StaleGrantError("delegation parent is not running")
+                await db.execute(
+                    "INSERT INTO effect_delegation_bindings VALUES "
+                    "(?,?,?,?,?,'active',?,NULL)",
+                    (
+                        binding.parent_operation_id,
+                        binding.parent_attempt_id,
+                        _sha256_json(
+                            "probos.selected-agent-id.v1", binding.child_agent_id
+                        ),
+                        _sha256_json(
+                            "probos.effect-child-run.v1", binding.child_run_id
+                        ),
+                        expected,
+                        now,
+                    ),
+                )
+                await db.commit()
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except StaleGrantError:
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "delegation binding could not commit"
+                ) from exc
+
+    async def _authorized_delegated_child(
+        self,
+        db: DatabaseConnection,
+        effect: object,
+        manifest: ExecutionManifest,
+    ) -> bool:
+        parent_operation_id = getattr(effect, "parent_operation_id", None)
+        parent_attempt_id = getattr(effect, "parent_attempt_id", None)
+        child_run_id = getattr(effect, "child_run_id", "")
+        binding_token = getattr(effect, "binding_token", "")
+        agent_id = getattr(effect, "agent_id", "")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                parent_operation_id,
+                parent_attempt_id,
+                child_run_id,
+                binding_token,
+                agent_id,
+            )
+        ):
+            return False
+        row = await self._transactions.fetchone(
+            db,
+            "SELECT b.binding_sha256,o.effect_class,o.state,o.manifest_id,"
+            "o.generation,a.state FROM effect_delegation_bindings b "
+            "JOIN effect_operations o ON o.operation_id=b.parent_operation_id "
+            "JOIN effect_attempts a ON a.attempt_id=b.parent_attempt_id "
+            "WHERE b.parent_operation_id=? AND b.parent_attempt_id=? "
+            "AND b.child_agent_id_sha256=? AND b.child_run_sha256=? "
+            "AND b.state='active'",
+            (
+                parent_operation_id,
+                parent_attempt_id,
+                _sha256_json("probos.selected-agent-id.v1", agent_id),
+                _sha256_json("probos.effect-child-run.v1", child_run_id),
+            ),
+        )
+        expected = _sha256_json(
+            "probos.effect-delegation-binding.v1",
+            {
+                "operation": parent_operation_id,
+                "attempt": parent_attempt_id,
+                "agent": agent_id,
+                "run": child_run_id,
+                "token": binding_token,
+            },
+        )
+        return bool(
+            row is not None
+            and str(row[0]) == expected
+            and str(row[1]) == "delegation"
+            and str(row[2]) == "running"
+            and str(row[3]) == manifest.manifest_id
+            and int(row[4]) == self._generation
+            and str(row[5]) == "running"
+        )
+class _EffectReservationMixin(_EffectDelegationMixin):
+    """Atomic operation identity, grant validation, and intent reservation."""
+
+    async def reserve_effect(
+        self, request: EffectReserveRequest
+    ) -> EffectReserveDecision:
+        effect = request.request
+        if (
+            not isinstance(effect.logical_key, str)
+            or not isinstance(effect.agent_id, str)
+            or not effect.agent_id
+            or not isinstance(effect.tool_id, str)
+            or not effect.tool_id
+            or not _is_sha256(effect.parameter_shape_sha256)
+            or type(request.lease_seconds) is not int
+            or not 1 <= request.lease_seconds <= 3600
+            or type(request.max_attempts) is not int
+            or not 1 <= request.max_attempts <= 10
+        ):
+            raise ValueError("effect reservation contains invalid trusted fields")
+        async with self._lock:
+            db = self._require_db()
+            manifest = self._active_manifest
+            if manifest is None:
+                raise StaleGrantError("effect reservation requires an active manifest")
+            malformed_logical_key = not effect.logical_key
+            logical_key_sha256 = _sha256_json(
+                "probos.effect-logical-key.v1",
+                (
+                    effect.logical_key
+                    if not malformed_logical_key
+                    else {"malformed_operation_id": request.permit.operation_id}
+                ),
+            )
+            now = _now_ms()
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                existing = await self._transactions.fetchone(
+                    db,
+                    "SELECT operation_id,state,reason_code,manifest_id,generation,"
+                    "runtime_session_sha256,agent_id_sha256,"
+                    "requested_tool_id_sha256,resolved_tool_id_sha256,"
+                    "effect_class,adapter_kind,target_sha256,parameter_shape_sha256,"
+                    "continuation_binding_sha256,isolation_binding_sha256,idempotency,"
+                    "parent_operation_id,parent_attempt_id,child_run_sha256 "
+                    "FROM effect_operations WHERE "
+                    + (
+                        "operation_id=?"
+                        if request.operation_handle is not None
+                        else "logical_key_sha256=?"
+                    ),
+                    (
+                        request.operation_handle.operation_id
+                        if request.operation_handle is not None
+                        else logical_key_sha256,
+                    ),
+                )
+                if existing is not None:
+                    operation_id = str(existing[0])
+                    state = str(existing[1])
+                    reason = str(existing[2])
+                    last_attempt = await self._transactions.fetchone(
+                        db,
+                        "SELECT attempt_id,ordinal,state FROM effect_attempts "
+                        "WHERE operation_id=? ORDER BY ordinal DESC LIMIT 1",
+                        (operation_id,),
+                    )
+                    attempt_id = str(last_attempt[0]) if last_attempt else ""
+                    ordinal = int(last_attempt[1]) if last_attempt else 0
+                    attempt_state = str(last_attempt[2]) if last_attempt else ""
+                    agent_id_sha256 = _sha256_json(
+                        "probos.selected-agent-id.v1", effect.agent_id
+                    )
+                    parent_authorized = (
+                        await self._authorized_delegated_child(
+                            db, effect, manifest
+                        )
+                        if effect.parent_operation_id is not None
+                        else False
+                    )
+                    bindings_match = (
+                        str(existing[3]) == manifest.manifest_id
+                        and int(existing[4]) == self._generation
+                        and str(existing[5]) == self._runtime_session_sha256
+                        and str(existing[6]) == agent_id_sha256
+                        and str(existing[7]) == _sha256_json(
+                            "probos.effect-tool-id.v1", effect.tool_id
+                        )
+                        and str(existing[8]) == _sha256_json(
+                            "probos.effect-tool-id.v1",
+                            effect.resolved_tool_id or effect.tool_id,
+                        )
+                        and str(existing[9]) == effect.effect_class
+                        and str(existing[10]) == effect.adapter_kind
+                        and str(existing[11]) == _sha256_json(
+                            "probos.effect-target.v1", effect.target_identity
+                        )
+                        and str(existing[12]) == effect.parameter_shape_sha256
+                        and str(existing[13])
+                        == effect.continuation_binding_sha256
+                        and str(existing[14]) == effect.isolation_binding_sha256
+                        and str(existing[15]) == effect.idempotency
+                        and (
+                            str(existing[16])
+                            if existing[16] is not None
+                            else None
+                        ) == effect.parent_operation_id
+                        and (
+                            str(existing[17])
+                            if existing[17] is not None
+                            else None
+                        ) == effect.parent_attempt_id
+                        and str(existing[18]) == _sha256_json(
+                            "probos.effect-child-run.v1", effect.child_run_id
+                        )
+                        and (
+                            parent_authorized
+                            if effect.parent_operation_id is not None
+                            else agent_id_sha256
+                            == manifest.selected_agent.agent_id_sha256
+                        )
+                    )
+                    if not bindings_match:
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "denied",
+                            "operation_binding_mismatch", None, state,
+                        )
+                    if state in {
+                        "result", "denied", "failed", "cancelled", "blocked"
+                    }:
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "duplicate",
+                            "duplicate_terminal", None, state,
+                        )
+                    if state in {"running", "pending"}:
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "blocked",
+                            "blocked_unknown", None, state,
+                        )
+                    if state == "unknown":
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "blocked",
+                            "reconciliation_required", None, state,
+                        )
+                    if state == "ready" and attempt_state == "intent_committed":
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "blocked",
+                            "duplicate_in_flight", None, state,
+                        )
+                    if state != "ready" or ordinal >= request.max_attempts:
+                        await db.execute(
+                            "UPDATE effect_operations SET state='blocked', "
+                            "reason_code='attempt_limit',updated_at_ms=? "
+                            "WHERE operation_id=?",
+                            (now, operation_id),
+                        )
+                        await self._insert_effect_transition(
+                            db, operation_id, None, state, "blocked",
+                            "attempt_limit", now,
+                        )
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, attempt_id, "blocked",
+                            "attempt_limit", None, "blocked",
+                        )
+                    attempt_id = str(uuid.uuid4())
+                    ordinal += 1
+                    grant = await self._active_effect_grant(db, manifest)
+                    if grant is None:
+                        await db.execute(
+                            "UPDATE effect_operations SET state='denied', "
+                            "reason_code='grant_unavailable',updated_at_ms=? "
+                            "WHERE operation_id=?",
+                            (now, operation_id),
+                        )
+                        await self._insert_effect_transition(
+                            db, operation_id, None, "ready", "denied",
+                            "grant_unavailable", now,
+                        )
+                        await db.commit()
+                        return EffectReserveDecision(
+                            operation_id, "", "denied", "grant_unavailable",
+                            None, "denied",
+                        )
+                    permit = replace(
+                        request.permit,
+                        operation_id=operation_id,
+                        attempt_id=attempt_id,
+                        generation=self._generation,
+                    )
+                    await self._insert_effect_attempt(
+                        db, permit, ordinal, grant, request.lease_seconds, now
+                    )
+                    await db.commit()
+                    return EffectReserveDecision(
+                        operation_id, attempt_id, "ready", "intent_committed",
+                        permit, "ready",
+                    )
+                if request.operation_handle is not None:
+                    await db.commit()
+                    return EffectReserveDecision(
+                        request.operation_handle.operation_id,
+                        request.operation_handle.attempt_id,
+                        "denied",
+                        "operation_handle_unknown",
+                        None,
+                        "denied",
+                    )
+
+                operation_id = request.permit.operation_id
+                attempt_id = request.permit.attempt_id
+                agent_id_sha256 = _sha256_json(
+                    "probos.selected-agent-id.v1", effect.agent_id
+                )
+                provider_call_hash = _sha256_json(
+                    "probos.effect-provider-call.v1", effect.provider_call_id or ""
+                )
+                parent_authorized = False
+                if effect.parent_operation_id is not None:
+                    parent_authorized = await self._authorized_delegated_child(
+                        db, effect, manifest
+                    )
+                await db.execute(
+                    "INSERT INTO effect_operations("
+                    "operation_id,logical_key_sha256,manifest_id,generation,"
+                    "runtime_session_sha256,agent_id_sha256,"
+                    "requested_tool_id_sha256,resolved_tool_id_sha256,"
+                    "effect_class,adapter_kind,target_sha256,"
+                    "parameter_shape_sha256,continuation_binding_sha256,"
+                    "isolation_binding_sha256,idempotency,parent_operation_id,"
+                    "parent_attempt_id,child_run_sha256,provider_call_id_sha256,"
+                    "state,reason_code,result_sha256,receipt_sha256,"
+                    "created_at_ms,updated_at_ms) VALUES "
+                    "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+                    "'pending','pending','','',?,?)",
+                    (
+                        operation_id,
+                        logical_key_sha256,
+                        manifest.manifest_id,
+                        self._generation,
+                        self._runtime_session_sha256,
+                        agent_id_sha256,
+                        _sha256_json("probos.effect-tool-id.v1", effect.tool_id),
+                        _sha256_json(
+                            "probos.effect-tool-id.v1",
+                            effect.resolved_tool_id or effect.tool_id,
+                        ),
+                        effect.effect_class,
+                        effect.adapter_kind,
+                        _sha256_json(
+                            "probos.effect-target.v1", effect.target_identity
+                        ),
+                        effect.parameter_shape_sha256,
+                        effect.continuation_binding_sha256,
+                        effect.isolation_binding_sha256,
+                        effect.idempotency,
+                        (
+                            effect.parent_operation_id
+                            if parent_authorized else None
+                        ),
+                        (
+                            effect.parent_attempt_id
+                            if parent_authorized else None
+                        ),
+                        _sha256_json(
+                            "probos.effect-child-run.v1", effect.child_run_id
+                        ),
+                        provider_call_hash,
+                        now,
+                        now,
+                    ),
+                )
+                await self._insert_effect_transition(
+                    db, operation_id, None, "new", "pending", "pending", now
+                )
+                grant = await self._active_effect_grant(db, manifest)
+                denial_reason = ""
+                if malformed_logical_key:
+                    denial_reason = "malformed_request"
+                elif request.runtime_session_id != self._runtime_session_id:
+                    denial_reason = "runtime_session_mismatch"
+                elif (
+                    not parent_authorized
+                    if effect.parent_operation_id is not None
+                    else agent_id_sha256
+                    != manifest.selected_agent.agent_id_sha256
+                ):
+                    denial_reason = "selected_agent_mismatch"
+                elif (
+                    effect.effect_class == "shell"
+                    and effect.target_identity == "strict_isolation_unbound"
+                ):
+                    denial_reason = "shell_isolation_unbound"
+                elif (
+                    effect.adapter_kind == "native_file"
+                    and not _is_sha256(effect.isolation_binding_sha256)
+                    and not effect.preflight_denial_reason
+                ):
+                    denial_reason = "file_target_unauthorized"
+                elif request.permit.tool_id_sha256 != _sha256_json(
+                    "probos.effect-tool-id.v1", effect.tool_id
+                ):
+                    denial_reason = "tool_binding_mismatch"
+                elif grant is None:
+                    denial_reason = "grant_unavailable"
+                elif not self._policy_allows(effect.effect_class):
+                    denial_reason = "policy_refused"
+                if denial_reason:
+                    await db.execute(
+                        "INSERT INTO effect_attempts VALUES "
+                        "(?,?,1,NULL,NULL,'denied',?,NULL,NULL,?,'','')",
+                        (attempt_id, operation_id, denial_reason, now),
+                    )
+                    await db.execute(
+                        "UPDATE effect_operations SET state='denied',reason_code=?,"
+                        "updated_at_ms=? WHERE operation_id=?",
+                        (denial_reason, now, operation_id),
+                    )
+                    await self._insert_effect_transition(
+                        db, operation_id, attempt_id, "pending", "denied",
+                        denial_reason, now,
+                    )
+                    await db.commit()
+                    return EffectReserveDecision(
+                        operation_id, attempt_id, "denied", denial_reason,
+                        None, "denied",
+                    )
+                permit = replace(request.permit, generation=self._generation)
+                await self._insert_effect_attempt(
+                    db, permit, 1, grant, request.lease_seconds, now
+                )
+                await db.execute(
+                    "UPDATE effect_operations SET state='ready',"
+                    "reason_code='intent_committed',updated_at_ms=? "
+                    "WHERE operation_id=?",
+                    (now, operation_id),
+                )
+                await self._insert_effect_transition(
+                    db, operation_id, attempt_id, "pending", "ready",
+                    "intent_committed", now,
+                )
+                await db.commit()
+                return EffectReserveDecision(
+                    operation_id, attempt_id, "ready", "intent_committed",
+                    permit, "ready",
+                )
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except (StaleGrantError, WitnessSchemaError):
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "effect intent could not commit"
+                ) from exc
+
+    async def _active_effect_grant(
+        self, db: DatabaseConnection, manifest: ExecutionManifest
+    ) -> tuple[str, str] | None:
+        row = await self._transactions.fetchone(
+            db,
+            "SELECT grant_id,attempt_id FROM execution_grants "
+            "WHERE manifest_id=? AND generation=? "
+            "AND runtime_session_sha256=? AND state='active' "
+            "ORDER BY issued_at_ms DESC LIMIT 1",
+            (
+                manifest.manifest_id,
+                self._generation,
+                self._runtime_session_sha256,
+            ),
+        )
+        if row is None:
+            return None
+        return str(row[0]), str(row[1])
+
+    async def _insert_effect_attempt(
+        self,
+        db: DatabaseConnection,
+        permit: EffectPermit,
+        ordinal: int,
+        grant: tuple[str, str],
+        lease_seconds: int,
+        now: int,
+    ) -> None:
+        await db.execute(
+            "INSERT INTO effect_attempts VALUES "
+            "(?,?,?,?,?,'intent_committed','intent_committed',?,NULL,NULL,'','')",
+            (
+                permit.attempt_id,
+                permit.operation_id,
+                ordinal,
+                grant[1],
+                grant[0],
+                now + lease_seconds * 1000,
+            ),
+        )
+
+    async def _insert_effect_transition(
+        self,
+        db: DatabaseConnection,
+        operation_id: str,
+        attempt_id: str | None,
+        from_state: str,
+        to_state: str,
+        reason_code: str,
+        now: int,
+    ) -> None:
+        await db.execute(
+            "INSERT INTO effect_transitions "
+            "(operation_id,attempt_id,from_state,to_state,reason_code,recorded_at_ms) "
+            "VALUES (?,?,?,?,?,?)",
+            (operation_id, attempt_id, from_state, to_state, reason_code, now),
+        )
+
+
+class _EffectTransitionMixin:
+    """Effect start, terminal transition, reconciliation, recovery, and query."""
+
+    async def mark_effect_started(self, permit: EffectPermit) -> None:
+        async with self._lock:
+            db = self._require_db()
+            now = _now_ms()
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                row = await self._transactions.fetchone(
+                    db,
+                    "SELECT o.state,o.generation,a.state,a.grant_id "
+                    "FROM effect_operations o JOIN effect_attempts a "
+                    "ON a.operation_id=o.operation_id "
+                    "WHERE o.operation_id=? AND a.attempt_id=?",
+                    (permit.operation_id, permit.attempt_id),
+                )
+                if (
+                    row is None
+                    or str(row[0]) != "ready"
+                    or int(row[1]) != self._generation
+                    or permit.generation != self._generation
+                    or str(row[2]) != "intent_committed"
+                ):
+                    raise StaleGrantError("effect permit is stale or already consumed")
+                grant = await self._transactions.fetchone(
+                    db,
+                    "SELECT state,generation FROM execution_grants WHERE grant_id=?",
+                    (str(row[3]),),
+                )
+                if (
+                    grant is None
+                    or str(grant[0]) != "active"
+                    or int(grant[1]) != self._generation
+                ):
+                    raise StaleGrantError("effect grant is no longer active")
+                attempt_update = await db.execute(
+                    "UPDATE effect_attempts SET state='running',"
+                    "reason_code='consumer_started',started_at_ms=? "
+                    "WHERE attempt_id=? AND state='intent_committed'",
+                    (now, permit.attempt_id),
+                )
+                operation_update = await db.execute(
+                    "UPDATE effect_operations SET state='running',"
+                    "reason_code='consumer_started',updated_at_ms=? "
+                    "WHERE operation_id=? AND state='ready'",
+                    (now, permit.operation_id),
+                )
+                if attempt_update.rowcount != 1 or operation_update.rowcount != 1:
+                    raise StaleGrantError("effect permit compare-and-set failed")
+                await self._insert_effect_transition(
+                    db, permit.operation_id, permit.attempt_id,
+                    "ready", "running", "consumer_started", now,
+                )
+                await db.commit()
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except StaleGrantError:
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "effect start could not commit"
+                ) from exc
+
+    async def finish_effect(
+        self, request: EffectFinishRequest
+    ) -> EffectOperationView:
+        if _REASON_CODE_RE.fullmatch(request.reason_code) is None:
+            raise ValueError("reason_code must use bounded stable-code syntax")
+        if request.result_sha256 and not _is_sha256(request.result_sha256):
+            raise ValueError("result_sha256 must be empty or SHA-256")
+        async with self._lock:
+            db = self._require_db()
+            now = _now_ms()
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                row = await self._transactions.fetchone(
+                    db,
+                    "SELECT o.state,a.state FROM effect_operations o "
+                    "JOIN effect_attempts a ON a.operation_id=o.operation_id "
+                    "WHERE o.operation_id=? AND a.attempt_id=?",
+                    (request.operation_id, request.attempt_id),
+                )
+                if row is None:
+                    raise StaleGrantError("effect attempt is unavailable")
+                operation_state = str(row[0])
+                attempt_state = str(row[1])
+                valid_finish = (
+                    operation_state == "running"
+                    and attempt_state == "running"
+                    and request.outcome in {"result", "failed", "unknown"}
+                ) or (
+                    request.outcome in {"cancelled", "denied", "failed"}
+                    and operation_state == "ready"
+                    and attempt_state == "intent_committed"
+                )
+                if not valid_finish:
+                    raise StaleGrantError("effect finish compare-and-set failed")
+                await db.execute(
+                    "UPDATE effect_attempts SET state=?,reason_code=?,"
+                    "finished_at_ms=?,result_sha256=? WHERE attempt_id=?",
+                    (
+                        request.outcome, request.reason_code, now,
+                        request.result_sha256, request.attempt_id,
+                    ),
+                )
+                await db.execute(
+                    "UPDATE effect_operations SET state=?,reason_code=?,"
+                    "result_sha256=?,updated_at_ms=? WHERE operation_id=?",
+                    (
+                        request.outcome, request.reason_code,
+                        request.result_sha256, now, request.operation_id,
+                    ),
+                )
+                await self._insert_effect_transition(
+                    db, request.operation_id, request.attempt_id,
+                    operation_state, request.outcome, request.reason_code, now,
+                )
+                await db.execute(
+                    "UPDATE effect_delegation_bindings SET state='closed',"
+                    "closed_at_ms=? WHERE parent_operation_id=? "
+                    "AND parent_attempt_id=? AND state='active'",
+                    (now, request.operation_id, request.attempt_id),
+                )
+                await db.commit()
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except StaleGrantError:
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "effect outcome could not commit"
+                ) from exc
+        operations = await self.query_effect_operations(request.operation_id)
+        if len(operations) != 1:
+            raise WitnessUnavailableError("effect outcome postcondition is missing")
+        return operations[0]
+
+    async def reconcile_effect(
+        self, evidence: ReconciliationEvidence, *, receipt_sha256: str
+    ) -> EffectOperationView:
+        if receipt_sha256 and not _is_sha256(receipt_sha256):
+            raise ValueError("receipt_sha256 must be empty or SHA-256")
+        next_state = {
+            "applied": "result",
+            "not_applied": "ready",
+            "failed": "blocked" if not receipt_sha256 else "failed",
+        }[evidence.observed]
+        reason = {
+            "applied": "receipt_applied",
+            "not_applied": "receipt_not_applied",
+            "failed": "reconciliation_unavailable" if not receipt_sha256 else "receipt_failed",
+        }[evidence.observed]
+        async with self._lock:
+            db = self._require_db()
+            now = _now_ms()
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                row = await self._transactions.fetchone(
+                    db,
+                    "SELECT state FROM effect_operations WHERE operation_id=?",
+                    (evidence.operation_id,),
+                )
+                if row is None or str(row[0]) != "unknown":
+                    raise StaleGrantError("only unknown effects can reconcile")
+                await db.execute(
+                    "UPDATE effect_operations SET state=?,reason_code=?,"
+                    "receipt_sha256=?,updated_at_ms=? WHERE operation_id=?",
+                    (
+                        next_state, reason, receipt_sha256, now,
+                        evidence.operation_id,
+                    ),
+                )
+                await self._insert_effect_transition(
+                    db, evidence.operation_id, None, "unknown",
+                    next_state, reason, now,
+                )
+                await db.commit()
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except StaleGrantError:
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "effect reconciliation could not commit"
+                ) from exc
+        operations = await self.query_effect_operations(evidence.operation_id)
+        return operations[0]
+
+    async def recover_effects(self, *, now_ms: int | None = None) -> int:
+        return await self._recover_effects(now_ms=now_ms, shutdown=False)
+
+    async def shutdown_effects(self) -> int:
+        return await self._recover_effects(now_ms=_now_ms(), shutdown=True)
+
+    async def _recover_effects(
+        self, *, now_ms: int | None, shutdown: bool
+    ) -> int:
+        async with self._lock:
+            db = self._require_db()
+            now = _now_ms() if now_ms is None else now_ms
+            recovered = 0
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                cursor = await db.execute(
+                    "SELECT operation_id,state,generation FROM effect_operations "
+                    "WHERE state IN ('pending','ready','running')"
+                )
+                for row in await cursor.fetchall():
+                    operation_id = str(row[0])
+                    state = str(row[1])
+                    generation = int(row[2])
+                    attempt = await self._transactions.fetchone(
+                        db,
+                        "SELECT attempt_id,state,lease_expires_at_ms "
+                        "FROM effect_attempts WHERE operation_id=? "
+                        "ORDER BY ordinal DESC LIMIT 1",
+                        (operation_id,),
+                    )
+                    if attempt is None:
+                        continue
+                    lease = (
+                        int(attempt[2]) if attempt[2] is not None else None
+                    )
+                    if state == "running" and (
+                        shutdown
+                        or
+                        generation < self._generation
+                        or lease is None
+                        or lease <= now
+                    ):
+                        next_state, reason = "unknown", "issuer_interrupted_after_effect"
+                    elif state in {"pending", "ready"} and (
+                        shutdown or generation < self._generation
+                    ):
+                        next_state, reason = "cancelled", "issuer_interrupted_before_effect"
+                    else:
+                        continue
+                    await db.execute(
+                        "UPDATE effect_operations SET state=?,reason_code=?,"
+                        "updated_at_ms=? WHERE operation_id=?",
+                        (next_state, reason, now, operation_id),
+                    )
+                    await db.execute(
+                        "UPDATE effect_attempts SET state=?,reason_code=?,"
+                        "finished_at_ms=? WHERE attempt_id=?",
+                        (next_state, reason, now, str(attempt[0])),
+                    )
+                    await self._insert_effect_transition(
+                        db, operation_id, str(attempt[0]), state,
+                        next_state, reason, now,
+                    )
+                    recovered += 1
+                await db.commit()
+            except asyncio.CancelledError:
+                await self._rollback_or_disable(db)
+                raise
+            except Exception as exc:
+                await self._rollback_or_disable(db)
+                raise WitnessUnavailableError(
+                    "effect recovery could not commit"
+                ) from exc
+            return recovered
+
+    async def query_effect_operations(
+        self, operation_id: str | None = None
+    ) -> tuple[EffectOperationView, ...]:
+        async with self._lock:
+            db = self._require_db()
+            sql = (
+                "SELECT operation_id,state,reason_code,effect_class,idempotency,"
+                "generation,parent_operation_id,result_sha256,receipt_sha256,"
+                "(SELECT COUNT(*) FROM effect_attempts a "
+                "WHERE a.operation_id=o.operation_id),adapter_kind,"
+                "continuation_binding_sha256,parent_attempt_id,child_run_sha256 "
+                "FROM effect_operations o"
+            )
+            parameters: tuple[object, ...] = ()
+            if operation_id is not None:
+                sql += " WHERE operation_id=?"
+                parameters = (operation_id,)
+            sql += " ORDER BY created_at_ms,operation_id"
+            cursor = await db.execute(sql, parameters)
+            return tuple(
+                EffectOperationView(
+                    operation_id=str(row[0]),
+                    state=str(row[1]),
+                    reason_code=str(row[2]),
+                    effect_class=str(row[3]),
+                    idempotency=str(row[4]),
+                    generation=int(row[5]),
+                    parent_operation_id=(
+                        str(row[6]) if row[6] is not None else None
+                    ),
+                    result_sha256=str(row[7]),
+                    receipt_sha256=str(row[8]),
+                    attempt_count=int(row[9]),
+                    adapter_kind=str(row[10]),
+                    continuation_binding_sha256=str(row[11]),
+                    parent_attempt_id=(
+                        str(row[12]) if row[12] is not None else None
+                    ),
+                    child_run_sha256=str(row[13]),
+                )
+                for row in await cursor.fetchall()
+            )
+
+    async def query_effect_attempts(
+        self, operation_id: str
+    ) -> tuple[EffectAttemptView, ...]:
+        async with self._lock:
+            db = self._require_db()
+            cursor = await db.execute(
+                "SELECT attempt_id,operation_id,ordinal,state,reason_code,"
+                "lease_expires_at_ms,started_at_ms,finished_at_ms,"
+                "result_sha256,receipt_sha256 FROM effect_attempts "
+                "WHERE operation_id=? ORDER BY ordinal",
+                (operation_id,),
+            )
+            return tuple(
+                EffectAttemptView(
+                    attempt_id=str(row[0]),
+                    operation_id=str(row[1]),
+                    ordinal=int(row[2]),
+                    state=str(row[3]),
+                    reason_code=str(row[4]),
+                    lease_expires_at_ms=(
+                        int(row[5]) if row[5] is not None else None
+                    ),
+                    started_at_ms=(
+                        int(row[6]) if row[6] is not None else None
+                    ),
+                    finished_at_ms=(
+                        int(row[7]) if row[7] is not None else None
+                    ),
+                    result_sha256=str(row[8]),
+                    receipt_sha256=str(row[9]),
+                )
+                for row in await cursor.fetchall()
+            )
+
+
+class ProtectedExecutionAuthority(
+    _ProtectedExecutionAuthorityCore,
+    _EffectReservationMixin,
+    _EffectTransitionMixin,
+):
+    """Runtime-owned strict issuer and governed-effect witness."""

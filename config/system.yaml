@@ -113,6 +113,9 @@ protected_execution:
   protected_installation_root: ''
   policy_path: ''
   worker_write_roots: []
+  effect_broker_enabled: false
+  effect_lease_seconds: 120
+  effect_max_attempts: 3
 memory:
   collection_name: probos_episodes
   max_episodes: 100000

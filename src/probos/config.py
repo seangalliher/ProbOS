@@ -3768,6 +3768,9 @@ class ProtectedExecutionConfig(BaseModel):
     protected_installation_root: str = ""
     policy_path: str = ""
     worker_write_roots: list[str] = Field(default_factory=list)
+    effect_broker_enabled: bool = False
+    effect_lease_seconds: int = Field(default=120, ge=1, le=3600)
+    effect_max_attempts: int = Field(default=3, ge=1, le=10)
 
     @field_validator("witness_filename")
     @classmethod
@@ -3787,6 +3790,10 @@ class ProtectedExecutionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_strict_profile(self) -> "ProtectedExecutionConfig":
+        if self.effect_broker_enabled and self.profile != "strict":
+            raise ValueError(
+                "effect_broker_enabled requires strict protected execution"
+            )
         if self.profile != "strict":
             return self
         if not self.enabled:

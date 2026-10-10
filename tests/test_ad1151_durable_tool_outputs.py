@@ -1015,6 +1015,10 @@ def test_tool_call_dataclasses_are_unchanged() -> None:
         "duration_ms",
         "source_chars",  # BF-760
     ]
+    # AD-1316 amendment 1 initially appended effect_correlation here. That
+    # changed ordinary asdict() output even while protected effects were off.
+    # Amendment 2 keeps strict correlation as non-dataclass result metadata so
+    # it crosses the persistence seam without changing this wire shape.
     assert [f.name for f in fields(ToolCallRequest)] == [
         "name",
         "arguments",

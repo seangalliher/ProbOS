@@ -15,7 +15,7 @@ import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tools import InstructionToolResult
 from probos.repository_instructions import InstructionObservation
@@ -683,6 +683,7 @@ class ToolCallResult:
     #: for every string result and every existing construction, including test
     #: doubles, so this field changes nothing that does not set it.
     source_chars: int | None = None
+    effect_correlation: ClassVar[Any | None] = None
 
     @classmethod
     def from_tool_result(

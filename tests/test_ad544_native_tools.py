@@ -100,6 +100,25 @@ def test_edit_file_tool_metadata() -> None:
     assert t.tool_id == "edit_file"
 
 
+@pytest.mark.parametrize("tool_type", [WriteFileTool, EditFileTool])
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("nt", True), ("posix", False)],
+)
+def test_strict_native_capability_is_windows_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_type: type[WriteFileTool] | type[EditFileTool],
+    platform: str,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(
+        "probos.cognitive.swe_harness.tools.os.name",
+        platform,
+    )
+
+    assert tool_type(_stub_runtime()).supports_strict_effect_target() is expected
+
+
 def test_run_command_tool_metadata() -> None:
     t = RunCommandTool(_stub_runtime())
     assert t.tool_id == "run_command"

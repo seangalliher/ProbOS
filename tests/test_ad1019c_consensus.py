@@ -9,6 +9,7 @@ invoke is the *commit*, gated on APPROVED, never on the broadcast/vote.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ import pytest
 from probos.agents.mcp_consensus_proposer import McpConsensusProposer
 from probos.cognitive.episodic import EpisodicMemory
 from probos.config import SystemConfig
+from probos.execution.effect_types import ExternalEffectContext
 from probos.integrations.mcp_bridge import MCPBridge
 from probos.runtime import ProbOSRuntime
 from probos.substrate.identity import generate_pool_ids
@@ -343,6 +345,155 @@ async def test_store_mcp_invoke_episode_records_with_mcp_anchor(runtime, tmp_pat
     after = set(runtime.trust_network.all_scores().keys())
     assert after == before
     assert "echo" not in after
+
+
+@pytest.mark.asyncio
+async def test_store_mcp_invoke_episode_strict_projects_target_and_identity(
+    runtime,
+    tmp_path,
+):
+    original_memory = runtime.episodic_memory
+    spy = _StoreSpy(EpisodicMemory(db_path=str(tmp_path / "ep_strict")))
+    await spy.start()
+    runtime.episodic_memory = spy
+    original_identity_registry = runtime.identity_registry
+    runtime.identity_registry = SimpleNamespace(
+        get_by_slot=lambda slot: (
+            SimpleNamespace(agent_uuid="sovereign-agent")
+            if slot == "slot-agent"
+            else None
+        )
+    )
+    context = ExternalEffectContext(
+        operation_id="operation-exact",
+        attempt_id="attempt-exact",
+        provider_idempotency_key=None,
+        adapter_kind="mcp",
+    )
+
+    try:
+        await runtime._store_mcp_invoke_episode(
+            server_url="https://SENTINEL_HOST/private",
+            tool="SENTINEL_TOOL",
+            tier="open",
+            success=True,
+            agent_id="slot-agent",
+            effect_context=context,
+        )
+    finally:
+        runtime.identity_registry = original_identity_registry
+        runtime.episodic_memory = original_memory
+
+    episode = spy.stored[0]
+    assert episode.user_input == (
+        "[mcp_invoke] operation=operation-exact attempt=attempt-exact"
+    )
+    assert episode.agent_ids == ["sovereign-agent"]
+    assert episode.outcomes[0]["server"] == hashlib.sha256(
+        b"https://SENTINEL_HOST/private"
+    ).hexdigest()
+    assert episode.outcomes[0]["tool"] == hashlib.sha256(
+        b"SENTINEL_TOOL"
+    ).hexdigest()
+    assert "SENTINEL" not in repr(episode)
+    persisted = await spy.recall_by_anchor(
+        channel="mcp",
+        trigger_type="mcp_invoke",
+    )
+    assert len(persisted) == 1
+    assert persisted[0].agent_ids == ["sovereign-agent"]
+    assert persisted[0].outcomes == episode.outcomes
+    assert "SENTINEL" not in repr(persisted[0])
+    await spy.stop()
+
+
+@pytest.mark.asyncio
+async def test_store_mcp_invoke_episode_strict_omits_unresolved_slot(
+    runtime,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+):
+    original_memory = runtime.episodic_memory
+    spy = _StoreSpy(EpisodicMemory(db_path=str(tmp_path / "ep_unresolved")))
+    await spy.start()
+    runtime.episodic_memory = spy
+    context = ExternalEffectContext(
+        operation_id="operation-unresolved",
+        attempt_id="attempt-unresolved",
+        provider_idempotency_key=None,
+        adapter_kind="mcp",
+    )
+
+    try:
+        with caplog.at_level("WARNING"):
+            await runtime._store_mcp_invoke_episode(
+                server_url="server",
+                tool="tool",
+                tier="open",
+                success=True,
+                agent_id="SENTINEL_UNRESOLVED_SLOT",
+                effect_context=context,
+            )
+    finally:
+        runtime.episodic_memory = original_memory
+
+    assert spy.stored[0].agent_ids == []
+    assert "operation_id=operation-unresolved" in caplog.text
+    assert "attempt_id=attempt-unresolved" in caplog.text
+    assert "reason_code=sovereign_identity_unresolved" in caplog.text
+    assert "SENTINEL_UNRESOLVED_SLOT" not in caplog.text
+    assert "SENTINEL_UNRESOLVED_SLOT" not in repr(spy.stored[0])
+    persisted = await spy.recall_by_anchor(
+        channel="mcp",
+        trigger_type="mcp_invoke",
+    )
+    assert len(persisted) == 1
+    assert persisted[0].agent_ids == []
+    assert "SENTINEL_UNRESOLVED_SLOT" not in repr(persisted[0])
+    await spy.stop()
+
+
+@pytest.mark.asyncio
+async def test_store_mcp_invoke_episode_strict_failure_logs_correlation(
+    runtime,
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+):
+    original_memory = runtime.episodic_memory
+    failing_memory = EpisodicMemory(db_path=str(tmp_path / "ep_failure"))
+    await failing_memory.start()
+    assert failing_memory._client is not None
+    failing_memory._client.delete_collection("episodes")
+    runtime.episodic_memory = failing_memory
+    context = ExternalEffectContext(
+        operation_id="operation-storage",
+        attempt_id="attempt-storage",
+        provider_idempotency_key=None,
+        adapter_kind="mcp",
+    )
+
+    try:
+        with caplog.at_level("DEBUG"):
+            await runtime._store_mcp_invoke_episode(
+                server_url="server",
+                tool="tool",
+                tier="confirm",
+                success=True,
+                effect_context=context,
+            )
+    finally:
+        runtime.episodic_memory = original_memory
+        await failing_memory.stop()
+
+    records = [
+        record
+        for record in caplog.records
+        if "Strict MCP episode storage failed" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert "operation_id=operation-storage" in records[0].getMessage()
+    assert "attempt_id=attempt-storage" in records[0].getMessage()
+    assert records[0].exc_info is None
 
 
 @pytest.mark.asyncio

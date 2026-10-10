@@ -5465,7 +5465,10 @@ async def finalize_startup(
 
         # AD-448: Wrapped Tool Executor
         from probos.tools.executor import ToolExecutor, wire_tool_invocation_hooks
-        tool_executor = ToolExecutor(registry=runtime.tool_registry)
+        tool_executor = ToolExecutor(
+            registry=runtime.tool_registry,
+            effect_broker=getattr(runtime, "effect_broker", None),
+        )
         # AD-1224: safe live completion plus the optional durable lifecycle.
         # Terminal completions stay durable-only; AD-1168 remains a post-hook.
         wire_tool_invocation_hooks(
@@ -5488,6 +5491,8 @@ async def finalize_startup(
             make_failure_telemetry_hook(runtime.tool_failure_telemetry)
         )
         runtime._tool_executor = tool_executor
+        if getattr(runtime, "effect_broker", None) is not None:
+            runtime.tool_registry.arm_effect_broker(runtime.effect_broker)
         logger.info("AD-448: ToolExecutor initialized with %d hooks", tool_executor.hook_count)
         # AD-543/544/548/549: Wire native SWE harness (tools + blocked-paths hook + harness)
         _wire_native_swe_harness(runtime=runtime, config=config, tool_executor=tool_executor)

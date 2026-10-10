@@ -24,9 +24,17 @@ from probos.mesh.pre_intent_auth import (
 )
 
 if TYPE_CHECKING:
+    from probos.execution.effect_types import MeshEffectContext
     from probos.mesh.nats_bus import NATSBus
 
 logger = logging.getLogger(__name__)
+
+
+class MeshEffectOutcomeUnknown(RuntimeError):
+    """A strict mesh handler was entered without correlated completion."""
+
+    def __init__(self) -> None:
+        super().__init__("mesh_delivery_unknown")
 
 # Type for subscriber callbacks
 IntentHandler = Callable[[IntentMessage], Awaitable[IntentResult | None]]
@@ -1287,6 +1295,7 @@ class IntentBus:
         intent: IntentMessage,
         timeout: float | None = None,
         *,
+        effect_context: "MeshEffectContext | None" = None,
         federated: bool = True,
         raise_on_denial: bool = False,
         raise_on_no_subscriber: bool = False,
@@ -1382,6 +1391,7 @@ class IntentBus:
         # moves the leak somewhere quieter. `untrack` is idempotent and both
         # cleanups tolerate partial setup.
         tasks: list[asyncio.Task] = []
+        strict_errors: list[bool] = []
         # THE round's result list. Held as a local, not looked up again: every
         # ID-keyed read is a chance to pick up a different round's work, which
         # is the whole of BF-833. `_pending_results` stays a registry so the
@@ -1445,6 +1455,8 @@ class IntentBus:
                     asyncio.create_task(
                         self._invoke_handler(
                             intent, agent_id, handler, latency_class, sink,
+                            effect_context=effect_context,
+                            strict_errors=strict_errors,
                         ),
                         name=f"intent-{intent.id[:8]}-{agent_id[:8]}",
                     )
@@ -1453,6 +1465,11 @@ class IntentBus:
             if tasks:
                 # Wait for all handlers, bounded by timeout
                 await asyncio.wait(tasks, timeout=timeout)
+                if effect_context is not None and (
+                    strict_errors
+                    or any(not task.done() or task.cancelled() for task in tasks)
+                ):
+                    raise MeshEffectOutcomeUnknown()
 
             # Read THIS round's list. Reading `_pending_results[intent.id]`
             # here would hand a concurrent round's results to this caller and
@@ -1511,7 +1528,17 @@ class IntentBus:
                 # An infrastructure failure is not evidence that no peer had a
                 # handler, so it counts UNKNOWN. Reporting it as "no
                 # subscriber" would retry work a peer may already have run.
-                logger.debug("Federation forwarding failed: %s", e)
+                if effect_context is not None:
+                    logger.warning(
+                        "Strict federation forwarding failed "
+                        "operation_id=%s attempt_id=%s "
+                        "reason_code=federation_delivery_unknown; broker will "
+                        "retain correlated uncertainty",
+                        effect_context.operation_id,
+                        effect_context.attempt_id,
+                    )
+                else:
+                    logger.debug("Federation forwarding failed: %s", e)
                 federation_unknown += 1
             else:
                 if isinstance(admitted, int) and isinstance(unknown, int):
@@ -1522,6 +1549,9 @@ class IntentBus:
                     # nothing about admission. That is UNKNOWN -- never "no
                     # candidate" -- or a mixed-version mesh strands orders.
                     federation_unknown += 1
+
+        if effect_context is not None and federation_unknown:
+            raise MeshEffectOutcomeUnknown()
 
         logger.info(
             "Intent resolved: %s id=%s results=%d",
@@ -1797,6 +1827,9 @@ class IntentBus:
         handler: IntentHandler,
         latency_class: HandlerLatencyClass,
         sink: list[IntentResult],
+        *,
+        effect_context: "MeshEffectContext | None" = None,
+        strict_errors: list[bool] | None = None,
     ) -> None:
         """Invoke a single subscriber's handler, catching errors.
 
@@ -1847,6 +1880,15 @@ class IntentBus:
                 elapsed_ms,
                 "error",
             )
+            if effect_context is not None:
+                logger.warning(
+                    "Strict mesh handler failed operation=intent_handler "
+                    "reason_code=handler_completion_unknown; broker will "
+                    "retain correlated uncertainty"
+                )
+                if strict_errors is not None:
+                    strict_errors.append(True)
+                return
             logger.warning(
                 "Handler error: agent_id=%s intent=%s intent_id=%s "
                 "reason=%s dispatch=completed",

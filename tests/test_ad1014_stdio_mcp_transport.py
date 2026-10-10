@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from probos.config import MCPConfig, MCPServerConfig
 from probos.events import EventType
+from probos.execution.effect_types import ExternalEffectContext
 from probos.integrations.mcp_bridge import (
     HttpTransport,
     MCPBridge,
@@ -74,6 +75,7 @@ class _FakeTransport:
         self._envelope = envelope or {}
         self._exc = exc
         self.last_metadata: dict[str, str] = last_metadata or {}
+        self.requests: list[dict[str, Any]] = []
         self.started = False
         self.closed = False
 
@@ -81,6 +83,7 @@ class _FakeTransport:
         self.started = True
 
     async def request(self, payload: dict[str, Any]) -> dict:
+        self.requests.append(payload)
         if self._exc is not None:
             raise self._exc
         return self._envelope
@@ -103,6 +106,42 @@ class _FakeResponse:
 
     def json(self) -> dict:
         return self._body
+
+
+@pytest.mark.asyncio
+async def test_call_tool_strict_context_preserves_standard_wire_params() -> None:
+    transport = _FakeTransport(
+        envelope={"jsonrpc": "2.0", "id": "response", "result": {"ok": True}}
+    )
+    client = MCPClient(
+        session=MCPSession(server_url="stdio:fake"),
+        transport=transport,
+    )
+
+    await client.call_tool("ordinary", {"value": 1})
+    await client.call_tool(
+        "strict",
+        {"value": 2},
+        effect_context=ExternalEffectContext(
+            operation_id="operation-sentinel",
+            attempt_id="attempt-sentinel",
+            provider_idempotency_key=None,
+            adapter_kind="mcp",
+        ),
+    )
+
+    assert transport.requests[0]["params"] == {
+        "name": "ordinary",
+        "arguments": {"value": 1},
+    }
+    assert transport.requests[1]["params"] == {
+        "name": "strict",
+        "arguments": {"value": 2},
+    }
+    assert set(transport.requests[1]["params"]) == {"name", "arguments"}
+    assert "_meta" not in repr(transport.requests[1])
+    assert "operation-sentinel" not in repr(transport.requests[1])
+    assert "attempt-sentinel" not in repr(transport.requests[1])
 
 
 class _FakeHttp:

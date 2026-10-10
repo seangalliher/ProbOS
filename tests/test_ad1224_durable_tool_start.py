@@ -20,6 +20,7 @@ import pytest
 import pytest_asyncio
 
 from probos.events import EventType
+from probos.execution.effect_types import EffectDispatchContext, EffectPermit
 from probos.substrate.event_log import EventLog
 from probos.tools.executor import (
     DEFAULT_MAX_RECORDS_PER_RUN,
@@ -459,6 +460,88 @@ async def test_budget_drops_pairs_not_just_starts(open_log: _LogFactory) -> None
     assert len(exhausted) == 1
     assert exhausted[0]["data"]["run_key"] == "thread-9"
     assert exhausted[0]["data"]["max_records_per_run"] == 2
+
+
+async def test_strict_lifecycle_records_project_owner_rows_and_emitted_payloads(
+    open_log: _LogFactory,
+) -> None:
+    log = await open_log()
+    emitted: list[tuple[Any, dict[str, Any]]] = []
+    executor = ToolExecutor(registry=_FakeRegistry())
+    emitter = lambda event, payload: emitted.append((event, payload))
+    executor.add_pre_hook(
+        make_start_hook(emitter, event_log=log, max_records_per_run=1)
+    )
+    audit = make_audit_hook(emitter, event_log=log)
+    executor.add_post_hook(audit)
+    executor.add_terminal_hook(audit)
+    permit = EffectPermit(
+        operation_id="operation-lifecycle-exact",
+        attempt_id="attempt-lifecycle-exact",
+        tool_id_sha256="0" * 64,
+        generation=1,
+        nonce="nonce",
+        signature="signature",
+    )
+    dispatch = EffectDispatchContext(
+        operation_id=permit.operation_id,
+        attempt_id=permit.attempt_id,
+        permit=permit,
+        provider_idempotency_key=None,
+        parent_operation_id=None,
+    )
+    context = {
+        "_effect_operation_id": dispatch.operation_id,
+        "_effect_attempt_id": dispatch.attempt_id,
+        "_effect_dispatch_context": dispatch,
+        "_agentic_run_id": "SENTINEL_LIFECYCLE_RUN",
+        "thread_id": "SENTINEL_LIFECYCLE_THREAD",
+        "_crew_work_item_id": "SENTINEL_LIFECYCLE_WORK_ITEM",
+    }
+
+    for _ in range(2):
+        await executor.invoke(
+            "SENTINEL_LIFECYCLE_AGENT",
+            "read_file",
+            {"SENTINEL_PARAMETER": "SENTINEL_VALUE"},
+            context=context,
+        )
+
+    starts = await _rows(log, EventType.TOOL_STARTED.value)
+    completions = await _rows(log, EventType.TOOL_INVOKED.value)
+    exhausted = await _rows(log, EventType.TOOL_RECORD_BUDGET_EXHAUSTED.value)
+    assert len(starts) == len(completions) == len(exhausted) == 1
+    for phase, row in (
+        ("started", starts[0]),
+        ("completed", completions[0]),
+        ("budget_exhausted", exhausted[0]),
+    ):
+        assert row["data"]["phase"] == phase
+        assert row["data"]["operation_id"] == dispatch.operation_id
+        assert row["data"]["attempt_id"] == dispatch.attempt_id
+        assert row["correlation_id"] == dispatch.operation_id
+        assert len(row["agent_id"]) == 64
+        assert len(row["detail"]) == 64
+        assert row["agent_id"] == row["data"]["agent_digest"]
+        assert row["detail"] == row["data"]["tool_digest"]
+        assert "SENTINEL" not in repr(row)
+    assert starts[0]["data"]["reason_code"] == "tool_started"
+    assert starts[0]["data"]["outcome"] == "unknown"
+    assert completions[0]["data"]["reason_code"] == "tool_completed"
+    assert completions[0]["data"]["outcome"] == "result"
+    assert exhausted[0]["data"]["reason_code"] == "tool_record_budget_exhausted"
+    assert exhausted[0]["data"]["record_count"] == 1
+    assert {
+        event for event, _ in emitted
+    } == {
+        EventType.TOOL_STARTED,
+        EventType.TOOL_INVOKED,
+        EventType.TOOL_RECORD_BUDGET_EXHAUSTED,
+    }
+    for _, payload in emitted:
+        assert payload["operation_id"] == dispatch.operation_id
+        assert payload["attempt_id"] == dispatch.attempt_id
+        assert "SENTINEL" not in repr(payload)
 
 
 async def test_a_hang_past_the_budget_is_explained_not_silently_zero(open_log: _LogFactory) -> None:

@@ -29,6 +29,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -57,6 +58,7 @@ from probos.cognitive.agentic_dispatch import (
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.swe_harness.tool_call import ToolCallResult
 from probos.config import ApprovalInboxConfig, BrowserToolConfig, SystemConfig
+from probos.execution.effect_types import EffectDispatchContext, EffectPermit
 from probos.integrations.mcp_bridge.risk import McpToolRisk
 from probos.routers.capability_requests import (
     _serialize,
@@ -1975,6 +1977,53 @@ class TestSeamAndOffPath:
             signature.parameters["disposition_sink"].kind
             is inspect.Parameter.KEYWORD_ONLY
         )
+
+    def test_strict_standing_expiry_failure_logs_only_safe_correlation(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        class _ApprovalStore:
+            def is_approved_sync(self, *_: Any) -> bool:
+                return True
+
+            def get_active_expiry_sync(self, *_: Any) -> float:
+                raise RuntimeError("SENTINEL_EXPIRY_EXCEPTION")
+
+        dispatch = EffectDispatchContext(
+            operation_id="operation-exact",
+            attempt_id="attempt-exact",
+            permit=EffectPermit(
+                operation_id="operation-exact",
+                attempt_id="attempt-exact",
+                tool_id_sha256="0" * 64,
+                generation=1,
+                nonce="nonce",
+                signature="signature",
+            ),
+            provider_idempotency_key=None,
+            parent_operation_id=None,
+        )
+        arming = SimpleNamespace(
+            config=SimpleNamespace(standing_rules_enabled=True),
+            approval_store=_ApprovalStore(),
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            expiry = DispatchToolExecutor._standing_rule_expiry(
+                arming,
+                "SENTINEL_AGENT",
+                "browser",
+                "goto",
+                "SENTINEL_SCOPE",
+                dispatch,
+            )
+
+        assert expiry == "its expiry"
+        assert "operation_id=operation-exact" in caplog.text
+        assert "attempt_id=attempt-exact" in caplog.text
+        assert "reason_code=render_failed" in caplog.text
+        assert "SENTINEL" not in caplog.text
+        assert not any(record.exc_info for record in caplog.records)
 
 
 # -- Fail CLOSED (DD-10) --------------------------------------------------

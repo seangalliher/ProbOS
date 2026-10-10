@@ -535,6 +535,9 @@ Default-off strict protected-execution authority configuration.
 | `protected_installation_root` | `str` | `''` | — |  |
 | `policy_path` | `str` | `''` | — |  |
 | `worker_write_roots` | `list[str]` | `[]` | — |  |
+| `effect_broker_enabled` | `bool` | `False` | — |  |
+| `effect_lease_seconds` | `int` | `120` | ≥ 1, ≤ 3600 |  |
+| `effect_max_attempts` | `int` | `3` | ≥ 1, ≤ 10 |  |
 
 ## `hooks`
 

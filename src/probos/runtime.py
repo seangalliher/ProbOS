@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -154,6 +155,10 @@ from probos.warm_boot import WarmBootService
 
 if TYPE_CHECKING:
     from probos.execution.authority import ProtectedExecutionAuthorityProtocol
+    from probos.execution.effect_types import (
+        ExternalEffectContext,
+        GovernedEffectBrokerProtocol,
+    )
     from probos.acm import AgentCapitalService
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
@@ -455,6 +460,7 @@ class ProbOSRuntime:
     # Event / Credential / Callsign
     event_log: EventLog
     execution_authority: "ProtectedExecutionAuthorityProtocol | None"
+    effect_broker: "GovernedEffectBrokerProtocol | None"
     credential_store: CredentialStore
     callsign_registry: CallsignRegistry
 
@@ -674,6 +680,7 @@ class ProbOSRuntime:
         # --- Event log ---
         self.event_log = EventLog(db_path=self._data_dir / "events.db")
         self.execution_authority = None
+        self.effect_broker = None
         # AD-1195: persists DURABLE EventType members to the event log.
         self.durable_events = DurableEventRouter(self.event_log)
 
@@ -2706,6 +2713,7 @@ class ProbOSRuntime:
         self.identity_registry = infra.identity_registry
         self.identity_key_binding = infra.identity_key_binding  # AD-1196
         self.execution_authority = infra.execution_authority
+        self.effect_broker = infra.effect_broker
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
         self.durable_events.bind_loop(self._dispatch_loop)
 
@@ -4698,6 +4706,7 @@ class ProbOSRuntime:
         *,
         timeout: float | None = None,
         policy: QuorumPolicy | None = None,
+        effect_context: "ExternalEffectContext | None" = None,
     ) -> dict[str, Any]:
         """Invoke an MCP tool through the full consensus pipeline (AD-1019c).
 
@@ -4740,10 +4749,25 @@ class ProbOSRuntime:
                 if self.mcp_bridge is not None:
                     try:
                         invoke_result = await self.mcp_bridge.invoke(
-                            server_url, tool, dict(arguments or {})
+                            server_url,
+                            tool,
+                            dict(arguments or {}),
+                            **(
+                                {"effect_context": effect_context}
+                                if effect_context is not None
+                                else {}
+                            ),
                         )
                         committed = True
                     except Exception:
+                        if effect_context is not None:
+                            logger.warning(
+                                "Strict MCP consensus commit failed "
+                                "operation=mcp_consensus reason_code="
+                                "consumer_exception_unknown; broker will retain "
+                                "correlated uncertainty"
+                            )
+                            raise
                         logger.warning(
                             "AD-1019c: MCP invoke commit failed after approval "
                             "(server=%s tool=%s); reporting not-committed",
@@ -4760,10 +4784,20 @@ class ProbOSRuntime:
                         tool,
                     )
 
+                strict_detail = (
+                    "operation_id="
+                    f"{effect_context.operation_id} attempt_id="
+                    f"{effect_context.attempt_id} target_sha256="
+                    f"{hashlib.sha256(server_url.encode('utf-8')).hexdigest()} "
+                    "tool_sha256="
+                    f"{hashlib.sha256(tool.encode('utf-8')).hexdigest()}"
+                    if effect_context is not None
+                    else f"server={server_url} tool={tool}"
+                )
                 await self.event_log.log(
                     category="consensus",
                     event="mcp_invoke_committed" if committed else "mcp_invoke_failed",
-                    detail=f"server={server_url} tool={tool}",
+                    detail=strict_detail,
                 )
                 # DD-5: episode on every invoke (the consensus tier records here;
                 # OPEN/CONFIRM record in the adapter). No trust/Hebbian write for
@@ -4773,14 +4807,22 @@ class ProbOSRuntime:
                     tool=tool,
                     tier="consensus",
                     success=committed,
+                    effect_context=effect_context,
                 )
             else:
                 await self.event_log.log(
                     category="consensus",
                     event="mcp_invoke_blocked",
                     detail=(
-                        f"server={server_url} tool={tool} failed_verifications="
-                        f"{len(failed_verifications)}"
+                        "operation_id="
+                        f"{effect_context.operation_id} attempt_id="
+                        f"{effect_context.attempt_id} reason_code="
+                        "verification_failed"
+                        if effect_context is not None
+                        else (
+                            f"server={server_url} tool={tool} "
+                            f"failed_verifications={len(failed_verifications)}"
+                        )
                     ),
                 )
 
@@ -4796,6 +4838,7 @@ class ProbOSRuntime:
         tier: str,
         success: bool,
         agent_id: str = "",
+        effect_context: "ExternalEffectContext | None" = None,
     ) -> None:
         """Persist an episode for one MCP tool invocation (AD-1019c DD-5).
 
@@ -4817,20 +4860,56 @@ class ProbOSRuntime:
             # mapping exists).
             sovereign_ids: list[str] = []
             if agent_id:
-                sovereign_ids = [
-                    resolve_sovereign_id_from_slot(agent_id, self.identity_registry)
-                ]
+                if effect_context is not None:
+                    certificate = (
+                        self.identity_registry.get_by_slot(agent_id)
+                        if self.identity_registry is not None
+                        else None
+                    )
+                    sovereign_id = getattr(certificate, "agent_uuid", "")
+                    if isinstance(sovereign_id, str) and sovereign_id:
+                        sovereign_ids = [sovereign_id]
+                    else:
+                        logger.warning(
+                            "Strict MCP episode identity unresolved "
+                            "operation_id=%s attempt_id=%s "
+                            "operation=mcp_episode_identity "
+                            "reason_code=sovereign_identity_unresolved; "
+                            "persisting the episode without an agent identity",
+                            effect_context.operation_id,
+                            effect_context.attempt_id,
+                        )
+                else:
+                    sovereign_ids = [
+                        resolve_sovereign_id_from_slot(
+                            agent_id, self.identity_registry
+                        )
+                    ]
 
+            target_value = (
+                hashlib.sha256(server_url.encode("utf-8")).hexdigest()
+                if effect_context is not None else server_url
+            )
+            tool_value = (
+                hashlib.sha256(tool.encode("utf-8")).hexdigest()
+                if effect_context is not None else tool
+            )
             episode = Episode(
-                user_input=f"[mcp_invoke] {tool} on {server_url}",
+                user_input=(
+                    "[mcp_invoke] operation="
+                    f"{effect_context.operation_id} attempt="
+                    f"{effect_context.attempt_id}"
+                    if effect_context is not None
+                    else f"[mcp_invoke] {tool} on {server_url}"
+                ),
                 timestamp=_time.time(),
                 agent_ids=sovereign_ids,
                 outcomes=[
                     {
                         "kind": "mcp_invoke",
                         "success": success,
-                        "server": server_url,
-                        "tool": tool,
+                        "server": target_value,
+                        "tool": tool_value,
                         "tier": tier,
                     }
                 ],
@@ -4839,12 +4918,22 @@ class ProbOSRuntime:
             )
             await self.episodic_memory.store(episode)
         except Exception:
-            logger.debug(
-                "AD-1019c: failed to store MCP invoke episode (server=%s tool=%s)",
-                server_url,
-                tool,
-                exc_info=True,
-            )
+            if effect_context is not None:
+                logger.debug(
+                    "Strict MCP episode storage failed operation_id=%s "
+                    "attempt_id=%s operation=mcp_episode "
+                    "reason_code=episode_store_failed; continuing without the episode",
+                    effect_context.operation_id,
+                    effect_context.attempt_id,
+                )
+            else:
+                logger.debug(
+                    "AD-1019c: failed to store MCP invoke episode "
+                    "(server=%s tool=%s)",
+                    server_url,
+                    tool,
+                    exc_info=True,
+                )
 
     async def submit_device_actuate_with_consensus(
         self,

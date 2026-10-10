@@ -2014,6 +2014,24 @@ async def shutdown(
                 exc_info=True,
             )
 
+    # AD-1316: disarm dispatch before closing the broker and its authority.
+    effect_broker = getattr(runtime, "effect_broker", None)
+    if effect_broker is not None:
+        tool_registry = getattr(runtime, "tool_registry", None)
+        if tool_registry is not None:
+            tool_registry.disarm_effect_broker()
+        try:
+            await effect_broker.stop()
+        except Exception:
+            logger.error(
+                "effect broker close failed operation=shutdown "
+                "reason_code=close_failed; dispatch remains disabled and "
+                "ordinary resource shutdown continues",
+                exc_info=True,
+            )
+        finally:
+            runtime.effect_broker = None
+
     # AD-1315: disable strict admission immediately before the EventLog's
     # terminal row. All effect-producing and background services have already
     # stopped, and rollback uses this same owned shutdown path.

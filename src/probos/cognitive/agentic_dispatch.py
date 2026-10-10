@@ -23,6 +23,7 @@ import hashlib
 import logging
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Protocol
 
@@ -60,6 +61,14 @@ from probos.integrations.mcp_bridge.risk import (
     McpToolRisk,
     resolve_tool_risk,
 )
+from probos.integrations.mcp_bridge.client import MCPProtocolError
+from probos.execution.effect_types import (
+    EffectCorrelation,
+    EffectDispatchContext,
+    ExternalEffectContext,
+    MeshEffectContext,
+)
+from probos.execution.effect_adapters import StrictEffectPrivacyProjector
 from probos.tools.browser.lifecycle import BrowserUse
 from probos.tools.browser.tool import BrowserTool
 from probos.tools.delegation_budget import (
@@ -89,6 +98,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
+    "strict_approval_dispatch", default=None
+)
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
 _CREW_WORK_ITEM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -102,6 +114,10 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
         "_crew_session_id",
         "_crew_work_item_id",
         "_crew_outcome_id",
+        "_parent_operation_id",
+        "_parent_attempt_id",
+        "_delegation_binding_token",
+        "_delegated_child_run_id",
         DELEGATION_TREE_BUDGET_KEY,
         EXECUTION_LONG_RUN_GRANT_KEY,  # AD-1246: a direct DM turn's long-run grant
     }
@@ -332,6 +348,8 @@ def _describe_standing_expiry(
     tool_id: str,
     action: str,
     scope_key: str,
+    *,
+    strict_dispatch: EffectDispatchContext | None = None,
 ) -> str:
     """AD-1154: a human-readable expiry for the standing-rule disposition.
 
@@ -348,9 +366,17 @@ def _describe_standing_expiry(
                 float(expires_at), tz=_dt.timezone.utc
             ).strftime("%Y-%m-%d %H:%M UTC")
     except Exception:
-        logger.debug(
-            "AD-1154: could not render the standing-rule expiry", exc_info=True
-        )
+        if strict_dispatch is not None:
+            logger.debug(
+                "Strict approval guard operation_id=%s attempt_id=%s "
+                "operation=standing_expiry reason_code=render_failed",
+                strict_dispatch.operation_id,
+                strict_dispatch.attempt_id,
+            )
+        else:
+            logger.debug(
+                "AD-1154: could not render the standing-rule expiry", exc_info=True
+            )
     return "its expiry"
 
 
@@ -676,8 +702,120 @@ def _announce_shared_session(
     return annotated
 
 
-class DispatchToolExecutor(ToolExecutor):
-    """ToolExecutor that records permission-denied tool ids (AD-856).
+class _DispatchGuardMixin:
+    async def _invoke_reserved_body(
+        self,
+        agent_id: str,
+        requested_tool_id: str,
+        params: dict[str, Any],
+        **kwargs: Any,
+    ) -> ToolResult:
+        tool_id = requested_tool_id
+        context = kwargs.get("context")
+        dispatch_value = (
+            context.get("_effect_dispatch_context")
+            if type(context) is dict
+            else None
+        )
+        strict_dispatch = (
+            dispatch_value
+            if type(dispatch_value) is EffectDispatchContext
+            else None
+        )
+
+        def strict_log(operation: str, reason_code: str) -> None:
+            if strict_dispatch is not None:
+                logger.info(
+                    "Strict dispatch guard operation_id=%s attempt_id=%s "
+                    "operation=%s reason_code=%s",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                    operation,
+                    reason_code,
+                )
+
+        def refuse(result: ToolResult, reason_code: str) -> ToolResult:
+            if self.protected_effects_enabled:
+                from probos.execution.effect_broker import EffectDenied
+
+                raise EffectDenied(reason_code, result=result)
+            return result
+
+        if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
+            if strict_dispatch is not None:
+                strict_log("plan_mode", "plan_mode_refused")
+            else:
+                logger.info(
+                    "AD-1156: plan mode refused a tool call from agent %s "
+                    "(a %s id of %d characters); not run",
+                    agent_id[:12],
+                    type(tool_id).__name__,
+                    len(tool_id) if type(tool_id) is str else -1,
+                )
+            return refuse(ToolResult(error=_PLAN_MODE_TOOL_REFUSAL), "plan_mode_refused")
+        if self._deferred_schemas is not None and self._deferred_schemas.withhold_call(tool_id):
+            strict_log("deferred_schema", "deferred_schema_refused")
+            return refuse(
+                ToolResult(error=_DEFERRED_SCHEMA_REFUSAL),
+                "deferred_schema_refused",
+            )
+        if tool_id == "browser" and type(params) is dict and not params.get("session_id"):
+            bound = context.get("browser_session_id") if type(context) is dict else None
+            if type(bound) is str and bound:
+                params = {**params, "session_id": bound}
+        restricted = self._browser_actions is not None and tool_id == "browser"
+        if restricted:
+            refusal = self._refuse_browser_action(
+                agent_id, params, strict_dispatch=strict_dispatch
+            )
+            if refusal is not None:
+                return refuse(refusal, "browser_action_refused")
+        dispositions: list[str] = []
+        crew_item = context.get("_crew_work_item_id") if type(context) is dict else None
+        strict_token = _STRICT_APPROVAL_DISPATCH.set(strict_dispatch)
+        try:
+            parked = await self._park_or_admit(
+                agent_id, tool_id, params, disposition_sink=dispositions,
+                work_item_id=(
+                    crew_item
+                    if type(crew_item) is str
+                    and _CREW_WORK_ITEM_ID_RE.fullmatch(crew_item)
+                    else None
+                ),
+            )
+        finally:
+            _STRICT_APPROVAL_DISPATCH.reset(strict_token)
+        if parked is not None:
+            return refuse(parked, "approval_required")
+        try:
+            result = await super()._invoke_reserved_body(
+                agent_id, tool_id, params, **kwargs
+            )
+        except ToolPermissionDenied as exc:
+            denied = getattr(exc, "tool_id", tool_id)
+            self.denied_tools.append(denied)
+            if strict_dispatch is not None:
+                strict_log("permission", "permission_denied")
+            else:
+                logger.info(
+                    "AD-856: tool %s denied for agent %s during dispatch; recorded "
+                    "for capability-gap surfacing",
+                    denied,
+                    agent_id[:12],
+                )
+            raise
+        if restricted and result.error is None:
+            result = replace(result, output=_bound_browser_output(result.output))
+        if dispositions and result.error is None:
+            return replace(
+                result,
+                output=_with_disposition(result.output, " ".join(dispositions)),
+            )
+        return result
+
+
+class _DispatchConfigurationMixin:
+    """Configuration state and arming APIs for dispatched tool execution.
 
     ``AgenticLoop.run`` wraps each executor call in ``try/except Exception`` and
     turns the raise into an is-error tool-result before continuing — so the
@@ -696,8 +834,10 @@ class DispatchToolExecutor(ToolExecutor):
     AD-1156 adds an OPT-IN plan-mode confinement (:meth:`restrict_to_plan_mode`).
     """
 
-    def __init__(self, *, registry: Any) -> None:
-        super().__init__(registry=registry)
+    def __init__(
+        self, *, registry: Any, effect_broker: Any = None
+    ) -> None:
+        super().__init__(registry=registry, effect_broker=effect_broker)
         self.denied_tools: list[str] = []
         # AD-1153: None = unarmed = today's behaviour. Set only by
         # ``restrict_browser_actions``.
@@ -758,7 +898,17 @@ class DispatchToolExecutor(ToolExecutor):
         """
         self._browser_actions = actions
 
-    def _refuse_browser_action(self, agent_id: str, params: Any) -> ToolResult | None:
+
+class _ApprovalGuardMixin:
+    """Browser and approval-inbox policy helpers."""
+
+    def _refuse_browser_action(
+        self,
+        agent_id: str,
+        params: Any,
+        *,
+        strict_dispatch: EffectDispatchContext | None = None,
+    ) -> ToolResult | None:
         """Return a refusal when ``params`` names a non-allowlisted action.
 
         ``None`` means "admitted". ``params`` and its ``action`` are LLM-produced
@@ -771,16 +921,31 @@ class DispatchToolExecutor(ToolExecutor):
         action = params.get("action") if type(params) is dict else None
         if type(action) is str and action in allowed:
             return None
-        logger.info(
-            "AD-1153: refused browser action %.64r for agent %s; the agentic "
-            "loop offers the read-only set %s and the tool was not entered",
-            action,
-            agent_id[:12],
-            sorted(allowed),
-        )
+        if strict_dispatch is not None:
+            logger.info(
+                "Strict browser guard operation_id=%s attempt_id=%s "
+                "operation=browser_action reason_code=browser_action_refused",
+                strict_dispatch.operation_id,
+                strict_dispatch.attempt_id,
+            )
+        else:
+            logger.info(
+                "AD-1153: refused browser action %.64r for agent %s; the agentic "
+                "loop offers the read-only set %s and the tool was not entered",
+                action,
+                agent_id[:12],
+                sorted(allowed),
+            )
         return ToolResult(error=_BROWSER_READ_ONLY_REFUSAL)
 
-    def _resolve_scope_key(self, action: str, params: Any, session: Any) -> str:
+    def _resolve_scope_key(
+        self,
+        action: str,
+        params: Any,
+        session: Any,
+        *,
+        strict_dispatch: EffectDispatchContext | None = None,
+    ) -> str:
         """AD-1154 / DD-4: producer-computed scope. The STORE never parses a URL.
 
         For ``browser`` this is the lowercased hostname of the URL the action
@@ -799,16 +964,29 @@ class DispatchToolExecutor(ToolExecutor):
 
             return (urlparse(url).hostname or "").lower()
         except Exception:
-            logger.warning(
-                "AD-1154: could not parse a scope host from %.128r for action "
-                "%.32r; scoping the ask to the empty scope, which no wildcard "
-                "rule can satisfy",
-                url,
-                action,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_scope reason_code=scope_invalid",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: could not parse a scope host from %.128r for action "
+                    "%.32r; scoping the ask to the empty scope, which no wildcard "
+                    "rule can satisfy",
+                    url,
+                    action,
+                )
             return ""
 
-    def _resolve_browser_session(self, params: Any) -> Any:
+    def _resolve_browser_session(
+        self,
+        params: Any,
+        *,
+        strict_dispatch: EffectDispatchContext | None = None,
+    ) -> Any:
         """Return an EXISTING browser session for ``params``, or ``None``.
 
         Never creates one. ``BrowserTool._get_or_create_session`` has a side
@@ -828,15 +1006,30 @@ class DispatchToolExecutor(ToolExecutor):
                 return None
             return getter(session_id)
         except Exception:
-            logger.warning(
-                "AD-1154: could not resolve browser session %.64r without "
-                "creating one; classifying with the always-tier-3 set only",
-                session_id,
-                exc_info=True,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=browser_session reason_code=session_unavailable",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: could not resolve browser session %.64r without "
+                    "creating one; classifying with the always-tier-3 set only",
+                    session_id,
+                    exc_info=True,
+                )
             return None
 
-    def _is_tier_3(self, action: str, params: Any, session: Any) -> bool:
+    def _is_tier_3(
+        self,
+        action: str,
+        params: Any,
+        session: Any,
+        *,
+        strict_dispatch: EffectDispatchContext | None = None,
+    ) -> bool:
         """AD-1154 / DD-10 step 2: is this action consequential enough to park?
 
         Deliberately ASYMMETRIC, and the asymmetry is the difference between a
@@ -856,12 +1049,20 @@ class DispatchToolExecutor(ToolExecutor):
 
             return classify_action(session, action, params if type(params) is dict else {}) == 3
         except Exception:
-            logger.warning(
-                "AD-1154: tier classification raised for action %.32r; treating "
-                "it as tier 3 so the action is parked rather than admitted",
-                action,
-                exc_info=True,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_classify reason_code=classification_failed",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: tier classification raised for action %.32r; treating "
+                    "it as tier 3 so the action is parked rather than admitted",
+                    action,
+                    exc_info=True,
+                )
             return True
 
     async def _park_or_admit(
@@ -902,6 +1103,7 @@ class DispatchToolExecutor(ToolExecutor):
         proceed: that would invert the whole feature. This is the Safety Budget
         axiom — a gate that cannot determine the answer assumes the maximum.
         """
+        strict_dispatch = _STRICT_APPROVAL_DISPATCH.get()
         arming = self._approval_inbox
         if arming is None or tool_id not in _APPROVAL_INBOX_TOOL_IDS:
             return None
@@ -910,34 +1112,57 @@ class DispatchToolExecutor(ToolExecutor):
         if type(action) is not str or not action:
             return None
 
-        session = self._resolve_browser_session(params)
-        if not self._is_tier_3(action, params, session):
+        session = self._resolve_browser_session(
+            params, strict_dispatch=strict_dispatch
+        )
+        if not self._is_tier_3(
+            action, params, session, strict_dispatch=strict_dispatch
+        ):
             return None
 
         if action in _NEVER_PARK_ACTIONS:
-            logger.info(
-                "AD-1154: refused %s for agent %s without filing — credential "
-                "entry stays a per-use Captain decision and is never converted "
-                "into a durable record or a standing rule",
-                action,
-                agent_id[:12],
-            )
+            if strict_dispatch is not None:
+                logger.info(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_credential "
+                    "reason_code=approval_credential_refused",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.info(
+                    "AD-1154: refused %s for agent %s without filing — credential "
+                    "entry stays a per-use Captain decision and is never converted "
+                    "into a durable record or a standing rule",
+                    action,
+                    agent_id[:12],
+                )
             return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
 
-        scope_key = self._resolve_scope_key(action, params, session)
+        scope_key = self._resolve_scope_key(
+            action, params, session, strict_dispatch=strict_dispatch
+        )
 
         expiry = self._standing_rule_expiry(
-            arming, agent_id, tool_id, action, scope_key
+            arming, agent_id, tool_id, action, scope_key, strict_dispatch
         )
         if expiry is not None:
-            logger.info(
-                "AD-1154: admitted tier-3 %s.%s for agent %s under a standing "
-                "approval in scope %r; no ask was filed",
-                tool_id,
-                action,
-                agent_id[:12],
-                scope_key,
-            )
+            if strict_dispatch is not None:
+                logger.info(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=standing_approval reason_code=approved",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.info(
+                    "AD-1154: admitted tier-3 %s.%s for agent %s under a standing "
+                    "approval in scope %r; no ask was filed",
+                    tool_id,
+                    action,
+                    agent_id[:12],
+                    scope_key,
+                )
             if disposition_sink is not None:
                 disposition_sink.append(
                     _APPROVAL_STANDING_DISPOSITION.format(expiry=expiry)
@@ -946,16 +1171,24 @@ class DispatchToolExecutor(ToolExecutor):
 
         request_store = arming.request_store
         if request_store is None:
-            logger.warning(
-                "AD-1154: no capability-request store is wired, so the tier-3 "
-                "action %s for agent %s could not be filed; refusing rather "
-                "than admitting it",
-                action,
-                agent_id[:12],
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_store reason_code=store_unavailable",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: no capability-request store is wired, so the tier-3 "
+                    "action %s for agent %s could not be filed; refusing rather "
+                    "than admitting it",
+                    action,
+                    agent_id[:12],
+                )
             return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
 
-        if self._pending_cap_reached(arming, agent_id):
+        if self._pending_cap_reached(arming, agent_id, strict_dispatch):
             return ToolResult(error=_APPROVAL_INBOX_FULL_REFUSAL)
 
         payload = self._build_action_payload(
@@ -969,26 +1202,42 @@ class DispatchToolExecutor(ToolExecutor):
                 work_item_id=work_item_id,
             )
         except Exception:
-            logger.warning(
-                "AD-1154: filing the tier-3 action ask for agent %s failed; "
-                "refusing the action so a store outage cannot become an "
-                "admission",
-                agent_id[:12],
-                exc_info=True,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_file reason_code=store_unavailable",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: filing the tier-3 action ask for agent %s failed; "
+                    "refusing the action so a store outage cannot become an "
+                    "admission",
+                    agent_id[:12],
+                    exc_info=True,
+                )
             return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
 
         if request is None or not getattr(request, "id", ""):
             return ToolResult(error=_APPROVAL_PARKED_REFUSAL_NO_ID)
-        logger.info(
-            "AD-1154: parked tier-3 %s.%s for agent %s as request %s "
-            "(scope=%r); the tool was not entered and the run continues",
-            tool_id,
-            action,
-            agent_id[:12],
-            request.id[:12],
-            scope_key,
-        )
+        if strict_dispatch is not None:
+            logger.info(
+                "Strict approval guard operation_id=%s attempt_id=%s "
+                "operation=approval_park reason_code=approval_required",
+                strict_dispatch.operation_id,
+                strict_dispatch.attempt_id,
+            )
+        else:
+            logger.info(
+                "AD-1154: parked tier-3 %s.%s for agent %s as request %s "
+                "(scope=%r); the tool was not entered and the run continues",
+                tool_id,
+                action,
+                agent_id[:12],
+                request.id[:12],
+                scope_key,
+            )
         return ToolResult(
             error=_APPROVAL_PARKED_REFUSAL.format(request_id=request.id)
         )
@@ -1033,6 +1282,7 @@ class DispatchToolExecutor(ToolExecutor):
         tool_id: str,
         action: str,
         scope_key: str,
+        strict_dispatch: EffectDispatchContext | None = None,
     ) -> str | None:
         """The expiry of a live standing rule covering this shape, else ``None``.
 
@@ -1051,22 +1301,39 @@ class DispatchToolExecutor(ToolExecutor):
             if not store.is_approved_sync(agent_id, tool_id, action, scope_key):
                 return None
         except Exception:
-            logger.warning(
-                "AD-1154: the standing-approval lookup for %s on %s.%s raised; "
-                "treating it as NOT approved so the action is parked rather "
-                "than admitted",
-                agent_id[:12],
-                tool_id,
-                action,
-                exc_info=True,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=standing_approval reason_code=lookup_failed",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: the standing-approval lookup for %s on %s.%s raised; "
+                    "treating it as NOT approved so the action is parked rather "
+                    "than admitted",
+                    agent_id[:12],
+                    tool_id,
+                    action,
+                    exc_info=True,
+                )
             return None
         return _describe_standing_expiry(
-            store, agent_id, tool_id, action, scope_key
+            store,
+            agent_id,
+            tool_id,
+            action,
+            scope_key,
+            strict_dispatch=strict_dispatch,
         )
 
     @staticmethod
-    def _pending_cap_reached(arming: "_ApprovalInboxArming", agent_id: str) -> bool:
+    def _pending_cap_reached(
+        arming: "_ApprovalInboxArming",
+        agent_id: str,
+        strict_dispatch: EffectDispatchContext | None = None,
+    ) -> bool:
         """AD-1154 / DD-6: is this agent's approval inbox saturated?
 
         Fails CLOSED (``True`` = refuse) when the count cannot be taken, for the
@@ -1081,24 +1348,49 @@ class DispatchToolExecutor(ToolExecutor):
                 agent_id, stale_before=stale_before
             )
         except Exception:
-            logger.warning(
-                "AD-1154: could not count pending asks for agent %s; refusing "
-                "the action rather than filing into an unbounded inbox",
-                agent_id[:12],
-                exc_info=True,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict approval guard operation_id=%s attempt_id=%s "
+                    "operation=approval_count reason_code=count_failed",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1154: could not count pending asks for agent %s; refusing "
+                    "the action rather than filing into an unbounded inbox",
+                    agent_id[:12],
+                    exc_info=True,
+                )
             return True
         if pending < cap_int:
             return False
-        logger.warning(
-            "AD-1154: approval inbox saturated for agent %s — %d undecided "
-            "asks at a cap of %d. The action was REFUSED without filing; "
-            "decide or revoke pending requests to free a slot",
-            agent_id[:12],
-            pending,
-            cap_int,
-        )
+        if strict_dispatch is not None:
+            logger.warning(
+                "Strict approval guard operation_id=%s attempt_id=%s "
+                "operation=approval_count reason_code=inbox_full",
+                strict_dispatch.operation_id,
+                strict_dispatch.attempt_id,
+            )
+        else:
+            logger.warning(
+                "AD-1154: approval inbox saturated for agent %s — %d undecided "
+                "asks at a cap of %d. The action was REFUSED without filing; "
+                "decide or revoke pending requests to free a slot",
+                agent_id[:12],
+                pending,
+                cap_int,
+            )
         return True
+
+
+class DispatchToolExecutor(
+    _DispatchGuardMixin,
+    _DispatchConfigurationMixin,
+    _ApprovalGuardMixin,
+    ToolExecutor,
+):
+    """Tool executor with dispatch guards and approval policy."""
 
     async def invoke(
         self,
@@ -1107,73 +1399,13 @@ class DispatchToolExecutor(ToolExecutor):
         params: dict[str, Any],
         **kwargs: Any,
     ) -> ToolResult:
-        # AD-1156: first, so a tool plan mode withholds is never resolved, parked or run.
-        if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
-            logger.info(
-                "AD-1156: plan mode refused a tool call from agent %s (a %s id of %d characters); not run",
-                agent_id[:12], type(tool_id).__name__, len(tool_id) if type(tool_id) is str else -1,
+        if self.protected_effects_enabled:
+            return await super().invoke(
+                agent_id, tool_id, params, **kwargs
             )
-            return ToolResult(error=_PLAN_MODE_TOOL_REFUSAL)
-        context = kwargs.get("context")
-        if self._deferred_schemas is not None and self._deferred_schemas.withhold_call(tool_id):
-            return ToolResult(error=_DEFERRED_SCHEMA_REFUSAL)
-        if tool_id == "browser" and type(params) is dict and not params.get("session_id"):
-            bound = context.get("browser_session_id") if type(context) is dict else None
-            if type(bound) is str and bound:
-                params = {**params, "session_id": bound}
-        # AD-1153: armed only for ``browser``, and only when the offer block
-        # called ``restrict_browser_actions``. Unarmed ⇒ this whole branch is
-        # skipped and the AD-856 path below runs verbatim.
-        restricted = self._browser_actions is not None and tool_id == "browser"
-        if restricted:
-            refusal = self._refuse_browser_action(agent_id, params)
-            if refusal is not None:
-                return refusal
-        # AD-1154: park AFTER the AD-1153 refusal, so an action already refused
-        # as non-allowlisted is never also filed as an ask — a refusal is not a
-        # request. Unarmed ⇒ ``_park_or_admit`` returns None on its first line.
-        dispositions: list[str] = []
-        # AD-1321: the executing crew work item (when dispatch context names one)
-        # is recorded on the ask so standing-rule eligibility can read its value.
-        crew_item = context.get("_crew_work_item_id") if type(context) is dict else None
-        parked = await self._park_or_admit(
-            agent_id, tool_id, params, disposition_sink=dispositions,
-            work_item_id=(
-                crew_item
-                if type(crew_item) is str and _CREW_WORK_ITEM_ID_RE.fullmatch(crew_item)
-                else None
-            ),
+        return await self._invoke_reserved_body(
+            agent_id, tool_id, params, **kwargs
         )
-        if parked is not None:
-            return parked
-        try:
-            result = await super().invoke(agent_id, tool_id, params, **kwargs)
-        except ToolPermissionDenied as exc:
-            denied = getattr(exc, "tool_id", tool_id)
-            self.denied_tools.append(denied)
-            logger.info(
-                "AD-856: tool %s denied for agent %s during dispatch; recorded "
-                "for capability-gap surfacing",
-                denied,
-                agent_id[:12],
-            )
-            raise
-        if restricted and result.error is None:
-            # AD-1153 / DD-3: bound + frame AFTER ``super().invoke`` so the
-            # value returned here is what ``ToolCallResult.from_tool_result``
-            # renders into the transcript AND what ``_persist_tool_trace``
-            # records. The AD-448 post-hooks fire inside ``super().invoke`` and
-            # therefore see the raw output; none of them consumes ``browser``.
-            result = replace(result, output=_bound_browser_output(result.output))
-        if dispositions and result.error is None:
-            # AD-1154 / DD-2: tell the agent, inline, that this ran under a
-            # standing rule rather than a fresh decision. Appended to whatever
-            # disposition the AD-1153 framing already set, so neither is lost.
-            return replace(
-                result,
-                output=_with_disposition(result.output, " ".join(dispositions)),
-            )
-        return result
 
 
 class _MeshIntentTool:
@@ -1225,9 +1457,28 @@ class _MeshIntentTool:
         params: dict[str, Any],
         context: dict[str, Any] | None = None,
     ) -> ToolResult:
-        results = await self._intent_bus.broadcast(
-            IntentMessage(intent=self._intent_name, params=dict(params or {}))
+        dispatch = (context or {}).get("_effect_dispatch_context")
+        strict_dispatch = (
+            dispatch if type(dispatch) is EffectDispatchContext else None
         )
+        mesh_context = (
+            MeshEffectContext(
+                operation_id=strict_dispatch.operation_id,
+                attempt_id=strict_dispatch.attempt_id,
+                handler_receipt_key=(
+                    strict_dispatch.provider_idempotency_key or ""
+                ),
+            )
+            if strict_dispatch is not None
+            else None
+        )
+        message = IntentMessage(intent=self._intent_name, params=dict(params or {}))
+        if mesh_context is None:
+            results = await self._intent_bus.broadcast(message)
+        else:
+            results = await self._intent_bus.broadcast(
+                message, effect_context=mesh_context
+            )
         if not results:
             return ToolResult(
                 error=f"No agent fulfilled mesh intent '{self._intent_name}'"
@@ -1242,7 +1493,11 @@ class _MeshIntentTool:
         )
 
 
-def _coerce_risk(value: str) -> McpToolRisk:
+def _coerce_risk(
+    value: str,
+    *,
+    strict_dispatch: EffectDispatchContext | None = None,
+) -> McpToolRisk:
     """AD-1019c DD-4: defensively coerce a free-form ``default_risk`` str.
 
     AD-1019b validates ``default_risk`` only at the create/update boundary, so a
@@ -1256,10 +1511,19 @@ def _coerce_risk(value: str) -> McpToolRisk:
     try:
         return McpToolRisk(value)
     except ValueError:
-        logger.warning(
-            "AD-1019c: unknown MCP risk tier %r; failing closed to CONSENSUS",
-            value,
-        )
+        if strict_dispatch is not None:
+            logger.warning(
+                "Strict MCP risk classification failed operation_id=%s "
+                "attempt_id=%s operation=mcp_risk "
+                "reason_code=risk_tier_invalid; failing closed to consensus",
+                strict_dispatch.operation_id,
+                strict_dispatch.attempt_id,
+            )
+        else:
+            logger.warning(
+                "AD-1019c: unknown MCP risk tier %r; failing closed to CONSENSUS",
+                value,
+            )
         return McpToolRisk.CONSENSUS
 
 
@@ -1352,7 +1616,15 @@ class _McpTool:
         fails closed to CONSENSUS on an unknown value), then lets a per-tool
         override win via :func:`resolve_tool_risk`.
         """
-        server_default = _coerce_risk(self._server_default_risk)
+        return self._effective_risk_for_dispatch(None)
+
+    def _effective_risk_for_dispatch(
+        self, strict_dispatch: EffectDispatchContext | None
+    ) -> McpToolRisk:
+        server_default = _coerce_risk(
+            self._server_default_risk,
+            strict_dispatch=strict_dispatch,
+        )
         override: McpToolRisk | None = None
         if self._risk_store is not None:
             override = self._risk_store.get_risk_sync(self._server_id, self._tool_name)
@@ -1364,25 +1636,62 @@ class _McpTool:
         context: dict[str, Any] | None = None,
     ) -> ToolResult:
         agent_id = str((context or {}).get("agent_id", ""))
+        dispatch = (context or {}).get("_effect_dispatch_context")
+        strict_dispatch = (
+            dispatch if type(dispatch) is EffectDispatchContext else None
+        )
+        external_context = (
+            ExternalEffectContext(
+                operation_id=strict_dispatch.operation_id,
+                attempt_id=strict_dispatch.attempt_id,
+                provider_idempotency_key=(
+                    strict_dispatch.provider_idempotency_key
+                ),
+                adapter_kind="mcp",
+            )
+            if strict_dispatch is not None
+            else None
+        )
         if self._touch is not None:
             self._touch()
         # Defense in depth: the adapter is globally registered, so re-verify the
         # invoking agent's AD-1019b authorization for THIS tool (the dispatch
         # scoping is the primary gate; this is the secondary, deny-safe one).
         if not self._authorize(agent_id):
-            logger.warning(
-                "AD-1019c: agent %s not authorized for MCP tool %s; denying",
-                agent_id[:12] or "?",
-                self.tool_id,
-            )
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict MCP authorization refused operation_id=%s "
+                    "attempt_id=%s operation=mcp_authorize "
+                    "reason_code=permission_denied",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+            else:
+                logger.warning(
+                    "AD-1019c: agent %s not authorized for MCP tool %s; denying",
+                    agent_id[:12] or "?",
+                    self.tool_id,
+                )
             return ToolResult(error=f"agent not authorized for MCP tool {self.tool_id}")
 
         args = dict(params or {})
         try:
-            effective = self.effective_risk()
+            effective = self._effective_risk_for_dispatch(strict_dispatch)
             if effective is McpToolRisk.OPEN:
-                out = await self._bridge.invoke(self._server_url, self._tool_name, args)
-                await self._record_episode("open", True, agent_id)
+                if external_context is None:
+                    out = await self._bridge.invoke(
+                        self._server_url, self._tool_name, args
+                    )
+                else:
+                    out = await self._bridge.invoke(
+                        self._server_url,
+                        self._tool_name,
+                        args,
+                        effect_context=external_context,
+                    )
+                await self._record_episode(
+                    "open", True, agent_id, effect_context=external_context
+                )
                 return ToolResult(output=out, metadata={"mcp_tier": "open"})
 
             if effective is McpToolRisk.CONFIRM:
@@ -1395,15 +1704,35 @@ class _McpTool:
                             "outcome": "requires_confirmation",
                         },
                     )
-                out = await self._bridge.invoke(self._server_url, self._tool_name, args)
-                await self._record_episode("confirm", True, agent_id)
+                if external_context is None:
+                    out = await self._bridge.invoke(
+                        self._server_url, self._tool_name, args
+                    )
+                else:
+                    out = await self._bridge.invoke(
+                        self._server_url,
+                        self._tool_name,
+                        args,
+                        effect_context=external_context,
+                    )
+                await self._record_episode(
+                    "confirm", True, agent_id, effect_context=external_context
+                )
                 return ToolResult(output=out, metadata={"mcp_tier": "confirm"})
 
             # CONSENSUS: the runtime broadcasts + commits on APPROVED only and
             # stores the episode itself (no double-store here).
-            consensus_result = await self._consensus_invoke(
-                self._server_url, self._tool_name, args
-            )
+            if external_context is None:
+                consensus_result = await self._consensus_invoke(
+                    self._server_url, self._tool_name, args
+                )
+            else:
+                consensus_result = await self._consensus_invoke(
+                    self._server_url,
+                    self._tool_name,
+                    args,
+                    effect_context=external_context,
+                )
             if bool(consensus_result.get("committed")):
                 return ToolResult(
                     output=consensus_result.get("invoke_result"),
@@ -1417,7 +1746,30 @@ class _McpTool:
                 error="consensus_blocked",
                 metadata={"mcp_tier": "consensus", "outcome": outcome},
             )
+        except MCPProtocolError as exc:
+            if strict_dispatch is not None:
+                if exc.delivery_state == "not_started":
+                    from probos.execution.effect_broker import NoEffectFailure
+
+                    raise NoEffectFailure("mcp_not_started") from exc
+                raise
+            logger.warning(
+                "AD-1019c: MCP tool %s invoke failed: %s",
+                self.tool_id,
+                exc,
+                exc_info=True,
+            )
+            return ToolResult(error=str(exc))
         except Exception as exc:
+            if strict_dispatch is not None:
+                logger.warning(
+                    "Strict MCP invoke failed operation_id=%s attempt_id=%s "
+                    "operation=mcp_invoke reason_code=consumer_exception_unknown; "
+                    "broker will record correlated uncertainty",
+                    strict_dispatch.operation_id,
+                    strict_dispatch.attempt_id,
+                )
+                raise
             logger.warning(
                 "AD-1019c: MCP tool %s invoke failed: %s",
                 self.tool_id,
@@ -1427,7 +1779,12 @@ class _McpTool:
             return ToolResult(error=str(exc))
 
     async def _record_episode(
-        self, tier: str, success: bool, agent_id: str
+        self,
+        tier: str,
+        success: bool,
+        agent_id: str,
+        *,
+        effect_context: ExternalEffectContext | None = None,
     ) -> None:
         """DD-5 episode for the OPEN/CONFIRM tiers (consensus records in runtime)."""
         if self._episode_writer is None:
@@ -1439,11 +1796,27 @@ class _McpTool:
                 tier=tier,
                 success=success,
                 agent_id=agent_id,
+                **(
+                    {"effect_context": effect_context}
+                    if effect_context is not None
+                    else {}
+                ),
             )
         except Exception:
-            logger.debug(
-                "AD-1019c: episode write failed for %s", self.tool_id, exc_info=True
-            )
+            if effect_context is not None:
+                logger.warning(
+                    "Strict MCP episode write failed operation_id=%s attempt_id=%s "
+                    "operation=mcp_episode_write reason_code=episode_write_failed; "
+                    "episode persistence will be retried only by its owner",
+                    effect_context.operation_id,
+                    effect_context.attempt_id,
+                )
+            else:
+                logger.debug(
+                    "AD-1019c: episode write failed for %s",
+                    self.tool_id,
+                    exc_info=True,
+                )
 
 
 # (tool_id, intent_name, display_name, description, input_schema)
@@ -2334,6 +2707,11 @@ class WorkItemAgenticExecutor:
             raise ValueError("agentic_context_invalid")
         else:
             _context = dict(extra_context)
+        parent_operation_id = _context.get("_parent_operation_id")
+        if parent_operation_id is not None and (
+            type(parent_operation_id) is not str or not parent_operation_id
+        ):
+            raise ValueError("agentic_context_invalid")
         # AD-1190: only a delegated run may carry a tree budget, and only the exact type.
         if DELEGATION_TREE_BUDGET_KEY in _context and (
             type(_context[DELEGATION_TREE_BUDGET_KEY]) is not DelegationTreeBudget
@@ -2377,7 +2755,10 @@ class WorkItemAgenticExecutor:
             fallback_rank=rank,
         )
 
-        executor = DispatchToolExecutor(registry=registry)
+        executor = DispatchToolExecutor(
+            registry=registry,
+            effect_broker=getattr(runtime, "effect_broker", None),
+        )
         observed_tool_results: list[tuple[Any, Any]] = []
         owned_view_references: list[owned_steps.OwnedStepsViewReference] = []
         pending_owned_views: dict[
@@ -2533,7 +2914,11 @@ class WorkItemAgenticExecutor:
         # (AD-993/994); empty default_permissions ⇒ ship-wide READ ⇒ invokable.
         exec_ids: list[str] = []
         exec_cfg = getattr(getattr(runtime, "config", None), "execution", None)
-        if getattr(exec_cfg, "enabled", False) and registry is not None:
+        if (
+            getattr(exec_cfg, "enabled", False)
+            and registry is not None
+            and getattr(runtime, "effect_broker", None) is None
+        ):
             try:
                 from probos.tools.code_execution_tool import CodeExecutionTool
 
@@ -2977,6 +3362,10 @@ class WorkItemAgenticExecutor:
                 *receipt_ids,
             ])
         )
+        if getattr(runtime, "effect_broker", None) is not None:
+            tool_ids = [
+                tool_id for tool_id in tool_ids if tool_id != "run_python"
+            ]
         # AD-1156: plan mode narrows the offer to its allowlist and arms the
         # matching invoke-time guard -- one decision, two consequences (BF-690).
         # The guard is what holds for a tool the model names without being
@@ -3817,14 +4206,59 @@ class WorkItemAgenticExecutor:
         The payload shaping sits inside the same ``try`` so a malformed result
         degrades identically rather than failing the dispatch.
         """
+        strict = getattr(runtime, "effect_broker", None) is not None
+        correlations: tuple[EffectCorrelation, ...] = ()
+        strict_results: list[Any] = []
+        privacy = StrictEffectPrivacyProjector()
+
+        def strict_log(operation: str, reason_code: str, action: str) -> None:
+            logger.warning(
+                "Strict tool trace persistence degraded fields=%s; %s",
+                privacy.project_failure_log(
+                    operation=operation,
+                    reason_code=reason_code,
+                    correlations=correlations,
+                ),
+                action,
+            )
+
+        if strict:
+            try:
+                candidate_results = getattr(
+                    agentic_result, "tool_results", []
+                )
+                if type(candidate_results) is not list:
+                    raise TypeError("strict tool results must be a list")
+                strict_results = candidate_results
+                correlations = privacy.sanitize_diagnostic_correlations(
+                    (
+                        getattr(result, "effect_correlation", None)
+                        for result in strict_results
+                    ),
+                    limit=len(strict_results),
+                )
+            except Exception:
+                strict_log(
+                    "tool_trace_shape",
+                    "tool_trace_shape_invalid",
+                    "tool_trace_ref will be None",
+                )
+                return None
         try:
             store = getattr(runtime, "attachment_store", None)
         except Exception:
-            logger.warning(
-                "AD-859a: attachment_store accessor raised while persisting the "
-                "tool trace for agent %s; tool_trace_ref will be None",
-                agent_id, exc_info=True,
-            )
+            if strict:
+                strict_log(
+                    "tool_trace_access",
+                    "attachment_store_unavailable",
+                    "tool_trace_ref will be None",
+                )
+            else:
+                logger.warning(
+                    "AD-859a: attachment_store accessor raised while persisting the "
+                    "tool trace for agent %s; tool_trace_ref will be None",
+                    agent_id, exc_info=True,
+                )
             return None
         if store is None:
             return None
@@ -3842,10 +4276,39 @@ class WorkItemAgenticExecutor:
             bounds = resolve_tool_trace_bounds(
                 getattr(getattr(runtime, "config", None), "agentic_loop", None)
             )
+            if strict:
+                effect_correlations: dict[
+                    str | tuple[str, int], EffectCorrelation
+                ] = {}
+                result_occurrences: dict[str, int] = {}
+                for result in strict_results:
+                    provider_id = getattr(result, "id", None)
+                    if type(provider_id) is not str:
+                        continue
+                    occurrence = result_occurrences.get(provider_id, 0)
+                    result_occurrences[provider_id] = occurrence + 1
+                    correlation = privacy.sanitize_diagnostic_correlation(
+                        getattr(result, "effect_correlation", None)
+                    )
+                    if correlation is not None:
+                        effect_correlations[(provider_id, occurrence)] = correlation
+            else:
+                effect_correlations = {
+                    result.id: result.effect_correlation
+                    for result in getattr(agentic_result, "tool_results", [])
+                    if isinstance(
+                        getattr(result, "effect_correlation", None),
+                        EffectCorrelation,
+                    )
+                }
             _entries, blob = build_tool_trace_payload(
                 getattr(agentic_result, "tool_calls", []),
                 getattr(agentic_result, "tool_results", []),
                 resolve_tool_id=resolve_tool_id,
+                effect_correlations=effect_correlations,
+                privacy_profile=(
+                    "strict" if strict else "ordinary"
+                ),
                 **bounds,
             )
             blob_max_bytes = bounds["blob_max_bytes"]
@@ -3854,12 +4317,19 @@ class WorkItemAgenticExecutor:
                 # call records alone still exceed the cap. Persist them anyway —
                 # dropping request records to save bytes would regress the
                 # guarantee this trace exists to provide.
-                logger.warning(
-                    "AD-1151: tool trace for agent %s is %d bytes after eliding "
-                    "every output, over the %d-byte cap; persisting the call "
-                    "records anyway so the provenance record is not lost",
-                    agent_id, len(blob), blob_max_bytes,
-                )
+                if strict:
+                    strict_log(
+                        "tool_trace_size",
+                        "tool_trace_over_cap",
+                        "persisting bounded call records",
+                    )
+                else:
+                    logger.warning(
+                        "AD-1151: tool trace for agent %s is %d bytes after eliding "
+                        "every output, over the %d-byte cap; persisting the call "
+                        "records anyway so the provenance record is not lost",
+                        agent_id, len(blob), blob_max_bytes,
+                    )
             content_hash = hashlib.sha256(blob).hexdigest()
             await store.write(
                 content_hash=content_hash,
@@ -3869,9 +4339,16 @@ class WorkItemAgenticExecutor:
             )
             return content_hash
         except Exception:
-            logger.warning(
-                "AD-859a: failed to persist the tool trace for agent %s; "
-                "tool_trace_ref will be None",
-                agent_id, exc_info=True,
-            )
+            if strict:
+                strict_log(
+                    "tool_trace_write",
+                    "tool_trace_write_failed",
+                    "tool_trace_ref will be None",
+                )
+            else:
+                logger.warning(
+                    "AD-859a: failed to persist the tool trace for agent %s; "
+                    "tool_trace_ref will be None",
+                    agent_id, exc_info=True,
+                )
             return None

@@ -37,6 +37,7 @@ from probos.event_persistence import (
     persistence_of,
 )
 from probos.events import EventType
+from probos.execution.effect_types import EffectPermit
 from probos.runtime import ProbOSRuntime
 from probos.substrate import durable_events as durable_events_module
 from probos.substrate.durable_events import (
@@ -46,6 +47,9 @@ from probos.substrate.durable_events import (
     durable_answer,
 )
 from probos.substrate.event_log import EventLog, bounded_json_payload
+from probos.tools.protocol import ToolPermission
+from probos.tools.registry import ToolPermissionDenied
+from tests.test_ad423b_tool_permissions import _make_registry_with_tool
 from tests.test_proactive import _make_loop, _make_mock_agent, _make_mock_runtime
 
 _ROUTER_LOGGER = "probos.substrate.durable_events"
@@ -381,6 +385,70 @@ async def test_real_emit_of_durable_member_lands_one_row_answerable_by_helper(
     assert copies[0]["type"] == "threat_detected" and copies[0]["data"] == pristine
     assert envelopes[0] == copies[0] and payload == pristine
     assert (stats.offered, stats.written, stats.pending, dict(stats.dropped)) == (1, 1, 0, {})
+
+
+async def test_strict_permission_denial_producer_projects_through_real_router(
+    event_log: EventLog,
+) -> None:
+    router = _bound_router(event_log)
+    registry, _ = _make_registry_with_tool(
+        tool_id="SENTINEL_PERMISSION_TOOL",
+        default_permissions={"ensign": "read"},
+    )
+    registry.set_event_callback(
+        lambda event, payload: router.offer(
+            {"type": event.value, "timestamp": 1.0, "data": payload}
+        )
+    )
+    permit = EffectPermit(
+        operation_id="operation-permission-exact",
+        attempt_id="attempt-permission-exact",
+        tool_id_sha256="0" * 64,
+        generation=1,
+        nonce="nonce",
+        signature="signature",
+    )
+
+    with pytest.raises(ToolPermissionDenied):
+        await registry.check_and_invoke(
+            "SENTINEL_PERMISSION_AGENT",
+            "SENTINEL_PERMISSION_TOOL",
+            {"SENTINEL_PARAMETER": "SENTINEL_VALUE"},
+            required=ToolPermission.WRITE,
+            agent_rank="ensign",
+            effect_permit=permit,
+        )
+    stats = await router.drain(wait_budget_s=5.0)
+
+    rows = await event_log.query_structured(
+        category=ROUTED_CATEGORY,
+        event=EventType.TOOL_PERMISSION_DENIED.value,
+        limit=10,
+    )
+    assert stats.written == 1
+    assert len(rows) == 1
+    payload = rows[0]["data"]["payload"]
+    assert set(payload) == {
+        "operation_id",
+        "attempt_id",
+        "outcome",
+        "reason_code",
+        "agent_digest",
+        "tool_digest",
+        "required",
+        "held",
+        "parameter_count",
+        "parameter_digest",
+    }
+    assert payload["operation_id"] == permit.operation_id
+    assert payload["attempt_id"] == permit.attempt_id
+    assert payload["outcome"] == "denied"
+    assert payload["reason_code"] == "permission_denied"
+    assert payload["required"] == "write"
+    assert payload["held"] == "read"
+    assert payload["parameter_count"] == 1
+    assert "SENTINEL" not in repr(payload)
+    assert await event_log.verify_chain() == (True, None)
 
 
 async def test_real_runtime_persists_routed_member_before_event_log_stops(tmp_path: Path) -> None:

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1859
-  field_definitions: 1836
+  canonical_dump_leaves: 1862
+  field_definitions: 1839
   incidental: 13
   own_models: 225
   owned: 292
   public_names: 305
-canonical_dump_sha256: f5a01f6682310d2730507cb1b51df69049fd6ca854b206515ece15552f6d61f4
+canonical_dump_sha256: 60b85111fda014d36d83d7dcd4c47a88a0c1866a85f7db3cb6e048567a4ad621
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2829,7 +2829,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 8db5b741740145f39dd95d9089ca4a48feec4617c64b0d299a8b4a235578fb0f
+    schema_sha256: 7f1a7b8707bcf8f7efb9048c78f8bb6b0edb6adc18d0dace08a0ce4340683b45
     fields:
     - {default: 'False', name: enabled}
     - {default: '''ordinary''', name: profile}
@@ -2838,6 +2838,9 @@ models:
     - {default: '''''', name: protected_installation_root}
     - {default: '''''', name: policy_path}
     - {default: <required>, has_default_factory: true, name: worker_write_roots}
+    - {default: 'False', name: effect_broker_enabled}
+    - {default: '120', name: effect_lease_seconds}
+    - {default: '3', name: effect_max_attempts}
   QAConfig:
     qualname: QAConfig
     bases:
@@ -3344,7 +3347,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 323bbdcb0659fcdc6bd23b5a89ec945e9b2b4c889ac0d5921f7c01302857596d
+    schema_sha256: de3384840d5b04efa5aba98909a00edd383c8b3a22dcedb61e24d448e9be6df6
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

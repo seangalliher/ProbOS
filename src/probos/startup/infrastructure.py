@@ -54,6 +54,7 @@ async def boot_infrastructure(
     data_dir.mkdir(parents=True, exist_ok=True)
     await event_log.start()
     execution_authority = None
+    effect_broker = None
     try:
         protected_config = config.protected_execution
         if protected_config.enabled and protected_config.profile == "strict":
@@ -72,6 +73,16 @@ async def boot_infrastructure(
                 ),
             )
             await execution_authority.start()
+            if protected_config.effect_broker_enabled:
+                from probos.execution.effect_broker import GovernedEffectBroker
+
+                effect_broker = GovernedEffectBroker(
+                    authority=execution_authority,
+                    runtime_session_id=runtime_session_id,
+                    lease_seconds=protected_config.effect_lease_seconds,
+                    max_attempts=protected_config.effect_max_attempts,
+                )
+                await effect_broker.start()
         event_prune_task = asyncio.create_task(
             event_log_prune_loop_fn(), name="event-log-prune-loop"
         )
@@ -112,8 +123,17 @@ async def boot_infrastructure(
             event_prune_task=event_prune_task,
             identity_key_binding=identity_key_binding,
             execution_authority=execution_authority,
+            effect_broker=effect_broker,
         )
     except BaseException:
+        if effect_broker is not None:
+            try:
+                await effect_broker.stop()
+            except BaseException:
+                logger.error(
+                    "effect broker cleanup failed operation=boot_infrastructure "
+                    "reason_code=phase_one_unwind_failed; startup remains failed"
+                )
         if execution_authority is not None:
             try:
                 await execution_authority.stop()
