@@ -37,6 +37,14 @@ import aiosqlite
 
 from probos import work_item_steps as owned_steps
 from probos.crew_execution_usage import CREW_EXECUTION_TOKEN_USAGE_KEY
+from probos.economic_calibration import (
+    CompletionCalibrationEvidence,
+    CompletionCalibrationLedger,
+    ValueDeclarationIdentity,
+    completion_calibration_from_payload,
+    CompletionCalibrationSummary,
+    completion_calibration_armed,
+)
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 from probos.types import Priority
@@ -609,6 +617,19 @@ def _decode_value_provenance(raw: Any) -> dict[str, Any] | None:
 
 def _encode_value_provenance(value: dict[str, Any] | None) -> str | None:
     return None if value is None else json.dumps(value, sort_keys=True)
+
+
+def _value_declaration_identity(item: Any) -> ValueDeclarationIdentity | None:
+    value_band = getattr(item, "value_band", None)
+    provenance = getattr(item, "value_band_provenance", None)
+    if value_band is None or provenance is None:
+        return None
+    return ValueDeclarationIdentity(
+        value_band=value_band,
+        source_kind=provenance["source_kind"],
+        source_id=provenance["source_id"],
+        recorded_at=float(provenance["recorded_at"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2677,7 +2698,9 @@ class _OwnedStepsExecutionPort:
         return await self._start(self, lease, child_id, execution_nonce=execution_nonce)
 
     async def submit(
-        self, lease: owned_steps.OwnedExecutionLease, submission: owned_steps.OwnedExecutionSubmission,
+        self,
+        lease: owned_steps.OwnedExecutionLease,
+        submission: owned_steps.OwnedExecutionSubmission,
     ) -> owned_steps.OwnedStepMutationResult:
         return await self._submit(self, lease, submission)
 
@@ -2725,6 +2748,13 @@ class WorkItemStore(EventEmitterMixin):
         self._owned_steps_write_binding: _OwnedStepsWriteBinding | None = None
         self._owned_execution_port: _OwnedStepsExecutionPort | None = None
         self._owned_execution_scopes: weakref.WeakSet[_OwnedExecutionScope] = weakref.WeakSet()
+        calibration_config = (
+            dict(config.get("completion_calibration", {}))
+            if config and isinstance(config.get("completion_calibration", {}), dict)
+            else {}
+        )
+        self._completion_calibration_config = calibration_config
+        self._completion_calibration: CompletionCalibrationLedger | None = None
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
@@ -3116,6 +3146,18 @@ class WorkItemStore(EventEmitterMixin):
                             raise ValueError("work_item_value_schema_invalid")
                 await self._migrate_promoted_report_trace()
                 await self._migrate_owned_steps_history()
+                if completion_calibration_armed(self._completion_calibration_config):
+                    self._completion_calibration = CompletionCalibrationLedger(
+                        self._db,
+                        cost_tolerance_percent=self._completion_calibration_config.get(
+                            "cost_tolerance_percent", 20,
+                        ),
+                        minimum_samples=self._completion_calibration_config.get(
+                            "minimum_samples", 8,
+                        ),
+                    )
+                    await self._completion_calibration.migrate()
+                    await self._db.commit()
             await self._refresh_snapshot_cache()
             self._running = True
             self._tick_task = asyncio.create_task(self._tick_loop())
@@ -3823,6 +3865,7 @@ class WorkItemStore(EventEmitterMixin):
             owned_steps.OwnedStepExecutionPermit: "permit",
             owned_steps.OwnedStepSubmission: "submission",
             owned_steps.OwnedExecutionSubmission: "submission",
+            owned_steps.OwnedCalibratedExecutionSubmission: "submission",
             owned_steps.OwnedUnstartedSubmission: "submission",
             owned_steps.ReviewedStepResult: "review",
         }
@@ -3862,6 +3905,8 @@ class WorkItemStore(EventEmitterMixin):
                     owned_steps.OwnedUnstartedSubmission if raw.get("admission") == "not_started"
                     else owned_steps.OwnedExecutionSubmission
                 )
+            elif kind == "submission" and raw.get("version") == 3:
+                model = owned_steps.OwnedCalibratedExecutionSubmission
             evidence = model.model_validate_json(payload)
             if evidence.model_dump(mode="json") != owned_steps.owned_json_loads(payload):
                 raise ValueError("owned_steps_evidence_incomplete")
@@ -7241,12 +7286,36 @@ class WorkItemStore(EventEmitterMixin):
         elif isinstance(command, owned_steps.SubmitOwnedStepCommand):
             submission = command.submission
             execution = owned_steps.owned_json_loads(submission.execution_json)
+            completion_calibration = (
+                completion_calibration_from_payload(
+                    owned_steps.owned_json_loads(
+                        submission.completion_calibration_json
+                    )
+                )
+                if isinstance(
+                    submission,
+                    owned_steps.OwnedCalibratedExecutionSubmission,
+                )
+                else None
+            )
             if (
                 row.permit_state != "started" or row.permit != owned_steps.owned_digest(
                     owned_steps.owned_json_bytes(submission.permit.model_dump(mode="json")),
                 )
                 or child.status != "in_progress" or execution["thread_id"] != control.thread_id
                 or child.actual_tokens > _MAX_WORK_ITEM_ACTUAL_TOKENS - execution["tokens_used"]
+                or (
+                    completion_calibration is not None
+                    and (
+                        self._completion_calibration is None
+                        or completion_calibration.agent_id != child.assigned_to
+                        or completion_calibration.work_type != child.work_type
+                        or completion_calibration.estimated_tokens
+                        != child.estimated_tokens
+                        or completion_calibration.actual_tokens
+                        != child.actual_tokens + execution["tokens_used"]
+                    )
+                )
             ):
                 raise owned_steps.OwnedStepsError("owned_steps_submission_conflict", parent_id=parent.id)
             if await self._read_owned_evidence(parent.id, control.incarnation, "permit", row.permit) != submission.permit:
@@ -7281,7 +7350,7 @@ class WorkItemStore(EventEmitterMixin):
                     exact = owned_steps.OwnedExecutionResult.model_validate_json(raw_result)
                 if exact.spec_id != row.child.spec_id:
                     raise owned_steps.OwnedStepsError("owned_steps_result_conflict", parent_id=parent.id)
-                owned_steps.OwnedExecutionSubmission.model_validate({
+                type(submission).model_validate({
                     **submission.model_dump(), "result": exact,
                 })
                 if submission.output is not None and (
@@ -7306,6 +7375,13 @@ class WorkItemStore(EventEmitterMixin):
                 "updated_at = ? WHERE id = ?",
                 (execution["status"], encoded.decode("utf-8"), execution["tokens_used"], now, child.id),
             )
+            if completion_calibration is not None:
+                assert self._completion_calibration is not None
+                await self._completion_calibration.record_completion(
+                    child.id,
+                    completion_calibration,
+                    declaration_identity=_value_declaration_identity(child),
+                )
             if booking is not None:
                 if booking.status not in ("active", "on_break") or await self.get_booking_journal(booking.id):
                     raise owned_steps.OwnedStepsError("owned_steps_booking_conflict", parent_id=parent.id)
@@ -8671,6 +8747,33 @@ class WorkItemStore(EventEmitterMixin):
                 raise ValueError("crew_session_write_reserved")
             updates = dict(updates)
             value_columns = self._prepare_value_context_update(item, updates)
+            replacement_resolution: tuple[str, dict[str, Any], str, dict[str, Any]] | None = None
+            if (
+                self._completion_calibration is not None
+                and "value_band" in value_columns
+                and value_columns["value_band"] != item.value_band
+                and item.value_band is not None
+                and item.value_band_provenance is not None
+                and item.value_band_provenance.get("source_kind") == "agent"
+                and item.value_band_provenance.get("confirmation_kind") is None
+            ):
+                requested_provenance = _decode_value_provenance(
+                    value_columns.get("value_band_provenance"),
+                )
+                if (
+                    type(requested_provenance) is dict
+                    and requested_provenance.get("source_kind") == "captain"
+                    and requested_provenance.get("confirmation_kind") == "captain"
+                    and type(requested_provenance.get("confirmed_by")) is str
+                    and bool(requested_provenance["confirmed_by"])
+                    and type(requested_provenance.get("confirmed_at")) in (int, float)
+                ):
+                    replacement_resolution = (
+                        item.value_band,
+                        item.value_band_provenance,
+                        value_columns["value_band"],
+                        requested_provenance,
+                    )
             set_clauses: list[str] = []
             params: list[Any] = []
             for key, value in updates.items():
@@ -8692,6 +8795,26 @@ class WorkItemStore(EventEmitterMixin):
                 f"UPDATE work_items SET {', '.join(set_clauses)} WHERE id = ?",
                 params,
             )
+            if replacement_resolution is not None:
+                proposed_band, proposed_provenance, confirmed_band, confirmed_provenance = (
+                    replacement_resolution
+                )
+                await self._completion_calibration.record_value_resolution(
+                    work_item_id=work_item_id,
+                    declaration_identity=ValueDeclarationIdentity(
+                        value_band=confirmed_band,
+                        source_kind=confirmed_provenance["source_kind"],
+                        source_id=confirmed_provenance["source_id"],
+                        recorded_at=float(confirmed_provenance["recorded_at"]),
+                    ),
+                    proposed_value_band=proposed_band,
+                    proposed_by=proposed_provenance["source_id"],
+                    proposed_at=float(proposed_provenance["recorded_at"]),
+                    confirmed_value_band=confirmed_band,
+                    confirmed_by=confirmed_provenance["confirmed_by"],
+                    confirmation_kind=confirmed_provenance["confirmation_kind"],
+                    confirmed_at=float(confirmed_provenance["confirmed_at"]),
+                )
             updated = await self.get_work_item(work_item_id)
         await self._refresh_snapshot_cache()
         self._emit(
@@ -8821,6 +8944,27 @@ class WorkItemStore(EventEmitterMixin):
             if cursor.rowcount != 1:
                 raise ValueError("value_context_confirmation_conflict")
             updated = await self.get_work_item(work_item_id)
+            if (
+                self._completion_calibration is not None
+                and item.value_band is not None
+                and item.value_band_provenance is not None
+                and item.value_band_provenance.get("source_kind") == "agent"
+                and item.value_band_provenance.get("confirmation_kind") is None
+                and updated is not None
+                and updated.value_band_provenance is not None
+            ):
+                provenance = updated.value_band_provenance
+                await self._completion_calibration.record_value_resolution(
+                    work_item_id=work_item_id,
+                    declaration_identity=_value_declaration_identity(updated),
+                    proposed_value_band=item.value_band,
+                    proposed_by=item.value_band_provenance["source_id"],
+                    proposed_at=float(item.value_band_provenance["recorded_at"]),
+                    confirmed_value_band=updated.value_band,
+                    confirmed_by=provenance["confirmed_by"],
+                    confirmation_kind=provenance["confirmation_kind"],
+                    confirmed_at=float(provenance["confirmed_at"]),
+                )
         await self._refresh_snapshot_cache()
         self._emit(
             EventType.WORK_ITEM_UPDATED,
@@ -8972,6 +9116,7 @@ class WorkItemStore(EventEmitterMixin):
         retry_barrier: WorkItemRetryBarrier | None = None,
         source: str = "system",
         owned_binding: owned_steps.OwnedStoreBinding | None = None,
+        completion_calibration: CompletionCalibrationEvidence | None = None,
     ) -> WorkItem | None:
         """Atomically shallow-merge top-level metadata for this store instance."""
         if retry_barrier is not None:
@@ -9077,6 +9222,16 @@ class WorkItemStore(EventEmitterMixin):
                 raise ValueError("work_item_actual_tokens_current_invalid")
             if item.actual_tokens > _MAX_WORK_ITEM_ACTUAL_TOKENS - actual_tokens_delta:
                 raise ValueError("work_item_actual_tokens_overflow")
+            if completion_calibration is not None and (
+                self._completion_calibration is None
+                or new_status != "done"
+                or completion_calibration.agent_id != item.assigned_to
+                or completion_calibration.work_type != item.work_type
+                or completion_calibration.estimated_tokens != item.estimated_tokens
+                or completion_calibration.actual_tokens
+                != item.actual_tokens + actual_tokens_delta
+            ):
+                raise ValueError("completion_calibration_evidence_invalid")
             if (
                 (expected_work_type is not None and item.work_type != expected_work_type)
                 or (expected_status is not None and item.status != expected_status)
@@ -9157,7 +9312,12 @@ class WorkItemStore(EventEmitterMixin):
                 session_id=work_item_id,
                 contract_payload=merged.get("crew_session"),
             )
-            if merged == current and not status_changed and actual_tokens_delta == 0:
+            if (
+                merged == current
+                and not status_changed
+                and actual_tokens_delta == 0
+                and completion_calibration is None
+            ):
                 return item
 
             serialized = json.dumps(
@@ -9204,6 +9364,13 @@ class WorkItemStore(EventEmitterMixin):
                         (serialized, now, work_item_id),
                     )
             await _insert_crew_session_delivery(self._db, delivery_payload)
+            if completion_calibration is not None:
+                assert self._completion_calibration is not None
+                await self._completion_calibration.record_completion(
+                    work_item_id,
+                    completion_calibration,
+                    declaration_identity=_value_declaration_identity(item),
+                )
             await self._finish_owned_store_write(owned_write)
 
             updated = await self.get_work_item(work_item_id)
@@ -9220,6 +9387,35 @@ class WorkItemStore(EventEmitterMixin):
                 "source": source,
             })
         return updated
+
+    async def get_completion_calibration(
+        self, agent_id: str, work_type: str,
+    ) -> CompletionCalibrationSummary | None:
+        if (
+            self._completion_calibration is None
+            or type(agent_id) is not str
+            or not agent_id
+            or type(work_type) is not str
+            or not work_type
+        ):
+            return None
+        return await self._completion_calibration.get_summary(agent_id, work_type)
+
+    async def matches_completion_calibration(
+        self,
+        work_item_id: str,
+        evidence: CompletionCalibrationEvidence,
+    ) -> bool:
+        if (
+            self._completion_calibration is None
+            or type(work_item_id) is not str
+            or not work_item_id
+        ):
+            return False
+        return await self._completion_calibration.matches_completion(
+            work_item_id,
+            evidence,
+        )
 
     def _validate_retry_merge(
         self,

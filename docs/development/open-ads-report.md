@@ -28,14 +28,14 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1324** | **AD-1325** | AD-1323 | 1324 |
+| AD | **AD-1325** | **AD-1326** | AD-1323 | 1324-1325 |
 | BF | **BF-888** | **BF-889** | BF-886 | 887-888 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-09T19:10:30+00:00 at `d811d8a3` | 2747 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-10T00:07:23+00:00 at `a6ec4d0e` | 2751 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
@@ -46,7 +46,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 69 | 23 | assigned, issue open, no shipped code |
+| `allocated-open` | 70 | 23 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 7 | 0 | abandoned, number **not** reusable |
@@ -54,10 +54,11 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 ## Allocated and open — **do not reuse these numbers**
 
-92 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+93 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1325` | — | a tracker head marks it open |  |
 | `AD-1324` | — | a tracker head marks it open |  |
 | `AD-1250` | [#1294](https://github.com/seangalliher/ProbOS/issues/1294) | issue #1294 open, no code | AD-1250: a joint allowance/ration search retains 32 rows where the ordered search retains 13 |
 | `AD-1246` | [#1241](https://github.com/seangalliher/ProbOS/issues/1241) | issue #1241 open, no code | AD-1246: a long execution should promote, not be capped at 30 seconds |
@@ -366,8 +367,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1237 head-shaped line yielded no AD/BF token
-PROGRESS.md:1243 head-shaped line yielded no AD/BF token
+PROGRESS.md:1239 head-shaped line yielded no AD/BF token
+PROGRESS.md:1245 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

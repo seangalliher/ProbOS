@@ -118,6 +118,10 @@ class StoreDeclaration:
     instance ``directives.db`` and ``data/directives.db`` — and a store with two
     spellings has no identity. Recording one spelling resolves that on paper;
     it moves no file and renames nothing.
+
+    ``companion_schema_modules`` names modules that contribute tables through
+    this store owner's connection and transaction. A companion does not own
+    the canonical path, connection, transaction, or lifecycle.
     """
 
     id: str
@@ -133,10 +137,11 @@ class StoreDeclaration:
     retention_note: str = ""
     reconstruction: str = ""
     notes: str = ""
+    companion_schema_modules: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Render as a JSON-safe mapping."""
-        return {
+        payload = {
             "id": self.id,
             "title": self.title,
             "owner_module": self.owner_module,
@@ -151,6 +156,11 @@ class StoreDeclaration:
             "reconstruction": self.reconstruction,
             "notes": self.notes,
         }
+        if self.companion_schema_modules:
+            payload["companion_schema_modules"] = list(
+                self.companion_schema_modules
+            )
+        return payload
 
     @property
     def owner_path(self) -> str:
@@ -230,4 +240,28 @@ def declaration_errors(declaration: StoreDeclaration) -> tuple[str, ...]:
             f"{declaration.restore!r}; a reconstruction method only means "
             "something when restore is 'reconstructed'"
         )
+    companions = declaration.companion_schema_modules
+    if not isinstance(companions, tuple):
+        problems.append(
+            f"{where}: 'companion_schema_modules' must be a tuple of module names"
+        )
+    else:
+        seen_companions: set[str] = set()
+        for companion in companions:
+            if not isinstance(companion, str) or not companion.strip():
+                problems.append(
+                    f"{where}: 'companion_schema_modules' members must be "
+                    "non-blank strings"
+                )
+                continue
+            if companion in seen_companions:
+                problems.append(
+                    f"{where}: duplicate companion schema module {companion!r}"
+                )
+            seen_companions.add(companion)
+            if companion == declaration.owner_module:
+                problems.append(
+                    f"{where}: owner_module {companion!r} cannot also be its "
+                    "own companion schema module"
+                )
     return tuple(problems)

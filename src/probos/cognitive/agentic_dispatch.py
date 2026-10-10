@@ -24,7 +24,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Protocol
 
 from probos import work_item_steps as owned_steps
 from probos.artifacts.refs import validate_artifact_ref
@@ -39,6 +39,11 @@ from probos.dm_reply import (  # AD-1248 / AD-1295
     ToolInvocations,
     mint_scope,
     scope_from_source,
+)
+from probos.economic_calibration import (
+    SpendPriceSnapshot,
+    completion_calibration_armed,
+    derive_calibrated_tokens,
 )
 from probos.execution.long_runs import EXECUTION_LONG_RUN_GRANT_KEY, LongRunGrant  # AD-1246
 from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
@@ -74,7 +79,7 @@ from probos.tools.protocol import (
     ToolType,
 )
 from probos.tools.registry import ToolPermissionDenied
-from probos.types import IntentMessage, LLMRequest
+from probos.types import IntentMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
     from probos.cognitive.tool_manifest import ToolManifestOffer
@@ -96,6 +101,7 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
         "_delegation_depth",
         "_crew_session_id",
         "_crew_work_item_id",
+        "_crew_outcome_id",
         DELEGATION_TREE_BUDGET_KEY,
         EXECUTION_LONG_RUN_GRANT_KEY,  # AD-1246: a direct DM turn's long-run grant
     }
@@ -389,7 +395,7 @@ class AgenticIdentityUnresolved(RuntimeError):
 
 def resolve_agentic_identity(
     *,
-    agent_id: str,
+    agent_id: str = "",
     agent_registry: AgentIdentityRegistry | None,
     ontology: AgentIdentityOntology | None,
     trust_network: AgentIdentityTrust | None,
@@ -1858,6 +1864,7 @@ class WorkItemAgenticOutcome:
     parked_request_id: str = ""
     # AD-1190: this loop's iteration count; appended last and defaulted.
     iterations: int = 0
+    completion_spends: ClassVar[tuple[SpendPriceSnapshot, ...]] = ()
 
 
 @dataclass(kw_only=True)
@@ -2037,6 +2044,7 @@ class WorkItemAgenticExecutor:
         extra_context: dict[str, Any] | None,
         failure_scope: str | None,
         work_item_id_provider: Callable[[], str | None] | None,
+        agent_id: str = "",
         tier: str | None,
         token_budget: int | None,
     ) -> None:
@@ -2062,6 +2070,8 @@ class WorkItemAgenticExecutor:
             )
             value_band: str | None = None
             stakes: str | None = None
+            calibration_summary = None
+            calibrated_tokens = None
             value_provenance = stakes_provenance = "unrecorded"
             store = getattr(runtime, "work_item_store", None)
             if work_item_id and store is not None:
@@ -2072,6 +2082,36 @@ class WorkItemAgenticExecutor:
                     value_provenance = classify_value_provenance(getattr(item, "value_band_provenance", None))
                 if type(stakes) is str:
                     stakes_provenance = classify_value_provenance(getattr(item, "stakes_provenance", None))
+                calibration_config = getattr(
+                    getattr(
+                        getattr(
+                            getattr(runtime, "config", None),
+                            "dm_agentic",
+                            None,
+                        ),
+                        "economic_judgment",
+                        None,
+                    ),
+                    "completion_calibration",
+                    None,
+                )
+                if completion_calibration_armed(calibration_config):
+                    calibration_summary = await store.get_completion_calibration(
+                        agent_id,
+                        getattr(item, "work_type", ""),
+                    )
+                    if (
+                        calibration_summary is not None
+                        and getattr(
+                            calibration_config,
+                            "feed_cost_estimates_to_organ",
+                            False,
+                        )
+                    ):
+                        calibrated_tokens = derive_calibrated_tokens(
+                            getattr(item, "estimated_tokens", None),
+                            calibration_summary,
+                        )
             verification: set[str] = set()
             if registry is not None:
                 for reg in registry.list_tools(tag="verification"):
@@ -2082,7 +2122,7 @@ class WorkItemAgenticExecutor:
             price, weight = resolve_tier_pricing(
                 getattr(runtime, "model_registry", None), effective_tier
             )
-            hook.open_run(
+            hook_kwargs = dict(
                 turn_key=turn_key,
                 value_band=value_band if type(value_band) is str else None,
                 stakes=stakes if type(stakes) is str else None,
@@ -2094,6 +2134,15 @@ class WorkItemAgenticExecutor:
                 value_provenance=value_provenance,
                 stakes_provenance=stakes_provenance,
             )
+            if calibration_summary is not None:
+                hook_kwargs["completion_calibration"] = calibration_summary
+                hook_kwargs["calibrated_tokens"] = calibrated_tokens
+                hook_kwargs["calibration_tolerance_percent"] = getattr(
+                    calibration_config,
+                    "cost_tolerance_percent",
+                    20,
+                )
+            hook.open_run(**hook_kwargs)
         except Exception:
             logger.warning(
                 "AD-1322: economic run context could not be opened; the organ stays "
@@ -3194,6 +3243,105 @@ class WorkItemAgenticExecutor:
         )
         if tier_controller is not None:
             _loop_kwargs["tier_controller"] = tier_controller
+        calibration_config = getattr(
+            getattr(
+                getattr(getattr(runtime, "config", None), "dm_agentic", None),
+                "economic_judgment",
+                None,
+            ),
+            "completion_calibration",
+            None,
+        )
+        calibration_armed = completion_calibration_armed(calibration_config)
+        if calibration_armed:
+            def _observe_completion_spend(
+                request: LLMRequest,
+                response: LLMResponse,
+                decision: Any,
+                charged_total: int,
+                charged_source: str,
+            ) -> SpendPriceSnapshot:
+                input_price = output_price = None
+                currency = None
+                try:
+                    descriptor = getattr(runtime, "model_registry", None)
+                    descriptor = (
+                        descriptor.get(response.model)
+                        if descriptor is not None else None
+                    )
+                    candidate_input = getattr(
+                        descriptor, "cost_per_million_input_tokens", 0.0,
+                    )
+                    candidate_output = getattr(
+                        descriptor, "cost_per_million_output_tokens", 0.0,
+                    )
+                    if candidate_input > 0 and candidate_output > 0:
+                        input_price = float(candidate_input)
+                        output_price = float(candidate_output)
+                        currency = "USD"
+                except Exception:
+                    logger.warning(
+                        "AD-1325: model price lookup failed for model=%r; the "
+                        "completion spend keeps null price fields",
+                        getattr(response, "model", ""),
+                        exc_info=True,
+                    )
+                raw_prompt = (
+                    response.prompt_tokens
+                    if type(response.prompt_tokens) is int else None
+                )
+                raw_completion = (
+                    response.completion_tokens
+                    if type(response.completion_tokens) is int else None
+                )
+                raw_total = (
+                    response.tokens_used
+                    if type(response.tokens_used) is int else None
+                )
+                measured_breakdown = (
+                    charged_source == "measured"
+                    and raw_prompt is not None
+                    and raw_prompt >= 0
+                    and raw_completion is not None
+                    and raw_completion >= 0
+                    and raw_prompt + raw_completion == charged_total
+                )
+                return SpendPriceSnapshot(
+                    request_id=request.id,
+                    provider_request_id=response.request_id or None,
+                    requested_tier=(
+                        decision.requested
+                        if decision is not None else request.tier
+                    ),
+                    effective_tier=(
+                        decision.tier if decision is not None else request.tier
+                    ),
+                    tier_outcome=(
+                        decision.outcome if decision is not None else None
+                    ),
+                    tier_evidence=(
+                        decision.evidence if decision is not None else None
+                    ),
+                    model_reason=(
+                        decision.reason if decision is not None else None
+                    ),
+                    model=response.model,
+                    token_source=charged_source,
+                    prompt_tokens=raw_prompt if measured_breakdown else 0,
+                    completion_tokens=(
+                        raw_completion if measured_breakdown else 0
+                    ),
+                    total_tokens=charged_total,
+                    input_price_per_million=input_price,
+                    output_price_per_million=output_price,
+                    currency=currency,
+                    price_effective_at=time.time(),
+                    provider_reported_prompt_tokens=raw_prompt,
+                    provider_reported_completion_tokens=raw_completion,
+                    provider_reported_total_tokens=raw_total,
+                )
+
+            _loop_kwargs["spend_observer"] = _observe_completion_spend
         # BF-731: same additive shape. Absent => the kwarg is never passed to
         # AgenticLoop, which in turn never passes it to complete(), so the task
         # path and every test double keep the exact call they had before.
@@ -3424,6 +3572,7 @@ class WorkItemAgenticExecutor:
                 extra_context=extra_context,
                 failure_scope=failure_scope,
                 work_item_id_provider=work_item_id_provider,
+                agent_id=agent_id,
                 tier=tier,
                 token_budget=token_budget,
             )
@@ -3603,13 +3752,23 @@ class WorkItemAgenticExecutor:
             ),
             iterations=iterations,
         )
+
+        def _attach_completion_spends(
+            outcome: WorkItemAgenticOutcome,
+        ) -> WorkItemAgenticOutcome:
+            if calibration_armed:
+                outcome.completion_spends = tuple(
+                    getattr(agentic_result, "completion_spends", ())
+                )
+            return outcome
+
         if fault_observer is None:
             if owned_view_references:
-                return OwnedWorkItemAgenticOutcome(
+                return _attach_completion_spends(OwnedWorkItemAgenticOutcome(
                     **outcome_fields,
                     owned_steps_view_references=tuple(owned_view_references),
-                )
-            return WorkItemAgenticOutcome(**outcome_fields)
+                ))
+            return _attach_completion_spends(WorkItemAgenticOutcome(**outcome_fields))
         assert fault_turn is not None
         observation = await observe_completed_tool_run(
             fault_observer, outcome=_defect_outcome, turn=fault_turn,
@@ -3619,10 +3778,10 @@ class WorkItemAgenticExecutor:
             attempted=fault_attempted, tool_trace_ref=tool_trace_ref,
             fault_capture=fault_capture,
         )
-        return ObservedWorkItemAgenticOutcome(
+        return _attach_completion_spends(ObservedWorkItemAgenticOutcome(
             **outcome_fields, fault_observation=observation,
             owned_steps_view_references=tuple(owned_view_references),
-        )
+        ))
 
     async def _persist_tool_trace(
         self,

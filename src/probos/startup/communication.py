@@ -378,6 +378,9 @@ async def init_communication(
             config={
                 "custom_work_types": config.workforce.custom_work_types,
                 "custom_templates": config.workforce.custom_templates,
+                "completion_calibration": (
+                    config.dm_agentic.economic_judgment.completion_calibration.model_dump()
+                ),
             },
             pull_resource_resolver=pull_resource_resolver,
         )

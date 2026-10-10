@@ -39,6 +39,10 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from probos.cognitive.organ import BaseCognitiveOrgan, OrganAuditEmit
+from probos.economic_calibration import (
+    CompletionCalibrationSummary,
+    render_calibration_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,9 @@ class InnerLoopHook(Protocol):
         verification_tool_ids: Collection[str] = (),
         value_provenance: str | None = None,
         stakes_provenance: str | None = None,
+        completion_calibration: CompletionCalibrationSummary | None = None,
+        calibrated_tokens: int | None = None,
+        calibration_tolerance_percent: int = 20,
     ) -> None: ...
 
     def before_model_call(
@@ -189,6 +196,9 @@ class InnerStepObservation:
     carry_tokens: int = 0
     pass_cumulative_tokens: int = 0
     pass_budget: int | None = None
+    completion_calibration: CompletionCalibrationSummary | None = None
+    calibrated_tokens: int | None = None
+    calibration_tolerance_percent: int = 20
     turn: Any = field(default=None, compare=False, repr=False)
 
 
@@ -386,6 +396,17 @@ def render_block(
     if currency_is_marginal and price is not None and price > 0:
         cost = prompt * price / 1_000_000
         _append("currency", (f"Input cost about ${cost:.4f}.", "full"))
+    if type(observation.completion_calibration) is CompletionCalibrationSummary:
+        try:
+            calibration_text = render_calibration_evidence(
+                observation.completion_calibration,
+                tolerance_percent=observation.calibration_tolerance_percent,
+                calibrated_tokens=observation.calibrated_tokens,
+            )
+        except Exception:
+            calibration_text = ""
+        if calibration_text:
+            _append("completion_calibration", (calibration_text, "full"))
     block = ECONOMIC_NOTE_PREFIX + " ".join(parts)
     return block, RenderTrace(
         kept=tuple(kept), dropped=tuple(dropped), block_chars=len(block),
@@ -409,6 +430,9 @@ class _TurnState:
     pass_budget: int | None = None
     input_price: float | None = None
     price_weight: float | None = None
+    completion_calibration: CompletionCalibrationSummary | None = None
+    calibrated_tokens: int | None = None
+    calibration_tolerance_percent: int = 20
     carry: int = 0
     pass_cumulative: int = 0
     spend_history: deque[int] = field(default_factory=lambda: deque(maxlen=_MAX_SPEND_HISTORY))
@@ -545,6 +569,9 @@ class EconomicJudgmentOrgan(BaseCognitiveOrgan):
             carry_tokens=turn.carry,
             pass_cumulative_tokens=turn.pass_cumulative,
             pass_budget=turn.pass_budget,
+            completion_calibration=turn.completion_calibration,
+            calibrated_tokens=turn.calibrated_tokens,
+            calibration_tolerance_percent=turn.calibration_tolerance_percent,
             turn=turn,
         )
 
@@ -725,6 +752,9 @@ class EconomicTurnHandle:
         verification_tool_ids: Collection[str] = (),
         value_provenance: str | None = None,
         stakes_provenance: str | None = None,
+        completion_calibration: CompletionCalibrationSummary | None = None,
+        calibrated_tokens: int | None = None,
+        calibration_tolerance_percent: int = 20,
     ) -> None:
         if not self._organ.attached:
             return
@@ -752,6 +782,22 @@ class EconomicTurnHandle:
         state.tier = str(tier or "")
         state.input_price = input_price_per_million
         state.price_weight = price_weight
+        state.completion_calibration = (
+            completion_calibration
+            if type(completion_calibration) is CompletionCalibrationSummary
+            else None
+        )
+        state.calibrated_tokens = (
+            calibrated_tokens
+            if type(calibrated_tokens) is int and calibrated_tokens > 0
+            else None
+        )
+        state.calibration_tolerance_percent = (
+            calibration_tolerance_percent
+            if type(calibration_tolerance_percent) is int
+            and 0 <= calibration_tolerance_percent <= 100
+            else 20
+        )
         state.effective_verification = self._organ.configured_verification_ids | frozenset(
             verification_tool_ids
         )
