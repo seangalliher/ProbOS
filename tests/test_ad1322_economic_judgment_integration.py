@@ -30,6 +30,7 @@ from tests.test_ad1320_agentic_budget_awareness import (
 
 ECONOMIC_MARKER = "Economic note"
 _ID = re.compile(r"[0-9a-f]{32}")
+_HOOK_OMITTED = object()
 
 
 def _organ(**kw: Any) -> tuple[Any, list[dict[str, Any]]]:
@@ -49,9 +50,16 @@ def _open(organ: Any, **kw: Any) -> None:
     organ.open_run(**args)
 
 
-async def _run(script: list[Resp], hook: Any = None, **kw: Any) -> tuple[Any, Client, Tools]:
+async def _run(
+    script: list[Resp],
+    hook: Any = _HOOK_OMITTED,
+    hook_key_presence: list[bool] | None = None,
+    **kw: Any,
+) -> tuple[Any, Client, Tools]:
     client, tools = Client(script), Tools()
-    extra = {"inner_loop_hook": hook} if hook is not None else {}
+    extra = {} if hook is _HOOK_OMITTED else {"inner_loop_hook": hook}
+    if hook_key_presence is not None:
+        hook_key_presence.append("inner_loop_hook" in extra)
     loop = AgenticLoop(
         llm_client=client, tool_executor=tools, max_iterations=kw.pop("max_iterations", 20),
         **extra, **kw,
@@ -69,10 +77,24 @@ def _shape(client: Client) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_default_off_loop_kwargs_and_request_bodies_byte_identical() -> None:
-    _, absent, _ = await _run([fetch(10), answer()])
-    _, explicit_none, _ = await _run([fetch(10), answer()], hook=None)
+    hook_key_presence: list[bool] = []
+    absent_result, absent, absent_tools = await _run(
+        [fetch(10), answer()], hook_key_presence=hook_key_presence,
+    )
+    explicit_none_result, explicit_none, explicit_none_tools = await _run(
+        [fetch(10), answer()], hook=None, hook_key_presence=hook_key_presence,
+    )
+    assert hook_key_presence == [False, True]
     assert _shape(absent) == _shape(explicit_none)
-    assert all(ECONOMIC_MARKER not in (r.system_prompt or "") for r in absent.requests)
+    for attr in ("stopped_reason", "iterations", "total_tokens", "final_text", "token_source"):
+        assert getattr(absent_result, attr) == getattr(explicit_none_result, attr), attr
+    assert len(absent.requests) == len(explicit_none.requests) == 2
+    assert absent_tools.calls == explicit_none_tools.calls == ["http_fetch"]
+    assert all(
+        ECONOMIC_MARKER not in (request.system_prompt or "")
+        for client in (absent, explicit_none)
+        for request in client.requests
+    )
 
 
 @pytest.mark.asyncio

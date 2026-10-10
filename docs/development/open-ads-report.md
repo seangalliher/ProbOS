@@ -319,9 +319,6 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1270` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `AD-1270` — code is in history but [#1324](https://github.com/seangalliher/ProbOS/issues/1324) is still open.
 - `AD-1276` — code is in history but [#1330](https://github.com/seangalliher/ProbOS/issues/1330) is still open.
-- `AD-1321` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
-- `AD-1322` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
-- `AD-1323` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `BF-063` — collision: 2 issues each lead with this number: [#3](https://github.com/seangalliher/ProbOS/issues/3), [#135](https://github.com/seangalliher/ProbOS/issues/135).
 - `BF-125` — collision: 2 issues each lead with this number: [#28](https://github.com/seangalliher/ProbOS/issues/28), [#29](https://github.com/seangalliher/ProbOS/issues/29).
 - `BF-126` — collision: 2 issues each lead with this number: [#33](https://github.com/seangalliher/ProbOS/issues/33), [#133](https://github.com/seangalliher/ProbOS/issues/133).
@@ -367,8 +364,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1239 head-shaped line yielded no AD/BF token
-PROGRESS.md:1245 head-shaped line yielded no AD/BF token
+PROGRESS.md:1231 head-shaped line yielded no AD/BF token
+PROGRESS.md:1237 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token
