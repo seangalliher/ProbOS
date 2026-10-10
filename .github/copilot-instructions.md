@@ -303,6 +303,7 @@ When asked to draft implementation prompts for Claude Code sessions:
 - Follow the pattern: "Phase X, Step Y: [title]. Implement [specific thing] in [specific file]. It should [behavior]. Wire it from [caller]. Add tests in [test file]. Do not change [boundaries]."
 - **Every build prompt must include this line in its acceptance criteria:** "Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`."
 - **Verify all references against the live codebase before marking a prompt ready.** Never draft from memory — always grep/read the actual code. Check: (1) import paths exist, (2) constructor/function signatures match (parameter names, types), (3) interface patterns match reality (e.g. `_emit_event_fn` callable, not `event_bus.emit()`), (4) startup wiring location is correct (check which `startup/*.py` module has the analogous pattern), (5) enum vs string constants, casing. AD-566a lesson: 4 would-break-build errors from assumed patterns.
+- **Prompts from the Claude Architect (split workflow, see `CLAUDE.md`):** a prompt in `prompts/` whose header carries `**Drafted by:** \`claude-architect\`` (or `**Revised by:**`) and a dated "Verified Against Codebase" section came from the Claude Code Architect and is build-ready. Build it rather than redrafting it, keep its provenance line, and route Builder hard stops back to the Captain for `claude-architect` triage.
 
 ### AD Numbering — Hard Rule
 
