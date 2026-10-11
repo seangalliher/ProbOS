@@ -217,7 +217,9 @@ Both domains remain opt-in extras to the original five-domain snapshot. The exis
 
 **R2 delivery correction:** the loop retains the exact admitted string and a strong output-object reference per invocation, clearing both before every presentation attempt. Successful optional queries use that text through a shallow temporary result replacement into the existing converter, without a third raw serialization. Original result/hook/metadata identity is preserved; invalid retention fails explicitly and old-only/other-tool paths stay unchanged. The omission notice now states the retrieval limitation to the model. Parent-retained affected and existing-presentation validation: **354 passed**.
 
-### AD-1207 OPEN -- Read-only Bridge fault visibility (ordinary implementation candidate)
+### AD-1207 -- Read-only Bridge fault visibility
+
+**Status (2026-10-11):** SHIPPED in PR #1405 (merge `91819953`); #1151 and #1152 are closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-19. **Existing issue:** #1152; #1153 acceptance verification. **Decision:** Implement parent-ratified Option 1 (comment 5746274610): authenticated list/detail router, component-owned bounded polling and the existing BridgeSection. No allocation or new service/event/config/store. The reviewed #1151 commit is retained; its interrupted standalone gate is not wave validation.
 
@@ -229,7 +231,9 @@ Faults follow Approvals and precede command stations, without competing pulse, b
 
 **Candidate evidence:** 496 combined Python cases passed; 45 new actual-component cases passed, including interactive executed-backend replay, plus 90 unchanged approval-consumer cases. TypeScript no-emit and four isolated browser checks passed. The continuous replay verifies one fake GitHub POST, durable receipt, unchanged lifecycle, no internal repair and reuse after restart/closure/recurrence; historical BF-715 data is not new launch-origin evidence. Old #1151 tests/fixture and approval assertions are unchanged. Parent owns independent review, staging new files for canonical preflight, freeze/commit, one fresh whole-wave full gate/PRCI and verified closure. [Contract and remaining limits](docs/development/fault-visibility.md).
 
-### AD-1206 OPEN -- Captain-approved fault reports become GitHub issues (ordinary implementation candidate)
+### AD-1206 -- Captain-approved fault reports become GitHub issues
+
+**Status (2026-10-11):** SHIPPED in PR #1405 (merge `91819953`); #1151 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-19. **Existing issue:** #1151. **Decision:** Implement the parent-ratified inline approval contract, four finalization amendments, bounded R1 corrections, existing-root store declaration and R2 config alignment, without allocating a new AD. **Status:** R1 and R2 corrections implemented with bounded validation passed; independent delta review, final freeze, canonical full gate, normal PR/CI, merge and verified closure remain parent-owned.
 
@@ -251,7 +255,9 @@ Reports rebuild useful evidence from the persisted fault and readable trace rath
 
 **Current R1 evidence (candidate only):** 1,045 combined Python cases passed, including 326 owner cases (131 store, 195 consumer), all 13 ratified adjacent families and four lifecycle cases; 11 config pins passed (one facade plus ten RepairConfig, 229 unrelated cases deselected); 72 Vitest cases and TypeScript no-emit passed. All seven standalone cheap gates passed, including inventory of 10 declarations/57 modules with all 48 remaining undeclared modules already baselined. In-memory compilation passed 2,433 tracked Python files. Six declaration/registry cases passed; a single absent-declaration control failed at its intended assertion and restoration passed again. Counts overlap. Combined validation asserted 284 ProbOS and 28 test/helper origins and unchanged bytes for all 26 paths. No additional old assertion/golden/baseline change, real credential/HTTP operation, log/JUnit artifact, staging, commit or canonical release gate was performed by this completion. Parent retains re-review and release authority. See [approved fault reporting](docs/development/approved-fault-reporting.md).
 
-### AD-1205 OPEN -- Systemic tool-fault observation (ordinary implementation candidate)
+### AD-1205 -- Systemic tool-fault observation
+
+**Status (2026-10-11):** SHIPPED in PR #1404 (merge `690520fe`); #1150 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-19. **Existing issue:** #1150. **Decision:** Parent-ratified bounded observer composed into the existing fault store, plus the compatible-carrier, exact-signature-test, R1 and narrow R2 repair amendments; no new AD allocation. **Status:** R2 verified the original three R1 repairs and blocked a path-sensitive diagnostic-classification seam. The authorized correction is implemented and final focused validation is green; parent re-review/release remain pending.
 
@@ -275,7 +281,9 @@ Diagnostic filing reserves before awaiting, is at most one attempt per signature
 
 **Final R2 selection:** **3,767 passed, 0 failures/errors/skips**, across the retained 66-file selection with unchanged documented limits. The AD-1205 owners contain 322 cases (91 observer, 231 production-path), and both R2-added executable classifier statements were covered. All 582 ProbOS and 73 test/helper origins were candidate-local; the 18-file candidate was unchanged during the run. Artifacts: `logs/gates/ordinary-1150-r2-final-focus-20260919T123004792.*`; JUnit SHA-256 `070a9fad451557715b174e2b90e6f4f04f8c9903acd057aba940f0bed787e04a`. One dependency deprecation warning remains. Frozen index `d3fd649ec4831b4501a2fe4c1fc92b296779a087` is unchanged. Earlier evidence is retained; independent re-review and all canonical/release steps remain parent-owned.
 
-### AD-1152 OPEN -- Agentic event correlation and token provenance (ordinary candidate; focused validation green)
+### AD-1152 -- Agentic event correlation and token provenance
+
+**Status (2026-10-11):** SHIPPED in PR #1400 (merge `f55c60de`); #1079 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1079. **Decision:** Parent-approved Option 1; no new AD allocation. **Status:** Implemented within the approved paths; the same combined focused selection is green after parent-authorized configuration bookkeeping repair. Independent review and release validation remain pending.
 
@@ -289,7 +297,9 @@ Activation across startup-owned consumers requires restart. The event-neutral se
 
 **Bookkeeping repair:** Parent authorized the measured census/header update and the existing facade test's strict field-definition expectation from 1,785 to 1,786, with a succinct AD-1152 reason and every other assertion retained. The census records 429 booleans: 204 default-False, 225 default-True, 85 armed and 119 never armed. All existing configuration checks passed. The structural audit proved that only the appended False leaf, its two dependent schema digests, the canonical dump digest and two +1 counts changed in the facade; removing the leaf restores the exact base default digest. The profile change is one unarmed product-feature row plus consequential census bookkeeping; the 170 frozen rows, old flags, profile activation, historical notes and admission rules are unchanged. The pinned ledger snapshot is unchanged. Independent review, canonical preflight/full gate, commit, push, release and verified closure are not claimed.
 
-### AD-1244 -- Structured criterion verdicts (ordinary implementation candidate)
+### AD-1244 -- Structured criterion verdicts
+
+**Status (2026-10-11):** SHIPPED in PR #1399 (merge `7dd95422`); #1237 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1237. **Status:** Implemented and focused-tested; independent review and release validation remain pending.
 
@@ -303,7 +313,9 @@ Both verdict dataclasses append optional typed criteria. Absence remains distinc
 
 **Measured implementation evidence:** The paired focused selection passed 1,065 cases, comprising the 843 unchanged existing selectors and 222 new cases (158 AD-1244, 64 AD-1245). Real isolated stores and scripted providers exercise named-gap correction, once-only resolved-refusal attribution, checkpoint restart, API projection and persisted episode reconstruction. These results establish deterministic contracts, not external-model judgement quality. They do not attest a canonical full gate, commit, push or issue closure.
 
-### AD-1245 -- Structural assessment maps to explicit abstention (ordinary implementation candidate)
+### AD-1245 -- Structural assessment maps to explicit abstention
+
+**Status (2026-10-11):** SHIPPED in PR #1399 (merge `7dd95422`); #1238 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1238. **Status:** Implemented and focused-tested; independent review and release validation remain pending.
 
@@ -9423,7 +9435,9 @@ production-consumer crossings, scoped adversarial review and a current canonical
 gate. Planning status does not attest those results. Verify all changes comply
 with the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1191 OPEN -- Delegated invocation evidence (ordinary implementation candidate)
+### AD-1191 -- Delegated invocation evidence
+
+**Status (2026-10-11):** SHIPPED in PR #1401 (merge `3df0f351`); #1128 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1128. **Decision:** Parent-selected Option 1, actual current-run producer observations with explicit parent transcript delivery. No new AD allocation. **Status:** Implemented and focused-tested; independent review and release validation remain pending.
 
@@ -9439,7 +9453,9 @@ The strict, frozen envelope bounds claims to one assertion plus eight findings, 
 
 **Limits and ownership:** This is implementation-stage evidence, not external-model factual quality, independent review, canonical preflight/full-gate, release or verified closure. The parent owns those remaining steps. No commit or push was made. Existing tests, tool schemas/descriptions, configuration, goldens, census/facade and pinned ledger snapshot remain unchanged. No #1127 budget, recursion/permission/consensus policy, UI, persistence migration, new I/O, new LLM call or Supervised workflow is included. Ordinary Git rollback requires no migration. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1200 OPEN -- Hierarchical repository instructions (ordinary implementation candidate)
+### AD-1200 -- Hierarchical repository instructions
+
+**Status (2026-10-11):** SHIPPED in PR #1402 (merge `31a9c2f9`); #1137 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1137. **Decision:** Execute the parent-approved, ordinary-Architect-revalidated Option 1; no new AD or footprint expansion. **Status:** Implementation and focused validation only. Independent review and release validation remain pending.
 
@@ -9467,7 +9483,9 @@ The loop derives one effective prompt from the unchanged governance base before 
 
 **AD-1200 R2 logging and compatibility.** Directly connected warnings no longer log provider retry headers, malformed tool names, upstream errors, exception details or invalid token counts; parsing, returned errors/names and retry timing remain unchanged. Instruction-free requests remain byte-identical even when private retention counters advance. The amended focused selection passed **635 tests, 4 existing skips**, including 192 AD-1200 cases, with 247 intended-source imports. Durable evidence: `logs/gates/ordinary-1137-r2-focused-20260918T134348966.*` (JUnit SHA-256 `225dec92b2958a9f56e24ee46a52ed353e69f12699c6d9e05f9761ca4a8eac9a`). The original golden's Windows/POSIX fixture-path normalization gap was empirically demonstrated and corrected in the test helper only; the unchanged golden plus three data-sensitive portability controls passed. No baseline was regenerated. Fresh independent review and canonical/hosted gates remain required.
 
-### AD-1187 OPEN -- Governed agent work pull (ordinary implementation candidate)
+### AD-1187 -- Governed agent work pull
+
+**Status (2026-10-11):** SHIPPED in PR #1403 (merge `0ae79d95`); #1124 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-18. **Existing issue:** #1124. **Authority:** Parent-selected ordinary Architect Option 1, supplemented by the [approved presentation-contract amendment](https://github.com/seangalliher/ProbOS/issues/1124#issuecomment-5738202045). No new AD allocation. **Status:** Implementation candidate; independent review and release validation remain parent-owned.
 
@@ -9479,7 +9497,9 @@ The presentation amendment preserves existing caps rather than raising or exempt
 
 See [publication, authority, projection, replay and rollback contracts](docs/development/agent-work-pull.md). No configuration, base result fields, tool-call adapter, registry/executor, storage protocol, REST/UI, old golden or pinned ledger snapshot changes are part of this decision. Validation evidence is reported in the execution conversation; it is not a canonical full-gate receipt, commit, release or issue-closure claim. The parent owns those remaining steps.
 
-### AD-1190 OPEN -- Delegation-tree aggregate budget (ordinary implementation candidate)
+### AD-1190 -- Delegation-tree aggregate budget
+
+**Status (2026-10-11):** SHIPPED in PR #1412 (merge `164e575b`); #1127 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-23. **Existing issue:** #1127. **Decision:** Execute the orchestrator-verified build contract, taking the top-ranked option for each of Q1-Q7; AD-1190 was already allocated to #1127, so no number is allocated. **Status:** Implementation candidate; independent review, the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9497,7 +9517,9 @@ See [publication, authority, projection, replay and rollback contracts](docs/dev
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. No persistence, schema, event, API, UI, frozen delegation-evidence envelope, tool-schema golden or `config/system.yaml` change is included. An ordinary Git revert needs no migration. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1135 OPEN -- `probos setup` provider wizard (ordinary implementation candidate)
+### AD-1135 -- `probos setup` provider wizard
+
+**Status (2026-10-11):** SHIPPED in PR #1413 (merge `096dbef7`); #1054 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-23. **Existing issue:** #1054. **Decision:** Execute the orchestrator-verified build contract, taking the top-ranked option for each of Q1-Q8 as amended by B1-B9; AD-1135 was already allocated to #1054, so no number is allocated. **Status:** Implementation candidate; independent review, the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9535,7 +9557,9 @@ See [publication, authority, projection, replay and rollback contracts](docs/dev
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. There is no config field, no env read in the config loader, and no loader, LLM client, doctor, HXI, dependency or shipped `config/system.yaml` change. An ordinary Git revert needs no migration; users restore from the printed backup. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1189 OPEN -- Deferred tool schemas in the agentic loop (ordinary implementation candidate)
+### AD-1189 -- Deferred tool schemas in the agentic loop
+
+**Status (2026-10-11):** SHIPPED in PR #1415 (merge `2d4bcada`); #1126 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-24. **Existing issue:** #1126. **Decision:** Execute the orchestrator-verified build contract, taking the top-ranked option for each of Q1-Q10 as amended by A1-A7; AD-1189 was already allocated to #1126, so no number is allocated. **Status:** Implementation candidate; independent review, the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9587,7 +9611,9 @@ MEAS-1 to MEAS-3 assert that the rich offer presents at most half its full bytes
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. Rollback is setting the threshold to 0, or leaving it unset, under which every model request matches a digest captured from unmodified base source (OFF-1), no arming is attempted and no AD-1189 warning is logged (OFF-5), and `tool_manifest` is neither imported nor registered (`logs/issue1126/m5b_probe_off_import_r1.log`); an ordinary Git revert needs no migration, because nothing persists across runs or turns. No `config/system.yaml`, loop, LLM client, serializer, retriever, MCP, crew-verifier, fault-report, AD-1248 renderer, persistence, persisted-schema, event, API or UI change is included, and promotion waits on AD-1186 Ship Trials (#1123). Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1195 OPEN -- Event persistence contract: what events.db can answer
+### AD-1195 -- Event persistence contract: what events.db can answer
+
+**Status (2026-10-11):** SHIPPED in PR #1416 (merge `044aab62`); #1132 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-24. **Existing issue:** #1132. **Decision:** Execute the orchestrator-verified build contract for the Captain's option (c), taking the top-ranked option for each of Q1-Q9 as amended by A1, A2 and A3; AD-1195 was already allocated to #1132, so no number is allocated. **Status:** Implementation candidate; independent review, the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9684,7 +9710,9 @@ On the A2 source (`logs/issue1132/r2_mut_run_b1.log` and `_b2.log`, with the sam
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. The detector-4 amendment is the contract's Appendix A, which the orchestrator applies to the local audit instrument outside git; no `prompts/audit-*.md` file is added. There is no schema, hash, index, retention, prune, config field, `config/system.yaml`, `query_governed`, HTTP API, HXI, AD-1224, AD-1265 or AuditLog change, and no migration or backfill; the one EventLog signature change is `query`'s keyword-only `exclude_category`, whose default leaves every existing caller's SQL unchanged. An ordinary Git revert needs no data migration: the routed rows and drop markers are ordinary rows in category `event_type`, which nothing used before this change. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1246 OPEN -- A long run_python execution promotes instead of hitting the inline cap
+### AD-1246 -- A long run_python execution promotes instead of hitting the inline cap
+
+**Status (2026-10-11):** SHIPPED in PR #1418 (merge `f8085821`); #1241 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-25. **Existing issue:** #1241. **Decision:** Execute the orchestrator-verified build contract, taking the top-ranked option for Q1-Q4 as amended by A-1 to A-4; AD-1246 was already allocated to #1241, so no number is allocated. **Status:** Implementation candidate; independent review, the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9718,7 +9746,9 @@ On the A2 source (`logs/issue1132/r2_mut_run_b1.log` and `_b2.log`, with the sam
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. Rollback is leaving `execution.max_runtime_seconds` at 0, under which every surface takes today's path and the model-facing text is byte-identical; an ordinary Git revert needs no migration, because nothing persists. There is no `config/system.yaml`, `turn_promotion.py`, `delegate_task_tool.py`, agentic-loop, tool-executor, tool-registry, audit-module, golden, fixture, oracle-digest, EventType, API or UI change, and nothing calls `create_task` or `ensure_future`. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1208 OPEN -- A DM agentic turn is bounded by what it spends and by trust, and tier-1 steps stop counting
+### AD-1208 -- A DM agentic turn is bounded by what it spends and by trust, and tier-1 steps stop counting
+
+**Status (2026-10-11):** SHIPPED in PR #1423 (merge `bf596520`); #1154 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-25. **Existing issue:** #1154. **Decision:** Execute the orchestrator-verified build contract as amended by A-1, taking the top-ranked option for Q1-Q10; AD-1208 was already allocated to #1154, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9755,7 +9785,9 @@ On the A2 source (`logs/issue1132/r2_mut_run_b1.log` and `_b2.log`, with the sam
 
 **Ownership and rollback:** This records an implementation candidate, not independent review, a canonical gate, commit, release or verified closure; the parent owns those steps. Rollback is leaving `dm_agentic.token_budget` unset, under which the DM turn imports nothing new, reads no trust and passes nothing new to the executor; an ordinary Git revert needs no migration, because nothing persists. There is no `config/system.yaml`, `continue_or_ask.py`, `turn_promotion.py`, events, golden or fixture change (`git diff` over them is empty), and nothing new calls `create_task` or `ensure_future`.
 
-### AD-1213 OPEN -- The chain of command reaches the approval path
+### AD-1213 -- The chain of command reaches the approval path
+
+**Status (2026-10-11):** SHIPPED in PR #1425 (merge `740017b7`); #1170 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-25. **Existing issue:** #1170. **Decision:** Execute the Captain's 2026-08-06 decision recorded in #1170 through the orchestrator-verified build contract; AD-1213 was already allocated, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9777,7 +9809,9 @@ On the A2 source (`logs/issue1132/r2_mut_run_b1.log` and `_b2.log`, with the sam
 
 **Ownership and rollback:** Rollback is leaving `delegated_approvals_enabled` off; an ordinary Git revert needs no migration beyond an unused `approval_authority.db`. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1214 OPEN -- The Captain pre-clears one exact class of delegated decision
+### AD-1214 -- The Captain pre-clears one exact class of delegated decision
+
+**Status (2026-10-11):** SHIPPED in PR #1426 (merge `7fb21407`); #1171 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-26. **Existing issue:** #1171 (follows #1170, parent epic #1162). **Decision:** Execute the orchestrator-verified build contract as amended by A-1 to A-5; AD-1214 was already allocated to #1171, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9801,7 +9835,9 @@ On the A2 source (`logs/issue1132/r2_mut_run_b1.log` and `_b2.log`, with the sam
 
 **Ownership and rollback:** Rollback is leaving `decision_pre_clearance_enabled` off (a live kill switch: every decision notifies again without deleting records); an ordinary Git revert needs no migration beyond an unused `decision_pre_clearances.db`. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1250 OPEN -- Bounded tool output keeps detail before breadth; the joint search is declined
+### AD-1250 -- Bounded tool output keeps detail before breadth; the joint search is declined
+
+**Status (2026-10-11):** SHIPPED in PR #1427 (merge `56c1168a`); #1294 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-26. **Existing issue:** #1294. **Decision:** `render_tool_output` keeps its ordered search -- the per-leaf allowance first (BF-761), then the container ration at that allowance (BF-762) -- as a stated policy: under a tight budget it keeps each retained record whole before it keeps more records. The joint alternative from BF-762's review (#1220), lowering the allowance before calling a wider ration an overflow, is declined. AD-1250 was already allocated, so no number is allocated. **Status:** decision recorded and pinned; no production behaviour changes.
 
@@ -9817,7 +9853,9 @@ Five variants were measured against the ordered search over 36 payload shapes at
 
 **Ownership and rollback:** This records a decision candidate, not independent review, a canonical gate, commit or verified closure; the parent owns those steps. Rollback is reverting the commit; no production behaviour depends on it.
 
-### AD-1228 OPEN -- An agent is told when a declared condition becomes true, instead of polling for it
+### AD-1228 -- An agent is told when a declared condition becomes true, instead of polling for it
+
+**Status (2026-10-11):** SHIPPED in PR #1428 (merge `6a12c153`); #1201 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-26. **Existing issue:** #1201. **Decision:** Execute the orchestrator-verified build contract as amended by A-1 to A-9. AD-1228 was already allocated to #1201, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9845,7 +9883,9 @@ Five variants were measured against the ordered search over 36 payload shapes at
 
 **Ownership and rollback:** Rollback is leaving `standing_interests_enabled` off; nothing is constructed. An ordinary Git revert needs no migration beyond an unused `standing_interests.db`. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1229 OPEN -- An agent can read whether its own direct messages were delivered and answered
+### AD-1229 -- An agent can read whether its own direct messages were delivered and answered
+
+**Status (2026-10-11):** SHIPPED in PR #1430 (merge `9430bcd9`); #1202 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-26. **Existing issue:** #1202 (increment 1 of three). **Decision:** Execute the orchestrator-verified build contract as amended by A-1 to A-3. AD-1229 was already allocated to #1202, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9899,7 +9939,9 @@ Five variants were measured against the ordered search over 36 payload shapes at
 
 **Ownership and rollback:** Reverting the commit alone is not a safe rollback: it restores the old door, which runs an unauthenticated caller's `tasks/send`. Roll back by first setting `federation.a2a.enabled: false` (or closing the A2A port) and then reverting; a `system.yaml` that sets the two new keys still loads afterwards (unknown keys are ignored). Reverting BF-875 has the same property for the MCP server (`federation.mcp_server.enabled`), and BF-876 must be reverted first because it imports BF-875's helpers. An operator who enabled the A2A server must add `auth_token` and list any intents to expose, and a peer that calls it must present that token. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1137 OPEN -- The quickstart is a tested path, and `probos doctor` checks what `probos` would use
+### AD-1137 -- The quickstart is a tested path, and `probos doctor` checks what `probos` would use
+
+**Status (2026-10-11):** SHIPPED in PR #1436 (merge `cd3ccfba`); #1056 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-27. **Existing issue:** #1056. **Decision:** Execute the Architect's build contract (decisions D1 to D9, each its top-ranked option) and its amendments A-2, A-3, A-4 and A-5, which repair review rounds 1 to 4. AD-1137 was already allocated to #1056, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9947,7 +9989,9 @@ Five variants were measured against the ordered search over 36 payload shapes at
 
 **Ownership and rollback:** Reverting the commit restores the AD-801 doctor, and after that `probos doctor --config` is an argparse error again. No config key, persisted schema or stored data changes. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1156 OPEN -- Plan and execute modes for a one-to-one conversation
+### AD-1156 -- Plan and execute modes for a one-to-one conversation
+
+**Status (2026-10-11):** SHIPPED in PR #1437 (merge `b611c14c`); #1083 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-28. **Existing issue:** #1083. **Decision:** Execute the architect's bounded build contract: slice 1, with amendment A-1 folding in reply-tag gating, amendment A-2 holding every reply step to the conversation, treating an unreadable metadata column as held and keeping model text out of the guard's log, amendment A-3 running the reply's sanity-gate retry in plan mode, keeping what a held request contains from the steps after it, and keeping a plan-mode reply from being scored for trust, Hebbian weights and the divergence record, amendment A-4 marking a plan-mode turn's episode so that dreaming learns nothing from it, and holding an AD-1230 replay's answer and an AD-1165 promoted run's report to the reply's rule, amendment A-5 marking the CLI session's episode of a plan-mode turn, keeping a record dormant on a thread that is not one-to-one, and holding a plan-mode episode's text to 500 characters, and amendment A-6 sending the CLI session's turn on the thread its gate read, with the route's plan floor, holding in plan mode a turn whose thread cannot be resolved, deciding `/mode` on the thread's participants as they are when it runs, and keeping the notice's closing clause within that bound, amendment A-7 having the mode writer check, inside its transaction, that the thread's one participant is the agent `/mode` addressed, amendment A-8 binding the record to the agent it was set for, so that it governs only while that agent is the thread's one participant, and amendment A-9 naming the turn's agent in every read of its mode, so that a stored record decides a turn only for the agent it was set for, while that agent is the thread's one participant, and holds any other turn in plan mode. AD-1156 was already allocated to #1083, so no number is allocated. **Status:** Implementation candidate; the canonical gate, commit and verified closure remain parent-owned.
 
@@ -9969,7 +10013,9 @@ Five variants were measured against the ordered search over 36 payload shapes at
 
 **Residual risk.** The reviews of A-6, A-7 and A-8 each found one High defect, the same outcome by three routes, and A-7, A-8 and A-9 close them with tests that fail on the candidate before each and mutants those tests kill: `/mode execute` addressed to one agent approved execution for another. First, the handler checked on the route's copy that the thread's one participant was the agent addressed and the writer checked only that there was one, so an agent that replaced it between the two took the record and its next turn read execute (A-7; A-6 had recorded this as a Low residual, a record following its thread). Then, with the write closed, the record itself still followed its thread, so an agent that replaced the addressed one after the write read its approval, and a plan set for one agent held another (A-8: the record names the agent it was set for, and governs only while that agent is the thread's one participant). Then, with the record bound, the reads still named no agent, so a turn the route admitted for one agent, whose thread passed to another agent with an execute record before the route's reply gate read it, was offered every tool with the execute instructions, and the gate did not withhold (A-9: every read of a turn's mode names the turn's agent, and a stored record that governs no turn of that agent holds it in plan mode; A-8 had recorded the in-flight case as needing a roster change during the turn). The review of A-5 found two High defects, one Medium and one Low, and A-6 closes them with tests that fail on the A-5 candidate and mutants those tests kill: a CLI session turn whose default thread could not be resolved was offered every tool while the session marked its episode, because the agent's own lookup failed and it ran as without this feature; a participant who joined between the session's gate and the agent's turn sent the agent to a second, newly made default thread with no record; `/mode` status answered from the route's copy of the thread's participants, and `/mode execute` wrote a record on a thread that had just become a group; and a notice past the bound was cut at its end, losing the clause that none of it was sent. The review of A-4 found two High defects and one Low, and A-5 closes them with tests that fail on the A-4 candidate and mutants those tests kill: a CLI session turn that plan mode governed stored an unmarked successful episode, so dreaming credited the agent's trust from it; a thread converted to a group kept its record, and `/mode` there reported plan mode while the group's replies acted; and a notice that alone exceeded 500 characters was stored whole, past the episode's bound. The review of A-3 found one High and one Medium defect, and A-4 closes both with tests that fail on the A-3 candidate and mutants those tests kill: a plan-mode reply's episode was stored as a successful direct message, so dreaming strengthened Hebbian weights and credited trust from it, and its stored response, the first 500 characters of what the Captain was shown, could keep a held request as shown or lose the notice; and an AD-1230 replay that plan mode governed posted the answer's DM request and notebook entry as raw text, with no notice. A-4's own census found the same two gaps in an AD-1165 promoted run's report and episode, and closes them the same way. The review of A-2 found three High defects, and A-3 closes each with tests that fail on the A-2 candidate and mutants those tests kill: a sanity-gate retry on a plan-mode thread asked the agent again on its default thread, so the retry was offered every tool and wrote a file; what a held block contained still acted, because A-2 left the block in the reply for the allowed steps after it -- an artifact inside a held note or DM block was filed, a choice card inside a DM block was filed, a mesh read or a re-roll inside one ran, and a note inside a DM block was counted as a note; and the divergence check, allowed in plan mode, wrote trust, Hebbian weights and the divergence history from a plan-mode reply. The review of A-1 found three before them, which A-2 closed: a plan-mode reply could act through five channels beyond the four gated tags (High), a metadata column that did not decode read as "no mode" and restored every tool (High), and the guard's log line carried the model's tool id (Medium). Low: an AD-743 follow-up runs the agent on its default thread in every mode, and with agent modes off so does a sanity-gate retry (pre-existing; the retry keeps it so that off stays HEAD). A follow-up already running when `/mode plan` lands is not recalled: it runs the agent once on its default thread, under that thread's mode, and its reply is discarded without reaching the pipeline. With divergence detection on, a plan-mode reply is spoken in the default voice and leaves no divergence record. Without a proactive loop, execute mode leaves DM and notebook blocks where they are, while plan mode moves them before the notice. A tag that the default-off AD-934 re-roll re-introduces after the tag steps ran is shown as text and never acted on, in any mode (pre-existing). A one-to-one thread converted to a group by adding a participant keeps its record: the group's replies read no mode and act as they do at HEAD, a one-to-one turn sent there -- from an agent's panel with the thread's id, or in flight when the thread changed -- is held in plan mode (A-9; A-5 ran it as with no mode; the agent's default thread is a fresh one-to-one thread by then, A-6), `/mode` there says so and names the record, and the record governs again once the thread is one-to-one with the agent it was set for (A-5, A-8); a thread whose one participant is replaced by another agent keeps it the same way, and holds that agent's turns (A-9). Every read of a turn's mode names the turn's agent, so a thread that changes hands during a turn holds that turn rather than handing it another agent's mode (A-9, which resolves what A-8 recorded here and the review of A-8 reached through the route). The store is not locked across a turn, so each read decides on the participants it sees: a change after the agent's read and before the reply first reaches a step that could act holds the reply, when the route's gate reads again, and a later change applies from the Captain's next turn. An execute-mode session turn whose thread gains a participant before the agent runs is held in plan mode and told the record was not set for it there (A-9; before, it was offered every tool, as a group's turn was), and its episode is marked; so is a turn floored to plan mode on such a thread. The handler still checks the route's copy before the writer checks the thread, so `/mode plan` or `/mode execute` on a thread that became one-to-one with the agent addressed after the route read it is refused and must be sent again; the writer alone would accept it (A-7). Single-pass turns (vision, or the fallback after a loop failure) carry no mode block; they have no tools, and their replies are held like any other. The AD-272 decision cache ignores the mode, but it is default-off, and a cached reply is held. An AD-1230 held turn reads the mode when it replays, and runs in plan mode at least if it was dispatched in plan mode (A-3); its answer bypasses the pipeline and acts on no tag, and when plan mode governed the replay it is shown as a plan-mode reply is (A-4). A promoted run's report and episode follow the mode the run started in, so a `/mode plan` that lands while it runs does not change them. A refused call is disclosed as a tool failure under an unrecognised-tool label. A reply that says it did what plan mode held back ("A note was saved.") keeps those words, and the notice after them says what was held back. The room-todo prose seeding (AD-1085a), which no tag asks for, is withheld without a notice. A title-lock or meeting write on a thread whose metadata does not decode rewrites the column as an object without a record, which ends the hold (those writers' behaviour at HEAD; no ProbOS writer produces such a column), and the threads API shows `metadata: {}` for such a thread while its turns are held. A plan-mode turn reached from another surface is a separate turn whose answer that surface handles as before. From a channel, the federation bridge or the main chat's inline `@callsign`, the agent's own record of the turn is marked; the CLI session's own episode of it is marked too (A-5), and its answer is shown as the shell shows every answer, with nothing in it acted on in any mode; with the modes on, the session asks for the agent's default thread before it sends, and so creates it if the agent has none yet. Readers that display or recall an episode's outcome (`/memory`, introspection, the decomposer's recall context) show a plan-mode episode's as they show any direct message's, marker included. A decision that applies an AD-384 strategy credits the strategy to the Hebbian router as a success when the decision is made, before any reply exists, in every mode (pre-existing, recorded for AD-384's owner): it is not an episode's outcome, so dreaming's filter does not reach it, and a plan-mode turn can still earn that credit. **Left to other owners:** a typed mode route with `expected_revision` compare-and-set that binds approval to the viewed plan message, and `/mode` at the inline entry point, to the HXI consumer, #1362; DM todo population and an agent-facing execute-to-plan tool, to a follow-up.
 
-### AD-1194 OPEN -- Every capability-gap producer files through one AD-854 ladder
+### AD-1194 -- Every capability-gap producer files through one AD-854 ladder
+
+**Status (2026-10-11):** SHIPPED in PR #1441 (merge `cf13eb4f`); #1131 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-09-30. **Existing issue:** #1131. **Decision:** Execute the Architect's build contract and its normative design diff, taking the top-ranked option of each decision below. AD-1194 was already allocated to #1131, so no number is allocated.
 
@@ -10136,7 +10182,9 @@ Measured at `cf13eb4f` through the real pipeline and registration: (2.0, 2.0) as
 
 **Ownership and rollback:** A Git revert needs no migration. No column, config key or event is added. `TrustNetwork` gains one read-only method, and `trust_prior` defaults to `None`, which keeps every other pool's behaviour. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1196 OPEN -- did:probos identifiers are bound to Ed25519 keys, with rotation, revocation and compromise recovery
+### AD-1196 -- did:probos identifiers are bound to Ed25519 keys, with rotation, revocation and compromise recovery
+
+**Status (2026-10-11):** SHIPPED in PR #1447 (merge `b621d3ab`); #1133 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-01. **Existing issue:** #1133 (parent epic #1140). **Decision:** Execute the Architect's build contract, taking the top-ranked option of each question. AD-1196 was already allocated to #1133.
 
@@ -10169,7 +10217,9 @@ Measured at `cf13eb4f` through the real pipeline and registration: (2.0, 2.0) as
 
 **Ownership and rollback.** Disarm the flag to return every path to its legacy behaviour -- on a peer that includes latest-wins chain import, so a chain imported while disarmed replaces any key history it held; rows, blocks and keyring entries remain and are harmless.
 
-### AD-1197 OPEN -- federation envelopes are signed with the ship key and replay-protected
+### AD-1197 -- federation envelopes are signed with the ship key and replay-protected
+
+**Status (2026-10-11):** SHIPPED in PR #1449 (merge `15b6dfeb`); #1134 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-01. **Existing issue:** #1134 (parent epic #1140). **Decision:** Execute the Architect's build contract, taking the top-ranked option of each question. AD-1197 was already allocated to #1134.
 
@@ -10364,7 +10414,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback:** A Git revert needs no migration: no column, config key, event type or HTTP field is added. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1198 OPEN -- federation peers are admitted by configuration and pinned ship keys (slice 1 of 3)
+### AD-1198 -- federation peers are admitted by configuration and pinned ship keys (slice 1 of 3)
+
+**Status (2026-10-11):** SHIPPED in PR #1457 (merge `d4cf722d`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-01. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 1 of the Architect's build contract, taking the top-ranked option of each question, as re-based onto `376903a5` by the orchestrator's amendment A-1. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10420,7 +10472,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Revert the commit to restore import-time resolution. `probos serve` passes `data_dir` explicitly (`__main__.py`), so production resolution is unchanged either way.
 
-### AD-1198 slice 3a OPEN -- federation peers fetch attachments with signed requests and never hold this ship's crew-scope token (F-6)
+### AD-1198 slice 3a -- federation peers fetch attachments with signed requests and never hold this ship's crew-scope token (F-6)
+
+**Status (2026-10-11):** SHIPPED in PR #1460 (merge `d5094c17`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-03. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 3a of the Architect's build contract, taking the top-ranked option of each question. Slice 3 is split into 3a (attachment serving and fetch, F-6 and F-9; this entry) and 3b (A2A per-caller identity and the MCP disposition). AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10449,7 +10503,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Disarm `federation.peer_admission_enabled` to return the attachment surface to the crew-token GET and the bearer fetch. Nothing is persisted beyond AD-1197's replay rows, and the store schema is unchanged. Older code ignores `api_url`, because the models ignore unknown keys. A Git revert needs no migration. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1198 slice 3b OPEN -- the A2A server serves pinned peers as themselves, and every caller's tasks are its own
+### AD-1198 slice 3b -- the A2A server serves pinned peers as themselves, and every caller's tasks are its own
+
+**Status (2026-10-11):** SHIPPED in PR #1461 (merge `39287cb2`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-03. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 3b of the Architect's build contract, taking the top-ranked option of each question. Slice 3b follows slice 3a (attachment serving and fetch, merged in PR #1460) and is the last part of slice 3: per-caller identity on A2A `POST /a2a`, the shared-bearer disposition and the MCP disposition. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10511,7 +10567,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Revert the commit. Nothing persists and no configuration changes. Changes follow the Engineering Principles in `.github/copilot-instructions.md`.
 
-### AD-1198 slice 2a OPEN -- the armed identity exchange resynchronises a key-history gap from the fetched chain, and an agent transfers between two real ships
+### AD-1198 slice 2a -- the armed identity exchange resynchronises a key-history gap from the fetched chain, and an agent transfers between two real ships
+
+**Status (2026-10-11):** SHIPPED in PR #1466 (merge `1e7ed644`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-05. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 2a of the Architect's build contract, taking the top-ranked option of each question. Slice 2 is sub-sliced: 2a is the armed identity exchange, the resync of a key-history gap and the AD-443e/f two-process transfer trial; 2b (fork resolution and retroactive re-verification) and 2c (an audited, operator-only reset route) follow, each with its own contract. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10548,7 +10606,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Disarm `federation.peer_admission_enabled`: no exchange is built, the bridge's identity handlers answer `identity_registry not wired` again, and no resync starts. No configuration field, flag or store schema changes, so a Git revert needs no migration.
 
-### AD-1198 slice 2b-i OPEN -- a recovery signed by the committed recovery key takes precedence over a divergent held history, in the envelope hold and in identity.db
+### AD-1198 slice 2b-i -- a recovery signed by the committed recovery key takes precedence over a divergent held history, in the envelope hold and in identity.db
+
+**Status (2026-10-11):** SHIPPED in PR #1467 (merge `71ab0a77`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-06. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 2b-i of the Architect's build contract (`ordinary-opus55-1135s2b-contract.md`), taking the top-ranked option of each question. Slice 2b is sub-sliced: 2b-i is key-history continuity across a recovery event (AD-1196/1197 R-2) in both holds; 2b-ii re-checks stored incoming transfer certificates (AD-1196 R-8), takes the pin horizon (R-7) and adds a two-process proof of both; 2c, the audited reset route, is unchanged. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10581,7 +10641,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Disarm `federation.peer_admission_enabled`, as for slice 2a. No configuration field, flag or schema changes, so a Git revert needs no migration; to slice 2a's code a re-anchored hold is an ordinary hold.
 
-### AD-1198 slice 2c OPEN -- an operator-only, audited reset forgets one peer's held key history, so that its next envelope is a first contact under its current pin
+### AD-1198 slice 2c -- an operator-only, audited reset forgets one peer's held key history, so that its next envelope is a first contact under its current pin
+
+**Status (2026-10-11):** SHIPPED in PR #1469 (merge `04d446f6`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-06. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 2c of the Architect's build contract (`ordinary-opus55-1135s2c-contract.md`), taking the top-ranked option of each question. Slice 2c is not split. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10649,7 +10711,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** No configuration field, flag or schema changes, so a Git revert needs no migration.
 
-### AD-1198 slice 2b-ii OPEN -- every chain identity.db stores judges again the stored incoming transfer certificates its ship issued; one it no longer supports is marked, never deleted
+### AD-1198 slice 2b-ii -- every chain identity.db stores judges again the stored incoming transfer certificates its ship issued; one it no longer supports is marked, never deleted
+
+**Status (2026-10-11):** SHIPPED in PR #1471 (merge `ea22e6e3`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-07. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 2b-ii of the Architect's build contract (`ordinary-opus55-1135s2bii-contract.md`), taking the top-ranked option of each question. Slice 2b-ii is split: it is the re-check of stored incoming transfer certificates (AD-1196 R-8) and the decision on the pin horizon (R-7); the two-process proof of slice 2b-i's re-anchor and of this slice's marks is slice 2b-iii, test-only. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10680,7 +10744,9 @@ After its first slash command, its "approval" was a console prompt on the server
 
 **Ownership and rollback.** Disarm `federation.peer_admission_enabled`, as for slices 2a, 2b-i and 2c. A Git revert needs no migration: code without this slice never reads `transfer_marks`, and an identity.db that has it works there unchanged.
 
-### AD-1198 slice 2b-iii OPEN -- a recovery heals a held fork between two real processes: the resync moves both holds and marks the transfer accepted from the replaced branch (test-only)
+### AD-1198 slice 2b-iii -- a recovery heals a held fork between two real processes: the resync moves both holds and marks the transfer accepted from the replaced branch (test-only)
+
+**Status (2026-10-11):** SHIPPED in PR #1472 (merge `c16eb1cf`); #1135 is closed completed. The text below is the record as written at implementation time.
 
 **Date:** 2026-10-07. **Existing issue:** #1135 (parent epic #1140). **Decision:** Execute slice 2b-iii of the Architect's build contract (`ordinary-opus55-1135s2biii-contract.md`), taking the top-ranked option of each question. Slice 2b-iii is test-only: no file under `src/` changes. AD-1198 was already allocated to #1135, so no number is allocated.
 
@@ -10792,7 +10858,9 @@ After its first slash command, its "approval" was a console prompt on the server
 **Ownership and rollback.** No configuration field, schema, persisted state or wire change, so a Git revert needs no migration.
 
 
-## AD-1320 (2026-10-08), #1475 -- live spend-awareness notes for conversational agentic turns (implementation candidate, default OFF)
+## AD-1320 (2026-10-08), #1475 -- live spend-awareness notes for conversational agentic turns (default OFF)
+
+**Status (2026-10-11):** SHIPPED in PR #1486 (merge `ae79ddf0`); #1475 closed completed. The text below is the record as written at implementation time.
 
 **Decision.** `DmAgenticConfig.budget_awareness_enabled` (default false) and `budget_awareness_thresholds` (default `[0.5, 0.8]`, validated strictly ascending finite floats in (0, 1)) let an AgenticLoop request carry one short note once the turn's cumulative AD-1208 spend first reaches a band. Nothing is shown before the first band, and with the flag off every request is byte-identical to before.
 

@@ -1,6 +1,6 @@
 # Repository instructions (AD-1200 / #1137)
 
-Implementation candidate; independent review and release validation are pending.
+Shipped in PR #1402 (merge `31a9c2f9`); #1137 is closed completed.
 
 ## Authority and consumers
 

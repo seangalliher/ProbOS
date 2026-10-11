@@ -35,10 +35,10 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-11T16:58:18+00:00 at `cddcb9f6` | 2800 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-11T17:50:08+00:00 at `7733c1c7` | 2802 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-08-29T05:45:15+00:00 | 1331 issues, 916 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-10-11T17:50:08+00:00 | 1407 issues, 968 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,51 +46,37 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 68 | 23 | assigned, issue open, no shipped code |
+| `allocated-open` | 54 | 8 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
-| `retired` | 7 | 0 | abandoned, number **not** reusable |
-| `shipped` | 960 | 532 | code in history |
+| `retired` | 10 | 0 | abandoned, number **not** reusable |
+| `shipped` | 987 | 549 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-91 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+62 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
-| `AD-1250` | [#1294](https://github.com/seangalliher/ProbOS/issues/1294) | issue #1294 open, no code | AD-1250: a joint allowance/ration search retains 32 rows where the ordered search retains 13 |
-| `AD-1246` | [#1241](https://github.com/seangalliher/ProbOS/issues/1241) | issue #1241 open, no code | AD-1246: a long execution should promote, not be capped at 30 seconds |
+| `AD-1319` | [#1464](https://github.com/seangalliher/ProbOS/issues/1464) | issue #1464 open, no code | AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307) |
+| `AD-1313` | [#1365](https://github.com/seangalliher/ProbOS/issues/1365) | issue #1365 open, no code | AD-1313: Authentic digital visual language and spatial continuity for HXI work |
+| `AD-1312` | [#1366](https://github.com/seangalliher/ProbOS/issues/1366) | issue #1366 open, no code | AD-1312: Contextual crew, knowledge, and administration experience |
+| `AD-1311` | [#1364](https://github.com/seangalliher/ProbOS/issues/1364) | issue #1364 open, no code | AD-1311: Embodied co-presence and explicit multimodal session controls |
+| `AD-1310` | [#1361](https://github.com/seangalliher/ProbOS/issues/1361) | issue #1361 open, no code | AD-1310: Shared evidence and artifact handback on the collaboration canvas |
+| `AD-1309` | [#1362](https://github.com/seangalliher/ProbOS/issues/1362) | issue #1362 open, no code | AD-1309: Progressive collaboration intake and explicit conversation context |
+| `AD-1308` | [#1363](https://github.com/seangalliher/ProbOS/issues/1363) | issue #1363 open, no code | AD-1308: Spatial workspace host and semantic navigation across HXI views |
+| `AD-1307` | [#1360](https://github.com/seangalliher/ProbOS/issues/1360), [#1464](https://github.com/seangalliher/ProbOS/issues/1464) | issue #1360, #1464 open, no code | AD-1307: HXI spatial collaboration program - crew-first workspace and release contract |
+| `AD-1290` | [#1337](https://github.com/seangalliher/ProbOS/issues/1337) | issue #1337 open, no code | AD-1290: Elastic Scatter/Gather and Team Trials |
+| `AD-1289` | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | issue #1336 open, no code | AD-1289: Typed Mission Blackboard |
+| `AD-1288` | [#1335](https://github.com/seangalliher/ProbOS/issues/1335) | issue #1335 open, no code | AD-1288: Agent-Commissioned Team Lifecycle |
+| `AD-1287` | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | issue #1334 open, no code | AD-1287: Evidence-Bound Skill Qualification |
 | `AD-1240` | [#1239](https://github.com/seangalliher/ProbOS/issues/1239) | issue #1239 open, no code | AD-1240: offload large tool results to the workspace instead of destroying them |
-| `AD-1236` | [#1205](https://github.com/seangalliher/ProbOS/issues/1205) | issue #1205 open, no code | AD-1236: the install rung means enable a registered MCP server (implements #1172 decision B) |
-| `AD-1229` | [#1202](https://github.com/seangalliher/ProbOS/issues/1202) | issue #1202 open, no code | AD-1229: did the action land - closing the loop between an agent's action and its effect |
-| `AD-1228` | [#1201](https://github.com/seangalliher/ProbOS/issues/1201) | issue #1201 open, no code | AD-1228: a standing interest - an agent is told when ship state changes, instead of polling for it |
 | `AD-1225` | [#1193](https://github.com/seangalliher/ProbOS/issues/1193) | issue #1193 open, no code | AD-1225: an agent pays a full ~18K-token prompt to decide to say nothing |
-| `AD-1215` | [#1172](https://github.com/seangalliher/ProbOS/issues/1172) | issue #1172 open, no code | AD-1215: decide whether ProbOS needs its own extension model or should use plugins |
-| `AD-1214` | [#1171](https://github.com/seangalliher/ProbOS/issues/1171) | issue #1171 open, no code | AD-1214: pre-clear a class so routine decisions stop notifying |
-| `AD-1213` | [#1170](https://github.com/seangalliher/ProbOS/issues/1170) | issue #1170 open, no code | AD-1213: the chain of command does not reach the approval path |
-| `AD-1208` | [#1154](https://github.com/seangalliher/ProbOS/issues/1154) | issue #1154 open, no code | AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap |
-| `AD-1207` | [#1152](https://github.com/seangalliher/ProbOS/issues/1152), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1152, #1153 open, no code | AD-1207: nothing surfaces a fault the ship has found to the Captain |
-| `AD-1206` | [#1151](https://github.com/seangalliher/ProbOS/issues/1151), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1151, #1153 open, no code | AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer) |
-| `AD-1205` | [#1150](https://github.com/seangalliher/ProbOS/issues/1150), [#1153](https://github.com/seangalliher/ProbOS/issues/1153) | issue #1150, #1153 open, no code | AD-1205: fault detection is too narrow to see a defect that breaks everything |
-| `AD-1202` | [#1142](https://github.com/seangalliher/ProbOS/issues/1142) | issue #1142 open, no code | AD-1202: the HXI has no control primitives -- 478 controls styled inline, zero shared components |
-| `AD-1200` | [#1137](https://github.com/seangalliher/ProbOS/issues/1137) | issue #1137 open, no code | AD-1200: hierarchical AGENTS.md discovery for external repositories |
+| `AD-1202` | [#1142](https://github.com/seangalliher/ProbOS/issues/1142) | issue #1142 open, no code | AD-1202: Shared HXI controls - glass material, contextual behavior, and a complete Bridge exemplar |
 | `AD-1199` | [#1136](https://github.com/seangalliher/ProbOS/issues/1136) | issue #1136 open, no code | AD-1199: a typed human-claim lifecycle |
-| `AD-1198` | [#1135](https://github.com/seangalliher/ProbOS/issues/1135), [#1140](https://github.com/seangalliher/ProbOS/issues/1140) | issue #1135, #1140 open, no code | AD-1198: authenticated transport admission, gated on the existing two-node cluster |
-| `AD-1197` | [#1134](https://github.com/seangalliher/ProbOS/issues/1134), [#1140](https://github.com/seangalliher/ProbOS/issues/1140) | issue #1134, #1140 open, no code | AD-1197: sign canonical federation envelopes and add replay protection |
-| `AD-1196` | [#1133](https://github.com/seangalliher/ProbOS/issues/1133), [#1140](https://github.com/seangalliher/ProbOS/issues/1140) | issue #1133, #1140 open, no code | AD-1196: bind did:probos identifiers to Ed25519 keys, with rotation and revocation |
-| `AD-1195` | [#1132](https://github.com/seangalliher/ProbOS/issues/1132) | issue #1132 open, no code | AD-1195: an event persistence contract -- decide what events.db can answer |
-| `AD-1194` | [#1131](https://github.com/seangalliher/ProbOS/issues/1131) | issue #1131 open, no code | AD-1194: unify capability triage through AD-854 |
 | `AD-1193` | [#1130](https://github.com/seangalliher/ProbOS/issues/1130) | issue #1130 open, no code | AD-1193: conversational streaming |
-| `AD-1191` | [#1128](https://github.com/seangalliher/ProbOS/issues/1128) | issue #1128 open, no code | AD-1191: typed evidence from a delegated subtask |
-| `AD-1190` | [#1127](https://github.com/seangalliher/ProbOS/issues/1127) | issue #1127 open, no code | AD-1190: aggregate budget across a delegation tree |
-| `AD-1189` | [#1126](https://github.com/seangalliher/ProbOS/issues/1126) | issue #1126 open, no code | AD-1189: deferred tool schemas in swe_harness |
-| `AD-1187` | [#1124](https://github.com/seangalliher/ProbOS/issues/1124), [#1139](https://github.com/seangalliher/ProbOS/issues/1139) | issue #1124, #1139 open, no code | AD-1187: a governed agent-facing claim and discovery surface over AD-496 |
 | `AD-1186` | [#1123](https://github.com/seangalliher/ProbOS/issues/1123), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) | issue #1123, #1138 open, no code | AD-1186: Ship Trials -- a release catalog and policy over the existing evaluators |
-| `AD-1156` | [#1083](https://github.com/seangalliher/ProbOS/issues/1083) | issue #1083 open, no code | AD-1156: Plan/execute mode provider (MAF framing; supersedes the AD-1150 approach) |
-| `AD-1152` | [#1079](https://github.com/seangalliher/ProbOS/issues/1079) | issue #1079 open, no code | AD-1152: Agentic-loop span correlation (OpenTelemetry prerequisite) |
-| `AD-1137` | [#1056](https://github.com/seangalliher/ProbOS/issues/1056) | issue #1056 open, no code | AD-1137: Quickstart + Alpha→Beta getting-started stability (`probos doctor`) (Phase 35) |
 | `AD-1136` | [#1055](https://github.com/seangalliher/ProbOS/issues/1055) | issue #1055 open, no code | AD-1136: First-class chat channel adapter (finish Discord/Slack gateway) (Phase 24) |
-| `AD-1135` | [#1054](https://github.com/seangalliher/ProbOS/issues/1054) | issue #1054 open, no code | AD-1135: `probos setup` provider wizard — BYO OpenAI-compatible model (Phase 35) |
 | `AD-1134` | [#1053](https://github.com/seangalliher/ProbOS/issues/1053) | issue #1053 open, no code | AD-1134: PyPI release + lightweight install path (Phase 35) |
 | `AD-703` | [#479](https://github.com/seangalliher/ProbOS/issues/479) | issue #479 open, no code | AD-703: Starfleet Command — fleet-wide policy distribution across instances |
 | `AD-392` | — | mentioned by an authority, no code and no closure |  |
@@ -129,24 +115,9 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `BF-888` | — | a tracker head marks it open |  |
 | `BF-887` | — | a tracker head marks it open |  |
 | `BF-885` | — | a tracker head marks it open |  |
-| `BF-884` | — | a tracker head marks it open |  |
-| `BF-883` | — | a tracker head marks it open |  |
 | `BF-882` | — | a tracker head marks it open |  |
 | `BF-881` | — | a tracker head marks it open |  |
 | `BF-880` | — | a tracker head marks it open |  |
-| `BF-879` | — | a tracker head marks it open |  |
-| `BF-878` | — | a tracker head marks it open |  |
-| `BF-877` | — | a tracker head marks it open |  |
-| `BF-876` | — | a tracker head marks it open |  |
-| `BF-875` | — | a tracker head marks it open |  |
-| `BF-867` | — | mentioned by an authority, no code and no closure |  |
-| `BF-843` | [#1313](https://github.com/seangalliher/ProbOS/issues/1313) | issue #1313 open, no code | BF-843: BackupService is wired but never invoked — zero SQLite snapshots have ever been taken |
-| `BF-839` | [#1305](https://github.com/seangalliher/ProbOS/issues/1305) | issue #1305 open, no code | BF-839: sandbox scratch cleanup ownership needs a state machine, not flags |
-| `BF-838` | [#1304](https://github.com/seangalliher/ProbOS/issues/1304) | issue #1304 open, no code | BF-838: 22 of 49 declared databases are outside backup coverage, including schema_versions and four grant stores |
-| `BF-818` | [#1282](https://github.com/seangalliher/ProbOS/issues/1282) | issue #1282 open, no code | BF-818: the watch dispatch loop is started, repaired, and has no producer |
-| `BF-809` | [#1273](https://github.com/seangalliher/ProbOS/issues/1273) | issue #1273 open, no code | BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit |
-| `BF-741` | [#1200](https://github.com/seangalliher/ProbOS/issues/1200) | issue #1200 open, no code | BF-741: an agent's own false claim is the top recall hit for the question that produced it |
-| `BF-689` | [#1090](https://github.com/seangalliher/ProbOS/issues/1090) | issue #1090 open, no code | BF-689: an agent misattributes real records it retrieved correctly (read-path attribution confabulation) |
 | `BF-7` | — | mentioned by an authority, no code and no closure |  |
 | `BF-5` | — | mentioned by an authority, no code and no closure |  |
 
@@ -164,7 +135,10 @@ _(none)_
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
-| `AD-1188` | [#1125](https://github.com/seangalliher/ProbOS/issues/1125), [#1139](https://github.com/seangalliher/ProbOS/issues/1139) | issue #1125 closed as not planned, no code | AD-1188: orchestration-mode ablation rig |
+| `AD-1318` | [#1382](https://github.com/seangalliher/ProbOS/issues/1382) | issue #1382 closed as not planned, no code | AD-1318: Optional VS Code surface and Copilot-assisted strong-harness interoperability |
+| `AD-1317` | [#1380](https://github.com/seangalliher/ProbOS/issues/1380) | issue #1380 closed as not planned, no code | AD-1317: Strong Supervised Worker host adapter and immutable restart recovery |
+| `AD-1314` | [#1379](https://github.com/seangalliher/ProbOS/issues/1379) | issue #1379 closed as not planned, no code | AD-1314: ProbOS-hosted strong supervision harness program |
+| `AD-1188` | [#1125](https://github.com/seangalliher/ProbOS/issues/1125) | issue #1125 closed as not planned, no code | AD-1188: orchestration-mode ablation rig |
 | `AD-1150` | [#1068](https://github.com/seangalliher/ProbOS/issues/1068), [#1075](https://github.com/seangalliher/ProbOS/issues/1075), [#1083](https://github.com/seangalliher/ProbOS/issues/1083) | issue #1075 closed as not planned, no code | Epic: Agentic harness parity — loop conversation mechanics (AD-1146..AD-1150) |
 | `AD-1149` | [#1074](https://github.com/seangalliher/ProbOS/issues/1074) | issue #1074 closed as not planned, no code | AD-1149: Prompt caching / stable prefix reuse |
 | `AD-842` | [#817](https://github.com/seangalliher/ProbOS/issues/817), [#821](https://github.com/seangalliher/ProbOS/issues/821) | issue #821 closed as not planned, no code | AD-842: Per-agent tool grants in the ACM profile |
@@ -174,17 +148,17 @@ _(none)_
 
 ## Shipped
 
-**AD** (960): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1138-1148, 1151, 1153-1155, 1157-1185, 1192, 1201, 1203-1204, 1209-1212, 1216-1224, 1226-1227, 1230-1235, 1239, 1241-1245, 1247-1248, 1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1286, 1291-1305, 1315-1316, 1320-1325
+**AD** (987): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1135, 1137-1148, 1151-1185, 1187, 1189-1192, 1194-1198, 1200-1201, 1203-1224, 1226-1236, 1239, 1241-1248, 1250-1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1286, 1291-1306, 1315-1316, 1320-1325
 
-**BF** (532): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-688, 690-740, 742-808, 810-817, 819-837, 840-842, 844-866, 868-869, 871-873, 886
+**BF** (549): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-879, 883-884, 886
 
 ## Unaccounted — silent, **not** free
 
 Numbers below the ceiling that no authority mentions. The issue layer is a snapshot and audits allocate before writing code, so silence here is absence of evidence. Confirm against live issues before minting.
 
-**AD** (289): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272, 1287-1290, 1306-1314, 1317-1319
+**AD** (273): 2-18, 140-141, 154-227, 229-261, 275, 278-280, 285-292, 301, 303, 306-307, 310, 325-336, 356, 374, 420-422, 503-506, 531, 533, 535-537, 542, 544-549, 555, 559, 578, 624, 681, 684, 767-789, 814, 829-831, 844, 848-852, 957, 967-971, 973-974, 1020, 1039, 1056-1064, 1066-1067, 1090, 1096-1118, 1237-1238, 1249, 1252-1255, 1262-1264, 1266, 1268, 1272
 
-**BF** (333): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681, 870, 874
+**BF** (331): 1-3, 14-22, 26, 28, 38, 42, 45-48, 50-52, 54-56, 61-62, 70, 72-75, 77, 81, 87-98, 105, 107, 117, 119-122, 176, 180-182, 202, 205, 220-221, 327-330, 333-596, 681
 
 ## Inconsistencies — reported, deliberately not fixed
 
@@ -192,12 +166,10 @@ This generator observes the ledger; correcting an append-only history is a separ
 
 A *collision* below means two issues each **lead** with the identical number. Sub-allocations that share a base (`AD-423a`, `AD-423b`, `AD-423c`) and epics that name their children in the title are normal and are not counted.
 
-- `AD-272` — code is in history but [#1273](https://github.com/seangalliher/ProbOS/issues/1273) is still open.
 - `AD-443` — collision: 2 issues each lead with this number: [#42](https://github.com/seangalliher/ProbOS/issues/42), [#433](https://github.com/seangalliher/ProbOS/issues/433).
 - `AD-473` — collision: 2 issues each lead with this number: [#67](https://github.com/seangalliher/ProbOS/issues/67), [#435](https://github.com/seangalliher/ProbOS/issues/435).
 - `AD-474` — collision: 2 issues each lead with this number: [#68](https://github.com/seangalliher/ProbOS/issues/68), [#436](https://github.com/seangalliher/ProbOS/issues/436).
 - `AD-482` — collision: 2 issues each lead with this number: [#76](https://github.com/seangalliher/ProbOS/issues/76), [#434](https://github.com/seangalliher/ProbOS/issues/434).
-- `AD-496` — code is in history but [#1124](https://github.com/seangalliher/ProbOS/issues/1124) is still open.
 - `AD-529` — collision: 2 issues each lead with this number: [#103](https://github.com/seangalliher/ProbOS/issues/103), [#437](https://github.com/seangalliher/ProbOS/issues/437).
 - `AD-538b` — collision: 2 issues each lead with this number: [#26](https://github.com/seangalliher/ProbOS/issues/26), [#418](https://github.com/seangalliher/ProbOS/issues/418).
 - `AD-539c` — collision: 2 issues each lead with this number: [#106](https://github.com/seangalliher/ProbOS/issues/106), [#454](https://github.com/seangalliher/ProbOS/issues/454).
@@ -277,7 +249,6 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-841` — collision: 2 issues each lead with this number: [#816](https://github.com/seangalliher/ProbOS/issues/816), [#820](https://github.com/seangalliher/ProbOS/issues/820).
 - `AD-842` — collision: 2 issues each lead with this number: [#817](https://github.com/seangalliher/ProbOS/issues/817), [#821](https://github.com/seangalliher/ProbOS/issues/821).
 - `AD-843` — collision: 2 issues each lead with this number: [#818](https://github.com/seangalliher/ProbOS/issues/818), [#822](https://github.com/seangalliher/ProbOS/issues/822).
-- `AD-854` — code is in history but [#1131](https://github.com/seangalliher/ProbOS/issues/1131) is still open.
 - `AD-861` — collision: 2 issues each lead with this number: [#831](https://github.com/seangalliher/ProbOS/issues/831), [#1247](https://github.com/seangalliher/ProbOS/issues/1247).
 - `AD-909` — collision: 2 issues each lead with this number: [#872](https://github.com/seangalliher/ProbOS/issues/872), [#951](https://github.com/seangalliher/ProbOS/issues/951).
 - `AD-938` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
@@ -289,34 +260,21 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-985` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `AD-1138` — code is in history but [#1057](https://github.com/seangalliher/ProbOS/issues/1057) is still open.
 - `AD-1143` — code is in history but [#1057](https://github.com/seangalliher/ProbOS/issues/1057), [#1064](https://github.com/seangalliher/ProbOS/issues/1064) is still open.
-- `AD-1146` — code is in history but [#1068](https://github.com/seangalliher/ProbOS/issues/1068) is still open.
 - `AD-1166` — collision: 2 issues each lead with this number: [#1097](https://github.com/seangalliher/ProbOS/issues/1097), [#1197](https://github.com/seangalliher/ProbOS/issues/1197).
 - `AD-1170` — collision: 2 issues each lead with this number: [#1101](https://github.com/seangalliher/ProbOS/issues/1101), [#1257](https://github.com/seangalliher/ProbOS/issues/1257).
-- `AD-1174` — code is in history but [#1105](https://github.com/seangalliher/ProbOS/issues/1105) is still open.
 - `AD-1179` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
-- `AD-1179` — code is in history but [#1111](https://github.com/seangalliher/ProbOS/issues/1111) is still open.
-- `AD-1183` — code is in history but [#1118](https://github.com/seangalliher/ProbOS/issues/1118) is still open.
-- `AD-1185` — code is in history but [#1121](https://github.com/seangalliher/ProbOS/issues/1121), [#1138](https://github.com/seangalliher/ProbOS/issues/1138) is still open.
-- `AD-1192` — code is in history but [#1129](https://github.com/seangalliher/ProbOS/issues/1129) is still open.
-- `AD-1203` — code is in history but [#1153](https://github.com/seangalliher/ProbOS/issues/1153) is still open.
-- `AD-1204` — code is in history but [#1163](https://github.com/seangalliher/ProbOS/issues/1163) is still open.
-- `AD-1212` — code is in history but [#1166](https://github.com/seangalliher/ProbOS/issues/1166) is still open.
-- `AD-1216` — code is in history but [#1175](https://github.com/seangalliher/ProbOS/issues/1175) is still open.
-- `AD-1224` — code is in history but [#1190](https://github.com/seangalliher/ProbOS/issues/1190) is still open.
+- `AD-1185` — code is in history but [#1138](https://github.com/seangalliher/ProbOS/issues/1138) is still open.
+- `AD-1189` — the trackers disagree: deferred, shipped. Resolved as `shipped`.
+- `AD-1200` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `AD-1230` — collision: 2 issues each lead with this number: [#1203](https://github.com/seangalliher/ProbOS/issues/1203), [#1256](https://github.com/seangalliher/ProbOS/issues/1256).
-- `AD-1241` — code is in history but [#1216](https://github.com/seangalliher/ProbOS/issues/1216) is still open.
-- `AD-1242` — code is in history but [#1234](https://github.com/seangalliher/ProbOS/issues/1234) is still open.
-- `AD-1243` — code is in history but [#1236](https://github.com/seangalliher/ProbOS/issues/1236) is still open.
-- `AD-1244` — code is in history but [#1237](https://github.com/seangalliher/ProbOS/issues/1237) is still open.
-- `AD-1245` — code is in history but [#1238](https://github.com/seangalliher/ProbOS/issues/1238) is still open.
-- `AD-1256` — code is in history but [#1302](https://github.com/seangalliher/ProbOS/issues/1302) is still open.
-- `AD-1258` — code is in history but [#1308](https://github.com/seangalliher/ProbOS/issues/1308) is still open.
-- `AD-1259` — code is in history but [#1309](https://github.com/seangalliher/ProbOS/issues/1309) is still open.
-- `AD-1260` — code is in history but [#1310](https://github.com/seangalliher/ProbOS/issues/1310) is still open.
-- `AD-1261` — code is in history but [#1311](https://github.com/seangalliher/ProbOS/issues/1311) is still open.
 - `AD-1270` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `AD-1270` — code is in history but [#1324](https://github.com/seangalliher/ProbOS/issues/1324) is still open.
-- `AD-1276` — code is in history but [#1330](https://github.com/seangalliher/ProbOS/issues/1330) is still open.
+- `AD-1299` — code is in history but [#1352](https://github.com/seangalliher/ProbOS/issues/1352) is still open.
+- `AD-1300` — code is in history but [#1353](https://github.com/seangalliher/ProbOS/issues/1353) is still open.
+- `AD-1301` — code is in history but [#1354](https://github.com/seangalliher/ProbOS/issues/1354) is still open.
+- `AD-1302` — code is in history but [#1355](https://github.com/seangalliher/ProbOS/issues/1355) is still open.
+- `AD-1303` — code is in history but [#1356](https://github.com/seangalliher/ProbOS/issues/1356) is still open.
+- `AD-1304` — code is in history but [#1357](https://github.com/seangalliher/ProbOS/issues/1357) is still open.
 - `BF-063` — collision: 2 issues each lead with this number: [#3](https://github.com/seangalliher/ProbOS/issues/3), [#135](https://github.com/seangalliher/ProbOS/issues/135).
 - `BF-125` — collision: 2 issues each lead with this number: [#28](https://github.com/seangalliher/ProbOS/issues/28), [#29](https://github.com/seangalliher/ProbOS/issues/29).
 - `BF-126` — collision: 2 issues each lead with this number: [#33](https://github.com/seangalliher/ProbOS/issues/33), [#133](https://github.com/seangalliher/ProbOS/issues/133).
@@ -335,27 +293,10 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `BF-236` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
 - `BF-264` — collision: 2 issues each lead with this number: [#422](https://github.com/seangalliher/ProbOS/issues/422), [#636](https://github.com/seangalliher/ProbOS/issues/636).
 - `BF-623` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
-- `BF-687` — code is in history but [#1087](https://github.com/seangalliher/ProbOS/issues/1087) is still open.
-- `BF-701` — code is in history but [#1111](https://github.com/seangalliher/ProbOS/issues/1111) is still open.
-- `BF-706` — code is in history but [#1111](https://github.com/seangalliher/ProbOS/issues/1111) is still open.
 - `BF-707` — collision: 2 issues each lead with this number: [#1113](https://github.com/seangalliher/ProbOS/issues/1113), [#1312](https://github.com/seangalliher/ProbOS/issues/1312).
 - `BF-711` — code is in history but [#1138](https://github.com/seangalliher/ProbOS/issues/1138) is still open.
 - `BF-759` — collision: 2 issues each lead with this number: [#1217](https://github.com/seangalliher/ProbOS/issues/1217), [#1219](https://github.com/seangalliher/ProbOS/issues/1219).
-- `BF-779` — code is in history but [#1242](https://github.com/seangalliher/ProbOS/issues/1242) is still open.
-- `BF-790` — code is in history but [#1277](https://github.com/seangalliher/ProbOS/issues/1277) is still open.
-- `BF-794` — code is in history but [#1258](https://github.com/seangalliher/ProbOS/issues/1258) is still open.
-- `BF-795` — code is in history but [#1259](https://github.com/seangalliher/ProbOS/issues/1259) is still open.
-- `BF-803` — code is in history but [#1267](https://github.com/seangalliher/ProbOS/issues/1267) is still open.
-- `BF-811` — code is in history but [#1275](https://github.com/seangalliher/ProbOS/issues/1275) is still open.
-- `BF-813` — code is in history but [#1277](https://github.com/seangalliher/ProbOS/issues/1277) is still open.
-- `BF-814` — code is in history but [#1278](https://github.com/seangalliher/ProbOS/issues/1278) is still open.
-- `BF-817` — code is in history but [#1281](https://github.com/seangalliher/ProbOS/issues/1281) is still open.
-- `BF-824` — code is in history but [#1316](https://github.com/seangalliher/ProbOS/issues/1316) is still open.
-- `BF-840` — code is in history but [#1314](https://github.com/seangalliher/ProbOS/issues/1314) is still open.
-- `BF-844` — code is in history but [#1314](https://github.com/seangalliher/ProbOS/issues/1314) is still open.
-- `BF-846` — code is in history but [#1316](https://github.com/seangalliher/ProbOS/issues/1316) is still open.
-- `BF-858` — code is in history but [#1328](https://github.com/seangalliher/ProbOS/issues/1328) is still open.
-- `BF-861` — code is in history but [#1331](https://github.com/seangalliher/ProbOS/issues/1331) is still open.
+- `BF-804` — collision: 2 issues each lead with this number: [#1268](https://github.com/seangalliher/ProbOS/issues/1268), [#1350](https://github.com/seangalliher/ProbOS/issues/1350).
 
 ## Unparseable lines
 

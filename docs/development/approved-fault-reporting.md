@@ -2,8 +2,8 @@
 
 This is issue filing, not an autonomous repair loop. Approval creates or links a
 GitHub issue; it does not execute a harness, assign Copilot, update/reopen an
-issue, change source, or close the fault. The ordinary implementation candidate
-still requires parent-owned review and release gates.
+issue, change source, or close the fault. It shipped in PR #1405 (merge `91819953`);
+#1151 is closed completed.
 
 ## Configuration and authority
 

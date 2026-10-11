@@ -456,9 +456,10 @@ def classify(
     6. ``allocated-open``anything else that any authority mentions at all
 
     Step 4 deliberately outranks step 5, which is why **AD-1152 (#1079)**
-    resolves ``allocated-open``: DECISIONS.md line 244 says the OTel half was
+    resolved ``allocated-open`` when this ordering was written (it has since
+    shipped; #1079 is closed): DECISIONS.md line 244 said the OTel half was
     "deferred to AD-1152", but that sentence schedules the work, it does not
-    close the number, and issue #1079 is open and unretired. Either label
+    close the number, and issue #1079 was open and unretired. Either label
     forbids reuse, so the safety property does not depend on this ordering --
     only the label does.
     """

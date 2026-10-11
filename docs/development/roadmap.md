@@ -13,7 +13,7 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 
 **AD-1323 through AD-1325 (SHIPPED, OSS; 2026-10-10) / [#1478](https://github.com/seangalliher/ProbOS/issues/1478), [#1479](https://github.com/seangalliher/ProbOS/issues/1479), [#1480](https://github.com/seangalliher/ProbOS/issues/1480):** costed continue asks, agent-chosen exact model tiers under deterministic floors, and descriptive-only completion calibration shipped default OFF. The child issues are closed completed. Amendment 1 superseded the former three-file/generated-report blocker for the [#1473](https://github.com/seangalliher/ProbOS/issues/1473) epic acceptance closure by authorizing a pinned-snapshot report refresh; that refresh and its ledger check now pass. The acceptance closure shipped in [PR #1492](https://github.com/seangalliher/ProbOS/pull/1492) and #1473 is closed completed; no roadmap scope was added. See DECISIONS.md AD-1323, AD-1324 and AD-1325.
 
-**AD-1187 OPEN (2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** ordinary governed work-discovery/claim implementation candidate with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Independent review, canonical frozen gate and release remain parent-owned; this is not a shipped/closure entry.
+**AD-1187 (SHIPPED, OSS; 2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** governed work-discovery/claim implementation with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Shipped in [PR #1403](https://github.com/seangalliher/ProbOS/pull/1403); #1124 is closed completed.
 
 ## Strong Supervision Host (Withdrawn 2026-10-10)
 
@@ -533,9 +533,9 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
-| AD-1196 | Bind `did:probos` identifiers to Ed25519 keys, with rotation, revocation and compromise recovery -- implementation candidate (default-off `federation.identity_keys_enabled`) | [#1133](https://github.com/seangalliher/ProbOS/issues/1133) | 1 |
-| AD-1197 | Sign canonical federation envelopes with the ship key and add replay protection -- implementation candidate (default-off `federation.envelope_signing_enabled`, policy `sign` or `require`) | [#1134](https://github.com/seangalliher/ProbOS/issues/1134) | 1 |
-| AD-1198 | Admit federation peers by configuration and pinned ship keys, proven on the existing two-node cluster -- slice 1 of 3, implementation candidate (default-off `federation.peer_admission_enabled`, per-peer `pinned_public_key`); slice 3a: signed peer HTTP requests for attachment serving and fetch (`peers[].api_url`), closing F-6 -- implementation candidate; slice 3b: signed A2A requests from pinned peers, with trust and tasks scoped per caller -- implementation candidate; slice 2a: identity exchange with sender-bound imports, automatic resync of a key-history gap, the AD-443e/f two-process transfer trial -- implementation candidate | [#1135](https://github.com/seangalliher/ProbOS/issues/1135) | 1 |
+| AD-1196 | Bind `did:probos` identifiers to Ed25519 keys, with rotation, revocation and compromise recovery -- shipped (default-off `federation.identity_keys_enabled`) | [#1133](https://github.com/seangalliher/ProbOS/issues/1133) | 1 |
+| AD-1197 | Sign canonical federation envelopes with the ship key and add replay protection -- shipped (default-off `federation.envelope_signing_enabled`, policy `sign` or `require`) | [#1134](https://github.com/seangalliher/ProbOS/issues/1134) | 1 |
+| AD-1198 | Admit federation peers by configuration and pinned ship keys, proven on the existing two-node cluster -- slice 1 of 3, shipped (default-off `federation.peer_admission_enabled`, per-peer `pinned_public_key`); slice 3a: signed peer HTTP requests for attachment serving and fetch (`peers[].api_url`), closing F-6 -- shipped; slice 3b: signed A2A requests from pinned peers, with trust and tasks scoped per caller -- shipped; slice 2a: identity exchange with sender-bound imports, automatic resync of a key-history gap, the AD-443e/f two-process transfer trial -- shipped | [#1135](https://github.com/seangalliher/ProbOS/issues/1135) | 1 |
 
 #### Other Backlog Items
 

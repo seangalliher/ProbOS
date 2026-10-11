@@ -1,8 +1,6 @@
 # Governed agent work discovery and claim (AD-1187 / #1124)
 
-Status: ordinary implementation candidate. Independent review, canonical
-preflight/full gate and release remain parent-owned; this document does not
-announce issue closure.
+Status: shipped in PR #1403 (merge `0ae79d95`); #1124 is closed completed.
 
 ## Publication and availability
 
