@@ -126,6 +126,11 @@ ALLOWED_EXCEPTIONS = {
     # stdlib; importing ``elastic_team`` never imports the federation package
     # (pinned by tests/test_ad1286_elastic_team_contract.py, test #12(b)).
     ("cognitive/elastic_team.py", "probos.federation.ard.jcs"),
+    # AD-1299 S1a: the repair candidate hashes its identity with AD-1144's RFC 8785
+    # canonicaliser, the AD-1286 precedent above (DRY; no second canonical-JSON
+    # site). Lazy, function-level (``_canonicalize``); importing ``repair_candidate``
+    # never imports the federation package (tests/test_ad1299_s1a_repair_candidate.py #9).
+    ("cognitive/repair_candidate.py", "probos.federation.ard.jcs"),
 }
 
 

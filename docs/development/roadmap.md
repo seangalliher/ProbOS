@@ -482,22 +482,22 @@ The bounded Core Fabric pilot does not complete all Tier C or Tier D requirement
 
 #### ProbOS Self-Maintenance (AD-1299)
 
-**Planned, not implemented or activated.** A Utility-tier Engineering Maintenance
+**Planned, not implemented or activated. Rescoped 2026-10-11 to native owners.** A Utility-tier Engineering Maintenance
 Agent composes the existing fault/RepairBrief, Architect, Builder, QA, Red Team,
-trust, episodic, and self-modification systems. Independent Supervised Worker
-governance is reached through `SupervisedCampaignAdapter` v1; either the ProbOS
-coding harness or GitHub Copilot/GHCP executes the same campaign contract.
+trust, episodic, and self-modification systems. A campaign is a CrewSession
+parent WorkItem; each consequential step needs the Captain's approval bound to one candidate digest; either the ProbOS
+coding harness or GitHub Copilot/GHCP produces file changes from the same `BuildSpec` (dual-backend support is claimed only after a real GHCP run).
 Backend choice cannot change identity, authority, review, evidence, completion,
 promotion, or rollback. Repair, maintenance, and enhancement grants are separate.
-Use isolated worktrees and shadow validation, then independently approved
-immutable promotion, external health checks, and rollback; never patch the
+Use campaign worktrees and shadow validation, independent owned-step review bound to the gate-tested tree, then a Captain-invoked, out-of-process release controller for
+immutable promotion, health observation, and generation-checked rollback; never patch the
 active runtime in place. Full architecture and acceptance slices:
-[AD-1299](self-maintenance-architecture.md). One epic; existing owners retain
+[AD-1299](self-maintenance-architecture.md). Enforced: Captain decision per step and compare-and-set state; refused: evidence that contradicts the candidate in the facts checked; recorded, not refused: each evidence sha256 (a receipt's covers its raw bytes, a review set's only five projected review fields; a later change within that scope is detectable only against a retained earlier digest); not prevented: same-OS-identity writes. Delegated and autonomous grants are parked pending the Captain's D-B2 isolation decision. First slice: S1a (`prompts/ad-1299-s1a-repair-candidate.md`). One epic; existing owners retain
 their scope and no campaign is started by this entry.
 
 | AD | Title | Issue |
 |----|-------|-------|
-| AD-1299 | Governed self-maintenance: Utility agent and backend-neutral campaigns | [#1352](https://github.com/seangalliher/ProbOS/issues/1352) |
+| AD-1299 | Governed self-maintenance: Utility agent and native repair campaigns | [#1352](https://github.com/seangalliher/ProbOS/issues/1352) |
 
 #### Existing Programs
 
