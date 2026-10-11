@@ -11,7 +11,7 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 > pass flipped 27 entries that had drifted (AD-486, 510, 512, 520, 526, 543-549, 562,
 > 566, 567, 569, 571, 595, 597, 599, 601, 604, 607).
 
-**AD-1323 through AD-1325 (SHIPPED, OSS; 2026-10-10) / [#1478](https://github.com/seangalliher/ProbOS/issues/1478), [#1479](https://github.com/seangalliher/ProbOS/issues/1479), [#1480](https://github.com/seangalliher/ProbOS/issues/1480):** costed continue asks, agent-chosen exact model tiers under deterministic floors, and descriptive-only completion calibration shipped default OFF. The child issues are closed completed. Amendment 1 superseded the former three-file/generated-report blocker for the [#1473](https://github.com/seangalliher/ProbOS/issues/1473) epic acceptance candidate by authorizing a pinned-snapshot report refresh; that refresh and its ledger check now pass. Acceptance closure remains pending scoped adversarial review, commit, canonical gate, merge and verified closure; no roadmap scope is added. See DECISIONS.md AD-1323, AD-1324 and AD-1325.
+**AD-1323 through AD-1325 (SHIPPED, OSS; 2026-10-10) / [#1478](https://github.com/seangalliher/ProbOS/issues/1478), [#1479](https://github.com/seangalliher/ProbOS/issues/1479), [#1480](https://github.com/seangalliher/ProbOS/issues/1480):** costed continue asks, agent-chosen exact model tiers under deterministic floors, and descriptive-only completion calibration shipped default OFF. The child issues are closed completed. Amendment 1 superseded the former three-file/generated-report blocker for the [#1473](https://github.com/seangalliher/ProbOS/issues/1473) epic acceptance closure by authorizing a pinned-snapshot report refresh; that refresh and its ledger check now pass. The acceptance closure shipped in [PR #1492](https://github.com/seangalliher/ProbOS/pull/1492) and #1473 is closed completed; no roadmap scope was added. See DECISIONS.md AD-1323, AD-1324 and AD-1325.
 
 **AD-1187 OPEN (2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** ordinary governed work-discovery/claim implementation candidate with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Independent review, canonical frozen gate and release remain parent-owned; this is not a shipped/closure entry.
 
@@ -523,7 +523,7 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
-| AD-1286 | Elastic Team Contract - immutable team specs, durable slots, ephemeral attempts (implemented candidate 2026-10-10; inert until AD-1288) | [#1333](https://github.com/seangalliher/ProbOS/issues/1333) | 1 |
+| AD-1286 | Elastic Team Contract - immutable team specs, durable slots, ephemeral attempts (SHIPPED 2026-10-11, PR #1503; inert until AD-1288) | [#1333](https://github.com/seangalliher/ProbOS/issues/1333) | 1 |
 | AD-1287 | Evidence-Bound Skill Qualification - exact skill/model/tool/policy/eval profiles | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | 1 |
 | AD-1288 | Agent-Commissioned Team Lifecycle - governed provision, leases, recovery, teardown | [#1335](https://github.com/seangalliher/ProbOS/issues/1335) | 1 |
 | AD-1289 | Typed Mission Blackboard - claims, evidence, challenges, decisions, and dissent | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | 2 |
