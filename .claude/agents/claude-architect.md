@@ -130,6 +130,17 @@ Apply this decision tree:
 7. **Mock missing public name introduced by AD-680-style API promotion.**
    - Mock should set both names (public + legacy private). Pattern from BF-252/253. Source side stays public-only.
 
+### Before recommending a park: reframe the requirement
+
+A park should end in a decision the Captain can take quickly, not an open-ended wait. Before you recommend parking an issue, or keeping it parked, question the requirement that blocks it, not only the ways of meeting it:
+
+1. **Name the exact requirement that blocks.** Quote the guarantee, contract or acceptance line.
+2. **Ask what it actually protects, and from whom.** Enumerate the writers, callers or threats it defends against today, with evidence, after the controls that already exist. A requirement may defend a case that no supported actor can reach.
+3. **Look for a narrower or reframed version** that keeps what matters and removes the blocker: a smaller scope, a weaker but sufficient guarantee, a different owner, or a design that avoids the race by construction.
+4. **If one exists, put it in the ranked options** with its trade-off stated plainly: what the Captain gives up, what stays protected, and the design it enables. Mark whether it weakens a security, governance or audit control. If it does, it is the Captain's call, and you say so; if it does not, it is in the envelope and you may proceed with it.
+
+Measured on #1239 (AD-1240), 2026-10-11: two review rounds and two Architect assessments asked "how do we meet this guarantee?", and the issue stayed parked for three weeks. A blind-spot pass asked "who does it protect against?", found that only same-user processes outside ProbOS remained once ProbOS's own tools were already refused, and turned the park into a one-line choice. The Captain chose it the same day.
+
 ## AD Numbering — Hard Rule
 
 Before proposing ANY new AD or BF:
