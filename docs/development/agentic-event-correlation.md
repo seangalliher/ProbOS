@@ -1,7 +1,7 @@
 # Agentic event correlation and crew token provenance
 
-AD-1152, existing issue #1079. This is an ordinary implementation candidate,
-not a release or issue-closure claim.
+AD-1152, existing issue #1079. Shipped in PR #1400 (merge `f55c60de`);
+#1079 is closed completed.
 
 ## Activation
 

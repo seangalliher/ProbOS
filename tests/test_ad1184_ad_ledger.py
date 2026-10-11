@@ -243,14 +243,15 @@ def test_a_not_planned_closure_with_no_code_is_retired(
     assert state == "retired"
 
 
-def test_ad_1152_classifies_allocated_open_not_free(ledger: types.ModuleType) -> None:
-    """AD-1152 (#1079) is the canonical false-free number.
+def test_ad_1240_classifies_allocated_open_not_free(ledger: types.ModuleType) -> None:
+    """AD-1240 (#1239) is the canonical false-free number (retargeted from AD-1152).
 
     It is open, titled as real unfinished work, and carries no retirement
-    comment -- while `PROGRESS.md` line 9 still calls it the "next free" number
-    and `DECISIONS.md` line 244 says work was "deferred to" it. A tree scan
-    reads all of that as free. Verified twice: through the classifier against
-    the real committed authorities, and in the published artifact.
+    comment and no code, so a tree scan reads it as free. AD-1152 (#1079) held
+    this role until it shipped (#1079 closed completed, PR #1400) and its
+    trackers stopped calling it open. Verified twice: through the classifier
+    against the real committed authorities, and in the published artifact.
+    Retarget this at another open, code-less AD when AD-1240 ships.
     """
     local, _skipped, _sources = ledger.parse_local_authorities()
     snapshot = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
@@ -258,17 +259,17 @@ def test_ad_1152_classifies_allocated_open_not_free(ledger: types.ModuleType) ->
     git_tokens = (snapshot.get("git") or {}).get("tokens") or {}
 
     state, reason = ledger.classify(
-        local=local.get("AD-1152", []),
-        git_tokens=git_tokens.get("AD-1152", []),
-        issues=issues.get("AD-1152", []),
+        local=local.get("AD-1240", []),
+        git_tokens=git_tokens.get("AD-1240", []),
+        issues=issues.get("AD-1240", []),
     )
-    assert state == "allocated-open", f"AD-1152 classified {state}: {reason}"
-    assert "#1079" in reason
+    assert state == "allocated-open", f"AD-1240 classified {state}: {reason}"
+    assert "#1239" in reason
 
     published = _section(
         _REPORT.read_text(encoding="utf-8"), "Allocated and open"
     )
-    assert "`AD-1152`" in published
+    assert "`AD-1240`" in published
 
 
 # --------------------------------------------------------------------------
