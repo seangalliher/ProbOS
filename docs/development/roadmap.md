@@ -15,25 +15,25 @@ ProbOS doesn't just orchestrate agents — it gives them a civilization to come 
 
 **AD-1187 OPEN (2026-09-18) / [#1124](https://github.com/seangalliher/ProbOS/issues/1124):** ordinary governed work-discovery/claim implementation candidate with the approved actual-budget presentation amendment. [Contract](agent-work-pull.md). Independent review, canonical frozen gate and release remain parent-owned; this is not a shipped/closure entry.
 
-## Strong Supervision Host (In Progress)
+## Strong Supervision Host (Withdrawn 2026-10-10)
 
-The Captain-approved 2026-09-08 split prioritizes a usable GitHub Copilot/VS Code
-Supervised Worker plugin with explicit local-scoped assurance. The original strong
-vision is retained separately in [AD-1314/#1379](https://github.com/seangalliher/ProbOS/issues/1379)
-and [Supervised Worker #11](https://github.com/seangalliher/supervised-worker/issues/11).
-See [the host program](supervised-worker-host-program.md) for the full contract.
+The Captain withdrew the ProbOS integration with Supervised Worker on 2026-10-10:
+Supervised Worker is no longer in use, and ProbOS's native self-repair path is the
+way forward. The program [AD-1314/#1379](https://github.com/seangalliher/ProbOS/issues/1379)
+and [Supervised Worker #11](https://github.com/seangalliher/supervised-worker/issues/11)
+close as not planned. Crew self-repair continues under
+[AD-1299/#1352](https://github.com/seangalliher/ProbOS/issues/1352).
+[The host program](supervised-worker-host-program.md) is kept as a historical record.
 
-| AD | Scope | Owner | Status |
+| AD | Scope | Owner | Outcome |
 | --- | --- | --- | --- |
-| AD-1315 | Protected host authority and durable admission witness. | [#1381](https://github.com/seangalliher/ProbOS/issues/1381) | implemented candidate, default OFF (`protected_execution.enabled=false`); #1381 closed, OSS |
-| AD-1316 | Governed effect broker, correlation and reconciliation. | [#1383](https://github.com/seangalliher/ProbOS/issues/1383) | in progress, OSS |
-| AD-1317 | Versioned adapter, immutable activation/rollback and strong canary. | [#1380](https://github.com/seangalliher/ProbOS/issues/1380) | planned, OSS |
-| AD-1318 | Optional VS Code or equivalently governed Copilot-assisted surface. | [#1382](https://github.com/seangalliher/ProbOS/issues/1382) | planned, OSS |
+| AD-1315 | Protected host authority and durable admission witness. | [#1381](https://github.com/seangalliher/ProbOS/issues/1381) | delivered as standalone infrastructure, default OFF (`protected_execution.enabled=false`), OSS |
+| AD-1316 | Governed effect broker, correlation and reconciliation. | [#1383](https://github.com/seangalliher/ProbOS/issues/1383) | delivered as standalone infrastructure, default OFF (`protected_execution.effect_broker_enabled=false`), OSS |
+| AD-1317 | Versioned adapter, immutable activation/rollback and strong canary. | [#1380](https://github.com/seangalliher/ProbOS/issues/1380) | withdrawn 2026-10-10, not planned; no code written |
+| AD-1318 | Optional VS Code or equivalently governed Copilot-assisted surface. | [#1382](https://github.com/seangalliher/ProbOS/issues/1382) | withdrawn 2026-10-10, not planned; no code written |
 
-ProbOS must own the actual governed execution and protected witness; launching an
-opaque Copilot process is not sufficient. Preserve one campaign owner, AD-1231,
-exact-source review/gates, ordinary behavior outside the strict profile, and
-separate host/provider/external evidence. No runtime activation is implied here.
+AD-1315 and AD-1316 do not depend on Supervised Worker; no source under `src/`
+references it. No runtime activation is implied here.
 
 ## Design Principles
 

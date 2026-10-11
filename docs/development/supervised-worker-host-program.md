@@ -1,5 +1,15 @@
 # ProbOS-Hosted Strong Supervision
 
+> **Withdrawn 2026-10-10 (Captain's decision).** The Captain stopped using
+> Supervised Worker and retired the ProbOS integration with it. AD-1314/#1379,
+> AD-1317/#1380, AD-1318/#1382 and Supervised Worker #11 close as not planned;
+> no code was written for AD-1317 or AD-1318. AD-1315/#1381 (protected host
+> authority and durable witness) and AD-1316/#1383 (governed effect broker) were
+> delivered and remain as standalone, default-off ProbOS infrastructure. Crew
+> self-repair continues natively under
+> [AD-1299/#1352](https://github.com/seangalliher/ProbOS/issues/1352). The body
+> below is the historical contract and is not maintained.
+
 Status: **planned**, explicitly requested 2026-09-08. No strong-host deployment,
 runtime change, or operational canary is claimed by this document.
 
