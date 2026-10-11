@@ -132,7 +132,7 @@ A decision is inside the envelope only when it has evidence, is backward-compati
 - moving information or implementation across the OSS/commercial boundary; or
 - accepting unresolved Critical/High risk or changing the product objective beyond the existing issue or the linked versioned slice.
 
-When one issue crosses this boundary, durably park it with the verified premise, ranked options, recommendation, exact decision required, and resumption condition, then continue every independent in-envelope item. Stop only when a fresh complete enumeration proves that every remaining item is parked behind such a boundary or is dependency-blocked by one and no independent work remains.
+When one issue crosses this boundary, durably park it with the verified premise, ranked options, recommendation, exact decision required, and resumption condition, then continue every independent in-envelope item. Stop only when a fresh complete enumeration proves that every remaining item is parked behind such a boundary or is dependency-blocked by one and no independent work remains. Before parking, ask whether the blocking requirement itself can be narrowed or reframed (what it protects, and from whom, after existing controls); if it can, include that as a ranked option with its trade-off, so the park ends in a decision rather than a wait (#1239 lesson, 2026-10-11).
 
 ---
 
