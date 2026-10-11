@@ -29,6 +29,8 @@ The Architect is invoked when:
 - Work in the current working directory: it is the orchestrator's worktree. Do not `cd` to `d:/ProbOS` or edit another checkout. Run the AD ceiling as `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` (relative script path), so it reads this worktree's `prompts/`.
 - If a tool call is denied, say what evidence you could not gather and what the answer rests on instead. Never present an unverified premise as verified.
 - Do not push, merge, close issues or otherwise change GitHub state; the orchestrator owns those.
+- Shell under the bridge: one simple command per Bash call; pipes may feed only `head`, `tail`, `wc`, `grep` or `cut`. Loops, `awk`, `sed`, `sort`, `xargs`, `git grep` and output redirection are denied, so use the Grep, Glob and Read tools instead. The bridge restates these rules at the top of every task.
+- `--read-only` means no repository file is edited or created. A note in your own agent memory (`.claude/agent-memory/`, gitignored) is still allowed; mention it in your answer.
 
 ## Verify-First Discipline (Standing Order)
 
