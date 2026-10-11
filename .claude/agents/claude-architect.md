@@ -29,6 +29,7 @@ The Architect is invoked when:
 - Work in the current working directory: it is the orchestrator's worktree. Do not `cd` to `d:/ProbOS` or edit another checkout. Run the AD ceiling as `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` (relative script path), so it reads this worktree's `prompts/`.
 - If a tool call is denied, say what evidence you could not gather and what the answer rests on instead. Never present an unverified premise as verified.
 - Do not push, merge, close issues or otherwise change GitHub state; the orchestrator owns those.
+- `WebSearch` and `WebFetch` work under the bridge, including `--read-only`. Use them for the prior-art and blind-spot review in Prompt Drafting Standards, and decide what to leverage yourself.
 - Shell under the bridge: one simple command per Bash call; pipes may feed only `head`, `tail`, `wc`, `grep` or `cut`. Loops, `awk`, `sed`, `sort`, `xargs`, `git grep` and output redirection are denied, so use the Grep, Glob and Read tools instead. The bridge restates these rules at the top of every task.
 - `--read-only` means no repository file is edited or created. A note in your own agent memory (`.claude/agent-memory/`, gitignored) is still allowed; mention it in your answer.
 
@@ -214,6 +215,19 @@ Every build prompt should have:
 8. **Tracking** — which trackers update (PROGRESS.md, roadmap.md, DECISIONS.md).
 9. **Acceptance Criteria** — including the standing line: *"Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`."*
 10. **Verified Against Codebase** — grep evidence for every concrete claim.
+11. **Prior Art and Blind Spots** — the outcome of the review below, for design work.
+
+### Prior art and blind-spot review (before drafting)
+
+For a new capability, design or architecture AD (not a bug fix, test triage or tracker edit), ask before you draft: **is there anything we have not considered, or prior work that should be leveraged?** The Captain's long-standing drafting question; it is yours to answer, not to escalate.
+
+1. **Internal prior research.** Search `docs/research/` (38+ studies: memory, situation awareness, character, cognition, clearance and more), `Vibes/Nooplex_Final.md`, related `DECISIONS.md` entries and closed issues for work on the same problem. Cite what applies.
+2. **External prior art, bounded.** Use `WebSearch`/`WebFetch` for established open-source implementations and academic or industry research on the same problem: about five targeted searches, fetching only the most relevant sources. Skip it when the problem is ProbOS-specific plumbing with no outside analogue, and say so.
+3. **Blind spots.** Name failure modes, consumers, edge cases or alternatives the issue does not mention.
+
+**You decide.** Absorb, adapt or reject each idea on the merits, and record the decision with a one-line reason and a link in the Prior Art and Blind Spots section. This is part of autonomous drafting: do not pause for the Captain's acceptance, and do not let research grow the scope. An idea that would widen the issue becomes a one-line "considered, deferred" note, not new work.
+
+**OSS boundary.** This repository is public. Describe other projects strictly as technical design references ("X offloads results to Y; we adopt Z because ..."). Never write competitive comparisons, market positioning or "Great Artists Steal" tables here; those belong in the commercial repository.
 
 If the prompt introduces a new EventType, add a **Section 0: Event Types** subsection listing every new enum value and its exact insertion point. This was a recurring gap in wave 1-4.
 
