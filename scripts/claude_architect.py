@@ -31,6 +31,7 @@ and the listed denials: it may rest on evidence the agent could not gather).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -81,7 +82,6 @@ _BASH_RULES = (
     "Bash(git show:*)",
     "Bash(git diff:*)",
     "Bash(git status:*)",
-    "Bash(git grep:*)",
     "Bash(git ls-files:*)",
     "Bash(git ls-tree:*)",
     "Bash(git rev-parse:*)",
@@ -103,6 +103,15 @@ _BASH_RULES = (
     "Bash(head:*)",
     "Bash(tail:*)",
     "Bash(wc:*)",
+    # `git grep` is deliberately absent: `-O<cmd>` / `--open-files-in-pager`
+    # runs a command (verified 2026-10-10) and can hide in combined short flags
+    # (`-iO...`), so no deny pattern holds; the Grep tool covers the need.
+    # Read-only filters for pipelines (measured 2026-10-10: the agent piped git
+    # grep into awk and sort and lost those calls). `sort` stays out: its -o
+    # output file can hide in combined short flags (`-no out`), which no deny
+    # pattern catches reliably. `awk` stays out: it can write from its program.
+    "Bash(grep:*)",
+    "Bash(cut:*)",
 )
 # Focused tests execute repository code (conftest, fixtures), so they are
 # granted only to runs that may also edit: triage, not read-only consults.
@@ -112,7 +121,15 @@ _TEST_RULES = ("Bash(d:/ProbOS/.venv/Scripts/pytest.exe:*)",)
 # Shell redirection needs no rule: measured 2026-10-10 under dontAsk, `echo x >
 # a.txt`, `git log -1 > b.txt`, `git show ... >> c.txt` and `ls > d.txt` were all
 # denied although their commands are allowed, and no file was written.
-_DENIED_RULES = ("Bash(git *--output*)",)
+# `git grep` is denied, not merely left unlisted. Measured 2026-10-10 under
+# dontAsk: the CLI auto-approves a plain `git grep` that is not in
+# --allowedTools, and refuses the `-O<cmd>`, `-iO<cmd>` and `git -C . grep -O`
+# forms itself. With this rule, plain `git grep` is denied, the global-option
+# forms (`git -C . grep`, `git --no-pager grep`, `git -c k=v grep`) are denied
+# (not auto-approved), and `git log --grep=...` still runs. The rule matches the
+# literal `git grep` prefix; the global-option forms rely on the CLI not
+# auto-approving them, as measured.
+_DENIED_RULES = ("Bash(git *--output*)", "Bash(git grep:*)")
 # Claude Code also applies an `env` block from these settings files, so a
 # redirecting variable set there counts as set.
 _SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
@@ -254,6 +271,38 @@ def preflight(
     return cli
 
 
+def bridge_preamble(*, read_only: bool) -> str:
+    """Rules prepended to every task, so the agent does not spend turns on calls that will be denied.
+
+    Measured 2026-10-10: a 91-turn run lost three calls to a `for` loop and to
+    pipes into awk and sort, none of which the permission rules can allow. The
+    allowed-command list is generated from the grant itself, so the two cannot drift.
+    """
+    rules = list(_BASH_RULES) + ([] if read_only else list(_TEST_RULES))
+    allowed = ", ".join(rule[len("Bash("):].removesuffix(")").removesuffix(":*") for rule in rules)
+    mode = (
+        # Agent-memory writes are permitted by the CLI outside the allowlist:
+        # measured 2026-10-10, a read-only run (no Edit/Write granted) wrote
+        # .claude/agent-memory/claude-architect/MEMORY.md and a note beside it.
+        "READ-ONLY: do not edit or create any repository file. A note in your own agent memory "
+        "(.claude/agent-memory/, gitignored) is allowed; say in your answer if you wrote one."
+        if read_only else
+        "EDITS ALLOWED inside this worktree only. Do not edit files in any other checkout."
+    )
+    return (
+        "[Bridge constraints: you are running headless through scripts/claude_architect.py; "
+        "nobody can answer questions mid-run.]\n"
+        f"- {mode}\n"
+        "- Shell: one simple command per Bash call. Pipes may feed only head, tail, wc, grep or cut. "
+        "No for/while loops, no awk, sed, sort, xargs, no git grep, and no output redirection; "
+        "these are denied.\n"
+        "- Prefer the Grep, Glob and Read tools for searching and reading code.\n"
+        f"- Allowed shell commands (prefixes): {allowed}.\n"
+        "- If a call is denied anyway, say what evidence you could not gather.\n"
+        "[End of bridge constraints. The task follows unaltered.]\n\n"
+    )
+
+
 def build_command(cli: str, *, read_only: bool, resume: str | None) -> list[str]:
     """Return the headless CLI invocation; the task itself is sent on stdin."""
     tools = list(_READ_TOOLS) + list(_BASH_RULES)
@@ -344,22 +393,25 @@ def run_architect(
     """Run claude-architect once, log the raw outcome under logs/architect/, and interpret it."""
     run = run or subprocess.run
     command = build_command(cli, read_only=read_only, resume=resume)
+    preamble = bridge_preamble(read_only=read_only)
+    # The log records what the agent was told, without repeating the whole text.
+    told = {"read_only": read_only, "preamble_sha256": hashlib.sha256(preamble.encode("utf-8")).hexdigest()}
     try:
         completed = run(
-            command, cwd=root, input=task, capture_output=True, text=True,
+            command, cwd=root, input=preamble + task, capture_output=True, text=True,
             encoding="utf-8", errors="replace", check=False, timeout=timeout, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         result = ArchitectResult(exit_code=3, text=f"claude-architect timed out after {timeout:.0f}s; no answer was produced.")
         partial = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        result.log_path = _write_log(root, None, {"command": command, "timeout_seconds": timeout, "stdout": partial})
+        result.log_path = _write_log(root, None, {"command": command, **told, "timeout_seconds": timeout, "stdout": partial})
         return result
     result = interpret(completed.stdout)
     if result.exit_code in (0, 4) and completed.returncode != 0:
         result.exit_code = 1
         result.text = f"claude CLI exited {completed.returncode} after reporting completion.\n{result.text}"
     result.log_path = _write_log(root, result.session_id, {
-        "command": command, "returncode": completed.returncode,
+        "command": command, **told, "returncode": completed.returncode,
         "stdout": completed.stdout, "stderr": (completed.stderr or "")[-4000:],
     })
     return result

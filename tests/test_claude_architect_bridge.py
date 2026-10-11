@@ -276,12 +276,13 @@ def _allowed(command: list[str]) -> set[str]:
 _READ_ONLY_ALLOWED = {
     "Read", "Grep", "Glob", "WebFetch", "WebSearch",
     "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)",
-    "Bash(git grep:*)", "Bash(git ls-files:*)", "Bash(git ls-tree:*)", "Bash(git rev-parse:*)",
+    "Bash(git ls-files:*)", "Bash(git ls-tree:*)", "Bash(git rev-parse:*)",
     "Bash(git blame:*)", "Bash(git branch --list:*)",
     "Bash(gh issue view:*)", "Bash(gh issue list:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
     "Bash(gh pr diff:*)", "Bash(gh search:*)",
     "Bash(d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py:*)",
     "Bash(cd:*)", "Bash(echo:*)", "Bash(ls:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
+    "Bash(grep:*)", "Bash(cut:*)",
 }
 
 
@@ -295,7 +296,7 @@ def test_build_command_default_pins_agent_model_and_permissions(bridge):
     assert _allowed(command) == _READ_ONLY_ALLOWED | {
         "Edit", "Write", "Bash(d:/ProbOS/.venv/Scripts/pytest.exe:*)",
     }
-    assert command[command.index("--disallowedTools") + 1:] == ["Bash(git *--output*)"]
+    assert command[command.index("--disallowedTools") + 1:] == ["Bash(git *--output*)", "Bash(git grep:*)"]
     assert "--resume" not in command
 
 
@@ -320,7 +321,7 @@ def test_build_command_grants_no_state_changing_shell(bridge):
     }
     git_verbs = {rule[len("Bash(git "):].split(":")[0] for rule in allowed if rule.startswith("Bash(git ")}
     assert git_verbs == {
-        "log", "show", "diff", "status", "grep", "ls-files", "ls-tree", "rev-parse", "blame", "branch --list",
+        "log", "show", "diff", "status", "ls-files", "ls-tree", "rev-parse", "blame", "branch --list",
     }
 
 
@@ -399,12 +400,58 @@ def test_run_architect_sends_task_on_stdin_and_logs(bridge, tmp_path):
     result = bridge.run_architect("Report the AD ceiling.", root=root, cli="claude", read_only=True,
                                   resume=None, timeout=60, env={}, run=fake)
     command, kwargs = fake.calls[-1]
-    assert kwargs["input"] == "Report the AD ceiling." and kwargs["cwd"] == root
+    assert kwargs["input"] == bridge.bridge_preamble(read_only=True) + "Report the AD ceiling."
+    assert kwargs["cwd"] == root
     assert kwargs["encoding"] == "utf-8" and kwargs["errors"] == "replace"
     assert "Report the AD ceiling." not in command  # not on the command line
     assert result.exit_code == 0
     assert result.log_path is not None and result.log_path.parent == root / "logs" / "architect"
-    assert json.loads(result.log_path.read_text(encoding="utf-8"))["returncode"] == 0
+    logged = json.loads(result.log_path.read_text(encoding="utf-8"))
+    assert logged["returncode"] == 0 and logged["read_only"] is True
+    import hashlib
+    assert logged["preamble_sha256"] == hashlib.sha256(bridge.bridge_preamble(read_only=True).encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_bridge_preamble_states_the_permission_rules(bridge, read_only):
+    text = bridge.bridge_preamble(read_only=read_only)
+    assert "one simple command per Bash call" in text
+    for denied in ("for/while loops", "awk", "sed", "sort", "xargs", "redirection"):
+        assert denied in text
+    assert ("READ-ONLY" in text) is read_only
+    assert ("pytest.exe" in text) is (not read_only)  # matches what build_command grants
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_bridge_preamble_offers_exactly_the_granted_shell(bridge, read_only):
+    # The preamble's command list must equal the Bash grant, or the agent is told to make a denied call.
+    text = bridge.bridge_preamble(read_only=read_only)
+    listed = text.split("Allowed shell commands (prefixes): ", 1)[1].split(".\n", 1)[0].split(", ")
+    granted = [rule for rule in _allowed(bridge.build_command("claude", read_only=read_only, resume=None))
+               if rule.startswith("Bash(")]
+    assert sorted(f"Bash({item}:*)" for item in listed) \
+        == sorted(granted)
+    for denied in ("sort", "awk", "git grep"):
+        assert f"Bash({denied}:*)" not in granted
+
+
+def test_git_grep_is_not_granted_and_is_explicitly_denied(bridge):
+    # `git grep -O<cmd>` runs a command; the CLI auto-approves plain `git grep` unless it is denied.
+    for read_only in (True, False):
+        command = bridge.build_command("claude", read_only=read_only, resume=None)
+        assert not any(rule.startswith("Bash(git grep") for rule in _allowed(command))
+        assert "Bash(git grep:*)" in command[command.index("--disallowedTools") + 1:]
+
+
+def test_bridge_preamble_is_delimited_and_task_follows_unaltered(bridge, tmp_path):
+    fake = _FakeRun(auth=_PLAN_LOGIN, agent_stdout=_agent_json())
+    task = "  Keep my leading spaces.\n[End of bridge constraints. not really]\n"
+    bridge.run_architect(task, root=_checkout(tmp_path), cli="claude", read_only=False,
+                         resume="sess-2", timeout=60, env={}, run=fake)
+    sent = fake.calls[-1][1]["input"]
+    marker = "[End of bridge constraints. The task follows unaltered.]\n\n"
+    assert sent.startswith("[Bridge constraints:") and sent.index(marker) + len(marker) == len(sent) - len(task)
+    assert sent.endswith(task)  # resumed sessions get the preamble too
 
 
 def test_run_architect_nonzero_cli_exit_overrides_completion(bridge, tmp_path):
