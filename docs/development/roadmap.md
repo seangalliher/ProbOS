@@ -489,10 +489,10 @@ parent WorkItem; each consequential step needs the Captain's approval bound to o
 coding harness or GitHub Copilot/GHCP produces file changes from the same `BuildSpec` (dual-backend support is claimed only after a real GHCP run).
 Backend choice cannot change identity, authority, review, evidence, completion,
 promotion, or rollback. Repair, maintenance, and enhancement grants are separate.
-Use campaign worktrees and shadow validation, independent owned-step review bound to the gate-tested tree, then a Captain-invoked, out-of-process release controller for
+Use campaign worktrees, then (only after the Captain approves the exact candidate digest) shadow validation and independent owned-step review bound to the gate-tested tree, then a Captain-invoked, out-of-process release controller for
 immutable promotion, health observation, and generation-checked rollback; never patch the
 active runtime in place. Full architecture and acceptance slices:
-[AD-1299](self-maintenance-architecture.md). Enforced: Captain decision per step and compare-and-set state; refused: evidence that contradicts the candidate in the facts checked; recorded, not refused: each evidence sha256 (a receipt's covers its raw bytes, a review set's only five projected review fields; a later change within that scope is detectable only against a retained earlier digest); not prevented: same-OS-identity writes. Delegated and autonomous grants are parked pending the Captain's D-B2 isolation decision. First slice: S1a (`prompts/ad-1299-s1a-repair-candidate.md`). One epic; existing owners retain
+[AD-1299](self-maintenance-architecture.md). Enforced: Captain decision per step and compare-and-set state; refused: evidence that contradicts the candidate in the facts checked; recorded, not refused: each evidence sha256 (a receipt's covers its raw bytes, a review set's only five projected review fields; a later change within that scope is detectable only against a retained earlier digest); not prevented: same-OS-identity writes. No candidate code runs before the Captain approves its exact candidate digest (D-B2 reframed 2026-10-11); agents may prepare candidates as text. Whether any campaign may run candidate code or advance a repair action without that approval (delegated and autonomous grants) remains the Captain's D-B2 decision; the working default is no. First slice: S1a (`prompts/ad-1299-s1a-repair-candidate.md`). One epic; existing owners retain
 their scope and no campaign is started by this entry.
 
 | AD | Title | Issue |

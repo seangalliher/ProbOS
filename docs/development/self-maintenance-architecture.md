@@ -9,9 +9,12 @@ governance policy, or campaign state changes are authorized here.
 > for campaign state, authority, review, execution backends and release. The
 > requirements that stood (separate grants, isolated build, independent review,
 > immutable promotion, verified rollback, no in-place patching) are unchanged.
-> One decision is **parked** for the Captain (D-B2: OS-enforced isolation, which
-> delegated and autonomous grants need); S1-S4 proceed with Captain-per-step
-> authority. Recorded in the append-only
+> D-B2 was **reframed** the same day (see "D-B2: reframed 2026-10-11"): no
+> candidate code runs before the Captain approves its exact candidate digest,
+> and agents may prepare candidates as text without the Captain; whether any
+> campaign may run candidate code or advance a repair action without that
+> approval remains the Captain's decision, with option (a), keep
+> execute-after-approval, as the working default S1-S4 build under. Recorded in the append-only
 > [decision record](../../DECISIONS.md#ad-1299-2026-09-06---governed-probos-self-maintenance)
 > under "Native rescope (2026-10-11)".
 
@@ -52,9 +55,11 @@ what each digest covers. Not authenticated: the evidence's producer; unread
 fields are not asserted valid. Not prevented: writes by any process that runs
 under ProbOS's own OS identity to ProbOS state, the release root or the
 evidence (AD-1315 Boundary: local-host evidence, not a defense against
-administrator/root/kernel compromise). Excluding same-identity writers needs a
-separate owner identity or OS isolation with privileged provisioning; that is
-the parked D-B2 decision.
+administrator/root/kernel compromise). Not contained: candidate code that a
+campaign runs (tests, shadow run) executes under the Captain's OS identity, so
+approval decides what runs but does not confine it. Excluding same-identity
+writers needs a separate owner identity or OS isolation with privileged
+provisioning; that is D-B2 option (b), the Captain's decision.
 
 ## Existing foundations and measured limits
 
@@ -159,9 +164,10 @@ flowchart TD
   choose an existing engineering capability, and propose a bounded objective.
   An agent's classification is a proposal; the Captain's approval is authority.
 - **Act:** obtain an Architect-reviewed contract, open the campaign as a
-  CrewSession, request each consequential step through the existing approval
-  surface, and collaborate with Builder, QA, and Red Team within the admitted
-  campaign. Deterministic services own transitions; agents own engineering
+  CrewSession, prepare the candidate as text, request each consequential step
+  through the existing approval surface, and collaborate with Builder, QA, and
+  Red Team within the admitted campaign. No candidate code runs before the
+  Captain approves its exact candidate digest. Deterministic services own transitions; agents own engineering
   judgment (Design Principle #1).
 - **Report:** project campaign evidence into existing work/approval surfaces and
   episodic memory. Distinguish proposed, built, tested, promoted, healthy, rolled
@@ -179,8 +185,8 @@ escalation to the Captain, never a silent refusal (Design Principle #13).
 
 | Class | Permitted objective | Required authority |
 |---|---|---|
-| Repair | Restore an existing approved behavior against a reproduced defect and a discriminating regression test. | Captain approval per consequential step. An explicit time-bounded repair delegation (repository, paths, tools, risk, budgets, allowed effects fixed in advance) **waits for D-B2**. No feature expansion. |
-| Maintenance | Preserve approved behavior through declared upkeep, supported dependency refresh, performance work, or bounded operational maintenance. | A separate maintenance grant with compatibility criteria, allowed operations, schedule, and resource limits. A repair grant does not imply it. A scheduled (unattended) grant **waits for D-B2**; until then each maintenance campaign is Captain-approved per step. |
+| Repair | Restore an existing approved behavior against a reproduced defect and a discriminating regression test. | Captain approval per consequential step, including approval of each exact candidate digest before its code runs. An explicit time-bounded repair delegation (repository, paths, tools, risk, budgets, allowed effects fixed in advance) exists only if the Captain chooses D-B2 option (b) or (c); under the working default (a) there is none. No feature expansion. |
+| Maintenance | Preserve approved behavior through declared upkeep, supported dependency refresh, performance work, or bounded operational maintenance. | A separate maintenance grant with compatibility criteria, allowed operations, schedule, and resource limits. A repair grant does not imply it. A scheduled (unattended) grant runs candidate code without per-candidate approval, so it exists only under D-B2 option (b) or (c); under the working default (a) each maintenance campaign is Captain-approved per step, including each candidate digest before its code runs. |
 | Enhancement | Add or intentionally change behavior, capability, public contracts, or architecture. | Explicit Captain-approved scope and architecture decision, followed by its own accepted build contract. Neither repair nor maintenance authority implies enhancement authority. |
 
 Authority is checked at admission and every consequential boundary. Expiry,
@@ -197,7 +203,7 @@ are ordinary enhancements under their own Captain-approved AD and review; a
 campaign cannot weaken the controls judging it. Under the in-envelope design
 this is enforced by the Captain's per-step decision; recorded evidence digests
 let a change be detected by a consumer holding an earlier trusted digest; it is
-not an OS-level write exclusion (D-B2).
+not an OS-level write exclusion (that would be D-B2 option (b)).
 
 ## Native campaign governance
 
@@ -208,7 +214,7 @@ no external campaign service: each requirement has a native owner.
 |---|---|
 | Identity | A repair campaign is one CrewSession parent WorkItem; its id is the campaign key. Each repair attempt is an owned step with its own attempt identity. Backend identity is attempt metadata, never the campaign key. Repository, base commit and candidate identity are the S1 `RepairCandidate`. |
 | Lifecycle | CrewSession/WorkItem compare-and-set transitions (`compare_and_set_recovery`, `transition_work_item`, verification CAS, terminal transition with trust). Effects an attempt produces use AD-1316 operation/attempt identity; `unknown` is terminal until reconciled and is never replayed. |
-| Authority | The Captain's decision on an action-shaped request in `CapabilityRequestStore`, bound to the candidate digest, with an expiry, re-checked at each boundary. `action` requests stay with the Captain alone. Delegated/autonomous grants wait for D-B2. |
+| Authority | The Captain's decision on an action-shaped request in `CapabilityRequestStore`, bound to the candidate digest, with an expiry, re-checked at each boundary. `action` requests stay with the Captain alone (`delegated_approvals.py:171-172`: every action, repair included, is Captain-reserved). The Captain approves each exact candidate digest before its code runs. Agents may prepare candidates as text without approval. Delegated/autonomous grants exist only under D-B2 option (b) or (c); the working default (a) has none. |
 | Candidate | `RepairCandidate`: base commit, candidate commit, tree, and the reviewed index tree, which must equal the committed tree. A path or branch name alone is not candidate identity. |
 | Evidence | Insert-only evidence links keyed by the candidate digest: gate receipt, review set, Captain approvals, promotion and health observation. Each link is `present`, `refused` (contradicts the candidate) or `unavailable` (cannot be read); anything other than `present` blocks completion and is never inferred. No raw prompts, credentials, or tool payloads in evidence. |
 | Recovery | Reconcile before retry or backend switch, through CrewSession recovery and AD-1316 reconciliation. Duplicate submissions resolve to the existing operation; no transport-level exactly-once claim. |
@@ -246,6 +252,15 @@ comes out, and `execute_approved_build(work_dir=<campaign worktree>)` applies it
   attempt is labelled **tools not confined, not broker-governed**; it requires a
   per-attempt Captain approval and is never eligible for a delegated grant.
 
+A backend run that executes code or writes outside the proposal (the native
+harness's `run_command`, which its build prompt uses to run pytest, its
+`write_file`/`edit_file`, which accept absolute paths, or any GHCP tool) counts
+as running candidate code, so it happens only after the Captain approves the
+exact candidate digest. Before that approval a candidate is produced as text
+only (file changes returned, not applied) and a deterministic service writes it
+into the campaign worktree after checking that every path is relative and stays
+inside the worktree.
+
 Backend choice must not change **campaign identity, authority, review, evidence,
 completion, promotion, or rollback semantics**. Every backend output is a
 provisional proposal that ProbOS validates, commits in the campaign worktree and
@@ -271,13 +286,18 @@ Conformance fixtures with a fake SDK prove the handoff, not the backend.
    arbitrary build/test code. Never route through `merge_to_main`,
    `WorktreeManager.remove` or the repository-root `work_dir` of
    `routers/build.py`.
-2. **Diagnose and build.** Reuse the existing fault/repair flow, Architect and
-   `BuildSpec`, then the native harness or GHCP against the campaign worktree.
+2. **Diagnose, prepare and approve.** Reuse the existing fault/repair flow,
+   Architect and `BuildSpec`, and produce the candidate as text (see "Execution
+   backends: one handoff"); a deterministic service writes it into the campaign
+   worktree and commits it, giving one `RepairCandidate` digest. **No candidate
+   code runs before the Captain approves that exact candidate digest**, having
+   seen its diff. A change after approval (a fix for a failing test or a review
+   finding) is a new candidate and needs a new approval before its code runs.
    Assert the reproduction's premise before trusting it. Bind every mutation to
    the accepted footprint. No active-runtime `AgentPatcher`, monkey-patching,
    module reload, live registration, or in-place package update is a
    maintenance deployment path.
-3. **Shadow validation.** Run a separate candidate process with disposable or
+3. **Shadow validation** (only for an approved candidate digest). Run a separate candidate process with disposable or
    verified snapshot-derived data, separate ports/identities, and blocked or
    explicitly brokered external effects. Prove interpreter/import origins are
    the candidate, not the parent's editable installation. Apply `CodeValidator`
@@ -288,10 +308,12 @@ Conformance fixtures with a fake SDK prove the handoff, not the backend.
    effects and an isolated target; a trace is not permission to repeat a live
    destructive action. Test the intended behavior, not just disappearance of
    the original error signature.
-4. **Freeze and verify.** Run focused regressions through affected production
-   consumers, then System QA and Red Team as owned-step reviews
-   (`ReviewedStepResult`), each by an agent and context different from the
-   builder's, plus the Captain's change approval. Repair findings, commit, then
+4. **Freeze and verify** (only for an approved candidate digest; the Captain's
+   approval in step 2 is the change approval and precedes all of this). Run
+   focused regressions through affected production consumers, then System QA and
+   Red Team as owned-step reviews (`ReviewedStepResult`), each by an agent and
+   context different from the builder's. Repairing a finding produces a new
+   candidate, which returns to step 2 for approval before its code runs. Then
    run the final canonical repository gate. Every review record and the gate
    receipt must name the same tree, equal to the receipt's `tree.head_tree` and
    `tree.index_tree`; the S1 evidence links refuse anything else. The Builder's
@@ -302,7 +324,10 @@ Conformance fixtures with a fake SDK prove the handoff, not the backend.
 5. **Prepare immutable release.** Produce a content-addressed release manifest
    binding source tree, executable artifacts, locked dependencies, relevant
    configuration, the evidence-link digest, and the prior known-good release.
-   Verify the staged bytes again before activation. Retain the previous release
+   Verify the staged bytes again before activation: the controller re-derives
+   the expected release bytes from the approved tree id and refuses a staged
+   release that differs. Whether git re-checks object hashes on every read is
+   not verified, so this does not claim to detect a tampered object store. Retain the previous release
    and a verified recovery path. Irreversible migrations are outside ordinary v1
    admission; data-affecting work needs an explicitly approved compatibility and
    restoration proof.
@@ -342,21 +367,50 @@ attempted outcomes; no-attempt/blocked outcomes do not earn success credit.
 Lessons, Hebbian routing, and behavioral monitoring can improve future proposals
 but cannot modify authority or waive future gates.
 
-## Parked: D-B2 (needs the Captain)
+## D-B2: reframed 2026-10-11 (partly in-envelope)
 
-**Decision required:** admit privileged OS isolation (a separate owner identity
-or isolation for the release root, controller and campaign state, provisioned
-with privilege) as the precondition for delegated or autonomous repair and
-maintenance grants. Ranked options: (1) admit it as a separate infrastructure
-AD; (2) keep v1 Captain-per-step permanently; (3) accept detection-only
-delegation (not recommended: it weakens a stated control). Envelope clauses:
-weakens or provisions a security control; operation on the live host.
+Re-run under the standing rule "reframe the requirement before recommending a
+park" (PR #1507). The original park (admit privileged OS isolation before any
+delegated or autonomous grant) is replaced by the following.
 
-**Resumption condition:** the Captain chooses an option, and for option 1 the
-isolation AD has landed. **Unbuildable until then:** delegated repair grants,
-scheduled maintenance grants, autonomous admission, and any claim that
-governance is unwritable by the candidate. **Proceeds without it:** S1-S4 in
-full under Captain-per-step authority.
+**What it protects, from whom.** It protects the release root, controller,
+campaign and approval stores and evidence from the code a campaign itself runs
+(tests, shadow run, GHCP's unconfined tools) and from same-user processes.
+Nothing on main excludes them: AD-993 is Tier 1, same-user, "NOT a
+kernel-enforced containment boundary" (`execution/isolation.py`), and the only
+tier built (`config_models/operations.py`); AD-1315/1316 give detection plus
+confinement of tool calls, and are default OFF. Unlike #1239, the remaining
+writer is the code under test, so the guarantee cannot simply be narrowed.
+Captain-per-step approval decides; it does not contain. The real line between
+per-step and delegated work is AD-1213, which keeps every action (repair
+included) with the Captain (`delegated_approvals.py:171-172`), and whether a
+human approved the exact code before it ran.
+
+**In-envelope now (adopted as constraints; they strengthen a control).**
+- **N1, execute-after-approval:** no candidate code runs before the Captain
+  approves its exact candidate digest. Agents prepare candidates as text, and a
+  deterministic service writes them into a campaign worktree after checking
+  every path. Any later change is a new candidate needing a new approval.
+- **N3, promotion-time re-derivation:** the controller re-derives release bytes
+  from the approved tree and refuses a staged release that differs. Whether git
+  re-checks object hashes on every read is not verified, so N3 does not claim
+  to detect a tampered object store.
+- **N2, optional and Windows-only:** the strict broker confines the agent's own
+  tool writes to the campaign worktree and refuses shell effects. That the
+  broker maps `run_command` to the shell class is not verified here.
+
+These must never claim containment, end-to-end autonomy, governance the
+candidate cannot write, or that approval prevents tampering.
+
+**The Captain's decision.** May a campaign run candidate code or advance a
+repair action without your approval of that exact candidate? (a) No: keep
+execute-after-approval (recommended, and the working default S1-S4 build
+under). (b) Yes, inside an admitted isolation AD (separate owner UID or AD-995
+Tier 2) plus a scoped AD-1213 amendment. (c) Yes, uncontained, scoped and
+expiring (not recommended). Narrower delegation limited to reversible classes
+(for example test- or docs-only diffs) is also the Captain's: it changes the
+AD-1213 floor. After (a) nothing further is needed; after (b) or (c), S2b adds
+delegated repair grants and scheduled maintenance grants.
 
 ## Prior art and blind spots (2026-10-11)
 
@@ -365,7 +419,7 @@ in-toto Statement, a typed kind bound to a subject digest, without its signing e
 infrastructure exists. S1a's 40/64-hex commit and tree ids are the in-toto `gitCommit`/`gitTree` DigestSet shapes. The release controller adopts update-framework and boot-assessment
 lessons: a monotonic activation sequence (not release identity) for compare-and-set, fail-closed on absent state, verify before persisting, an `indeterminate` then `good` or `bad`
 release status with `bad` never auto-selected, retention that keeps the active and rollback releases, and validation in the release's own environment. TUF role signing and OS-level
-deployment were considered and rejected or deferred: they need keys or privilege (parked D-B2) and add nothing against a writer with ProbOS's own OS identity. The full table, with
+deployment were considered and rejected or deferred: they need keys or privilege (D-B2 option (b), the Captain's) and add nothing against a writer with ProbOS's own OS identity. The full table, with
 sources and what was absorbed, adapted, rejected or deferred, is in `prompts/ad-1299-s1a-repair-candidate.md`. Review round 1 of S1a (Amendment 1) separately corrected the
 binding's claim to "refuses what contradicts the candidate in the facts it checks; records a sha256 per piece of evidence", and round 2 scoped that digest (a receipt's raw bytes; a review set's five projected fields only) (see "Native campaign governance").
 
@@ -402,17 +456,23 @@ testable blocker that cannot be delivered inside this contract.
   [prompts/ad-1299-s1a-repair-candidate.md](../../prompts/ad-1299-s1a-repair-candidate.md).
 - **S2 - Utility agent and admission:** wire instructions-first diagnosis and
   the three authority classes through the existing fault, CrewSession,
-  Architect and approval surfaces, Captain-per-step, autonomy default-off. Add
+  Architect and approval surfaces, Captain-per-step, autonomy default-off.
+  Agents may prepare a candidate as text and file the approval for its exact
+  digest without the Captain; nothing runs until the Captain approves. Add
   an expected-state guard to `FaultReportStore.resolve`. Test happy,
   denied/expired, empty, unavailable, and malformed paths; default-off behavior
   must preserve the existing runtime.
 - **S3 - Isolated engineering:** campaign worktrees (never `merge_to_main` or
   forced removal), Builder/harness, self-modification, CodeValidator, QA and Red
-  Team in a shadow environment. Tests must prove actual consumer crossings and
-  that attempted writes to protected roots are refused where enforced and
-  detected where only detectable.
+  Team in a shadow environment. Candidate code (tests, shadow run, harness
+  `run_command`, GHCP tools) runs only after the Captain approves its exact
+  candidate digest; a fix after approval is a new candidate needing a new
+  approval. Tests must prove that no candidate code runs before approval, actual
+  consumer crossings, and that attempted writes to protected roots are refused
+  where enforced and detected where only detectable.
 - **S4 - Release and recovery:** content-addressed manifest and immutable
-  install, Captain-invoked controller with a generation compare-and-set,
+  install, release bytes re-derived from the approved tree at promotion (N3),
+  Captain-invoked controller with a generation compare-and-set,
   `/api/health` release identity, observation window, generation-checked
   rollback, interrupted-promotion reconciliation from the intent journal,
   review provenance per step 4, and linked episodes with raw `(alpha, beta)`
