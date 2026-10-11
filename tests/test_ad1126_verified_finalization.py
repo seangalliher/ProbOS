@@ -6073,6 +6073,10 @@ def test_public_session_apis_and_finalizer_signature_are_fully_typed() -> None:
         "get_owned_steps_execution_port",
         "get_owned_steps_snapshot",
         "get_recovery",
+        # AD-1286: write-once team-spec binding, its read API and lookup-port binder.
+        "bind_team_spec",
+        "bind_team_spec_lookup",
+        "get_team_binding",
         "get_session",
         "initialize_session",
         "install_recovery_plan",

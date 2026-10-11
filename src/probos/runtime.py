@@ -165,6 +165,7 @@ if TYPE_CHECKING:
     from probos.continue_extension_permits import SqliteContinueExtensionPermitStore  # AD-1323
     from probos.cognitive.standing_interest_store import StandingInterestStore  # AD-1228
     from probos.cognitive.standing_interests import StandingInterestService  # AD-1228
+    from probos.cognitive.elastic_team_store import ElasticTeamStore  # AD-1286
     from probos.assignment import AssignmentService
     from probos.bridge_alerts import BridgeAlertService
     from probos.capability_request import CapabilityRequestStore
@@ -494,6 +495,7 @@ class ProbOSRuntime:
     continue_extension_reconciler: Callable[[str], Awaitable[bool]] | None  # AD-1323
     standing_interest_store: StandingInterestStore | None  # AD-1228
     standing_interests: StandingInterestService | None  # AD-1228
+    elastic_team_store: ElasticTeamStore | None  # AD-1286
     delegated_approvals: DelegatedApprovalService | None  # AD-1213
     tool_registry: ToolRegistry | None
     dream_scheduler: DreamScheduler | None
@@ -1080,6 +1082,8 @@ class ProbOSRuntime:
         # --- Standing interests (AD-1228): set by finalize only while enabled ---
         self.standing_interest_store: StandingInterestStore | None = None
         self.standing_interests: StandingInterestService | None = None
+        # --- Elastic team store (AD-1286): set by finalize only while crew sessions are enabled ---
+        self.elastic_team_store: ElasticTeamStore | None = None
 
         # --- Capability Gap Driver (AD-855) ---
         self.capability_gap_driver: "CapabilityGapDriver | None" = None

@@ -1906,9 +1906,12 @@ def test_public_service_api_and_annotations_are_exact() -> None:
         "owned_steps_authority", "owned_store_binding", "owns_store", "read_correction",
         "reassign_unstarted", "record_correction", "record_unstarted",
         "register_owned_steps_component", "start", "submit", "validate",
+        # AD-1286: write-once team-spec binding, its read API, and the lookup-port
+        # binder (mirrors bind_worker_resolver); annotation-checked by the loop below.
+        "bind_team_spec", "bind_team_spec_lookup", "get_team_binding",
     }
     # The former 17-method-only pin masked the admitted owned execution ports.
-    assert len(original_public) == 17 and len(admitted_public) == 25
+    assert len(original_public) == 17 and len(admitted_public) == 28
     assert original_public.isdisjoint(admitted_public)
     assert public == original_public | admitted_public
     expected_parameters = {

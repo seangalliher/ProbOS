@@ -119,6 +119,13 @@ ALLOWED_EXCEPTIONS = {
     # runs only when ``federation.ard.discovery_before_design`` is enabled; the
     # surface reports candidates and never adopts one (AD-1049's rule).
     ("cognitive/capability_triage.py", "probos.federation.ard.adoption"),
+    # AD-1286: the elastic team contract hashes its identities with AD-1144's
+    # RFC 8785 canonicaliser -- the one standards-grade canonical-JSON owner --
+    # rather than adding another ad-hoc ``sort_keys`` site (DRY). The import is
+    # lazy and function-level (``canonicalize_projection``) and ``jcs`` is pure
+    # stdlib; importing ``elastic_team`` never imports the federation package
+    # (pinned by tests/test_ad1286_elastic_team_contract.py, test #12(b)).
+    ("cognitive/elastic_team.py", "probos.federation.ard.jcs"),
 }
 
 

@@ -2038,6 +2038,68 @@ def _wire_crew_session_service(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _wire_elastic_team_store(*, runtime: Any) -> bool:
+    """AD-1286: open the elastic team store and bind it as the session's team-spec lookup.
+
+    Called only after ``_wire_crew_session_service`` returned True, so a runtime
+    with crew sessions disabled (the default) never imports, opens or logs this.
+    Ordinary unavailability degrades with a WARNING (binding stays unavailable and
+    crew sessions run unchanged). A corrupt database file -- a ``sqlite3.DatabaseError``
+    that is not an ``OperationalError`` -- is data integrity: it logs an ERROR and
+    fails startup. The store is published on the runtime only after the service has
+    accepted it as its lookup.
+    """
+    service = getattr(runtime, "crew_session_service", None)
+    data_dir = getattr(runtime, "data_dir", None)
+    if service is None or data_dir is None:
+        logger.warning(
+            "AD-1286: crew sessions are wired but the runtime has no %s; the elastic team store "
+            "is not opened and team-spec binding stays unavailable",
+            "crew session service" if service is None else "data directory",
+        )
+        return False
+    if getattr(runtime, "elastic_team_store", None) is not None:
+        return True
+    import sqlite3
+    from pathlib import Path
+
+    from probos.cognitive.elastic_team_store import ElasticTeamStore
+
+    db_path = Path(data_dir) / "elastic_teams.db"
+    store = ElasticTeamStore(db_path=str(db_path))
+    try:
+        await store.start()
+    except Exception as exc:
+        if isinstance(exc, sqlite3.DatabaseError) and not isinstance(exc, sqlite3.OperationalError):
+            logger.error(
+                "AD-1286: %s is not a usable SQLite database (%s); refusing to start with a corrupt "
+                "elastic team store -- move the file aside to recover",
+                db_path,
+                exc,
+                exc_info=True,
+            )
+            raise
+        logger.warning(
+            "AD-1286: ElasticTeamStore failed to start at %s; team-spec binding stays "
+            "unavailable and crew sessions run unchanged",
+            db_path,
+            exc_info=True,
+        )
+        return False
+    try:
+        service.bind_team_spec_lookup(store)
+    except ValueError:
+        logger.warning(
+            "AD-1286: the crew session service already has a team-spec lookup bound; closing the newly "
+            "opened store so no second store is published",
+            exc_info=True,
+        )
+        await store.stop()
+        return False
+    runtime.elastic_team_store = store
+    return True
+
+
 def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-867: wire :class:`CrewOrchestrator` behind ``runtime.crew_orchestrator``.
 
@@ -3951,6 +4013,8 @@ async def finalize_startup(
 
     if _wire_crew_session_service(runtime=runtime, config=config):
         logger.info("AD-1124: CrewSessionService wired during finalization")
+        if await _wire_elastic_team_store(runtime=runtime):
+            logger.info("AD-1286: ElasticTeamStore wired during finalization")
 
     if _wire_crew_orchestrator(runtime=runtime, config=config):
         logger.info("AD-867: CrewOrchestrator wired during finalization")
