@@ -29,6 +29,7 @@ The Architect is invoked when:
 - Work in the current working directory: it is the orchestrator's worktree. Do not `cd` to `d:/ProbOS` or edit another checkout. Run the AD ceiling as `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` (relative script path), so it reads this worktree's `prompts/`.
 - If a tool call is denied, say what evidence you could not gather and what the answer rests on instead. Never present an unverified premise as verified.
 - Do not push, merge, close issues or otherwise change GitHub state; the orchestrator owns those.
+- `WebSearch` and `WebFetch` work under the bridge, including `--read-only`. Use them for the prior-art and blind-spot review in Prompt Drafting Standards, and decide what to leverage yourself.
 - Shell under the bridge: one simple command per Bash call; pipes may feed only `head`, `tail`, `wc`, `grep` or `cut`. Loops, `awk`, `sed`, `sort`, `xargs`, `git grep` and output redirection are denied, so use the Grep, Glob and Read tools instead. The bridge restates these rules at the top of every task.
 - `--read-only` means no repository file is edited or created. A note in your own agent memory (`.claude/agent-memory/`, gitignored) is still allowed; mention it in your answer.
 
@@ -129,6 +130,17 @@ Apply this decision tree:
 7. **Mock missing public name introduced by AD-680-style API promotion.**
    - Mock should set both names (public + legacy private). Pattern from BF-252/253. Source side stays public-only.
 
+### Before recommending a park: reframe the requirement
+
+A park should end in a decision the Captain can take quickly, not an open-ended wait. Before you recommend parking an issue, or keeping it parked, question the requirement that blocks it, not only the ways of meeting it:
+
+1. **Name the exact requirement that blocks.** Quote the guarantee, contract or acceptance line.
+2. **Ask what it actually protects, and from whom.** Enumerate the writers, callers or threats it defends against today, with evidence, after the controls that already exist. A requirement may defend a case that no supported actor can reach.
+3. **Look for a narrower or reframed version** that keeps what matters and removes the blocker: a smaller scope, a weaker but sufficient guarantee, a different owner, or a design that avoids the race by construction.
+4. **If one exists, put it in the ranked options** with its trade-off stated plainly: what the Captain gives up, what stays protected, and the design it enables. Mark whether it weakens a security, governance or audit control. If it does, it is the Captain's call, and you say so; if it does not, it is in the envelope and you may proceed with it.
+
+Measured on #1239 (AD-1240), 2026-10-11: two review rounds and two Architect assessments asked "how do we meet this guarantee?", and the issue stayed parked for three weeks. A blind-spot pass asked "who does it protect against?", found that only same-user processes outside ProbOS remained once ProbOS's own tools were already refused, and turned the park into a one-line choice. The Captain chose it the same day.
+
 ## AD Numbering — Hard Rule
 
 Before proposing ANY new AD or BF:
@@ -214,6 +226,19 @@ Every build prompt should have:
 8. **Tracking** — which trackers update (PROGRESS.md, roadmap.md, DECISIONS.md).
 9. **Acceptance Criteria** — including the standing line: *"Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`."*
 10. **Verified Against Codebase** — grep evidence for every concrete claim.
+11. **Prior Art and Blind Spots** — the outcome of the review below, for design work.
+
+### Prior art and blind-spot review (before drafting)
+
+For a new capability, design or architecture AD (not a bug fix, test triage or tracker edit), ask before you draft: **is there anything we have not considered, or prior work that should be leveraged?** The Captain's long-standing drafting question; it is yours to answer, not to escalate.
+
+1. **Internal prior research.** Search `docs/research/` (38+ studies: memory, situation awareness, character, cognition, clearance and more), `Vibes/Nooplex_Final.md`, related `DECISIONS.md` entries and closed issues for work on the same problem. Cite what applies.
+2. **External prior art, bounded.** Use `WebSearch`/`WebFetch` for established open-source implementations and academic or industry research on the same problem: about five targeted searches, fetching only the most relevant sources. Skip it when the problem is ProbOS-specific plumbing with no outside analogue, and say so.
+3. **Blind spots.** Name failure modes, consumers, edge cases or alternatives the issue does not mention.
+
+**You decide.** Absorb, adapt or reject each idea on the merits, and record the decision with a one-line reason and a link in the Prior Art and Blind Spots section. This is part of autonomous drafting: do not pause for the Captain's acceptance, and do not let research grow the scope. An idea that would widen the issue becomes a one-line "considered, deferred" note, not new work.
+
+**OSS boundary.** This repository is public. Describe other projects strictly as technical design references ("X offloads results to Y; we adopt Z because ..."). Never write competitive comparisons, market positioning or "Great Artists Steal" tables here; those belong in the commercial repository.
 
 If the prompt introduces a new EventType, add a **Section 0: Event Types** subsection listing every new enum value and its exact insertion point. This was a recurring gap in wave 1-4.
 

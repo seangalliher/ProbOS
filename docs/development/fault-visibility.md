@@ -1,6 +1,6 @@
 # Bridge fault visibility (AD-1207)
 
-Implementation candidate for existing #1152, in the Captain's #1151/#1152 wave.
+Shipped for existing #1152 in PR #1405 (merge `91819953`), in the Captain's #1151/#1152 wave.
 #1153 is acceptance verification, not another implementation program. Parent
 ratification is issue comment 5746274610. No AD was allocated.
 

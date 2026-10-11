@@ -1,9 +1,7 @@
 # Systemic tool-fault observations (AD-1205)
 
-Implementation candidate for #1150. This is detection, not automatic repair.
-Independent review, canonical preflight/full-gate evidence and release remain
-separate, parent-owned steps. No live-vessel or external-model measurement is
-claimed.
+Shipped for #1150 in PR #1404 (merge `690520fe`). This is detection, not
+automatic repair. No live-vessel or external-model measurement is claimed.
 
 ## Generated-entry provenance (R1)
 

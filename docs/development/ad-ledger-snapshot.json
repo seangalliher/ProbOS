@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-10-11T02:37:56+00:00",
-    "head": "61d35a52",
-    "subject_count": 2798,
+    "captured_at": "2026-10-11T20:16:58+00:00",
+    "head": "e07c0a1f",
+    "subject_count": 2801,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -3256,8 +3256,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-08-29T05:45:15+00:00",
-    "issue_count": 1331,
+    "captured_at": "2026-10-11T17:50:08+00:00",
+    "issue_count": 1407,
     "issues": {
       "AD-1000": [
         {
@@ -4006,8 +4006,8 @@
             "AD-1135"
           ],
           "number": 1054,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1135: `probos setup` provider wizard \u2014 BYO OpenAI-compatible model (Phase 35)"
         }
       ],
@@ -4028,8 +4028,8 @@
             "AD-1137"
           ],
           "number": 1056,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1137: Quickstart + Alpha\u2192Beta getting-started stability (`probos doctor`) (Phase 35)"
         }
       ],
@@ -4139,8 +4139,8 @@
         {
           "claims": [],
           "number": 1068,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: Agentic harness parity \u2014 loop conversation mechanics (AD-1146..AD-1150)"
         },
         {
@@ -4190,8 +4190,8 @@
         {
           "claims": [],
           "number": 1068,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: Agentic harness parity \u2014 loop conversation mechanics (AD-1146..AD-1150)"
         },
         {
@@ -4206,8 +4206,8 @@
         {
           "claims": [],
           "number": 1083,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1156: Plan/execute mode provider (MAF framing; supersedes the AD-1150 approach)"
         }
       ],
@@ -4228,8 +4228,8 @@
             "AD-1152"
           ],
           "number": 1079,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1152: Agentic-loop span correlation (OpenTelemetry prerequisite)"
         }
       ],
@@ -4279,8 +4279,8 @@
             "AD-1156"
           ],
           "number": 1083,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1156: Plan/execute mode provider (MAF framing; supersedes the AD-1150 approach)"
         }
       ],
@@ -4430,8 +4430,8 @@
             "AD-1174"
           ],
           "number": 1105,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1174: live tool-call progress in the HXI"
         }
       ],
@@ -4485,8 +4485,8 @@
             "AD-1179"
           ],
           "number": 1111,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1179: derive tool schemas from the tool (kill the BF-701/BF-706 drift class)"
         }
       ],
@@ -4529,8 +4529,8 @@
             "AD-1183"
           ],
           "number": 1118,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1183: Replace time-sensitive competitive claims in OSS with dated evidence or neutral contracts"
         }
       ],
@@ -4551,8 +4551,8 @@
             "AD-1185"
           ],
           "number": 1121,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1185: a supported SystemConfig contract, parsed and booted in CI"
         },
         {
@@ -4587,16 +4587,9 @@
             "AD-1187"
           ],
           "number": 1124,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1187: a governed agent-facing claim and discovery surface over AD-496"
-        },
-        {
-          "claims": [],
-          "number": 1139,
-          "reason": "",
-          "state": "OPEN",
-          "title": "Epic: test the coordination thesis (AD-1187, AD-1188, decision on #1116)"
         }
       ],
       "AD-1188": [
@@ -4608,13 +4601,6 @@
           "reason": "NOT_PLANNED",
           "state": "CLOSED",
           "title": "AD-1188: orchestration-mode ablation rig"
-        },
-        {
-          "claims": [],
-          "number": 1139,
-          "reason": "",
-          "state": "OPEN",
-          "title": "Epic: test the coordination thesis (AD-1187, AD-1188, decision on #1116)"
         }
       ],
       "AD-1189": [
@@ -4623,8 +4609,8 @@
             "AD-1189"
           ],
           "number": 1126,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1189: deferred tool schemas in swe_harness"
         }
       ],
@@ -4634,8 +4620,8 @@
             "AD-1190"
           ],
           "number": 1127,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1190: aggregate budget across a delegation tree"
         }
       ],
@@ -4645,8 +4631,8 @@
             "AD-1191"
           ],
           "number": 1128,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1191: typed evidence from a delegated subtask"
         }
       ],
@@ -4656,8 +4642,8 @@
             "AD-1192"
           ],
           "number": 1129,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1192: a durable plan writer for WorkItem.steps"
         }
       ],
@@ -4678,8 +4664,8 @@
             "AD-1194"
           ],
           "number": 1131,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1194: unify capability triage through AD-854"
         }
       ],
@@ -4689,8 +4675,8 @@
             "AD-1195"
           ],
           "number": 1132,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1195: an event persistence contract -- decide what events.db can answer"
         }
       ],
@@ -4700,15 +4686,15 @@
             "AD-1196"
           ],
           "number": 1133,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1196: bind did:probos identifiers to Ed25519 keys, with rotation and revocation"
         },
         {
           "claims": [],
           "number": 1140,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: authenticate the existing two-node cluster (AD-1196, AD-1197, AD-1198)"
         }
       ],
@@ -4718,15 +4704,15 @@
             "AD-1197"
           ],
           "number": 1134,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1197: sign canonical federation envelopes and add replay protection"
         },
         {
           "claims": [],
           "number": 1140,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: authenticate the existing two-node cluster (AD-1196, AD-1197, AD-1198)"
         }
       ],
@@ -4736,15 +4722,15 @@
             "AD-1198"
           ],
           "number": 1135,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1198: authenticated transport admission, gated on the existing two-node cluster"
         },
         {
           "claims": [],
           "number": 1140,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: authenticate the existing two-node cluster (AD-1196, AD-1197, AD-1198)"
         }
       ],
@@ -4765,8 +4751,8 @@
             "AD-1200"
           ],
           "number": 1137,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1200: hierarchical AGENTS.md discovery for external repositories"
         }
       ],
@@ -4789,7 +4775,7 @@
           "number": 1142,
           "reason": "",
           "state": "OPEN",
-          "title": "AD-1202: the HXI has no control primitives -- 478 controls styled inline, zero shared components"
+          "title": "AD-1202: Shared HXI controls - glass material, contextual behavior, and a complete Bridge exemplar"
         }
       ],
       "AD-1203": [
@@ -4805,8 +4791,8 @@
         {
           "claims": [],
           "number": 1153,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
@@ -4823,8 +4809,8 @@
         {
           "claims": [],
           "number": 1163,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Verify the AD-1204 continue-resume live \u2014 it has never executed"
         }
       ],
@@ -4834,15 +4820,15 @@
             "AD-1205"
           ],
           "number": 1150,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1205: fault detection is too narrow to see a defect that breaks everything"
         },
         {
           "claims": [],
           "number": 1153,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
@@ -4852,15 +4838,15 @@
             "AD-1206"
           ],
           "number": 1151,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1206: an approved repair brief becomes a GitHub issue (the missing consumer)"
         },
         {
           "claims": [],
           "number": 1153,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
@@ -4870,15 +4856,15 @@
             "AD-1207"
           ],
           "number": 1152,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1207: nothing surfaces a fault the ship has found to the Captain"
         },
         {
           "claims": [],
           "number": 1153,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "Epic: ProbOS observes, diagnoses and reports its own defects (AD-1203, AD-1205, AD-1206, AD-1207)"
         }
       ],
@@ -4888,8 +4874,8 @@
             "AD-1208"
           ],
           "number": 1154,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1208: bound agentic turns by risk and cost, not by a flat iteration cap"
         }
       ],
@@ -4932,8 +4918,8 @@
             "AD-1212"
           ],
           "number": 1166,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1212: action requests cannot be meaningfully approved in the HXI"
         }
       ],
@@ -4943,8 +4929,8 @@
             "AD-1213"
           ],
           "number": 1170,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1213: the chain of command does not reach the approval path"
         }
       ],
@@ -4954,8 +4940,8 @@
             "AD-1214"
           ],
           "number": 1171,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1214: pre-clear a class so routine decisions stop notifying"
         }
       ],
@@ -4965,8 +4951,8 @@
             "AD-1215"
           ],
           "number": 1172,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1215: decide whether ProbOS needs its own extension model or should use plugins"
         }
       ],
@@ -4976,8 +4962,8 @@
             "AD-1216"
           ],
           "number": 1175,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1216: approve from the chat, not only from the Bridge"
         }
       ],
@@ -5071,8 +5057,8 @@
             "AD-1224"
           ],
           "number": 1190,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1224: persist tool-start events so a hung run is diagnosable before it returns"
         }
       ],
@@ -5104,8 +5090,8 @@
             "AD-1228"
           ],
           "number": 1201,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1228: a standing interest - an agent is told when ship state changes, instead of polling for it"
         }
       ],
@@ -5115,8 +5101,8 @@
             "AD-1229"
           ],
           "number": 1202,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1229: did the action land - closing the loop between an agent's action and its effect"
         }
       ],
@@ -5146,8 +5132,8 @@
             "AD-1236"
           ],
           "number": 1205,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1236: the install rung means enable a registered MCP server (implements #1172 decision B)"
         }
       ],
@@ -5179,8 +5165,8 @@
             "AD-1241"
           ],
           "number": 1216,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1241: a mid-turn refreshed tool offer has no bound and rescans every warm adapter"
         }
       ],
@@ -5190,8 +5176,8 @@
             "AD-1242"
           ],
           "number": 1234,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1242: the verifier is asked whether claims are supported, and shown no evidence"
         }
       ],
@@ -5201,8 +5187,8 @@
             "AD-1243"
           ],
           "number": 1236,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1243: show the Captain what a reply actually consulted"
         }
       ],
@@ -5212,8 +5198,8 @@
             "AD-1244"
           ],
           "number": 1237,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1244: a refusal must say what is missing, and a verdict must not contradict itself"
         }
       ],
@@ -5223,8 +5209,8 @@
             "AD-1245"
           ],
           "number": 1238,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1245: a verdict must distinguish judged-and-refused from could-not-judge"
         }
       ],
@@ -5234,8 +5220,8 @@
             "AD-1246"
           ],
           "number": 1241,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1246: a long execution should promote, not be capped at 30 seconds"
         }
       ],
@@ -5272,8 +5258,8 @@
             "AD-1250"
           ],
           "number": 1294,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1250: a joint allowance/ration search retains 32 rows where the ordered search retains 13"
         }
       ],
@@ -5283,8 +5269,8 @@
             "AD-1256"
           ],
           "number": 1302,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1256: a store registry and shared storage layer \u2014 59 databases, 34 bespoke connects, no declared criticality or retention"
         }
       ],
@@ -5294,8 +5280,8 @@
             "AD-1258"
           ],
           "number": 1308,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1258: the telemetry snapshot renders every domain it collects, and the agent can ask for it"
         }
       ],
@@ -5305,8 +5291,8 @@
             "AD-1259"
           ],
           "number": 1309,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1259: one source of truth for agent self-knowledge \u2014 two paths report the same trust score to different precision"
         }
       ],
@@ -5316,8 +5302,8 @@
             "AD-1260"
           ],
           "number": 1310,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1260: the wellness domain, and the line between first person and third \u2014 the Counselor cannot read her own assessment"
         }
       ],
@@ -5327,8 +5313,8 @@
             "AD-1261"
           ],
           "number": 1311,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1261: the authority domain \u2014 an agent cannot see its own ceiling, so it can only refuse, never escalate"
         }
       ],
@@ -5341,6 +5327,13 @@
           "reason": "",
           "state": "OPEN",
           "title": "AD-1270: platform maturity \u2014 exercised capabilities, robust seams, modular owners, fast gates, truthful docs"
+        },
+        {
+          "claims": [],
+          "number": 1349,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD ledger regex cannot parse digit-suffixed AD slices (AD-1270e1/e2 are invisible)"
         }
       ],
       "AD-1276": [
@@ -5349,17 +5342,398 @@
             "AD-1276"
           ],
           "number": 1330,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1276 follow-up: a loopback charges the pre-intent-auth hook twice \u2014 decide whether to suppress, and how"
+        }
+      ],
+      "AD-1285": [
+        {
+          "claims": [
+            "AD-1285"
+          ],
+          "number": 1338,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1285 follow-up: the tool half of the write-claim guard, and three artifact-channel seams"
+        }
+      ],
+      "AD-1286": [
+        {
+          "claims": [
+            "AD-1286"
+          ],
+          "number": 1333,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1286: Elastic Team Contract"
+        }
+      ],
+      "AD-1287": [
+        {
+          "claims": [
+            "AD-1287"
+          ],
+          "number": 1334,
           "reason": "",
           "state": "OPEN",
-          "title": "AD-1276 follow-up: a loopback charges the pre-intent-auth hook twice \u2014 decide whether to suppress, and how"
+          "title": "AD-1287: Evidence-Bound Skill Qualification"
+        }
+      ],
+      "AD-1288": [
+        {
+          "claims": [
+            "AD-1288"
+          ],
+          "number": 1335,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1288: Agent-Commissioned Team Lifecycle"
+        }
+      ],
+      "AD-1289": [
+        {
+          "claims": [
+            "AD-1289"
+          ],
+          "number": 1336,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1289: Typed Mission Blackboard"
+        }
+      ],
+      "AD-1290": [
+        {
+          "claims": [
+            "AD-1290"
+          ],
+          "number": 1337,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1290: Elastic Scatter/Gather and Team Trials"
+        }
+      ],
+      "AD-1291": [
+        {
+          "claims": [
+            "AD-1291"
+          ],
+          "number": 1340,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1291 follow-up: retire the BF-764 drain now that the arbiter owns the device"
+        }
+      ],
+      "AD-1299": [
+        {
+          "claims": [
+            "AD-1299"
+          ],
+          "number": 1352,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1299: Governed ProbOS self-maintenance - Utility agent and backend-neutral campaigns"
+        }
+      ],
+      "AD-1300": [
+        {
+          "claims": [
+            "AD-1300"
+          ],
+          "number": 1353,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1300: Goal validity, revision, and supersession for durable missions"
+        }
+      ],
+      "AD-1301": [
+        {
+          "claims": [
+            "AD-1301"
+          ],
+          "number": 1354,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1301: External-effect reconciliation and authorized compensation"
+        }
+      ],
+      "AD-1302": [
+        {
+          "claims": [
+            "AD-1302"
+          ],
+          "number": 1355,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1302: Dependency-aware reassessment of derived knowledge"
+        }
+      ],
+      "AD-1303": [
+        {
+          "claims": [
+            "AD-1303"
+          ],
+          "number": 1356,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1303: Sovereign Core Fabric pilot - human claim to cross-mesh reuse"
+        }
+      ],
+      "AD-1304": [
+        {
+          "claims": [
+            "AD-1304"
+          ],
+          "number": 1357,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1304: Independent-peer conformance and sovereign federation exit"
+        }
+      ],
+      "AD-1305": [
+        {
+          "claims": [
+            "AD-1305"
+          ],
+          "number": 1358,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1305: Preserve group write-outcome evidence through transcript and episodic recall"
+        }
+      ],
+      "AD-1306": [
+        {
+          "claims": [
+            "AD-1306"
+          ],
+          "number": 1359,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1306: Truthful disclosure when durable-write channels have mixed outcomes"
+        }
+      ],
+      "AD-1307": [
+        {
+          "claims": [
+            "AD-1307"
+          ],
+          "number": 1360,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1307: HXI spatial collaboration program - crew-first workspace and release contract"
+        },
+        {
+          "claims": [],
+          "number": 1464,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307)"
+        }
+      ],
+      "AD-1308": [
+        {
+          "claims": [
+            "AD-1308"
+          ],
+          "number": 1363,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1308: Spatial workspace host and semantic navigation across HXI views"
+        }
+      ],
+      "AD-1309": [
+        {
+          "claims": [
+            "AD-1309"
+          ],
+          "number": 1362,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1309: Progressive collaboration intake and explicit conversation context"
+        }
+      ],
+      "AD-1310": [
+        {
+          "claims": [
+            "AD-1310"
+          ],
+          "number": 1361,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1310: Shared evidence and artifact handback on the collaboration canvas"
+        }
+      ],
+      "AD-1311": [
+        {
+          "claims": [
+            "AD-1311"
+          ],
+          "number": 1364,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1311: Embodied co-presence and explicit multimodal session controls"
+        }
+      ],
+      "AD-1312": [
+        {
+          "claims": [
+            "AD-1312"
+          ],
+          "number": 1366,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1312: Contextual crew, knowledge, and administration experience"
+        }
+      ],
+      "AD-1313": [
+        {
+          "claims": [
+            "AD-1313"
+          ],
+          "number": 1365,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1313: Authentic digital visual language and spatial continuity for HXI work"
+        }
+      ],
+      "AD-1314": [
+        {
+          "claims": [
+            "AD-1314"
+          ],
+          "number": 1379,
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
+          "title": "AD-1314: ProbOS-hosted strong supervision harness program"
+        }
+      ],
+      "AD-1315": [
+        {
+          "claims": [
+            "AD-1315"
+          ],
+          "number": 1381,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1315: Protected ProbOS host authority and durable admission witness"
+        }
+      ],
+      "AD-1316": [
+        {
+          "claims": [
+            "AD-1316"
+          ],
+          "number": 1383,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1316: Governed effect dispatch with durable operation correlation and reconciliation"
+        }
+      ],
+      "AD-1317": [
+        {
+          "claims": [
+            "AD-1317"
+          ],
+          "number": 1380,
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
+          "title": "AD-1317: Strong Supervised Worker host adapter and immutable restart recovery"
+        }
+      ],
+      "AD-1318": [
+        {
+          "claims": [
+            "AD-1318"
+          ],
+          "number": 1382,
+          "reason": "NOT_PLANNED",
+          "state": "CLOSED",
+          "title": "AD-1318: Optional VS Code surface and Copilot-assisted strong-harness interoperability"
+        }
+      ],
+      "AD-1319": [
+        {
+          "claims": [
+            "AD-1319"
+          ],
+          "number": 1464,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307)"
+        }
+      ],
+      "AD-1320": [
+        {
+          "claims": [
+            "AD-1320"
+          ],
+          "number": 1475,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1320: show an agent its spend and remaining budget at decision points"
+        }
+      ],
+      "AD-1321": [
+        {
+          "claims": [
+            "AD-1321"
+          ],
+          "number": 1476,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1321: record the value and stakes of work on work items and goals"
+        }
+      ],
+      "AD-1322": [
+        {
+          "claims": [
+            "AD-1322"
+          ],
+          "number": 1477,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1322: an economic judgment organ that weighs spend against value and stakes at each step"
+        }
+      ],
+      "AD-1323": [
+        {
+          "claims": [
+            "AD-1323"
+          ],
+          "number": 1478,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1323: ask with a costed case instead of stopping at the token budget"
+        }
+      ],
+      "AD-1324": [
+        {
+          "claims": [
+            "AD-1324"
+          ],
+          "number": 1479,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1324: let the agent choose the model tier for each step from stakes and difficulty"
+        }
+      ],
+      "AD-1325": [
+        {
+          "claims": [
+            "AD-1325"
+          ],
+          "number": 1480,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1325: calibrate cost estimates and value claims against outcomes"
         }
       ],
       "AD-272": [
         {
           "claims": [],
           "number": 1273,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit"
         }
       ],
@@ -5942,6 +6316,13 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-480: Federation Protocol Adapters \u2014 MCP & A2A"
+        },
+        {
+          "claims": [],
+          "number": 1462,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-884: a taken A2A or MCP server port ends the whole ProbOS process (AD-480d bind-failure degrade is unreachable)"
         }
       ],
       "AD-481": [
@@ -6100,8 +6481,8 @@
         {
           "claims": [],
           "number": 1124,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1187: a governed agent-facing claim and discovery surface over AD-496"
         }
       ],
@@ -8016,6 +8397,15 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-637z: NATS Migration Cleanup \u2014 prefix re-subscription, double subs, durable consumers, task leak, stream dedup"
+        },
+        {
+          "claims": [
+            "AD-637z2"
+          ],
+          "number": 639,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-637z2: Uniform NATS transport invariant (revert BF-267 after AD-731 ships)"
         }
       ],
       "AD-638": [
@@ -9567,7 +9957,7 @@
           "number": 530,
           "reason": "",
           "state": "OPEN",
-          "title": "AD-721c: VR / spatial-scene avatar mode"
+          "title": "AD-721c: Bounded VR spatial collaboration pilot over the shared HXI workspace"
         },
         {
           "claims": [
@@ -11866,8 +12256,8 @@
         {
           "claims": [],
           "number": 1131,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1194: unify capability triage through AD-854"
         }
       ],
@@ -15292,8 +15682,8 @@
             "BF-687"
           ],
           "number": 1087,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-687: an agent can narrate a tool call it never made (write-path confabulation)"
         }
       ],
@@ -15314,8 +15704,8 @@
             "BF-689"
           ],
           "number": 1090,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-689: an agent misattributes real records it retrieved correctly (read-path attribution confabulation)"
         }
       ],
@@ -15356,8 +15746,8 @@
         {
           "claims": [],
           "number": 1111,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1179: derive tool schemas from the tool (kill the BF-701/BF-706 drift class)"
         }
       ],
@@ -15396,8 +15786,8 @@
         {
           "claims": [],
           "number": 1111,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1179: derive tool schemas from the tool (kill the BF-701/BF-706 drift class)"
         },
         {
@@ -15806,8 +16196,8 @@
             "BF-741"
           ],
           "number": 1200,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-741: an agent's own false claim is the top recall hit for the question that produced it"
         }
       ],
@@ -15983,6 +16373,13 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-764: a burst of transcript arrivals talks over itself"
+        },
+        {
+          "claims": [],
+          "number": 1340,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "AD-1291 follow-up: retire the BF-764 drain now that the arbiter owns the device"
         }
       ],
       "BF-765": [
@@ -16141,8 +16538,8 @@
             "BF-779"
           ],
           "number": 1242,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-779: write_file is the only intent consensus actually gates; the rest execute first and vote after"
         }
       ],
@@ -16276,8 +16673,8 @@
         {
           "claims": [],
           "number": 1277,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land"
         }
       ],
@@ -16320,8 +16717,8 @@
             "BF-794"
           ],
           "number": 1258,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-794: Telegram adapter chunking can split a reply mid-disclosure"
         }
       ],
@@ -16331,8 +16728,8 @@
             "BF-795"
           ],
           "number": 1259,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-795: episodic memory stores the pre-disclosure reply text"
         }
       ],
@@ -16430,8 +16827,8 @@
             "BF-803"
           ],
           "number": 1267,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-803: Gmail marks messages Seen before processing, so a failure is at-most-once\r"
         }
       ],
@@ -16444,6 +16841,15 @@
           "reason": "NOT_PLANNED",
           "state": "CLOSED",
           "title": "BF-804: a long tool-failure disclosure can be split across two Discord messages\r"
+        },
+        {
+          "claims": [
+            "BF-804"
+          ],
+          "number": 1350,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-804: a failed pairing-instruction send looks like success, so the inbound message is acknowledged"
         }
       ],
       "BF-805": [
@@ -16496,8 +16902,8 @@
             "BF-809"
           ],
           "number": 1273,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-809: the AD-272 decision cache keys on a per-cycle correlation_id, so it may never hit"
         }
       ],
@@ -16518,8 +16924,8 @@
             "BF-811"
           ],
           "number": 1275,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-811: the Dispatcher's delegating arm trusts an unenforced prerequisite"
         }
       ],
@@ -16540,8 +16946,8 @@
             "BF-813"
           ],
           "number": 1277,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-813: three consumers must be fixed before the remaining BF-790 opt-ins can land"
         }
       ],
@@ -16551,8 +16957,8 @@
             "BF-814"
           ],
           "number": 1278,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-814: an authorized watch order with no subscriber is still consumed"
         }
       ],
@@ -16584,8 +16990,8 @@
             "BF-817"
           ],
           "number": 1281,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-817: checkpoint resume discards the restored DAG and re-decomposes from source text"
         }
       ],
@@ -16595,8 +17001,8 @@
             "BF-818"
           ],
           "number": 1282,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-818: the watch dispatch loop is started, repaired, and has no producer"
         }
       ],
@@ -16677,8 +17083,8 @@
         {
           "claims": [],
           "number": 1316,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half)"
         }
       ],
@@ -16831,8 +17237,8 @@
             "BF-838"
           ],
           "number": 1304,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-838: 22 of 49 declared databases are outside backup coverage, including schema_versions and four grant stores"
         }
       ],
@@ -16842,8 +17248,8 @@
             "BF-839"
           ],
           "number": 1305,
-          "reason": "REOPENED",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-839: sandbox scratch cleanup ownership needs a state machine, not flags"
         }
       ],
@@ -16860,8 +17266,8 @@
         {
           "claims": [],
           "number": 1314,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840"
         }
       ],
@@ -16893,8 +17299,8 @@
             "BF-843"
           ],
           "number": 1313,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-843: BackupService is wired but never invoked \u2014 zero SQLite snapshots have ever been taken"
         }
       ],
@@ -16904,8 +17310,8 @@
             "BF-844"
           ],
           "number": 1314,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-844: the visiting-builder temp tree has the same one-shot silent-cleanup shape as BF-840"
         }
       ],
@@ -16926,8 +17332,8 @@
             "BF-846"
           ],
           "number": 1316,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-846: check_health's raise-contract blocks per-member recycle containment (BF-824 second half)"
         }
       ],
@@ -16951,6 +17357,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-848: the crew-executor concurrency test proves parallelism by wall-clock overlap, so a loaded gate reads a peak of 1"
+        }
+      ],
+      "BF-849": [
+        {
+          "claims": [
+            "BF-849"
+          ],
+          "number": 1344,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-849: BackupService._backup_one leaks both SQLite handles \u2014 sqlite3's context manager is a transaction, not a close"
         }
       ],
       "BF-850": [
@@ -17047,8 +17464,8 @@
             "BF-858"
           ],
           "number": 1328,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-858: four speech producers still cancel one another"
         }
       ],
@@ -17069,9 +17486,196 @@
             "BF-861"
           ],
           "number": 1331,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "BF-861: the audit spill is unbounded, and the entries cap stops applying once the durable stream terminates"
+        }
+      ],
+      "BF-862": [
+        {
+          "claims": [
+            "BF-862"
+          ],
+          "number": 1339,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-862: a bare speech 'end' matches any reply, so the Ship's Computer can advance the meeting sequencer early"
+        }
+      ],
+      "BF-863": [
+        {
+          "claims": [
+            "BF-863"
+          ],
+          "number": 1341,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-863: the inbound NATS route returns raw exception text across a node boundary"
+        }
+      ],
+      "BF-867": [
+        {
+          "claims": [
+            "BF-867"
+          ],
+          "number": 1342,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-867: mouse_button has never executed \u2014 its sub-verb collides with the dispatch key"
+        }
+      ],
+      "BF-868": [
+        {
+          "claims": [
+            "BF-868"
+          ],
+          "number": 1343,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-868: erasure infers attachment ids by shape, so a 64-hex tool name can unlink an unrelated attachment"
+        }
+      ],
+      "BF-869": [
+        {
+          "claims": [
+            "BF-869"
+          ],
+          "number": 1345,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-869: a fused frame's second attachment ref is never recorded in the episode, so erasure cannot reach it"
+        }
+      ],
+      "BF-870": [
+        {
+          "claims": [
+            "BF-870"
+          ],
+          "number": 1346,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-870: federation reports \"configured\", not \"delivered\", so a peerless forward still consumes a watch order"
+        }
+      ],
+      "BF-872": [
+        {
+          "claims": [
+            "BF-872"
+          ],
+          "number": 1348,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-872: test_the_spacing_holds_as_the_burst_grows asserts a spacing floor asyncio cannot satisfy on Windows, and flakes under the parallel gate"
+        }
+      ],
+      "BF-873": [
+        {
+          "claims": [
+            "BF-873"
+          ],
+          "number": 1351,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-873: concurrent EventLog writes corrupt the hash chain (verify_chain fails from row 2)"
+        }
+      ],
+      "BF-874": [
+        {
+          "claims": [
+            "BF-874"
+          ],
+          "number": 1429,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-874: a proactive DM to a multi-word callsign is posted publicly instead of sent"
+        }
+      ],
+      "BF-875": [
+        {
+          "claims": [
+            "BF-875"
+          ],
+          "number": 1431,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-875: the inbound MCP server has no caller authentication and dispatches consensus-flagged intents outside the consensus path"
+        }
+      ],
+      "BF-876": [
+        {
+          "claims": [
+            "BF-876"
+          ],
+          "number": 1433,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-876: the inbound A2A server authenticates only callers who name a configured peer and dispatches consensus-flagged intents outside the consensus path"
+        }
+      ],
+      "BF-877": [
+        {
+          "claims": [
+            "BF-877"
+          ],
+          "number": 1438,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-877: the self-mod approval gate passes when no approval callback is wired"
+        }
+      ],
+      "BF-878": [
+        {
+          "claims": [
+            "BF-878"
+          ],
+          "number": 1439,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-878: a work item whose grant is fulfilled at filing time stays BLOCKED"
+        }
+      ],
+      "BF-879": [
+        {
+          "claims": [
+            "BF-879"
+          ],
+          "number": 1440,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-879: self-designed agents never receive the probationary trust prior"
+        }
+      ],
+      "BF-883": [
+        {
+          "claims": [
+            "BF-883"
+          ],
+          "number": 1458,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-883: the test suite boots runtimes into the live vessel's data directory, as the vessel"
+        }
+      ],
+      "BF-884": [
+        {
+          "claims": [
+            "BF-884"
+          ],
+          "number": 1462,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-884: a taken A2A or MCP server port ends the whole ProbOS process (AD-480d bind-failure degrade is unreachable)"
+        }
+      ],
+      "BF-886": [
+        {
+          "claims": [
+            "BF-886"
+          ],
+          "number": 1474,
+          "reason": "COMPLETED",
+          "state": "CLOSED",
+          "title": "BF-886: model routing ignores the configured tier models and the configured cost ceiling"
         }
       ],
       "BF-99": [
