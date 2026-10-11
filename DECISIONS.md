@@ -12,7 +12,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ### AD-1286 -- Elastic Team Contract: immutable team specs, durable slots, ephemeral attempts
 
-**Status:** IMPLEMENTED candidate (#1333), inert until AD-1288; store opened only when crew sessions are enabled.
+**Status:** SHIPPED (2026-10-11), PR #1503 (merge `cddcb9f6`), #1333 closed completed; inert until AD-1288; store opened only when crew sessions are enabled.
 
 **Decision.** D1 -- two new modules split the contract from its persistence. `probos/cognitive/elastic_team.py` holds only frozen pydantic identity contracts: `ElasticTeamSpec` (a versioned team recipe bound to an existing AD-618 Bill and/or an installed CrewSession plan), `WorkerSlot` (one durable role/task-class/capacity requirement, never an agent instance, carrying typed closed capacity, qualification, independence, merge, budget and authority-ceiling policies), `WorkerAttempt` (one uniquely identified ephemeral incarnation of a slot, bound by reference to an execution profile), `WorkerAttemptOutcome` (runtime-only terminal state), `CrewElasticTeamBinding`, the `TeamSpecLookup` protocol and the digest helpers. It imports only the standard library and pydantic; AD-1144's RFC 8785 canonicaliser is imported lazily inside one helper, so importing the module never imports the federation package. `elastic_team_store.py` imports `elastic_team` and `probos.protocols`; `crew_session.py` imports `elastic_team` only lazily and under `TYPE_CHECKING`; neither new module imports `crew_session`, `crew_executor`, `crew_orchestrator` or `workforce`. D2 -- identity is content addressed: `sha256(domain prefix + RFC 8785 bytes)` over the `model_dump(mode="json")` projection, with a per-kind domain prefix (`probos.elastic_team/<kind>/v1\0`). Identity material holds no floats; set-valued fields are sorted at validation and duplicates are refused, so declaration order never changes an identity; optional fields are always emitted (as `null`), so the key set is fixed per schema version and a new field means a new schema version, never a silent re-hash of v1. A worker attempt's id is derived from `(team_spec_ref, session_id, slot_id, ordinal)`, and runtime outcome state is a separate type that is never part of any digest.
 
@@ -28,7 +28,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ### AD-1315 -- Protected ProbOS host authority and durable admission witness
 
-**Status:** IMPLEMENTED candidate (#1381), default OFF (`protected_execution.enabled=false`, profile `ordinary`). Parent #1379 (AD-1314) withdrawn 2026-10-10; this AD stays as standalone infrastructure (see the Captain decision under AD-1316). AD-1316 adds governed effect routing without changing this authority.
+**Status:** SHIPPED (2026-10-10), PR #1494 (merge `57e814df`), #1381 closed completed, default OFF (`protected_execution.enabled=false`, profile `ordinary`). Parent #1379 (AD-1314) withdrawn 2026-10-10; this AD stays as standalone infrastructure (see the Captain decision under AD-1316). AD-1316 adds governed effect routing without changing this authority.
 
 **Decision.** A runtime-owned `ProtectedExecutionAuthority` uses a dedicated `ConnectionFactory`-backed `execution_authority.db` with additive schema version 1. It persists immutable execution manifests, complete enforcement-source snapshots, one append-preserving row per admission attempt, and active/revoked grants. Strict publication binds repository HEAD/tree/dirty state, durable host identity, process incarnation, runtime session, selected-agent identity/source, policy, issuer generation, and all required effective-enforcement kinds with canonical metadata-only SHA-256 digests. Duplicate effective operation or handler claims fail publication rather than shadowing.
 
@@ -38,7 +38,7 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ### AD-1316 -- Governed effect dispatch with durable operation correlation and reconciliation
 
-**Status:** IMPLEMENTED candidate (#1383), default OFF (`protected_execution.effect_broker_enabled=false`). Parent #1379 (AD-1314) withdrawn 2026-10-10; see the Captain decision below.
+**Status:** SHIPPED (2026-10-10), PR #1499 (merge `161e9277`), #1383 closed completed, default OFF (`protected_execution.effect_broker_enabled=false`). Parent #1379 (AD-1314) withdrawn 2026-10-10; see the Captain decision below.
 
 **Decision.** Use one runtime-owned `GovernedEffectBroker` above the existing `ToolExecutor`/`ToolRegistry` consumer boundary and extend AD-1315's protected witness to schema v2. The broker mints a UUID operation identity from the runtime-owned session/run/iteration/call-index/selected-agent correlation before authorization and a distinct UUID attempt identity for every reservation. Provider/model tool-call IDs remain hashed diagnostic provenance only. AD-1315 remains the sole manifest, generation, grant, isolation, and database authority; the broker owns deterministic effect transitions, not work selection, task decomposition, agent ranking, or campaign state.
 
@@ -48,9 +48,9 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 **Captain decision (2026-10-10).** The ProbOS integration with Supervised Worker is retired: the Captain stopped using Supervised Worker, and ProbOS's native self-repair path is the way forward. The strong supervision host program AD-1314/#1379, AD-1317/#1380 (host adapter) and AD-1318/#1382 (VS Code surface) close as not planned; no code was written for AD-1317 or AD-1318, and Supervised Worker #11 closes as not planned with that repository archived. AD-1315 and AD-1316 were delivered and stay as standalone, default-off ProbOS infrastructure with no Supervised Worker dependency (`git grep -i -E "supervised.?worker" -- src` returns no files). Crew self-repair continues under AD-1299/#1352, rescoped to drop its Supervised Worker framing. This decision allocates no AD number.
 
-### AD-1325 OPEN -- Default-off completion calibration with immutable spend evidence
+### AD-1325 -- Default-off completion calibration with immutable spend evidence
 
-**Status:** OPEN candidate (#1480), default OFF (`dm_agentic.economic_judgment.completion_calibration.enabled`; the independent descriptive estimate feed is also default OFF).
+**Status:** SHIPPED (2026-10-10), PR #1491 (merge `6dfcae19`), #1480 closed completed, default OFF (`dm_agentic.economic_judgment.completion_calibration.enabled`; the independent descriptive estimate feed is also default OFF).
 
 **Decision.** Successful owned crew-child completion records calibration in four WorkItemStore-owned sidecar tables, atomically with terminal status, token accounting and the owned submission. The completion row stores only raw work-item outcome fields. Each successful model call contributes an immutable snapshot of request/provider identity, requested/effective tier, AD-1324 outcome/evidence/reason, provider token splits, resolved model and the registry prices effective at capture time. Historical price snapshots are never recalculated after catalog changes.
 
@@ -60,9 +60,9 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 **Boundary.** Collection is independent of whether the economic organ is enabled. With calibration off, no schema, observer, outcome identity or versioned calibrated submission exists. With no mature data, hook arguments and prompt bytes are unchanged. Calibration does not change trust, authority, assignment, technical verification, budget headroom, model routing, AD-1324 tier policy or the frozen 14-key `crew_execution` record. The public crew path keeps its intentional deep default; legitimate floor-redo capture is exercised through `WorkItemAgenticExecutor.run(tier="fast")`, the public owner of that input.
 
-### AD-1324 OPEN -- Agent-chosen model tier per step under a deterministic stakes floor
+### AD-1324 -- Agent-chosen model tier per step under a deterministic stakes floor
 
-**Status:** OPEN candidate (#1479), default OFF (`dm_agentic.economic_judgment.tier_choice.enabled`, also needs economic judgment, `dm_agentic.enabled` and `model_routing.enabled`).
+**Status:** SHIPPED (2026-10-09), PR #1490 (merge `a6ec4d0e`), #1479 closed completed, default OFF (`dm_agentic.economic_judgment.tier_choice.enabled`, also needs economic judgment, `dm_agentic.enabled` and `model_routing.enabled`).
 
 **The split.** The model states the next step's tier with one closed directive (`@@next_tier {"tier":"fast|standard|deep","reason":"<closed token>"}`). Deterministic code validates the tier and reason, enforces limits and raises to a stakes floor; it never chooses among valid tiers and never cascades to a higher tier on its own. The directive is stripped from user and history output immediately after the model call, before token accounting; malformed, duplicate or unknown directives are dropped safely.
 
