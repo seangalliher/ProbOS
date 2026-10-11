@@ -138,4 +138,31 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "memory; resume() re-queues work-item notices after a restart."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.elastic-teams",
+        title="Elastic team specs, slots and worker attempts (AD-1286)",
+        owner_module="probos.cognitive.elastic_team_store",
+        owner_symbol="ElasticTeamStore",
+        canonical_path="elastic_teams.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.cognitive.elastic_team_store.ElasticTeamStore",
+        retention=StoreRetention.UNBOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Insert-only by design: team specs, slots, attempts and outcomes are provenance, and "
+            "twelve triggers abort every UPDATE, every DELETE and every INSERT that would replace "
+            "an existing row (REPLACE / INSERT OR REPLACE, including through a secondary unique "
+            "key); the tables are WITHOUT ROWID, so no implicit rowid exists to replace a row "
+            "through, and the module has no delete path. Growth is "
+            "bounded per session by each slot's budget.max_attempts (at most 1,024) and by the "
+            "number of spec revisions authored. Retention and teardown policy belongs to the "
+            "AD-1288/AD-1290 lifecycle, which may add an archival path; this AD adds none."
+        ),
+        notes=(
+            "Constructed only when agentic_dispatch.orchestrator_enabled wires CrewSessionService "
+            "(startup/finalize.py). Inert until AD-1288 commissions attempts; a default runtime "
+            "never creates the file."
+        ),
+    ),
 )

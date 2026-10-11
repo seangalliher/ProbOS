@@ -2420,6 +2420,7 @@ async def _durable_finalization_harness(
     child_count: int,
     output_size: int,
     attachment_decorator: Callable[[Any], Any] | None = None,
+    after_session: Callable[[Any, Any], Any] | None = None,
 ) -> Any:
     from types import SimpleNamespace
 
@@ -2450,6 +2451,9 @@ async def _durable_finalization_harness(
     if attachment_decorator is not None:
         stores.attachments = attachment_decorator(stores.attachments)
     parent, thread, service = await _session_parent(stores)
+    if after_session is not None:
+        # AD-1286: lets a caller act on the discussing session before any child exists.
+        await after_session(parent, service)
     children = [
         await _child(
             stores,

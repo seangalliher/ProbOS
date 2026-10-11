@@ -312,6 +312,7 @@ async def _stop_runtime_sqlite_sidecars(
         ("decision_pre_clearance_store", "decision pre-clearance store"),  # AD-1214
         ("continue_extension_permit_store", "continue extension permit store"),  # AD-1323
         ("standing_interest_store", "standing interest store"),  # AD-1228
+        ("elastic_team_store", "elastic team store"),  # AD-1286
         ("knowledge_edges", "knowledge edge store"),
         ("personal_ontology_prober", "personal ontology prober"),
         ("rejection_cache", "relationship rejection cache"),

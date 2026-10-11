@@ -39,6 +39,7 @@ from probos.workforce import WorkItemRetryBarrier, WorkItemRetryConflict
 if TYPE_CHECKING:
     from probos.cognitive.crew_assignment import AssignmentDecision
     from probos.cognitive.crew_synth import SynthesisResult
+    from probos.cognitive.elastic_team import CrewElasticTeamBinding, TeamSpecLookup
     from probos.consultation.dispatch import WorkItemSpec
     from probos.threads import ChatThread
     from probos.workforce import (
@@ -2095,6 +2096,18 @@ def _validate_session_recovery_invariant(
         raise ValueError("crew_session_recovery_state_conflict")
 
 
+def _parse_team_binding(value: Any) -> CrewElasticTeamBinding:
+    """AD-1286: strict parse of the stored ``crew_elastic_team`` binding (data integrity: propagate)."""
+    from probos.cognitive.elastic_team import CrewElasticTeamBinding
+
+    if type(value) is not dict:
+        raise ValueError("crew_session_team_binding_invalid")
+    try:
+        return CrewElasticTeamBinding.model_validate(value)
+    except ValidationError as exc:
+        raise ValueError("crew_session_team_binding_invalid") from exc
+
+
 class _WorkItemStoreProtocol(Protocol):
     work_type_registry: WorkTypeRegistry
 
@@ -2341,6 +2354,8 @@ class CrewSessionService:
         self._owned_components[self] = frozenset({"owner", "executor", "verifier", "ttl"})
         self._owned_legacy_authorizer: owned_steps.OwnedStepsAuthorizer | None = None
         self._owned_view_authorizer: owned_steps.OwnedStepsAuthorizer | None = None
+        # AD-1286: bound only by the crew-gated finalize wiring; unbound means binding refuses.
+        self._team_spec_lookup: TeamSpecLookup | None = None
 
     def register_owned_steps_component(self, component: object, roles: frozenset[str]) -> None:
         if not roles or not roles <= {"owner", "executor", "verifier", "ttl"}:
@@ -3263,6 +3278,172 @@ class CrewSessionService:
         if self._worker_resolver is not None or resolver is None:
             raise ValueError("crew_session_worker_binding_invalid")
         self._worker_resolver = resolver
+
+    def bind_team_spec_lookup(self, lookup: TeamSpecLookup) -> None:
+        """AD-1286: bind the read port that resolves an exact team spec before a session binds it."""
+        if self._team_spec_lookup is not None or lookup is None:
+            raise ValueError("crew_session_team_lookup_binding_invalid")
+        self._team_spec_lookup = lookup
+
+    async def get_team_binding(self, parent_id: str) -> CrewElasticTeamBinding | None:
+        """AD-1286: the team-spec reference this session bound through ``bind_team_spec``, or None.
+
+        The stored value is parsed strictly and, when a lookup is bound, verified against it: the
+        referenced spec must exist and carry the same ``team_id`` and ``revision``. An unparseable or
+        unverifiable binding raises ``crew_session_team_binding_invalid`` instead of reading as valid,
+        because nothing about the key guarantees ``bind_team_spec`` wrote it: it is owner-protected
+        only once a plan is installed, and before that the platform's generic metadata merge can write
+        any ``crew_*`` key (a pre-existing property recorded in #1419). Plan currency is not checked
+        here; AD-1288's commission admission compares ``spec.process.plan_hash`` with the current plan.
+        """
+        from probos.cognitive.elastic_team import CREW_ELASTIC_TEAM_METADATA_KEY
+
+        parent = await self._work_items.get_work_item(_normalize_id(parent_id))
+        if parent is None:
+            return None
+        metadata = parent.metadata or {}
+        session_raw = metadata.get("crew_session", _MISSING)
+        if session_raw is _MISSING:
+            return None
+        await self._validate_loaded(parent, self._parse_contract(session_raw))
+        raw = metadata.get(CREW_ELASTIC_TEAM_METADATA_KEY, _MISSING)
+        if raw is _MISSING:
+            return None
+        binding = _parse_team_binding(raw)
+        lookup = self._team_spec_lookup
+        if lookup is not None:
+            spec = await lookup.get_team_spec(binding.team_spec_ref)
+            if spec is None or (spec.team_id, spec.revision) != (binding.team_id, binding.revision):
+                logger.error(
+                    "AD-1286: crew session parent=%s binding names team spec %s, which the lookup cannot "
+                    "confirm; refusing to return an unverifiable binding",
+                    parent.id,
+                    binding.team_spec_ref,
+                )
+                raise ValueError("crew_session_team_binding_invalid")
+        return binding
+
+    async def bind_team_spec(
+        self,
+        parent_id: str,
+        team_spec_ref: str,
+        *,
+        expected_session: CrewSessionContract,
+    ) -> CrewElasticTeamBinding:
+        """AD-1286: durably bind one exact, already-persisted team spec to a discussing session.
+
+        Write-once, parent row only. Allowed only while the session is ``discussing``
+        (recovery absent, ``unplanned`` or ``planned``) and no ``crew_provisioning``
+        marker is present, so the session has not started executing. A spec naming a
+        ``plan_hash`` binds only when the session's **current** recovery plan carries
+        that hash. This is a bind-time admission check: a later governed replan
+        (``replan_unstarted``) can install a different plan and leaves the binding
+        unchanged, so a repeat bind then reports ``crew_session_team_plan_mismatch``,
+        and AD-1288's commission admission must compare ``spec.process.plan_hash`` with
+        the session's current plan before it commissions any attempt. Re-binding the
+        identical reference returns the stored binding (after the same plan check); any
+        other reference is a conflict. This method is the writer of the key, not its
+        guard: the key is owner-protected only once a plan is installed (see
+        ``get_team_binding``), which is why reads verify what they return.
+        """
+        from probos.cognitive.elastic_team import (
+            CREW_ELASTIC_TEAM_METADATA_KEY,
+            CrewElasticTeamBinding,
+            ElasticTeamSpec,
+            is_sha256_ref,
+        )
+
+        parent_key = _normalize_id(parent_id)
+        if not is_sha256_ref(team_spec_ref):
+            raise ValueError("crew_session_team_spec_ref_invalid")
+        lookup = self._team_spec_lookup
+        if lookup is None:
+            raise ValueError("crew_session_team_lookup_unavailable")
+        spec = await lookup.get_team_spec(team_spec_ref)
+        if spec is None:
+            raise ValueError("crew_session_team_spec_not_found")
+        spec = ElasticTeamSpec.model_validate(spec)  # whatever the lookup returned must still validate
+        candidate = CrewElasticTeamBinding.for_spec(spec)
+        if candidate.team_spec_ref != team_spec_ref:
+            raise ValueError("crew_session_team_spec_ref_invalid")
+        candidate_json = candidate.model_dump(mode="json")
+        expected_contract = self._validate_contract(expected_session)
+        last_error: ValueError | None = None
+        for _ in range(3):
+            parent = await self._work_items.get_work_item(parent_key)
+            if parent is None:
+                raise ValueError("crew_session_parent_not_found")
+            metadata = parent.metadata or {}
+            session_raw = metadata.get("crew_session", _MISSING)
+            if session_raw is _MISSING:
+                raise ValueError("crew_session_not_initialized")
+            current = self._parse_contract(session_raw)
+            await self._validate_loaded(parent, current)
+            recovery_raw = metadata.get("crew_recovery", _MISSING)
+            recovery = None if recovery_raw is _MISSING else self._parse_recovery(recovery_raw)
+            plan_hash = spec.process.plan_hash
+            plan_current = plan_hash is None or (
+                recovery is not None and recovery.plan is not None and recovery.plan.plan_hash == plan_hash
+            )
+            existing_raw = metadata.get(CREW_ELASTIC_TEAM_METADATA_KEY, _MISSING)
+            if existing_raw is not _MISSING:
+                existing = _parse_team_binding(existing_raw)
+                if not _json_values_exactly_equal(existing.model_dump(mode="json"), candidate_json):
+                    raise ValueError("crew_session_team_binding_conflict")
+                if not plan_current:
+                    raise ValueError("crew_session_team_plan_mismatch")  # a replan moved the plan the spec names
+                return existing
+            if not _json_values_exactly_equal(
+                current.model_dump(mode="json"),
+                expected_contract.model_dump(mode="json"),
+            ):
+                raise ValueError("crew_session_revision_conflict")
+            if current.state != "discussing" or "crew_provisioning" in metadata:
+                raise ValueError("crew_session_team_binding_state_invalid")
+            if recovery is not None and recovery.phase not in _DISCUSSING_RECOVERY_PHASES:
+                raise ValueError("crew_session_team_binding_state_invalid")
+            if not plan_current:
+                raise ValueError("crew_session_team_plan_mismatch")
+            expected: dict[str, Any] = {"crew_session": session_raw}
+            absent = {CREW_ELASTIC_TEAM_METADATA_KEY, "crew_provisioning"}
+            if recovery_raw is _MISSING:
+                absent.add("crew_recovery")
+            else:
+                expected["crew_recovery"] = recovery_raw
+            try:
+                updated = await self._merge_owned_metadata(
+                    parent.id,
+                    {CREW_ELASTIC_TEAM_METADATA_KEY: candidate_json},
+                    expected=expected,
+                    expected_absent_keys=frozenset(absent),
+                    expected_work_type="crew_session",
+                    expected_status=_STATUS_PROJECTION[current.state],
+                    expected_assigned_to=current.facilitator_id,
+                    source="crew_session_team_binding",
+                )
+            except ValueError as exc:
+                if str(exc) not in ("work_item_metadata_conflict", "owned_steps_plan_conflict"):
+                    raise  # any other authority failure is final
+                last_error = exc  # a concurrent writer moved the row or its owned plan; re-read and decide again
+                continue
+            if updated is None:
+                raise ValueError("crew_session_team_binding_failed")
+            authoritative = _parse_team_binding(
+                (updated.metadata or {}).get(CREW_ELASTIC_TEAM_METADATA_KEY),
+            )
+            if not _json_values_exactly_equal(authoritative.model_dump(mode="json"), candidate_json):
+                raise ValueError("crew_session_team_binding_failed")
+            logger.info(
+                "AD-1286: crew session parent=%s bound team spec=%s (team=%s revision=%d); "
+                "the binding is write-once and changes no accepted work",
+                parent.id,
+                authoritative.team_spec_ref,
+                authoritative.team_id,
+                authoritative.revision,
+            )
+            return authoritative
+        assert last_error is not None  # every pass either returned, raised, or recorded the conflict it retried
+        raise last_error
 
     @property
     def worker_eligibility(self) -> CrewWorkerEligibilityResolver | None:
