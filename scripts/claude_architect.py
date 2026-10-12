@@ -26,13 +26,23 @@ Usage:
 Exit codes: 0 completed, 1 agent error or incomplete run, 2 preflight refused,
 3 timed out, 4 completed but the agent was denied a tool call (read the answer
 and the listed denials: it may rest on evidence the agent could not gather),
-5 resume refused because the session's context is above --max-resume-context
-(start a fresh session with a short handoff instead; nothing ran).
+5 resume refused because the session's context is above --max-resume-context,
+or its prompt cache has expired (idle past --stale-resume-minutes) while it
+still carries more than --stale-resume-context tokens; start a fresh session
+with a short handoff instead. Nothing ran.
 
 Token economy (measured 2026-10-11): 34 runs used about 437M cache-read tokens,
 about 80% of the spend, because resumed sessions grew to 250K-670K tokens a
 call. Resume only for a direct follow-up; give `--effort` per task (read-only
 runs default to medium).
+
+Prompt caching. Measured 2026-10-11 on the bridge sessions: Claude Code writes
+cache entries with the 1-hour TTL, at 2x the input price (reads cost 0.05x on
+Opus 5.5). Seven resumes that came 64-138 minutes after the session's last
+call read nothing from cache and rewrote the whole context, 230K-610K tokens in
+one call each. Per Anthropic's prompt-caching guidance, an effort change also
+invalidates the conversation cache, so a resumed session keeps the effort it
+started with.
 """
 
 from __future__ import annotations
@@ -46,7 +56,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -60,6 +70,10 @@ DEFAULT_READ_ONLY_EFFORT = "medium"
 # resumed sessions averaged 250K-330K and peaked at 667K, re-sending files read
 # for earlier phases on every call.
 DEFAULT_MAX_RESUME_CONTEXT = 250_000
+# Claude Code caches with the 1-hour TTL; a resume after that pays a full rewrite at 2x.
+DEFAULT_STALE_RESUME_MINUTES = 55
+# Below this, a cold rewrite costs about what a fresh session's own cold start does.
+DEFAULT_STALE_RESUME_CONTEXT = 60_000
 _SESSION_ID = re.compile(r"[0-9A-Fa-f][0-9A-Fa-f-]{7,63}")
 
 # Any of these redirects the CLI away from the claude.ai login: an API key or
@@ -170,6 +184,8 @@ class ArchitectResult:
     effort: str | None = None
     resumed_context: int | None = None
     resumed: bool = False
+    cache: dict[str, int] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
 
 def repo_root(cwd: Path, run: Runner | None = None) -> Path:
@@ -340,22 +356,18 @@ def projects_root(env: dict[str, str], home: Path | None = None, settings: dict[
     return Path(base) if base else (home or Path.home()) / ".claude"
 
 
-def resumed_context_tokens(session_id: str, config_dir: Path) -> int | None:
-    """Context size, in tokens, of the last main-model call in a session's transcript; None if unknown.
-
-    The next resumed call re-sends at least this much, so it is the size the
-    resume guard compares against its limit.
-    """
+def session_cache_state(session_id: str, config_dir: Path) -> tuple[int | None, datetime | None]:
+    """(context tokens, time) of the last main-model call in a session's transcripts; (None, None) if unknown."""
     if not _SESSION_ID.fullmatch(session_id or ""):
-        return None
-    found = None
-    # A session normally has one transcript; if it has several, take the largest (the conservative choice).
+        return None, None
+    context: int | None = None
+    latest: datetime | None = None
     for transcript in sorted((config_dir / "projects").glob(f"*/{session_id}.jsonl")):
         try:
             lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        last = None
+        last_ctx, last_at = None, None
         for line in lines:
             try:
                 record = json.loads(line)
@@ -367,15 +379,85 @@ def resumed_context_tokens(session_id: str, config_dir: Path) -> int | None:
             if MODEL not in str(message.get("model") or ""):
                 continue
             usage = message.get("usage")
-            if isinstance(usage, dict):
+            if not isinstance(usage, dict):
+                continue
+            try:
+                ctx = sum(int(usage.get(key) or 0) for key in
+                          ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+            except (TypeError, ValueError):
+                continue
+            stamp = None
+            if isinstance(record.get("timestamp"), str):
                 try:
-                    last = sum(int(usage.get(key) or 0) for key in
-                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-                except (TypeError, ValueError):
-                    continue  # an unreadable usage record is skipped, not fatal
-        if last is not None:
-            found = last if found is None else max(found, last)
-    return found
+                    stamp = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+                except ValueError:
+                    stamp = None
+                if stamp is not None and stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)  # transcripts record UTC
+            last_ctx, last_at = ctx, stamp or last_at
+        # Size: the largest transcript (conservative). Age: the most recent call in any transcript.
+        if last_ctx is not None and (context is None or last_ctx > context):
+            context = last_ctx
+        if last_at is not None and (latest is None or last_at > latest):
+            latest = last_at
+    return context, latest
+
+
+def resume_refusal(context: int | None, last_at: datetime | None, *, now: datetime, max_context: int,
+                   stale_minutes: float, stale_context: int) -> str | None:
+    """Why resuming would waste the cache, or None if it is fine (unknown size never blocks)."""
+    if context is None:
+        return None
+    if context > max_context:
+        return (f"it already carries about {context:,} tokens of context (limit {max_context:,}), and every "
+                "call would re-send all of it")
+    if last_at is not None and context > stale_context:
+        idle = (now - last_at).total_seconds() / 60
+        if idle > stale_minutes:
+            return (f"its last call was {idle:.0f} minutes ago, so its 1-hour prompt cache has expired and the "
+                    f"first call would rewrite all {context:,} tokens at twice the input price")
+    return None
+
+
+def session_effort(root: Path, session_id: str) -> tuple[bool, str | None]:
+    """(known, effort) the session last ran with, from this worktree's bridge logs."""
+    for log in sorted((root / "logs" / "architect").glob(f"*-{session_id}.json"), reverse=True):
+        try:
+            record = json.loads(log.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict):
+            effort = record.get("effort")  # absent before 2026-10-11: the CLI default
+            if effort is None or effort in EFFORT_LEVELS:
+                return True, effort
+            return False, None  # an unrecognised value is treated as unknown, never passed on
+    return False, None
+
+
+def cache_stats(raw: str | None) -> dict[str, int]:
+    """Summed cache usage of the main model for one run, from the CLI's JSON result."""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    usage = data.get("modelUsage") if isinstance(data, dict) else None
+    model = usage.get(MODEL) if isinstance(usage, dict) else None
+    if not isinstance(model, dict):
+        return {}
+    keys = {"cache_read": "cacheReadInputTokens", "cache_write": "cacheCreationInputTokens", "input": "inputTokens"}
+    try:
+        return {name: int(model.get(key) or 0) for name, key in keys.items()}
+    except (TypeError, ValueError):
+        return {}
+
+
+def resumed_context_tokens(session_id: str, config_dir: Path) -> int | None:
+    """Context size, in tokens, of the last main-model call in a session's transcript; None if unknown.
+
+    The next resumed call re-sends at least this much, so it is the size the
+    resume guard compares against its limit.
+    """
+    return session_cache_state(session_id, config_dir)[0]
 
 
 def build_command(cli: str, *, read_only: bool, resume: str | None, effort: str | None = None) -> list[str]:
@@ -489,11 +571,12 @@ def run_architect(
         return result
     result = interpret(completed.stdout)
     result.effort, result.resumed_context, result.resumed = effort, resumed_context, resume is not None
+    result.cache = cache_stats(completed.stdout)
     if result.exit_code in (0, 4) and completed.returncode != 0:
         result.exit_code = 1
         result.text = f"claude CLI exited {completed.returncode} after reporting completion.\n{result.text}"
     result.log_path = _write_log(root, result.session_id, {
-        "command": command, **told, "returncode": completed.returncode,
+        "command": command, **told, "cache": result.cache, "returncode": completed.returncode,
         "stdout": completed.stdout, "stderr": (completed.stderr or "")[-4000:],
     })
     return result
@@ -509,15 +592,33 @@ def render(result: ArchitectResult) -> str:
         f"exit: {result.exit_code}",
         f"effort: {result.effort or 'cli default'}",
     ]
+    if result.cache:
+        header.append("cache: read {cache_read:,} / write {cache_write:,} / uncached {input:,} tokens".format(**result.cache))
     if result.resumed_context is not None:
         header.append(f"resumed_context_tokens: {result.resumed_context:,}")
     elif result.resumed:
         header.append("resumed_context_tokens: unknown (no transcript found; the resume guard was not applied)")
     for denial in result.denials:
         header.append(f"  denied: {denial.get('tool_name')} {json.dumps(denial.get('tool_input'))[:200]}")
+    for note in result.notes:
+        header.append(f"note: {note}")
     if result.log_path:
         header.append(f"log: {result.log_path}")
     return "\n".join(header) + "\n----\n" + result.text
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+def _positive_float(text: str) -> float:
+    value = float(text)
+    if not value > 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -530,9 +631,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="continue an earlier session: only for a direct follow-up to its last answer")
     parser.add_argument("--effort", choices=EFFORT_LEVELS,
                         help=f"reasoning effort (default: {DEFAULT_READ_ONLY_EFFORT} for --read-only, else the CLI default)")
-    parser.add_argument("--max-resume-context", type=int, default=DEFAULT_MAX_RESUME_CONTEXT,
+    parser.add_argument("--max-resume-context", type=_positive_int, default=DEFAULT_MAX_RESUME_CONTEXT,
                         help=f"refuse --resume above this many context tokens (default {DEFAULT_MAX_RESUME_CONTEXT:,})")
-    parser.add_argument("--allow-large-resume", action="store_true", help="resume even above --max-resume-context")
+    parser.add_argument("--stale-resume-minutes", type=_positive_float, default=DEFAULT_STALE_RESUME_MINUTES,
+                        help=f"treat the session's cache as expired after this idle time (default {DEFAULT_STALE_RESUME_MINUTES})")
+    parser.add_argument("--stale-resume-context", type=_positive_int, default=DEFAULT_STALE_RESUME_CONTEXT,
+                        help=f"an expired session above this many tokens is not resumed (default {DEFAULT_STALE_RESUME_CONTEXT:,})")
+    parser.add_argument("--allow-large-resume", action="store_true",
+                        help="resume even when the session is too large or its cache has expired")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="seconds (default 3600)")
     args = parser.parse_args(argv)
 
@@ -551,22 +657,39 @@ def main(argv: list[str] | None = None) -> int:
     except PreflightError as exc:
         print(f"claude_architect: preflight refused: {exc}", file=sys.stderr)
         return 2
-    effort = resolve_effort(read_only=args.read_only, requested=args.effort)
+    notes: list[str] = []
     resumed_context = None
     if args.resume:
         try:
             settings = {name: value for name, (value, _) in settings_env(root, Path.home()).items()}
         except PreflightError:
             settings = {}
-        resumed_context = resumed_context_tokens(args.resume, projects_root(env, settings=settings))
+        resumed_context, last_at = session_cache_state(args.resume, projects_root(env, settings=settings))
+        known, previous_effort = session_effort(root, args.resume)
+        if args.effort is None:
+            # An effort change invalidates the conversation cache: keep what the session ran with.
+            effort = previous_effort if known else None
+            if not known:
+                notes.append("the session's effort is unknown (no bridge log for it in this worktree); "
+                             "running at the CLI default")
+        else:
+            effort = resolve_effort(read_only=args.read_only, requested=args.effort)
+            if known and effort != previous_effort:
+                notes.append(f"effort {effort} differs from the session's {previous_effort or 'cli default'}; "
+                             "the conversation cache will be rewritten")
+        why = resume_refusal(resumed_context, last_at, now=datetime.now(timezone.utc),
+                             max_context=args.max_resume_context, stale_minutes=args.stale_resume_minutes,
+                             stale_context=args.stale_resume_context)
+    else:
+        effort = resolve_effort(read_only=args.read_only, requested=args.effort)
+        why = None
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if resumed_context is not None and resumed_context > args.max_resume_context and not args.allow_large_resume:
+    if why and not args.allow_large_resume:
         refused = ArchitectResult(
             exit_code=5, session_id=args.resume, effort=effort, resumed_context=resumed_context, resumed=True,
-            text=(f"Resume refused: session {args.resume} already carries about {resumed_context:,} tokens of "
-                  f"context (limit {args.max_resume_context:,}), and every call would re-send all of it. Start a "
-                  "fresh session with a short handoff (prompt path, findings, decision needed), or pass "
-                  "--allow-large-resume for a direct follow-up that truly needs the old context. Nothing ran."),
+            text=(f"Resume refused for session {args.resume}: {why}. Start a fresh session with a short handoff "
+                  "(prompt path, findings, decision needed), or pass --allow-large-resume for a direct follow-up "
+                  "that truly needs the old context. Nothing ran."),
         )
         print(render(refused))
         return refused.exit_code
@@ -574,6 +697,7 @@ def main(argv: list[str] | None = None) -> int:
         task, root=root, cli=cli, read_only=args.read_only, resume=args.resume,
         timeout=args.timeout, env=env, effort=effort, resumed_context=resumed_context,
     )
+    result.notes.extend(notes)
     # The answer may contain any Unicode; stdout was reconfigured above so the console code page cannot crash it.
     print(render(result))
     return result.exit_code
