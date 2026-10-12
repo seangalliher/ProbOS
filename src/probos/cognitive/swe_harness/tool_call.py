@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, TYPE_CHECKING
 
 from probos.cognitive.swe_harness.tools import InstructionToolResult
+from probos.execution.workspace_results import (
+    INSPECTION_MAX_DEPTH, INSPECTION_MAX_SLOTS, ResultDelivery, WorkspaceResultError,
+)
 from probos.repository_instructions import InstructionObservation
 from probos.tools.delegation_evidence import DelegatedToolResult, DelegationEvidence
 
@@ -435,6 +438,10 @@ def render_tool_output_sourced(value: Any, *, max_chars: int = 0) -> tuple[str, 
         plain = str(value)
     except Exception:  # noqa: BLE001 — a hostile __repr__ is not our problem
         return "", 0
+    return _render_from_plain(value, plain, max_chars=max_chars)
+
+
+def _render_from_plain(value: Any, plain: str, *, max_chars: int) -> tuple[str, int]:
     if max_chars <= 0 or len(plain) <= max_chars:
         return plain, len(plain)
 
@@ -717,41 +724,14 @@ class ToolCallResult:
         ``__repr__`` can answer differently the second time, and serialising a
         large structure twice is unbounded synchronous work on the tool path.
 
-        This records the LENGTH only. Keeping the value itself is AD-1240's
-        question (#1239, open), and deliberately not answered here.
+        This direct adapter retains the legacy rendering and source length.
+        AD-1240's armed loop instead prepares ``capture_tool_result`` before
+        destructive rendering; it does not change this adapter's output.
         """
-        result_type = cls
-        extension: dict[str, Any] = {}
-        if isinstance(tool_result, DelegatedToolResult):
-            result_type = DelegatedToolCallResult
-            extension["evidence"] = tool_result.evidence
-        elif isinstance(tool_result, InstructionToolResult) and tool_result.error is None:
-            result_type = InstructionToolCallResult
-            extension["repository_instructions"] = tool_result.repository_instructions
-        if tool_result.error is not None:
-            return result_type(
-                id=request_id,
-                output=str(tool_result.error),
-                is_error=True,
-                duration_ms=duration_ms,
-                **extension,
-            )
-        raw = tool_result.output
-        source_chars: int | None = None
-        if isinstance(raw, str):
-            out = raw
-        elif raw is None:
-            out = ""
-        else:
-            out, source_chars = render_tool_output_sourced(raw, max_chars=max_chars)
-        return result_type(
-            id=request_id,
-            output=out,
-            is_error=False,
-            duration_ms=duration_ms,
-            source_chars=source_chars,
-            **extension,
+        captured = _capture_conversion(
+            request_id, tool_result, duration_ms, max_chars=max_chars, qualify=False,
         )
+        return captured.legacy_result(result_type=cls)
 
 
 @dataclass(frozen=True)
@@ -770,6 +750,165 @@ class DelegatedToolCallResult(ToolCallResult):
     def __post_init__(self) -> None:
         if not isinstance(self.evidence, DelegationEvidence):
             raise TypeError("delegated call result requires typed evidence")
+
+
+@dataclass(frozen=True)
+class _CaptureInspection:
+    root_type: str
+    shape: tuple[tuple[str, int], ...] = ()
+    error: str | None = None
+
+
+def _inspect_capture_value(value: object) -> _CaptureInspection:
+    natives = (str, type(None), bool, int, float, list, tuple, dict)
+    root_type = next((native.__name__ for native in natives if type(value) is native), "opaque")
+    seen: set[int] = set()
+    shape = {"slots": 0, "dicts": 0, "lists": 0, "tuples": 0, "scalars": 0, "revisits": 0}
+
+    def inspect(item: object, depth: int) -> None:
+        shape["slots"] += 1
+        if shape["slots"] > INSPECTION_MAX_SLOTS:
+            raise WorkspaceResultError("capture_slots")
+        if depth > INSPECTION_MAX_DEPTH:
+            raise WorkspaceResultError("capture_depth")
+        kind = type(item)
+        # Identity comparisons only: even a metaclass __eq__/__hash__ is not
+        # an eligibility hook. Containers are exact built-ins before walking.
+        if any(kind is native for native in natives[:5]):
+            shape["scalars"] += 1
+            return
+        if not any(kind is native for native in natives[5:]):
+            raise WorkspaceResultError("capture_opaque")
+        if id(item) in seen:
+            shape["revisits"] += 1
+            return
+        seen.add(id(item))
+        if kind is dict:
+            shape["dicts"] += 1
+            for key, child in item.items():
+                inspect(key, depth + 1)
+                inspect(child, depth + 1)
+        else:
+            shape["lists" if kind is list else "tuples"] += 1
+            for child in item:
+                inspect(child, depth + 1)
+
+    try:
+        inspect(value, 0)
+    except WorkspaceResultError as exc:
+        return _CaptureInspection(root_type, error=exc.code)
+    except Exception:
+        return _CaptureInspection(root_type, error="capture_changed")
+    return _CaptureInspection(root_type, tuple(shape.items()))
+
+
+@dataclass(frozen=True)
+class CapturedConversion:
+    """The converter's first text, before any destructive shape rendering."""
+
+    request_id: str
+    producer: "ToolResult" = field(repr=False)
+    duration_ms: float
+    max_chars: int
+    text: str | None = field(repr=False)
+    serialization_error: Exception | None = field(default=None, repr=False)
+    inspection: _CaptureInspection | None = field(default=None, repr=False)
+
+    def result(
+        self, text: str, *, source_chars: int | None = None,
+        result_type: type[ToolCallResult] = ToolCallResult,
+    ) -> ToolCallResult:
+        extension: dict[str, Any] = {}
+        if isinstance(self.producer, DelegatedToolResult):
+            result_type = DelegatedToolCallResult
+            extension["evidence"] = self.producer.evidence
+        elif isinstance(self.producer, InstructionToolResult) and self.producer.error is None:
+            result_type = InstructionToolCallResult
+            extension["repository_instructions"] = self.producer.repository_instructions
+        return result_type(
+            id=self.request_id, output=text, is_error=self.producer.error is not None,
+            duration_ms=self.duration_ms, source_chars=source_chars, **extension,
+        )
+
+    def legacy_result(
+        self, *, result_type: type[ToolCallResult] = ToolCallResult,
+    ) -> ToolCallResult:
+        raw = self.producer.output
+        if self.serialization_error is not None:
+            if self.producer.error is not None or not isinstance(raw, (dict, list, tuple)):
+                raise self.serialization_error
+            return self.result("", source_chars=0, result_type=result_type)
+        text = self.text if self.text is not None else ""
+        if self.producer.error is not None or isinstance(raw, str) or raw is None:
+            return self.result(text, result_type=result_type)
+        rendered, source_chars = (
+            _render_from_plain(raw, text, max_chars=self.max_chars)
+            if isinstance(raw, (dict, list, tuple)) else (text, len(text))
+        )
+        return self.result(rendered, source_chars=source_chars, result_type=result_type)
+
+
+def capture_tool_result(
+    request_id: str, raw: "ToolResult", duration_ms: float, *, max_chars: int,
+) -> CapturedConversion:
+    """Capture exactly the existing first serialization, without shrinking it."""
+    return _capture_conversion(request_id, raw, duration_ms, max_chars=max_chars, qualify=True)
+
+
+def _capture_conversion(
+    request_id: str, raw: "ToolResult", duration_ms: float, *, max_chars: int, qualify: bool,
+) -> CapturedConversion:
+    inspection = None
+    try:
+        value = raw.error if raw.error is not None else raw.output
+        # Record eligibility BEFORE repr can mutate a containing value. Legacy
+        # adapters skip inspection altogether and keep their existing algorithm.
+        inspection = _inspect_capture_value(value) if qualify else None
+        text = (
+            str(value) if raw.error is not None else
+            value if isinstance(value, str) else "" if value is None else str(value)
+        )
+    except Exception as exc:
+        return CapturedConversion(request_id, raw, duration_ms, max_chars, None, exc, inspection)
+    return CapturedConversion(request_id, raw, duration_ms, max_chars, text, inspection=inspection)
+
+
+@dataclass(frozen=True)
+class DeliveryToolCallResult(ToolCallResult):
+    delivery: ResultDelivery = field(kw_only=True, repr=False)
+
+
+@dataclass(frozen=True)
+class InstructionDeliveryToolCallResult(InstructionToolCallResult):
+    delivery: ResultDelivery = field(kw_only=True, repr=False)
+
+
+@dataclass(frozen=True)
+class DelegatedDeliveryToolCallResult(DelegatedToolCallResult):
+    delivery: ResultDelivery = field(kw_only=True, repr=False)
+
+
+def result_delivery(result: ToolCallResult) -> ResultDelivery | None:
+    if isinstance(result, (
+        DeliveryToolCallResult, InstructionDeliveryToolCallResult, DelegatedDeliveryToolCallResult,
+    )):
+        return result.delivery
+    return None
+
+
+def with_result_delivery(result: ToolCallResult, delivery: ResultDelivery) -> ToolCallResult:
+    if type(delivery) is not ResultDelivery:
+        raise TypeError("result delivery requires a typed record")
+    fields = {
+        "id": result.id, "output": result.output, "is_error": result.is_error,
+        "duration_ms": result.duration_ms, "source_chars": result.source_chars,
+        "delivery": delivery,
+    }
+    if isinstance(result, DelegatedToolCallResult):
+        return DelegatedDeliveryToolCallResult(**fields, evidence=result.evidence)
+    if isinstance(result, InstructionToolCallResult):
+        return InstructionDeliveryToolCallResult(**fields, repository_instructions=result.repository_instructions)
+    return DeliveryToolCallResult(**fields)
 
 
 @dataclass(frozen=True)

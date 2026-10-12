@@ -1,0 +1,40 @@
+{
+  "base": "1c9abde5bcde5fef96f2035ff319f81b0c002ff9",
+  "normalization": "none; deterministic inputs, request IDs and durations",
+  "inputs": [
+    "none",
+    "small_structure",
+    "unicode_crlf",
+    "threshold_minus_one",
+    "threshold_equal",
+    "small_error",
+    "legacy_20k_string",
+    "legacy_20k_structure"
+  ],
+  "cases": {
+    "legacy/cap0": {
+      "bytes": 153879,
+      "sha256": "4302679cb50d5ecc57e163c7b81ab1e0ae105da7cad2192831b61b32b32ccfe0"
+    },
+    "legacy/cap1": {
+      "bytes": 61473,
+      "sha256": "70af00217097a3217bfeb9a8883be7e9b3044db3ea1f0a9095cd530bf523a4d8"
+    },
+    "legacy/cap6000": {
+      "bytes": 87354,
+      "sha256": "21f94fb40254ca072053f0f8a18d9f3732ac5e8c111c067b54a0ab3b2c22cbaa"
+    },
+    "structured/cap0": {
+      "bytes": 155264,
+      "sha256": "1e0de967a3febba40286de3d35566a53c37870cd03f4848ffc494e938451465a"
+    },
+    "structured/cap1": {
+      "bytes": 62858,
+      "sha256": "aee53292755f7753d7e679e506598769d7fe7ac342bd020cf965c3dcaf0e2f62"
+    },
+    "structured/cap6000": {
+      "bytes": 88739,
+      "sha256": "74f18618340cba39ffa8eb661abe53c0d771574877b31f79c09740ff7e00a7b2"
+    }
+  }
+}

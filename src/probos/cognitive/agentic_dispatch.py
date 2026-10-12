@@ -34,6 +34,7 @@ from probos.cognitive.swe_harness.agentic_loop import (
     AGENTIC_DEFAULT_TIER,
     AgenticBudgetAwarenessState,
 )
+from probos.cognitive.swe_harness.result_offload import workspace_delivery_context  # AD-1240
 from probos.cognitive.dm.reply_value import correlate_tool_outcomes  # AD-1248
 from probos.dm_reply import (  # AD-1248 / AD-1295
     ToolFailures,
@@ -47,6 +48,7 @@ from probos.economic_calibration import (
     derive_calibrated_tokens,
 )
 from probos.execution.long_runs import EXECUTION_LONG_RUN_GRANT_KEY, LongRunGrant  # AD-1246
+from probos.execution.workspace_results import UnavailableWorkspaceResults, resolve_workspace_results  # AD-1240
 from probos.fault_report import ToolDefect, detect_tool_defect  # AD-1257
 from probos.fault_detection import (
     FaultObservationResult,
@@ -91,6 +93,7 @@ from probos.tools.registry import ToolPermissionDenied
 from probos.types import IntentMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
+    from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
     from probos.cognitive.tool_manifest import ToolManifestOffer
     from probos.mesh.intent import IntentBus
     from probos.substrate.agent import BaseAgent
@@ -2091,6 +2094,55 @@ def _is_correlatable(call_id: Any, ambiguous: set[str]) -> bool:
     return isinstance(call_id, str) and bool(call_id) and call_id not in ambiguous
 
 
+@dataclass(frozen=True)
+class _ExecutedOutcomePairs:
+    """AD-1240 R2-1: the issued requests that have an outcome, joined by id, in request order.
+
+    ``correlate_tool_outcomes`` pairs ``tool_calls`` with ``tool_results`` by
+    position. A request refused before it ran has no result, so it would shift
+    every later call onto the wrong outcome. This is the narrow projection it
+    reads instead; the original ``AgenticResult`` is never mutated and still goes
+    to every consumer that already joins by id.
+    """
+
+    tool_calls: tuple[ToolCallRequest, ...]
+    tool_results: tuple[ToolCallResult, ...]
+
+
+def _executed_outcome_pairs(agentic_result: Any) -> Any:
+    """AD-1240 R2-1: *agentic_result* as the request/outcome pairs that actually ran.
+
+    The loop appends every issued request to ``tool_calls`` and only genuine
+    outcomes to ``tool_results``, so the two are the same length unless a request
+    was refused before it ran. Aligned lists are positionally correct and the
+    same object is returned untouched. Otherwise the pairs are joined by id, in
+    request order, with the AD-1295 rule for an id that cannot be correlated: a
+    request without an outcome, and one whose id repeats or is empty, is omitted.
+    """
+    calls = getattr(agentic_result, "tool_calls", None)
+    results = getattr(agentic_result, "tool_results", None)
+    if (
+        not isinstance(calls, (list, tuple))
+        or not isinstance(results, (list, tuple))
+        or len(calls) == len(results)
+    ):
+        return agentic_result
+    ambiguous = _duplicate_tool_ids(calls) | _duplicate_tool_ids(results)
+    outcome_by_id = {
+        res.id: res for res in results
+        if _is_correlatable(getattr(res, "id", None), ambiguous)
+    }
+    pairs = [
+        (call, outcome_by_id[call.id]) for call in calls
+        if _is_correlatable(getattr(call, "id", None), ambiguous)
+        and call.id in outcome_by_id
+    ]
+    return _ExecutedOutcomePairs(
+        tool_calls=tuple(call for call, _ in pairs),
+        tool_results=tuple(res for _, res in pairs),
+    )
+
+
 def _project_tool_invocations(result: Any) -> ToolInvocations | None:
     """AD-1295 (#1087): the turn's tool NAMES, out of the loop's own record.
 
@@ -3452,6 +3504,15 @@ class WorkItemAgenticExecutor:
 
         offered_names: set[str] = set()
 
+        # AD-1240 (F1): the recovery reader a worked call advertises must survive
+        # the AD-1189 deferred-schema consumer. Delivery is armed unless plan mode
+        # withholds ``read_file``; the reader's definition is then kept in full
+        # only when a real owner is injected and the strict profile is off, so a
+        # strict run (legacy delivery) and an unavailable owner (AD-1189 withholds
+        # as before) keep today's offer.
+        _delivery_armed = plan_mode_tool_ids is None or "read_file" in plan_mode_tool_ids
+        _recovery_reader_full = _delivery_armed and not executor.protected_effects_enabled and not isinstance(resolve_workspace_results(runtime), UnavailableWorkspaceResults)
+
         def _build_tools(
             ids: list[str],
         ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
@@ -3487,6 +3548,7 @@ class WorkItemAgenticExecutor:
                     _is_mcp_id(tid)
                     or not manifest_offer.may_defer(tid)
                     or (tid == "browser" and _captain_row is not None)
+                    or (tid == "read_file" and _recovery_reader_full)
                 ):
                     keep_full.add((definition.get("function") or {}).get("name") or "")
             # BF-757: last gate before the provider. A duplicate function name
@@ -3888,6 +3950,17 @@ class WorkItemAgenticExecutor:
             **resolve_event_correlation_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
+        # AD-1240: the owner is assigned after construction (never as a constructor
+        # keyword), so every loop double that pins the constructor keywords is
+        # unaffected. The run context carries the SAME authorized registry view this
+        # run's executor uses, only when a real owner was injected.
+        # AD-1240 (F1): plan mode that offers no ``read_file`` has no recovery
+        # reader, so the loop is left unarmed there (legacy delivery, as on main).
+        if _delivery_armed:
+            loop.workspace_results = resolve_workspace_results(runtime)
+            _context.update(workspace_delivery_context(runtime, registry, agent_id))
+        else:
+            logger.info("AD-1240: plan mode offers no recovery reader; this run keeps legacy delivery")
         if mcp_offer_armed and mcp_offer is not None:
             _context[MCP_DISPATCH_OFFER_CONTEXT_KEY] = mcp_offer
         if manifest_offer is not None:
@@ -4109,7 +4182,7 @@ class WorkItemAgenticExecutor:
             # the raw call/result pairs -- ``WorkItemAgenticOutcome`` is the
             # projection callers see, and the pairs do not survive it.
             tool_failures=correlate_tool_outcomes(
-                agentic_result,
+                _executed_outcome_pairs(agentic_result),
                 root=_failure_scope,
                 scope=_failure_scope,
                 known_tools=offered_names,

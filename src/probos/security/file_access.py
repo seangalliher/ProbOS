@@ -39,7 +39,8 @@ import logging
 import ntpath
 import os
 import stat
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
@@ -324,6 +325,11 @@ def _is_reparse(info: os.stat_result) -> bool:
     )
 
 
+def is_reparse_point(info: os.stat_result) -> bool:
+    """Public: True for a symlink or a Windows reparse point (junction)."""
+    return _is_reparse(info)
+
+
 def _same_identity(before: os.stat_result, after: os.stat_result) -> bool:
     return (before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode)) == (
         after.st_dev, after.st_ino, stat.S_IFMT(after.st_mode),
@@ -435,6 +441,256 @@ def _validate_instruction_chain(
 
             if _windows_handle_path(msvcrt.get_osfhandle(fd)) != path:
                 raise _UnsafeInstructionPath
+
+
+@dataclass(frozen=True)
+class VerifiedFileRead:
+    """A verified open-file observation; bytes are never part of its repr."""
+
+    data: bytes = field(repr=False)
+    identity: tuple[int, int, int]
+    revision: tuple[int, int, int]
+
+
+class PinnedDirectory:
+    """Public handle-pinning primitive for workspace-owned I/O.
+
+    Instances belong to ``pin_directory``'s context. POSIX operations are
+    descriptor-relative; Windows ancestor handles deny delete/rename sharing.
+    Every operation validates the named chain as well as the opened handles.
+    """
+
+    def __init__(self) -> None:
+        self._paths: list[Path] = []
+        self._snapshots: list[os.stat_result] = []
+        self._descriptors: list[int] = []
+        self._expected: dict[Path, tuple[int, int, int]] = {}
+
+    def verify(self) -> None:
+        if not self._descriptors:
+            raise FileAccessDenied("", "closed directory authority")
+        for path, before, fd in zip(self._paths, self._snapshots, self._descriptors, strict=True):
+            named, opened = path.lstat(), os.fstat(fd)
+            if _is_reparse(named) or not _same_identity(before, named) or not _same_identity(before, opened):
+                raise FileAccessDenied("", "directory identity changed")
+            expected = self._expected.get(path)
+            if expected is not None and expected != (named.st_dev, named.st_ino, stat.S_IFMT(named.st_mode)):
+                raise FileAccessDenied("", "previously pinned directory identity changed")
+            if os.name == "nt":
+                import msvcrt
+
+                if _windows_handle_path(msvcrt.get_osfhandle(fd)) != path:
+                    raise FileAccessDenied("", "opened directory moved")
+
+    @property
+    def path(self) -> Path:
+        self.verify()
+        return self._paths[-1]
+
+    @property
+    def identity(self) -> tuple[int, int, int]:
+        self.verify()
+        info = os.fstat(self._descriptors[-1])
+        return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
+
+    @property
+    def identities(self) -> tuple[tuple[Path, tuple[int, int, int]], ...]:
+        self.verify()
+        return tuple(
+            (path, (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)))
+            for path, info in zip(self._paths, self._snapshots, strict=True)
+        )
+
+    def _leaf(self, name: str) -> Path:
+        self.verify()
+        if (
+            type(name) is not str or not name or name in (".", "..")
+            or "/" in name or "\\" in name or ":" in name
+            or name.rstrip(". ") != name
+        ):
+            raise FileAccessDenied("", "invalid child name")
+        return validate_read_location(self._paths[-1] / name)
+
+    def list_names(self) -> tuple[str, ...]:
+        self.verify()
+        names = tuple(os.listdir(self._paths[-1] if os.name == "nt" else self._descriptors[-1]))
+        self.verify()
+        return names
+
+    def read_bytes(self, name: str, *, max_bytes: int | None = None) -> VerifiedFileRead:
+        path = self._leaf(name)
+        if max_bytes is not None and (type(max_bytes) is not int or max_bytes < 0):
+            raise ValueError("invalid file read limit")
+        before = path.lstat()
+        if _is_reparse(before) or not stat.S_ISREG(before.st_mode):
+            raise FileAccessDenied("", "unsafe or non-regular file")
+        if os.name == "nt":
+            fd = _open_windows_instruction_path(path, directory=False)
+        else:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                         dir_fd=self._descriptors[-1])
+        try:
+            opened = os.fstat(fd)
+            if not _same_file(before, opened, opened=True):
+                raise FileAccessDenied("", "opened file identity changed")
+            self.verify()
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                data = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
+            self.verify()
+            if not _same_file(before, path.lstat()) or not _same_file(opened, os.fstat(fd)):
+                raise FileAccessDenied("", "file changed during read")
+            if max_bytes is not None and len(data) > max_bytes:
+                raise FileAccessDenied("", "file exceeds read limit")
+            return VerifiedFileRead(
+                data=data,
+                identity=(before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode)),
+                revision=(before.st_size, before.st_mtime_ns, before.st_ctime_ns),
+            )
+        finally:
+            os.close(fd)
+
+    def write_new(self, name: str, data: bytes) -> None:
+        path = self._leaf(name)
+        if type(data) is not bytes:
+            raise TypeError("file writes require bytes")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if os.name == "nt":
+            fd = os.open(path, flags | os.O_BINARY, 0o600)
+        else:
+            fd = os.open(name, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600,
+                         dir_fd=self._descriptors[-1])
+        try:
+            self.verify()
+            if _is_reparse(path.lstat()) or not _same_identity(path.lstat(), os.fstat(fd)):
+                raise FileAccessDenied("", "new file identity changed")
+            with os.fdopen(os.dup(fd), "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            self.verify()
+            if not _same_identity(path.lstat(), os.fstat(fd)):
+                raise FileAccessDenied("", "written file identity changed")
+        finally:
+            os.close(fd)
+
+    def make_directory(self, name: str) -> None:
+        path = self._leaf(name)
+        if os.name == "nt":
+            os.mkdir(path, 0o700)
+        else:
+            os.mkdir(name, 0o700, dir_fd=self._descriptors[-1])
+        self.verify()
+
+    def publish_file(self, staged: str, name: str) -> None:
+        """Atomic, no-replacement publication within this pinned directory."""
+        source, target = self._leaf(staged), self._leaf(name)
+        before = source.lstat()
+        if _is_reparse(before) or not stat.S_ISREG(before.st_mode):
+            raise FileAccessDenied("", "unsafe publication source")
+        if os.name == "nt":
+            os.link(source, target, follow_symlinks=False)
+        else:
+            os.link(staged, name, src_dir_fd=self._descriptors[-1],
+                    dst_dir_fd=self._descriptors[-1], follow_symlinks=False)
+        self.verify()
+        if not _same_identity(before, target.lstat()) or _is_reparse(target.lstat()):
+            raise FileAccessDenied("", "published identity changed")
+        self.remove_file(staged)
+        if os.name != "nt":
+            os.fsync(self._descriptors[-1])
+
+    def remove_file(self, name: str) -> None:
+        path = self._leaf(name)
+        if _is_reparse(path.lstat()) or not stat.S_ISREG(path.lstat().st_mode):
+            raise FileAccessDenied("", "refusing unsafe file removal")
+        if os.name == "nt":
+            path.unlink()
+        else:
+            os.unlink(name, dir_fd=self._descriptors[-1])
+        self.verify()
+
+    def remove_directory(self, name: str) -> None:
+        path = self._leaf(name)
+        if _is_reparse(path.lstat()) or not stat.S_ISDIR(path.lstat().st_mode):
+            raise FileAccessDenied("", "refusing unsafe directory removal")
+        if os.name == "nt":
+            path.rmdir()
+        else:
+            os.rmdir(name, dir_fd=self._descriptors[-1])
+        self.verify()
+
+    def open(
+        self, path: Path, *, create: bool = False,
+        expected: tuple[tuple[Path, tuple[int, int, int]], ...] = (),
+    ) -> None:
+        if self._descriptors:
+            raise FileAccessDenied("", "directory authority already open")
+        path = validate_read_location(path)
+        self._expected = dict(expected)
+        for candidate in (*reversed(path.parents), path):
+            if self._descriptors:
+                self.verify()
+            try:
+                info = candidate.lstat()
+            except FileNotFoundError:
+                if candidate in self._expected:
+                    raise FileAccessDenied("", "previously pinned directory disappeared")
+                if not create or not self._descriptors:
+                    raise
+                self.make_directory(candidate.name)
+                info = candidate.lstat()
+            if _is_reparse(info) or not stat.S_ISDIR(info.st_mode):
+                raise FileAccessDenied("", "unsafe directory chain")
+            if os.name == "nt":
+                fd = _open_windows_instruction_path(candidate, directory=True)
+            else:
+                fd = os.open(
+                    candidate.name if self._descriptors else str(candidate),
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_DIRECTORY,
+                    **({"dir_fd": self._descriptors[-1]} if self._descriptors else {}),
+                )
+            self._paths.append(candidate)
+            self._snapshots.append(info)
+            self._descriptors.append(fd)
+            self.verify()
+
+    def close(self) -> None:
+        for fd in reversed(self._descriptors):
+            os.close(fd)
+        self._descriptors.clear()
+
+
+@contextmanager
+def pin_directory(
+    path: Path, *, create: bool = False,
+    expected: tuple[tuple[Path, tuple[int, int, int]], ...] = (),
+) -> Iterator[PinnedDirectory]:
+    """Pin an absolute lexical chain; no symlink, junction or reparse traversal."""
+    directory = PinnedDirectory()
+    try:
+        directory.open(path, create=create, expected=expected)
+        yield directory
+        directory.verify()
+    except (_UnsafeInstructionPath, _ChangedInstructionPath, _NotRegularInstructionPath) as exc:
+        raise FileAccessDenied("", "opened path failed identity verification") from exc
+    finally:
+        directory.close()
+
+
+def read_verified_file(
+    path: Path, *, protected_roots: Sequence[Path],
+    exempt_roots: Sequence[Path] = (), permitted_roots: Sequence[Path] | None = None,
+) -> VerifiedFileRead:
+    """Reauthorize, pin and verify a full ordinary read, without new exemptions."""
+    candidate = validate_read_location(path)
+    resolved = resolve_read_path(
+        str(candidate), protected_roots=protected_roots, exempt_roots=exempt_roots,
+        permitted_roots=permitted_roots,
+    )
+    if resolved != candidate:
+        raise FileAccessDenied("", "source path aliases another file")
+    with pin_directory(candidate.parent) as directory:
+        return directory.read_bytes(candidate.name)
 
 
 def _decode_instruction_bytes(data: bytes, *, truncated: bool) -> BoundedTextRead:

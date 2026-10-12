@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from probos.execution.workspace_results import UnavailableWorkspaceResults, WorkspaceResults
+
 if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.agent_onboarding import AgentOnboardingService
@@ -82,6 +84,9 @@ class InfrastructureResult:
     identity_key_binding: "IdentityKeyBinding | None" = None  # AD-1196
     execution_authority: "ProtectedExecutionAuthorityProtocol | None" = None
     effect_broker: "GovernedEffectBrokerProtocol | None" = None
+    # AD-1240: the started workspace tool-result store, or the typed unavailable owner.
+    # Last, so every existing positional or keyword construction keeps working.
+    workspace_results: WorkspaceResults = field(default_factory=UnavailableWorkspaceResults)
 
 
 @dataclass

@@ -1,0 +1,125 @@
+{
+  "base": "1c9abde5bcde5fef96f2035ff319f81b0c002ff9",
+  "profile": "strict: ToolExecutor armed with a GovernedEffectBroker (strict_runtime in tests/test_ad1316_governed_effect_broker.py)",
+  "normalization": "none after capture; uuid4 in probos.types, agentic_loop and effect_broker is replaced by deterministic per-run streams and perf_counter is constant",
+  "inputs": [
+    "none",
+    "small_structure",
+    "unicode_crlf",
+    "threshold_minus_one",
+    "threshold_equal",
+    "small_error",
+    "legacy_20k_string",
+    "legacy_20k_structure"
+  ],
+  "cases": {
+    "legacy/cap0": {
+      "requests": {
+        "bytes": 80353,
+        "sha256": "b38d796bd590e36e7fbab0fa109b8b75c55d33be4bac6a3d61ff9a8d23eeb3f9"
+      },
+      "results": {
+        "bytes": 73584,
+        "sha256": "69b8fd8fa4d09a8c1ab67c76dfd194b6906538ccaf1921d95cbbba4ebd1baff6"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "cfb7b6eb66a0b10bf9c9811cac270cd4e3cba203860196620c391d9a1249bd4a"
+      },
+      "trace": {
+        "bytes": 3400,
+        "sha256": "9ea6cafc479bef27fb576c87627084f4a746e6dbeb1f8d3db15ef8909c89b9fd"
+      }
+    },
+    "legacy/cap1": {
+      "requests": {
+        "bytes": 7903,
+        "sha256": "10b6eefb7ac9d89d3c7a4928fefcc02011e3b55bc678b5df981e8d816fe1c626"
+      },
+      "results": {
+        "bytes": 53624,
+        "sha256": "a67a7ee23729c8389282a6b8f4dbd43b190ecb2b30857f42103e65ff47ad11b8"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "e1b9933946e19ef4b3c56cc8948b919cb1ee3ca3662f43d95415f76857c73b78"
+      },
+      "trace": {
+        "bytes": 3397,
+        "sha256": "69c3f25123729fd6dbbee6279f2123ed11baa576b4e2a9c306e2ac0ae9cfb613"
+      }
+    },
+    "legacy/cap6000": {
+      "requests": {
+        "bytes": 33808,
+        "sha256": "2217a775b9bc66b656d7e51049c70e79a724d7c2cedc97ee37072926dcac0878"
+      },
+      "results": {
+        "bytes": 53604,
+        "sha256": "ee52f26370fe4a4c4aa4363e582c48db714303f0ac6399059694555c53f5faa4"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "af58c3cb3c97d9841f4634f1ce55bd4b6ef7a553980713982f5b62b2a74eb715"
+      },
+      "trace": {
+        "bytes": 3397,
+        "sha256": "dc2a9a945e601aee9da885449ee522e3c9501eda32327905c4664afde278481a"
+      }
+    },
+    "structured/cap0": {
+      "requests": {
+        "bytes": 81738,
+        "sha256": "76043a5c33bb249887c82ffa00e7637438d1b404431af9e3eeec77ece0615532"
+      },
+      "results": {
+        "bytes": 73584,
+        "sha256": "69b8fd8fa4d09a8c1ab67c76dfd194b6906538ccaf1921d95cbbba4ebd1baff6"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "81613613c6770574564601fe7099e97c604287ebd89c574a5f02c0618b6cc439"
+      },
+      "trace": {
+        "bytes": 3400,
+        "sha256": "a1ffead0d9820ac90f5a7fd90ae45e45ea3e69652d8580af6fd43803edc1fd6e"
+      }
+    },
+    "structured/cap1": {
+      "requests": {
+        "bytes": 9288,
+        "sha256": "8fa61889e5e0f5e1044d0b17b42e7b7116786f232e82f0d86355cb5e56e91c65"
+      },
+      "results": {
+        "bytes": 53624,
+        "sha256": "a67a7ee23729c8389282a6b8f4dbd43b190ecb2b30857f42103e65ff47ad11b8"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "fe03e33ed700ff06ec6fde57f62c7fe0fdd1d3881d9cfba88671bc32e55e5273"
+      },
+      "trace": {
+        "bytes": 3397,
+        "sha256": "921afe2c7fb0484ce863055d255ab53697ac75744d80651aaa247e44a085e45d"
+      }
+    },
+    "structured/cap6000": {
+      "requests": {
+        "bytes": 35193,
+        "sha256": "bee89d4f51956c5f1fe287e8d20c42c943511c928563fe4cd0105e36aa4a02b7"
+      },
+      "results": {
+        "bytes": 53604,
+        "sha256": "ee52f26370fe4a4c4aa4363e582c48db714303f0ac6399059694555c53f5faa4"
+      },
+      "events": {
+        "bytes": 10347,
+        "sha256": "b1a32ca2b101147365cdae937c19acaafb55ee693e60c361a07ae681a73edf3b"
+      },
+      "trace": {
+        "bytes": 3397,
+        "sha256": "61f5c6811154f6a63d2cbe6806a6180cf7e7fcdcd06986f55ee458e5f9383e75"
+      }
+    }
+  }
+}

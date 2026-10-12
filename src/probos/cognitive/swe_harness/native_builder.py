@@ -17,10 +17,12 @@ from probos.cognitive.swe_harness.agentic_loop import (
     AgenticLoop,
     AgenticResult,
 )
+from probos.cognitive.swe_harness.result_offload import workspace_delivery_context
 from probos.cognitive.swe_harness.tool_call import (
     dedupe_llm_definitions,
     tool_registration_to_llm_definition,
 )
+from probos.execution.workspace_results import resolve_workspace_results
 from probos.fault_detection import (
     ToolFaultTurn,
     fault_observer_for,
@@ -154,6 +156,10 @@ class NativeBuilderHarness:
             ),
         )
 
+        # AD-1240: assigned after construction, never as a keyword. The run context
+        # carries the SAME authorized registry view this harness's executor serves,
+        # only when a real owner was injected.
+        loop.workspace_results = resolve_workspace_results(self._runtime)
         agentic_result: AgenticResult = await loop.run(
             system_prompt=system_prompt,
             user_message=user_message,
@@ -162,6 +168,7 @@ class NativeBuilderHarness:
                 "agent_id": agent_id,
                 "department": department,
                 "rank": rank,
+                **workspace_delivery_context(self._runtime, self._registry, agent_id),
             },
             **(
                 {"repository_instructions": repository_instructions}

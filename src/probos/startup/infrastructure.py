@@ -1,6 +1,9 @@
 """Phase 1: Infrastructure boot (AD-517).
 
 Starts core infrastructure services and creates the identity registry.
+AD-1240: the workspace tool-result store is started after the mesh services and
+before the identity registry, and is stopped by this phase's unwind if a later
+step fails.
 """
 
 from __future__ import annotations
@@ -10,6 +13,13 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from probos.execution.workspace import WorkspaceManager
+from probos.execution.workspace_result_store import WorkspaceResultStore
+from probos.execution.workspace_results import (
+    UnavailableWorkspaceResults,
+    WorkspaceResultError,
+    WorkspaceResults,
+)
 from probos.startup.results import InfrastructureResult
 
 if TYPE_CHECKING:
@@ -21,6 +31,18 @@ if TYPE_CHECKING:
     from probos.substrate.event_log import EventLog
 
 logger = logging.getLogger(__name__)
+
+
+def _configured_workspace_root(config: "SystemConfig") -> str | Path | None:
+    """AD-1240: the configured workspace root, or None when it is missing or not a path.
+
+    An empty value counts as missing: ``WorkspaceManager`` would resolve it to the platform
+    data directory itself, which is ambient storage and never a workspace root.
+    """
+    configured = getattr(getattr(config, "execution", None), "workspace_root", None)
+    if not isinstance(configured, (str, Path)) or not Path(configured).parts:
+        return None
+    return configured
 
 
 async def boot_infrastructure(
@@ -47,6 +69,9 @@ async def boot_infrastructure(
         AD-824: optional callable that registers a task on the runtime's
         ``_background_tasks`` registry so the shutdown sweep can cancel
         it before the AD-820 clean-shutdown marker is written.
+        AD-1240: it also receives the workspace result store's reaper task,
+        which the sweep leaves alone: the store drains its own worker.
+        Without it the store cannot start and stays typed-unavailable.
     """
     logger.info("Startup [infrastructure]: starting")
 
@@ -55,6 +80,7 @@ async def boot_infrastructure(
     await event_log.start()
     execution_authority = None
     effect_broker = None
+    workspace_store: WorkspaceResultStore | None = None
     try:
         protected_config = config.protected_execution
         if protected_config.enabled and protected_config.profile == "strict":
@@ -93,6 +119,36 @@ async def boot_infrastructure(
         await gossip.start()
         await trust_network.start()
 
+        # AD-1240: the workspace tool-result store (publication, verified readback and the
+        # hourly-generation reaper) starts before the identity registry, so a failure while
+        # it starts leaves nothing else open; the unwind below stops it. A store that cannot
+        # start is stopped and the typed unavailable owner stays: every use of it raises
+        # ``workspace_unavailable``, and nothing is redirected to ambient storage.
+        workspace_results: WorkspaceResults = UnavailableWorkspaceResults()
+        workspace_root = _configured_workspace_root(config)
+        if workspace_root is None:
+            logger.error(
+                "Workspace result root configuration is missing or not a path; workspace "
+                "tool-result offload stays unavailable until the next restart rather than "
+                "selecting ambient storage"
+            )
+        else:
+            workspace_store = WorkspaceResultStore(
+                WorkspaceManager(workspace_root), background_register=background_register,
+            )
+            try:
+                await workspace_store.start()
+            except Exception as exc:
+                logger.error(
+                    "Workspace result store failed to start (%s); the store is stopped and "
+                    "workspace tool-result offload stays unavailable until the next restart",
+                    exc.code if isinstance(exc, WorkspaceResultError) else type(exc).__name__,
+                )
+                await workspace_store.stop()
+                workspace_store = None
+            else:
+                workspace_results = workspace_store
+
         # --- Sovereign Agent Identity (AD-441) ---
         from probos.identity import AgentIdentityRegistry
 
@@ -124,8 +180,20 @@ async def boot_infrastructure(
             identity_key_binding=identity_key_binding,
             execution_authority=execution_authority,
             effect_broker=effect_broker,
+            workspace_results=workspace_results,
         )
     except BaseException:
+        # AD-1240: the store started after the effect broker and the authority, so it is
+        # stopped first. Its stop drains the reaper and any worker thread before a
+        # cancellation propagates.
+        if workspace_store is not None:
+            try:
+                await workspace_store.stop()
+            except BaseException:
+                logger.error(
+                    "workspace result store cleanup failed operation=boot_infrastructure "
+                    "reason_code=phase_one_unwind_failed; startup remains failed"
+                )
         if effect_broker is not None:
             try:
                 await effect_broker.stop()
