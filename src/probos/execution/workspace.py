@@ -19,17 +19,38 @@ attribution and confinement-by-convention, not a kernel-enforced boundary —
 a determined payload at Tier 1 can still reach outside its folder. The real
 controls remain consensus + default-OFF; the folder gives the Captain
 visibility and keeps one agent's work from clobbering another's by default.
+
+AD-1240: the ``.tool-results`` directory inside an owner folder is a
+runtime-reserved namespace (``workspace_results``), not a work product.
+``resolve_file`` refuses it and every alias into it before anything is
+created, and the inspection walks (``list_files`` / ``total_bytes``) never
+list, enter or size it. A walk resolves a directory or a link once and a plain
+file never (its own lstat is all there is to know); a link that leads outside
+the owner folder or into the namespace is dropped, and any other link is listed
+once and never entered (a directory link is not sized either: its target is
+walked once, as itself); a directory is entered only while it is still the
+object that was checked, seen without following a link. A hard link created
+by a process outside ProbOS is indistinguishable from an ordinary file and is
+listed and served as one. Publishing, reading and reaping the namespace's
+contents live in ``workspace_result_store``, which depends on this module and
+not the reverse.
 """
 
 from __future__ import annotations
 
 import logging
+import operator
 import os
 import re
+import stat
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+from probos.execution.workspace_results import RESULT_DIRECTORY, is_workspace_result_path
+from probos.security.file_access import is_reparse_point
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +119,207 @@ class WorkspaceFile:
     modified: float    # POSIX mtime
 
 
+# AD-1240: the reserved result namespace, as ordinary operations must treat it.
+# What separates one directory from another that now sits at the same path.
+_Identity = tuple[int, int]
+
+
+def _identity(info: os.stat_result) -> _Identity:
+    return (info.st_dev, info.st_ino)
+
+
+def _resolve_once(path: Path) -> Path | None:
+    """One resolution of ``path``; ``None`` (a refusal, never an exception) if it fails."""
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+class _Resolutions:
+    """One call's resolutions: a path is resolved at most once, failures included.
+
+    ``resolve_file`` checks the exact values held here and returns one of them,
+    so what it authorizes is what it hands back.
+    """
+
+    def __init__(self) -> None:
+        self._seen: dict[Path, Path | None] = {}
+
+    def of(self, path: Path) -> Path | None:
+        if path not in self._seen:
+            self._seen[path] = _resolve_once(path)
+        return self._seen[path]
+
+
+def _admit_owner(base: Path) -> tuple[Path, _Identity] | None:
+    """The single owner/root decision of an inspection walk.
+
+    ``base`` and each of its ancestors are resolved once. The folder is admitted
+    only when none of those resolutions is, or leads into, the reserved
+    namespace and the resolved folder is a directory. It is returned with its
+    identity so the walk can tell when what it enters is no longer what was
+    admitted. Nothing is remembered between walks: a folder swapped for an
+    alias gets a fresh decision.
+    """
+    if is_workspace_result_path(base):
+        return None
+    top = _resolve_once(base)
+    if top is None or is_workspace_result_path(top):
+        return None
+    for ancestor in base.parents:
+        resolved = _resolve_once(ancestor)
+        if resolved is None or is_workspace_result_path(resolved):
+            return None
+    try:
+        info = top.stat()
+    except OSError:
+        return None
+    return (top, _identity(info)) if stat.S_ISDIR(info.st_mode) else None
+
+
+class _Child(NamedTuple):
+    """One entry of a scanned directory: classified, not yet checked."""
+
+    name: str
+    path: str
+    info: os.stat_result   # the scan entry's lstat; a real directory's is re-read, so it carries its identity
+    is_dir: bool           # a directory, or a link to one
+    link: bool             # a symlink, a junction or any other reparse point
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """One checked entry of an inspection walk."""
+
+    name: str              # path relative to the walked folder, '/'-joined
+    is_dir: bool
+    opaque: bool           # a real directory listed as one entry, sized and never recursed into; a link never is
+    info: os.stat_result   # of the entry itself, or of a link's checked target
+    checked: Path | None   # the exact resolution that was checked; None for a plain file
+
+
+def _is_checked_directory(directory: Path, expected: _Identity) -> bool:
+    """Whether ``directory`` is still the real directory that was checked, seen without following a link.
+
+    A link, junction or other reparse point is refused even when it leads to
+    the very object that was checked: that object may since have been moved
+    into the reserved namespace, and following the link would enter it.
+    """
+    info = os.lstat(directory)  # no-follow: os.stat would report the identity of what an alias leads to
+    return stat.S_ISDIR(info.st_mode) and not is_reparse_point(info) and _identity(info) == expected
+
+
+def _listing(directory: Path, expected: _Identity) -> list[os.DirEntry[str]] | None:
+    """The entries of ``directory``, or ``None`` if it is not the object that was checked.
+
+    It is observed before the listing and again after it, each time without
+    following a link, so a listing taken from a replaced directory, or through
+    an alias that replaced it, is never used.
+    """
+    try:
+        if not _is_checked_directory(directory, expected):
+            return None
+        with os.scandir(directory) as scanned:
+            entries = list(scanned)
+        return entries if _is_checked_directory(directory, expected) else None
+    except OSError:
+        return None
+
+
+def _classify(entry: os.DirEntry[str], info: os.stat_result) -> tuple[bool, bool]:
+    """``(is_dir, link)`` of a scan entry: its link flag, and the kind of anything that is not a link, from ``info``.
+
+    A link is a symlink, a junction or any other reparse point. ``info`` is a
+    no-follow stat, so for a link the kind of its target is the scan entry's own
+    answer (``entry.is_dir()``, which may have been cached when the directory was
+    scanned); for anything else the stat itself says whether it is a directory.
+    """
+    link = is_reparse_point(info)
+    return (entry.is_dir() if link else stat.S_ISDIR(info.st_mode)), link
+
+
+def _children(entries: list[os.DirEntry[str]]) -> tuple[list[_Child], list[_Child]]:
+    """Classify scan entries as ``(directories and links to them, everything else)``, each sorted by name.
+
+    An entry named for the reserved namespace is dropped here, whatever it is
+    and in whatever case it is spelt. A real directory is observed a second
+    time, for its identity, and classified again from that observation: a
+    child's link flag and, unless it is a link, its kind always belong to the
+    stat it carries.
+    """
+    dirs: list[_Child] = []
+    others: list[_Child] = []
+    for entry in entries:
+        if entry.name.casefold() == RESULT_DIRECTORY:  # the reserved name, in any case
+            continue
+        try:
+            info = entry.stat(follow_symlinks=False)
+            is_dir, link = _classify(entry, info)
+            if is_dir and not link:
+                info = os.lstat(entry.path)  # a scan entry's stat carries no identity on Windows
+                is_dir, link = _classify(entry, info)  # a directory replaced since the scan is what is there now
+        except OSError:
+            continue
+        (dirs if is_dir else others).append(_Child(entry.name, entry.path, info, is_dir, link))
+    return sorted(dirs, key=operator.attrgetter("name")), sorted(others, key=operator.attrgetter("name"))
+
+
+def _checked_entry(child: _Child, base: Path, prefix: str) -> _Entry | None:
+    """Check one scanned child; ``None`` if it must not be listed, sized or entered.
+
+    A plain file is never resolved: its own lstat says all there is to know. A
+    directory or a link is resolved once and kept only if that exact resolution
+    lies under ``base`` and outside the reserved namespace. A file link is then
+    sized from its checked target; a directory link is listed once with size 0
+    and is neither entered nor sized, because its target is walked once, as itself.
+    """
+    name = prefix + child.name
+    if not child.link and not child.is_dir:
+        return _Entry(name, False, False, child.info, None)
+    checked = _resolve_once(Path(child.path))
+    if checked is None or is_workspace_result_path(checked) or not checked.is_relative_to(base):
+        return None
+    info = child.info
+    if child.link:
+        try:
+            info = checked.stat()
+        except OSError:
+            return None
+    opaque = child.is_dir and not child.link and child.name in _OPAQUE_DIRS  # a link's target is never sized
+    return _Entry(name, child.is_dir, opaque, info, checked)
+
+
+def _ordinary_entries(
+    top: Path, identity: _Identity, *, base: Path, descend_opaque: bool,
+) -> Iterator[_Entry]:
+    """Ordinary entries below an admitted ``top``, lazily, in listing order.
+
+    A folder's directories (and links to them) come first, then its other
+    entries, each sorted; the walk then enters the kept real directories in
+    turn. Only real directories are entered, each only while it is still the
+    object whose lstat was taken from its scan entry. ``base`` is the owner's
+    resolved folder that every resolved directory and link must lie under.
+    """
+    pending: list[tuple[Path, str, _Identity]] = [(top, "", identity)]
+    while pending:
+        directory, prefix, expected = pending.pop()
+        entries = _listing(directory, expected)
+        if entries is None:
+            continue
+        dirs, others = _children(entries)
+        entered: list[tuple[Path, str, _Identity]] = []
+        for child in (*dirs, *others):
+            entry = _checked_entry(child, base, prefix)
+            if entry is None:
+                continue
+            yield entry
+            enter = entry.is_dir and not child.link and (descend_opaque or not entry.opaque)
+            if enter and entry.checked is not None:
+                entered.append((entry.checked, f"{entry.name}/", _identity(child.info)))
+        pending.extend(reversed(entered))
+
+
 class WorkspaceManager:
     """Resolve + inspect per-owner working folders under a single root."""
 
@@ -164,6 +386,13 @@ class WorkspaceManager:
         attachment + records stores. Returns ``None`` (never raises, never a path
         outside the folder) for an empty / absolute / NUL-bearing /
         traversal-escaping ``rel_path``, or for the folder itself (not a file).
+        AD-1240: the reserved result namespace is refused too, whoever owns it
+        and whatever its expiry: a lexical component naming it, any lexical
+        prefix or the owner folder that resolves into it (including an alias
+        that enters it and a later ``..`` that leaves it), and the final
+        resolution. The folder and the target are each resolved ONCE, those
+        exact values are what is checked, and the checked target is what is
+        returned; refusal happens before any parent is created.
         When ``create_parents`` is set the parent directories of the confined
         target are created best-effort so a first write under a new sub-path can
         succeed (a failed mkdir is logged and left for the write to surface — it
@@ -171,13 +400,23 @@ class WorkspaceManager:
         """
         if not rel_path or "\x00" in rel_path:
             return None
-        base = self.resolve(owner_key).resolve()
-        try:
-            resolved = (base / rel_path).resolve()
-        except (OSError, RuntimeError, ValueError):
+        lexical_base = self.resolve(owner_key)
+        candidate = lexical_base / rel_path
+        if is_workspace_result_path(candidate):
+            return None
+        resolutions = _Resolutions()
+        base = resolutions.of(lexical_base)
+        resolved = resolutions.of(candidate)
+        if base is None or resolved is None:
             return None
         if resolved == base or not resolved.is_relative_to(base):
             return None
+        if is_workspace_result_path(base) or is_workspace_result_path(resolved):
+            return None
+        for prefix in (*lexical_base.parents, *candidate.parents):
+            aliased = resolutions.of(prefix)
+            if aliased is None or is_workspace_result_path(aliased):
+                return None
         if create_parents:
             try:
                 resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -201,62 +440,47 @@ class WorkspaceManager:
 
         Deterministic (sorted), bounded by ``limit``, and *shallow into noise*:
         ``.venv`` / ``__pycache__`` / ``.git`` appear as a single directory
-        entry but are never recursed into. Honest-degrade: returns ``[]`` when
-        the folder is absent or unreadable (never raises).
+        entry but are never recursed into. AD-1240: the reserved result
+        namespace, and any alias into it, is omitted from entries and sizes, and
+        so is a link that leads outside the owner folder; links are listed but
+        never entered. The folder is resolved once, a plain file never, and a
+        directory or link once. Honest-degrade: returns ``[]`` when the folder
+        is absent, reserved or unreadable (never raises).
         """
-        base = self.resolve(owner_key)
-        if not base.is_dir():
+        owner = _admit_owner(self.resolve(owner_key))
+        if owner is None:
             return []
+        top, identity = owner
         out: list[WorkspaceFile] = []
         try:
-            for dirpath, dirnames, filenames in os.walk(base):
-                rel_dir = Path(dirpath).relative_to(base)
-                # Record opaque dirs as a single entry, then stop descending.
-                kept_dirs = []
-                for d in sorted(dirnames):
-                    entry_rel = (rel_dir / d).as_posix()
-                    full = Path(dirpath) / d
-                    try:
-                        st = full.stat()
-                        out.append(WorkspaceFile(entry_rel, True, _dir_size(full) if d in _OPAQUE_DIRS else 0, st.st_mtime))
-                    except OSError:
-                        continue
-                    if d not in _OPAQUE_DIRS:
-                        kept_dirs.append(d)
-                    if len(out) >= limit:
-                        return out[:limit]
-                dirnames[:] = kept_dirs  # prune opaque dirs from the walk
-                for f in sorted(filenames):
-                    entry_rel = (rel_dir / f).as_posix()
-                    full = Path(dirpath) / f
-                    try:
-                        st = full.stat()
-                    except OSError:
-                        continue
-                    out.append(WorkspaceFile(entry_rel, False, st.st_size, st.st_mtime))
-                    if len(out) >= limit:
-                        return out[:limit]
+            for entry in _ordinary_entries(top, identity, base=top, descend_opaque=False):
+                size = entry.info.st_size
+                if entry.is_dir:
+                    size = _dir_size(entry.checked, _identity(entry.info), base=top) if entry.opaque else 0
+                out.append(WorkspaceFile(entry.name, entry.is_dir, size, entry.info.st_mtime))
+                if len(out) >= limit:
+                    return out[:limit]
         except OSError:
             logger.debug("AD-997: list_files failed for %s", owner_key, exc_info=True)
             return out
         return out
 
     def total_bytes(self, owner_key: str) -> int:
-        """Total size of ``owner_key``'s folder (incl. venv). 0 if absent."""
-        base = self.resolve(owner_key)
-        return _dir_size(base) if base.is_dir() else 0
+        """Total ordinary size of ``owner_key``'s folder (incl. venv, excluding the result namespace). 0 if absent."""
+        owner = _admit_owner(self.resolve(owner_key))
+        if owner is None:
+            return 0
+        top, identity = owner
+        return _dir_size(top, identity, base=top)
 
 
-def _dir_size(path: Path) -> int:
-    """Recursive byte size of a directory tree; best-effort (skips unreadable)."""
+def _dir_size(top: Path, identity: _Identity, *, base: Path) -> int:
+    """Recursive byte size of an admitted directory tree; best-effort (skips unreadable)."""
     total = 0
     try:
-        for dirpath, _dirnames, filenames in os.walk(path):
-            for f in filenames:
-                try:
-                    total += (Path(dirpath) / f).stat().st_size
-                except OSError:
-                    continue
+        for entry in _ordinary_entries(top, identity, base=base, descend_opaque=True):
+            if not entry.is_dir:
+                total += entry.info.st_size
     except OSError:
         return total
     return total

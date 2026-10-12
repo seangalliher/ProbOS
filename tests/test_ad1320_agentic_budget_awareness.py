@@ -612,7 +612,10 @@ async def test_executor_omits_state_when_absent_and_forwards_unchanged_when_pres
 
 def test_native_builder_and_continue_or_ask_are_untouched_negative_pins() -> None:
     # Git blob id from the contract; native_builder.py is still pinned byte-exact.
-    rel, blob = "cognitive/swe_harness/native_builder.py", "764d0f86d2fc339e83ec8f3a71cc3631c26876b3"
+    # AD-1240 (#1239): native_builder.py now assigns the workspace-results slot and merges the delivery
+    # context (7 added lines); the protected property (no budget_awareness in this file) is unchanged.
+    # The blob before AD-1240 was 764d0f86d2fc339e83ec8f3a71cc3631c26876b3.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "24179141cc441e31e176227fc767b39b950ac976"
     data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
     assert b"budget_awareness" not in data

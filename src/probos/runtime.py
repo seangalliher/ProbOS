@@ -152,6 +152,7 @@ from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
 from probos.build_pipeline import BuildPipeline
 from probos.warm_boot import WarmBootService
+from probos.execution.workspace_results import UnavailableWorkspaceResults, WorkspaceResults  # AD-1240
 
 if TYPE_CHECKING:
     from probos.execution.authority import ProtectedExecutionAuthorityProtocol
@@ -643,6 +644,9 @@ class ProbOSRuntime:
 
         # --- Substrate ---
         self.registry = AgentRegistry()
+        # AD-1240: the workspace tool-result owner. Typed-unavailable until Phase 1 of
+        # start() replaces it with the started store; never ambient storage.
+        self.workspace_results: WorkspaceResults = UnavailableWorkspaceResults()
         self.spawner = AgentSpawner(self.registry)
         self.pools: dict[str, ResourcePool] = {}
         self.pool_groups = PoolGroupRegistry()
@@ -2715,6 +2719,7 @@ class ProbOSRuntime:
             background_register=self._background_tasks.add,
         )
         self.identity_registry = infra.identity_registry
+        self.workspace_results = infra.workspace_results  # AD-1240
         self.identity_key_binding = infra.identity_key_binding  # AD-1196
         self.execution_authority = infra.execution_authority
         self.effect_broker = infra.effect_broker

@@ -16,7 +16,14 @@ import pytest
 
 from probos.artifacts import ArtifactStore
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor, WorkItemAgenticOutcome
-from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, ToolUseBlock
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, AgenticResult
+from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
+    TextBlock,
+    ToolCallRequest,
+    ToolUseBlock,
+    result_delivery,
+)
 from probos.config import AgenticLoopConfig, AgenticToolsConfig, ExecutionConfig
 from probos.consensus.trust import TrustNetwork
 from probos.crew_profile import CallsignRegistry
@@ -560,15 +567,26 @@ async def test_legacy_outcome_and_forged_evidence_do_not_imply_observation(
 async def test_real_next_parent_message_respects_tiny_and_finite_caps(
     tmp_path: Path, structured: bool, cap: int,
 ) -> None:
+    # The old *5000 vector pinned successful truncation despite armed-unavailable
+    # delivery above AD-1240's threshold; that contract is tested separately below.
+    original = "native final " * 200
     llm = _LLM([
         _calls(_use("delegate_task", {"task": "child task", "to": "Child"}, "delegation")),
-        _text("native final " * 5000),
+        _text(original),
         _text("parent completed"),
     ])
     runtime = _runtime(tmp_path, llm, structured=structured, cap=cap)
-    await _parent(runtime, llm)
+    outcome = await _parent(runtime, llm)
+    assert outcome.stopped_reason == "complete" and outcome.final_text == "parent completed"
+    assert len(llm.requests) == 3 and not llm.responses
+    assert len(runtime.delegator.results) == 1
     native = runtime.delegator.results[0]
-    assert native.output["result"] == "native final " * 5000
+    assert isinstance(native, DelegatedToolResult)
+    assert isinstance(native.evidence, DelegationEvidence)
+    assert native.output["result"] == original and native.error is None
+    canonical = repr(native.output)
+    assert len(canonical) > cap
+    assert len(canonical.encode("utf-8")) < 12288
     content = _parent_tool_content(llm.requests[-1], structured=structured)
     assert len(content) <= cap
     if cap < 36:
@@ -579,6 +597,67 @@ async def test_real_next_parent_message_respects_tiny_and_finite_caps(
         line, _ = content.split("\n", 1)
         assert json.loads(line)
         assert len(line) + 1 <= cap // 2
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("cap", [1, 35, 36, 73, 74, 600, 1400])
+async def test_real_large_delegation_unavailable_owner_stops_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, structured: bool, cap: int,
+) -> None:
+    original = "native final " * 5000
+    continuation = _text("parent completed")
+    llm = _LLM([
+        _calls(_use("delegate_task", {"task": "child task", "to": "Child"}, "delegation")),
+        _text(original),
+        continuation,
+    ])
+    runtime = _runtime(tmp_path, llm, structured=structured, cap=cap)
+    completed_runs: list[AgenticResult] = []
+    real_run = AgenticLoop.run
+
+    async def record_run(self: AgenticLoop, **kwargs: Any) -> AgenticResult:
+        result = await real_run(self, **kwargs)
+        completed_runs.append(result)
+        return result
+
+    monkeypatch.setattr(AgenticLoop, "run", record_run)
+    outcome = await _parent(runtime, llm)
+
+    assert len(runtime.delegator.results) == len(runtime.delegator.contexts) == 1
+    native = runtime.delegator.results[0]
+    assert isinstance(native, DelegatedToolResult)
+    assert isinstance(native.evidence, DelegationEvidence)
+    assert native.output == {
+        "delegated": True, "to": "Child", "result": original, "stopped_reason": "complete",
+    }
+    assert native.error is None and native.success
+    canonical = repr(native.output)
+    assert len(canonical.encode("utf-8")) > 12288
+    assert native.evidence.status == "completed"
+    assert native.evidence.producer.agent_id == "child"
+    assert native.evidence.claims[0].result_sha256 == hashlib.sha256(original.encode("utf-8")).hexdigest()
+    assert len(completed_runs) == 2
+    child, parent = completed_runs
+    assert child.stopped_reason == "complete" and child.final_text == original
+    assert [call.id for call in parent.tool_calls] == ["delegation"]
+    assert len(parent.tool_results) == 1
+    delivered = parent.tool_results[0]
+    assert isinstance(delivered, DelegatedToolCallResult)
+    assert delivered.id == "delegation" and delivered.evidence is native.evidence
+    assert delivered.output == canonical and delivered.source_chars == len(canonical)
+    assert delivered.is_error is False, "delivery failure must not fabricate a producer fault"
+    delivery = result_delivery(delivered)
+    assert delivery is not None and delivery.status == "failed"
+    assert delivery.code == "workspace_unavailable" and delivery.capture_available
+    assert delivery.reference is None
+    assert parent.stopped_reason == outcome.stopped_reason == "error"
+    assert parent.error == "workspace_unavailable"
+    explanation = "Result delivery failed (workspace_unavailable)."
+    expected_final = explanation if len(explanation) <= cap else "!"
+    assert parent.final_text == outcome.final_text == delivery.presentation == expected_final
+    assert 0 < len(outcome.final_text) <= min(128, cap)
+    assert len(llm.requests) == 2, "only the parent delegation and child completion may run"
+    assert len(llm.responses) == 1 and llm.responses[0] is continuation
 
 
 @pytest.mark.parametrize("structured", [False, True])

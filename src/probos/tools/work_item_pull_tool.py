@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, Callable, Literal, Protocol
 
 from probos.tools.protocol import (
@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 WORK_PULL_ROOM_CONTEXT_KEYS = frozenset({"_crew_session_id", "_crew_work_item_id"})
 _DESCRIPTION_BYTES = 16_384
 _PREVIEW_CHARS = 256
+
+
+@dataclass(frozen=True)
+class WorkPullReceipt(ToolResult):
+    """Producer-admitted complete control receipt, not an offloadable document."""
 
 
 class WorkItemPullStore(Protocol):
@@ -285,7 +290,7 @@ class DiscoverWorkItemsTool(_WorkItemPullTool):
                         break
             if rendered is None:
                 raise _ResultBudgetError()
-            return ToolResult(output=rendered, duration_ms=(time.monotonic() - started) * 1000.0)
+            return WorkPullReceipt(output=rendered, duration_ms=(time.monotonic() - started) * 1000.0)
         except _ResultBudgetError:
             return self._error("work_pull_result_budget", presentation, started)
         except PermissionError:
@@ -357,7 +362,7 @@ class ClaimWorkItemTool(_WorkItemPullTool):
                     rendered = _render(presentation, value)
                 if rendered is None:
                     raise _ResultBudgetError()
-                prepared = ToolResult(output=rendered)
+                prepared = WorkPullReceipt(output=rendered)
 
             result = await self._store.claim_work_item(
                 actor, work_item_id=wanted, agent_pull=True, prepare_claim=prepare,
@@ -366,7 +371,7 @@ class ClaimWorkItemTool(_WorkItemPullTool):
                 rendered = _render(presentation, {"owned": False, "reason": "not_claimable"})
                 if rendered is None:
                     raise _ResultBudgetError()
-                return ToolResult(
+                return WorkPullReceipt(
                     output=rendered, duration_ms=(time.monotonic() - started) * 1000.0,
                 )
             if prepared is None:

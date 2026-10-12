@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
 from probos.execution.long_runs import LONG_RUN_SETTLE_SECONDS, LongRunService
+from probos.execution.workspace_results import resolve_workspace_results
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
@@ -1315,6 +1316,13 @@ async def shutdown(
         pending_snapshot.extend(background_tasks)
     if drain_tasks_remaining:
         pending_snapshot.extend(drain_tasks_remaining)
+    # AD-1240: the workspace result store drains its own reaper when it is stopped, after
+    # the pools (its publishers) have stopped. Cancelling the reaper here would latch the
+    # store unavailable while they still run, so its tasks are not part of this sweep. The
+    # owner is read once: the one excluded here is the one stopped below.
+    workspace_results = resolve_workspace_results(runtime)
+    workspace_tasks = workspace_results.background_tasks
+    pending_snapshot = [task for task in pending_snapshot if task not in workspace_tasks]
     if pending_snapshot:
         for _task in pending_snapshot:
             _task.cancel()
@@ -1897,9 +1905,24 @@ async def shutdown(
     # IntentBus work while NATS is still available. Failures retain the pool
     # owner but cannot bypass the remaining transport teardown.
     with steps("pools stop and intent bus drain"):
-        deferred_shutdown_cancellation = await _stop_pools_and_drain_intent_bus(
-            runtime
-        )
+        # AD-1240: the workspace result store stops once the pools (its publishers) have,
+        # and also when the pool step raises: a store left running keeps its reaper and its
+        # worker threads alive past teardown. Its stop drains them before it lets a
+        # cancellation through, so the cancellation is deferred like the pools': the rest
+        # of the teardown still runs. It shares this guard: BF-882 pins the guarded steps.
+        try:
+            deferred_shutdown_cancellation = await _stop_pools_and_drain_intent_bus(
+                runtime
+            )
+        finally:
+            try:
+                await workspace_results.stop()
+            except asyncio.CancelledError as exc:
+                deferred_shutdown_cancellation = deferred_shutdown_cancellation or exc
+                logger.warning(
+                    "Workspace result store completed its drain-safe stop but shutdown "
+                    "cancellation is deferred until transport teardown completes"
+                )
 
     # BF-882: a pool that could not unwire an agent keeps it, running. A rollback has no
     # later retry, so stop what is still alive before the transport below is torn down.

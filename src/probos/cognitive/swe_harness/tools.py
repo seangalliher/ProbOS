@@ -11,6 +11,8 @@ AD-423b's permission ladder.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import io
 import logging
 import os
 from contextlib import contextmanager, nullcontext
@@ -18,11 +20,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.execution.workspace_results import (
+    RecoverRead,
+    SourceRef,
+    WorkspaceReadContext,
+    WorkspaceResultError,
+    WorkspaceSlice,
+    drained_result_io,
+    is_workspace_result_path,
+    resolve_workspace_results,
+)
 from probos.repository_instructions import (
     InstructionObservation,
     discover_repository_instructions,
     instruction_read_policy,
     repository_instruction_directory,
+)
+from probos.security.file_access import (
+    FileAccessDenied,
+    permitted_read_roots,
+    protected_read_roots,
+    read_verified_file,
+    resolve_for_runtime,
+    workspace_exempt_roots,
 )
 from probos.tools.protocol import (
     Tool,
@@ -219,6 +239,142 @@ class InstructionToolResult(ToolResult):
             raise TypeError("file guidance requires a typed instruction observation")
 
 
+@dataclass(frozen=True)
+class SourceToolResult(ToolResult):
+    """A verified original-file read, carrying the reference a recovery re-reads."""
+
+    source_reference: SourceRef = field(kw_only=True, repr=False)
+    recovery: bool = field(default=False, kw_only=True)
+
+
+@dataclass(frozen=True)
+class InstructionSourceToolResult(InstructionToolResult):
+    """``SourceToolResult`` for a read that also carries repository instructions."""
+
+    source_reference: SourceRef = field(kw_only=True, repr=False)
+    recovery: bool = field(default=False, kw_only=True)
+
+
+@dataclass(frozen=True)
+class WorkspaceSliceToolResult(ToolResult):
+    """An exact slice of an offloaded result, read back through the typed owner."""
+
+    workspace_slice: WorkspaceSlice = field(kw_only=True, repr=False)
+
+
+@dataclass(frozen=True)
+class RecoveryFailureToolResult(ToolResult):
+    """A typed, content-free refusal of a promised recovery or private read."""
+
+    delivery_error: str = field(kw_only=True)
+
+
+def _read_context(context: dict[str, Any] | None) -> WorkspaceReadContext | None:
+    candidate = (context or {}).get("_workspace_read")
+    if candidate is None:
+        return None
+    if type(candidate) is not WorkspaceReadContext or (
+        candidate.binding.agent_id != (context or {}).get("agent_id")
+        or candidate.binding.agent_id != candidate.scope.agent_id
+    ):
+        raise WorkspaceResultError("reference_unavailable")
+    if type(candidate.directive) is RecoverRead:
+        reference = candidate.directive.reference
+        if type(reference) is not SourceRef:
+            raise WorkspaceResultError("reference_unavailable")
+        candidate.scope.validate(reference.path, candidate.directive)
+    return candidate
+
+
+def _workspace_result_path(
+    runtime: object, raw: str, target: Path, context: dict[str, Any] | None,
+) -> bool:
+    candidates = (_resolve_path(raw), target)
+    if not any(is_workspace_result_path(path) for path in candidates):
+        return False
+    from probos.execution.workspace import WorkspaceManager
+
+    roots = workspace_exempt_roots(runtime)
+    configured = getattr(getattr(getattr(runtime, "config", None), "execution", None), "workspace_root", None)
+    if isinstance(configured, (str, Path)):
+        # Retain the lexical configured root as well as its resolved spelling:
+        # a private path redirected out through a link must still fail closed.
+        roots.append(WorkspaceManager(configured).root)
+    read = _read_context(context)
+    if read is not None:
+        roots.append(read.binding.root)
+    return any(
+        is_workspace_result_path(path) and path.is_relative_to(root)
+        for path in candidates for root in roots
+    )
+
+
+def _verified_source_result(
+    target: Path, runtime: object, read: WorkspaceReadContext,
+    start: int | None, end: int | None,
+) -> ToolResult:
+    read.scope.validate(str(target), read.directive)
+    expected = read.directive.reference if type(read.directive) is RecoverRead else None
+    try:
+        snapshot = read_verified_file(
+            target, protected_roots=protected_read_roots(runtime),
+            exempt_roots=workspace_exempt_roots(runtime),
+            permitted_roots=permitted_read_roots(runtime) or None,
+        )
+    except (FileNotFoundError, FileAccessDenied, OSError) as exc:
+        if expected is not None:
+            raise WorkspaceResultError("source_changed") from exc
+        # A fresh read keeps the native producer-error path: the caller's own
+        # handlers turn this into the ordinary error result. There is no
+        # fallback re-read, because a second, unverified read could observe
+        # something the verified read did not.
+        raise
+    digest = hashlib.sha256(snapshot.data).hexdigest()
+    if expected is not None and (
+        Path(expected.path) != target or expected.identity != snapshot.identity
+        or expected.revision != snapshot.revision or expected.raw_sha256 != digest
+    ):
+        raise WorkspaceResultError("source_changed")
+    # Match Path.read_text's UTF-8 and universal-newline behavior, including
+    # the whole-file trailing newline; ordinary sliced reads use splitlines.
+    with io.TextIOWrapper(io.BytesIO(snapshot.data), encoding="utf-8", newline=None) as stream:
+        text = stream.read()
+    lines = text.splitlines()
+    whole = start is None and end is None
+    selected = slice(start or 0, end if end is not None else len(lines))
+    first, last, _ = selected.indices(len(lines))
+    if not whole:
+        text = "\n".join(lines[selected])
+    reference = SourceRef(
+        read.binding.agent_id, read.scope.run_nonce, str(target),
+        snapshot.identity, snapshot.revision, digest, first, max(first, last), len(lines), whole,
+    )
+    result = _file_read_result(text, target, runtime)
+    if isinstance(result, InstructionToolResult):
+        return InstructionSourceToolResult(
+            output=text, repository_instructions=result.repository_instructions,
+            source_reference=reference, recovery=expected is not None,
+        )
+    return SourceToolResult(output=text, source_reference=reference, recovery=expected is not None)
+
+
+async def _workspace_slice_result(
+    runtime: object, target: Path, context: dict[str, Any] | None,
+    offset: int | None, limit: int | None,
+) -> ToolResult:
+    read = _read_context(context)
+    if read is None:
+        owner = resolve_workspace_results(runtime)
+        agent_id = (context or {}).get("agent_id")
+        registry = getattr(runtime, "registry", None)
+        registered = registry.get(agent_id) if registry is not None and type(agent_id) is str else None
+        binding = owner.bind_agent(agent_id, registered)
+    else:
+        owner, binding = read.owner, read.binding
+    selected = await owner.read_tool_result_slice(binding, str(target), offset, limit)
+    return WorkspaceSliceToolResult(output=selected.text, workspace_slice=selected)
+
+
 def _file_read_result(text: str, target: Path, runtime: object) -> ToolResult:
     observation = discover_repository_instructions(
         target.parent,
@@ -269,6 +425,10 @@ class ReadFileTool:
     def __init__(self, runtime: "ProbOSRuntime") -> None:
         self._runtime = runtime
 
+    def resolve_source_path(self, path: str) -> Path:
+        """The file ``read_file`` would read for ``path`` under the runtime's read policy."""
+        return resolve_for_runtime(path, self._runtime, relative_base=_PROJECT_ROOT)
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
@@ -279,31 +439,51 @@ class ReadFileTool:
         if not path:
             return ToolResult(error="path is required")
         try:
-            from probos.security.file_access import resolve_for_runtime
-
-            target = resolve_for_runtime(
-                str(path), self._runtime, relative_base=_PROJECT_ROOT
-            )
-        except Exception as exc:
-            return ToolResult(error=f"read_file refused: {exc}")
-        try:
-            text = target.read_text(encoding="utf-8")
+            read = _read_context(context)
+            try:
+                target = self.resolve_source_path(str(path))
+            except Exception as exc:
+                if read is not None and type(read.directive) is RecoverRead:
+                    raise WorkspaceResultError("source_changed") from exc
+                return ToolResult(error=f"read_file refused: {exc}")
+            if read is not None:
+                read.scope.validate(str(target), read.directive)
             offset = params.get("offset")
             limit = params.get("limit")
+            private_candidate = is_workspace_result_path(target) or is_workspace_result_path(Path(str(path)))
+            if private_candidate and await drained_result_io(
+                lambda: _workspace_result_path(self._runtime, str(path), target, context),
+            ):
+                return await _workspace_slice_result(self._runtime, target, context, offset, limit)
+            if read is not None:
+                start = int(offset or 0) if offset is not None or limit is not None else None
+                end = (start or 0) + int(limit) if limit is not None else None
+                return await drained_result_io(
+                    lambda: _verified_source_result(target, self._runtime, read, start, end),
+                )
+            text = target.read_text(encoding="utf-8")
             if offset is not None or limit is not None:
                 lines = text.splitlines()
                 start = int(offset or 0)
                 end = start + int(limit) if limit is not None else len(lines)
                 text = "\n".join(lines[start:end])
             return _file_read_result(text, target, self._runtime)
+        except WorkspaceResultError as exc:
+            return RecoveryFailureToolResult(error=exc.code, delivery_error=exc.code)
         except FileNotFoundError:
             return ToolResult(error=f"File not found: {path}")
         except Exception as exc:
-            logger.warning(
-                "AD-544 ReadFileTool failed for path=%s: %s; returning error ToolResult",
-                path,
-                exc,
-            )
+            if type((context or {}).get("_workspace_read")) is WorkspaceReadContext:
+                logger.warning(
+                    "Verified native file read failed; no source reference is "
+                    "available and the original error result is returned",
+                )
+            else:
+                logger.warning(
+                    "AD-544 ReadFileTool failed for path=%s: %s; returning error ToolResult",
+                    path,
+                    exc,
+                )
             return ToolResult(error=f"read_file failed: {exc}")
 
 
@@ -551,6 +731,10 @@ class CodebaseReadSourceTool:
     def __init__(self, runtime: "ProbOSRuntime") -> None:
         self._runtime = runtime
 
+    def resolve_source_path(self, path: str) -> Path:
+        """The file ``codebase_read_source`` would read for ``path`` under the read policy."""
+        return resolve_for_runtime(path, self._runtime, relative_base=_PROJECT_ROOT)
+
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
     ) -> ToolResult:
@@ -561,20 +745,37 @@ class CodebaseReadSourceTool:
         if not path:
             return ToolResult(error="file_path is required")
         try:
-            from probos.security.file_access import resolve_for_runtime
-
-            target = resolve_for_runtime(
-                str(path), self._runtime, relative_base=_PROJECT_ROOT,
-            )
-            text = target.read_text(encoding="utf-8")
+            read = _read_context(context)
+            try:
+                target = self.resolve_source_path(str(path))
+            except Exception as exc:
+                if read is not None and type(read.directive) is RecoverRead:
+                    raise WorkspaceResultError("source_changed") from exc
+                raise
+            if read is not None:
+                read.scope.validate(str(target), read.directive)
+            private_candidate = is_workspace_result_path(target) or is_workspace_result_path(Path(str(path)))
+            if private_candidate and await drained_result_io(
+                lambda: _workspace_result_path(self._runtime, str(path), target, context),
+            ):
+                raise WorkspaceResultError("workspace_reader_required")
             start = params.get("start_line")
             end = params.get("end_line")
+            if read is not None:
+                first = max(0, int(start or 1) - 1) if start is not None or end is not None else None
+                last = int(end) if end is not None else None
+                return await drained_result_io(
+                    lambda: _verified_source_result(target, self._runtime, read, first, last),
+                )
+            text = target.read_text(encoding="utf-8")
             if start is not None or end is not None:
                 lines = text.splitlines()
                 s = max(0, int(start or 1) - 1)
                 e = int(end) if end is not None else len(lines)
                 text = "\n".join(lines[s:e])
             return _file_read_result(text, target, self._runtime)
+        except WorkspaceResultError as exc:
+            return RecoveryFailureToolResult(error=exc.code, delivery_error=exc.code)
         except FileNotFoundError:
             return ToolResult(error=f"File not found: {path}")
         except Exception as exc:

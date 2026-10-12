@@ -18,6 +18,7 @@ import pytest
 
 from probos import work_item_steps as steps
 from probos.artifacts import ArtifactStore
+from probos.artifacts.refs import validate_artifact_ref
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.cognitive.agentic_dispatch import (
     WorkItemAgenticExecutor,
@@ -28,9 +29,11 @@ from probos.cognitive.crew_orchestrator import CrewOrchestrator
 from probos.cognitive.crew_session import CrewSessionService
 from probos.cognitive.crew_synth import SynthesisResult
 from probos.cognitive.crew_verifier import ConvergenceOutcome, VerificationVerdict
+from probos.cognitive.swe_harness.tool_call import capture_tool_result
 from probos.config import GroupChatConfig, SystemConfig
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.events import EventType
+from probos.execution.workspace_results import TOOL_RESULT_THRESHOLD_BYTES
 from probos.startup.finalize import _wire_crew_orchestrator
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 from probos.threads import ChatThread, ChatThreadStore
@@ -1310,14 +1313,27 @@ async def test_outcome_artifact_extraction_is_bounded_validated_and_detached(
         _artifact_ref("artifact-bool", size_bytes=True),
         {"artifact_id": "artifact-short"},
     ]
+    # AD-1240 (#1239): the vector's size was incidental; armed delivery is tested in test_ad1240_*
     candidates.extend(
         _artifact_ref(
             f"artifact-good-{index}",
             content_hash=f"{index:064x}",
             name=f"report-{index}.txt",
         )
-        for index in range(1, 60)
+        for index in range(1, 40)
     )
+    captured = capture_tool_result(
+        "premise", ToolResult(output={"artifact_details": candidates}), 0.0, max_chars=0,
+    )
+    assert captured.text is not None
+    assert len(captured.text.encode("utf-8")) <= TOOL_RESULT_THRESHOLD_BYTES
+    accepted: set[str] = set()
+    for candidate in candidates:
+        try:
+            accepted.add(validate_artifact_ref(candidate, thread_id="thread-1").artifact_id)
+        except ValueError:
+            continue
+    assert len(accepted) > 32
     runtime = _runtime(stores, tmp_path)
     runtime.tool_registry.register(_ResultTool({"artifact_details": candidates}))
     llm = _ScriptedLLM(

@@ -27,7 +27,21 @@ from probos.cognitive.swe_harness.tool_call import (
     ToolCallResult,
     ToolResultBlock,
     ToolUseBlock,
+    capture_tool_result,
     render_tool_output,
+    result_delivery,
+)
+from probos.cognitive.swe_harness.result_offload import (
+    DeliveryAccess,
+    DeliveryContext,
+    DeliveryRun,
+    DeliverySettings,
+    InvocationRefusal,
+    WorkspaceResultsSlot,
+    delivery_trace,
+    prepare_result,
+    safe_delivery_error,
+    seal_workspace_results,
 )
 from probos.crew_execution_usage import (
     TOKEN_SOURCE_ESTIMATED,
@@ -51,7 +65,7 @@ from probos.repository_instructions import (
 )
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
 from probos.tools.executor import recording_identity, tool_recording_scope
-from probos.tools.protocol import ToolResultPresentation
+from probos.tools.protocol import ToolResult, ToolResultPresentation
 from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
 from probos.execution.effect_types import (
@@ -59,6 +73,7 @@ from probos.execution.effect_types import (
     EffectOperationHandle,
 )
 from probos.execution.effect_adapters import StrictEffectPrivacyProjector
+from probos.execution.workspace_results import WorkspaceResultError, WorkspaceResults
 
 if TYPE_CHECKING:
     from probos.cognitive.economic_judgment_organ import InnerLoopHook
@@ -421,6 +436,14 @@ def build_tool_trace_payload(
     ``None`` signs against the observed name, which is what the detector does
     when there is no registry to ask.
 
+    **AD-1240 — ``delivery``.** A result that was offloaded, promised by source
+    path, recovered or refused delivery carries a content-free ``delivery``
+    record (status, reference, retention) and its ``output`` is elided like any
+    other elision, so the trace references the payload and never becomes a
+    second copy of it. Absent for every other entry, so every legacy blob stays
+    byte-identical; readers version by key presence, and strict traces never
+    carry it.
+
     What this does NOT fix: a ``tool_trace_output_max_chars`` larger than
     ``tool_result_max_chars`` still cannot retain more than the context render,
     because only the LENGTH survives to here and not the value. Keeping the
@@ -521,6 +544,14 @@ def build_tool_trace_payload(
                 head_chars=head_chars,
                 tail_chars=tail_chars,
             )
+            delivery = delivery_trace(tcr)
+            if delivery is not None:
+                # AD-1240: a delivered result keeps the producer qualification and
+                # signature below, but not a second copy of its payload: the
+                # versioned reference states where the payload lives and for how
+                # long, and the output field is elided like any other elision.
+                bounded = ""
+                entry["delivery"] = delivery
             entry["output"] = bounded
             entry["is_error"] = tcr.is_error
             entry["output_chars"] = len(original)
@@ -787,6 +818,13 @@ def format_tool_result_content(
     tail_chars: int = TOOL_RESULT_TAIL_CHARS,
 ) -> str:
     """Render the typed extension only at the message boundary, never in trace output."""
+    delivery = result_delivery(result)
+    if delivery is not None:
+        # AD-1240: a delivery is a complete, already-admitted frame; it is never
+        # truncated, so one that no longer fits is refused rather than clipped.
+        if max_chars > 0 and len(delivery.presentation) > max_chars:
+            raise WorkspaceResultError("delivery_frame_too_large")
+        return delivery.presentation
     if not isinstance(result, DelegatedToolCallResult):
         return truncate_tool_output(
             result.output, max_chars=max_chars, head_chars=head_chars, tail_chars=tail_chars,
@@ -1220,6 +1258,78 @@ class PresentedToolResult:
     output: str
 
 
+def _open_delivery_run(
+    owner: WorkspaceResults | None,
+    context: Mapping[str, Any],
+    settings: DeliverySettings,
+    *,
+    strict: bool,
+) -> DeliveryRun | None:
+    """AD-1240: one run's delivery state, or ``None`` for legacy delivery.
+
+    ``None`` is every loop that was never given an owner, and every strict-profile
+    run: the strict profile keeps legacy delivery (no capture, no offload, no
+    source promise), so its trace and event bytes are those of the loop before
+    AD-1240. A loop that was given an owner says so once, at INFO and without
+    content, so the deferral is visible.
+    """
+    if owner is None:
+        return None
+    if strict:
+        logger.info(
+            "AD-1240: workspace result delivery is not offered under the strict "
+            "effect profile; this run keeps legacy tool-result delivery",
+        )
+        return None
+    access = context.get("_workspace_delivery")
+    return DeliveryRun(
+        owner,
+        access if type(access) is DeliveryAccess else None,
+        str(context.get("agent_id") or "<unknown>"),
+        context.get("department", "engineering"),
+        context.get("rank", "ensign"),
+        settings,
+    )
+
+
+def _executed_outcomes(
+    tool_uses: list[ToolUseBlock],
+    results: list[ToolCallResult | InvocationRefusal],
+) -> tuple[list[ToolUseBlock], list[ToolCallResult]]:
+    """AD-1240 R2-1: the issued requests that produced an outcome, and those outcomes.
+
+    ``results`` stays positionally aligned with ``tool_uses``: a refused request
+    keeps its slot. This is where outcomes are consumed, so a refusal (a control
+    record, never an outcome) is filtered out here, and the two returned lists
+    stay aligned with each other.
+    """
+    pairs = [
+        (use, item)
+        for use, item in zip(tool_uses, results, strict=True)
+        if isinstance(item, ToolCallResult)
+    ]
+    return [use for use, _ in pairs], [item for _, item in pairs]
+
+
+def _delivery_stop(
+    results: list[ToolCallResult | InvocationRefusal], max_chars: int,
+) -> tuple[str, str] | None:
+    """AD-1240: the ``(code, text)`` that ends the run, or ``None`` to continue.
+
+    A refused request (R2-1) and a result whose delivery failed both end the run:
+    no further model request can honestly follow either. ``results`` is in request
+    order, so the failure that ends the run is the first one issued.
+    """
+    for item in results:
+        if isinstance(item, InvocationRefusal):
+            return item.code, safe_delivery_error(item.code, max_chars)
+        delivery = result_delivery(item)
+        if delivery is not None and delivery.status == "failed":
+            # ``ResultDelivery`` validates that a failed delivery carries its code.
+            return delivery.code, delivery.presentation
+    return None
+
+
 def _observe_completion_spend(
     observer: Any,
     result: AgenticResult,
@@ -1254,6 +1364,12 @@ def _observe_completion_spend(
 class AgenticLoop:
     """Multi-turn agentic tool-calling loop."""
 
+    # AD-1240: the workspace-results owner, a data descriptor rather than a binder
+    # method, so wiring an owner after construction adds no method here (the AD-1324
+    # ceiling stands). It reads ``None`` until one is assigned and refuses every
+    # assignment once ``run()`` has begun.
+    workspace_results = WorkspaceResultsSlot()
+
     def __init__(
         self,
         *,
@@ -1284,6 +1400,7 @@ class AgenticLoop:
         spend_observer: Callable[
             [LLMRequest, LLMResponse, Any, int, str], Any
         ] | None = None,
+        workspace_results: WorkspaceResults | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1359,6 +1476,10 @@ class AgenticLoop:
             LoopTierSteps(tier_controller, estimate_context=_estimate_context_tokens, is_tier1=is_tier_1_tool_call)
             if tier_controller is not None else None
         )
+        # AD-1240: None (every caller that injects no owner) keeps legacy delivery.
+        # The assignment goes through the slot, so an invalid owner is refused here.
+        if workspace_results is not None:
+            self.workspace_results = workspace_results
 
     def _hook_before_model_call(
         self, *, iteration: int, messages: list[Any], cumulative_tokens: int,
@@ -1456,6 +1577,9 @@ class AgenticLoop:
         fault_capture: ToolFaultCapture | None = None,
     ) -> AgenticResult:
         """Run with one recording budget, restoring the parent scope on every exit."""
+        # AD-1240: before any callback or await, so the owner can no longer be
+        # assigned however this run ends.
+        seal_workspace_results(self)
         if repository_instructions is not None and type(repository_instructions) is not InstructionObservation:
             raise TypeError("agentic repository guidance requires a typed observation")
         delegated_run_id = context.get("_delegated_child_run_id")
@@ -1499,7 +1623,17 @@ class AgenticLoop:
         with tool_recording_scope():
             hook_close_reason = "error"
             hook_final_tokens: int | None = None
+            delivery_run: DeliveryRun | None = None
             try:
+                # AD-1240: this run's delivery state, closed on every exit below.
+                delivery_run = _open_delivery_run(
+                    self.workspace_results, run_context,
+                    DeliverySettings(
+                        self._tool_result_max_chars, self._tool_result_head_chars,
+                        self._tool_result_tail_chars, self._max_iter,
+                    ),
+                    strict=bool(getattr(self._executor, "protected_effects_enabled", False)),
+                )
                 result = await self._run_scoped(
                     system_prompt=system_prompt, user_message=user_message,
                     tools=tools, context=run_context,
@@ -1509,11 +1643,14 @@ class AgenticLoop:
                         if repository_instructions is not None else {}
                     ),
                     **({"fault_capture": fault_capture} if fault_capture is not None else {}),
+                    **({"delivery_run": delivery_run} if delivery_run is not None else {}),
                 )
                 hook_close_reason = str(getattr(result, "stopped_reason", "") or "")
                 hook_final_tokens = getattr(result, "total_tokens", None)
                 return result
             finally:
+                if delivery_run is not None:
+                    delivery_run.close()
                 self._hook_close(hook_close_reason, hook_final_tokens)
 
     async def _run_scoped(
@@ -1526,6 +1663,7 @@ class AgenticLoop:
         run_id: str | None = None,
         repository_instructions: InstructionObservation | None = None,
         fault_capture: ToolFaultCapture | None = None,
+        delivery_run: DeliveryRun | None = None,
     ) -> AgenticResult:
         """Run the agentic loop until completion or limit reached.
 
@@ -1611,6 +1749,23 @@ class AgenticLoop:
 
             effective_system_prompt = append_repository_instructions(system_prompt, instruction_state)
             messages[0] = {"role": "system", "content": effective_system_prompt}
+            if delivery_run is not None and delivery_run.promised:
+                # AD-1240: a promised source can only be recovered through the reader
+                # the worked call names, so the offer carries exactly that reader.
+                try:
+                    tools = delivery_run.offer(tools)
+                except Exception as exc:
+                    code = exc.code if isinstance(exc, WorkspaceResultError) else "reader_unavailable"
+                    logger.warning(
+                        "AD-1240: the recovery reader is no longer offerable (%s) at "
+                        "iteration=%d agent=%s; stopping with stopped_reason=error "
+                        "rather than send a pointer the model cannot follow",
+                        code, iteration, agent_id[:12],
+                    )
+                    result.stopped_reason = "error"
+                    result.error = code
+                    result.final_text = safe_delivery_error(code, delivery_run.settings.max_chars)
+                    return result
 
             # Optional compaction (AD-547) before LLM call.
             #
@@ -1630,13 +1785,26 @@ class AgenticLoop:
                 and _estimate_context_tokens(messages)
                 >= self._compaction_threshold
             ):
-                messages = await self._compact_messages(
-                    messages, iteration=iteration, agent_id=agent_id,
+                # AD-1240: a delivered result's pointer is only usable while its group
+                # is whole, so a compaction that would change one is not applied.
+                protected = delivery_run is not None and bool(delivery_run.protected_groups)
+                compacted = await self._compact_messages(
+                    copy.deepcopy(messages) if protected else messages,
+                    iteration=iteration, agent_id=agent_id,
                     **(
                         {"repository_system_prompt": effective_system_prompt}
                         if effective_system_prompt != system_prompt else {}
                     ),
                 )
+                if protected and not delivery_run.preserves_groups(compacted):
+                    logger.warning(
+                        "AD-1240: compaction would change an unconsumed workspace "
+                        "recovery group at iteration=%d agent=%s; keeping the complete "
+                        "uncompacted history so the pointer stays readable",
+                        iteration, agent_id[:12],
+                    )
+                else:
+                    messages = compacted
                 # Guidance belongs to this run, not to a compactor summary.
                 if messages and messages[0].get("role") == "system":
                     messages[0] = {"role": "system", "content": effective_system_prompt}
@@ -1958,6 +2126,7 @@ class AgenticLoop:
             ]
             tool_uses = [b for b in blocks if isinstance(b, ToolUseBlock)]
 
+            group_start = len(messages)
             assistant_text = "\n".join(
                 b.text for b in blocks if isinstance(b, TextBlock)
             )
@@ -1986,6 +2155,17 @@ class AgenticLoop:
                 self._hook_signal("finished", "complete")
                 return result
 
+            # AD-1240 D2: the model requests this run may still make after this step. Delivery
+            # needs two (read the stored result back, then answer), so the figure must follow
+            # BOTH AD-1208 ceilings and net out AD-1324 floor re-issues: tier-1 steps inflate
+            # ``iteration`` without counting toward ``max_iterations``, and armed, the recovery
+            # read is not tier 1 and does count.
+            delivery_remaining = iteration_ceiling - iteration - redo_calls
+            if self._max_total_iter is not None:
+                delivery_remaining = min(
+                    delivery_remaining,
+                    self._max_iter - counted_iterations - (1 if _counts_toward_max_iterations(tool_uses) else 0),
+                )
             tool_results = await self._execute_tool_uses(
                 tool_uses,
                 agent_id=agent_id,
@@ -1993,27 +2173,37 @@ class AgenticLoop:
                 context=context,
                 **({"run_id": run_id} if run_id is not None else {}),
                 **({"fault_capture": fault_capture} if fault_capture is not None else {}),
+                **(
+                    {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
+                    if delivery_run is not None else {}
+                ),
             )
             for tool_result in tool_results:
                 if isinstance(tool_result, InstructionToolCallResult) and not tool_result.is_error:
                     instruction_state = merge_instruction_observations(
                         instruction_state, tool_result.repository_instructions,
                     )
+            # AD-1240 R2-1: a request refused before it was invoked keeps its slot in
+            # ``tool_results`` so the lists stay positionally aligned with
+            # ``tool_uses``; it is a control record, not an outcome, so it is
+            # filtered out wherever outcomes are consumed below.
+            executed_uses, outcomes = _executed_outcomes(tool_uses, tool_results)
             # DD-2: ``_execute_tool_uses`` returns results in REQUEST order
             # regardless of completion order, so these three lists stay aligned
             # with the assistant turn's ``tool_calls`` array (AD-1146).
             tool_result_blocks = [
-                ToolResultBlock(result=tcr) for tcr in tool_results
+                ToolResultBlock(result=tcr) for tcr in outcomes
             ]
             for use in tool_uses:
                 result.tool_calls.append(use.tool_call)
                 tool_id_history.append(use.tool_call.name)
-            self._hook_after_tools(
-                iteration=iteration, tool_uses=tool_uses, results=tool_results,
-                cumulative_tokens=result.total_tokens,
-            )
-            if self._tier_ctl is not None:
-                self._tier_ctl.observe(tier_decision, tier_parse, tool_uses, tool_results, messages)
+            if outcomes:
+                self._hook_after_tools(
+                    iteration=iteration, tool_uses=executed_uses, results=outcomes,
+                    cumulative_tokens=result.total_tokens,
+                )
+            if self._tier_ctl is not None and outcomes:
+                self._tier_ctl.observe(tier_decision, tier_parse, executed_uses, outcomes, messages)
             # AD-1151 / DD-1: capture the outputs alongside the requests,
             # before AD-1148 bounding is applied to message content below.
             # BF-760 (#1218): these are NOT the tool's full outputs for a STRUCTURED
@@ -2021,7 +2211,17 @@ class AgenticLoop:
             # so the trace records the rendered value and its ``output_chars``
             # measures that rather than what the tool returned. A string output
             # is untouched by that path and does arrive whole.
-            result.tool_results.extend(tool_results)
+            result.tool_results.extend(outcomes)
+            # AD-1240: a refused request (R2-1) or a result whose delivery failed ends
+            # the run, selected by request order. The issued request stays in
+            # ``tool_calls``; ``tool_results`` holds genuine outcomes only. No further
+            # model request is made, and the model is told only a bounded code.
+            if delivery_run is not None:
+                stop = _delivery_stop(tool_results, delivery_run.settings.max_chars)
+                if stop is not None:
+                    result.stopped_reason = "error"
+                    result.error, result.final_text = stop
+                    return result
 
             # AD-1146: structured results are individually correlated by
             # ``tool_call_id``; the legacy path folds them into one user turn.
@@ -2038,11 +2238,14 @@ class AgenticLoop:
                 messages.extend(result_messages)
                 if self._on_model_request_presented is not None:
                     for use, tool_result, frame in zip(
-                        tool_uses, tool_results, result_messages, strict=True,
+                        executed_uses, outcomes, result_messages, strict=True,
                     ):
                         if (
                             not tool_result.is_error
                             and frame.get("content") == tool_result.output
+                            # AD-1240: an offloaded, source or recovered presentation is a
+                            # pointer or a slice, never what an acknowledgement compares.
+                            and result_delivery(tool_result) is None
                         ):
                             presentation_frames.append((
                                 dict(frame),
@@ -2063,6 +2266,7 @@ class AgenticLoop:
                             tail_chars=self._tool_result_tail_chars,
                         )
                         if isinstance(trb.result, DelegatedToolCallResult)
+                        or result_delivery(trb.result) is not None
                         else self._bound_tool_output(trb.result.output)
                     )
                     for trb in tool_result_blocks
@@ -2076,15 +2280,22 @@ class AgenticLoop:
                             use.tool_call.name,
                             tool_result.output,
                         )
-                        for use, tool_result in zip(tool_uses, tool_results, strict=True)
+                        for use, tool_result in zip(executed_uses, outcomes, strict=True)
                         if (
                             not tool_result.is_error
                             and not isinstance(tool_result, DelegatedToolCallResult)
                             and self._bound_tool_output(tool_result.output)
                             == tool_result.output
+                            # AD-1240: delivered presentations are never acknowledged.
+                            and result_delivery(tool_result) is None
                         )
                     )
                     presentation_frames.append((dict(result_message), presentations))
+            # AD-1240: this group carries a delivered result's pointer or slice. It is
+            # kept whole for the rest of the run, so compaction cannot summarise away
+            # the path and offsets the model still has to read.
+            if delivery_run is not None and any(result_delivery(item) is not None for item in outcomes):
+                delivery_run.protected_groups.append(copy.deepcopy(messages[group_start:]))
 
             # BF-755: a tool discovered THIS iteration is registered, warm and
             # authorized -- and absent from the definitions the model can call,
@@ -2250,8 +2461,17 @@ class AgenticLoop:
         context: dict[str, Any],
         run_id: str | None = None,
         fault_capture: ToolFaultCapture | None = None,
-    ) -> list[ToolCallResult]:
+        delivery_run: DeliveryRun | None = None,
+        delivery_remaining: int = 0,
+    ) -> list[ToolCallResult | InvocationRefusal]:
         """Execute one response's tool calls, returning results in REQUEST order.
+
+        AD-1240 R2-1: a request refused before it was invoked is an
+        :class:`InvocationRefusal` in its own slot, so the list stays positionally
+        aligned with ``tool_uses``; the other calls in the group still run and
+        their outcomes are kept. ``delivery_remaining`` is the number of model
+        requests the run may still make after this step (the default 0 proves no
+        iteration, so delivery would refuse rather than offload).
 
         Default-OFF (AD-1147 DD-7) runs the AD-545 sequential path verbatim: one
         call at a time, in the order the LLM emitted them.
@@ -2272,6 +2492,10 @@ class AgenticLoop:
                     use, agent_id=agent_id, iteration=iteration, context=context,
                     **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                     **(
+                        {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
+                        if delivery_run is not None else {}
+                    ),
+                    **(
                         {"run_id": run_id, "tool_call_index": index}
                         if run_id is not None else {}
                     ),
@@ -2280,12 +2504,12 @@ class AgenticLoop:
             ]
 
         parallel_indices, sequential_indices = partition_tool_uses(tool_uses)
-        by_index: dict[int, ToolCallResult] = {}
+        by_index: dict[int, ToolCallResult | InvocationRefusal] = {}
 
         if parallel_indices:
             semaphore = asyncio.Semaphore(self._max_parallel_tool_calls)
 
-            async def _bounded(index: int) -> ToolCallResult:
+            async def _bounded(index: int) -> ToolCallResult | InvocationRefusal:
                 async with semaphore:
                     return await self._execute_one_tool(
                         tool_uses[index],
@@ -2293,6 +2517,10 @@ class AgenticLoop:
                         iteration=iteration,
                         context=context,
                         **({"fault_capture": fault_capture} if fault_capture is not None else {}),
+                        **(
+                            {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
+                            if delivery_run is not None else {}
+                        ),
                         **(
                             {"run_id": run_id, "tool_call_index": index}
                             if run_id is not None else {}
@@ -2350,6 +2578,10 @@ class AgenticLoop:
                 context=context,
                 **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                 **(
+                    {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
+                    if delivery_run is not None else {}
+                ),
+                **(
                     {"run_id": run_id, "tool_call_index": index}
                     if run_id is not None else {}
                 ),
@@ -2369,13 +2601,20 @@ class AgenticLoop:
         run_id: str | None = None,
         tool_call_index: int | None = None,
         fault_capture: ToolFaultCapture | None = None,
-    ) -> ToolCallResult:
+        delivery_run: DeliveryRun | None = None,
+        delivery_remaining: int = 0,
+    ) -> ToolCallResult | InvocationRefusal:
         """AD-545: run one tool call, translating any failure into an error result.
 
         Extracted verbatim from the AD-545 inline loop body so the sequential and
         the AD-1147 concurrent paths instrument, time and degrade each call
         identically. ``asyncio.CancelledError`` is a ``BaseException`` and so is
         deliberately not caught here (DD-5).
+
+        AD-1240 R2-1: a worked call that promised a source and has lost the
+        authority to recover it is refused BEFORE it starts, as an
+        :class:`InvocationRefusal` (a control record, not a producer outcome):
+        no executor call, no event, no hook and no observer ever sees it.
         """
         correlation = (
             {
@@ -2398,6 +2637,23 @@ class AgenticLoop:
                     correlation["thread_id"] = thread_id
         strict = getattr(self._executor, "protected_effects_enabled", False)
         privacy = StrictEffectPrivacyProjector()
+        read_context = None
+        if delivery_run is not None:
+            # AD-1240 R2-1: decided BEFORE STARTED and outside the producer window.
+            # A promised source whose authority was lost is refused here, so nothing
+            # downstream (executor, hooks, events, the replacement reader) runs.
+            try:
+                read_context = await delivery_run.invocation_context(
+                    use.tool_call.name, use.tool_call.arguments,
+                )
+            except WorkspaceResultError as exc:
+                logger.warning(
+                    "AD-1240: refusing tool=%s agent=%s before it starts (%s); the "
+                    "promised recovery cannot be served safely, so the run stops "
+                    "with stopped_reason=error and the tool is never called",
+                    use.tool_call.name, agent_id[:12], exc.code,
+                )
+                return InvocationRefusal(use.tool_call.id, exc.code)
         self._fire_event(
             "AGENTIC_TOOL_CALL_STARTED",
             (
@@ -2420,8 +2676,13 @@ class AgenticLoop:
             strict=strict,
         )
         start = time.perf_counter()
+        # AD-1240: the producer outcome that delivery will capture, set by whichever
+        # ``from_tool_result`` site the armed loop replaces. Unarmed: always ``None``.
+        delivery_source: ToolResult | None = None
         try:
             invocation_context = {**context, "iteration": iteration}
+            if read_context is not None:
+                invocation_context["_workspace_read"] = read_context
             retained_presentation: tuple[Any, str] | None = None
             requested_domains = (
                 use.tool_call.arguments.get("domains")
@@ -2565,12 +2826,18 @@ class AgenticLoop:
                         or is_capability_gap(retained_presentation[1])
                     ):
                         raise ValueError("Invalid retained telemetry presentation")
-                    tcr = ToolCallResult.from_tool_result(
-                        use.tool_call.id,
-                        replace(raw_result, output=retained_presentation[1]),
-                        duration_ms,
-                        max_chars=self._tool_result_max_chars,
-                    )
+                    if delivery_run is None:
+                        tcr = ToolCallResult.from_tool_result(
+                            use.tool_call.id,
+                            replace(raw_result, output=retained_presentation[1]),
+                            duration_ms,
+                            max_chars=self._tool_result_max_chars,
+                        )
+                    else:
+                        # AD-1240: delivery captures the retained presentation
+                        # (the text the model would have seen), after the producer
+                        # window closes below.
+                        delivery_source = replace(raw_result, output=retained_presentation[1])
                 except Exception:
                     logger.warning(
                         "self_query presentation delivery failed; complete model delivery "
@@ -2583,12 +2850,15 @@ class AgenticLoop:
                         duration_ms=duration_ms,
                     )
             else:
-                tcr = ToolCallResult.from_tool_result(
-                    use.tool_call.id,
-                    raw_result,
-                    duration_ms,
-                    max_chars=self._tool_result_max_chars,
-                )
+                if delivery_run is None:
+                    tcr = ToolCallResult.from_tool_result(
+                        use.tool_call.id,
+                        raw_result,
+                        duration_ms,
+                        max_chars=self._tool_result_max_chars,
+                    )
+                else:
+                    delivery_source = raw_result
         except Exception as exc:
             failure = getattr(exc, "failure", None)
             unresolved_handle = getattr(exc, "operation_handle", None)
@@ -2637,7 +2907,9 @@ class AgenticLoop:
                     "feeding error result back to LLM",
                     use.tool_call.name,
                     agent_id[:12],
-                    exc_info=True,
+                    # AD-1240: armed, the raised text is the producer outcome that
+                    # delivery may offload; its traceback would copy it into the log.
+                    exc_info=delivery_run is None,
                 )
             tcr = ToolCallResult(
                 id=use.tool_call.id,
@@ -2649,6 +2921,20 @@ class AgenticLoop:
                 is_error=True,
                 duration_ms=duration_ms,
             )
+            if delivery_run is not None:
+                # AD-1240: the converted error text IS the producer's outcome here,
+                # so delivery captures exactly that text, after the window closes.
+                delivery_source = ToolResult(error=tcr.output)
+        if delivery_run is not None and delivery_source is not None:
+            # AD-1240: delivery is deliberately outside the producer exception window.
+            # Every observer has already seen the original outcome, and a delivery
+            # failure is never reported as a producer error: ``prepare_result`` turns
+            # one into a typed refusal on the result, and the run stops on it.
+            captured = capture_tool_result(
+                use.tool_call.id, delivery_source, duration_ms,
+                max_chars=delivery_run.settings.max_chars,
+            )
+            tcr = await prepare_result(captured, DeliveryContext(delivery_run, delivery_remaining))
         if trace_correlation is not None:
             if strict and tcr.is_error:
                 tcr = replace(

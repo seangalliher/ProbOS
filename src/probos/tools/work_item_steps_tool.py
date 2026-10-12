@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from probos import work_item_steps as owned_steps
@@ -13,6 +14,11 @@ from probos.tools.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OwnedStepsViewResult(ToolResult):
+    """Producer-admitted complete owned-steps page; its exact text authorises acknowledgement, so it is never offloaded."""
 
 
 class ReadOwnedStepsTool:
@@ -133,7 +139,7 @@ class ReadOwnedStepsTool:
                     view_id=view.view_id,
                     actions=("page", "detail", "view_budget"),
                 )
-            return ToolResult(
+            return OwnedStepsViewResult(
                 output=rendered,
                 duration_ms=(time.monotonic() - started) * 1000.0,
                 metadata={
