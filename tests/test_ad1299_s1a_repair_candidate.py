@@ -50,7 +50,7 @@ from probos.cognitive.repair_candidate import (
     EvidenceLink,
     RepairCandidate,
     ReviewAttestation,
-    bind_reviews,
+    bind_reviews as _module_bind_reviews,
     verify_gate_receipt,
 )
 from probos.federation.ard.jcs import canonicalize as jcs_canonicalize
@@ -239,6 +239,24 @@ def _two_independent_reviews() -> list[_Review]:
         _Review(review_attempt_id="attempt-1", reviewer_id="red_team"),
         _Review(review_attempt_id="attempt-2", reviewer_id="system_qa"),
     ]
+
+
+def bind_reviews(
+    candidate: RepairCandidate,
+    reviews: object,
+    *,
+    required_reviewers: int = 1,
+    expected_assignee: str = "builder",
+) -> EvidenceLink:
+    """S1b (C8) adapter. The real binder requires ``expected_assignee``; this adapter supplies the
+    campaign builder ``builder`` (the ``_Review.assignee_id`` default) unless a case passes another.
+    The S1a assignee probes vary ``assignee_id`` on purpose and now see ``review_assignee_mismatch``
+    for a valid non-``builder`` value. C8 itself is pinned in
+    tests/test_ad1299_s1b_evidence_completion.py, never through this adapter."""
+    return _module_bind_reviews(
+        candidate, reviews,  # type: ignore[arg-type]
+        expected_assignee=expected_assignee, required_reviewers=required_reviewers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -896,6 +914,7 @@ _EXPECTED_REASON_CODES = frozenset({
     "review_malformed",
     "review_insufficient",
     "review_attempt_duplicate",
+    "review_assignee_mismatch",
     "review_not_independent",
     "review_not_accepted",
     "review_tree_mismatch",
@@ -941,11 +960,12 @@ def _links_for_every_reason(gate: ModuleType, repo: Path) -> list[EvidenceLink]:
         bind_reviews(pure, [dataclasses.replace(first, reviewer_id="builder")]),
         bind_reviews(pure, [dataclasses.replace(first, accepted=False)]),
         bind_reviews(pure, [dataclasses.replace(first, reviewed_tree="e" * 40)]),
+        bind_reviews(pure, [dataclasses.replace(first, assignee_id="someone_else")]),
     ]
 
 
 def test_reason_codes_are_pinned(gate: ModuleType, repo: Path) -> None:
-    assert len(_EXPECTED_REASON_CODES) == 20
+    assert len(_EXPECTED_REASON_CODES) == 21
     assert REASON_CODES == _EXPECTED_REASON_CODES
     assert (
         REPAIR_CANDIDATE_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, MAX_RECEIPT_BYTES, MAX_REVIEWS,
@@ -956,7 +976,7 @@ def test_reason_codes_are_pinned(gate: ModuleType, repo: Path) -> None:
     # every code in the pinned set is reachable through the public verifiers, none outside it is
     # produced, and each link is internally consistent about its kind, status and current flag
     produced = [link.reason for link in links]
-    assert len(produced) == len(set(produced)) == 20
+    assert len(produced) == len(set(produced)) == 21
     assert set(produced) == REASON_CODES
     for link in links:
         assert link.reason in REASON_CODES

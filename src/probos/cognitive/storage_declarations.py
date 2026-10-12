@@ -165,4 +165,29 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "never creates the file."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.repair-evidence",
+        title="First trusted digest per repair evidence reference (AD-1299 S1b)",
+        owner_module="probos.cognitive.repair_evidence_store",
+        owner_symbol="RepairEvidenceLinkStore",
+        canonical_path="repair_evidence.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="unowned",
+        retention=StoreRetention.UNBOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Insert-only by design: six triggers abort every UPDATE, every DELETE and every replacing "
+            "INSERT on both WITHOUT ROWID tables, and the module has no delete path. Growth is at most "
+            "two rows per evidence reference (the first trusted digest and the first different digest), "
+            "and references are created per candidate per gate run or review round. Archival belongs to "
+            "the S4 release lifecycle; this slice adds none."
+        ),
+        notes=(
+            "Not wired: nothing constructs or starts the store in production until AD-1299 S2 admission, "
+            "so a default runtime never creates the file (lifecycle_owner is the 'unowned' sentinel). "
+            "Detection only: a writer with ProbOS's OS identity can delete the file, which resets the "
+            "first trusted digests (D-B2)."
+        ),
+    ),
 )
