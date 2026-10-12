@@ -944,7 +944,7 @@ Rows 1–14 and 17–44 must be KILLED. Rows 15–16 must be KILLED or justified
   - the transient-versus-integrity latch, with the 2R and root/namespace escalations;
   - the in-process committed-artifact registry (seven fields);
   - the owned-steps exemption, and delivery's iteration accounting under AD-1208 (C6-D2);
-  - 24 paths plus any C6-D5 test files (`file_access.py` gains only `is_reparse_point`; `work_item_steps_tool.py` gains only `OwnedStepsViewResult`);
+  - 26 paths in the index, including the C6-D5 test file and the C6-D3 pin move (`file_access.py` gains the pinned-directory primitives `PinnedDirectory`, `pin_directory`, `read_verified_file` and `is_reparse_point`; `work_item_steps_tool.py` gains only `OwnedStepsViewResult`);
   - the R1 and R2 acceptance set, with R2-3 as documented behaviour;
   - the mutation campaign of record;
   - the gate receipt path.
