@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-10-11T20:55:35+00:00",
-    "head": "1a7a3fef",
-    "subject_count": 2811,
+    "captured_at": "2026-10-12T09:12:39+00:00",
+    "head": "c596b511",
+    "subject_count": 2822,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -3256,8 +3256,8 @@
     }
   },
   "issues": {
-    "captured_at": "2026-10-11T17:50:08+00:00",
-    "issue_count": 1407,
+    "captured_at": "2026-10-12T09:12:39+00:00",
+    "issue_count": 1410,
     "issues": {
       "AD-1000": [
         {
@@ -5154,8 +5154,8 @@
             "AD-1240"
           ],
           "number": 1239,
-          "reason": "",
-          "state": "OPEN",
+          "reason": "COMPLETED",
+          "state": "CLOSED",
           "title": "AD-1240: offload large tool results to the workspace instead of destroying them"
         }
       ],
@@ -5726,6 +5726,28 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "AD-1325: calibrate cost estimates and value claims against outcomes"
+        }
+      ],
+      "AD-1326": [
+        {
+          "claims": [
+            "AD-1326"
+          ],
+          "number": 1510,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1326: procedure evolution keeps the champion until a challenger wins head-to-head"
+        }
+      ],
+      "AD-1327": [
+        {
+          "claims": [
+            "AD-1327"
+          ],
+          "number": 1511,
+          "reason": "",
+          "state": "OPEN",
+          "title": "AD-1327: crew verification names its own model and reports when it is judging itself"
         }
       ],
       "AD-272": [
@@ -17676,6 +17698,17 @@
           "reason": "COMPLETED",
           "state": "CLOSED",
           "title": "BF-886: model routing ignores the configured tier models and the configured cost ceiling"
+        }
+      ],
+      "BF-889": [
+        {
+          "claims": [
+            "BF-889"
+          ],
+          "number": 1515,
+          "reason": "",
+          "state": "OPEN",
+          "title": "BF-889: read_page silently keeps only the first 8,000 characters, and CSS uses up the budget"
         }
       ],
       "BF-99": [
