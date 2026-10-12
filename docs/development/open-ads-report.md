@@ -28,17 +28,17 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Series | Highest allocated | Next free | Highest with code | Allocated above the code ceiling |
 |---|---|---|---|---|
-| AD | **AD-1325** | **AD-1326** | AD-1325 | _(none)_ |
-| BF | **BF-888** | **BF-889** | BF-886 | 887-888 |
+| AD | **AD-1327** | **AD-1328** | AD-1325 | 1326-1327 |
+| BF | **BF-889** | **BF-890** | BF-886 | 887-889 |
 
 ## Where each layer came from
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-11T20:55:35+00:00 at `1a7a3fef` | 2811 subjects, 1009 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-12T09:12:39+00:00 at `c596b511` | 2822 subjects, 1009 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
-| `gh issue list --state all` | pinned snapshot (network) | 2026-10-11T17:50:08+00:00 | 1407 issues, 968 numbers |
+| `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |
 
 The two pinned layers are refreshed by running the generator (`--online` for issues). `--check` re-renders from the pinned snapshot and a fresh parse of the two live authorities, so it opens no socket and spawns no subprocess.
 
@@ -46,18 +46,20 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 54 | 8 | assigned, issue open, no shipped code |
+| `allocated-open` | 55 | 9 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 10 | 0 | abandoned, number **not** reusable |
-| `shipped` | 987 | 549 | code in history |
+| `shipped` | 988 | 549 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-62 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+64 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
+| `AD-1327` | [#1511](https://github.com/seangalliher/ProbOS/issues/1511) | issue #1511 open, no code | AD-1327: crew verification names its own model and reports when it is judging itself |
+| `AD-1326` | [#1510](https://github.com/seangalliher/ProbOS/issues/1510) | issue #1510 open, no code | AD-1326: procedure evolution keeps the champion until a challenger wins head-to-head |
 | `AD-1319` | [#1464](https://github.com/seangalliher/ProbOS/issues/1464) | issue #1464 open, no code | AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307) |
 | `AD-1313` | [#1365](https://github.com/seangalliher/ProbOS/issues/1365) | issue #1365 open, no code | AD-1313: Authentic digital visual language and spatial continuity for HXI work |
 | `AD-1312` | [#1366](https://github.com/seangalliher/ProbOS/issues/1366) | issue #1366 open, no code | AD-1312: Contextual crew, knowledge, and administration experience |
@@ -70,7 +72,6 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-1289` | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | issue #1336 open, no code | AD-1289: Typed Mission Blackboard |
 | `AD-1288` | [#1335](https://github.com/seangalliher/ProbOS/issues/1335) | issue #1335 open, no code | AD-1288: Agent-Commissioned Team Lifecycle |
 | `AD-1287` | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | issue #1334 open, no code | AD-1287: Evidence-Bound Skill Qualification |
-| `AD-1240` | [#1239](https://github.com/seangalliher/ProbOS/issues/1239) | issue #1239 open, no code | AD-1240: offload large tool results to the workspace instead of destroying them |
 | `AD-1225` | [#1193](https://github.com/seangalliher/ProbOS/issues/1193) | issue #1193 open, no code | AD-1225: an agent pays a full ~18K-token prompt to decide to say nothing |
 | `AD-1202` | [#1142](https://github.com/seangalliher/ProbOS/issues/1142) | issue #1142 open, no code | AD-1202: Shared HXI controls - glass material, contextual behavior, and a complete Bridge exemplar |
 | `AD-1199` | [#1136](https://github.com/seangalliher/ProbOS/issues/1136) | issue #1136 open, no code | AD-1199: a typed human-claim lifecycle |
@@ -112,6 +113,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-889` | [#1515](https://github.com/seangalliher/ProbOS/issues/1515) | issue #1515 open, no code | BF-889: read_page silently keeps only the first 8,000 characters, and CSS uses up the budget |
 | `BF-888` | — | a tracker head marks it open |  |
 | `BF-887` | — | a tracker head marks it open |  |
 | `BF-885` | — | a tracker head marks it open |  |
@@ -148,7 +150,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (987): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1135, 1137-1148, 1151-1185, 1187, 1189-1192, 1194-1198, 1200-1201, 1203-1224, 1226-1236, 1239, 1241-1248, 1250-1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1286, 1291-1306, 1315-1316, 1320-1325
+**AD** (988): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1135, 1137-1148, 1151-1185, 1187, 1189-1192, 1194-1198, 1200-1201, 1203-1224, 1226-1236, 1239-1248, 1250-1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1286, 1291-1306, 1315-1316, 1320-1325
 
 **BF** (549): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-879, 883-884, 886
 
@@ -303,8 +305,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1239 head-shaped line yielded no AD/BF token
-PROGRESS.md:1245 head-shaped line yielded no AD/BF token
+PROGRESS.md:1241 head-shaped line yielded no AD/BF token
+PROGRESS.md:1247 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token
