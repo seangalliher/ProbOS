@@ -512,3 +512,165 @@ def test_main_preflight_refusal_returns_2_without_running(bridge, monkeypatch, c
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert bridge.main(["--task", "hello"]) == 2
     assert "preflight refused" in capsys.readouterr().err
+
+
+# --- token economy (2026-10-11) -----------------------------------------------
+
+
+def _transcript(config_dir: Path, session: str, contexts: list[tuple[str, int]]) -> None:
+    project = config_dir / "projects" / "D--ProbOS-worktrees-x"
+    project.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}), "not json"]
+    for model, ctx in contexts:
+        lines.append(json.dumps({"message": {"role": "assistant", "model": model, "usage": {
+            "input_tokens": 10, "cache_read_input_tokens": ctx - 110, "cache_creation_input_tokens": 100}}}))
+    (project / f"{session}.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+
+_SID = "558bcee4-1168-4647-81a5-ee7b7f7d1410"
+
+
+def test_resumed_context_is_the_last_main_model_call(bridge, tmp_path):
+    # The helper-model call comes last, so ignoring the model filter would return 900,000.
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 40_000), ("claude-opus-5-5", 300_000),
+                                 ("claude-haiku-5-5", 900_000)])
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 300_000
+
+
+def test_resumed_context_skips_unreadable_usage_values(bridge, tmp_path):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 50_000)])
+    path = tmp_path / "projects" / "D--ProbOS-worktrees-x" / f"{_SID}.jsonl"
+    bad = json.dumps({"message": {"role": "assistant", "model": "claude-opus-5-5",
+                                  "usage": {"input_tokens": "lots", "cache_read_input_tokens": 1}}})
+    path.write_text(path.read_text(encoding="utf-8") + "\n" + bad, encoding="utf-8")
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 50_000
+
+
+def test_resumed_context_takes_the_largest_of_duplicate_transcripts(bridge, tmp_path):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 50_000)])
+    other = tmp_path / "projects" / "a-earlier-slug"
+    other.mkdir(parents=True)
+    (other / f"{_SID}.jsonl").write_text(json.dumps({"message": {"role": "assistant", "model": "claude-opus-5-5",
+        "usage": {"input_tokens": 400_000}}}), encoding="utf-8")
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 400_000
+
+
+@pytest.mark.parametrize("session", ["", "not-a-session", "../../etc/passwd", "*", "558bcee4/../x"])
+def test_resumed_context_rejects_non_session_ids(bridge, tmp_path, session):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 300_000)])
+    assert bridge.resumed_context_tokens(session, tmp_path) is None
+
+
+def test_resumed_context_unknown_session_is_none(bridge, tmp_path):
+    assert bridge.resumed_context_tokens(_SID, tmp_path) is None
+
+
+def test_projects_root_honours_claude_config_dir(bridge, tmp_path):
+    assert bridge.projects_root({"CLAUDE_CONFIG_DIR": str(tmp_path)}) == tmp_path
+    assert bridge.projects_root({}, home=tmp_path) == tmp_path / ".claude"
+    assert bridge.projects_root({}, home=tmp_path, settings={"CLAUDE_CONFIG_DIR": str(tmp_path / "s")}) == tmp_path / "s"
+    # the environment wins over settings, as for the CLI
+    assert bridge.projects_root({"CLAUDE_CONFIG_DIR": str(tmp_path / "e")}, settings={"CLAUDE_CONFIG_DIR": "x"}) == tmp_path / "e"
+
+
+@pytest.mark.parametrize("read_only, requested, expected", [
+    (True, None, "medium"), (False, None, None), (True, "high", "high"), (False, "low", "low"),
+])
+def test_resolve_effort(bridge, read_only, requested, expected):
+    assert bridge.resolve_effort(read_only=read_only, requested=requested) == expected
+
+
+def test_resolve_effort_rejects_unknown_level(bridge):
+    with pytest.raises(ValueError):
+        bridge.resolve_effort(read_only=False, requested="turbo")
+
+
+def test_build_command_passes_effort_only_when_set(bridge):
+    assert bridge.build_command("claude", read_only=True, resume=None, effort="medium")[-2:] == ["--effort", "medium"]
+    assert "--effort" not in bridge.build_command("claude", read_only=False, resume=None, effort=None)
+
+
+def test_preamble_states_context_economy(bridge):
+    edit_text = bridge.bridge_preamble(read_only=False)
+    read_text = bridge.bridge_preamble(read_only=True)
+    for text in (edit_text, read_text):
+        assert "Grep before Read" in text and "do not re-read a file you have not changed" in text
+    assert "one Write" in edit_text and "one Write" not in read_text  # read-only runs have no Write tool
+
+
+def test_run_architect_logs_effort_and_resumed_context(bridge, tmp_path):
+    fake = _FakeRun(auth=_PLAN_LOGIN, agent_stdout=_agent_json())
+    result = bridge.run_architect("x", root=_checkout(tmp_path), cli="claude", read_only=True, resume=_SID,
+                                  timeout=60, env={}, run=fake, effort="medium", resumed_context=120_000)
+    command = fake.calls[-1][0]
+    assert command[command.index("--effort") + 1] == "medium"
+    logged = json.loads(result.log_path.read_text(encoding="utf-8"))
+    assert logged["effort"] == "medium" and logged["resumed_context_tokens"] == 120_000
+    out = bridge.render(result)
+    assert "effort: medium" in out and "resumed_context_tokens: 120,000" in out
+
+
+def _main_env(bridge, monkeypatch, tmp_path, context: int | None):
+    root = _checkout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge, "repo_root", lambda cwd: root)
+    monkeypatch.setattr(bridge, "preflight", lambda root, env: "claude")
+    monkeypatch.setattr(bridge, "resumed_context_tokens", lambda session, config_dir: context)
+    calls = []
+
+    def fake_run_architect(task, **kwargs):
+        calls.append(kwargs)
+        return bridge.ArchitectResult(exit_code=0, text="ok", session_id=_SID, models=["claude-opus-5-5"],
+                                      effort=kwargs["effort"], resumed_context=kwargs["resumed_context"])
+
+    monkeypatch.setattr(bridge, "run_architect", fake_run_architect)
+    return calls
+
+
+def test_main_refuses_large_resume_with_exit_5_and_runs_nothing(bridge, monkeypatch, tmp_path, capsys):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=400_000)
+    assert bridge.main(["--task", "follow up", "--resume", _SID]) == 5
+    out = capsys.readouterr().out
+    assert calls == [] and "Resume refused" in out and "exit: 5" in out and "400,000" in out
+
+
+def test_main_large_resume_allowed_when_asked(bridge, monkeypatch, tmp_path):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=400_000)
+    assert bridge.main(["--task", "x", "--resume", _SID, "--allow-large-resume"]) == 0
+    assert calls and calls[0]["resumed_context"] == 400_000
+
+
+@pytest.mark.parametrize("context", [None, 250_000, 10_000])
+def test_main_small_or_unknown_resume_runs(bridge, monkeypatch, tmp_path, context):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=context)
+    assert bridge.main(["--task", "x", "--resume", _SID]) == 0  # at the limit is allowed; unknown is not blocked
+    assert len(calls) == 1
+
+
+def test_main_guard_reads_the_real_transcript_via_claude_config_dir(bridge, monkeypatch, tmp_path, capsys):
+    # End to end through main: env -> projects_root -> resumed_context_tokens -> refusal (not stubbed).
+    root = _checkout(tmp_path)
+    config = tmp_path / "cfg"
+    _transcript(config, _SID, [("claude-opus-5-5", 400_000)])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge, "repo_root", lambda cwd: root)
+    monkeypatch.setattr(bridge, "preflight", lambda root, env: "claude")
+    monkeypatch.setattr(bridge, "run_architect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    assert bridge.main(["--task", "x", "--resume", _SID]) == 5
+    assert "400,000" in capsys.readouterr().out
+
+
+def test_render_reports_unknown_resume_size(bridge):
+    out = bridge.render(bridge.ArchitectResult(exit_code=0, text="a", models=["claude-opus-5-5"], resumed=True))
+    assert "resumed_context_tokens: unknown" in out
+    fresh = bridge.render(bridge.ArchitectResult(exit_code=0, text="a", models=["claude-opus-5-5"]))
+    assert "resumed_context_tokens" not in fresh
+
+
+def test_main_read_only_defaults_to_medium_effort(bridge, monkeypatch, tmp_path):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=None)
+    bridge.main(["--task", "x", "--read-only"])
+    bridge.main(["--task", "x"])
+    bridge.main(["--task", "x", "--read-only", "--effort", "high"])
+    assert [c["effort"] for c in calls] == ["medium", None, "high"]

@@ -25,7 +25,14 @@ Usage:
 
 Exit codes: 0 completed, 1 agent error or incomplete run, 2 preflight refused,
 3 timed out, 4 completed but the agent was denied a tool call (read the answer
-and the listed denials: it may rest on evidence the agent could not gather).
+and the listed denials: it may rest on evidence the agent could not gather),
+5 resume refused because the session's context is above --max-resume-context
+(start a fresh session with a short handoff instead; nothing ran).
+
+Token economy (measured 2026-10-11): 34 runs used about 437M cache-read tokens,
+about 80% of the spend, because resumed sessions grew to 250K-670K tokens a
+call. Resume only for a direct follow-up; give `--effort` per task (read-only
+runs default to medium).
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +53,14 @@ from typing import Callable
 AGENT = "claude-architect"
 MODEL = "claude-opus-5-5"
 DEFAULT_TIMEOUT_SECONDS = 3600
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+# Consults and option ranking do not need drafting-level effort.
+DEFAULT_READ_ONLY_EFFORT = "medium"
+# Measured 2026-10-11: fresh sessions ran at 30K-83K tokens a call; long
+# resumed sessions averaged 250K-330K and peaked at 667K, re-sending files read
+# for earlier phases on every call.
+DEFAULT_MAX_RESUME_CONTEXT = 250_000
+_SESSION_ID = re.compile(r"[0-9A-Fa-f][0-9A-Fa-f-]{7,63}")
 
 # Any of these redirects the CLI away from the claude.ai login: an API key or
 # token bills the API account, and the provider switches leave Anthropic
@@ -151,6 +167,9 @@ class ArchitectResult:
     models: list[str] = field(default_factory=list)
     denials: list[dict] = field(default_factory=list)
     log_path: Path | None = None
+    effort: str | None = None
+    resumed_context: int | None = None
+    resumed: bool = False
 
 
 def repo_root(cwd: Path, run: Runner | None = None) -> Path:
@@ -298,12 +317,68 @@ def bridge_preamble(*, read_only: bool) -> str:
         "these are denied.\n"
         "- Prefer the Grep, Glob and Read tools for searching and reading code.\n"
         f"- Allowed shell commands (prefixes): {allowed}.\n"
+        "- Context economy: every call re-sends the whole conversation. Grep before Read, then read "
+        "line ranges; do not re-read a file you have not changed"
+        + ("" if read_only else "; write a prompt in one Write, then refine it with few Edits") + ".\n"
         "- If a call is denied anyway, say what evidence you could not gather.\n"
         "[End of bridge constraints. The task follows unaltered.]\n\n"
     )
 
 
-def build_command(cli: str, *, read_only: bool, resume: str | None) -> list[str]:
+def resolve_effort(*, read_only: bool, requested: str | None) -> str | None:
+    """The effort to pass: the caller's choice, else medium for read-only runs, else the CLI default."""
+    if requested is not None:
+        if requested not in EFFORT_LEVELS:
+            raise ValueError(f"effort must be one of {', '.join(EFFORT_LEVELS)}")
+        return requested
+    return DEFAULT_READ_ONLY_EFFORT if read_only else None
+
+
+def projects_root(env: dict[str, str], home: Path | None = None, settings: dict[str, str] | None = None) -> Path:
+    """Where the Claude Code CLI keeps session transcripts: the environment, then a settings `env` block."""
+    base = env.get("CLAUDE_CONFIG_DIR") or (settings or {}).get("CLAUDE_CONFIG_DIR")
+    return Path(base) if base else (home or Path.home()) / ".claude"
+
+
+def resumed_context_tokens(session_id: str, config_dir: Path) -> int | None:
+    """Context size, in tokens, of the last main-model call in a session's transcript; None if unknown.
+
+    The next resumed call re-sends at least this much, so it is the size the
+    resume guard compares against its limit.
+    """
+    if not _SESSION_ID.fullmatch(session_id or ""):
+        return None
+    found = None
+    # A session normally has one transcript; if it has several, take the largest (the conservative choice).
+    for transcript in sorted((config_dir / "projects").glob(f"*/{session_id}.jsonl")):
+        try:
+            lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        last = None
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = record.get("message") if isinstance(record, dict) else None
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            if MODEL not in str(message.get("model") or ""):
+                continue
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                try:
+                    last = sum(int(usage.get(key) or 0) for key in
+                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+                except (TypeError, ValueError):
+                    continue  # an unreadable usage record is skipped, not fatal
+        if last is not None:
+            found = last if found is None else max(found, last)
+    return found
+
+
+def build_command(cli: str, *, read_only: bool, resume: str | None, effort: str | None = None) -> list[str]:
     """Return the headless CLI invocation; the task itself is sent on stdin."""
     tools = list(_READ_TOOLS) + list(_BASH_RULES)
     if not read_only:
@@ -320,6 +395,8 @@ def build_command(cli: str, *, read_only: bool, resume: str | None) -> list[str]
         "--allowedTools", *tools,
         "--disallowedTools", *_DENIED_RULES,
     ]
+    if effort:
+        command += ["--effort", effort]
     if resume:
         command += ["--resume", resume]
     return command
@@ -389,24 +466,29 @@ def run_architect(
     timeout: float,
     env: dict[str, str],
     run: Runner | None = None,
+    effort: str | None = None,
+    resumed_context: int | None = None,
 ) -> ArchitectResult:
     """Run claude-architect once, log the raw outcome under logs/architect/, and interpret it."""
     run = run or subprocess.run
-    command = build_command(cli, read_only=read_only, resume=resume)
+    command = build_command(cli, read_only=read_only, resume=resume, effort=effort)
     preamble = bridge_preamble(read_only=read_only)
     # The log records what the agent was told, without repeating the whole text.
-    told = {"read_only": read_only, "preamble_sha256": hashlib.sha256(preamble.encode("utf-8")).hexdigest()}
+    told = {"read_only": read_only, "effort": effort, "resumed_context_tokens": resumed_context,
+            "preamble_sha256": hashlib.sha256(preamble.encode("utf-8")).hexdigest()}
     try:
         completed = run(
             command, cwd=root, input=preamble + task, capture_output=True, text=True,
             encoding="utf-8", errors="replace", check=False, timeout=timeout, env=env,
         )
     except subprocess.TimeoutExpired as exc:
-        result = ArchitectResult(exit_code=3, text=f"claude-architect timed out after {timeout:.0f}s; no answer was produced.")
+        result = ArchitectResult(exit_code=3, text=f"claude-architect timed out after {timeout:.0f}s; no answer was produced.",
+                                 effort=effort, resumed_context=resumed_context, resumed=resume is not None)
         partial = exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
         result.log_path = _write_log(root, None, {"command": command, **told, "timeout_seconds": timeout, "stdout": partial})
         return result
     result = interpret(completed.stdout)
+    result.effort, result.resumed_context, result.resumed = effort, resumed_context, resume is not None
     if result.exit_code in (0, 4) and completed.returncode != 0:
         result.exit_code = 1
         result.text = f"claude CLI exited {completed.returncode} after reporting completion.\n{result.text}"
@@ -425,7 +507,12 @@ def render(result: ArchitectResult) -> str:
         f"models: {', '.join(result.models) or 'none'}",
         f"permission_denials: {len(result.denials)}",
         f"exit: {result.exit_code}",
+        f"effort: {result.effort or 'cli default'}",
     ]
+    if result.resumed_context is not None:
+        header.append(f"resumed_context_tokens: {result.resumed_context:,}")
+    elif result.resumed:
+        header.append("resumed_context_tokens: unknown (no transcript found; the resume guard was not applied)")
     for denial in result.denials:
         header.append(f"  denied: {denial.get('tool_name')} {json.dumps(denial.get('tool_input'))[:200]}")
     if result.log_path:
@@ -439,7 +526,13 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--task", help="the request for the Architect")
     source.add_argument("--task-file", type=Path, help="a UTF-8 file holding the request")
     parser.add_argument("--read-only", action="store_true", help="no Edit/Write and no test runs: consults and option ranking")
-    parser.add_argument("--resume", metavar="SESSION_ID", help="continue an earlier claude-architect session")
+    parser.add_argument("--resume", metavar="SESSION_ID",
+                        help="continue an earlier session: only for a direct follow-up to its last answer")
+    parser.add_argument("--effort", choices=EFFORT_LEVELS,
+                        help=f"reasoning effort (default: {DEFAULT_READ_ONLY_EFFORT} for --read-only, else the CLI default)")
+    parser.add_argument("--max-resume-context", type=int, default=DEFAULT_MAX_RESUME_CONTEXT,
+                        help=f"refuse --resume above this many context tokens (default {DEFAULT_MAX_RESUME_CONTEXT:,})")
+    parser.add_argument("--allow-large-resume", action="store_true", help="resume even above --max-resume-context")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="seconds (default 3600)")
     args = parser.parse_args(argv)
 
@@ -458,12 +551,30 @@ def main(argv: list[str] | None = None) -> int:
     except PreflightError as exc:
         print(f"claude_architect: preflight refused: {exc}", file=sys.stderr)
         return 2
+    effort = resolve_effort(read_only=args.read_only, requested=args.effort)
+    resumed_context = None
+    if args.resume:
+        try:
+            settings = {name: value for name, (value, _) in settings_env(root, Path.home()).items()}
+        except PreflightError:
+            settings = {}
+        resumed_context = resumed_context_tokens(args.resume, projects_root(env, settings=settings))
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if resumed_context is not None and resumed_context > args.max_resume_context and not args.allow_large_resume:
+        refused = ArchitectResult(
+            exit_code=5, session_id=args.resume, effort=effort, resumed_context=resumed_context, resumed=True,
+            text=(f"Resume refused: session {args.resume} already carries about {resumed_context:,} tokens of "
+                  f"context (limit {args.max_resume_context:,}), and every call would re-send all of it. Start a "
+                  "fresh session with a short handoff (prompt path, findings, decision needed), or pass "
+                  "--allow-large-resume for a direct follow-up that truly needs the old context. Nothing ran."),
+        )
+        print(render(refused))
+        return refused.exit_code
     result = run_architect(
         task, root=root, cli=cli, read_only=args.read_only, resume=args.resume,
-        timeout=args.timeout, env=env,
+        timeout=args.timeout, env=env, effort=effort, resumed_context=resumed_context,
     )
-    # The answer may contain any Unicode; never let the console code page turn a good run into a crash.
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # The answer may contain any Unicode; stdout was reconfigured above so the console code page cannot crash it.
     print(render(result))
     return result.exit_code
 
