@@ -402,6 +402,15 @@ human approved the exact code before it ran.
 These must never claim containment, end-to-end autonomy, governance the
 candidate cannot write, or that approval prevents tampering.
 
+**Detection-only, named for S2 (C12): ledger reset by deleting the file.** The S1b
+evidence ledger (`repair_evidence.db`) detects a changed digest only for a reference the
+consumer re-presents, and only while the file exists. A writer with ProbOS's own OS
+identity can delete the file; `start()` then creates an empty ledger and the first
+digests are gone without a signal. This is neither refused nor prevented. S2 wiring must
+decide how a recreated ledger is detected (for example a ledger identity recorded at
+campaign admission) and must derive a fresh reference per gate run
+(`prompts/ad-1299-s1b-evidence-completion-ledger.md`, "Blind spots named").
+
 **The Captain's decision.** May a campaign run candidate code or advance a
 repair action without your approval of that exact candidate? (a) No: keep
 execute-after-approval (recommended, and the working default S1-S4 build
@@ -427,8 +436,8 @@ binding's claim to "refuses what contradicts the candidate in the facts it check
 
 | Id | Slice | Constraint |
 |---|---|---|
-| C8 | S1b | The review binder takes a required `expected_assignee` (the campaign's builder) and refuses a set in which any review names a different assignee. |
-| C9 | S1b | A required-evidence-kinds set per authority class. Completion means every required kind is `present` for the same candidate digest; extra kinds never substitute. |
+| C8 | S1b | The review binder takes a required `expected_assignee` (the campaign's builder) and refuses a set in which any review names a different assignee. Built in S1b. |
+| C9 | S1b | A required-evidence-kinds set per authority class. Completion means every required kind is `present` for the same candidate digest; extra kinds never substitute. Built in S1b. |
 | C10 | S2/S4 | Two independent requirements for forward promotion: `base_commit` equals the approved base, and `candidate_commit` descends from the active release's commit. Promotion refuses if either fails. A recovery rollback to a retained release is a separate path governed by C1 and C4. |
 | C11 | S3 | Every regression probe that passes on the active release must also pass on the candidate (comparison with the incumbent). |
 | C1 | S4 | Activation compare-and-set keys on a monotonic, never-reused activation sequence. A rollback is a new sequence entry pointing at the old release. |
@@ -454,6 +463,9 @@ testable blocker that cannot be delivered inside this contract.
   (candidate identity, gate-receipt binding, review binding; pure, no wiring) is
   the first buildable slice:
   [prompts/ad-1299-s1a-repair-candidate.md](../../prompts/ad-1299-s1a-repair-candidate.md).
+  **S1b** (C8 and C9, the first-trusted-digest ledger `RepairEvidenceLinkStore` and the
+  in-slice consumer `assess_candidate_evidence`; built, runtime-unwired):
+  [prompts/ad-1299-s1b-evidence-completion-ledger.md](../../prompts/ad-1299-s1b-evidence-completion-ledger.md).
 - **S2 - Utility agent and admission:** wire instructions-first diagnosis and
   the three authority classes through the existing fault, CrewSession,
   Architect and approval surfaces, Captain-per-step, autonomy default-off.

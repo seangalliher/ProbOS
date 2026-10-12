@@ -8,8 +8,13 @@ bindings:
 * ``verify_gate_receipt`` binds a canonical ``scripts/run_test_gate.py``
   success receipt (schema 1) only when it describes a clean full-gate success
   of exactly the candidate's commit and tree.
-* ``bind_reviews`` binds a review set only when every review was accepted by a
-  reviewer other than the assignee and names the candidate's tree.
+* ``bind_reviews`` binds a review set only when every review names the
+  campaign's builder as its assignee (``expected_assignee``, C8), was accepted
+  by a reviewer other than that assignee and names the candidate's tree.
+
+S1b adds C9: ``evaluate_completion`` says whether the links supplied for one
+candidate cover every evidence kind its authority class requires. Complete
+evidence is not authority: the Captain's approval is separate (S2).
 
 Each returns an :class:`EvidenceLink`: ``present`` (bound), ``refused``
 (readable but contradicts the candidate) or ``unavailable`` (absent, empty,
@@ -42,8 +47,9 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol
 
 REPAIR_CANDIDATE_SCHEMA_VERSION: Final = 1
@@ -62,6 +68,7 @@ _ID_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 
 EvidenceKind = Literal["gate_receipt", "review_set"]
 EvidenceStatus = Literal["present", "refused", "unavailable"]
+AuthorityClass = Literal["repair", "maintenance", "enhancement"]
 
 _BOUND: Final = frozenset({"gate_receipt_bound", "review_set_bound"})
 _UNAVAILABLE: Final = frozenset({
@@ -82,11 +89,30 @@ _REFUSED: Final = frozenset({
     "gate_receipt_tree_mismatch",
     "gate_receipt_commit_mismatch",
     "review_attempt_duplicate",
+    "review_assignee_mismatch",
     "review_not_independent",
     "review_not_accepted",
     "review_tree_mismatch",
 })
 REASON_CODES: Final[frozenset[str]] = _BOUND | _UNAVAILABLE | _REFUSED
+
+AUTHORITY_CLASSES: Final[frozenset[str]] = frozenset({"repair", "maintenance", "enhancement"})
+# C9: the evidence kinds whose ``present`` links complete one candidate's evidence, per authority class.
+# Every class requires both kinds S1 can verify. S2 adds ``captain_approval`` to every class when its
+# binder exists; a change may only add kinds, never remove one. Completion is not authority.
+REQUIRED_EVIDENCE_KINDS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
+    "repair": frozenset({"gate_receipt", "review_set"}),
+    "maintenance": frozenset({"gate_receipt", "review_set"}),
+    "enhancement": frozenset({"gate_receipt", "review_set"}),
+})
+_COMPLETE: Final = "evidence_complete"
+COMPLETION_REASONS: Final[frozenset[str]] = frozenset({
+    _COMPLETE,
+    "evidence_candidate_mismatch",
+    "evidence_not_present",
+    "evidence_kind_missing",
+    "evidence_changed",
+})
 
 
 class _Malformed(ValueError):
@@ -102,6 +128,16 @@ def _canonicalize(value: object) -> bytes:
 
 def _is_git_object(value: object) -> bool:
     return type(value) is str and _GIT_OBJECT_RE.fullmatch(value) is not None
+
+
+def is_sha256_hex(value: object) -> bool:
+    """True for a 64-character lowercase-hex SHA-256 digest, the shape of every digest here."""
+    return type(value) is str and _SHA256_RE.fullmatch(value) is not None
+
+
+def is_evidence_ref(value: object) -> bool:
+    """True for a valid evidence reference: the owned-step id shape that review ids use."""
+    return type(value) is str and _ID_RE.fullmatch(value) is not None
 
 
 def _status_for(reason: str) -> EvidenceStatus:
@@ -410,10 +446,13 @@ def _review_reason(
     candidate: RepairCandidate,
     projected: list[tuple[str, str, str, str, bool]],
     required_reviewers: int,
+    expected_assignee: str,
 ) -> str:
     attempts = [attempt for attempt, _, _, _, _ in projected]
     if len(set(attempts)) != len(attempts):
         return "review_attempt_duplicate"
+    if any(assignee != expected_assignee for _, _, assignee, _, _ in projected):
+        return "review_assignee_mismatch"
     if any(reviewer == assignee for _, reviewer, assignee, _, _ in projected):
         return "review_not_independent"
     if not all(accepted for _, _, _, _, accepted in projected):
@@ -429,6 +468,7 @@ def bind_reviews(
     candidate: RepairCandidate,
     reviews: Sequence[ReviewAttestation] | None,
     *,
+    expected_assignee: str,
     required_reviewers: int = 1,
 ) -> EvidenceLink:
     """Bind an independent review set to ``candidate``.
@@ -436,9 +476,14 @@ def bind_reviews(
     ``reviews`` must be a ``list`` or ``tuple`` (or ``None``). Raises
     ``TypeError`` for a non-``RepairCandidate`` candidate or another container,
     and ``ValueError`` when ``required_reviewers`` is not an ``int`` in
-    ``1..MAX_REVIEWS``. Every evidence defect is returned as a link. A review
-    whose reviewer, assignee or attempt id is changed to another valid,
-    independent value still binds; only ``evidence_sha256`` changes.
+    ``1..MAX_REVIEWS``. Raises ``ValueError`` when ``expected_assignee`` (the
+    campaign's builder, C8) is not an owned-id string; a review naming any
+    other assignee is refused as ``review_assignee_mismatch``. Every evidence
+    defect is returned as a link. A review
+    whose reviewer or attempt id is changed to another valid, independent
+    value still binds, and only ``evidence_sha256`` changes; a changed
+    assignee binds only if it still equals ``expected_assignee``, and
+    otherwise is refused as ``review_assignee_mismatch``.
     Attributes outside the five projected fields, for example a submission
     digest, do not enter ``evidence_sha256``.
     """
@@ -446,6 +491,8 @@ def bind_reviews(
         raise TypeError("repair_candidate_required")
     if type(required_reviewers) is not int or not 1 <= required_reviewers <= MAX_REVIEWS:
         raise ValueError("review_required_invalid")
+    if type(expected_assignee) is not str or _ID_RE.fullmatch(expected_assignee) is None:
+        raise ValueError("review_expected_assignee_invalid")
     digest = candidate.digest()
     if reviews is None:
         return _link("review_set", "review_set_absent", digest)
@@ -476,4 +523,82 @@ def bind_reviews(
             ],
         })
     ).hexdigest()
-    return _link("review_set", _review_reason(candidate, projected, required_reviewers), digest, evidence)
+    return _link(
+        "review_set",
+        _review_reason(candidate, projected, required_reviewers, expected_assignee),
+        digest,
+        evidence,
+    )
+
+
+# -- completion (C9) ----------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceCompleteness:
+    """Whether one candidate's evidence is complete for one authority class (C9).
+
+    A report, not authority: ``complete`` never means approved, promoted or closed.
+    """
+
+    authority_class: str
+    candidate_digest: str
+    reason: str
+    missing_kinds: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.authority_class) is not str
+            or self.authority_class not in AUTHORITY_CLASSES
+            or not is_sha256_hex(self.candidate_digest)
+            or type(self.reason) is not str
+            or self.reason not in COMPLETION_REASONS
+            or type(self.missing_kinds) is not tuple
+            or any(type(kind) is not str or kind not in REQUIRED_EVIDENCE_KINDS[self.authority_class] for kind in self.missing_kinds)
+            or (self.reason == _COMPLETE and self.missing_kinds)
+            or (self.reason == "evidence_kind_missing" and not self.missing_kinds)
+        ):
+            raise ValueError("evidence_completeness_invalid")
+
+    @property
+    def complete(self) -> bool:
+        """True only when every required kind is present for this candidate and nothing blocks."""
+        return self.reason == _COMPLETE
+
+
+def evaluate_completion(
+    candidate: RepairCandidate,
+    authority_class: AuthorityClass,
+    links: Sequence[EvidenceLink],
+) -> EvidenceCompleteness:
+    """C9: complete only when every kind required for ``authority_class`` has a ``present`` link for
+    ``candidate`` and every supplied link is ``present`` and names ``candidate``.
+
+    Completion counts kinds, not links, so an extra link never substitutes for a missing kind.
+    Precedence when several apply: ``evidence_candidate_mismatch``, then ``evidence_not_present``, then
+    ``evidence_kind_missing``. ``missing_kinds`` lists the required kinds with no ``present`` link for
+    this candidate, whatever the reason. Raises ``TypeError`` for a non-``RepairCandidate`` candidate, a
+    container other than ``list``/``tuple`` or an element that is not an ``EvidenceLink``, and
+    ``ValueError`` for an unknown authority class. Complete evidence is not authority.
+    """
+    if type(candidate) is not RepairCandidate:
+        raise TypeError("repair_candidate_required")
+    if type(authority_class) is not str or authority_class not in AUTHORITY_CLASSES:
+        raise ValueError("authority_class_invalid")
+    if type(links) not in (list, tuple):
+        raise TypeError("evidence_links_container_invalid")
+    if any(type(link) is not EvidenceLink for link in links):
+        raise TypeError("evidence_link_required")
+    digest = candidate.digest()
+    required = REQUIRED_EVIDENCE_KINDS[authority_class]
+    present = {link.kind for link in links if link.current and link.candidate_digest == digest}
+    missing = tuple(sorted(required - present))
+    if any(link.candidate_digest != digest for link in links):
+        reason = "evidence_candidate_mismatch"
+    elif any(not link.current for link in links):
+        reason = "evidence_not_present"
+    elif missing:
+        reason = "evidence_kind_missing"
+    else:
+        reason = _COMPLETE
+    return EvidenceCompleteness(authority_class, digest, reason, missing)
