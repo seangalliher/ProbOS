@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -512,3 +513,329 @@ def test_main_preflight_refusal_returns_2_without_running(bridge, monkeypatch, c
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert bridge.main(["--task", "hello"]) == 2
     assert "preflight refused" in capsys.readouterr().err
+
+
+# --- token economy (2026-10-11) -----------------------------------------------
+
+
+def _transcript(config_dir: Path, session: str, contexts: list[tuple[str, int]]) -> None:
+    project = config_dir / "projects" / "D--ProbOS-worktrees-x"
+    project.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}), "not json"]
+    for model, ctx in contexts:
+        lines.append(json.dumps({"message": {"role": "assistant", "model": model, "usage": {
+            "input_tokens": 10, "cache_read_input_tokens": ctx - 110, "cache_creation_input_tokens": 100}}}))
+    (project / f"{session}.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+
+_SID = "558bcee4-1168-4647-81a5-ee7b7f7d1410"
+
+
+def test_resumed_context_is_the_last_main_model_call(bridge, tmp_path):
+    # The helper-model call comes last, so ignoring the model filter would return 900,000.
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 40_000), ("claude-opus-5-5", 300_000),
+                                 ("claude-haiku-5-5", 900_000)])
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 300_000
+
+
+def test_resumed_context_skips_unreadable_usage_values(bridge, tmp_path):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 50_000)])
+    path = tmp_path / "projects" / "D--ProbOS-worktrees-x" / f"{_SID}.jsonl"
+    bad = json.dumps({"message": {"role": "assistant", "model": "claude-opus-5-5",
+                                  "usage": {"input_tokens": "lots", "cache_read_input_tokens": 1}}})
+    path.write_text(path.read_text(encoding="utf-8") + "\n" + bad, encoding="utf-8")
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 50_000
+
+
+def test_resumed_context_takes_the_largest_of_duplicate_transcripts(bridge, tmp_path):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 50_000)])
+    other = tmp_path / "projects" / "a-earlier-slug"
+    other.mkdir(parents=True)
+    (other / f"{_SID}.jsonl").write_text(json.dumps({"message": {"role": "assistant", "model": "claude-opus-5-5",
+        "usage": {"input_tokens": 400_000}}}), encoding="utf-8")
+    assert bridge.resumed_context_tokens(_SID, tmp_path) == 400_000
+
+
+@pytest.mark.parametrize("session", ["", "not-a-session", "../../etc/passwd", "*", "558bcee4/../x"])
+def test_resumed_context_rejects_non_session_ids(bridge, tmp_path, session):
+    _transcript(tmp_path, _SID, [("claude-opus-5-5", 300_000)])
+    assert bridge.resumed_context_tokens(session, tmp_path) is None
+
+
+def test_resumed_context_unknown_session_is_none(bridge, tmp_path):
+    assert bridge.resumed_context_tokens(_SID, tmp_path) is None
+
+
+def test_projects_root_honours_claude_config_dir(bridge, tmp_path):
+    assert bridge.projects_root({"CLAUDE_CONFIG_DIR": str(tmp_path)}) == tmp_path
+    assert bridge.projects_root({}, home=tmp_path) == tmp_path / ".claude"
+    assert bridge.projects_root({}, home=tmp_path, settings={"CLAUDE_CONFIG_DIR": str(tmp_path / "s")}) == tmp_path / "s"
+    # the environment wins over settings, as for the CLI
+    assert bridge.projects_root({"CLAUDE_CONFIG_DIR": str(tmp_path / "e")}, settings={"CLAUDE_CONFIG_DIR": "x"}) == tmp_path / "e"
+
+
+@pytest.mark.parametrize("read_only, requested, expected", [
+    (True, None, "medium"), (False, None, None), (True, "high", "high"), (False, "low", "low"),
+])
+def test_resolve_effort(bridge, read_only, requested, expected):
+    assert bridge.resolve_effort(read_only=read_only, requested=requested) == expected
+
+
+def test_resolve_effort_rejects_unknown_level(bridge):
+    with pytest.raises(ValueError):
+        bridge.resolve_effort(read_only=False, requested="turbo")
+
+
+def test_build_command_passes_effort_only_when_set(bridge):
+    assert bridge.build_command("claude", read_only=True, resume=None, effort="medium")[-2:] == ["--effort", "medium"]
+    assert "--effort" not in bridge.build_command("claude", read_only=False, resume=None, effort=None)
+
+
+def test_preamble_states_context_economy(bridge):
+    edit_text = bridge.bridge_preamble(read_only=False)
+    read_text = bridge.bridge_preamble(read_only=True)
+    for text in (edit_text, read_text):
+        assert "Grep before Read" in text and "do not re-read a file you have not changed" in text
+    assert "one Write" in edit_text and "one Write" not in read_text  # read-only runs have no Write tool
+
+
+def test_run_architect_logs_effort_and_resumed_context(bridge, tmp_path):
+    fake = _FakeRun(auth=_PLAN_LOGIN, agent_stdout=_agent_json())
+    result = bridge.run_architect("x", root=_checkout(tmp_path), cli="claude", read_only=True, resume=_SID,
+                                  timeout=60, env={}, run=fake, effort="medium", resumed_context=120_000)
+    command = fake.calls[-1][0]
+    assert command[command.index("--effort") + 1] == "medium"
+    logged = json.loads(result.log_path.read_text(encoding="utf-8"))
+    assert logged["effort"] == "medium" and logged["resumed_context_tokens"] == 120_000
+    out = bridge.render(result)
+    assert "effort: medium" in out and "resumed_context_tokens: 120,000" in out
+
+
+def _main_env(bridge, monkeypatch, tmp_path, context: int | None):
+    root = _checkout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge, "repo_root", lambda cwd: root)
+    monkeypatch.setattr(bridge, "preflight", lambda root, env: "claude")
+    monkeypatch.setattr(bridge, "session_cache_state", lambda session, config_dir: (context, None))
+    calls = []
+
+    def fake_run_architect(task, **kwargs):
+        calls.append(kwargs)
+        return bridge.ArchitectResult(exit_code=0, text="ok", session_id=_SID, models=["claude-opus-5-5"],
+                                      effort=kwargs["effort"], resumed_context=kwargs["resumed_context"])
+
+    monkeypatch.setattr(bridge, "run_architect", fake_run_architect)
+    return calls
+
+
+def test_main_refuses_large_resume_with_exit_5_and_runs_nothing(bridge, monkeypatch, tmp_path, capsys):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=400_000)
+    assert bridge.main(["--task", "follow up", "--resume", _SID]) == 5
+    out = capsys.readouterr().out
+    assert calls == [] and "Resume refused" in out and "exit: 5" in out and "400,000" in out
+
+
+def test_main_large_resume_allowed_when_asked(bridge, monkeypatch, tmp_path):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=400_000)
+    assert bridge.main(["--task", "x", "--resume", _SID, "--allow-large-resume"]) == 0
+    assert calls and calls[0]["resumed_context"] == 400_000
+
+
+@pytest.mark.parametrize("context", [None, 250_000, 10_000])
+def test_main_small_or_unknown_resume_runs(bridge, monkeypatch, tmp_path, context):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=context)
+    assert bridge.main(["--task", "x", "--resume", _SID]) == 0  # at the limit is allowed; unknown is not blocked
+    assert len(calls) == 1
+
+
+def test_main_guard_reads_the_real_transcript_via_claude_config_dir(bridge, monkeypatch, tmp_path, capsys):
+    # End to end through main: env -> projects_root -> resumed_context_tokens -> refusal (not stubbed).
+    root = _checkout(tmp_path)
+    config = tmp_path / "cfg"
+    _transcript(config, _SID, [("claude-opus-5-5", 400_000)])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge, "repo_root", lambda cwd: root)
+    monkeypatch.setattr(bridge, "preflight", lambda root, env: "claude")
+    monkeypatch.setattr(bridge, "run_architect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    assert bridge.main(["--task", "x", "--resume", _SID]) == 5
+    assert "400,000" in capsys.readouterr().out
+
+
+def test_render_reports_unknown_resume_size(bridge):
+    out = bridge.render(bridge.ArchitectResult(exit_code=0, text="a", models=["claude-opus-5-5"], resumed=True))
+    assert "resumed_context_tokens: unknown" in out
+    fresh = bridge.render(bridge.ArchitectResult(exit_code=0, text="a", models=["claude-opus-5-5"]))
+    assert "resumed_context_tokens" not in fresh
+
+
+def test_main_read_only_defaults_to_medium_effort(bridge, monkeypatch, tmp_path):
+    calls = _main_env(bridge, monkeypatch, tmp_path, context=None)
+    bridge.main(["--task", "x", "--read-only"])
+    bridge.main(["--task", "x"])
+    bridge.main(["--task", "x", "--read-only", "--effort", "high"])
+    assert [c["effort"] for c in calls] == ["medium", None, "high"]
+
+
+# --- cache-aware resume (2026-10-11) ---------------------------------------------
+
+_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
+
+
+def _refusal(bridge, context, minutes_ago):
+    last = None if minutes_ago is None else _NOW - timedelta(minutes=minutes_ago)
+    return bridge.resume_refusal(context, last, now=_NOW, max_context=250_000, stale_minutes=55, stale_context=60_000)
+
+
+def test_resume_refusal_over_size_limit(bridge):
+    assert "carries about 300,000 tokens" in _refusal(bridge, 300_000, 1)
+
+
+def test_resume_refusal_expired_cache_on_large_session(bridge):
+    why = _refusal(bridge, 200_000, 80)
+    assert why and "80 minutes ago" in why and "twice the input price" in why
+
+
+@pytest.mark.parametrize("context, minutes_ago", [
+    (200_000, 30),    # cache still warm
+    (40_000, 300),    # expired, but small: a cold rewrite costs about a fresh start
+    (None, 300),      # unknown size never blocks
+    (200_000, None),  # unknown age: only the size limit applies
+])
+def test_resume_refusal_allows(bridge, context, minutes_ago):
+    assert _refusal(bridge, context, minutes_ago) is None
+
+
+def test_session_cache_state_returns_last_main_model_context_and_time(bridge, tmp_path):
+    project = tmp_path / "projects" / "slug"
+    project.mkdir(parents=True)
+    lines = [
+        {"timestamp": "2026-10-12T10:00:00Z", "message": {"role": "assistant", "model": "claude-opus-5-5",
+                                                       "usage": {"input_tokens": 5, "cache_read_input_tokens": 100_000}}},
+        {"timestamp": "2026-10-12T11:00:00Z", "message": {"role": "assistant", "model": "claude-haiku-5-5",
+                                                       "usage": {"input_tokens": 999_999}}},
+    ]
+    (project / f"{_SID}.jsonl").write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    context, at = bridge.session_cache_state(_SID, tmp_path)
+    assert context == 100_005 and at == datetime(2026, 10, 12, 10, 0, tzinfo=timezone.utc)
+
+
+def _bridge_log(root: Path, session: str, stamp: str, record: dict) -> None:
+    logs = root / "logs" / "architect"
+    logs.mkdir(parents=True, exist_ok=True)
+    (logs / f"{stamp}-{session}.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_session_effort_reads_latest_log(bridge, tmp_path):
+    root = _checkout(tmp_path)
+    assert bridge.session_effort(root, _SID) == (False, None)
+    _bridge_log(root, _SID, "20261011T000000Z", {"effort": "high"})
+    _bridge_log(root, _SID, "20261012T000000Z", {"effort": "medium"})
+    assert bridge.session_effort(root, _SID) == (True, "medium")
+
+
+def test_session_effort_absent_key_means_cli_default(bridge, tmp_path):
+    root = _checkout(tmp_path)
+    _bridge_log(root, _SID, "20261010T000000Z", {"command": []})  # logged before efforts were recorded
+    assert bridge.session_effort(root, _SID) == (True, None)
+
+
+def test_cache_stats_parses_main_model_usage(bridge):
+    raw = _agent_json(modelUsage={"claude-opus-5-5": {"cacheReadInputTokens": 900, "cacheCreationInputTokens": 50,
+                                                      "inputTokens": 7}, "claude-haiku-5-5": {"inputTokens": 1}})
+    assert bridge.cache_stats(raw) == {"cache_read": 900, "cache_write": 50, "input": 7}
+    assert bridge.cache_stats("not json") == {} and bridge.cache_stats(_agent_json(modelUsage={})) == {}
+
+
+def test_render_shows_cache_line_and_notes(bridge):
+    out = bridge.render(bridge.ArchitectResult(exit_code=0, text="a", models=["claude-opus-5-5"],
+                                               cache={"cache_read": 1000, "cache_write": 20, "input": 3},
+                                               notes=["effort high differs"]))
+    assert "cache: read 1,000 / write 20 / uncached 3 tokens" in out and "note: effort high differs" in out
+
+
+def _resume_env(bridge, monkeypatch, tmp_path, *, context, minutes_ago, logged_effort):
+    root = _checkout(tmp_path)
+    if logged_effort is not ...:
+        _bridge_log(root, _SID, "20261011T000000Z", {} if logged_effort is None else {"effort": logged_effort})
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge, "repo_root", lambda cwd: root)
+    monkeypatch.setattr(bridge, "preflight", lambda root, env: "claude")
+    last = None if minutes_ago is None else datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    monkeypatch.setattr(bridge, "session_cache_state", lambda session, config_dir: (context, last))
+    calls = []
+
+    def fake_run_architect(task, **kwargs):
+        calls.append(kwargs)
+        return bridge.ArchitectResult(exit_code=0, text="ok", session_id=_SID, models=["claude-opus-5-5"],
+                                      effort=kwargs["effort"], resumed=True)
+
+    monkeypatch.setattr(bridge, "run_architect", fake_run_architect)
+    return calls
+
+
+def test_main_refuses_stale_large_resume(bridge, monkeypatch, tmp_path, capsys):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=200_000, minutes_ago=90, logged_effort="high")
+    assert bridge.main(["--task", "x", "--resume", _SID]) == 5
+    assert calls == [] and "1-hour prompt cache has expired" in capsys.readouterr().out
+
+
+def test_main_resume_inherits_session_effort_even_when_read_only(bridge, monkeypatch, tmp_path):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=50_000, minutes_ago=5, logged_effort="high")
+    assert bridge.main(["--task", "x", "--resume", _SID, "--read-only"]) == 0
+    assert calls[0]["effort"] == "high"  # not the read-only default: a change would rewrite the cache
+
+
+def test_session_cache_state_treats_naive_timestamps_as_utc(bridge, tmp_path):
+    project = tmp_path / "projects" / "slug"
+    project.mkdir(parents=True)
+    (project / f"{_SID}.jsonl").write_text(json.dumps({"timestamp": "2026-10-12T10:00:00", "message": {
+        "role": "assistant", "model": "claude-opus-5-5", "usage": {"input_tokens": 200_000}}}), encoding="utf-8")
+    context, at = bridge.session_cache_state(_SID, tmp_path)
+    assert at.tzinfo is not None
+    # and the guard can compare it without raising
+    assert "minutes ago" in bridge.resume_refusal(context, at, now=at + timedelta(minutes=90), max_context=250_000,
+                                                  stale_minutes=55, stale_context=60_000)
+
+
+def test_session_cache_state_age_is_latest_across_transcripts(bridge, tmp_path):
+    for slug, stamp, ctx in (("a", "2026-10-12T11:50:00Z", 5_000), ("b", "2026-10-12T02:00:00Z", 100_000)):
+        project = tmp_path / "projects" / slug
+        project.mkdir(parents=True)
+        (project / f"{_SID}.jsonl").write_text(json.dumps({"timestamp": stamp, "message": {
+            "role": "assistant", "model": "claude-opus-5-5", "usage": {"input_tokens": ctx}}}), encoding="utf-8")
+    context, at = bridge.session_cache_state(_SID, tmp_path)
+    assert context == 100_000 and at == datetime(2026, 10, 12, 11, 50, tzinfo=timezone.utc)
+
+
+def test_session_effort_rejects_unknown_logged_level(bridge, tmp_path):
+    root = _checkout(tmp_path)
+    _bridge_log(root, _SID, "20261011T000000Z", {"effort": "turbo"})
+    assert bridge.session_effort(root, _SID) == (False, None)
+
+
+def test_main_resume_with_unknown_effort_uses_cli_default_and_says_so(bridge, monkeypatch, tmp_path, capsys):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=50_000, minutes_ago=5, logged_effort=...)
+    bridge.main(["--task", "x", "--resume", _SID, "--read-only"])
+    assert calls[0]["effort"] is None  # not the read-only default: that could change the session's effort
+    assert "the session's effort is unknown" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flag", ["--stale-resume-minutes", "--stale-resume-context", "--max-resume-context"])
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_main_rejects_non_positive_limits(bridge, flag, value):
+    with pytest.raises(SystemExit):
+        bridge.main(["--task", "x", flag, value])
+
+
+def test_main_resume_of_pre_effort_session_keeps_cli_default(bridge, monkeypatch, tmp_path):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=50_000, minutes_ago=5, logged_effort=None)
+    bridge.main(["--task", "x", "--resume", _SID, "--read-only"])
+    assert calls[0]["effort"] is None
+
+
+def test_main_explicit_effort_change_on_resume_is_noted(bridge, monkeypatch, tmp_path, capsys):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=50_000, minutes_ago=5, logged_effort="high")
+    bridge.main(["--task", "x", "--resume", _SID, "--effort", "low"])
+    assert calls[0]["effort"] == "low"
+    assert "note: effort low differs from the session's high" in capsys.readouterr().out
