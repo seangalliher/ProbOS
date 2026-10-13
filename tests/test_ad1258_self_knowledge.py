@@ -1168,15 +1168,93 @@ async def _run_self_query_fixture(
     )
 
 
+# BF-889 (#1515) changed one entry of the offer captured above: read_page gained
+# an optional ``offset`` and a description that teaches it. The two pairs below
+# are frozen text, not read from the code under test.
+_BF889_READ_PAGE_BEFORE: dict[str, Any] = {
+    "description": "Fetch and read the contents of a web page by URL.",
+    "parameters": {
+        "type": "object",
+        "properties": {"url": {"type": "string"}},
+        "required": ["url"],
+    },
+}
+_BF889_READ_PAGE_AFTER: dict[str, Any] = {
+    "description": (
+        "Fetch a web page by URL and return a summary of its text. A long page "
+        "is read in sections of 8,000 characters: the result then starts with a "
+        "note giving the next offset, and calling read_page again with that "
+        "offset reads the next section."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string"},
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "Characters into the page's text to start reading "
+                    "from. Omit it, or pass 0, for the start; to read on, "
+                    "pass the offset given in the previous result's note."
+                ),
+            },
+        },
+        "required": ["url"],
+    },
+}
+_BF889_CARVED_FIELDS = ("description", "parameters")
+
+
+def _restore_pre_bf889_read_page(
+    definitions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """A deep copy of ``definitions`` with read_page as it was before BF-889.
+
+    The live read_page entry must equal the BF-889 entry exactly, so the
+    carve-out covers one known change and no other: a further change to
+    read_page fails here, and a change to any other entry, or to any other key
+    of read_page, is left in the copy and fails the digest.
+    """
+    restored = deepcopy(definitions)
+    index = [d["function"]["name"] for d in restored].index("read_page")
+    function = restored[index]["function"]
+    assert {k: function[k] for k in _BF889_CARVED_FIELDS} == _BF889_READ_PAGE_AFTER, (
+        "read_page differs from the BF-889 entry; this carve-out covers that "
+        "one change only"
+    )
+    for key in _BF889_CARVED_FIELDS:
+        function[key] = deepcopy(_BF889_READ_PAGE_BEFORE[key])
+    others = [d for i, d in enumerate(restored) if i != index]
+    assert others == [d for i, d in enumerate(definitions) if i != index]
+    live = definitions[index]
+    assert {k: v for k, v in restored[index].items() if k != "function"} == {
+        k: v for k, v in live.items() if k != "function"
+    }
+    assert {k: v for k, v in function.items() if k not in _BF889_CARVED_FIELDS} == {
+        k: v for k, v in live["function"].items() if k not in _BF889_CARVED_FIELDS
+    }
+    return restored
+
+
 def _assert_baseline_offer(definitions: list[dict[str, Any]]) -> None:
-    """Independent Windows pre-registration capture with historical_offer_inputs."""
+    """Independent Windows pre-registration capture with historical_offer_inputs.
+
+    Provenance: ``_BASELINE_OFFER_SHA256`` is the 2026-09-09 independent
+    Windows capture and is never regenerated from a live offer. BF-889
+    (#1515, 2026-10-12) changed read_page's description and parameters; the
+    digest is checked against the offer with that one change restored by
+    ``_restore_pre_bf889_read_page``, and the BF-889 entry itself is pinned
+    there and in ``tests/test_bf889_read_page_sections.py``.
+    """
     names = [definition["function"]["name"] for definition in definitions]
     assert {"web_search", "read_page", "http_fetch"}.issubset(names)
     assert "run_python" in names
     assert {"search_capabilities", "delegate_task"}.issubset(names)
     assert names == list(_BASELINE_OFFER_NAMES)
     serialized = json.dumps(
-        definitions, ensure_ascii=True, separators=(",", ":"),
+        _restore_pre_bf889_read_page(definitions),
+        ensure_ascii=True, separators=(",", ":"),
     ).encode("utf-8")
     assert hashlib.sha256(serialized).hexdigest() == _BASELINE_OFFER_SHA256, (
         "Complete ordered descriptions and schemas must match the independent "

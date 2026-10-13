@@ -6,6 +6,7 @@ All web-facing agents dispatch ``http_fetch`` through the mesh via
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
@@ -22,6 +23,7 @@ from probos.types import (
     IntentMessage,
     IntentResult,
 )
+from probos.utils.html_text import HtmlTextError, html_to_text, strip_tags_linear
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,134 @@ def _with_truncation_notice(text: str, outcome: FetchOutcome) -> str:
     return f"{text}\n\n{_TRUNCATION_NOTICE.format(total=total)}"
 
 
+#: BF-889: the reader's per-call budget, in characters of EXTRACTED text. The
+#: figure is the one the bare ``[:8000]`` slices used; what changed is that it
+#: is counted after scripts and styles are dropped, the cut is stated, and the
+#: rest of a page is reachable with ``read_page``'s ``offset``.
+_SECTION_CHARS = 8000
+
+#: Said to the summarising model when it holds one section of a longer text.
+#: The positions are exact: they count characters of the text the model holds,
+#: unlike the byte figures BF-807 deliberately refuses to state. Avoids the
+#: phrase "partial document", which is BF-807's producer-cap notice, so the two
+#: facts stay distinguishable. Checked against `_CAPABILITY_GAP_RE` by tests.
+_SECTION_NOTICE = (
+    "[Note: this is one section of a longer text: characters {start} to {end} "
+    "of {total}. The text outside that range was left out of this request. "
+    "Summarise this section only and say that it is one section, not the "
+    "whole.]"
+)
+
+#: Prepended to the CALLER's result, not the model's input: the summary is
+#: model output and may drop the note, and the AD-869 chat render keeps only
+#: the first 1,500 characters, so a trailing note could be cut. Plain integers
+#: because the caller copies ``offset=`` back verbatim.
+_SECTION_HEADER_MORE = (
+    "[read_page section: characters {start} to {end} of {total} of the page "
+    "text. More follows: call read_page again with the same url and "
+    "offset={end} to read the next section.]"
+)
+_SECTION_HEADER_END = (
+    "[read_page section: characters {start} to {end} of {total} of the page "
+    "text. This section reaches the end of the page text.]"
+)
+_SECTION_HEADER_END_FETCH_CUT = (
+    "[read_page section: characters {start} to {end} of {total} of the text "
+    "that was retrieved. The source was larger than the fetch limit, so this "
+    "is the end of what was retrieved and the page itself goes on.]"
+)
+
+_OFFSET_RE = re.compile(r"[0-9]{1,9}")
+
+
+@dataclass(frozen=True)
+class TextSection:
+    """One bounded section of a longer text (BF-889)."""
+
+    text: str
+    start: int
+    end: int
+    total: int
+
+    @property
+    def is_whole(self) -> bool:
+        return self.start == 0 and self.end >= self.total
+
+    @property
+    def reaches_end(self) -> bool:
+        return self.end >= self.total
+
+
+def _text_section(text: str, offset: int = 0, size: int = _SECTION_CHARS) -> TextSection:
+    """``text[offset:offset + size]`` and the positions that describe it.
+
+    ``offset`` is clamped into ``[0, len(text)]``; a caller that must refuse an
+    offset past the end checks it before calling.
+    """
+    total = len(text)
+    start = min(max(offset, 0), total)
+    end = min(start + size, total)
+    return TextSection(text=text[start:end], start=start, end=end, total=total)
+
+
+def _with_section_notice(section: TextSection) -> str:
+    """The section's text, plus :data:`_SECTION_NOTICE` unless it is whole.
+
+    Appended, as BF-807's notice is, so no slice can cut it away.
+    """
+    if section.is_whole:
+        return section.text
+    notice = _SECTION_NOTICE.format(
+        start=section.start, end=section.end, total=section.total
+    )
+    return f"{section.text}\n\n{notice}"
+
+
+def _first_section(text: str) -> str:
+    """BF-889: the bounded prefix this module's readers used to take with a
+    bare ``[:8000]``, now stated to the model whenever it cuts."""
+    return _with_section_notice(_text_section(text))
+
+
+def _section_header(section: TextSection, outcome: FetchOutcome) -> str:
+    """What the caller is told about the section it got; "" for a whole text."""
+    if section.is_whole:
+        return ""
+    fields = {"start": section.start, "end": section.end, "total": section.total}
+    if not section.reaches_end:
+        return _SECTION_HEADER_MORE.format(**fields)
+    if outcome.truncated:
+        return _SECTION_HEADER_END_FETCH_CUT.format(**fields)
+    return _SECTION_HEADER_END.format(**fields)
+
+
+def _parse_offset(raw: object) -> int | None:
+    """``read_page``'s ``offset``: whole characters into the page text, >= 0.
+
+    Absent or blank means 0. Anything else that is not a whole number of 0 or
+    more returns ``None``, which the caller reports instead of reading from 0:
+    an agent that asked for section three and got section one would summarise
+    the wrong text with confidence. Arrives as an ``int`` from a tool call and
+    as a string from the AD-869 ``[MESH read_page url=... offset=8000]`` tag,
+    whose params are all strings.
+    """
+    if raw is None:
+        return 0
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 0 else None
+    if isinstance(raw, float):
+        return int(raw) if raw.is_integer() and raw >= 0 else None
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return 0
+        if _OFFSET_RE.fullmatch(stripped):
+            return int(stripped)
+    return None
+
+
 async def _mesh_fetch_detailed(runtime: Any, url: str) -> FetchOutcome:
     """One URL fetched through the mesh, with everything the producer reported.
 
@@ -176,6 +306,15 @@ class _FetchGatedMixin:
     #: How this agent names what it did not obtain, e.g. "no page was read".
     _fetch_failure_prefix = "the fetch did not succeed"
 
+    #: BF-889: an observation key a subclass may set in ``perceive``. ``decide``
+    #: carries it into the decision and ``act`` puts it ahead of the model's
+    #: output on the success return only; failure returns are unchanged. It
+    #: lives here, not in a subclass override, because BF-772 requires every
+    #: fetch-gated reader to use this ``decide``/``act`` pair. An agent that
+    #: never sets the key (Weather, News) gets no header: its success result
+    #: is the model's output alone, as before.
+    _RESULT_HEADER_KEY = "result_header"
+
     async def _fetch_or_fail(self, obs: dict, url: str) -> FetchOutcome | None:
         """The outcome for a non-empty 2xx; otherwise flag ``obs`` and return ``None``.
 
@@ -205,8 +344,7 @@ class _FetchGatedMixin:
         else:
             return outcome
 
-        obs["fetch_failed"] = True
-        obs["fetch_error"] = f"{self._fetch_failure_prefix}: {reason}"
+        self._report_fetch_failure(obs, reason)
         logger.warning(
             "BF-772: %s reporting failure rather than reading the response as "
             "content (%s); the URL is not logged because a failed fetch can "
@@ -214,6 +352,17 @@ class _FetchGatedMixin:
             type(self).__name__, reason,
         )
         return None
+
+    def _report_fetch_failure(self, obs: dict, reason: str) -> None:
+        """Mark ``obs`` as a read that produced nothing to reason over.
+
+        ``decide`` then skips the model and ``act`` returns ``success=False``
+        with ``"<prefix>: <reason>"``. BF-889 added callers (a bad ``offset``,
+        a page with no readable text, an offset past the end), so the two keys
+        are set in one place.
+        """
+        obs["fetch_failed"] = True
+        obs["fetch_error"] = f"{self._fetch_failure_prefix}: {reason}"
 
     async def decide(self, observation: dict) -> dict:
         # Short-circuit before the LLM, as BF-769 does: with no content there is
@@ -225,14 +374,22 @@ class _FetchGatedMixin:
                 "fetch_failed": True,
                 "fetch_error": observation.get("fetch_error", ""),
             }
-        return await super().decide(observation)  # type: ignore[misc]
+        decision = await super().decide(observation)  # type: ignore[misc]
+        if header := observation.get(self._RESULT_HEADER_KEY):
+            # A copy: the dict returned by CognitiveAgent.decide is left
+            # exactly as it was.
+            decision = {**decision, self._RESULT_HEADER_KEY: header}
+        return decision
 
     async def act(self, decision: dict) -> dict:
-        if decision.get("action") == "error":
+        if decision.get("action") == "error":  # a failed model call: no summary, so no header
             return {"success": False, "error": decision.get("reason")}
         if decision.get("fetch_failed"):
             return {"success": False, "error": decision.get("fetch_error", "")}
-        return {"success": True, "result": decision.get("llm_output", "")}
+        output = decision.get("llm_output", "")
+        if header := decision.get(self._RESULT_HEADER_KEY):
+            output = f"{header}\n\n{output}"
+        return {"success": True, "result": output}
 
 
 # ------------------------------------------------------------------
@@ -250,9 +407,31 @@ _DDG_SNIPPET_RE = re.compile(
 
 
 def _strip_tags(fragment: str) -> str:
-    """Strip HTML tags and unescape entities from a fragment."""
-    text = re.sub(r"<[^>]+>", " ", fragment)
-    return html.unescape(re.sub(r"\s+", " ", text)).strip()
+    """Readable text of an HTML fragment or page (BF-889: one extractor).
+
+    Delegates to :func:`probos.utils.html_text.html_to_text`, so a bang
+    landing page drops its scripts and styles as ``read_page`` does. On
+    ordinary fragments (tags, entities, whitespace) it reads as the old regex
+    did; the two measured differences are fixes: a non-breaking space between
+    words becomes one space, and a bare ``<`` ... ``>`` span in text is kept,
+    not deleted. Pinned by ``TestStripTagsDelegation`` in
+    ``tests/test_bf889_read_page_sections.py``.
+
+    Never raises: search titles and snippets must still render. If the
+    parser rejects the fragment (no such input is known on CPython 3.12 once
+    references are bounded), it falls back, with a warning, to
+    :func:`probos.utils.html_text.strip_tags_linear`, which still drops
+    script and style blocks.
+    """
+    try:
+        return html_to_text(fragment)
+    except HtmlTextError:  # search titles and snippets must still render
+        logger.warning(
+            "BF-889: html.parser rejected a %d-character fragment; using the "
+            "linear tag strip",
+            len(fragment),
+        )
+        return strip_tags_linear(fragment)
 
 
 def _decode_ddg_url(href: str) -> str:
@@ -382,7 +561,7 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             # budget on page chrome (head/CSS/search form) and cut off the
             # result <div>s, so the LLM never saw any results.
             obs["fetched_content"] = _with_truncation_notice(
-                _format_ddg_results(results)[:8000], outcome
+                _first_section(_format_ddg_results(results)), outcome
             )
             return obs
 
@@ -396,7 +575,7 @@ class WebSearchAgent(_BundledMixin, CognitiveAgent):
             # the page the Captain asked for, not a search-result page, so the
             # absence of result blocks is expected rather than a failure.
             obs["fetched_content"] = _with_truncation_notice(
-                _strip_tags(body)[:8000], outcome
+                _first_section(_strip_tags(body)), outcome
             )
             return obs
 
@@ -473,10 +652,15 @@ class PageReaderAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
     intent_descriptors = [
         IntentDescriptor(
             name="read_page",
+            # BF-889: ``offset`` is deliberately NOT listed here. The federation
+            # MCP server marks every descriptor param required
+            # (``mcp_server._project_tools_from_descriptors``), so listing it
+            # would break an MCP client that exposes read_page. It is taught by
+            # ``usage_hint`` (AD-983a) and the agentic tool schema instead.
             params={"url": "<url>"},
             description="Read and summarize a web page",
             requires_reflect=True,
-            usage_hint="[MESH read_page url=<url>] (read & summarize a web page)",
+            usage_hint="[MESH read_page url=<url>] (read & summarize a web page; a long page comes in sections: the result gives the next offset, and [MESH read_page url=<url> offset=<n>] reads on)",
         ),
     ]
     _handled_intents = {"read_page"}
@@ -485,17 +669,57 @@ class PageReaderAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
 
     async def perceive(self, intent: Any) -> dict:
         obs = await super().perceive(intent)
-        url = obs.get("params", {}).get("url", "")
+        params = obs.get("params", {})
+        url = params.get("url", "")
         if url and self._runtime:
+            offset = _parse_offset(params.get("offset"))
+            if offset is None:
+                # Refused before the fetch: no network call for a request that
+                # cannot be served.
+                self._report_fetch_failure(
+                    obs, "offset must be a whole number of characters, 0 or more"
+                )
+                return obs
             outcome = await self._fetch_or_fail(obs, url)
             if outcome and outcome.body:
-                # Strip HTML tags for cleaner LLM context
-                text = re.sub(r"<[^>]+>", " ", outcome.body)
-                text = re.sub(r"\s+", " ", text).strip()
-                obs["fetched_content"] = _with_truncation_notice(
-                    text[:8000], outcome
-                )
+                await self._read_section(obs, outcome, offset)
         return obs
+
+    async def _read_section(self, obs: dict, outcome: FetchOutcome, offset: int) -> None:
+        """Put the section at ``offset`` into ``obs``, or report why there is none."""
+        try:
+            # A worker thread: measured 0.2-0.4 s at the 1 MiB fetch cap,
+            # which must not stall the event loop. Pure, own parser per call.
+            text = await asyncio.to_thread(html_to_text, outcome.body or "")
+        except HtmlTextError:  # no text was extracted: say so, do not guess
+            logger.warning(
+                "BF-889: %s could not extract text from a %d-character page; "
+                "reporting failure (the URL is not logged, as in BF-772)",
+                type(self).__name__,
+                len(outcome.body or ""),
+            )
+            self._report_fetch_failure(obs, "the page could not be read as HTML")
+            return
+        if not text:
+            # A script-only page used to reach the model as its own source code.
+            self._report_fetch_failure(
+                obs, "the page has no readable text once scripts and styles are removed"
+            )
+            return
+        if offset >= len(text):
+            self._report_fetch_failure(
+                obs,
+                f"offset={offset} is at or past the end of the page text "
+                f"({len(text)} characters)",
+            )
+            return
+        section = _text_section(text, offset)
+        obs["fetched_content"] = _with_truncation_notice(
+            _with_section_notice(section), outcome
+        )
+        header = _section_header(section, outcome)
+        if header:
+            obs[self._RESULT_HEADER_KEY] = header
 
 
 # ------------------------------------------------------------------
@@ -534,7 +758,7 @@ class WeatherAgent(_FetchGatedMixin, _BundledMixin, CognitiveAgent):
             outcome = await self._fetch_or_fail(obs, url)
             if outcome and outcome.body:
                 obs["fetched_content"] = _with_truncation_notice(
-                    outcome.body[:8000], outcome
+                    _first_section(outcome.body), outcome
                 )
         return obs
 
