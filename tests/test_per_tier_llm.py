@@ -261,6 +261,7 @@ class TestOpenAICompatibleClientMultiEndpoint:
             "vision_fast": None,  # AD-742a: vision_fast peer tier, unconfigured by default
             "compute_use": None,  # AD-706c-2: compute_use peer tier, unconfigured by default
             "image_gen": None,  # AD-730-3: image_gen peer tier, unconfigured by default
+            "verifier": None,  # AD-1327: verifier tier, unconfigured by default
         }
 
 
@@ -284,7 +285,7 @@ class TestConnectivityCheck:
             assert isinstance(result, dict)
             # AD-732 + AD-706c-2: vision and compute_use are peer tiers in
             # the connectivity report.
-            assert set(result.keys()) == {"fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen"}
+            assert set(result.keys()) == {"fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier"}
             for tier, reachable in result.items():
                 assert isinstance(reachable, bool)
         finally:

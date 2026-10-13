@@ -524,6 +524,42 @@ class CognitiveConfig(BaseModel):
     llm_timeout_image_gen: float | None = None
     llm_api_format_image_gen: str | None = None  # "openai" (only supported shape)
 
+    # AD-1327: verifier tier -- the model the crew verifier judges crew work with.
+    llm_base_url_verifier: str | None = Field(
+        default=None,
+        description=(
+            "AD-1327: base URL of the crew verifier's judge model. None uses the shared "
+            "llm_base_url, as the text tiers do."
+        ),
+    )
+    llm_api_key_verifier: str | None = Field(
+        default=None,
+        description="AD-1327: API key for the verifier tier. None uses the shared llm_api_key.",
+    )
+    llm_model_verifier: str | None = Field(
+        default=None,
+        description=(
+            "AD-1327: model the crew verifier judges crew work with. Unset or blank: the "
+            "verifier requests the standard tier, as before AD-1327. Set: it requests the "
+            "verifier tier, which falls back to standard, fast and deep, and each verdict "
+            "records its judge model and whether that is a crew tier's model or family."
+        ),
+    )
+    llm_timeout_verifier: float | None = Field(
+        default=None,
+        description="AD-1327: verifier tier timeout in seconds. None uses llm_timeout_seconds.",
+    )
+    llm_api_format_verifier: str | None = Field(
+        default=None,
+        description='AD-1327: "openai" or "ollama" for the verifier tier. None uses "openai".',
+    )
+
+    @field_validator("llm_model_verifier", mode="before")
+    @classmethod
+    def _blank_verifier_model_is_unset(cls, value: object) -> object:
+        # AD-1327: a blank model name leaves the verifier tier unset, never a model named "".
+        return None if isinstance(value, str) and not value.strip() else value
+
     # Per-tier sampling overrides (None = use request-level value)
     llm_temperature_fast: float | None = None
     llm_temperature_standard: float | None = None
@@ -597,6 +633,7 @@ class CognitiveConfig(BaseModel):
             "vision_fast": self.llm_model_vision_fast,
             "compute_use": self.llm_model_compute_use,
             "image_gen": self.llm_model_image_gen,
+            "verifier": self.llm_model_verifier,
         }
         url_map = {
             "fast": self.llm_base_url_fast,
@@ -606,6 +643,7 @@ class CognitiveConfig(BaseModel):
             "vision_fast": self.llm_base_url_vision_fast,
             "compute_use": self.llm_base_url_compute_use,
             "image_gen": self.llm_base_url_image_gen,
+            "verifier": self.llm_base_url_verifier,
         }
         key_map = {
             "fast": self.llm_api_key_fast,
@@ -615,6 +653,7 @@ class CognitiveConfig(BaseModel):
             "vision_fast": self.llm_api_key_vision_fast,
             "compute_use": self.llm_api_key_compute_use,
             "image_gen": self.llm_api_key_image_gen,
+            "verifier": self.llm_api_key_verifier,
         }
         timeout_map = {
             "fast": self.llm_timeout_fast,
@@ -624,6 +663,7 @@ class CognitiveConfig(BaseModel):
             "vision_fast": self.llm_timeout_vision_fast,
             "compute_use": self.llm_timeout_compute_use,
             "image_gen": self.llm_timeout_image_gen,
+            "verifier": self.llm_timeout_verifier,
         }
         format_map = {
             "fast": self.llm_api_format_fast,
@@ -633,6 +673,7 @@ class CognitiveConfig(BaseModel):
             "vision_fast": self.llm_api_format_vision_fast,
             "compute_use": self.llm_api_format_compute_use,
             "image_gen": self.llm_api_format_image_gen,
+            "verifier": self.llm_api_format_verifier,
         }
         temp_map = {
             "fast": self.llm_temperature_fast,

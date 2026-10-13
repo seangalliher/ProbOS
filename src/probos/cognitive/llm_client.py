@@ -15,7 +15,7 @@ from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, NamedTuple
 
 import httpx
@@ -39,7 +39,12 @@ _ENDPOINT_GOVERNED: ContextVar[bool] = ContextVar(
 # tiers cannot see images or generate images. Vision/compute_use/image_gen
 # failures route to honest-degrade messages defined in
 # cognitive/vision_dispatch.py and cognitive/image_gen_dispatch.py.
-_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")
+# AD-1327: the crew verifier's judge tier. A peer in ``_LLM_TIERS`` (per-tier state,
+# probes, its own endpoint) but outside ``_TIER_ORDER``: AD-1324's tier choice and
+# stakes floor rank ``TEXT_TIERS`` only, so neither can select it. A request for
+# it falls back to standard, fast, deep (``_complete_inner``).
+VERIFIER_TIER: str = "verifier"
+_LLM_TIERS: tuple[str, ...] = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", VERIFIER_TIER)
 
 # AD-706c-2: fallback chain is text-only. ``vision``, ``compute_use``, and
 # ``image_gen`` are excluded — text tiers silently drop image content (BF-269)
@@ -95,6 +100,46 @@ class TierExactExclusion(Exception):
 
     Never a licence to send another tier's model: the caller refuses the attempt.
     """
+
+
+def _pool_base(tc: Mapping[str, Any]) -> str:
+    return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
+
+
+def _client_pool_key(tier_configs: Mapping[str, Mapping[str, Any]], tier: str) -> str:
+    """The httpx pool a tier uses: ``base_url|api_format``.
+
+    AD-1327: a pool's Authorization header is the key of the tier that last built it
+    (``_build_client``): ``__init__`` builds it for the first tier in ``_LLM_TIERS``
+    order, and ``_refresh_client`` rebuilds it for whichever tier is recovering (BF-612),
+    which can be any tier on the pool. So a configured verifier tier shares a pool only
+    when every other tier on that ``base_url|api_format`` has the verifier's key, and no
+    build of the pool can carry another key; otherwise it gets its own pool,
+    ``base_url|api_format|verifier``, whose requests, probe, refresh generation, in-flight
+    cap and breaker use its own key. The suffix is a constant; no key, or anything derived
+    from one, is part of a pool name (pool names are logged). Every other tier, and an
+    unset verifier, keeps the pool it had.
+    """
+    tc = tier_configs[tier]
+    base = _pool_base(tc)
+    if tier != VERIFIER_TIER or not tc.get("model"):
+        return base
+    key = tc.get("api_key") or ""
+    for other in _LLM_TIERS:
+        oc = tier_configs[other]
+        if other != VERIFIER_TIER and _pool_base(oc) == base and (oc.get("api_key") or "") != key:
+            return f"{base}|{VERIFIER_TIER}"
+    return base
+
+
+def _echoed_model(data: Any) -> str:
+    """AD-1327: the model id a provider's reply body names (its ``model`` field), verbatim.
+
+    ``""`` when the body names none or names something that is not text. The consumer
+    that persists it bounds it (``VerifierJudgePolicy.provenance``).
+    """
+    value = data.get("model") if isinstance(data, dict) else None
+    return value if type(value) is str else ""
 
 
 def _cache_put(client: Any, key: str, response: Any, served_tier: str | None) -> None:
@@ -428,9 +473,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         }
 
     def _client_key(self, tier: str) -> str:
-        """Return the client lookup key for a tier."""
-        tc = self._tier_configs[tier]
-        return f"{tc['base_url']}|{tc.get('api_format', 'openai')}"
+        """Return the client lookup key for a tier (``_client_pool_key``; AD-1327 verifier credential)."""
+        return _client_pool_key(self._tier_configs, tier)
 
     async def _claim_endpoint_admission(
         self,
@@ -1023,10 +1067,11 @@ class OpenAICompatibleClient(BaseLLMClient):
     def _probe_model(self, tier: str) -> str | None:
         """BF-886 A-1: the model a connectivity probe of ``tier`` sends.
 
-        A probe is a generation request, so for a text tier it obeys the wired
-        router's cost ceiling as a completion does: it sends the model the
-        router would choose, previewed without logging or events. Other tiers,
-        no router, or a router without ``preview`` keep the configured model.
+        A probe is a generation request, so for a text tier, and for the verifier
+        tier (AD-1327, previewed ``exact_tier``), it obeys the wired router's cost
+        ceiling as a completion does: it sends the model the router would choose,
+        previewed without logging or events. Other tiers, no router, or a router
+        without ``preview`` keep the configured model.
 
         Raises:
           CostCeilingExclusion: the ceiling leaves the tier no admissible
@@ -1034,14 +1079,14 @@ class OpenAICompatibleClient(BaseLLMClient):
             the tier is neither reachable nor unreachable for it.
         """
         configured = self._tier_configs[tier]["model"]
-        if tier not in TEXT_TIERS:
+        if tier not in TEXT_TIERS and tier != VERIFIER_TIER:
             return configured
         preview = getattr(getattr(self, "model_router", None), "preview", None)
         if preview is None:
             return configured
         refusal = ""
         try:
-            decision = preview(tier=tier)
+            decision = preview(tier=tier) if tier in TEXT_TIERS else preview(tier=tier, exact_tier=True)
             if getattr(decision, "excluded_by_cost_ceiling", False) is True:
                 refusal = decision.reason
             chosen = decision.chosen_model or configured
@@ -1143,7 +1188,9 @@ class OpenAICompatibleClient(BaseLLMClient):
             # model name — the operator either configures the tier or
             # accepts the honest-degrade fallback (vision_fast falls back
             # to vision; vision honest-degrades to the system message).
-            if tier in ("vision", "vision_fast") and not tc.get("model"):
+            # AD-1327: an unconfigured verifier tier is not probed either; its requests
+            # go down the standard chain.
+            if tier in ("vision", "vision_fast", VERIFIER_TIER) and not tc.get("model"):
                 results[tier] = False
                 self._tier_status[tier] = False
                 continue
@@ -1478,6 +1525,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     if cached is not None:
                         return LLMResponse(
                             content=cached.content, model=cached.model, tier=tier,
+                            answered_tier=cached.answered_tier, answered_model=cached.answered_model,
                             tokens_used=cached.tokens_used, cached=True, request_id=request.id,
                         )
                 return LLMResponse(
@@ -1507,6 +1555,12 @@ class OpenAICompatibleClient(BaseLLMClient):
             # unreachable, the deeper 27B narrative tier is still vision-
             # capable and produces a correct (slower) describe.
             fallback_tiers = ["vision_fast", "vision"]
+        elif tier == VERIFIER_TIER:
+            # AD-1327: the verifier tier falls back to the chain the crew verifier used
+            # before it existed: standard, then fast and deep. An unconfigured verifier
+            # tier (no model) is skipped, so its request goes down the standard chain.
+            verifier_first = [tier] if self._tier_configs[tier].get("model") else []
+            fallback_tiers = [*verifier_first, "standard", *(t for t in _TIER_ORDER if t != "standard")]
         elif exact:
             fallback_tiers = [tier]
         else:
@@ -1547,6 +1601,11 @@ class OpenAICompatibleClient(BaseLLMClient):
                     _override, _served = self._resolve_route_for_tier(
                         attempt_tier, min_tier=floor, correlation=correlation, exact_tier=True,
                     )
+                elif attempt_tier == VERIFIER_TIER:
+                    # AD-1327: the verifier attempt is served by the verifier model or refused
+                    # (TierExactExclusion skips it); the router never substitutes a crew tier's
+                    # model on the verifier endpoint, and the cost ceiling still applies.
+                    _override, _served = self._resolve_route_for_tier(attempt_tier, exact_tier=True)
                 elif floor is None and correlation is None:
                     _override = self._resolve_model_for_tier(attempt_tier)
                     _served = attempt_tier if getattr(self, "model_router", None) is None else None
@@ -1769,6 +1828,9 @@ class OpenAICompatibleClient(BaseLLMClient):
                         # cache key ('vision:hash("")') and would always collide.
                         # The multimodal-skip below handles that lookup-side; this
                         # write-side guard catches any tier that returns empty.
+                        # AD-1327: the tier whose attempt answered (its endpoint and route), on the
+                        # returned response and the cached entry, so a replay still says who answered.
+                        response = replace(response, answered_tier=attempt_tier)
                         if request.messages is None and response.content:
                             cache_key = self._cache_key(tier, request.prompt, request.system_prompt)
                             # Provenance is the tier whose model SERVED THIS request, read with its
@@ -1939,6 +2001,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                 return LLMResponse(
                     content=cached.content,
                     model=cached.model,
+                    answered_tier=cached.answered_tier,
+                    answered_model=cached.answered_model,
                     tier=tier,
                     tokens_used=cached.tokens_used,
                     cached=True,
@@ -2364,6 +2428,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             request_id=request.id,
             content_blocks=content_blocks_list,
             stop_reason=stop_reason_value,
+            answered_model=_echoed_model(data),
         )
 
     async def _call_ollama_native(
@@ -2423,6 +2488,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             completion_tokens=completion_tokens,
             cached=False,
             request_id=request.id,
+            answered_model=_echoed_model(data),
         )
 
     def tier_info(self) -> dict[str, dict]:

@@ -53,8 +53,9 @@ from rich.text import Text
 
 from probos import provider_setup
 from probos.cognitive.episodic import EpisodicMemory
-from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, TEXT_TIERS, _LLM_TIERS
-from probos.cognitive.model_router import build_model_routing, ceiling_denials
+from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, _LLM_TIERS
+from probos.cognitive.model_router import build_model_routing, ceiling_denials, routed_tiers
+from probos.cognitive.verifier_independence import VerifierJudgePolicy, verifier_independence_report
 from probos.config import load_config
 from probos.runtime import ProbOSRuntime
 from probos.experience.shell import ProbOSShell
@@ -318,7 +319,7 @@ async def _create_llm_client(config, console: Console):
 
     cog = config.cognitive
     router = build_model_routing(config)
-    denied = {} if router is None else router.denials(TEXT_TIERS)
+    denied = {} if router is None else router.denials(routed_tiers(cog))
     client = OpenAICompatibleClient(config=cog, rate_config=config.llm_rate, model_router=router)
 
     console.print("  Checking LLM endpoints...")
@@ -341,6 +342,14 @@ async def _create_llm_client(config, console: Console):
             console.print(f"  [green]\u2713[/green] LLM {tier}: {model} at {where}")
         else:
             console.print(f"  [yellow]\u2717[/yellow] LLM {tier}: {where} unreachable")
+
+    # AD-1327: while the crew orchestrator is on (the crew verifier is built only then),
+    # say whether the verifier judges with a model the crew also runs on.
+    if config.agentic_dispatch.orchestrator_enabled:
+        independence, detail = verifier_independence_report(VerifierJudgePolicy.from_cognitive(cog))
+        shown = escape(provider_setup.redact_keys(f"Crew verifier: {detail}", keys))
+        mark = "[green]\u2713[/green]" if independence == "independent" else "[yellow]\u26a0[/yellow]"
+        console.print(f"  {mark} {shown}")
 
     # BF-886 A-1: a tier the cost ceiling excludes was not probed. Its exclusion
     # is a budget decision, not an outage, so it never selects the mock.

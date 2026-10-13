@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from probos import work_item_steps as owned_steps
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
+    JudgeProvenance,
     parse_verdict_criteria,
     render_critique,
 )
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
     from probos.cognitive.crew_executor import SubtaskResult
     from probos.cognitive.mcp_workbench import MCPDispatchOffer, MCPDispatchSource
+    from probos.cognitive.verifier_independence import VerifierJudgePolicy
     from probos.consensus.trust import TrustNetwork
     from probos.substrate.registry import AgentRegistry
     from probos.workforce import WorkItemStore
@@ -182,6 +184,8 @@ class VerificationVerdict:
     verifier_agent_id: str
     verification_defect: bool = False
     criteria: tuple[CriterionVerdict, ...] | None = None
+    # AD-1327: the model that judged this verdict; None when no judge answered or none was wired.
+    judge: JudgeProvenance | None = None
 
 
 @dataclass
@@ -210,6 +214,8 @@ class SessionVerificationPass:
     tokens_used: int
     failure_code: SessionVerificationFailureCode | None
     criteria: tuple[CriterionVerdict, ...] | None = None
+    # AD-1327: the model that judged this verdict; None when no judge answered or none was wired.
+    judge: JudgeProvenance | None = None
 
 
 @dataclass(frozen=True)
@@ -1304,6 +1310,7 @@ class SubtaskVerifier:
         runtime: Any,
         max_convergence_rounds: int = 2,
         ontology: Any = None,
+        judge_policy: VerifierJudgePolicy | None = None,
     ) -> None:
         self._llm = llm_client
         self._store = work_item_store
@@ -1318,6 +1325,10 @@ class SubtaskVerifier:
         # independent agent. Default ``None`` preserves the AD-860 any-independent
         # behavior verbatim for every existing call site.
         self._ontology = ontology
+        # AD-1327 (optional, Dependency Inversion): when wired, the judge call requests the
+        # policy's tier and each answered verdict records its judge. None keeps the
+        # pre-AD-1327 request (tier "standard") and records no judge.
+        self._judge_policy = judge_policy
 
     def bind_owned_steps_correction_port(
         self,
@@ -1336,6 +1347,25 @@ class SubtaskVerifier:
                     "owned_steps_owner_already_bound"
                 )
         self._owned_steps_port = port
+
+    def _judge_tier(self) -> str:
+        """AD-1327: the tier the judge call requests: ``standard`` unless the policy names the verifier tier."""
+        return "standard" if self._judge_policy is None else self._judge_policy.request_tier
+
+    def _judge_provenance(self, response: Any) -> JudgeProvenance | None:
+        """AD-1327: the judge record for ``response``, or None when no policy is wired.
+
+        Reads what the LLM client reports answered (``LLMResponse.answered_tier`` and
+        ``answered_model``), never the model it sent. ``getattr``: the verifier's LLM is
+        duck-typed (test doubles return other response objects); a response without them
+        is recorded as unknown and not shown to come from the requested tier.
+        """
+        if self._judge_policy is None:
+            return None
+        return self._judge_policy.provenance(
+            answered_tier=getattr(response, "answered_tier", None),
+            answered_model=getattr(response, "answered_model", None),
+        )
 
     async def _build_trace_section(self, trace_ref: str | None) -> str:
         if not trace_ref:
@@ -1415,14 +1445,16 @@ class SubtaskVerifier:
         prompt += await self._build_trace_section(
             getattr(result, "tool_trace_ref", None),
         )
+        request_tier = self._judge_tier()
         request = LLMRequest(
             prompt=prompt,
             system_prompt=self._JUDGE_SYSTEM_PROMPT,
-            tier="standard",
+            tier=request_tier,
         )
         try:
             response = await self._llm.complete(request)
             verdict = self._parse_verdict(getattr(response, "content", ""), verifier_id)
+            verdict = replace(verdict, judge=self._judge_provenance(response))
         except Exception:
             logger.warning(
                 "AD-860: LLM judge call failed for sub-task %s (verifier=%s); "
@@ -1828,6 +1860,7 @@ class SubtaskVerifier:
                 tokens_used=0,
                 failure_code="independent_verifier_unavailable",
             )
+        judge: JudgeProvenance | None = None
         try:
             result_text = self._session_result_text(
                 result.output,
@@ -1845,11 +1878,12 @@ class SubtaskVerifier:
             response = await self._llm.complete(LLMRequest(
                 prompt=prompt,
                 system_prompt=self._JUDGE_SYSTEM_PROMPT,
-                tier="standard",
+                tier=self._judge_tier(),
             ))
+            judge = self._judge_provenance(response)
             tokens = self._session_tokens(getattr(response, "tokens_used", None))
             content = getattr(response, "content", None)
-            return self._parse_session_verdict(content, verifier_id, tokens)
+            return replace(self._parse_session_verdict(content, verifier_id, tokens), judge=judge)
         except asyncio.CancelledError:
             raise
         except ValueError:
@@ -1861,6 +1895,7 @@ class SubtaskVerifier:
                 verifier_agent_id=verifier_id,
                 tokens_used=0,
                 failure_code="verification_defect",
+                judge=judge,
             )
         except Exception:
             logger.warning(

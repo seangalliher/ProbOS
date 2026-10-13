@@ -127,6 +127,11 @@ Cognitive layer configuration.
 | `llm_model_image_gen` | `str | None` | `None` | — |  |
 | `llm_timeout_image_gen` | `float | None` | `None` | — |  |
 | `llm_api_format_image_gen` | `str | None` | `None` | — |  |
+| `llm_base_url_verifier` | `str | None` | `None` | — | AD-1327: base URL of the crew verifier's judge model. None uses the shared llm_base_url, as the text tiers do. |
+| `llm_api_key_verifier` | `str | None` | `None` | — | AD-1327: API key for the verifier tier. None uses the shared llm_api_key. |
+| `llm_model_verifier` | `str | None` | `None` | — | AD-1327: model the crew verifier judges crew work with. Unset or blank: the verifier requests the standard tier, as before AD-1327. Set: it requests the verifier tier, which falls back to standard, fast and deep, and each verdict records its judge model and whether that is a crew tier's model or family. |
+| `llm_timeout_verifier` | `float | None` | `None` | — | AD-1327: verifier tier timeout in seconds. None uses llm_timeout_seconds. |
+| `llm_api_format_verifier` | `str | None` | `None` | — | AD-1327: "openai" or "ollama" for the verifier tier. None uses "openai". |
 | `llm_temperature_fast` | `float | None` | `None` | — |  |
 | `llm_temperature_standard` | `float | None` | `None` | — |  |
 | `llm_temperature_deep` | `float | None` | `None` | — |  |

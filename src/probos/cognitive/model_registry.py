@@ -100,6 +100,49 @@ def catalog() -> tuple[ModelDescriptor, ...]:
     return _DEFAULT_DESCRIPTORS
 
 
+# AD-1327: model families by id substring, for the crew verifier's independence
+# report. Deliberately small: an id that matches no marker, or markers of two
+# families (a distilled "deepseek-r1-distill-qwen" names two), has no known
+# family, and an unknown family is never reported as independent.
+_FAMILY_MARKERS: tuple[tuple[str, str], ...] = (
+    ("claude", "anthropic"),
+    ("gpt", "openai"),
+    ("gemini", "google"),
+    ("gemma", "google"),
+    ("llama", "meta"),
+    ("qwen", "alibaba"),
+    ("mistral", "mistral"),
+    ("mixtral", "mistral"),
+    ("codestral", "mistral"),
+    ("deepseek", "deepseek"),
+)
+
+
+def normalise_model_id(model_id: str) -> str:
+    """AD-1327: a model id compared as a model: stripped, after the last "/", case-folded.
+
+    ``anthropic/claude-sonnet-4-6`` and ``Claude-Sonnet-4-6`` name one model.
+    """
+    return model_id.strip().rsplit("/", 1)[-1].casefold()
+
+
+def model_family(model_id: str) -> str | None:
+    """AD-1327: the vendor family a model id names, or None when unknown or ambiguous.
+
+    A name the built-in catalog lists exactly takes the catalog's ``provider``.
+    Otherwise the normalised id is matched against ``_FAMILY_MARKERS``; no match,
+    or markers of two families, is None.
+    """
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    known = _CATALOG_BY_NAME.get(model_id)
+    if known is not None and known.provider != "unknown":
+        return known.provider
+    lowered = normalise_model_id(model_id)
+    families = {family for marker, family in _FAMILY_MARKERS if marker in lowered}
+    return families.pop() if len(families) == 1 else None
+
+
 @dataclass
 class ModelRegistry:
     """In-memory catalog. Seeded from defaults; operators extend at startup.

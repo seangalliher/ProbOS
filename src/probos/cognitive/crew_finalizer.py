@@ -36,8 +36,11 @@ from probos.cognitive.crew_trust import (
 )
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
+    JudgeProvenance,
     criteria_to_json,
+    judge_to_json,
     parse_criteria,
+    parse_judge,
     validate_criteria,
 )
 from probos.cognitive.crew_verifier import (
@@ -239,11 +242,18 @@ class _VerdictRecord(BaseModel):
     tokens_used: int
     failure_code: SessionVerificationFailureCode | None
     criteria: tuple[CriterionVerdict, ...] | None = None
+    judge: JudgeProvenance | None = None
 
     @field_validator("criteria", mode="before")
     @classmethod
     def _validate_criteria(cls, value: object) -> tuple[CriterionVerdict, ...]:
         return parse_criteria(value)
+
+    @field_validator("judge", mode="before")
+    @classmethod
+    def _validate_judge(cls, value: object) -> JudgeProvenance:
+        # AD-1327: a JSON object or a validated record; an explicit null is refused.
+        return value if isinstance(value, JudgeProvenance) else parse_judge(value)
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -251,6 +261,9 @@ class _VerdictRecord(BaseModel):
         if self.criteria is None:
             # Absence is part of historical checkpoint bytes and trust identity.
             document.pop("criteria", None)
+        if self.judge is None:
+            # AD-1327: the same rule for the judge record.
+            document.pop("judge", None)
         return document
 
     def to_verdict(self) -> SessionVerificationPass:
@@ -263,6 +276,7 @@ class _VerdictRecord(BaseModel):
             tokens_used=self.tokens_used,
             failure_code=self.failure_code,
             criteria=self.criteria,
+            judge=self.judge,
         )
 
     @field_validator("accepted", mode="before")
@@ -3371,6 +3385,7 @@ class CrewSessionFinalizer:
                     {"criteria": criteria_to_json(item.criteria)}
                     if item.criteria is not None else {}
                 ),
+                **({"judge": judge_to_json(item.judge)} if item.judge is not None else {}),
             })
         except (AttributeError, ValidationError) as exc:
             raise ValueError("crew_finalization_verdict_invalid") from exc

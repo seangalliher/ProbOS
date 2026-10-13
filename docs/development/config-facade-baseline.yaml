@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1862
-  field_definitions: 1839
+  canonical_dump_leaves: 1867
+  field_definitions: 1844
   incidental: 13
   own_models: 225
   owned: 292
   public_names: 305
-canonical_dump_sha256: 60b85111fda014d36d83d7dcd4c47a88a0c1866a85f7db3cb6e048567a4ad621
+canonical_dump_sha256: a0d97f0854e31648fce1a87a956de88cb277210aecd8b53660e6d8a87389e03b
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1035,7 +1035,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 80580fb229f0caf6bdbfd3df8753eef12cfb2ad17b98e41156fecc66205dfb1b
+    schema_sha256: a477658b95e36b11d0f28067a985461757563cabc1931aaa39a2438ad0fc56c8
     fields:
     - {default: '''http://127.0.0.1:8080/v1''', name: llm_base_url}
     - {default: '''''', name: llm_api_key}
@@ -1087,6 +1087,11 @@ models:
     - {default: None, name: llm_model_image_gen}
     - {default: None, name: llm_timeout_image_gen}
     - {default: None, name: llm_api_format_image_gen}
+    - {default: None, name: llm_base_url_verifier}
+    - {default: None, name: llm_api_key_verifier}
+    - {default: None, name: llm_model_verifier}
+    - {default: None, name: llm_timeout_verifier}
+    - {default: None, name: llm_api_format_verifier}
     - {default: None, name: llm_temperature_fast}
     - {default: None, name: llm_temperature_standard}
     - {default: None, name: llm_temperature_deep}
@@ -3347,7 +3352,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: de3384840d5b04efa5aba98909a00edd383c8b3a22dcedb61e24d448e9be6df6
+    schema_sha256: 62e0c66908fe5e75757d2a1f0d279065dd8aee670c5c9a460f2f8b4b9e084739
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

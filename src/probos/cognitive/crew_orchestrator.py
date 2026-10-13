@@ -73,7 +73,7 @@ from probos.cognitive.crew_executor import (
     is_untouched_crew_child,
 )
 from probos.cognitive.crew_synth import SynthesisResult
-from probos.cognitive.crew_verdict import criteria_to_json, parse_criteria
+from probos.cognitive.crew_verdict import criteria_to_json, judge_to_json, parse_criteria, parse_judge
 from probos.cognitive.crew_verifier import (
     ConvergenceOutcome,
     VerificationVerdict,
@@ -3974,6 +3974,7 @@ class CrewOrchestrator:
                 if verdict.criteria is not None
                 else None
             ),
+            **({"judge": judge_to_json(verdict.judge)} if verdict.judge is not None else {}),
             "rounds": outcome.rounds,
             "parent_id": snapshot.control.parent_id,
             "work_item_id": result.work_item_id,
@@ -4110,6 +4111,7 @@ class CrewOrchestrator:
             verifier_agent_id=verification["verifier_agent_id"],
             verification_defect=verification["verification_defect"],
             criteria=criteria,
+            judge=parse_judge(verification["judge"]) if "judge" in verification else None,
         )
         return ConvergenceOutcome(
             result=result,

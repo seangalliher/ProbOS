@@ -284,7 +284,9 @@ class ModelRouter:
         if not candidates:
             # No available model in the tier -- emit fallback
             for d in self._registry.all():
-                if d.available and _within_ceiling(d, ceiling) and _meets_floor(d.tier, min_tier):
+                # AD-1327: only a text tier's model may stand in for another tier; the
+                # verifier model (registered under its own tier) never answers a crew request.
+                if d.available and _tier_rank(d.tier) >= 0 and _within_ceiling(d, ceiling) and _meets_floor(d.tier, min_tier):
                     return RoutingDecision(
                         chosen_model=d.name,
                         requested_tier=tier,
@@ -436,22 +438,36 @@ def _correlation_payload(
     return extra
 
 
+def routed_tiers(cognitive: Any) -> tuple[str, ...]:
+    """AD-1327: the tiers the model router governs for ``cognitive``.
+
+    The text tiers, then the ``verifier`` tier when ``llm_model_verifier`` names a
+    model: that model is registered under its own tier, so the cost ceiling applies
+    to it. Unset, this returns ``TEXT_TIERS`` itself.
+    """
+    from probos.cognitive.llm_client import TEXT_TIERS, VERIFIER_TIER
+    from probos.cognitive.verifier_independence import is_verifier_tier_configured
+
+    if is_verifier_tier_configured(cognitive):
+        return (*TEXT_TIERS, VERIFIER_TIER)
+    return TEXT_TIERS
+
+
 def build_model_routing(
     config: SystemConfig, *, emit_event: Any | None = None,
 ) -> ModelRouter | None:
     """BF-886 A-1: the model router ``config`` describes, or None when routing is off.
 
-    Its registry holds exactly the configured model of each text tier
-    (``ModelRegistry.from_tier_models``), and it applies the configured cost
+    Its registry holds exactly the configured model of each routed tier
+    (``routed_tiers``: the text tiers, and the verifier tier when set, AD-1327;
+    ``ModelRegistry.from_tier_models``), and it applies the configured cost
     ceiling. The boot factory, startup wiring and ``probos doctor`` all build
     it here, so a probe obeys the policy a completion does.
     """
     if not config.model_routing.enabled:
         return None
-    from probos.cognitive.llm_client import TEXT_TIERS
-
     registry = ModelRegistry.from_tier_models(
-        {tier: config.cognitive.tier_config(tier)["model"] for tier in TEXT_TIERS},
+        {tier: config.cognitive.tier_config(tier)["model"] for tier in routed_tiers(config.cognitive)},
     )
     return ModelRouter(
         registry=registry,
@@ -461,7 +477,7 @@ def build_model_routing(
 
 
 def ceiling_denials(config: SystemConfig) -> dict[str, str]:
-    """BF-886 A-1: ``{tier: reason}`` for each text tier ``config``'s cost ceiling leaves no model.
+    """BF-886 A-1: ``{tier: reason}`` for each routed tier ``config``'s cost ceiling leaves no model.
 
     ``{}`` when routing is off or no ceiling is set. Nothing may send a
     generation request -- a completion, a probe or a warm-up -- for these.
@@ -469,6 +485,4 @@ def ceiling_denials(config: SystemConfig) -> dict[str, str]:
     router = build_model_routing(config)
     if router is None:
         return {}
-    from probos.cognitive.llm_client import TEXT_TIERS
-
-    return router.denials(TEXT_TIERS)
+    return router.denials(routed_tiers(config.cognitive))

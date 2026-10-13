@@ -40,6 +40,7 @@ from pydantic import ValidationError
 
 from probos.cognitive.image_gen_dispatch import is_image_gen_tier_configured
 from probos.cognitive.llm_client import _LLM_TIERS, _TIER_ORDER
+from probos.cognitive.verifier_independence import is_verifier_tier_configured
 from probos.cognitive.vision_dispatch import is_vision_tier_configured
 from probos.config import CognitiveConfig, load_config
 
@@ -54,6 +55,7 @@ TIER_CONFIGURED_CHECKS: Mapping[str, Callable[[CognitiveConfig], bool]] = Mappin
     "vision_fast": lambda config: is_vision_tier_configured(config, "vision_fast"),  # perception/consumer.py:907
     "compute_use": lambda config: is_vision_tier_configured(config, "compute_use"),  # tools/browser/compute_use.py:107
     "image_gen": is_image_gen_tier_configured,  # cognitive/image_gen_dispatch.py:142
+    "verifier": is_verifier_tier_configured,  # AD-1327: cognitive/verifier_independence.py, the crew verifier's tier
 })
 
 # Caps each connect/read wait so an endpoint that goes silent fails the check; costs failing a listing slower than 10 s.

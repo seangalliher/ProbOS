@@ -12,6 +12,7 @@ from probos.doctor.checks import (  # noqa: F401
     data_dir_check,
     llm_check,
     extras_check,
+    verifier_check,
     nats_check,
     chroma_check,
     security_check,
