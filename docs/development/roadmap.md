@@ -524,7 +524,7 @@ CrewSession path; it does not create another workflow engine. Parent epic:
 | AD | Title | Issue | Priority |
 |----|-------|-------|----------|
 | AD-1286 | Elastic Team Contract - immutable team specs, durable slots, ephemeral attempts (SHIPPED 2026-10-11, PR #1503; inert until AD-1288) | [#1333](https://github.com/seangalliher/ProbOS/issues/1333) | 1 |
-| AD-1287 | Evidence-Bound Skill Qualification - exact skill/model/tool/policy/eval profiles | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | 1 |
+| AD-1287 | Evidence-Bound Skill Qualification - exact skill/model/tool/policy/eval profiles (S1 built 2026-10-12, unwired; S2/S3 remain) | [#1334](https://github.com/seangalliher/ProbOS/issues/1334) | 1 |
 | AD-1288 | Agent-Commissioned Team Lifecycle - governed provision, leases, recovery, teardown | [#1335](https://github.com/seangalliher/ProbOS/issues/1335) | 1 |
 | AD-1289 | Typed Mission Blackboard - claims, evidence, challenges, decisions, and dissent | [#1336](https://github.com/seangalliher/ProbOS/issues/1336) | 2 |
 | AD-1290 | Elastic Scatter/Gather and Team Trials - replicas, reducers, attribution, ablations | [#1337](https://github.com/seangalliher/ProbOS/issues/1337) | 2 |

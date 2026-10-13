@@ -10,6 +10,115 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### AD-1287 S1 -- Evidence-bound execution-profile qualification (2026-10-12)
+
+Slice S1 of AD-1287 (#1334), built and unwired: a content-addressed execution profile, an insert-only store that records evaluations and invalidations of it, and a slot gate that refuses a profile that is not `qualified`. Nothing under `src/` imports the S1 modules or calls the store or gate directly (a direct-reference scan, not every call flow); contract `prompts/ad-1287-s1-execution-profile-qualification.md`; no new AD or BF number; S2 and S3 remain and #1334 stays open.
+
+**Decisions**, one line each (the ranked tables are in the contract):
+
+- *D1.* Profile identity lives in a new `cognitive/execution_profile.py` with its own domains and AD-1286's public `canonicalize_projection`, `ElasticId`, `Sha256Ref`, `Revision` and `WorkerSlot`: no edit to the shipped AD-1286 module.
+- *D2.* One digest over everything the issue lists, suite included (pass rule and validity window too), sorted components, duplicates refused, integers only: it matches "creates a new profile" and makes slot pinning exact.
+- *D3.* A new `ProfileQualificationStore` in its own file `profile_qualifications.db`: three `WITHOUT ROWID` tables, per-row `schema_version`, nine triggers refusing UPDATE, DELETE and replacing INSERT, canonical JSON re-verified on every row used, selection columns `VIRTUAL` via `json_extract`; it follows the AD-1286 and AD-1299 S1b precedent.
+- *D3a.* `start()` accepts only an empty file or exactly this layout (an exact catalog match against the module's own fifteen statements, one `BEGIN IMMEDIATE`), else `profile_qualification_layout_mismatch`: equality covers every property at once, where a semantic subset recurs on any property left out.
+- *D3b.* `PRAGMA journal_mode=WAL` after the check, with `busy_timeout=0` and a bounded retry (50 tries, 0.1 s apart), then log-and-degrade: no correctness claim needs WAL, so a refusal would turn a concurrency property into an outage.
+- *D4.* The latest evaluation by store sequence decides; an invalidation applies to every earlier evaluation of that profile; precedence `invalidated` > `expired` > `structurally_invalid` > `insufficient_sample` > `failed` > `qualified`: ordering by a sequence drawn under `BEGIN IMMEDIATE` survives a clock moved backwards.
+- *D5.* The slot boundary is a composition, `admit_qualified_attempt`, that gates then calls AD-1286's `record_attempt`, with AD-1286 unchanged: no production caller of `record_attempt` exists, so no control is weakened.
+- *D6.* No migration: any component change gives a new reference with zero evaluations and no API copies evidence: the weakest and safest option, which the acceptance text allows.
+- *D7.* AD-1299 S1b's per-operation `_open` copied (one connection per operation from the injected factory, `BEGIN IMMEDIATE`, one lock; `CancelledError` propagates and means an unknown outcome, every write idempotent for identical input): extracting a shared helper would edit S1b's pinned `_open`.
+- *D8.* Qualification grants nothing: no S1 field name contains `scope`, `rank`, `lease`, `grant`, `authority` or `permission`, and the two modules import no ProbOS module outside an allowlist; neither test says downstream code cannot misuse a result.
+- *D9.* Failure tiers: bad arguments, an unavailable store, an invalid clock, a layout mismatch and a row failing verification propagate with stable codes before any write; close failures and a WAL switch that cannot complete log and degrade.
+- *Slicing.* Three slices (S1 identity, store, query and gate as a whole chain; S2 component producers, drift and a currency check; S3 outcome learning), each shippable and unwired: S1 is a whole chain and S2 and S3 add producers without changing its contract.
+
+**Obligations handed on:**
+
+- *O-1 (AD-1288).* Commission admission must record attempts only through `admit_qualified_attempt` (or `check_slot_qualification` immediately before `record_attempt`). It must change M3 #16 deliberately. Recovery reads `get_attempt` rather than re-admitting (M3 #15).
+- *O-2 (S2).* Add live component sources and a currency check to the gate. Until then a qualified reference stays admissible after a live component changes.
+- *O-3 (S3).* Outcome learning keys on `execution_profile_ref` and the profile's `task_class`, is idempotent by `worker_attempt_id`, stores integer raw counts, returns `(alpha, beta)` with a prior of `(2, 2)` (TrustNetwork's default, `trust.py:66-67`), does not count `cancelled`, writes nothing to `TrustNetwork`, and gates nothing.
+
+**Residuals:**
+
+- *R-1.* Extract the per-operation `_open` shared with the AD-1299 S1b store once AD-1299 S2 lands; recorded for the wave's consolidated follow-up.
+- *R-2 (round 1, documented not filed).* A row missing from a selection (deleted, or edited so no selection reaches it, including an invalidation moved to another key) is indistinguishable from one never written. Per-row verification cannot see absence; detecting it needs an anchored chain or signature (AD-1047's Captain decision). Carried in: module docstring, D9, the store declaration `notes`, this entry.
+- *R-3 (round 1, documented not filed).* Store stamps (`seq`, `issued_at_ms`, `recorded_at_ms`, `invalidated_at_ms`) rewritten within type and range are not detected; `seq` decides which evaluation is latest. Carried in: module docstring, D4, D9, this entry.
+
+**Review.** The Architect was Claude Code `claude-architect` (Opus 5.5) through the bridge, nine calls, no fallback; Builders `claude-sonnet-5.5` (M1-M3, repair rounds R1-R4, R2b); Diff Reviewers GPT-6.1 Sol. Round 1: store scope NOT READY (2 High: columns the store selected by could hide a row; impossible timestamps accepted; 3 Medium; 1 Low), identity and gate scope READY (4 Low). Round 2: NOT READY (1 High: `start()` accepted a database with another layout; 1 Medium: sequence exhaustion committed unreadable evidence; 2 Low). Round 3: layout and concurrency scope NOT READY (1 High: a healthy concurrent start failed at the WAL switch; 1 Medium: the refusal promise was broader than SQLite allows), tests and regression scope READY (3 Medium test gaps). Round 4: NOT READY on 2 Medium (the WAL retry's elapsed budget under an EXCLUSIVE lock holder; rollback byte-identity) and 2 Low; the reviewer's follow-up on the repair: READY, one Low wording, fixed. Two defects were found by executing the Architect's revised design before the Builder started: an undefined name in the layout comparison, and the store registry's detector no longer seeing the module (`store modules` 68 -> 67). Every finding was reproduced before repair.
+
+Campaign of record (run once on the committed tree): base commit `1d13e5e6c4972b4897b5f694faa19b76725f20df`, tree `c0da9143cac1073a50247f3602db150f40a33d04`.
+
+Pinned file sha256 (working tree, CRLF):
+
+- `src/probos/cognitive/execution_profile.py` `4c06ac95758db7228029e35655f84d71936dc35457871336701b4351e2142fed`
+- `src/probos/cognitive/profile_qualification_store.py` `b4c874b5687fd3979eed65900681f36b2738ad38efd31636b227ba3074f3503a`
+- `src/probos/cognitive/storage_declarations.py` `911d2e4e48bf67792bd9e1bee0d856278265b3def64fc06f56ba79eb34d62f62`
+- `tests/test_ad1287_execution_profile.py` `72bc2920ab9774a0bd3879933970850cdd4bafff8a726949d6925aec62717f21`
+- `tests/test_ad1287_profile_qualification_store.py` `e41859a3f5a77ec34f0bdee97e1bb7614afafc98a0492503a1c47a1bbeaa36fb`
+- `tests/test_ad1287_slot_qualification.py` `9cc9802703777380e4240ea19ae880fe6047a89af9c8d259316197d109851d53`
+
+Result: **60 of 60 mutants KILLED**, 0 survived, 0 inert, 0 invalid.
+
+| Id | Killed first by |
+|---|---|
+| P1 | `assess_evaluation_status_boundaries[rate_at_threshold_qualifies]` |
+| P2 | `assess_evaluation_status_boundaries[at_expiry]` |
+| P3 | `assess_evaluation_status_boundaries[fewer_than_min_samples]` |
+| P4 | `assess_evaluation_status_boundaries[structurally_invalid_record]` |
+| P5 | `assess_evaluation_precedence` |
+| P6 | `slot_refusal_codes[pinned_elsewhere]` |
+| P7 | `slot_refusal_codes[qualification_id]` |
+| P8 | `slot_refusal_codes[task_class]` |
+| P9 | `assess_evaluation_refuses_wrong_types_and_foreign_records` |
+| P10 | `profile_reference_matches_independent_known_answer` |
+| P11 | `profile_refuses_malformed_input[duplicate` |
+| P12 | `profile_reference_matches_independent_known_answer` |
+| P13 | `profile_reference_matches_independent_known_answer` |
+| S1 | `conflicting_or_unregistered_evaluation_writes_nothing` |
+| S2 | `latest_evaluation_decides` |
+| S3 | `invalidation_applies_to_earlier_evaluations_and_survives_restart` |
+| S4 | `tampered_rows_are_integrity_errors[evaluation_expires_shifted]` |
+| S5 | `tampered_rows_are_integrity_errors[profile_json_reindented]` |
+| S6 | `out_of_range_stamps_are_integrity_errors[profile-recorded-not-a-number]` |
+| S7 | `query_is_bounded_and_resumable` |
+| S8 | `candidates_are_only_qualified_profiles_meeting_the_slot` |
+| S9 | `check_slot_qualification_refusal_codes[status_unevaluated]` |
+| S10 | `check_slot_qualification_refusal_codes[role_mismatch]` |
+| S11 | `check_slot_qualification_refuses_mismatched_reader_evidence[other-profiles-evidence]` |
+| S12 | `slot_boundary_refuses_unqualified_and_admits_the_exact_qualified_profile_across_restart` |
+| S13 | `database_refuses_update_delete_and_replace[profile_evaluations-update]` |
+| S14 | `schema_version_check_refuses_other_versions[profile_evaluations]` |
+| S15 | `database_refuses_update_delete_and_replace[profile_evaluations-replace_through_seq]` |
+| S16 | `latest_evaluation_decides` |
+| S17 | `candidates_are_only_qualified_profiles_meeting_the_slot` |
+| S18 | `rowid_replacement_is_refused_on_every_table[rowid-replace-profiles]` |
+| S19 | `rowid_replacement_is_refused_on_every_table[rowid-replace-evaluations]` |
+| S20 | `rowid_replacement_is_refused_on_every_table[rowid-replace-invalidations]` |
+| S21 | `next_seq_work_does_not_grow_with_rows` |
+| S22 | `out_of_range_stamps_are_integrity_errors[evaluation-issued-above-maximum]` |
+| S23 | `out_of_range_stamps_are_integrity_errors[evaluation-seq-above-maximum]` |
+| S24 | `invalid_clock_refuses_every_call[inf]` |
+| S25 | `conflicting_or_unregistered_evaluation_writes_nothing` |
+| S26 | `clock_is_read_once_per_data_call_and_never_otherwise` |
+| S27 | `close_failure_is_logged_and_the_operation_result_stands` |
+| S28 | `close_failure_is_logged_and_the_operation_result_stands` |
+| S29 | `start_accepts_only_this_layout[missing_trigger]` |
+| S30 | `start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| S31 | `unstarted_and_stopped_store_raise_unavailable` |
+| S32 | `start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| S33 | `start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| S34 | `unstarted_and_stopped_store_raise_unavailable` |
+| S35 | `sequence_bound_is_refused_before_any_write[record_evaluation]` |
+| S36 | `foreign_keys_are_on_before_the_first_statement_of_every_connection` |
+| S37 | `store_tables_are_visible_to_the_store_registry_detector` |
+| S38 | `a_start_failing_while_creating_leaves_no_layout_and_a_later_start_creates_it` |
+| S39 | `start_accepts_only_this_layout[extra_index]` |
+| S40 | `an_invalid_stored_maximum_sequence_is_an_integrity_error[record_evaluation]` |
+| S41 | `the_wal_switch_is_tried_again_while_another_connection_holds_the_lock` |
+| S42 | `a_wal_switch_still_busy_after_every_try_starts_with_a_warning` |
+| S43 | `a_wal_switch_still_busy_after_every_try_starts_with_a_warning` |
+| S44 | `a_wal_switch_answered_with_another_mode_starts_with_a_warning` |
+| S45 | `the_wal_switch_runs_with_the_busy_handler_off` |
+| S46 | `an_operational_error_without_an_sqlite_code_propagates_unchanged` |
+| S47 | `an_operational_error_without_an_sqlite_code_propagates_unchanged` |
+
 ### AD-1286 -- Elastic Team Contract: immutable team specs, durable slots, ephemeral attempts
 
 **Status:** SHIPPED (2026-10-11), PR #1503 (merge `cddcb9f6`), #1333 closed completed; inert until AD-1288; store opened only when crew sessions are enabled.
