@@ -241,25 +241,36 @@ class TestPageReaderAgent:
 
     @pytest.mark.asyncio
     async def test_perceive_strips_html(self):
-        """PageReaderAgent.perceive() strips HTML tags from fetched content.
+        """PageReaderAgent.perceive() hands on the page's text, not its markup.
 
-        We test the stripping logic directly using re.sub (the same approach
-        the agent uses). Without a runtime, fetched_content is not set, so
-        we verify the observation structure is correct without runtime.
+        BF-889: this goes through ``perceive`` with a fetched body. It used to
+        re-implement the agent's regex inline, so it could not fail when the
+        agent's own extraction changed. The inline CSS is the #1515 premise:
+        the pre-BF-889 regex kept it. Without a runtime nothing is fetched.
         """
         import re
 
-        raw_html = "<html><body><h1>Title</h1><p>Hello <b>world</b></p></body></html>"
-        text = re.sub(r"<[^>]+>", " ", raw_html)
-        text = re.sub(r"\s+", " ", text).strip()
-        assert "<" not in text
-        assert "Title" in text
-        assert "Hello" in text
-        assert "world" in text
+        from probos.agents.utility import web_agents
+
+        raw_html = (
+            "<html><head><style>.nav-item{color:red}</style></head><body>"
+            "<h1>Title</h1><p>Hello <b>world</b> &amp; more</p></body></html>"
+        )
+        # Premise: the regex the agent used before BF-889 keeps the CSS.
+        assert ".nav-item" in re.sub(r"<[^>]+>", " ", raw_html)
+
+        async def _fake_fetch(runtime, url):
+            return web_agents.FetchOutcome(body=raw_html, status_code=200, final_url=url)
+
+        msg = IntentMessage(intent="read_page", params={"url": "https://example.com"})
+        agent = _make_agent(PageReaderAgent)
+        agent._runtime = MagicMock()
+        with patch.object(web_agents, "_mesh_fetch_detailed", _fake_fetch):
+            obs = await agent.perceive(msg)
+        assert obs["fetched_content"] == "Title Hello world & more"
 
         # Agent without runtime still returns valid obs
         agent = _make_agent(PageReaderAgent)
-        msg = IntentMessage(intent="read_page", params={"url": "https://example.com"})
         obs = await agent.perceive(msg)
         assert obs["params"]["url"] == "https://example.com"
         # No fetched_content because runtime is None

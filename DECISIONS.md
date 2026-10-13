@@ -10,6 +10,13 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-889 -- read_page reads a long page in sections (2026-10-12, #1515)
+
+- *Offset contract.* `read_page` takes an optional `offset` (int >= 0, in characters of the extracted text) and reads 8,000-character sections; when a cut remains, the next offset is stated in a header prepended to the caller's result. A page whose nonempty text fits in one section gets no notice or header only when read from offset 0.
+- *Extraction.* Script, style, noscript, template and svg content is dropped and nothing else: head/title and nav/footer are kept. Stdlib only, in `probos/utils/html_text.py`.
+- *Descriptor.* `offset` is kept out of `IntentDescriptor.params` because `federation/mcp_server.py` projects every descriptor param as required. Rejected: in-call map-reduce (unbounded spend), raw-text mode (duplicates `http_fetch`; the AD-1148 cap would elide an 8,000-char window).
+- *Failure contract.* `html_to_text` returns text or raises `HtmlTextError`, with no degraded mode, because `html.parser` internals vary by CPython version and a degraded extraction would hand the model script and style text; `read_page` reports `the page could not be read as HTML`; `_strip_tags` falls back to a linear strip that still drops script and style; references are bounded instead of raising the process-wide int-digit limit; extraction runs in `asyncio.to_thread`. The linear strip ends skipped-element tag names at an HTML delimiter and finds those tags' end by the HTML tokenizer's attribute rules (other tags are removed by a simple pass), and `/>` closes all five skipped elements in both extractors, the XHTML reading, because the browser reading hid an XHTML page's whole article after `<script src="a.js"/>`; the accepted cost is that code placed after a self-closed `<script/>` is read as text.
+
 ### AD-1287 S1 -- Evidence-bound execution-profile qualification (2026-10-12)
 
 Slice S1 of AD-1287 (#1334), built and unwired: a content-addressed execution profile, an insert-only store that records evaluations and invalidations of it, and a slot gate that refuses a profile that is not `qualified`. Nothing under `src/` imports the S1 modules or calls the store or gate directly (a direct-reference scan, not every call flow); contract `prompts/ad-1287-s1-execution-profile-qualification.md`; no new AD or BF number; S2 and S3 remain and #1334 stays open.

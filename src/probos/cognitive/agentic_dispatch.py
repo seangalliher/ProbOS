@@ -1839,10 +1839,21 @@ _MESH_TOOL_SPECS: list[tuple[str, str, str, str, dict[str, Any]]] = [
         "read_page",
         "read_page",
         "Read Page",
-        "Fetch and read the contents of a web page by URL.",
+        "Fetch a web page by URL and return a summary of its text. A long page is read in sections of 8,000 characters: the result then starts with a note giving the next offset, and calling read_page again with that offset reads the next section.",
         {
             "type": "object",
-            "properties": {"url": {"type": "string"}},
+            "properties": {
+                "url": {"type": "string"},
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Characters into the page's text to start reading "
+                        "from. Omit it, or pass 0, for the start; to read on, "
+                        "pass the offset given in the previous result's note."
+                    ),
+                },
+            },
             "required": ["url"],
         },
     ),
