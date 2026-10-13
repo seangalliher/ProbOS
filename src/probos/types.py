@@ -336,6 +336,13 @@ class LLMResponse:
     # AD-1324 amendment 2: closed token naming WHY a tier refusal happened (floor_unmet, ceiling,
     # exact_unavailable, ineligible, route_unverifiable, redo_floor_unmet); None = unclassified.
     refusal_cause: str | None = None
+    # AD-1327: who answered, as distinct from what was asked. ``answered_tier`` is the tier whose
+    # fallback-chain attempt produced this response (``tier`` stays the requested one); set by
+    # ``OpenAICompatibleClient``'s attempt loop and kept on cache replays. ``answered_model`` is
+    # the model id the provider's reply named (``model`` stays the id sent): verbatim text, or ""
+    # when the reply named none usable. None = not reported (test doubles, the mock client, errors).
+    answered_tier: str | None = None
+    answered_model: str | None = None
 
 
 class EscalationTier(Enum):

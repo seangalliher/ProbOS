@@ -34,6 +34,7 @@ import probos.__main__ as main_mod
 from probos import provider_setup as ps
 from probos.cognitive.image_gen_dispatch import is_image_gen_tier_configured
 from probos.cognitive.llm_client import _LLM_TIERS
+from probos.cognitive.verifier_independence import is_verifier_tier_configured
 from probos.cognitive.vision_dispatch import is_vision_tier_configured
 from probos.config import load_config
 from probos.doctor.checks.config_check import _ConfigCheck
@@ -884,7 +885,11 @@ def _configured(config: Path) -> dict[str, bool]:
     # Each tier's runtime consumer's own check; this read image_gen through is_vision_tier_configured too (B8).
     cognitive = load_config(config).cognitive
     return {
-        tier: is_image_gen_tier_configured(cognitive) if tier == "image_gen" else is_vision_tier_configured(cognitive, tier)
+        tier: (
+            is_image_gen_tier_configured(cognitive) if tier == "image_gen"
+            else is_verifier_tier_configured(cognitive) if tier == "verifier"
+            else is_vision_tier_configured(cognitive, tier)
+        )
         for tier in _OPTIONAL_TIERS
     }
 

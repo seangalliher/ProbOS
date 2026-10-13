@@ -95,7 +95,7 @@ def test_tier_tuples_are_unchanged() -> None:
     assert llm_mod.TEXT_TIERS == ("fast", "standard", "deep")
     assert llm_mod._TIER_ORDER == ("fast", "standard", "deep")
     assert llm_mod._LLM_TIERS == (
-        "fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen",
+        "fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier",
     )
 
 

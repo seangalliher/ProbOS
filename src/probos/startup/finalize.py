@@ -2164,6 +2164,11 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
     from probos.cognitive.crew_trust import CrewSessionTrustRecorder
     from probos.cognitive.crew_verifier import SubtaskVerifier
     from probos.cognitive.swe_harness.agentic_loop import resolve_event_correlation_settings
+    from probos.cognitive.verifier_independence import (
+        VERIFIER_REMEDIATION,
+        VerifierJudgePolicy,
+        verifier_independence_report,
+    )
 
     emit_fn = getattr(runtime, "emit_event", None)
     order_manager = getattr(runtime, "order_manager", None)
@@ -2232,6 +2237,18 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         ),
         **resolve_event_correlation_settings(getattr(config, "agentic_loop", None)),
     )
+    # AD-1327: the judge tier and model, decided once from the config. The log line is
+    # the runtime's record of whether the verifier shares a crew tier's model.
+    judge_policy = VerifierJudgePolicy.from_cognitive(config.cognitive)
+    independence, judge_report = verifier_independence_report(judge_policy)
+    if independence == "independent":
+        logger.info("AD-1327: crew verifier: %s", judge_report)
+    else:
+        logger.warning(
+            "AD-1327: crew verifier: %s; each verdict records its judge model and this "
+            "independence. %s",
+            judge_report, VERIFIER_REMEDIATION,
+        )
     verifier = SubtaskVerifier(
         llm_client=llm_client,
         work_item_store=work_item_store,
@@ -2241,6 +2258,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         runtime=runtime,
         max_convergence_rounds=max_rounds,
         ontology=ontology,
+        judge_policy=judge_policy,
     )
     synthesizer = CrewSynthesizer(
         llm_client=llm_client,
@@ -3845,7 +3863,8 @@ def _wire_model_routing(*, runtime: Any, config: "SystemConfig") -> bool:
     Extracted from ``finalize_startup`` so the config -> router -> client
     crossing has a testable seam. ``build_model_routing`` seeds the registry
     with exactly the models the operator configured for the text tiers
-    (``TEXT_TIERS``; the vision tiers bypass the router, BF-273), priced from
+    (``TEXT_TIERS``; the vision tiers bypass the router, BF-273) and, when
+    ``llm_model_verifier`` is set, the verifier tier (AD-1327, ``routed_tiers``), priced from
     the built-in catalog where a name matches, and hands the router the
     configured cost ceiling, which it applies on every text-tier routing call.
     The boot factory attached an identical router before its first probe
@@ -3854,7 +3873,7 @@ def _wire_model_routing(*, runtime: Any, config: "SystemConfig") -> bool:
     configured tier models unrouted. Returns True when routing is wired.
     """
     from probos.cognitive.llm_client import TEXT_TIERS
-    from probos.cognitive.model_router import build_model_routing
+    from probos.cognitive.model_router import build_model_routing, routed_tiers
 
     router = build_model_routing(config, emit_event=runtime.emit_event)
     if router is None:
@@ -3863,7 +3882,7 @@ def _wire_model_routing(*, runtime: Any, config: "SystemConfig") -> bool:
         return False
     runtime.model_registry = router.registry
     runtime.model_router = router
-    router.report_cost_ceiling(TEXT_TIERS)
+    router.report_cost_ceiling(routed_tiers(config.cognitive))
     # Wire ModelRouter into the existing LLM client (real consumer, not theater).
     # The client's `model_router` public attribute is consulted at every
     # _complete_inner() iteration via _resolve_model_for_tier(). Existing

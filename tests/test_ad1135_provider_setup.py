@@ -33,6 +33,7 @@ import probos.__main__ as main_mod
 from probos import provider_setup as ps
 from probos.cognitive.image_gen_dispatch import is_image_gen_tier_configured
 from probos.cognitive.llm_client import _LLM_TIERS
+from probos.cognitive.verifier_independence import is_verifier_tier_configured
 from probos.cognitive.vision_dispatch import is_vision_tier_configured
 from probos.config import CognitiveConfig, load_config
 
@@ -698,7 +699,8 @@ def test_provider_setup_is_imported_only_by_the_cli() -> None:
     assert scanned > 100  # premise: the walk saw the package, not an empty directory
     # AD-1137 (#1056): `probos doctor` checks providers with setup's probes; both run in the operator's
     # CLI, and tests/test_ad1137_doctor.py pins the doctor package to __main__ in turn.
-    assert importers == {"__main__.py", "doctor/runner.py", "doctor/checks/llm_check.py"}
+    # AD-1327: the crew verifier's doctor check reads setup's tier checks and key redaction, as llm_check does.
+    assert importers == {"__main__.py", "doctor/runner.py", "doctor/checks/llm_check.py", "doctor/checks/verifier_check.py"}
 
 
 def _values() -> dict[str, str]:
@@ -1122,7 +1124,11 @@ _OLD_SHARED = "http://127.0.0.1:8080/v1"
 
 
 def _consumer_configured(config: object, tier: str) -> bool:
-    # What the tier's runtime consumer reads: image_gen_dispatch.py:142 for image_gen, else vision_dispatch's check.
+    # What the tier's runtime consumer reads: image_gen_dispatch.py:142 for image_gen, the crew verifier's own
+    # check for verifier (AD-1327; vision_dispatch's check reads True for a tier it does not know, B8), else
+    # vision_dispatch's check.
+    if tier == "verifier":
+        return is_verifier_tier_configured(config)
     return is_image_gen_tier_configured(config) if tier == "image_gen" else is_vision_tier_configured(config, tier)
 
 
@@ -1144,7 +1150,7 @@ def test_optional_tier_endpoints_match_the_runtime_tier_config(tmp_path: Path) -
         resolved = runtime.tier_config(tier)
         assert (endpoint.base_url, endpoint.model) == (resolved["base_url"], resolved["model"])
         assert endpoint.configured is _consumer_configured(runtime, tier)
-    assert {tier for tier, endpoint in endpoints.items() if endpoint.inherited} == {"vision", "compute_use", "image_gen"}
+    assert {tier for tier, endpoint in endpoints.items() if endpoint.inherited} == {"vision", "compute_use", "image_gen", "verifier"}
     # Premise: the consumers' checks tell these tiers apart, so the comparison above can fail. This set held image_gen
     # while every tier was read through is_vision_tier_configured, True for a tier it does not know (B8).
     assert {tier for tier, endpoint in endpoints.items() if endpoint.configured} == {"vision_fast"}
@@ -1376,7 +1382,9 @@ def test_tier_configured_checks_are_each_optional_tier_consumers_own_check() -> 
         configs = [CognitiveConfig.model_validate({f"llm_{k}_{tier}": v for k, v in shape.items()}) for shape in shapes]
         answers = [ps.TIER_CONFIGURED_CHECKS[tier](config) for config in configs]
         assert answers == [_consumer_configured(config, tier) for config in configs]
-        assert answers == [False, False, False, True]  # premise: each check gives both answers across these shapes
+        # AD-1327: the verifier tier, like the text tiers, needs only a model (its URL falls back to the shared one).
+        expected = [False, True, False, True] if tier == "verifier" else [False, False, False, True]
+        assert answers == expected  # premise: each check gives both answers across these shapes
     # Premise: the vision check reads True for image_gen with nothing set, so it cannot stand in for image_gen's own.
     assert is_vision_tier_configured(CognitiveConfig(), "image_gen") is True
 

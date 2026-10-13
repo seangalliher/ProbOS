@@ -46,7 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from probos.cognitive.crew_verdict import criteria_to_json
+from probos.cognitive.crew_verdict import criteria_to_json, judge_to_json
 from probos.cognitive.crew_verifier import SubtaskVerifier
 from probos.consensus.shapley import compute_shapley_values
 from probos.events import EventType
@@ -187,6 +187,7 @@ def _legacy_episode_payload(
                     if outcome.verdict.criteria is not None
                     else {}
                 ),
+                **({"judge": judge_to_json(outcome.verdict.judge)} if outcome.verdict.judge is not None else {}),
             }
             for outcome in outcomes
         ],
@@ -1078,6 +1079,7 @@ class CrewSynthesizer:
                             {"criteria": criteria_to_json(oc.verdict.criteria)}
                             if oc.verdict.criteria is not None else {}
                         ),
+                        **({"judge": judge_to_json(oc.verdict.judge)} if oc.verdict.judge is not None else {}),
                     }
                     for oc in outcomes
                 ],
@@ -1274,6 +1276,7 @@ class CrewSynthesizer:
                         {"criteria": criteria_to_json(oc.verdict.criteria)}
                         if oc.verdict.criteria is not None else {}
                     ),
+                    **({"judge": judge_to_json(oc.verdict.judge)} if oc.verdict.judge is not None else {}),
                 }
                 for oc in outcomes
             ]

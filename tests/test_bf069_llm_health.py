@@ -23,8 +23,8 @@ class TestLLMClientHealthTracking:
         client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
         # Initialize the health tracking state
         # AD-732 + AD-706c-2 + AD-730-3 + AD-742a: include vision + vision_fast + compute_use + image_gen.
-        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")}
-        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")}
+        client._consecutive_failures = {t: 0 for t in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier")}
+        client._consecutive_successes = {t: 0 for t in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier")}
         client._min_consecutive_healthy = 3
         client._last_success = {}
         client._last_failure = {}
@@ -63,7 +63,7 @@ class TestLLMClientHealthTracking:
         # AD-732 + AD-706c-2 + AD-730-3 + AD-742a: vision, vision_fast, compute_use, and
         # image_gen are peer tiers; mark them unreachable too so the overall-offline
         # assertion holds.
-        for tier in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen"):
+        for tier in ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier"):
             client._consecutive_failures[tier] = 3
         status = client.get_health_status()
         assert status["overall"] == "offline"
@@ -538,7 +538,7 @@ class TestDwellTimeCriterion:
         from probos.config import CognitiveConfig
 
         # AD-732 + AD-706c-2 + AD-730-3 + AD-742a: include vision + vision_fast + compute_use + image_gen in state-init dicts.
-        _tiers = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen")
+        _tiers = ("fast", "standard", "deep", "vision", "vision_fast", "compute_use", "image_gen", "verifier")
         client = OpenAICompatibleClient(
             config=CognitiveConfig(
                 default_llm_tier="fast",

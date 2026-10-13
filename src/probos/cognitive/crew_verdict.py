@@ -99,6 +99,78 @@ def criteria_to_json(
     return [criterion.model_dump(mode="json") for criterion in criteria]
 
 
+# AD-1327: how independent the model that judged a verdict is of the crew's models.
+# "unknown" is degraded like the two "same" outcomes and is never reported as
+# "independent" (cognitive/verifier_independence.py decides it).
+JudgeIndependence = Literal["same_model", "same_family", "unknown", "independent"]
+MAX_JUDGE_MODEL_CHARS = 256
+
+
+def is_persistable_judge_model(value: str) -> bool:
+    """AD-1327: whether the text ``value`` can be a judge record's ``model``.
+
+    No NUL, at most ``MAX_JUDGE_MODEL_CHARS`` characters, and strict UTF-8:
+    a lone surrogate (what a JSON ``\\ud800`` escape decodes to) is refused, because the
+    strict encoders the record passes through (the finalizer checkpoint, owned steps,
+    trust evidence) cannot write it. The one bound for a persisted record
+    (``JudgeProvenance``) and for a provider's reply (``VerifierJudgePolicy.provenance``).
+    """
+    if "\x00" in value or len(value) > MAX_JUDGE_MODEL_CHARS:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+class JudgeProvenance(BaseModel):
+    """AD-1327: the model that judged one verdict, and how independent it is of the crew.
+
+    ``tier`` is the tier the verifier requested: ``verifier`` when
+    ``cognitive.llm_model_verifier`` is set, else ``standard``. ``model`` is the
+    model id the provider's reply named (``LLMResponse.answered_model``), ``""``
+    when it named none usable. ``fallback`` is True when the requested tier is not
+    shown to have answered (``LLMResponse.answered_tier``): another tier of the
+    fallback chain answered, or the response does not say which tier did.
+    Persisted beside ``criteria`` and, like it, omitted when absent, so a verdict
+    written before AD-1327 keeps its bytes.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    tier: Literal["verifier", "standard"]
+    model: str
+    independence: JudgeIndependence
+    fallback: bool
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _validate_model(cls, value: object) -> str:
+        if type(value) is not str or not is_persistable_judge_model(value):
+            raise ValueError("judge_provenance_invalid")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_consistency(self) -> JudgeProvenance:
+        if self.fallback and self.independence == "independent":
+            raise ValueError("judge_provenance_invalid")
+        if not self.model and self.independence != "unknown":
+            raise ValueError("judge_provenance_invalid")
+        return self
+
+
+def parse_judge(value: object) -> JudgeProvenance:
+    """AD-1327: validate a persisted judge record (a JSON object); anything else is refused."""
+    if type(value) is not dict:
+        raise ValueError("judge_provenance_invalid")
+    return JudgeProvenance.model_validate(value, strict=True)
+
+
+def judge_to_json(judge: JudgeProvenance) -> dict[str, Any]:
+    return judge.model_dump(mode="json")
+
+
 def render_critique(
     critique: str,
     criteria: tuple[CriterionVerdict, ...] | None,

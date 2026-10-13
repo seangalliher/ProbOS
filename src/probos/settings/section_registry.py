@@ -109,6 +109,9 @@ SECTIONS: tuple[SectionDescriptor, ...] = (
             FieldDescriptor("cognitive.llm_base_url_image_gen", "Image-gen tier — base URL", "text"),
             FieldDescriptor("cognitive.llm_model_image_gen", "Image-gen tier — model", "text"),
             FieldDescriptor("cognitive.llm_timeout_image_gen", "Image-gen tier — timeout (s)", "float"),
+            FieldDescriptor("cognitive.llm_base_url_verifier", "Verifier tier — base URL", "text"),
+            FieldDescriptor("cognitive.llm_model_verifier", "Verifier tier — model", "text"),
+            FieldDescriptor("cognitive.llm_timeout_verifier", "Verifier tier — timeout (s)", "float"),
             FieldDescriptor(
                 "cognitive.whisper_model_path",
                 "Whisper model path",

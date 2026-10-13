@@ -308,9 +308,10 @@ def test_verdict_fields_append_without_changing_existing_positional_constructors
     assert legacy.criteria is None and legacy.verification_defect is True
     assert session.criteria is None and session.tokens_used == 7
     assert [field.name for field in fields(VerificationVerdict)] == [
-        "accepted", "confidence", "critique", "verifier_agent_id", "verification_defect", "criteria",
+        "accepted", "confidence", "critique", "verifier_agent_id", "verification_defect", "criteria", "judge",
     ]
-    assert fields(SessionVerificationPass)[-1].name == "criteria"
+    assert [field.name for field in fields(SessionVerificationPass)][-2:] == ["criteria", "judge"]  # AD-1327 appends
+    assert legacy.judge is None and session.judge is None
 
 
 def _canonical(document: dict[str, Any]) -> bytes:
