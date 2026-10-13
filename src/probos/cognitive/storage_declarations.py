@@ -190,4 +190,30 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "first trusted digests (D-B2)."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.profile-qualifications",
+        title="Execution profiles, evaluation evidence and invalidations (AD-1287 S1)",
+        owner_module="probos.cognitive.profile_qualification_store",
+        owner_symbol="ProfileQualificationStore",
+        canonical_path="profile_qualifications.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="unowned",
+        retention=StoreRetention.UNBOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Insert-only by design: nine triggers abort every UPDATE, every DELETE and every replacing "
+            "INSERT on the three WITHOUT ROWID tables, and the module has no delete path. Growth is one row "
+            "per registered profile, one per evaluation run and one per invalidation; this slice does not "
+            "bound evaluation runs per profile. Archival belongs to a later lifecycle slice; this one adds none."
+        ),
+        notes=(
+            "Not wired: nothing constructs or starts the store in production until AD-1288 commission "
+            "admission calls admit_qualified_attempt, so a default runtime never creates the file "
+            "(lifecycle_owner is the 'unowned' sentinel). start() refuses a file whose schema is not exactly "
+            "this store's and issues no schema or data write to it. Each row the store uses to decide or return a result is re-verified and one that "
+            "does not verify is refused; a missing row, or a store stamp rewritten within range, is not "
+            "detected, and evaluators are not authenticated."
+        ),
+    ),
 )
