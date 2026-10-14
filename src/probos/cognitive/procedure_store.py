@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from probos.cognitive.procedure_challenges import ProcedureChallengeLedger
     from probos.cognitive.procedures import Procedure
     from probos.protocols import ConnectionFactory, DatabaseConnection
 
@@ -135,6 +136,11 @@ class ProcedureStore:
         self._write_lock = threading.Lock()
         self._chroma_collection: Any = None
         self._chroma_client: Any = None
+        # AD-1326 (D1b): the ledger's connection is held here, one attribute level deep, so
+        # BF-882's last-resort close (startup/shutdown.py _direct_connections) reaches it when
+        # this store's stop() fails during a startup rollback.
+        self._challenges_db: DatabaseConnection | None = None
+        self._challenges: ProcedureChallengeLedger | None = None  # AD-1326
 
     async def start(self) -> None:
         """Initialize SQLite index and ChromaDB collection."""
@@ -159,6 +165,8 @@ class ProcedureStore:
             await self._init_chroma()
             # AD-535: Auto-promote qualifying Level 1 procedures to Level 2
             await self._migrate_qualifying_procedures()
+            # AD-1326: the challenger ledger shares this store's lifecycle, not its file.
+            await self._start_challenge_ledger()
         except asyncio.CancelledError:
             await self._close_resources()
             raise
@@ -274,12 +282,65 @@ class ProcedureStore:
         except Exception as e:
             logger.debug("AD-567d: Source anchors schema migration failed: %s", e)
 
+    async def _start_challenge_ledger(self) -> None:
+        """AD-1326: open procedures_challenges.db; a failure leaves the store running without it.
+
+        This store opens the connection and holds it as ``_challenges_db`` (D1b); the ledger
+        only uses it. Assigned before the schema runs, so a cancellation during it is closed by
+        ``start``'s own ``_close_resources``. The name sorts after ``procedures.db``, so the hot
+        backup (which copies in sorted path order) copies the ledger second, and when both online
+        backups succeed it is never older than ``procedures.db``
+        (``test_backup_copies_the_ledger_after_procedures_db``). The backup's raw-copy fallback can
+        copy an older ledger image; admission then refuses its undecided challengers (R3-5, 3g).
+        """
+        from probos.cognitive.procedure_challenges import ProcedureChallengeLedger
+
+        try:
+            self._challenges_db = await self._connection_factory.connect(
+                str(self._data_dir / "procedures_challenges.db")
+            )
+            ledger = ProcedureChallengeLedger(self._challenges_db)
+            await ledger.start()
+        except Exception:
+            opened, self._challenges_db = self._challenges_db, None
+            if opened is not None:
+                try:
+                    await opened.close()
+                except Exception:
+                    # Log-and-degrade: the WARNING below already reports the ledger as unavailable.
+                    logger.debug("AD-1326: closing the unopened ledger's connection failed", exc_info=True)
+            logger.warning(
+                "AD-1326: the procedure challenger ledger could not be opened; FIX evolution "
+                "follows its legacy handling until the next start",
+                exc_info=True,
+            )
+            return
+        self._challenges = ledger
+
+    @property
+    def challenges(self) -> ProcedureChallengeLedger | None:
+        """AD-1326: the challenger ledger, or ``None`` when it is not open."""
+        return self._challenges
+
     async def stop(self) -> None:
         """Close database connections."""
         await self._close_resources()
 
     async def _close_resources(self) -> None:
         """Close and clear all resources acquired by this store."""
+        ledger, self._challenges = self._challenges, None
+        if ledger is not None:
+            ledger.detach()
+        challenges_db, self._challenges_db = self._challenges_db, None
+        if challenges_db is not None:
+            try:
+                await challenges_db.close()
+            except Exception:
+                logger.warning(
+                    "AD-1326: failed to close the procedure challenger ledger's database; its "
+                    "reference is cleared and shutdown continues",
+                    exc_info=True,
+                )
         self._chroma_collection = None
         chroma_client = self._chroma_client
         self._chroma_client = None
@@ -649,6 +710,49 @@ class ProcedureStore:
             )
             return False
 
+    async def sync_routing_index(self, procedure_id: str) -> bool:
+        """AD-1326: rewrite one procedure's semantic-index entry from SQLite; whether routing agrees.
+
+        ``find_matching`` reads only the index, and ``save``/``deactivate`` report an index
+        write failure only in the log. True when the entry was rewritten from the
+        authoritative row, when there is no row (``find_matching`` drops ids without one),
+        or when this store runs without an index (it then matches nothing); False when the
+        index is open and the write failed (``_save_to_chroma`` logs the WARNING). The entry's
+        ``is_active`` comes from the row's column through ``routing_state``, not from the snapshot
+        ``get`` returns (review rounds 3 and 6, R3-3, R6-1;
+        ``test_sync_routing_index_publishes_the_activity_column``).
+        """
+        if not self._chroma_collection:
+            return True
+        procedure = await self.get(procedure_id)
+        if procedure is None:
+            return True
+        state = await self.routing_state(procedure_id)
+        if state is not None:
+            procedure.is_active = state[0]  # R3-3/R6-1: publish the column admission reads
+        return self._save_to_chroma(procedure)
+
+    async def routing_state(self, procedure_id: str) -> tuple[bool, str] | None:
+        """AD-1326: a procedure's ``is_active`` and ``superseded_by`` columns; ``None`` without a row.
+
+        Routing admission (``_get_index_row``) reads these columns. The JSON snapshot ``get``
+        rebuilds a procedure from can be older: ``deactivate``, archive and ``restore_procedure``
+        swallow a failed snapshot UPDATE after the columns change. ``get`` keeps its base
+        behaviour for its legacy callers; every lineage decision of AD-1326 (admission, the
+        published index flag, ``ProcedureChallenger``) reads here, so they share one source
+        (review round 6, R6-1; ``test_routing_state_reads_the_columns_not_the_snapshot``).
+        """
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT is_active, superseded_by FROM procedure_records WHERE id = ?",
+            (procedure_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return bool(row[0]), row[1] or ""
+
     async def get(self, procedure_id: str) -> "Any | None":
         """Load a procedure from SQLite index by ID."""
         if not self._db:
@@ -824,19 +928,52 @@ class ProcedureStore:
             return []
 
     async def _get_index_row(self, procedure_id: str) -> dict[str, Any] | None:
-        """Load procedure metadata from SQLite index (no full content)."""
+        """Load a routable procedure's metadata from SQLite (no full content); ``None`` otherwise.
+
+        ``find_matching`` admits a semantic-index match only through this row. SQLite's
+        ``is_active`` can veto an entry the index admits, so a stale ACTIVE entry does not route
+        an inactive procedure (``save`` and ``deactivate`` report an index write failure only in
+        the log; AD-1326 review round 2, R2-1, ``test_find_matching_admits_only_rows_active_in_sqlite``).
+        It cannot admit one the index excludes: ``find_matching`` filters the index on
+        ``is_active`` first, so a row active in SQLite whose entry is missing or says inactive is
+        not found until that entry is rewritten (review round 3, R3-6). While the ledger is open
+        and readable, a challenger it holds ``retired`` is refused whatever both say, and so is
+        one it holds ``pending`` (R3-5,
+        ``test_find_matching_refuses_a_challenger_the_ledger_holds_undecided``) unless
+        ``procedures.db`` already holds its completed promotion -- its champion inactive and
+        superseded by it, the pair ``ProcedureChallenger._reconcile`` records as ``restored_promotion``
+        when the challenger service is enabled and a dream reaches its step -- so that winner routes
+        with no dream cycle, also with the feature disabled (review round 4, R4-2; review round 5, R5-4). With no open ledger, or one that cannot be read, SQLite alone decides, as before AD-1326.
+        """
         if not self._db:
             return None
         cursor = await self._db.execute(
             """SELECT id, name, evolution_type, compilation_level,
                 intent_types, total_selections, total_applied,
                 total_completions, total_fallbacks, is_negative
-            FROM procedure_records WHERE id = ?""",
+            FROM procedure_records WHERE id = ? AND is_active = 1""",
             (procedure_id,),
         )
         row = await cursor.fetchone()
         if not row:
             return None
+        if self._challenges is not None:
+            try:
+                record = await self._challenges.get(procedure_id)
+            except Exception:
+                # Log-and-degrade (fail open): admission falls back to SQLite alone, as before AD-1326.
+                logger.warning(
+                    "AD-1326: the challenger ledger could not be read while routing %s; SQLite alone admits it",
+                    procedure_id,
+                    exc_info=True,
+                )
+                record = None
+            if record is not None and record.bars_routing:
+                if record.status != "pending":
+                    return None
+                # R4-2: an older ledger beside a procedures.db that holds the completed promotion.
+                if await self.routing_state(record.champion_id) != (False, procedure_id):  # R6-1: _reconcile's predicate
+                    return None
         return {
             "id": row[0],
             "name": row[1],

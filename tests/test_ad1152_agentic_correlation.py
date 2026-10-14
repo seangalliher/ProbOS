@@ -280,6 +280,16 @@ async def _off_observation(
     assert config["protected_execution"].pop("effect_broker_enabled") is False
     assert config["protected_execution"].pop("effect_lease_seconds") == 120
     assert config["protected_execution"].pop("effect_max_attempts") == 3
+    # AD-1326's procedure-challenger controls were added after this capture too. The flag is ON
+    # by default (FIX evolution as a challenger); this agentic-loop observation never dreams.
+    assert config["dreaming"].pop("procedure_challenger_enabled") is True
+    assert config["dreaming"].pop("procedure_challenger_used_contexts") == 2
+    assert config["dreaming"].pop("procedure_challenger_held_out_episodes") == 2
+    assert config["dreaming"].pop("procedure_challenger_min_decisions") == 3
+    assert config["dreaming"].pop("procedure_challenger_promotion_margin") == 0.1
+    assert config["dreaming"].pop("procedure_challenger_max_judge_calls_per_cycle") == 16
+    assert config["dreaming"].pop("procedure_challenger_max_pending_cycles") == 5
+    assert config["dreaming"].pop("procedure_challenger_max_pending_per_champion") == 2
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

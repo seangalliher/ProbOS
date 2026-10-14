@@ -133,6 +133,7 @@ def _make_dreaming_engine(**overrides):
     engine._last_consolidated_count = 0
     engine._llm_client = overrides.get("llm_client", AsyncMock())
     engine._procedure_store = overrides.get("procedure_store", _make_store_mock())
+    engine._procedure_challenger = None  # AD-1326
     engine._last_procedures = []
     engine._extracted_cluster_ids = set()
     engine._addressed_degradations = {}

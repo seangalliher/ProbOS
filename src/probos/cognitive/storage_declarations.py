@@ -216,4 +216,43 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "detected, and evaluators are not authenticated."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.procedure-challenges",
+        title="Procedure challengers and their head-to-head evidence (AD-1326)",
+        owner_module="probos.cognitive.procedure_challenges",
+        owner_symbol="ProcedureChallengeLedger",
+        canonical_path="procedures/procedures_challenges.db",
+        criticality=StoreCriticality.OPTIONAL,
+        lifecycle_owner="probos.cognitive.procedure_store.ProcedureStore",
+        retention=StoreRetention.UNBOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Nothing is deleted: a retired challenger keeps its evidence (#1510). Growth is one "
+            "challenge row per FIX evolution, at most dreaming.procedure_challenger_max_pending_per_champion "
+            "pending per champion; at most dreaming.procedure_challenger_max_judge_calls_per_cycle / 2 "
+            "comparison rows per dream cycle; and one cycle row per dream cycle that judged, deferred or "
+            "decided something. Archival belongs to a later lifecycle slice; this one adds none."
+        ),
+        notes=(
+            "Opened and closed by ProcedureStore.start/stop beside procedures.db through the store's "
+            "ConnectionFactory, on its own connection, so its writes never share procedures.db's "
+            "transactions. ProcedureStore holds that connection as a direct attribute, which BF-882's "
+            "last-resort close reaches when the store's stop() fails in a startup rollback. A ledger that fails to open leaves ProcedureStore running and FIX evolution on "
+            "its legacy handling. The two files are copied separately; the backup copies in sorted path "
+            "order, so this file (named to sort after procedures.db) is copied second and, when both "
+            "online backups succeed, a restored ledger is never older than procedures.db; the raw-copy "
+            "fallback can copy an older image. While this ledger is open and readable, "
+            "ProcedureStore.find_matching refuses any challenger it holds retired, and any it holds "
+            "pending unless procedures.db already holds that challenger's completed promotion (its "
+            "champion inactive and superseded by it), so no undecided challenger routes; with the ledger "
+            "closed or unreadable, procedures.db alone decides (fail-open). When the challenger service "
+            "is enabled (dreaming.procedure_challenger_enabled) and a dream reaches its step, a pair from "
+            "different moments is reconciled: the step records a promotion procedures.db already holds "
+            "(restored_promotion), deactivates any other routable pending challenger and retires orphans "
+            "with their evidence (challenger_missing, champion_inactive); with the service disabled the "
+            "ledger is left as restored and routing still follows the rule above. A ledger newer than "
+            "procedures.db leaves the older routing in place."
+        ),
+    ),
 )

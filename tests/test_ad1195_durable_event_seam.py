@@ -323,11 +323,11 @@ async def _reopen(db_path: Path) -> EventLog:
 
 def test_route_premises_are_the_contract_counts() -> None:
     """BYTE-1/BYTE-2 parametrize over these sets; a drift must not silently shrink them."""
-    assert len(EventType) == 396
-    assert len(ROUTED_VALUES) == 28
-    assert (len(_ROUTED), len(_NOT_ROUTED)) == (28, 368)
+    assert len(EventType) == 397
+    assert len(ROUTED_VALUES) == 29
+    assert (len(_ROUTED), len(_NOT_ROUTED)) == (29, 368)
     assert {m.value for m in _ROUTED} == ROUTED_VALUES
-    assert sum(1 for p in DECLARATIONS.values() if p is Persistence.DURABLE) == 36
+    assert sum(1 for p in DECLARATIONS.values() if p is Persistence.DURABLE) == 37
     assert len(OWNER_RECORDS) == 8
     assert all(persistence_of(name) is Persistence.DURABLE for name in OWNER_RECORDS)
     assert all(is_routed(m.name) for m in _ROUTED)

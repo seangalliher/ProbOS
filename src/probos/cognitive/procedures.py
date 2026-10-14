@@ -20,6 +20,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.cognitive.crew_verdict import is_persistable_judge_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,6 +172,33 @@ class EvolutionResult:
     procedure: Procedure
     content_diff: str
     change_summary: str
+    # AD-1326: the tier and model that answered the rewrite (LLMResponse.answered_tier /
+    # answered_model); "" when the response did not say or named unpersistable text.
+    optimizer_tier: str = ""
+    optimizer_model: str = ""
+
+
+# AD-1326 (#1510): procedure REWRITING (FIX and DERIVED evolution) is the optimizer and runs
+# on the strongest tier. The floor keeps a deep outage or cost-ceiling exclusion from landing
+# on the fast tier: AD-1324's min_tier only removes lower tiers, so the chain is deep, then
+# standard. Extraction and the evolution gate stay on standard.
+PROCEDURE_REWRITE_TIER = "deep"
+PROCEDURE_REWRITE_MIN_TIER = "standard"
+
+
+def _optimizer_provenance(response: Any) -> tuple[str, str]:
+    """AD-1326: the tier and model that answered a rewrite, each persistable text or "".
+
+    ``getattr`` because evolution callers pass any object with ``content`` (the
+    procedure tests use bare mocks); only an exact ``str`` the judge-model bound
+    accepts (no NUL, at most 256 characters, strict UTF-8) is kept.
+    """
+    tier = getattr(response, "answered_tier", None)
+    model = getattr(response, "answered_model", None)
+    return (
+        tier if type(tier) is str and is_persistable_judge_model(tier) else "",
+        model if type(model) is str and is_persistable_judge_model(model) else "",
+    )
 
 
 # ------------------------------------------------------------------
@@ -761,7 +790,9 @@ async def evolve_fix_procedure(
 ) -> EvolutionResult | None:
     """Evolve a FIX replacement for a degraded procedure.
 
-    The parent is deactivated by the caller after successful evolution.
+    The caller decides what replaces what. With procedure challengers on (AD-1326,
+    the default) the result is saved inactive and the parent keeps routing until the
+    result wins head-to-head; with them off the caller deactivates the parent.
     Returns None if the LLM cannot produce a repair.
     """
     try:
@@ -784,7 +815,8 @@ async def evolve_fix_procedure(
         request = LLMRequest(
             prompt=user_prompt,
             system_prompt=_FIX_SYSTEM_PROMPT,
-            tier="standard",
+            tier=PROCEDURE_REWRITE_TIER,
+            min_tier=PROCEDURE_REWRITE_MIN_TIER,
             temperature=0.0,
             max_tokens=2048,
         )
@@ -814,10 +846,13 @@ async def evolve_fix_procedure(
         content_diff = _generate_content_diff(parent, procedure)
         change_summary = data.get("change_summary", "")
 
+        optimizer_tier, optimizer_model = _optimizer_provenance(response)
         return EvolutionResult(
             procedure=procedure,
             content_diff=content_diff,
             change_summary=change_summary,
+            optimizer_tier=optimizer_tier,
+            optimizer_model=optimizer_model,
         )
 
     except Exception as e:
@@ -871,7 +906,8 @@ async def evolve_derived_procedure(
         request = LLMRequest(
             prompt=user_prompt,
             system_prompt=_DERIVED_SYSTEM_PROMPT,
-            tier="standard",
+            tier=PROCEDURE_REWRITE_TIER,
+            min_tier=PROCEDURE_REWRITE_MIN_TIER,
             temperature=0.0,
             max_tokens=2048,
         )
@@ -909,10 +945,13 @@ async def evolve_derived_procedure(
         content_diff = _generate_content_diff(parents[0], procedure)
         change_summary = data.get("change_summary", "")
 
+        optimizer_tier, optimizer_model = _optimizer_provenance(response)
         return EvolutionResult(
             procedure=procedure,
             content_diff=content_diff,
             change_summary=change_summary,
+            optimizer_tier=optimizer_tier,
+            optimizer_model=optimizer_model,
         )
 
     except Exception as e:
@@ -1291,7 +1330,8 @@ async def evolve_fix_from_fallback(
         request = LLMRequest(
             prompt=user_prompt,
             system_prompt=_FALLBACK_FIX_SYSTEM_PROMPT,
-            tier="standard",
+            tier=PROCEDURE_REWRITE_TIER,
+            min_tier=PROCEDURE_REWRITE_MIN_TIER,
             temperature=0.0,
             max_tokens=2048,
         )
@@ -1321,10 +1361,13 @@ async def evolve_fix_from_fallback(
         content_diff = _generate_content_diff(parent, procedure)
         change_summary = data.get("change_summary", "")
 
+        optimizer_tier, optimizer_model = _optimizer_provenance(response)
         return EvolutionResult(
             procedure=procedure,
             content_diff=content_diff,
             change_summary=change_summary,
+            optimizer_tier=optimizer_tier,
+            optimizer_model=optimizer_model,
         )
 
     except Exception as e:

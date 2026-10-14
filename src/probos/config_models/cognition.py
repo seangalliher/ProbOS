@@ -7,7 +7,12 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# AD-1326: the most episodes one procedure evolution recalls (dreaming.py Step 7b, the
+# proactive scan and Step 7d each keep this many). The challenger controls are bounded by
+# it and validated against it, so an accepted configuration can always produce a challenge.
+PROCEDURE_EVOLUTION_EPISODE_LIMIT = 10
 
 
 class AttentionConfig(BaseModel):
@@ -156,6 +161,73 @@ class DreamingConfig(BaseModel):
     relationship_inference_max_pairs_per_run: int = 50
     relationship_inference_max_per_entity: int = 5
     relationship_inference_min_confidence: float = 0.6
+    # AD-1326: a FIX evolution is a challenger that replaces its champion only after winning
+    # head-to-head judgements (dream Step 7d-2). False keeps the legacy FIX handling: Step 7b,
+    # the proactive scan and an execution-failure fallback FIX deactivate the parent on save;
+    # a near-miss fallback FIX is saved active beside it. Rewrites run on deep either way.
+    procedure_challenger_enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-1326: save a FIX procedure evolution as an inactive challenger that replaces its "
+            "champion only after winning head-to-head judgements. False keeps the legacy FIX "
+            "handling: Step 7b, the proactive scan and an execution-failure fallback FIX deactivate "
+            "the parent on save; a near-miss fallback FIX is saved active beside it. Procedure "
+            "rewrites use the deep tier with a standard floor either way."
+        ),
+    )
+    procedure_challenger_used_contexts: int = Field(
+        default=2, ge=0, le=PROCEDURE_EVOLUTION_EPISODE_LIMIT,
+        description="AD-1326: episodes the rewrite saw that the challenger is also judged on.",
+    )
+    procedure_challenger_held_out_episodes: int = Field(
+        default=2, ge=0, le=PROCEDURE_EVOLUTION_EPISODE_LIMIT // 2,
+        description=(
+            "AD-1326: recalled episodes kept out of the rewrite prompt and used only to judge it "
+            "(never more than half of the at most 10 recalled)."
+        ),
+    )
+    procedure_challenger_min_decisions: int = Field(
+        default=3, ge=1, le=PROCEDURE_EVOLUTION_EPISODE_LIMIT,
+        description=(
+            "AD-1326: counted judgements a challenger needs before it can be promoted; at most the "
+            "situations one challenge can have from at most 10 recalled episodes (checked at parse time)."
+        ),
+    )
+    procedure_challenger_promotion_margin: float = Field(
+        default=0.1, ge=0.0, lt=0.5,
+        description="AD-1326: a challenger is promoted only with a win share strictly above 0.5 plus this.",
+    )
+    procedure_challenger_max_judge_calls_per_cycle: int = Field(
+        default=16, ge=0, le=200,
+        description=(
+            "AD-1326: judge LLM complete() calls per dream cycle (two per situation); the client's "
+            "fallback chain can make more than one provider attempt per call. Work beyond it is "
+            "deferred, never promoted; 0 defers everything."
+        ),
+    )
+    procedure_challenger_max_pending_cycles: int = Field(
+        default=5, ge=1, le=100,
+        description="AD-1326: dream cycles a challenger may stay undecided before it is retired.",
+    )
+    procedure_challenger_max_pending_per_champion: int = Field(
+        default=2, ge=1, le=5,
+        description="AD-1326: pending challengers per champion; at the limit no new rewrite is attempted.",
+    )
+
+    @model_validator(mode="after")
+    def _procedure_challenger_can_decide(self) -> DreamingConfig:
+        # Exactly what ProcedureChallenger.prepare assembles from a full recall of
+        # PROCEDURE_EVOLUTION_EPISODE_LIMIT episodes: held-out ones take odd positions, at most half.
+        limit = PROCEDURE_EVOLUTION_EPISODE_LIMIT
+        held_out = min(self.procedure_challenger_held_out_episodes, limit // 2)
+        achievable = min(self.procedure_challenger_used_contexts, limit - held_out) + held_out
+        if self.procedure_challenger_min_decisions > achievable:
+            raise ValueError(
+                "dreaming.procedure_challenger_min_decisions exceeds the comparison situations one "
+                f"challenge can have ({achievable} from at most {limit} recalled episodes), so no "
+                "challenger could ever be promoted"
+            )
+        return self
 
 
 class DreamWMConfig(BaseModel):

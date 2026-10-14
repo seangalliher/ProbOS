@@ -64,7 +64,7 @@ class _FakeEvolutionMemory:
         self.episodes = episodes
         self.validity_updates: list[tuple[str, float]] = []
 
-    async def recall_by_intent(self, intent_type: str) -> list[Episode]:
+    async def recall_by_intent(self, intent_type: str, k: int = 5) -> list[Episode]:  # AD-1326 R3-4: the helper passes k
         return [episode for episode in self.episodes if episode.outcomes[0]["intent"] == intent_type]
 
     async def update_episode_validity(self, episode_id: str, valid_until: float) -> bool:

@@ -50,6 +50,7 @@ def _build_engine(mock_store, **overrides):
     engine._last_consolidated_count = 0
     engine._llm_client = overrides.get("llm_client", AsyncMock())
     engine._procedure_store = mock_store
+    engine._procedure_challenger = None  # AD-1326
     engine._last_procedures = []
     engine._extracted_cluster_ids = set()
     engine._addressed_degradations = {}
