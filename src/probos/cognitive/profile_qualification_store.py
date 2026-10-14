@@ -1,15 +1,17 @@
 """AD-1287 S1: ProfileQualificationStore -- insert-only execution profiles, evaluation evidence and invalidations.
 
-Three ``WITHOUT ROWID`` tables; nine triggers abort every UPDATE, every DELETE and every INSERT that
-would replace a row (including through a secondary unique key). The store issues plain INSERTs after
-read-then-insert checks inside ``BEGIN IMMEDIATE``. Profiles and evaluation records are stored as
+Four ``WITHOUT ROWID`` tables (S1's three and S3's ``profile_outcomes``); twelve triggers abort every UPDATE,
+every DELETE and every INSERT that would replace a row (including through a secondary unique key). The store
+issues plain INSERTs after read-then-insert checks inside ``BEGIN IMMEDIATE``. Profiles and evaluation records are stored as
 RFC 8785 canonical text under their content reference. The columns the store selects and enforces
 uniqueness by (a profile's role and task class; an evaluation's profile and evaluation id) are
 ``VIRTUAL`` columns generated from that text, so they hold no value of their own to edit.
 
-``start()`` accepts a database holding no schema objects (it creates them) or exactly this module's:
-the same tables, indexes and triggers, each stored with the definition this module writes, which
-SQLite re-reads every time it opens the file. Anything else is refused, and the store issues no schema
+``start()`` accepts a database holding no schema objects (it creates them), exactly the S1 layout (it adds the
+S3 outcome table and its three triggers in the same ``BEGIN IMMEDIATE`` and changes no S1 object or row), or
+exactly this module's: the same tables, indexes and triggers, each stored with the definition this module
+writes, which SQLite re-reads every time it opens the file. Anything else is refused, including an S1 file
+holding part of the S3 objects, and the store issues no schema
 or data write to a file it refuses. SQLite itself can still change a refused file: opening it replays
 a hot rollback journal a crashed writer left, or recovers its ``-wal`` file, and closing the last
 connection to a WAL-mode file can checkpoint it and remove its ``-wal`` and ``-shm`` files. A refused file that needs no such
@@ -39,9 +41,25 @@ profile (highest sequence) decides its status; an invalidation applies to every 
 profile with a lower sequence, so requalification is a new evaluation recorded after it. Expiry is
 wall clock: issue time plus the suite's validity, both stamped by this store's clock.
 
+Outcome learning (S3). ``record_profile_outcome`` learns one AD-1286 attempt outcome against the attempt's
+execution profile, keyed by ``worker_attempt_id``: ``succeeded`` adds one to ``alpha``, ``failed`` (any error
+code) adds one to ``beta``, and ``cancelled`` is refused as not evidence. Each row stores the profile's task
+class, AD-1286's status and error code, the profile's observation number and the raw integer ``(alpha, beta)``
+after it, from a ``(2, 2)`` prior; the profile's latest row is its state (``get_outcome_state``). A repeat of
+the same attempt with the same profile, status and code returns the stored row and writes nothing; anything
+else for a learned attempt is refused, so the first learned stands. Outcomes draw no store sequence number.
+No S1 read, status, candidate query or slot check reads them, and this module writes nothing to
+``TrustNetwork``: learning gates nothing. Reads verify the outcome rows they use (the profile's latest row;
+the attempt's own row on a repeat naming the same profile; a row naming another profile is refused as a
+conflict without verification). Any other outcome row is not read, so an edit to it is not detected, and
+neither is a deleted latest row nor counts rewritten consistently (R-2, R-3). ``learn_attempt_outcome`` is the
+producer: it reads an attempt and its outcome through ``AttemptOutcomeReader`` and records it. It does not
+check that the attempt was admitted through the slot boundary. A file this code has started holds the S3
+objects, so the S1 code refuses it as a layout mismatch.
+
 Not wired: nothing constructs or starts this store in production; AD-1288 commission admission is
-the intended caller of ``admit_qualified_attempt``. Qualification never grants a tool, data scope,
-rank or authority lease.
+the intended caller of ``admit_qualified_attempt``, and nothing calls ``learn_attempt_outcome``.
+Qualification and outcome learning never grant a tool, data scope, rank or authority lease.
 """
 
 from __future__ import annotations
@@ -59,7 +77,15 @@ from typing import Any, Final, Protocol
 
 from pydantic import TypeAdapter
 
-from probos.cognitive.elastic_team import ElasticId, ElasticTeamSpec, WorkerAttempt, WorkerSlot, is_sha256_ref
+from probos.cognitive.elastic_team import (
+    ElasticId,
+    ElasticTeamSpec,
+    OutcomeCode,
+    WorkerAttempt,
+    WorkerAttemptOutcome,
+    WorkerSlot,
+    is_sha256_ref,
+)
 from probos.cognitive.execution_profile import (
     EvaluationRecord,
     ExecutionProfile,
@@ -151,6 +177,32 @@ WHEN EXISTS (SELECT 1 FROM profile_invalidations WHERE seq = NEW.seq
              OR (profile_ref = NEW.profile_ref AND invalidation_id = NEW.invalidation_id))
 BEGIN SELECT RAISE(ABORT, 'profile_qualification_immutable'); END""",
 )
+# AD-1287 S3: the outcome table and its three triggers, in the same normalised form. ``_SCHEMA_STATEMENTS`` stays
+# exactly the S1 layout, so ``start()`` can recognise an S1 file and add these to it.
+_OUTCOMES_TABLE: Final = """CREATE TABLE profile_outcomes (
+    worker_attempt_id TEXT PRIMARY KEY,
+    profile_ref TEXT NOT NULL REFERENCES execution_profiles (profile_ref),
+    task_class TEXT NOT NULL,
+    observation INTEGER NOT NULL,
+    terminal_status TEXT NOT NULL,
+    error_code TEXT,
+    alpha INTEGER NOT NULL,
+    beta INTEGER NOT NULL,
+    learned_at_ms INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL CHECK (schema_version = 1), -- profile_outcomes
+    UNIQUE (profile_ref, observation)
+) WITHOUT ROWID"""  # end profile_outcomes
+_OUTCOME_STATEMENTS: Final = (
+    _OUTCOMES_TABLE,
+    """CREATE TRIGGER profile_outcomes_no_update BEFORE UPDATE ON profile_outcomes
+BEGIN SELECT RAISE(ABORT, 'profile_qualification_immutable'); END""",
+    """CREATE TRIGGER profile_outcomes_no_delete BEFORE DELETE ON profile_outcomes
+BEGIN SELECT RAISE(ABORT, 'profile_qualification_immutable'); END""",
+    """CREATE TRIGGER profile_outcomes_no_replace BEFORE INSERT ON profile_outcomes
+WHEN EXISTS (SELECT 1 FROM profile_outcomes WHERE worker_attempt_id = NEW.worker_attempt_id
+             OR (profile_ref = NEW.profile_ref AND observation = NEW.observation))
+BEGIN SELECT RAISE(ABORT, 'profile_qualification_immutable'); END""",
+)
 
 
 def _object_key(statement: str) -> tuple[str, str]:
@@ -159,12 +211,24 @@ def _object_key(statement: str) -> tuple[str, str]:
     return kind.lower(), name
 
 
-_LAYOUT: Final = {_object_key(statement): statement for statement in _SCHEMA_STATEMENTS}
+# The S1 file that start() extends, and the S1+S3 layout it otherwise requires; both are exact matches.
+_S1_LAYOUT: Final = {_object_key(statement): statement for statement in _SCHEMA_STATEMENTS}
+_LAYOUT: Final = {_object_key(statement): statement for statement in _SCHEMA_STATEMENTS + _OUTCOME_STATEMENTS}
 _CATALOG_SQL: Final = "SELECT type, name, sql FROM sqlite_master"
 
 _PROFILE_COLUMNS: Final = "profile_ref, schema_version, canonical_json, recorded_at_ms"
 _EVALUATION_COLUMNS: Final = "evidence_ref, seq, issued_at_ms, expires_at_ms, schema_version, canonical_json"
 _INVALIDATION_COLUMNS: Final = "profile_ref, invalidation_id, seq, reason_code, invalidated_at_ms, schema_version"
+# AD-1287 S3: one row per learned attempt outcome, holding the raw Beta parameters after it.
+_OUTCOME_COLUMNS: Final = (
+    "worker_attempt_id, profile_ref, task_class, observation, terminal_status, error_code, alpha, beta, "
+    "learned_at_ms, schema_version"
+)
+PROFILE_OUTCOME_PRIOR: Final[tuple[int, int]] = (2, 2)  # TrustNetwork's default prior (consensus/trust.py:66-67)
+# What each AD-1286 terminal status adds to (alpha, beta). ``cancelled`` is absent: it is not evidence.
+_OUTCOME_DELTAS: Final = {"succeeded": (1, 0), "failed": (0, 1)}
+PROFILE_OUTCOME_EVIDENCE: Final = frozenset(_OUTCOME_DELTAS)
+_OUTCOME_CODE: Final = TypeAdapter(OutcomeCode)
 # Each table's MAX(seq) is read from its ``seq`` unique index, so the work does not grow with the rows.
 _NEXT_SEQ_SQL: Final = (
     "SELECT MAX(m) FROM (SELECT MAX(seq) AS m FROM profile_evaluations "
@@ -238,6 +302,44 @@ class CandidateQueryResult:
     next_after: str | None
 
 
+@dataclass(frozen=True)
+class RecordedProfileOutcome:
+    """One AD-1286 attempt outcome learned against its execution profile (AD-1287 S3): provenance and the raw
+    Beta parameters after it. Evidence, never a grant."""
+
+    worker_attempt_id: str
+    profile_ref: str
+    task_class: str  # the profile's own task class
+    terminal_status: str  # "succeeded" or "failed"; a cancelled attempt is not learned
+    error_code: str | None  # AD-1286's code; None exactly when "succeeded"
+    observation: int  # 1 for the profile's first learned outcome, then one more each time
+    alpha: int  # 2 + successes learned up to and including this one
+    beta: int  # 2 + failures learned up to and including this one
+    learned_at_ms: int
+
+
+@dataclass(frozen=True)
+class ProfileOutcomeState:
+    """A profile's raw Beta parameters from the outcomes learned so far: ``(2, 2)``, no observations and
+    ``latest=None`` before any. Reported for the process owner; nothing in this module admits or refuses by it."""
+
+    profile_ref: str
+    task_class: str
+    alpha: int
+    beta: int
+    observations: int
+    latest: RecordedProfileOutcome | None
+
+
+@dataclass(frozen=True)
+class ProfileOutcomeLearning:
+    """What ``learn_attempt_outcome`` did for one attempt."""
+
+    worker_attempt_id: str
+    disposition: str  # "pending" (no outcome yet), "not_evidence" (cancelled) or "recorded"
+    recorded: RecordedProfileOutcome | None  # the stored row when "recorded", the same row on every repeat
+
+
 class ProfileQualificationReader(Protocol):
     """The narrow read port the slot boundary depends on (ISP); ``ProfileQualificationStore`` satisfies it."""
 
@@ -250,6 +352,22 @@ class TeamAttemptRecorder(Protocol):
     async def get_team_spec(self, team_spec_ref: str) -> ElasticTeamSpec | None: ...
 
     async def record_attempt(self, attempt: WorkerAttempt) -> WorkerAttempt: ...
+
+
+class AttemptOutcomeReader(Protocol):
+    """The two ``ElasticTeamStore`` reads outcome learning uses; ``ElasticTeamStore`` satisfies it."""
+
+    async def get_attempt(self, worker_attempt_id: str) -> WorkerAttempt | None: ...
+
+    async def get_attempt_outcome(self, worker_attempt_id: str) -> WorkerAttemptOutcome | None: ...
+
+
+class ProfileOutcomeRecorder(Protocol):
+    """The ``ProfileQualificationStore`` write outcome learning uses; ``ProfileQualificationStore`` satisfies it."""
+
+    async def record_profile_outcome(
+        self, attempt: WorkerAttempt, outcome: WorkerAttemptOutcome,
+    ) -> RecordedProfileOutcome: ...
 
 
 def _checked_now_ms(clock: Callable[[], float]) -> int:
@@ -276,6 +394,15 @@ def _integrity(what: str, key: object) -> ProfileQualificationIntegrityError:
 def _is_elastic_id(value: object) -> bool:
     try:
         _ELASTIC_ID.validate_python(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_outcome_code(value: object) -> bool:
+    """An AD-1286 outcome code (``OutcomeCode``)."""
+    try:
+        _OUTCOME_CODE.validate_python(value)
     except ValueError:
         return False
     return True
@@ -395,6 +522,46 @@ def _verified_invalidation(row: Any, profile_ref: str) -> RecordedInvalidation:
     return RecordedInvalidation(profile_ref, invalidation_id, reason_code, seq, invalidated_at)
 
 
+def _verified_outcome_row(row: Any, profile_ref: str, profile: ExecutionProfile) -> RecordedProfileOutcome:
+    """Verify one ``_OUTCOME_COLUMNS`` row of ``profile``: provenance, AD-1286 status and code, observation number,
+    raw counts consistent with it, stamp and schema version. Counts or stamps rewritten consistently are not
+    detected (R-3)."""
+    attempt_id, row_profile_ref, task_class, observation, status, error_code, alpha, beta, learned_at, version = row
+    delta = _OUTCOME_DELTAS.get(status) if type(status) is str else None
+    verified = (
+        _is_elastic_id(attempt_id)
+        and row_profile_ref == profile_ref
+        and task_class == profile.task_class
+        and delta is not None
+        and (error_code is None) == (status == "succeeded")
+        and (error_code is None or _is_outcome_code(error_code))
+        and _is_seq(observation)
+        and type(alpha) is int
+        and type(beta) is int
+        and alpha >= PROFILE_OUTCOME_PRIOR[0] + delta[0]
+        and beta >= PROFILE_OUTCOME_PRIOR[1] + delta[1]
+        and alpha + beta == sum(PROFILE_OUTCOME_PRIOR) + observation
+        and _is_stamp(learned_at)
+        and type(version) is int
+        and version == PROFILE_QUALIFICATION_SCHEMA_VERSION
+    )
+    if not verified:
+        raise _integrity("profile outcome", attempt_id)
+    return RecordedProfileOutcome(
+        attempt_id, profile_ref, task_class, status, error_code, observation, alpha, beta, learned_at,
+    )
+
+
+async def _latest_outcome(db: Any, profile_ref: str, profile: ExecutionProfile) -> RecordedProfileOutcome | None:
+    """The profile's latest learned outcome (highest observation), verified, or None before any."""
+    rows = await _query(
+        db,
+        f"SELECT {_OUTCOME_COLUMNS} FROM profile_outcomes WHERE profile_ref = ? ORDER BY observation DESC LIMIT 1",
+        (profile_ref,),
+    )
+    return _verified_outcome_row(rows[0], profile_ref, profile) if rows else None
+
+
 async def _next_seq(db: Any) -> int:
     """One more than the highest sequence in either table (1 for an empty store). Called inside BEGIN IMMEDIATE,
     before the caller's INSERT, so a refusal here writes nothing.
@@ -451,6 +618,8 @@ class ProfileQualificationStore:
         invalidate_profile(profile_ref, invalidation_id, reason_code) -> RecordedInvalidation -- idempotent
         get_qualification(profile_ref) -> ProfileQualification | None -- satisfies ProfileQualificationReader
         find_slot_candidates(slot, *, limit, after) -> CandidateQueryResult -- bounded, deterministic
+        record_profile_outcome(attempt, outcome) -> RecordedProfileOutcome -- S3; idempotent by worker_attempt_id
+        get_outcome_state(profile_ref) -> ProfileOutcomeState | None -- S3; raw (alpha, beta), gates nothing
 
     Cancellation contract (every method): ``CancelledError`` propagates and is not swallowed; for a write
     it means the outcome is unknown. Every write is idempotent for identical input, so retrying the
@@ -488,8 +657,9 @@ class ProfileQualificationStore:
     async def start(self) -> None:
         """Check the file's layout (creating it in a file that holds none), then admit operations. Idempotent.
 
-        Accepts a database holding no schema objects, which it gives this module's layout, or exactly this
-        module's layout. Any other file is refused inside one ``BEGIN IMMEDIATE``; the store issues no schema
+        Accepts a database holding no schema objects, which it gives this module's layout; exactly the S1
+        layout, to which it adds the S3 outcome objects in the same transaction; or exactly this module's
+        layout. Any other file is refused inside one ``BEGIN IMMEDIATE``; the store issues no schema
         or data write to it (SQLite's own journal recovery and checkpoint can still change it). WAL is
         requested only after the check, and tried again while another connection holds the lock; a file that
         does not end in WAL is served as it is, with a WARNING. A start that finds the store stopped and fails
@@ -503,12 +673,17 @@ class ProfileQualificationStore:
         async with self._lock:
             if self._started:
                 return
+            added_outcomes = False
             async with self._open() as db:
                 await db.execute("BEGIN IMMEDIATE")
                 found = _schema_objects(await _query(db, _CATALOG_SQL, ()))
                 if not found:
-                    for statement in _SCHEMA_STATEMENTS:
+                    for statement in _SCHEMA_STATEMENTS + _OUTCOME_STATEMENTS:
                         await db.execute(statement)
+                elif found == _S1_LAYOUT:  # exactly an S1 file: add the S3 objects in this same transaction
+                    for statement in _OUTCOME_STATEMENTS:
+                        await db.execute(statement)
+                    added_outcomes = True
                 else:
                     differences = _layout_differences(found)
                     if differences:
@@ -531,9 +706,15 @@ class ProfileQualificationStore:
                 mode or "busy on every try",
                 _WAL_ATTEMPTS,
             )
+        if added_outcomes:
+            logger.info(
+                "AD-1287: added the S3 outcome table to the S1 file %s and changed no S1 object or row; the S1 "
+                "code now refuses this file as a layout mismatch",
+                self._db_path,
+            )
         logger.info(
-            "AD-1287: ProfileQualificationStore started (db=%s); profiles, evaluations and invalidations "
-            "are insert-only",
+            "AD-1287: ProfileQualificationStore started (db=%s); profiles, evaluations, invalidations and "
+            "learned outcomes are insert-only",
             self._db_path,
         )
 
@@ -570,7 +751,7 @@ class ProfileQualificationStore:
 
     @contextlib.asynccontextmanager
     async def _operation(self) -> AsyncIterator[tuple[Any, int]]:
-        """The frame of each of the six data methods: hold the lock, refuse when stopped, take "now", open one
+        """The frame of each of the eight data methods: hold the lock, refuse when stopped, take "now", open one
         connection. ``start`` and ``stop`` take the lock but read no clock."""
         async with self._lock:
             if not self._started:
@@ -780,6 +961,124 @@ class ProfileQualificationStore:
             next_after = None if complete else rows[examined - 1][0]
         return CandidateQueryResult(tuple(candidates), examined, complete, next_after)
 
+    async def record_profile_outcome(
+        self, attempt: WorkerAttempt, outcome: WorkerAttemptOutcome,
+    ) -> RecordedProfileOutcome:
+        """Learn ``outcome`` of ``attempt`` against the attempt's execution profile, once (AD-1287 S3).
+
+        ``succeeded`` adds one to ``alpha`` and ``failed`` one to ``beta``, from the profile's latest learned row
+        or the ``(2, 2)`` prior. The new row stores the profile's task class, AD-1286's status and error code, the
+        next observation number and the raw ``(alpha, beta)`` after it. Idempotent: the same attempt with the same
+        profile, status and error code returns the stored row (its first ``learned_at_ms``) and writes nothing.
+        Evidence only: no S1 read, status, candidate query or slot check reads these rows.
+
+        Raises:
+            TypeError: ``profile_outcome_type_invalid``.
+            ValueError: (``pydantic.ValidationError``) either argument no longer validates;
+                ``profile_outcome_attempt_mismatch`` when they name different attempts;
+                ``profile_outcome_not_evidence`` for ``cancelled``. Nothing is read or written.
+            ProfileQualificationConflict: ``profile_unknown``; ``profile_outcome_conflict`` (this attempt was
+                learned with another profile, status or error code; the first learned stands); or
+                ``profile_sequence_exhausted``. Nothing is written.
+            ProfileQualificationIntegrityError: a row that decides the write does not verify.
+        """
+        if type(attempt) is not WorkerAttempt or type(outcome) is not WorkerAttemptOutcome:
+            raise TypeError("profile_outcome_type_invalid")
+        attempt = WorkerAttempt.model_validate(attempt)  # a model_copy(update=...) skips validation
+        outcome = WorkerAttemptOutcome.model_validate(outcome)
+        if attempt.worker_attempt_id != outcome.worker_attempt_id:
+            raise ValueError("profile_outcome_attempt_mismatch")
+        delta = _OUTCOME_DELTAS.get(outcome.terminal_status)
+        if delta is None:
+            raise ValueError("profile_outcome_not_evidence")
+        profile_ref = attempt.execution_profile_ref
+        async with self._operation() as (db, now_ms):
+            await db.execute("BEGIN IMMEDIATE")
+            profile = await _load_profile(db, profile_ref)
+            if profile is None:
+                raise ProfileQualificationConflict("profile_unknown")
+            rows = await _query(
+                db,
+                f"SELECT {_OUTCOME_COLUMNS} FROM profile_outcomes WHERE worker_attempt_id = ?",
+                (attempt.worker_attempt_id,),
+            )
+            if rows:
+                if rows[0][1] != profile_ref:
+                    raise ProfileQualificationConflict("profile_outcome_conflict")
+                learned = _verified_outcome_row(rows[0], profile_ref, profile)
+                if (learned.terminal_status, learned.error_code) != (outcome.terminal_status, outcome.error_code):
+                    raise ProfileQualificationConflict("profile_outcome_conflict")
+                await db.commit()
+                return learned
+            latest = await _latest_outcome(db, profile_ref, profile)
+            if latest is None:
+                alpha, beta, observation = PROFILE_OUTCOME_PRIOR[0], PROFILE_OUTCOME_PRIOR[1], 0
+            else:
+                alpha, beta, observation = latest.alpha, latest.beta, latest.observation
+            if observation == _MAX_SEQ:
+                raise ProfileQualificationConflict("profile_sequence_exhausted")
+            recorded = RecordedProfileOutcome(
+                attempt.worker_attempt_id,
+                profile_ref,
+                profile.task_class,
+                outcome.terminal_status,
+                outcome.error_code,
+                observation + 1,
+                alpha + delta[0],
+                beta + delta[1],
+                now_ms,
+            )
+            await db.execute(
+                f"INSERT INTO profile_outcomes ({_OUTCOME_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    recorded.worker_attempt_id,
+                    recorded.profile_ref,
+                    recorded.task_class,
+                    recorded.observation,
+                    recorded.terminal_status,
+                    recorded.error_code,
+                    recorded.alpha,
+                    recorded.beta,
+                    recorded.learned_at_ms,
+                    PROFILE_QUALIFICATION_SCHEMA_VERSION,
+                ),
+            )
+            await db.commit()  # not shielded: a COMMIT queued before a cancel may still run (N2)
+        logger.info(
+            "AD-1287: learned %s of worker attempt %s for execution profile %s (observation %d, alpha %d, beta %d); "
+            "evidence only, it gates nothing",
+            recorded.terminal_status,
+            recorded.worker_attempt_id,
+            recorded.profile_ref,
+            recorded.observation,
+            recorded.alpha,
+            recorded.beta,
+        )
+        return recorded
+
+    async def get_outcome_state(self, profile_ref: str) -> ProfileOutcomeState | None:
+        """``profile_ref``'s raw Beta parameters from the outcomes learned so far, or None when it is not registered.
+
+        ``(2, 2)`` with no observations before any outcome is learned. Reported for the process owner; nothing in
+        this module admits or refuses a profile by it.
+
+        Raises:
+            ValueError: ``execution_profile_ref_invalid`` for a malformed reference.
+            ProfileQualificationIntegrityError: the profile row or its latest outcome row does not verify.
+        """
+        if not is_sha256_ref(profile_ref):
+            raise ValueError("execution_profile_ref_invalid")
+        async with self._operation() as (db, _now_ms):
+            profile = await _load_profile(db, profile_ref)
+            if profile is None:
+                return None
+            latest = await _latest_outcome(db, profile_ref, profile)
+        if latest is None:
+            return ProfileOutcomeState(profile_ref, profile.task_class, *PROFILE_OUTCOME_PRIOR, 0, None)
+        return ProfileOutcomeState(
+            profile_ref, profile.task_class, latest.alpha, latest.beta, latest.observation, latest,
+        )
+
 
 async def check_slot_qualification(
     qualifications: ProfileQualificationReader, spec: ElasticTeamSpec, slot_id: str, profile_ref: str,
@@ -846,3 +1145,43 @@ async def admit_qualified_attempt(
         )
         raise
     return await teams.record_attempt(attempt)
+
+
+async def learn_attempt_outcome(
+    outcomes: ProfileOutcomeRecorder, attempts: AttemptOutcomeReader, worker_attempt_id: str,
+) -> ProfileOutcomeLearning:
+    """Learn one AD-1286 attempt's terminal outcome against its execution profile (the AD-1287 S3 producer).
+
+    Reads the attempt, then its outcome, through ``attempts``. No outcome yet: ``pending``, nothing written.
+    ``cancelled``: ``not_evidence``, nothing written. Otherwise ``outcomes.record_profile_outcome`` records it:
+    ``recorded``, with the stored row, which is the same row on every repeat. Safe to call again for the same
+    attempt. It does not check that the attempt was admitted through the slot boundary; learning gates nothing.
+
+    Raises:
+        ValueError: ``profile_outcome_attempt_invalid`` for a malformed id (nothing is read);
+            ``profile_outcome_attempt_unknown`` when ``attempts`` holds no such attempt;
+            ``profile_outcome_evidence_mismatch`` when ``attempts`` answers for another attempt.
+        What ``attempts`` or ``outcomes.record_profile_outcome`` raises, unchanged.
+    """
+    if not _is_elastic_id(worker_attempt_id):
+        raise ValueError("profile_outcome_attempt_invalid")
+    attempt = await attempts.get_attempt(worker_attempt_id)
+    if attempt is None:
+        raise ValueError("profile_outcome_attempt_unknown")
+    if attempt.worker_attempt_id != worker_attempt_id:
+        raise ValueError("profile_outcome_evidence_mismatch")
+    outcome = await attempts.get_attempt_outcome(worker_attempt_id)
+    if outcome is None:
+        return ProfileOutcomeLearning(worker_attempt_id, "pending", None)
+    if outcome.worker_attempt_id != worker_attempt_id:
+        raise ValueError("profile_outcome_evidence_mismatch")
+    if outcome.terminal_status not in PROFILE_OUTCOME_EVIDENCE:
+        logger.info(
+            "AD-1287: worker attempt %s ended %s; not learned as evidence for execution profile %s",
+            worker_attempt_id,
+            outcome.terminal_status,
+            attempt.execution_profile_ref,
+        )
+        return ProfileOutcomeLearning(worker_attempt_id, "not_evidence", None)
+    recorded = await outcomes.record_profile_outcome(attempt, outcome)
+    return ProfileOutcomeLearning(worker_attempt_id, "recorded", recorded)

@@ -202,18 +202,23 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         backup="included",
         restore="point-in-time",
         retention_note=(
-            "Insert-only by design: nine triggers abort every UPDATE, every DELETE and every replacing "
-            "INSERT on the three WITHOUT ROWID tables, and the module has no delete path. Growth is one row "
-            "per registered profile, one per evaluation run and one per invalidation; this slice does not "
-            "bound evaluation runs per profile. Archival belongs to a later lifecycle slice; this one adds none."
+            "Insert-only by design: twelve triggers abort every UPDATE, every DELETE and every replacing "
+            "INSERT on the four WITHOUT ROWID tables, and the module has no delete path. Growth is one row "
+            "per registered profile, one per evaluation run, one per invalidation and one per learned attempt "
+            "outcome (S3); no retention or lifecycle cap bounds evaluation runs or learned outcomes per profile "
+            "(only the 2**53 - 1 sequence limit does). Archival belongs to a "
+            "later lifecycle slice; S1 and S3 add none."
         ),
         notes=(
             "Not wired: nothing constructs or starts the store in production until AD-1288 commission "
-            "admission calls admit_qualified_attempt, so a default runtime never creates the file "
-            "(lifecycle_owner is the 'unowned' sentinel). start() refuses a file whose schema is not exactly "
-            "this store's and issues no schema or data write to it. Each row the store uses to decide or return a result is re-verified and one that "
-            "does not verify is refused; a missing row, or a store stamp rewritten within range, is not "
-            "detected, and evaluators are not authenticated."
+            "admission calls admit_current_qualified_attempt, so a default runtime never creates the file "
+            "(lifecycle_owner is the 'unowned' sentinel). start() accepts an empty file, exactly the S1 layout "
+            "(to which it adds the S3 outcome table and triggers in the same transaction) or exactly the S1+S3 "
+            "layout, refuses any other file and issues no schema or data write to it; the S1 code refuses a file "
+            "the S3 code has started. Each row the store uses to decide or return a result is re-verified and one that "
+            "does not verify is refused, except that a learned attempt whose stored profile differs from the one "
+            "named is refused as a conflict without verifying that row; a missing row, or a store stamp rewritten "
+            "within range, is not detected, and evaluators are not authenticated."
         ),
     ),
     StoreDeclaration(
