@@ -307,6 +307,14 @@ Dreaming / offline consolidation configuration.
 | `relationship_inference_max_pairs_per_run` | `int` | `50` | — |  |
 | `relationship_inference_max_per_entity` | `int` | `5` | — |  |
 | `relationship_inference_min_confidence` | `float` | `0.6` | — |  |
+| `procedure_challenger_enabled` | `bool` | `True` | — | AD-1326: save a FIX procedure evolution as an inactive challenger that replaces its champion only after winning head-to-head judgements. False keeps the legacy FIX handling: Step 7b, the proactive scan and an execution-failure fallback FIX deactivate the parent on save; a near-miss fallback FIX is saved active beside it. Procedure rewrites use the deep tier with a standard floor either way. |
+| `procedure_challenger_used_contexts` | `int` | `2` | ≥ 0, ≤ 10 | AD-1326: episodes the rewrite saw that the challenger is also judged on. |
+| `procedure_challenger_held_out_episodes` | `int` | `2` | ≥ 0, ≤ 5 | AD-1326: recalled episodes kept out of the rewrite prompt and used only to judge it (never more than half of the at most 10 recalled). |
+| `procedure_challenger_min_decisions` | `int` | `3` | ≥ 1, ≤ 10 | AD-1326: counted judgements a challenger needs before it can be promoted; at most the situations one challenge can have from at most 10 recalled episodes (checked at parse time). |
+| `procedure_challenger_promotion_margin` | `float` | `0.1` | ≥ 0.0, < 0.5 | AD-1326: a challenger is promoted only with a win share strictly above 0.5 plus this. |
+| `procedure_challenger_max_judge_calls_per_cycle` | `int` | `16` | ≥ 0, ≤ 200 | AD-1326: judge LLM complete() calls per dream cycle (two per situation); the client's fallback chain can make more than one provider attempt per call. Work beyond it is deferred, never promoted; 0 defers everything. |
+| `procedure_challenger_max_pending_cycles` | `int` | `5` | ≥ 1, ≤ 100 | AD-1326: dream cycles a challenger may stay undecided before it is retired. |
+| `procedure_challenger_max_pending_per_champion` | `int` | `2` | ≥ 1, ≤ 5 | AD-1326: pending challengers per champion; at the limit no new rewrite is attempted. |
 
 ## `dream_wm`
 

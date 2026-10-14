@@ -189,6 +189,7 @@ class EventType(str, Enum):
     FEDERATION_DESIGNED_AGENT_RECEIVED = "federation_designed_agent_received"  # AD-479e
     TASK_EXECUTION_COMPLETE = "task_execution_complete"  # AD-532e: reactive trigger
     PROCEDURE_FALLBACK_LEARNING = "procedure_fallback_learning"  # AD-534b: fallback evidence
+    PROCEDURE_CHALLENGE_DECIDED = "procedure_challenge_decided"  # AD-1326: a challenger promoted or retired
     GAP_IDENTIFIED = "gap_identified"  # AD-539: gap → qualification pipeline
     GAP_REMEDIATION_RECORDED = "gap_remediation_recorded"  # AD-539c: observational remediation candidate
     FLEET_GAP_SNAPSHOT_TAKEN = "fleet_gap_snapshot_taken"  # AD-539d: local-ship gap aggregation

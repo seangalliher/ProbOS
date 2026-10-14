@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-13T13:59:52+00:00 at `271e8288` | 2840 subjects, 1010 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-14T11:18:18+00:00 at `713edb15` | 2845 subjects, 1010 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |
@@ -46,19 +46,18 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 53 | 8 | assigned, issue open, no shipped code |
+| `allocated-open` | 52 | 8 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
 | `retired` | 10 | 0 | abandoned, number **not** reusable |
-| `shipped` | 990 | 550 | code in history |
+| `shipped` | 991 | 550 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-61 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+60 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
-| `AD-1326` | [#1510](https://github.com/seangalliher/ProbOS/issues/1510) | issue #1510 open, no code | AD-1326: procedure evolution keeps the champion until a challenger wins head-to-head |
 | `AD-1319` | [#1464](https://github.com/seangalliher/ProbOS/issues/1464) | issue #1464 open, no code | AD-1319: Ship View - state-bound 3D projection of the live mesh (child of AD-1307) |
 | `AD-1313` | [#1365](https://github.com/seangalliher/ProbOS/issues/1365) | issue #1365 open, no code | AD-1313: Authentic digital visual language and spatial continuity for HXI work |
 | `AD-1312` | [#1366](https://github.com/seangalliher/ProbOS/issues/1366) | issue #1366 open, no code | AD-1312: Contextual crew, knowledge, and administration experience |
@@ -147,7 +146,7 @@ _(none)_
 
 ## Shipped
 
-**AD** (990): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1135, 1137-1148, 1151-1185, 1187, 1189-1192, 1194-1198, 1200-1201, 1203-1224, 1226-1236, 1239-1248, 1250-1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1287, 1291-1306, 1315-1316, 1320-1325, 1327
+**AD** (991): 1, 19-139, 142-153, 228, 262-273, 293-300, 302, 311, 313-314, 316-317, 321-322, 324, 348-355, 357-373, 376-388, 393-419, 423-502, 507-530, 532, 534, 538-541, 543, 550-554, 556-558, 560-577, 579-623, 625-680, 682-683, 685-692, 694-702, 704, 706-708, 710-766, 790-813, 815-828, 832-839, 841, 843, 845-847, 853-956, 958-966, 972, 975-1019, 1021-1038, 1040-1055, 1065, 1068-1089, 1091-1095, 1119-1133, 1135, 1137-1148, 1151-1185, 1187, 1189-1192, 1194-1198, 1200-1201, 1203-1224, 1226-1236, 1239-1248, 1250-1251, 1256-1261, 1265, 1267, 1269-1271, 1273-1287, 1291-1306, 1315-1316, 1320-1327
 
 **BF** (550): 4, 6, 8-13, 23-25, 27, 29-37, 39-41, 43-44, 49, 53, 57-60, 63-69, 71, 76, 78-80, 82-86, 99-104, 106, 108-116, 118, 123-175, 177-179, 183-201, 203-204, 206-219, 222-326, 331-332, 597-680, 682-879, 883-884, 886, 889
 
@@ -275,7 +274,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 - `AD-1302` — code is in history but [#1355](https://github.com/seangalliher/ProbOS/issues/1355) is still open.
 - `AD-1303` — code is in history but [#1356](https://github.com/seangalliher/ProbOS/issues/1356) is still open.
 - `AD-1304` — code is in history but [#1357](https://github.com/seangalliher/ProbOS/issues/1357) is still open.
-- `AD-1327` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
+- `AD-1326` — the trackers disagree: allocated-open, shipped. Resolved as `shipped`.
+- `AD-1326` — code is in history but [#1510](https://github.com/seangalliher/ProbOS/issues/1510) is still open.
 - `AD-1327` — code is in history but [#1511](https://github.com/seangalliher/ProbOS/issues/1511) is still open.
 - `BF-063` — collision: 2 issues each lead with this number: [#3](https://github.com/seangalliher/ProbOS/issues/3), [#135](https://github.com/seangalliher/ProbOS/issues/135).
 - `BF-125` — collision: 2 issues each lead with this number: [#28](https://github.com/seangalliher/ProbOS/issues/28), [#29](https://github.com/seangalliher/ProbOS/issues/29).
@@ -306,8 +306,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1249 head-shaped line yielded no AD/BF token
-PROGRESS.md:1255 head-shaped line yielded no AD/BF token
+PROGRESS.md:1251 head-shaped line yielded no AD/BF token
+PROGRESS.md:1257 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token

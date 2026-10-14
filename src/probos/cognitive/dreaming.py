@@ -12,7 +12,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.contradiction_detector import detect_contradictions
 from probos.cognitive.episode_clustering import cluster_episodes
@@ -44,6 +44,7 @@ from probos.config import (  # AD-537: observation config
     OBSERVATION_MIN_TRUST,
     OBSERVATION_WARD_ROOM_LOOKBACK_HOURS,
 )
+from probos.config_models.cognition import PROCEDURE_EVOLUTION_EPISODE_LIMIT  # AD-1326: shared with the validator
 from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — dream consolidation mutates trust
 from probos.mesh.routing import HebbianRouter, REL_INTENT
 from probos.types import (
@@ -54,6 +55,9 @@ from probos.types import (
     MemorySource,
     episode_ran_in_plan_mode,
 )
+
+if TYPE_CHECKING:
+    from probos.cognitive.procedure_challenger import ProcedureChallenger
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +116,7 @@ class DreamingEngine:
         manifest: Any = None,  # AD-538b: DreamManifest for skip-already-processed
         skill_service: Any = None,  # AD-428b v1: AgentSkillService for cluster reinforcement
         intent_skill_map: dict[str, str] | None = None,  # AD-428b v1: intent->skill map
+        procedure_challenger: ProcedureChallenger | None = None,  # AD-1326: FIX evolution as a challenger
     ) -> None:
         self.router = router
         self.trust_network = trust_network
@@ -125,6 +130,8 @@ class DreamingEngine:
         self._last_consolidated_count: int = 0  # Cursor for micro-dream dedup
         self._llm_client = llm_client  # AD-532: for procedure extraction
         self._procedure_store = procedure_store  # AD-533: persistent procedure storage
+        # AD-1326: None keeps the legacy FIX handling (dreaming.procedure_challenger_enabled=false).
+        self._procedure_challenger = procedure_challenger
         # AD-428b v1: dream consolidation reinforces skills via record_exercise().
         self._skill_service = skill_service
         self._intent_skill_map: dict[str, str] = dict(intent_skill_map or {})
@@ -818,6 +825,18 @@ class DreamingEngine:
                 logger.debug("Step 7d: Evolved %d procedures from fallback evidence", fallback_stats["evolved"])
         except Exception as e:
             logger.debug("Step 7d fallback learning failed: %s", e)
+
+        # Step 7d-2: Procedure challengers meet their champions (AD-1326)
+        if self._procedure_challenger is not None:
+            try:
+                challenge_report = await self._procedure_challenger.run_cycle()
+                await self._expire_superseded_episode_sources(list(challenge_report.superseded_episodes))
+            except Exception as e:
+                logger.warning(
+                    "Step 7d-2: procedure challenger comparisons failed (%s); pending challengers wait "
+                    "for the next dream cycle, which also finishes any interrupted promotion",
+                    e,
+                )
 
         # Step 7e: Observational learning from Ward Room (AD-537)
         procedures_observed = 0
@@ -1834,8 +1853,12 @@ class DreamingEngine:
     async def _recall_evidence_by_intent(self, intent_type: str) -> list[Episode]:
         """Recent episodes of ``intent_type`` a procedure may evolve from: every
         procedure-evolution path recalls through here, and no plan-mode
-        conversation's episode is among them (AD-1156 A-4, :func:`_outcome_evidence`)."""
-        return _outcome_evidence(await self.episodic_memory.recall_by_intent(intent_type))
+        conversation's episode is among them (AD-1156 A-4, :func:`_outcome_evidence`).
+        AD-1326 (R3-4): asks for ``PROCEDURE_EVOLUTION_EPISODE_LIMIT`` episodes, the recall the
+        challenger settings are validated against (the memory's default ``k`` is 5)."""
+        return _outcome_evidence(
+            await self.episodic_memory.recall_by_intent(intent_type, k=PROCEDURE_EVOLUTION_EPISODE_LIMIT)
+        )
 
     async def _evolve_degraded_procedures(
         self, episodes: list[Episode], procedures: list,
@@ -1881,18 +1904,28 @@ class DreamingEngine:
                 except Exception:
                     continue
 
-            # Limit to 10 most recent
-            fresh_episodes = fresh_episodes[:10]
+            # Limit to 10 most recent (AD-1326: the limit the challenger controls are validated against)
+            fresh_episodes = fresh_episodes[:PROCEDURE_EVOLUTION_EPISODE_LIMIT]
 
             if not fresh_episodes:
                 self._addressed_degradations[proc_id] = now
                 continue
 
+            # AD-1326: a FIX result is a challenger; its held-out episodes stay out of the rewrite.
+            plan = None
+            if self._procedure_challenger is not None and diagnosis.startswith("FIX:"):  # AD-1326 step 7b
+                plan = await self._procedure_challenger.prepare(parent, fresh_episodes)
+                if plan is None:
+                    self._addressed_degradations[proc_id] = now
+                    continue
+
             # Dispatch to appropriate evolution function
             result = None
             if diagnosis.startswith("FIX:"):
                 result = await evolve_fix_procedure(
-                    parent, diagnosis, metrics, fresh_episodes, self._llm_client,
+                    parent, diagnosis, metrics,
+                    list(plan.evolution_episodes) if plan is not None else fresh_episodes,  # AD-1326 step 7b
+                    self._llm_client,
                 )
             elif diagnosis.startswith("DERIVED:"):
                 result = await evolve_derived_procedure(
@@ -1903,6 +1936,13 @@ class DreamingEngine:
             self._addressed_degradations[proc_id] = time.time()
 
             if result is None:
+                continue
+
+            if plan is not None:
+                challenger = await self._procedure_challenger.submit(plan, result)
+                if challenger is not None:
+                    procedures.append(challenger)
+                    evolved_count += 1
                 continue
 
             # Persist evolved procedure
@@ -2001,18 +2041,28 @@ class DreamingEngine:
                         seen_ids.add(ep.id)
             except Exception:
                 continue
-        fresh_episodes = fresh_episodes[:10]
+        fresh_episodes = fresh_episodes[:PROCEDURE_EVOLUTION_EPISODE_LIMIT]
 
         if not fresh_episodes:
             self._addressed_degradations[proc_id] = now
             return False
+
+        # AD-1326: a FIX result is a challenger; its held-out episodes stay out of the rewrite.
+        plan = None
+        if self._procedure_challenger is not None and diagnosis.startswith("FIX:"):  # AD-1326 proactive
+            plan = await self._procedure_challenger.prepare(parent, fresh_episodes)
+            if plan is None:
+                self._addressed_degradations[proc_id] = now
+                return False
 
         # Dispatch to appropriate evolution function with retry
         result = None
         if diagnosis.startswith("FIX:"):
             result = await evolve_with_retry(
                 evolve_fix_procedure,
-                parent, diagnosis, metrics, fresh_episodes, self._llm_client,
+                parent, diagnosis, metrics,
+                list(plan.evolution_episodes) if plan is not None else fresh_episodes,  # AD-1326 proactive
+                self._llm_client,
             )
         elif diagnosis.startswith("DERIVED:"):
             result = await evolve_with_retry(
@@ -2024,6 +2074,16 @@ class DreamingEngine:
 
         if result is None:
             return False
+
+        if plan is not None:
+            challenger = await self._procedure_challenger.submit(plan, result)
+            if challenger is None:
+                return False
+            logger.info(
+                "AD-1326: procedure challenger '%s' saved for champion '%s'; the champion keeps routing",
+                challenger.name, parent.name,
+            )
+            return True
 
         # Persist
         try:
@@ -2191,7 +2251,19 @@ class DreamingEngine:
                                 seen_ids.add(ep.id)
                     except Exception:
                         continue
-                fresh_episodes = fresh_episodes[:10]
+                fresh_episodes = fresh_episodes[:PROCEDURE_EVOLUTION_EPISODE_LIMIT]
+
+                # AD-1326: every fallback FIX (failure and near-miss) is a challenger.
+                plan = None
+                if self._procedure_challenger is not None:  # AD-1326 step 7d
+                    # The rewrite prompt quotes this turn's LLM response, so the turn's own
+                    # episodes are rewrite evidence and are never held out.
+                    plan = await self._procedure_challenger.prepare(
+                        parent, fresh_episodes, source_correlation_id=event.get("correlation_id", ""),
+                    )
+                    if plan is None:
+                        self._addressed_degradations[proc_id] = time.time()
+                        continue
 
                 # Call evolution with retry
                 result = await evolve_with_retry(
@@ -2200,7 +2272,7 @@ class DreamingEngine:
                     fallback_type,
                     event.get("llm_response", ""),
                     event.get("rejection_reason", ""),
-                    fresh_episodes,
+                    list(plan.evolution_episodes) if plan is not None else fresh_episodes,  # AD-1326 step 7d
                     self._llm_client,
                 )
 
@@ -2208,6 +2280,11 @@ class DreamingEngine:
                 self._addressed_degradations[proc_id] = time.time()
 
                 if result is None:
+                    continue
+
+                if plan is not None:
+                    if await self._procedure_challenger.submit(plan, result) is not None:
+                        evolved_count += 1
                     continue
 
                 # Persist evolved procedure

@@ -16,6 +16,7 @@ from probos.cognitive.dream_wm_bridge import DreamWorkingMemoryBridge
 from probos.cognitive.emergent_detector import EmergentDetector
 from probos.cognitive.emergence_metrics import EmergenceMetricsEngine
 from probos.cognitive.episodic_procedural_bridge import EpisodicProceduralBridge
+from probos.cognitive.procedure_challenger import build_procedure_challenger
 from probos.cognitive.reconsolidation import ReconsolidationScheduler
 from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
 from probos.cognitive.task_scheduler import TaskScheduler
@@ -163,6 +164,14 @@ async def init_dreaming(
             )
     if episodic_memory:
         dream_cfg = config.dreaming
+        # AD-1326: FIX evolution saves a challenger that replaces its champion only after winning.
+        procedure_challenger = build_procedure_challenger(
+            config=config,
+            procedure_store=procedure_store,
+            episodic_memory=episodic_memory,
+            llm_client=llm_client,
+            emit_event_fn=emit_event_fn,
+        )
         dreaming_engine = DreamingEngine(
             router=hebbian_router,
             trust_network=trust_network,
@@ -189,6 +198,7 @@ async def init_dreaming(
             reconsolidation_scheduler=reconsolidation_scheduler,
             expertise_directory=expertise_directory,
             failure_distiller=failure_distiller,
+            procedure_challenger=procedure_challenger,
         )
         if reconsolidation_scheduler and hasattr(episodic_memory, "set_reconsolidation_scheduler"):
             episodic_memory.set_reconsolidation_scheduler(reconsolidation_scheduler)

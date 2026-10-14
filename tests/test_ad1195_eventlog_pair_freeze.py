@@ -492,7 +492,7 @@ def test_census_resolves_only_static_strings_and_flags_what_it_cannot_classify()
 def test_owner_pairs_are_written_and_no_routed_value_is_a_written_event() -> None:
     """DRIFT-5: every owner pair has a writer, and the router never duplicates an owner's row."""
     assert _contract_problems(_tree_census(), OWNER_RECORDS, ROUTED_VALUES) == []
-    assert len(OWNER_RECORDS) == 8 and len(ROUTED_VALUES) == 28
+    assert len(OWNER_RECORDS) == 8 and len(ROUTED_VALUES) == 29
 
 
 def test_contract_problems_report_an_unwritten_owner_and_a_routed_collision() -> None:

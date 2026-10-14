@@ -58,6 +58,7 @@ DECLARATIONS: Mapping[str, Persistence] = MappingProxyType({
     "SELF_MOD_FAILURE": _DURABLE,
     "DESIGN_GENERATED": _DURABLE,
     "SHIP_NAMED": _DURABLE,
+    "PROCEDURE_CHALLENGE_DECIDED": _DURABLE,  # AD-1326: the ship changing its own routing
     # Security controls deciding.
     "THREAT_DETECTED": _DURABLE,
     "TRUST_INTEGRITY_VIOLATION": _DURABLE,

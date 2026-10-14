@@ -391,7 +391,7 @@ _GOLDEN_GRANDFATHERED = frozenset({
     "ZPD_SCENARIO_CALIBRATED",
 })
 
-# DECL-4: the 28 routed values of the contract's DURABLE table (section 3.8).
+# DECL-4: the 29 routed values of the contract's DURABLE table (section 3.8), plus AD-1326's.
 _CONTRACT_ROUTED_VALUES = frozenset({
     "capability_request_filed", "capability_request_decided", "capability_request_fulfilled",
     "tool_permission_denied", "tool_intervention_required",
@@ -403,6 +403,7 @@ _CONTRACT_ROUTED_VALUES = frozenset({
     "mcp_bridge_invoke", "mcp_bridge_failed",
     "work_item_status_changed", "work_item_quarantined", "crew_task_started", "crew_task_completed",
     "config_changed",
+    "procedure_challenge_decided",
 })
 
 _CONTRACT_OPERATIONAL = frozenset({
@@ -443,12 +444,12 @@ def _problem_lines(text: str, kind: str) -> list[str]:
 
 
 def test_every_member_is_declared_or_grandfathered_never_both() -> None:
-    """DECL-1: 396 members = 40 declared + 356 grandfathered, disjoint."""
+    """DECL-1: 397 members = 41 declared + 356 grandfathered, disjoint."""
     names = set(EventType.__members__)
     declared = set(ep.DECLARATIONS)
     assert not declared & ep.GRANDFATHERED
     assert declared | ep.GRANDFATHERED == names
-    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (396, 40, 356)
+    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (397, 41, 356)
     assert isinstance(ep.GRANDFATHERED, frozenset)
     assert ep.assert_complete(EventType.__members__) is None
 
@@ -499,13 +500,13 @@ def test_snapshot_only_shrinks() -> None:
 
 
 def test_declared_counts_and_routed_values_match_the_contract() -> None:
-    """DECL-4: 36 DURABLE (8 owner, 28 routed), 4 OPERATIONAL, 0 DIAGNOSTIC."""
+    """DECL-4: 37 DURABLE (8 owner, 29 routed), 4 OPERATIONAL, 0 DIAGNOSTIC."""
     counts = Counter(ep.DECLARATIONS.values())
-    assert counts == {Persistence.DURABLE: 36, Persistence.OPERATIONAL: 4}
+    assert counts == {Persistence.DURABLE: 37, Persistence.OPERATIONAL: 4}
     assert counts[Persistence.DIAGNOSTIC] == 0
     assert len(ep.OWNER_RECORDS) == 8
     assert ROUTED_VALUES == _CONTRACT_ROUTED_VALUES
-    assert len(ROUTED_VALUES) == 28
+    assert len(ROUTED_VALUES) == 29
     operational = {name for name, cls in ep.DECLARATIONS.items() if cls is Persistence.OPERATIONAL}
     assert operational == _CONTRACT_OPERATIONAL
     assert not any(ep.is_routed(name) for name in operational)
@@ -583,4 +584,4 @@ def test_every_member_keeps_str_equality_and_pickle_identity() -> None:
         )
     ]
     assert broken == []
-    assert len(EventType) == 396
+    assert len(EventType) == 397

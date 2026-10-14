@@ -65,6 +65,7 @@ _PRODUCER_FILES: dict[str, tuple[str, ...]] = {
     "CREW_TASK_STARTED": ("cognitive/crew_executor.py",),
     "CREW_TASK_COMPLETED": ("cognitive/crew_synth.py",),
     "CONFIG_CHANGED": ("runtime_config_service.py",),
+    "PROCEDURE_CHALLENGE_DECIDED": ("cognitive/procedure_challenger.py",),
 }
 
 # Owner members ACCEPT-1 drives through the writer that owns their row.
@@ -158,7 +159,7 @@ def _producer_lines(rel: str, name: str) -> list[int]:
 
 def test_producer_table_names_exactly_the_routed_members() -> None:
     """PROD-1 and ACCEPT-1 parametrize over these; a drift must not silently shrink them."""
-    assert len(_ROUTED) == 28
+    assert len(_ROUTED) == 29
     assert set(_PRODUCER_FILES) == set(_ROUTED)
     missing = [rel for files in _PRODUCER_FILES.values() for rel in files if not (_SRC / rel).is_file()]
     assert missing == []
@@ -168,7 +169,7 @@ def test_acceptance_covers_every_durable_member() -> None:
     """Every DURABLE member is answered for below, or its owner writer is covered elsewhere."""
     durable = {name for name, cls in DECLARATIONS.items() if cls is Persistence.DURABLE}
     owners = {*_OWNER_TOOL_MEMBERS, *_OWNER_BACKUP_MEMBERS, *_OWNER_COVERED_ELSEWHERE}
-    assert len(durable) == 36
+    assert len(durable) == 37
     assert owners == set(OWNER_RECORDS)
     assert set(_ROUTED) | owners == durable
 

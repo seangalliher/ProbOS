@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1867
-  field_definitions: 1844
+  canonical_dump_leaves: 1875
+  field_definitions: 1852
   incidental: 13
   own_models: 225
   owned: 292
   public_names: 305
-canonical_dump_sha256: a0d97f0854e31648fce1a87a956de88cb277210aecd8b53660e6d8a87389e03b
+canonical_dump_sha256: 32c4a7d5c0a5c87897f93abdd47cdf75701991e66495b9f19b692451570da9d1
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1538,7 +1538,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 18c1ce0832d1819e294bc26fa744fad3284001f9b4cae739e1cb3d9252f7a876
+    schema_sha256: f5880b274721698687a43590069b4ee32570f52c72f897f4423f08c873ec5b70
     fields:
     - {default: 'False', name: organ_enabled}
     - {default: '120.0', name: idle_threshold_seconds}
@@ -1589,6 +1589,14 @@ models:
     - {default: '50', name: relationship_inference_max_pairs_per_run}
     - {default: '5', name: relationship_inference_max_per_entity}
     - {default: '0.6', name: relationship_inference_min_confidence}
+    - {default: 'True', name: procedure_challenger_enabled}
+    - {default: '2', name: procedure_challenger_used_contexts}
+    - {default: '2', name: procedure_challenger_held_out_episodes}
+    - {default: '3', name: procedure_challenger_min_decisions}
+    - {default: '0.1', name: procedure_challenger_promotion_margin}
+    - {default: '16', name: procedure_challenger_max_judge_calls_per_cycle}
+    - {default: '5', name: procedure_challenger_max_pending_cycles}
+    - {default: '2', name: procedure_challenger_max_pending_per_champion}
   DutyDefinition:
     qualname: DutyDefinition
     bases:
@@ -3352,7 +3360,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 62e0c66908fe5e75757d2a1f0d279065dd8aee670c5c9a460f2f8b4b9e084739
+    schema_sha256: d53a8131f2d633bfa8f75847596f8761270aca03d6407a6a208f6593fb77d659
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
