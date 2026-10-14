@@ -33,7 +33,12 @@ from typing import Any
 import pytest
 
 import probos.cognitive.profile_qualification_store as store_module
-from probos.cognitive.elastic_team import AuthorityCeiling, WorkerSlot, canonicalize_projection
+from probos.cognitive.elastic_team import (
+    AuthorityCeiling,
+    WorkerAttemptOutcome,
+    WorkerSlot,
+    canonicalize_projection,
+)
 from probos.cognitive.execution_profile import EvaluationRecord, ExecutionProfile
 from probos.cognitive.profile_qualification_store import (
     CandidateQueryResult,
@@ -47,7 +52,7 @@ from probos.cognitive.profile_qualification_store import (
 )
 from probos.storage.registry import load_default_store_registry
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
-from tests.test_ad1286_elastic_team_contract import _review_slot
+from tests.test_ad1286_elastic_team_contract import _attempt, _review_slot
 from tests.test_ad1287_execution_profile import (
     _PROFILE,
     _all_field_names,
@@ -302,8 +307,12 @@ def _values(table: str, row: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _data_calls(profile: ExecutionProfile, profile_ref: str, record: EvaluationRecord) -> dict[str, _DataCall]:
-    """The six data methods, with arguments well formed in every respect but the store's state."""
+    """The eight data methods (S1's six, then S3's two), with arguments well formed in every respect but the store's state."""
     slot = WorkerSlot.model_validate(_review_slot())
+    attempt = _attempt(execution_profile_ref=profile_ref)
+    outcome = WorkerAttemptOutcome(
+        worker_attempt_id=attempt.worker_attempt_id, terminal_status="succeeded", error_code=None, recorded_at=2000.0,
+    )
     return {
         "register_profile": lambda store: store.register_profile(profile),
         "get_profile": lambda store: store.get_profile(profile_ref),
@@ -311,6 +320,8 @@ def _data_calls(profile: ExecutionProfile, profile_ref: str, record: EvaluationR
         "invalidate_profile": lambda store: store.invalidate_profile(profile_ref, "inv-1", "evaluator_revoked"),
         "get_qualification": lambda store: store.get_qualification(profile_ref),
         "find_slot_candidates": lambda store: store.find_slot_candidates(slot),
+        "record_profile_outcome": lambda store: store.record_profile_outcome(attempt, outcome),
+        "get_outcome_state": lambda store: store.get_outcome_state(profile_ref),
     }
 
 
@@ -344,7 +355,7 @@ async def test_unstarted_and_stopped_store_raise_unavailable(db_path: Path) -> N
     profile = _profile_model()
     ref = profile.content_ref()
     calls = _data_calls(profile, ref, _evaluation(ref))
-    # the list under test is the store's whole public async surface, so a seventh data method cannot slip past it
+    # the list under test is the store's whole public async surface, so a ninth data method cannot slip past it
     public = {name for name, _ in inspect.getmembers(ProfileQualificationStore, inspect.iscoroutinefunction)
               if not name.startswith("_")}
     assert public - {"start", "stop"} == set(calls)
@@ -1146,7 +1157,7 @@ async def test_every_table_is_without_rowid(db_path: Path) -> None:
     with contextlib.closing(sqlite3.connect(db_path)) as raw:
         definitions = dict(raw.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'"))
 
-    assert set(definitions) == set(_TABLES)
+    assert set(definitions) == {*_TABLES, "profile_outcomes"}  # AD-1287 S3 adds the outcome table
     for table, definition in definitions.items():
         assert definition.rstrip().upper().endswith("WITHOUT ROWID"), table
 
@@ -1299,6 +1310,10 @@ async def test_clock_is_read_once_per_data_call_and_never_otherwise(db_path: Pat
         ),
         "get_qualification": (lambda s: s.get_qualification("x"), ValueError, "execution_profile_ref_invalid"),
         "find_slot_candidates": (lambda s: s.find_slot_candidates({}), TypeError, "profile_slot_type_invalid"),
+        "record_profile_outcome": (
+            lambda s: s.record_profile_outcome({}, {}), TypeError, "profile_outcome_type_invalid",
+        ),
+        "get_outcome_state": (lambda s: s.get_outcome_state("x"), ValueError, "execution_profile_ref_invalid"),
     }
     assert list(malformed) == list(valid)  # premise: one malformed call per data method
     reads: dict[str, int] = {}
@@ -1605,7 +1620,7 @@ async def test_start_accepts_only_this_layout(db_path: Path, caplog: pytest.LogC
         store = await _started(db_path)
         objects = _catalog(db_path)
         ours = sorted(kind for kind, name, _table, _sql in objects if not name.startswith("sqlite_"))
-        assert ours == ["index"] * 3 + ["table"] * 3 + ["trigger"] * 9  # premise: the fifteen objects of this layout
+        assert ours == ["index"] * 3 + ["table"] * 4 + ["trigger"] * 12  # premise: the S1+S3 layout's nineteen objects
         assert any(name.startswith("sqlite_autoindex_") for _kind, name, _table, _sql in objects)  # and SQLite's own
         assert await store.get_profile(ref) is None  # started: a data call is served, not refused
         await store.stop()
@@ -1723,7 +1738,7 @@ async def test_foreign_keys_are_on_before_the_first_statement_of_every_connectio
         await call(store)
         seen[name] = list(settings)
 
-    assert len(seen) == 8  # premise: start on a new file, start on a populated one and the six data methods
+    assert len(seen) == 10  # premise: start on a new file, start on a populated one and the eight data methods
     for label, entries in seen.items():
         assert entries, label  # the proxy saw a connection of this call
         assert set(entries) == {1}, label  # and each one had foreign keys on before its first statement
@@ -1760,14 +1775,16 @@ def test_store_tables_are_visible_to_the_store_registry_detector(monkeypatch: py
     assert checker.detect_tables(in_one_tuple) == ()
     assert checker.detect_tables(each_named) == tables
 
-    assert checker.detect_tables(Path(store_module.__file__).read_text(encoding="utf-8")) == tables
+    # AD-1287 S3 binds its table to its own name too, so the detector sees four
+    assert checker.detect_tables(Path(store_module.__file__).read_text(encoding="utf-8")) == (*tables, "profile_outcomes")
 
 
 # --------------------------------------------------------------------------------------
 # 39. A start that fails while creating leaves no layout (review round 3, D2.1)
 # --------------------------------------------------------------------------------------
 
-_FIFTEEN = ["index"] * 3 + ["table"] * 3 + ["trigger"] * 9  # the kinds of the fifteen objects of this layout (#35)
+# the kinds of the S1+S3 layout's nineteen objects (#35; AD-1287 S3 adds a table and three triggers)
+_NINETEEN = ["index"] * 3 + ["table"] * 4 + ["trigger"] * 12
 
 
 def _own_kinds(path: Path) -> list[str]:
@@ -1795,7 +1812,7 @@ async def test_a_start_failing_while_creating_leaves_no_layout_and_a_later_start
     factory.fail_on = None
     await store.start()  # a later start, on the same instance
     assert await store.get_profile(ref) is None  # started: a data call is served
-    assert _own_kinds(db_path) == _FIFTEEN  # and the whole layout is there
+    assert _own_kinds(db_path) == _NINETEEN  # and the whole layout is there
 
 
 # --------------------------------------------------------------------------------------
@@ -1961,7 +1978,7 @@ async def test_two_concurrent_fresh_starts_both_succeed_in_wal(db_path: Path) ->
 
     assert await first.get_profile(ref) is None  # both started: each serves a data call
     assert await second.get_profile(ref) is None
-    assert _own_kinds(db_path) == _FIFTEEN  # the layout was created once, and whole
+    assert _own_kinds(db_path) == _NINETEEN  # the layout was created once, and whole
     assert _journal_mode(db_path) == "wal"
 
 
