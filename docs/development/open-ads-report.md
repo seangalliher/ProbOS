@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-14T11:18:18+00:00 at `713edb15` | 2845 subjects, 1010 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-14T17:18:05+00:00 at `47b80a89` | 2849 subjects, 1010 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |
@@ -306,8 +306,8 @@ A *collision* below means two issues each **lead** with the identical number. Su
 9 head-shaped lines could not be parsed. A malformed or historical entry is skipped and counted, never fatal — five eras of formatting conventions are represented in these files.
 
 ```
-PROGRESS.md:1251 head-shaped line yielded no AD/BF token
-PROGRESS.md:1257 head-shaped line yielded no AD/BF token
+PROGRESS.md:1253 head-shaped line yielded no AD/BF token
+PROGRESS.md:1259 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:146 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:167 head-shaped line yielded no AD/BF token
 progress-era-3-product.md:190 head-shaped line yielded no AD/BF token
