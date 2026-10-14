@@ -623,8 +623,15 @@ async def test_identical_replay_after_expiry_is_refused(world: _World) -> None:
 # 16. Not wired
 # --------------------------------------------------------------------------------------
 
-_S1_MODULES = ("execution_profile", "profile_qualification_store")
-_GATE_NAMES = ("ProfileQualificationStore", "admit_qualified_attempt", "check_slot_qualification")
+# AD-1287 S2a added two modules and a gate: the scan covers them, and spares them as owners, the same way
+_S1_MODULES = ("execution_profile", "profile_qualification_store", "profile_components", "profile_currency")
+_GATE_NAMES = (
+    "ProfileQualificationStore",
+    "admit_qualified_attempt",
+    "check_slot_qualification",
+    "admit_current_qualified_attempt",
+    "RegistryComponentSource",
+)
 
 
 def _gate_references(tree: ast.AST) -> list[str]:
@@ -697,9 +704,9 @@ def _scan_tree(root: Path, owned: list[Path]) -> tuple[list[str], dict[str, list
 
 
 def test_nothing_in_src_constructs_the_store_or_calls_the_gate(tmp_path: Path) -> None:
-    """Pins D5: no file under ``src/probos`` except the two S1 modules holds a direct syntactic reference to them (an import of an S1 module, or a call of the store or a gate function by name or attribute).
+    """Pins D5: no file under ``src/probos`` except the S1 and S2a modules (``_S1_MODULES``) holds a direct syntactic reference to them (an import of one of them, or a call of the store, a gate function or the S2a source by name or attribute).
 
-    AD-1288 (commission admission) constructs the store and routes admission through ``admit_qualified_attempt``,
+    AD-1288 (commission admission) constructs the store and routes admission through ``admit_current_qualified_attempt``,
     and changes this test deliberately. The scan is AST-based: a string that merely names a store, a module or a
     function (as the store declaration does) is not a reference.
     Calls through a plain alias and lookups by string are not covered; this test does not assert them either way.
