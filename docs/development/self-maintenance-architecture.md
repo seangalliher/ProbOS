@@ -473,7 +473,12 @@ testable blocker that cannot be delivered inside this contract.
   digest without the Captain; nothing runs until the Captain approves. Add
   an expected-state guard to `FaultReportStore.resolve`. Test happy,
   denied/expired, empty, unavailable, and malformed paths; default-off behavior
-  must preserve the existing runtime.
+  must preserve the existing runtime. **S2a** (the Captain's approval of one
+  exact candidate, filed on the existing approval surface and checked by one
+  durable read with a 24-hour expiry; built, runtime-unwired):
+  [prompts/ad-1299-s2a-candidate-approval.md](../../prompts/ad-1299-s2a-candidate-approval.md).
+  Later in-envelope slices are S2c to S2f; S2b stays reserved for delegated
+  and scheduled grants under D-B2 (b) or (c).
 - **S3 - Isolated engineering:** campaign worktrees (never `merge_to_main` or
   forced removal), Builder/harness, self-modification, CodeValidator, QA and Red
   Team in a shadow environment. Candidate code (tests, shadow run, harness
