@@ -41,6 +41,66 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *Descriptor.* `offset` is kept out of `IntentDescriptor.params` because `federation/mcp_server.py` projects every descriptor param as required. Rejected: in-call map-reduce (unbounded spend), raw-text mode (duplicates `http_fetch`; the AD-1148 cap would elide an 8,000-char window).
 - *Failure contract.* `html_to_text` returns text or raises `HtmlTextError`, with no degraded mode, because `html.parser` internals vary by CPython version and a degraded extraction would hand the model script and style text; `read_page` reports `the page could not be read as HTML`; `_strip_tags` falls back to a linear strip that still drops script and style; references are bounded instead of raising the process-wide int-digit limit; extraction runs in `asyncio.to_thread`. The linear strip ends skipped-element tag names at an HTML delimiter and finds those tags' end by the HTML tokenizer's attribute rules (other tags are removed by a simple pass), and `/>` closes all five skipped elements in both extractors, the XHTML reading, because the browser reading hid an XHTML page's whole article after `<script src="a.js"/>`; the accepted cost is that code placed after a self-closed `<script/>` is read as text.
 
+### AD-1287 S3 -- Outcome learning: raw Beta parameters per execution profile (2026-10-14, #1334)
+
+AD-1287 S3 extends the S1 store with an insert-only `profile_outcomes` table and an explicit two-layout `start()`, and adds `record_profile_outcome`, `get_outcome_state` and the producer `learn_attempt_outcome`: a profile's raw `(alpha, beta)` is learned from AD-1286 attempt outcomes, once per attempt, and gates nothing. Built and unwired (nothing under `src/` constructs the store or calls the producer); nothing is written to `TrustNetwork`. With S1, S2a and S2b it completes #1334. Contract `prompts/ad-1287-s3-outcome-learning.md`; no new AD or BF number.
+
+- *Slicing.* One slice inside the S1 store module (no new module, so S1 test #16 and the store's pinned import list stay as S2b left them). Rejected: the producer in a new module (it would conflict with S2b's edit of the same test #16 lines), layout first and producer later (a table with no producer), a separate store file (a third copy of the connection, WAL and layout code, no foreign key to the profiles, and it contradicts O-3's "same store").
+- *D1 (where alpha/beta live).* A separate read, `get_outcome_state(profile_ref)`; `ProfileQualification`, `_assess`, both gates and the candidate query are unchanged. Folding outcomes into `_assess` would let a corrupt outcome row refuse admission, so learning would gate; mutant O18 proves the isolation test catches it.
+- *D2 (what counts).* `succeeded` adds one to alpha, `failed` one to beta whatever its error code, `cancelled` is not evidence, and no outcome yet is "pending". Prior `(2, 2)` (TrustNetwork's default, not written to it). Idempotent by `worker_attempt_id`: the same attempt with the same profile, status and code returns the stored row (its first `learned_at_ms`) and writes nothing; a different outcome or profile for a learned attempt is `profile_outcome_conflict` and the first learned stands. Classifying failures by error code is deferred: AD-1286 codes are free-form and nothing writes them yet.
+- *D3 (the producer's port).* `AttemptOutcomeReader` over `get_attempt` and `get_attempt_outcome`; the profile ref comes from the attempt and the task class from the store's own verified profile; a sweeper (AD-1288) is the intended caller. Learning does not check that the attempt was admitted through the gate.
+- *D4 (layouts).* Two exact matches: S1's fifteen statements and S1 plus S3's nineteen. An empty file gets all; an exact S1 file gets the four S3 objects inside the same `BEGIN IMMEDIATE` with no S1 object or row changed; a partial or edited S3 layout is refused with the file untouched. `_SCHEMA_STATEMENTS` is byte-identical, so a file written by the S1 code still opens; once the S3 code has started a file the S1 code refuses it (stated in the docstring and the declaration; no production file exists).
+- *D5 (registry, backup, pins).* The store declaration has no table field and the module is declared, not baselined, so only its prose changed. Backup coverage works by file name. Six S1 test lines pinned the S1-only layout and were widened (Section 3 of the contract); one more pin was found by the full-suite diagnostic and two tests derived from it needed matching edits (the orchestrator's addendum, Section 4: `test_unstarted_and_stopped_store_raise_unavailable` pins the store's whole public async surface to `_data_calls`, so `_data_calls` now covers the eight data methods and the two derived tests, the clock-once and foreign-keys tests, were extended).
+- *D6 (failure tiers).* Bad input propagates before any read; an unknown profile, a conflict and the observation bound are `ProfileQualificationConflict` with nothing written; a row that decides or is returned and fails verification is `ProfileQualificationIntegrityError`.
+- *Obligations and residuals.* O-1 (AD-1288 calls `admit_current_qualified_attempt`), O-4 (provision on the declared model and lease under the declared policy, or refuse; AD-1288 owns any sweeper) and the residuals R-1 (shared `_open`), R-2, R-3 (AD-1047), R-4 (S1's gate callable without currency), R-5 (prompts and tool implementations), R-6 (model version and policy declared-only) stay with AD-1288 and the Captain; all are recorded on #1335.
+- *Review round 1 (2026-10-14, Diff Reviewer GPT-6.1 Sol, READY, two prose follow-ups, both corrected).* The reviewer executed each property against a genuine S1-written file (taken from `5c77cd50`), including concurrent starts, interrupted extension, five refused layouts with identical file hashes, 40 attempts learned by two writers (observations 1 to 40, `alpha + beta == 4 + observation`), cancellation after INSERT and after COMMIT, nine tampered-row cases, and gating isolation across the S1, S2a and S2b gates. **F1** (P2, injected): the store declaration said every deciding row is re-verified; an attempt already learned under another profile is refused as `profile_outcome_conflict` without verifying that stored row (the module docstring said so, the declaration did not). **F2** (P2, injected): the declaration said nothing bounds learned outcomes per profile; the 2**53 - 1 sequence limit does (`profile_sequence_exhausted`, before any write). Both are claims in prose; the declaration now says what the code does, and it also names `admit_current_qualified_attempt` rather than `admit_qualified_attempt` as AD-1288's caller. No logic changed since the reviewed commit `2c8a2825`.
+- *Mutation campaign of record (2026-10-14).* On the committed tree `f66cced7` (tree `e84167f99efd9af3e4d4b89b5fabcb2afbde20c6`, win32): 42 of 42 mutants KILLED, 0 survived, 0 inert, 0 invalid (baseline 155 passed): the 28 new rows O1-O28 and 14 re-runs of S1 rows whose code or killing test S3 changes (R-S18 to R-S20, R-S26, R-S29 to R-S34, R-S36 to R-S39); the other S1 rows stay valid on S1's record because their anchor lines, functions and killing tests are unchanged. sha256: `src/probos/cognitive/profile_qualification_store.py` `b57c0d7d434c7dc34e1512de725e2eef5e302ecf030a1969ca4512ee8fb4a447`, `tests/test_ad1287_profile_qualification_store.py` `405c77b38efdba0da8b7626ff85590eb73f02b054ca812acd67a1ada7d9d30c5`, `tests/test_ad1287_s3_profile_outcomes.py` `b1b48423cec4955b1c36cb8dee5b1356bc474041df30444c490f86e06ae24a53`, `tests/test_ad1287_s3_outcome_learning.py` `a73dbb53b7b722fea6775af4b4619694eb4cdb8fe7dc400cdb8c10603aa6e15e`. The pre-campaign on the reviewed commit also killed 42 of 42. A later Builder whose hashes match does not repeat it. `PS` is the S1 store test file, `PO` the S3 store test file, `OL` the producer test file:
+
+| Id | Killed first by |
+|---|---|
+| O1 | `PS::test_start_accepts_only_this_layout[module_statements_rollback]` |
+| O2 | `PS::test_invalid_clock_refuses_every_call[nan]` |
+| O3 | `PO::test_an_s1_file_is_extended_once_and_keeps_every_s1_object_and_row` |
+| O4 | `PS::test_unstarted_and_stopped_store_raise_unavailable` |
+| O5 | `PO::test_succeeded_adds_alpha_and_failed_adds_beta_from_the_2_2_prior` |
+| O6 | `PO::test_bad_input_is_refused_before_any_read[cancelled]` |
+| O7 | `PS::test_invalid_clock_refuses_every_call[nan]` |
+| O8 | `PO::test_succeeded_adds_alpha_and_failed_adds_beta_from_the_2_2_prior` |
+| O9 | `PO::test_a_different_outcome_or_profile_for_a_learned_attempt_is_refused[other_status]` |
+| O10 | `PO::test_a_different_outcome_or_profile_for_a_learned_attempt_is_refused[other_profile]` |
+| O11 | `PO::test_tampered_outcome_rows_are_integrity_errors[sum]` |
+| O12 | `PO::test_tampered_outcome_rows_are_integrity_errors[task_class]` |
+| O13 | `PO::test_tampered_outcome_rows_are_integrity_errors[succeeded_with_code]` |
+| O14 | `PO::test_tampered_outcome_rows_are_integrity_errors[learned_at_negative]` |
+| O15 | `PO::test_the_observation_bound_is_refused_before_any_write` |
+| O16 | `OL::test_cancelled_is_not_evidence_and_nothing_written` |
+| O17 | `OL::test_pending_when_no_outcome_and_nothing_written` |
+| O18 | `PO::test_learning_gates_nothing` |
+| O19 | `PO::test_the_database_refuses_update_delete_and_replace_of_outcomes[replace_by_attempt]` |
+| O20 | `PS::test_tampered_rows_are_integrity_errors[evaluation_passed_flipped]` |
+| O21 | `PO::test_the_database_refuses_update_delete_and_replace_of_outcomes[delete]` |
+| O22 | `PS::test_every_table_is_without_rowid` |
+| O23 | `PO::test_partial_s3_objects_are_refused_and_the_file_is_left_unchanged[outcome_table_without_check]` |
+| O24 | `PO::test_bad_input_is_refused_before_any_read[attempt_mismatch]` |
+| O25 | `OL::test_a_reader_answering_for_another_attempt_is_refused[attempt]` |
+| O26 | `PO::test_unobserved_profile_reports_the_prior_and_unknown_reports_none` |
+| O27 | `OL::test_malformed_and_unknown_attempts_are_refused[malformed]` |
+| O28 | `PO::test_tampered_outcome_rows_are_integrity_errors[alpha_below_own_count]` |
+| R-S18 | `PS::test_rowid_replacement_is_refused_on_every_table[rowid-replace-profiles]` |
+| R-S19 | `PS::test_rowid_replacement_is_refused_on_every_table[rowid-replace-evaluations]` |
+| R-S20 | `PS::test_rowid_replacement_is_refused_on_every_table[rowid-replace-invalidations]` |
+| R-S26 | `PS::test_clock_is_read_once_per_data_call_and_never_otherwise` |
+| R-S29 | `PS::test_start_accepts_only_this_layout[missing_trigger]` |
+| R-S30 | `PS::test_start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| R-S31 | `PS::test_unstarted_and_stopped_store_raise_unavailable` |
+| R-S32 | `PS::test_start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| R-S33 | `PS::test_start_refuses_the_pre_round_1_layout_and_leaves_the_file_unmodified` |
+| R-S34 | `PS::test_unstarted_and_stopped_store_raise_unavailable` |
+| R-S36 | `PS::test_foreign_keys_are_on_before_the_first_statement_of_every_connection` |
+| R-S37 | `PS::test_store_tables_are_visible_to_the_store_registry_detector` |
+| R-S38 | `PS::test_a_start_failing_while_creating_leaves_no_layout_and_a_later_start_creates_it` |
+| R-S39 | `PS::test_start_accepts_only_this_layout[extra_index]` |
+
 ### AD-1287 S2b -- Drift recorded as invalidations; model and policy declared-only (2026-10-14, #1334)
 
 - *Slicing.* S2b records the drift S2a already detects for the components that have a live owner (skill content, skill structure, tool schema) as S1 invalidations; the model and the policy stay declared-only. S3 (outcome learning, O-3) is the last slice; #1334 closes when it lands. Rejected: adding a policy digest over the tools' `ToolRegistration` fields (effective permission is per agent, so it would cover only registration defaults), a model producer with a new per-tier config version label (the registry has no version, `from_tier_models` gives any non-catalog name the provider `"unknown"`, and an operator-asserted label is not observed), and recording on refusal inside the S2a gate (admission would become a writer and S2a D6 would be reversed).
