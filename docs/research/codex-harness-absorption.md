@@ -36,7 +36,7 @@ A second pass compared Codex's core tool loop (`codex-rs/core/src/tools`, `unifi
 | Edits | `apply_patch`: one multi-file patch, every change computed before any write, line endings preserved, symlink policy | `Edit File`: one replacement in one file per call; `Write File`: whole file | **Gap → AD-1332/#1535.** Also cuts calls, since every call re-sends context. |
 | Turn change record | `TurnDiffTracker`: net diff of the turn from committed patches | None | **Gap → AD-1332/#1535.** |
 | Approval reuse | Approval cache keyed on a canonical command (wrappers unwrapped; exact text kept when untokenizable) | None | **Folded into AD-1328/#1530** as an amendment. |
-| Code mode (model-written script calling tools) | Nested tool calls from a runtime; intermediate results stay out of context | AD-1221 fetch broker covers the commonest case (fetch inside `run_python`) | **Deferred.** Revisit if tool-to-tool data volume shows in the token data; every nested call must keep the same governance. |
+| Code mode (model-written script calling tools) | Nested tool calls from a runtime; intermediate results stay out of context | AD-1221 fetch broker covers fetch only: `ship.py` exports just `fetch` (`execution/fetch_broker.py:226`), so other tool-to-tool data still crosses the context | **Gap → AD-1333/#1537:** a governed tool broker, `ship.call`, with every nested call through `ToolExecutor.invoke` and its gates; read-only by default. |
 | Token-budget compaction (fresh window without summarization) | Modelled as a normal compaction lifecycle | AD-1142 compaction | **Considered.** Compare designs when compaction is next touched. |
 
 ## Consistent with existing ProbOS principles
