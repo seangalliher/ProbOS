@@ -733,7 +733,7 @@ def test_nothing_in_src_constructs_the_store_or_calls_the_gate(tmp_path: Path) -
     declared = (_SRC_PROBOS / "cognitive" / "storage_declarations.py").read_text(encoding="utf-8")
     assert "probos.cognitive.profile_qualification_store" in declared
     assert "ProfileQualificationStore" in declared
-    assert "admit_qualified_attempt" in declared
+    assert "admit_current_qualified_attempt" in declared
     assert _gate_references(ast.parse(declared)) == []
 
     # the tree scan is not vacuous either: in a scratch tree it reports a violating file, and spares the excluded

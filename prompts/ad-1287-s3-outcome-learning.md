@@ -888,6 +888,18 @@ from tests.test_ad1286_elastic_team_contract import _attempt, _review_slot
 >>>>>>> REPLACE
 ```
 
+### Section 5 -- `tests/test_ad1287_slot_qualification.py`
+
+The declaration prose (Section 2) now names `admit_current_qualified_attempt` as AD-1288's caller (S2a amended O-1). S1 test #16 asserts, as a premise of its string-versus-reference check, that the real declaration names a gate; it named the old one. Found by the canonical gate after the prose edit (the full AD-1287 test group passes with it).
+
+```
+<<<<<<< SEARCH
+    assert "admit_qualified_attempt" in declared
+=======
+    assert "admit_current_qualified_attempt" in declared
+>>>>>>> REPLACE
+```
+
 ## Tests (written by Builders against the installed source; tests only)
 
 Every test asserts its own premise; fakes are `_Fake*` classes; each refusal has a negative control (the accepted neighbour). Copy the helpers you need (`_Clock`, `_profile_model`, `_evaluation`, `_ProxyFactory`, `_catalog`, `_run_script`, `_journal_mode`, `_file_sha256`) from `tests/test_ad1287_profile_qualification_store.py`, and the two-store world from `tests/test_ad1287_slot_qualification.py` (`_World`, ~line 90). Do not import from another test module. Real stores in `tmp_path` only. Never edit `src/`.
