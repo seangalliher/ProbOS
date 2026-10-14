@@ -623,14 +623,22 @@ async def test_identical_replay_after_expiry_is_refused(world: _World) -> None:
 # 16. Not wired
 # --------------------------------------------------------------------------------------
 
-# AD-1287 S2a added two modules and a gate: the scan covers them, and spares them as owners, the same way
-_S1_MODULES = ("execution_profile", "profile_qualification_store", "profile_components", "profile_currency")
+# AD-1287 S2a added two modules and a gate, and S2b a module and a recorder: the scan covers them, and spares them
+# as owners, the same way
+_S1_MODULES = (
+    "execution_profile",
+    "profile_qualification_store",
+    "profile_components",
+    "profile_currency",
+    "profile_drift_recorder",
+)
 _GATE_NAMES = (
     "ProfileQualificationStore",
     "admit_qualified_attempt",
     "check_slot_qualification",
     "admit_current_qualified_attempt",
     "RegistryComponentSource",
+    "record_component_drift",
 )
 
 
