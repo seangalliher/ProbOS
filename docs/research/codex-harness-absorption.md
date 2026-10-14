@@ -24,6 +24,21 @@ This note records which patterns from the Codex coding-agent harness ProbOS abso
 - **Thread-store split** (`thread-store`: append-only history separate from explicit metadata patches). Already consistent with ProbOS's Cloud-Ready Storage principle.
 - **Managed-hooks-only mode** (`hooks` / `requirements.toml`). An enterprise administration feature, so it belongs to the commercial repository, not OSS.
 
+## Tool loop comparison (2026-10-14)
+
+A second pass compared Codex's core tool loop (`codex-rs/core/src/tools`, `unified_exec`, `apply-patch`, `turn_diff_tracker.rs`, `command_canonicalization.rs`, `compact*.rs`, `tools/src/code_mode.rs`, `hooks/src/output_spill.rs`) with ProbOS's (`cognitive/swe_harness`).
+
+| Area | Codex | ProbOS (verified) | Outcome |
+|---|---|---|---|
+| Oversized tool output | Spill to a temp file; head/tail preview plus a recovery path, with the path budgeted before truncation | AD-1240 (#1239, shipped): offload to a reserved workspace in dated generations, head/tail preview, exact readback, a fixed-width preview path budgeted into the frame (`swe_harness/result_offload.py`) | **Parity or better.** Nothing to absorb. |
+| Parallel tool calls | Parallel dispatch with timing | AD-1147: read-only calls in parallel, writes sequential (`agentic_loop.py:660`) | **Parity.** |
+| Interactive processes | Unified exec: PTY sessions with start / write stdin / poll / interrupt; head/tail capped buffer with omission count; stdin targets resolved from host-owned records; stdin reviewed against launch permissions and current policy | None: `run_command` is one-shot; AD-1246 long runs only extend a `run_python` wait | **Gap → AD-1331/#1534.** |
+| Edits | `apply_patch`: one multi-file patch, every change computed before any write, line endings preserved, symlink policy | `Edit File`: one replacement in one file per call; `Write File`: whole file | **Gap → AD-1332/#1535.** Also cuts calls, since every call re-sends context. |
+| Turn change record | `TurnDiffTracker`: net diff of the turn from committed patches | None | **Gap → AD-1332/#1535.** |
+| Approval reuse | Approval cache keyed on a canonical command (wrappers unwrapped; exact text kept when untokenizable) | None | **Folded into AD-1328/#1530** as an amendment. |
+| Code mode (model-written script calling tools) | Nested tool calls from a runtime; intermediate results stay out of context | AD-1221 fetch broker covers the commonest case (fetch inside `run_python`) | **Deferred.** Revisit if tool-to-tool data volume shows in the token data; every nested call must keep the same governance. |
+| Token-budget compaction (fresh window without summarization) | Modelled as a normal compaction lifecycle | AD-1142 compaction | **Considered.** Compare designs when compaction is next touched. |
+
 ## Consistent with existing ProbOS principles
 
 - **Governance buys autonomy (DP-13).** Codex's `forbidden` + justification + alternative matches DP-13(b): prefer a governed path to a removed one. Its `prompt` becomes escalation, never a dead end, per DP-13(c).
