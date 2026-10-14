@@ -575,7 +575,7 @@ def test_projects_root_honours_claude_config_dir(bridge, tmp_path):
 
 
 @pytest.mark.parametrize("read_only, requested, expected", [
-    (True, None, "medium"), (False, None, None), (True, "high", "high"), (False, "low", "low"),
+    (True, None, "high"), (False, None, "high"), (True, "medium", "medium"), (False, "low", "low"),
 ])
 def test_resolve_effort(bridge, read_only, requested, expected):
     assert bridge.resolve_effort(read_only=read_only, requested=requested) == expected
@@ -669,12 +669,19 @@ def test_render_reports_unknown_resume_size(bridge):
     assert "resumed_context_tokens" not in fresh
 
 
-def test_main_read_only_defaults_to_medium_effort(bridge, monkeypatch, tmp_path):
+def test_main_fresh_runs_default_to_high_effort(bridge, monkeypatch, tmp_path):
     calls = _main_env(bridge, monkeypatch, tmp_path, context=None)
     bridge.main(["--task", "x", "--read-only"])
     bridge.main(["--task", "x"])
-    bridge.main(["--task", "x", "--read-only", "--effort", "high"])
-    assert [c["effort"] for c in calls] == ["medium", None, "high"]
+    bridge.main(["--task", "x", "--read-only", "--effort", "medium"])
+    # read-only and edit runs alike get an explicit `high`; a caller may lower it for lookups
+    assert [c["effort"] for c in calls] == ["high", "high", "medium"]
+
+
+def test_build_command_always_carries_the_default_effort(bridge):
+    effort = bridge.resolve_effort(read_only=False, requested=None)
+    command = bridge.build_command("claude", read_only=False, resume=None, effort=effort)
+    assert command[command.index("--effort") + 1] == "high"
 
 
 # --- cache-aware resume (2026-10-11) ---------------------------------------------
@@ -826,6 +833,14 @@ def test_main_resume_with_unknown_effort_uses_cli_default_and_says_so(bridge, mo
 def test_main_rejects_non_positive_limits(bridge, flag, value):
     with pytest.raises(SystemExit):
         bridge.main(["--task", "x", flag, value])
+
+
+@pytest.mark.parametrize("logged", ["medium", "high"])
+@pytest.mark.parametrize("mode", [[], ["--read-only"]])
+def test_main_resume_keeps_the_logged_effort_not_the_new_default(bridge, monkeypatch, tmp_path, logged, mode):
+    calls = _resume_env(bridge, monkeypatch, tmp_path, context=50_000, minutes_ago=5, logged_effort=logged)
+    bridge.main(["--task", "x", "--resume", _SID, *mode])
+    assert calls[0]["effort"] == logged
 
 
 def test_main_resume_of_pre_effort_session_keeps_cli_default(bridge, monkeypatch, tmp_path):

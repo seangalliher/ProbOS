@@ -33,8 +33,8 @@ with a short handoff instead. Nothing ran.
 
 Token economy (measured 2026-10-11): 34 runs used about 437M cache-read tokens,
 about 80% of the spend, because resumed sessions grew to 250K-670K tokens a
-call. Resume only for a direct follow-up; give `--effort` per task (read-only
-runs default to medium).
+call. Resume only for a direct follow-up. Every fresh run defaults to `high`
+effort (2026-10-14); pass `--effort medium` only for mechanical lookups.
 
 Prompt caching. Measured 2026-10-11 on the bridge sessions: Claude Code writes
 cache entries with the 1-hour TTL, at 2x the input price (reads cost 0.05x on
@@ -64,8 +64,14 @@ AGENT = "claude-architect"
 MODEL = "claude-opus-5-5"
 DEFAULT_TIMEOUT_SECONDS = 3600
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
-# Consults and option ranking do not need drafting-level effort.
-DEFAULT_READ_ONLY_EFFORT = "medium"
+# Anthropic recommends at least `high` for intelligence-sensitive work, and
+# Opus 5.5's own default is `medium`. The Architect's read-only consults (option
+# ranking, readiness verdicts, park reassessment, triage) are its most
+# judgment-heavy calls, so every fresh run defaults to `high`. Pass
+# `--effort medium` only for mechanical lookups (AD ceiling, locating a symbol).
+# Set explicitly, rather than left to the CLI default, so each run's effort is
+# known, logged, and kept by resumes.
+DEFAULT_EFFORT = "high"
 # Measured 2026-10-11: fresh sessions ran at 30K-83K tokens a call; long
 # resumed sessions averaged 250K-330K and peaked at 667K, re-sending files read
 # for earlier phases on every call.
@@ -342,12 +348,16 @@ def bridge_preamble(*, read_only: bool) -> str:
 
 
 def resolve_effort(*, read_only: bool, requested: str | None) -> str | None:
-    """The effort to pass: the caller's choice, else medium for read-only runs, else the CLI default."""
+    """The effort to pass: the caller's choice, else `DEFAULT_EFFORT` for read-only and edit runs alike.
+
+    `read_only` no longer changes the default; it stays in the signature so call sites
+    keep stating the run's mode, and a mode-specific default can return without churn.
+    """
     if requested is not None:
         if requested not in EFFORT_LEVELS:
             raise ValueError(f"effort must be one of {', '.join(EFFORT_LEVELS)}")
         return requested
-    return DEFAULT_READ_ONLY_EFFORT if read_only else None
+    return DEFAULT_EFFORT
 
 
 def projects_root(env: dict[str, str], home: Path | None = None, settings: dict[str, str] | None = None) -> Path:
@@ -630,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", metavar="SESSION_ID",
                         help="continue an earlier session: only for a direct follow-up to its last answer")
     parser.add_argument("--effort", choices=EFFORT_LEVELS,
-                        help=f"reasoning effort (default: {DEFAULT_READ_ONLY_EFFORT} for --read-only, else the CLI default)")
+                        help=f"reasoning effort for a fresh run (default {DEFAULT_EFFORT}; medium for mechanical lookups); "
+                             "on a resume, omit it to keep the session's own effort")
     parser.add_argument("--max-resume-context", type=_positive_int, default=DEFAULT_MAX_RESUME_CONTEXT,
                         help=f"refuse --resume above this many context tokens (default {DEFAULT_MAX_RESUME_CONTEXT:,})")
     parser.add_argument("--stale-resume-minutes", type=_positive_float, default=DEFAULT_STALE_RESUME_MINUTES,
