@@ -143,6 +143,34 @@ async def test_parsed_drive_letter_output_is_reported_by_rg(tmp_path, monkeypatc
     assert result["data"] == [{"path": r"C:\x\a.txt", "line": 2, "text": "hello world"}]
 
 
+@pytest.mark.parametrize("sep", ["\u2028", "\u2029", "\x85", "\x0c", "\x0b", "\x1c"])
+async def test_a_separator_character_in_a_path_does_not_cut_the_record(tmp_path, monkeypatch, sep):
+    assert len(("a" + sep + "b").splitlines()) == 2  # premise: splitlines() would cut here
+    path = "C:\\x\\line" + sep + "sep.txt"
+    _fake_rg(monkeypatch, 0, (path + NUL + "2:needle\r\n").encode("utf-8"))
+    result = await _run(_tree(tmp_path), "hello")
+    assert result["engine"] == "rg"
+    assert result["data"] == [{"path": path, "line": 2, "text": "needle"}]
+
+
+async def test_a_separator_and_nul_inside_match_text_do_not_mint_a_record(tmp_path, monkeypatch):
+    text = "X\u2028additional" + NUL + "7:y"
+    _fake_rg(monkeypatch, 0, ("C:\\x\\a.txt" + NUL + "2:" + text + "\r\n").encode("utf-8"))
+    result = await _run(_tree(tmp_path), "hello")
+    assert result["engine"] == "rg"
+    assert [(m["path"], m["line"]) for m in result["data"]] == [("C:\\x\\a.txt", 2)]
+    assert result["data"][0]["text"] == text
+
+
+async def test_records_are_framed_on_lf_and_a_trailing_cr_is_trimmed(tmp_path, monkeypatch):
+    _fake_rg(monkeypatch, 0, b"C:\\x\\a.txt\x001:one\nC:\\x\\b.txt\x002:two\r\n")
+    result = await _run(_tree(tmp_path), "hello")
+    assert result["data"] == [
+        {"path": "C:\\x\\a.txt", "line": 1, "text": "one"},
+        {"path": "C:\\x\\b.txt", "line": 2, "text": "two"},
+    ]
+
+
 def _norm(p: str) -> str:
     return os.path.normcase(os.path.normpath(p))
 
@@ -180,6 +208,25 @@ async def test_real_rg_reads_a_numeric_stream_file_root(tmp_path):
     assert [(_norm(m["path"]), m["line"], m["text"]) for m in via_rg["data"]] == \
         [(_norm(m["path"]), m["line"], m["text"]) for m in via_py["data"]] == \
         [(_norm(str(stream)), 1, "needle")]
+
+
+@needs_rg
+@pytest.mark.parametrize("sep", ["\u2028", "\u0085"])
+async def test_real_rg_keeps_a_path_holding_a_separator_character(tmp_path, sep):
+    name = "line" + sep + "sep.txt"
+    try:
+        (tmp_path / name).write_text("a\nneedle\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("the temp filesystem refuses this file name")
+    agent = CodeSearchAgent(agent_id="bf895")
+    for target in (tmp_path, tmp_path / name):
+        plan = await agent.decide({"params": {"path": str(target), "pattern": "needle"}})
+        via_py = agent._search_python(plan, target)
+        assert via_py["count"] == 1, "premise: the Python engine finds the one match under the full name"
+        via_rg = await agent._search_rg(_RG, plan, target)
+        assert via_rg is not None and via_rg["engine"] == "rg"
+        assert [(_norm(m["path"]), m["line"]) for m in via_rg["data"]] == \
+            [(_norm(m["path"]), m["line"]) for m in via_py["data"]]
 
 
 @needs_rg

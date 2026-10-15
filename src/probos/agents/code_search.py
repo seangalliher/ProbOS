@@ -194,8 +194,12 @@ class CodeSearchAgent(BaseAgent):
         if proc.returncode not in (0, 1):
             return None
         matches: list[dict] = []
-        for line in stdout.decode("utf-8", errors="replace").splitlines():
-            parsed = _parse_rg_line(line)
+        # BF-895 (#1548): frame on LF only. str.splitlines() also splits at U+2028, U+2029,
+        # U+0085, form feed and others, which a file name or a match can hold: it cut a path
+        # short and minted a record from the tail of a match. One trailing CR (a CRLF file's
+        # line) is part of the terminator, as splitlines() treated it.
+        for line in stdout.decode("utf-8", errors="replace").split("\n"):
+            parsed = _parse_rg_line(line.removesuffix("\r"))
             if parsed is not None:
                 matches.append(parsed)
                 if len(matches) >= plan["max_results"]:
