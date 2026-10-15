@@ -15,7 +15,11 @@ question, not a guard one: getattr(subprocess, "run") and other dynamic calls,
 importlib-loaded modules, launches inside third-party libraries (Playwright's driver,
 webbrowser), an environment mutated under a second name (``e = env; e.update(...)``), and a
 mapping from elsewhere merged into a sanctioned base, which counts as an addition
-(``{**build_command_env(), **request.env}`` stays allowlist).
+(``{**build_command_env(), **request.env}`` stays allowlist). Import aliases resolve by
+lexical scope (a function's own imports, then each enclosing function's, then the
+module's); a name bound in no scope of that chain falls back to any scope's import of it,
+so ``global``/``nonlocal`` imports are still seen; a later rebinding by assignment is not
+tracked.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ from __future__ import annotations
 import ast
 import os
 import textwrap
-from collections import Counter
+from collections import ChainMap, Counter, deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -109,11 +114,19 @@ def _module_parts(rel_path: str) -> tuple[list[str], bool]:
     return (parts[:-1] if is_package else parts), is_package
 
 
-def _aliases(tree: ast.Module, rel_path: str) -> dict[str, str]:
+def _scope_aliases(scope: ast.AST, rel_path: str) -> dict[str, str]:
+    """Import aliases bound directly in *scope*'s own body (the module, or one function).
+
+    A nested function is its own scope and is not entered; a class body is entered.
+    """
     module, is_package = _module_parts(rel_path)
     package = module if is_package else module[:-1]
     names: dict[str, str] = {}
-    for node in ast.walk(tree):
+    pending = deque(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.popleft()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
@@ -129,10 +142,11 @@ def _aliases(tree: ast.Module, rel_path: str) -> dict[str, str]:
                 origin = node.module or ""
             for alias in node.names:
                 names[alias.asname or alias.name] = f"{origin}.{alias.name}"
+        pending.extend(ast.iter_child_nodes(node))
     return names
 
 
-def _dotted(node: ast.AST, aliases: dict[str, str]) -> str | None:
+def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str | None:
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
@@ -158,7 +172,7 @@ def _is_type_reference(node: ast.AST) -> bool:
     return False
 
 
-def _launcher(node: ast.AST, aliases: dict[str, str]) -> tuple[str, bool] | None:
+def _launcher(node: ast.AST, aliases: Mapping[str, str]) -> tuple[str, bool] | None:
     """(callee, takes_env) when *node* names a launch API."""
     dotted = _dotted(node, aliases)
     if dotted is not None:
@@ -171,7 +185,7 @@ def _launcher(node: ast.AST, aliases: dict[str, str]) -> tuple[str, bool] | None
     return None
 
 
-def _reads_whole_environment(expr: ast.AST, aliases: dict[str, str]) -> bool:
+def _reads_whole_environment(expr: ast.AST, aliases: Mapping[str, str]) -> bool:
     """True when *expr* uses os.environ whole (copy, spread, pass), not one .get()/[...] read."""
     parents = {id(child): node for node in ast.walk(expr) for child in ast.iter_child_nodes(node)}
     for node in ast.walk(expr):
@@ -241,21 +255,35 @@ def _widest(verdicts: list[str]) -> str:
 class _Scanner(ast.NodeVisitor):
     def __init__(self, tree: ast.Module, rel_path: str) -> None:
         self.path = rel_path
-        self.aliases = _aliases(tree, rel_path)
+        module_aliases = _scope_aliases(tree, rel_path)
+        self._alias_stack: list[dict[str, str]] = [module_aliases]  # module first
+        # Every scope's imports in one map (what the whole-tree walk used to build): the fallback
+        # for a name the lexical chain does not bind, i.e. a `global`/`nonlocal` import.
+        self._every_alias: dict[str, str] = dict(module_aliases)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._every_alias.update(_scope_aliases(node, rel_path))
         self.scope: list[str] = []
         self.functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.launches: list[Launch] = []
         self._consumed: set[int] = set()
 
+    @property
+    def aliases(self) -> ChainMap[str, str]:
+        """Import aliases in force here: the lexical chain (innermost function first), then every scope's."""
+        return ChainMap(*reversed(self._alias_stack), self._every_alias)
+
     def _enter(self, node: ast.AST, name: str, is_function: bool) -> None:
         self.scope.append(name)
         if is_function:
             self.functions.append(node)  # type: ignore[arg-type]
+            self._alias_stack.append(_scope_aliases(node, self.path))
             args = node.args  # type: ignore[attr-defined]
             params = (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg)
             self._skip_annotations(node.returns, *(p.annotation for p in params if p is not None))  # type: ignore[attr-defined]
         self.generic_visit(node)
         if is_function:
+            self._alias_stack.pop()
             self.functions.pop()
         self.scope.pop()
 
@@ -497,6 +525,41 @@ _SHAPE_CASES = [
         import asyncio as _a
         async def f():
             await _a.create_subprocess_shell('x')
+        """, "direct", "fail: no env="),
+    # Import aliases resolve by lexical scope: a function's own import shadows the module's only
+    # inside that function (and the functions nested in it), never in a sibling function.
+    _case("local-import-shadows-module-alias", """\
+        import subprocess as sp
+        def other():
+            import json as sp
+            return sp
+        def launch():
+            return sp.run(['x'])
+        """, "direct", "fail: no env="),
+    _case("sibling-local-alias-does-not-hide", """\
+        def a():
+            import subprocess as sp
+            return sp.run(['x'])
+        def b():
+            import json as sp
+            return sp
+        """, "direct", "fail: no env="),
+    # Control: a nested function still sees its enclosing function's import.
+    _case("nested-function-sees-outer-import", """\
+        def outer():
+            import subprocess as sp
+            def inner():
+                return sp.run(['x'])
+            return inner
+        """, "direct", "fail: no env="),
+    # A name bound in no scope of that chain falls back to any scope's import of it, so an import
+    # bound through `global` in one function is still seen from another.
+    _case("global-import-seen-from-another-function", """\
+        def setup():
+            global sp
+            import subprocess as sp
+        def launch():
+            return sp.run(['x'])
         """, "direct", "fail: no env="),
     _case("asyncio-subprocess", """\
         import asyncio
