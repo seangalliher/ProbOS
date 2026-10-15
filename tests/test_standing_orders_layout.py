@@ -111,7 +111,7 @@ PROCEDURE = (
     "the exact command that shows the delta (`git diff <base> <head>` for a committed candidate",
     "`git diff --cached <base>` in the worktree for a staged one",
     "or staged in full (`git add <paths>`, new files included; never `git add -N`",
-    "that exists only in the working tree is not frozen, so stage it before the call and never hand it off unstaged",
+    "that exists only in the working tree has neither form, so stage it before the call and never hand it off unstaged",
     "kept out of the index and named by `git diff` in the worktree for a staged candidate or by `git diff <head>` for a committed one",
     "**Progress comments (Captain, 2026-10-15).**",
     "Phase: draft | build | review round N | gate | CI",
@@ -455,6 +455,17 @@ def test_review_rounds_pointers_and_brake_options_agree() -> None:
         _rel(ARCHITECT_PROFILE): [option for option in BRAKE_OPTIONS if option not in architect],
     }
     assert not any(missing.values()), f"brake options the two sides do not share: {missing}"
+
+
+def test_brake_handoff_does_not_redefine_frozen() -> None:
+    """'Frozen' keeps its plain meaning (a candidate held fixed during a pass) in the round definition and the
+    focused check, so the brake's handoff forms are described without it and a working-tree pass still counts."""
+    orchestrator = _text(ORCHESTRATOR)
+    marker = "**Round-three brake (Captain, 2026-10-15).**"
+    assert orchestrator.count(marker) == 1, "the brake paragraph moved or was duplicated"
+    brake = orchestrator.split(marker, 1)[1].split("\n\n", 1)[0]
+    assert "in one of two forms and no other" in brake, "the paragraph under test is not the handoff clause"
+    assert not re.search(r"\bfrozen\b", brake, re.IGNORECASE), "the brake paragraph uses 'frozen' again"
 
 
 # ── pointers and the retired profiles ──────────────────────────────
