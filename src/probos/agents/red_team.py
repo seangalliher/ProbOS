@@ -14,7 +14,7 @@ import httpx
 
 from probos.agents.http_fetch import safe_fetch_method
 from probos.execution.command_env import build_command_env
-from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
+from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -307,13 +307,18 @@ class RedTeamAgent(BaseAgent):
         try:
             loop = asyncio.get_running_loop()
             deadline = time.monotonic() + _RERUN_TIMEOUT_S
-            run_result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, self._run_verify_sync, command,
-                    build_command_env(self._command_env_passthrough), deadline,
-                ),
-                timeout=_RERUN_TIMEOUT_S + _RERUN_TEARDOWN_GRACE_S,
-            )
+            slot = ProcessTreeSlot()
+            try:
+                run_result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, self._run_verify_sync, command,
+                        build_command_env(self._command_env_passthrough), deadline, slot,
+                    ),
+                    timeout=_RERUN_TIMEOUT_S + _RERUN_TEARDOWN_GRACE_S,
+                )
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                slot.cancel()  # BF-893: an enclosing timeout must not leave the re-run's tree running
+                raise
 
             if run_result is None:
                 self.update_confidence(False)
@@ -392,16 +397,19 @@ class RedTeamAgent(BaseAgent):
     @staticmethod
     def _run_verify_sync(
         command: str, env: dict[str, str] | None, deadline: float | None = None,
+        slot: ProcessTreeSlot | None = None,
     ) -> tuple[int, str] | None:
         """Blocking subprocess for verification (called via run_in_executor).
 
         ``deadline`` is the ``time.monotonic()`` instant the caller's budget ends (BF-893): a worker that
-        starts past it runs nothing, and one that starts inside it never outlives it. Omitted, the
-        budget starts now.
+        starts past it runs nothing, and one that starts inside it ends its command's tree at the
+        deadline, or when ``slot`` is cancelled (the caller gave up). It can outlive the deadline only
+        while that teardown is in progress, or if a process cannot be ended (``ProcessTree.kill`` logs
+        when it cannot signal the tree). Omitted, the budget starts now.
         """
         if deadline is None:
             deadline = time.monotonic() + _RERUN_TIMEOUT_S
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= deadline or (slot is not None and slot.cancelled()):
             return None
         try:
             if sys.platform == "win32":
@@ -417,12 +425,18 @@ class RedTeamAgent(BaseAgent):
                     **process_tree_popen_kwargs(),
                 )
             with ProcessTree.attach(proc) as tree:
+                if slot is not None and not slot.hold(tree):
+                    proc.wait()
+                    return None
                 try:
                     stdout_bytes, _ = proc.communicate(timeout=max(deadline - time.monotonic(), 0.0))
                 except subprocess.TimeoutExpired:
                     # BF-893 (#1544): end the re-run's whole tree, not only the shell.
                     tree.kill()
                     return None
+                finally:
+                    if slot is not None:
+                        slot.release()  # before close(): cancel() never sees a closed job
             stdout = stdout_bytes[:64 * 1024].decode("utf-8", errors="replace")
             return (proc.returncode, stdout)
         except Exception:

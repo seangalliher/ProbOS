@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from probos.execution.command_env import build_command_env
-from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
+from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
@@ -177,13 +177,18 @@ class ShellCommandAgent(BaseAgent):
         # budget used to start when a pool thread picked the job up, so with the shared executor busy the
         # caller reported a timeout while the command it had started was still running.
         deadline = time.monotonic() + self.DEFAULT_TIMEOUT
+        slot = ProcessTreeSlot()
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._run_sync, command, deadline),
+                loop.run_in_executor(None, self._run_sync, command, deadline, slot),
                 timeout=self.DEFAULT_TIMEOUT + self.WORKER_TEARDOWN_GRACE,
             )
             return result
+        except asyncio.CancelledError:
+            slot.cancel()  # BF-893: an enclosing timeout or cancellation must not leave the tree running
+            raise
         except asyncio.TimeoutError:
+            slot.cancel()
             return {
                 "success": False,
                 "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
@@ -222,17 +227,21 @@ class ShellCommandAgent(BaseAgent):
             return f'{prefix}"{sys.executable}"' + command[m.end(1):]
         return command
 
-    def _run_sync(self, command: str, deadline: float | None = None) -> dict[str, Any]:
+    def _run_sync(
+        self, command: str, deadline: float | None = None, slot: ProcessTreeSlot | None = None,
+    ) -> dict[str, Any]:
         """Blocking subprocess execution (called via run_in_executor).
 
         ``deadline`` is the ``time.monotonic()`` instant the caller's budget ends (BF-893): a worker
-        that starts past it runs nothing, and one that starts inside it never outlives it, so a caller
-        told "timed out" has no command still running. Omitted, the budget starts now.
+        that starts past it runs nothing, and one that starts inside it ends its command's tree at the
+        deadline, or when ``slot`` is cancelled (the caller gave up). It can outlive the deadline only
+        while that teardown is in progress, or if a process cannot be ended (``ProcessTree.kill`` logs
+        when it cannot signal the tree). Omitted, the budget starts now.
         """
         if deadline is None:
             deadline = time.monotonic() + self.DEFAULT_TIMEOUT
         timed_out = {"success": False, "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s"}
-        if time.monotonic() >= deadline:
+        if time.monotonic() >= deadline or (slot is not None and slot.cancelled()):
             return timed_out
         try:
             # BF-890 (#1529): an allowlisted environment, not the runtime's.
@@ -257,6 +266,9 @@ class ShellCommandAgent(BaseAgent):
                 )
 
             with ProcessTree.attach(proc) as tree:
+                if slot is not None and not slot.hold(tree):
+                    proc.wait()
+                    return timed_out
                 try:
                     stdout_bytes, stderr_bytes = proc.communicate(
                         timeout=max(deadline - time.monotonic(), 0.0),
@@ -266,6 +278,9 @@ class ShellCommandAgent(BaseAgent):
                     tree.kill()
                     proc.wait()
                     return timed_out
+                finally:
+                    if slot is not None:
+                        slot.release()  # before close(): cancel() never sees a closed job
 
             stdout = stdout_bytes[:self.MAX_OUTPUT_BYTES].decode(
                 "utf-8", errors="replace"

@@ -162,9 +162,10 @@ async def _rerun_verdict(agent: RedTeamAgent, command: str, claimed_stdout: str)
 
     The claim is exit code 0 and stdout *claimed_stdout*. Skips the test when the re-run ran out of the red team's own
     5 s: that is a loaded host, not a verdict, and no mutant makes the re-run slower (one that leaks the environment
-    gives a stdout mismatch). The brief names "Verification command timed out", but that string is the losing side of
-    a race: ``asyncio.wait_for`` starts its 5 s clock before ``communicate(timeout=5)`` does, so a real timeout
-    surfaces as ``"Verification error: "`` (a bare ``TimeoutError``; measured). Both count, and only after the wait
+    gives a stdout mismatch). The brief names "Verification command timed out": since BF-893 the worker enforces the
+    submission deadline it shares with the caller and the caller's ``asyncio.wait_for`` is only a later backstop, so a
+    real timeout surfaces as that string; the backstop's ``"Verification error: "`` (a bare ``TimeoutError``) is
+    still accepted. Both count, and only after the wait
     was really spent, so an instant error never skips.
     """
     intent = IntentMessage(intent="run_command", params={"command": command})

@@ -1166,6 +1166,9 @@ class RunCommandTool:
             except _asyncio.TimeoutError:
                 tree.kill()
                 return ToolResult(error=f"run_command timed out after {timeout}s")
+            except _asyncio.CancelledError:
+                tree.kill()  # BF-893: an enclosing timeout or cancellation must not leave the tree running
+                raise
             finally:
                 tree.close()
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""

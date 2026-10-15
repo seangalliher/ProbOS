@@ -25,15 +25,23 @@ team) cover ``ShellCommandAgent._run_command`` and ``RedTeamAgent._verify_run_co
 worker on the loop's shared default executor and give it one deadline, measured from submission. They put
 that executor under contention (one thread, held by a test-owned event) so the worker is picked up late:
 past the deadline it must run nothing, and inside it it must end the command's whole tree before the call
-reports the timeout. The ``_started_late_`` tests use a grandchild that writes a heartbeat (``beater.py``),
-and their teardown ends it by the pid ``.started`` records, but only while it is still beating (a pid read
-back from a file can belong to a stranger once its process is gone). They poll with ``asyncio.sleep``, never
+reports the timeout. The ``_started_late_`` tests and the cancellation tests use a grandchild that writes a
+heartbeat (``beater.py``). It loops only while ``<marker>.stop`` does not exist (and for at most 60 s), so a
+test's cleanup writes that file and waits briefly: nothing in this module signals a PID (a PID read back
+from a file can belong to a stranger once its process is gone). They poll with ``asyncio.sleep``, never
 ``asyncio.to_thread``: the executor they hold is the one ``to_thread`` would queue behind.
+
+The cancellation tests (``test_shell_cancel_ends_tree``, ``test_redteam_outer_timeout_ends_rerun``,
+``test_swe_run_command_cancel_ends_tree``, ``test_queued_worker_cancelled_runs_nothing``,
+``test_backstop_timeout_cancels_the_held_slot`` and the ``ProcessTreeSlot`` tests) cover a caller that gives up
+before the deadline: an enclosing timeout or a cancelled task must end the worker's command tree at once, not
+leave it running to the worker's own deadline.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import subprocess
@@ -43,6 +51,7 @@ import time
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -51,7 +60,7 @@ from probos.agents.red_team import RedTeamAgent
 from probos.agents.shell_command import ShellCommandAgent
 from probos.cognitive.swe_harness.tools import RunCommandTool
 from probos.execution.command_env import build_command_env
-from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
+from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.types import IntentMessage, IntentResult, VerificationResult
 
 _ON_WINDOWS = sys.platform == "win32"
@@ -80,17 +89,18 @@ child.wait()
 """
 
 #: The same shape as the spawner (root records the grandchild's pid in ``.started``, then waits), but the
-#: grandchild is this script again and appends a line to ``marker + ".beat"`` every 0.1 s for up to
-#: ``limit`` seconds: a heartbeat that only a live process can advance.
+#: grandchild is this script again and appends a line to ``marker + ".beat"`` every 0.1 s, for up to ``limit``
+#: seconds and only while ``marker + ".stop"`` does not exist: a heartbeat that only a live process can
+#: advance, and that a test ends by writing the stop file (no signal, no pid).
 _BEATER_SOURCE = """\
-import pathlib, subprocess, sys, time
+import os, pathlib, subprocess, sys, time
 
 
 def beat(marker, limit):
     end = time.monotonic() + limit
     with open(marker + ".beat", "a") as out:
         n = 0
-        while time.monotonic() < end:
+        while time.monotonic() < end and not os.path.exists(marker + ".stop"):
             n += 1
             out.write(f"{n}\\n")
             out.flush()
@@ -216,19 +226,21 @@ def _beating(marker: Path, over: float = 0.3) -> bool:
     return _beats(marker) > before
 
 
-def _end_grandchild(marker: Path) -> None:
-    """Best-effort teardown: end the heartbeat grandchild whose pid ``.started`` records, whatever became of its root.
+def _request_stop(marker: Path) -> None:
+    """Ask the heartbeat grandchild to stop: it beats only while ``<marker>.stop`` does not exist (and for 60 s)."""
+    Path(f"{marker}.stop").write_text("stop", encoding="utf-8")
 
-    A pid read back from a file can belong to a stranger by the time a test ends (Windows reuses pids within
-    seconds), so it is signalled only while the heartbeat is still advancing: a process that is writing one is
-    alive, and a live process's pid is its own. A grandchild that is already gone is left alone.
+
+def _stop_heartbeat(marker: Path) -> None:
+    """Cooperative teardown for a heartbeat grandchild: request the stop, then wait briefly for the beats to cease.
+
+    Nothing is signalled: a pid read back from a file (or any pid, once its process has exited) can belong to a
+    stranger. A grandchild that ignored the request still ends by itself at its 60 s limit.
     """
-    if not _beating(marker):
-        return
-    try:
-        os.kill(int(_started(marker).read_text()), getattr(signal, "SIGKILL", signal.SIGTERM))
-    except (OSError, ValueError):
-        pass  # it ended between the check and the signal, or its root had not recorded the pid: nothing to end
+    _request_stop(marker)
+    for _ in range(8):
+        if not _beating(marker, over=0.25):
+            return
 
 
 class _SpawnSpy:
@@ -260,11 +272,16 @@ class _ContendedCall:
     """The running loop's default executor cut to one thread, that thread held, and a call queued behind the hold.
 
     Reproduces a busy shared pool: whatever the call hands to ``run_in_executor(None, ...)`` waits for
-    :meth:`release`. Leaving the block always releases the hold, cancels the call if it is still pending and
-    shuts the pool down, so a failing test leaves no thread blocked.
+    :meth:`release`. ``hold=False`` leaves the thread free (the same one-thread pool without the contention), so a
+    test can ask with :meth:`is_free` whether a cancelled call released its thread. Leaving the block always
+    asks each heartbeat grandchild in *heartbeats* to stop (so a worker waiting on its command ends and the pool
+    can be joined), releases the hold, cancels the call if it is still pending and shuts the pool down: a
+    failing test leaves no thread blocked.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, hold: bool = True, heartbeats: tuple[Path, ...] = ()) -> None:
+        self._hold = hold
+        self._heartbeats = heartbeats
         self._release = threading.Event()
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bf893-contention")
         self._held: asyncio.Future[bool] | None = None
@@ -273,7 +290,8 @@ class _ContendedCall:
     async def __aenter__(self) -> _ContendedCall:
         loop = asyncio.get_running_loop()
         loop.set_default_executor(self._pool)
-        self._held = loop.run_in_executor(None, self._release.wait, 30)  # occupies the pool's only thread
+        if self._hold:
+            self._held = loop.run_in_executor(None, self._release.wait, 30)  # occupies the pool's only thread
         return self
 
     def submit(self, call: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
@@ -284,7 +302,17 @@ class _ContendedCall:
     def release(self) -> None:
         self._release.set()
 
+    async def is_free(self, within: float) -> bool:
+        """Whether the pool's only thread runs a trivial job within *within* s: nothing else is running on it."""
+        try:
+            await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(None, int), timeout=within)
+        except TimeoutError:
+            return False
+        return True
+
     async def __aexit__(self, *exc_info: object) -> None:
+        for marker in self._heartbeats:
+            _request_stop(marker)
         self._release.set()
         if self._call is not None and not self._call.done():
             self._call.cancel()
@@ -293,41 +321,51 @@ class _ContendedCall:
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor())  # leave the loop a usable default
 
 
-def _rerun(agent: RedTeamAgent, command: str) -> Coroutine[Any, Any, VerificationResult]:
-    """The red team's verdict on a claimed run of *command* (exit 0, no output), as an awaitable."""
+def _rerun(agent: RedTeamAgent, command: str, claimed_stdout: str = "") -> Coroutine[Any, Any, VerificationResult]:
+    """The red team's verdict on a claimed run of *command* (exit 0, output *claimed_stdout*), as an awaitable."""
     intent = IntentMessage(intent="run_command", params={"command": command})
     claimed = IntentResult(
         intent_id=intent.id, agent_id="shell-1", success=True,
-        result={"exit_code": 0, "stdout": ""}, confidence=0.8,
+        result={"exit_code": 0, "stdout": claimed_stdout}, confidence=0.8,
     )
     return agent._verify_run_command("shell-1", intent, claimed, intent.params)
 
 
 async def _beats_until_ended(marker: Path, call: asyncio.Task[Any]) -> None:
-    """Control for the heartbeat checks: a command nothing ends keeps beating, and the teardown can end it.
+    """Control for the heartbeat checks: a command nothing ends keeps beating, until the test asks it to stop.
 
-    *call* runs a heartbeat command under a generous deadline. Wait for its grandchild to start, watch the count
-    advance (so "unchanged" in the real check can be told from "still beating"), then end the grandchild by pid,
-    let the call finish and see the count stop.
+    *call* runs a heartbeat command under a generous deadline and is never cancelled. Wait for its grandchild to
+    start, watch the count advance (so "unchanged" in the real check can be told from "still beating"), then ask
+    the grandchild to stop (the stop file), let the call finish and see the count stop.
     """
     assert await _appears_async(_started(marker), 20), "control: the grandchild never started"
     first = _beats(marker)
     await asyncio.sleep(0.5)
     assert _beats(marker) > first, "control: a command nothing ended did not keep beating"
-    _end_grandchild(marker)
+    _request_stop(marker)
     await asyncio.wait_for(call, timeout=20)
     stopped = _beats(marker)
     await asyncio.sleep(0.5)
-    assert _beats(marker) == stopped, "control: ending the grandchild by pid did not stop its heartbeat"
+    assert _beats(marker) == stopped, "control: the stop request did not end the heartbeat"
 
 
-async def _assert_silent_after_the_report(marker: Path) -> None:
-    """Called the moment a call reports its timeout: the grandchild had started and beaten, and beats no more."""
-    assert _started(marker).exists(), "premise: the grandchild did not exist when the timeout was reported"
-    reported = _beats(marker)
-    assert reported >= 2, "premise: the heartbeat had not advanced when the timeout was reported"
+async def _heartbeat_is_running(marker: Path, call: asyncio.Task[Any]) -> None:
+    """Premise for the cancellation tests: the grandchild has started and beaten, and *call* still waits on it."""
+    assert await _appears_async(_started(marker), 20), "premise: the grandchild never started"
+    deadline = time.monotonic() + 20
+    while _beats(marker) < 2 and not call.done() and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert not call.done(), "premise: the call ended before the heartbeat ran"
+    assert _beats(marker) >= 2, "premise: the heartbeat did not advance"
+
+
+async def _assert_silent_after_the_call(marker: Path) -> None:
+    """Called the moment a call ends (timeout reported, or cancelled): the grandchild had beaten, and beats no more."""
+    assert _started(marker).exists(), "premise: the grandchild did not exist when the call ended"
+    ended = _beats(marker)
+    assert ended >= 2, "premise: the heartbeat had not advanced when the call ended"
     await asyncio.sleep(1.0)
-    assert _beats(marker) == reported, "a descendant was still beating after the timeout was reported"
+    assert _beats(marker) == ended, "a descendant was still beating after the call ended"
 
 
 class _FakeProcess:
@@ -347,6 +385,59 @@ class _FakeProcess:
 
 class _FakeRuntime:
     """``RunCommandTool`` stores the runtime but never reads it on the command path."""
+
+
+_FakeTree = _FakeProcess  # a ``ProcessTreeSlot`` only ever calls ``kill()`` on the tree it holds
+
+
+def _recording_slot(events: list[str]) -> type[ProcessTreeSlot]:
+    """A ``ProcessTreeSlot`` that records ``hold`` / ``release`` / ``cancel`` calls in *events*, then delegates."""
+
+    class Recording(ProcessTreeSlot):
+        def hold(self, tree: ProcessTree) -> bool:
+            events.append("hold")
+            return super().hold(tree)
+
+        def release(self) -> None:
+            events.append("release")
+            super().release()
+
+        def cancel(self) -> None:
+            events.append("cancel")
+            super().cancel()
+
+    return Recording
+
+
+def _site(name: str, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """The shell agent (``"shell"``) or the red team (``"red_team"``), each on a generous 20 s budget.
+
+    ``module`` is the agent module a spawn spy watches; ``call(command)`` is the async entry point a caller awaits
+    (and may cancel); ``worker(command, slot)`` is its blocking worker on a 20 s deadline; ``in_time(result)`` says
+    whether a call's result is that of a command that ran to completion; ``refusal`` is what the worker returns
+    when it ran nothing.
+    """
+    if name == "shell":
+        agent = ShellCommandAgent(pool="shell")
+        agent.DEFAULT_TIMEOUT = 20.0
+        return SimpleNamespace(
+            module="probos.agents.shell_command",
+            call=agent._run_command,
+            worker=lambda command, slot: agent._run_sync(command, time.monotonic() + 20.0, slot),
+            in_time=lambda result: result.get("success") is True,
+            refusal={"success": False, "error": "Command timed out after 20.0s"},
+        )
+    monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 20.0)
+    red = RedTeamAgent(pool="red_team")
+    return SimpleNamespace(
+        module="probos.agents.red_team",
+        call=lambda command: _rerun(red, command),
+        worker=lambda command, slot: RedTeamAgent._run_verify_sync(
+            command, build_command_env(), time.monotonic() + 20.0, slot,
+        ),
+        in_time=lambda verdict: verdict.verified is True,
+        refusal=None,
+    )
 
 
 @pytest.mark.timeout(90)
@@ -658,7 +749,7 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
         # caller's backstop, which reports the timeout while the command still runs.
         agent.DEFAULT_TIMEOUT = 3.0
         agent.WORKER_TEARDOWN_GRACE = 0.5
-        async with _ContendedCall() as contended:
+        async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(
                 agent._run_command(_spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
             )
@@ -667,10 +758,10 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
             contended.release()
             result = await asyncio.wait_for(call, timeout=15)
             assert result == {"success": False, "error": "Command timed out after 3.0s"}
-            await _assert_silent_after_the_report(marker)
+            await _assert_silent_after_the_call(marker)
     finally:
-        _end_grandchild(control_marker)
-        _end_grandchild(marker)
+        _stop_heartbeat(control_marker)
+        _stop_heartbeat(marker)
 
 
 @pytest.mark.timeout(90)
@@ -730,7 +821,7 @@ async def test_red_team_rerun_started_late_leaves_no_descendant_when_the_timeout
         # The teardown grace is cut to 0.5 s for the reason given in the shell agent's test.
         monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 3.0)
         monkeypatch.setattr("probos.agents.red_team._RERUN_TEARDOWN_GRACE_S", 0.5)
-        async with _ContendedCall() as contended:
+        async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(
                 _rerun(agent, _spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
             )
@@ -740,7 +831,310 @@ async def test_red_team_rerun_started_late_leaves_no_descendant_when_the_timeout
             verdict = await asyncio.wait_for(call, timeout=15)
             assert verdict.verified is False
             assert verdict.discrepancy == "Verification command timed out"
-            await _assert_silent_after_the_report(marker)
+            await _assert_silent_after_the_call(marker)
     finally:
-        _end_grandchild(control_marker)
-        _end_grandchild(marker)
+        _stop_heartbeat(control_marker)
+        _stop_heartbeat(marker)
+
+
+@pytest.mark.timeout(90)
+async def test_shell_cancel_ends_tree(tmp_path: Path, beater: Path) -> None:
+    """Cancelling the task that awaits ``ShellCommandAgent._run_command`` ends the command's whole tree.
+
+    Before the slot, a cancellation (or an enclosing ``wait_for`` timing out) left the worker thread's command
+    running to its own deadline. The budget here is 20 s, so only the cancellation can end it in time, and the
+    one-thread pool must get its thread back.
+    """
+    agent = ShellCommandAgent(pool="shell")
+    agent.DEFAULT_TIMEOUT = 20.0
+    control_marker = tmp_path / "control"
+    marker = tmp_path / "marker"
+    try:
+        # Control: never cancelled, the same call keeps beating.
+        control = asyncio.create_task(
+            agent._run_command(_spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
+        )
+        await _beats_until_ended(control_marker, control)
+
+        async with _ContendedCall(hold=False, heartbeats=(marker,)) as pool:
+            call = pool.submit(
+                agent._run_command(_spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
+            )
+            await _heartbeat_is_running(marker, call)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+            await _assert_silent_after_the_call(marker)
+            assert await pool.is_free(3.0), "the cancelled call left its worker thread running the command"
+    finally:
+        _stop_heartbeat(control_marker)
+        _stop_heartbeat(marker)
+
+
+@pytest.mark.timeout(90)
+async def test_redteam_outer_timeout_ends_rerun(
+    tmp_path: Path, beater: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An enclosing ``wait_for`` that times out first ends the red team's re-run tree, not only the await.
+
+    The runtime wraps the re-run in a shorter timer than the re-run's own budget; the cancellation that timer sends
+    used to leave the command running to the worker's deadline while the caller was told "timed out". Here the
+    re-run has 5 s and the outer timer 1 s, started once the heartbeat runs (a slow start cannot fail the premise).
+    """
+    agent = RedTeamAgent(pool="red_team")
+    control_marker = tmp_path / "control"
+    marker = tmp_path / "marker"
+    try:
+        # Control: never timed out from outside, the same re-run keeps beating.
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 10.0)
+        control = asyncio.create_task(
+            _rerun(agent, _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
+        )
+        await _beats_until_ended(control_marker, control)
+
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 5.0)
+        async with _ContendedCall(hold=False, heartbeats=(marker,)) as pool:
+            started_at = time.monotonic()
+            rerun = pool.submit(
+                _rerun(agent, _spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
+            )
+            await _heartbeat_is_running(marker, rerun)
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(rerun, timeout=1.0)
+            assert time.monotonic() - started_at < 4.5, "the re-run's own 5 s budget ended it, not the outer timer"
+            await _assert_silent_after_the_call(marker)
+            assert await pool.is_free(3.0), "the timed-out re-run left its worker thread running the command"
+    finally:
+        _stop_heartbeat(control_marker)
+        _stop_heartbeat(marker)
+
+
+@pytest.mark.timeout(90)
+@pytest.mark.parametrize("site_name", ["shell", "red_team"])
+async def test_queued_worker_cancelled_runs_nothing(
+    site_name: str, tmp_path: Path, spawner: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A call cancelled while queued behind a busy pool starts nothing; neither does a worker with a cancelled slot.
+
+    Phase 1 is end to end: the pool's only thread is held, the call is submitted and cancelled while its job is
+    queued, then the thread is released. (The pool itself drops a cancelled queued job, so this phase cannot see
+    the worker's own check.) Phase 2 hands the worker an already-cancelled slot, as when the caller gives up just
+    after a thread picked the job up: it must run nothing. Both phases are judged by ``Popen`` (a command started
+    and ended within milliseconds never writes ``.started``) and by ``.started``.
+    """
+    site = _site(site_name, monkeypatch)
+    spawned = _watch_spawns(monkeypatch, site.module)
+
+    # Control: on a free pool, with a live slot, the same call does start the command and it completes.
+    control_marker = tmp_path / "control"
+    assert site.in_time(await site.call(_spawner_command(spawner, control_marker, 1, powershell=_ON_WINDOWS))), (
+        "control: an in-time call did not complete"
+    )
+    assert len(spawned) == 1, "control: the command was not started through subprocess.Popen"
+    assert _started(control_marker).exists(), "control: the grandchild never started"
+    spawned.clear()
+
+    marker = tmp_path / "marker"
+    command = _spawner_command(spawner, marker, 7, powershell=_ON_WINDOWS)
+    async with _ContendedCall() as contended:
+        call = contended.submit(site.call(command))
+        await asyncio.sleep(0.5)
+        assert not call.done(), "premise: the call returned while its job was still queued"
+        assert spawned == [] and not _started(marker).exists(), "premise: the command started while the pool was held"
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        contended.release()
+        await asyncio.sleep(0.5)  # the released thread now reaches the cancelled job
+    assert spawned == [], "a call cancelled while queued started its command"
+    assert not await _appears_async(_started(marker), 3), "a call cancelled while queued started its command"
+
+    slot = ProcessTreeSlot()
+    slot.cancel()
+    refused = await asyncio.get_running_loop().run_in_executor(None, site.worker, command, slot)
+    assert refused == site.refusal
+    assert spawned == [], "a worker handed a cancelled slot started its command"
+    assert not _started(marker).exists(), "a worker handed a cancelled slot started its command"
+
+
+@pytest.mark.timeout(90)
+@pytest.mark.parametrize("site_name", ["shell", "red_team"])
+async def test_backstop_timeout_cancels_the_held_slot(site_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the caller's backstop gives up on a worker that never returns, the tree that worker holds is ended.
+
+    The worker is a stand-in that holds a fake tree in the slot it is handed, then waits (a wedged worker). No real
+    command runs, so the only thing that can end the held tree is the backstop's own ``slot.cancel()``. Control:
+    the same stand-in released at once returns in time and its tree is left alone.
+    """
+    release = threading.Event()
+    held: list[_FakeTree] = []
+
+    def stand_in(slot: ProcessTreeSlot) -> None:
+        held.append(_FakeTree())
+        assert slot.hold(held[-1]) is True
+        release.wait(10)
+
+    if site_name == "shell":
+        agent = ShellCommandAgent(pool="shell")
+        agent.DEFAULT_TIMEOUT = 0.5
+        agent.WORKER_TEARDOWN_GRACE = 0.5
+        monkeypatch.setattr(
+            ShellCommandAgent, "_run_sync",
+            lambda self, command, deadline=None, slot=None: stand_in(slot) or {"success": True, "data": {}},
+        )
+
+        def call() -> Coroutine[Any, Any, Any]:
+            return agent._run_command("ignored")
+
+        def in_time(result: Any) -> bool:
+            return result == {"success": True, "data": {}}
+
+        def gave_up(result: Any) -> bool:
+            return result == {"success": False, "error": "Command timed out after 0.5s"}
+    else:
+        agent = RedTeamAgent(pool="red_team")
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 0.5)
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TEARDOWN_GRACE_S", 0.5)
+        monkeypatch.setattr(
+            RedTeamAgent, "_run_verify_sync",
+            staticmethod(lambda command, env, deadline=None, slot=None: stand_in(slot) or (0, "")),
+        )
+
+        def call() -> Coroutine[Any, Any, Any]:
+            return _rerun(agent, "ignored")
+
+        def in_time(result: Any) -> bool:
+            return result.verified is True
+
+        def gave_up(result: Any) -> bool:
+            return result.verified is False and result.discrepancy == "Verification error: "
+
+    try:
+        release.set()
+        assert in_time(await call()), "control: a stand-in that returns at once was not answered"
+        assert held[0].kill_calls == 0, "control: a worker that returned in time had its tree ended"
+
+        release.clear()
+        assert gave_up(await call())
+        assert len(held) == 2, "premise: the wedged worker never held its tree"
+        assert held[1].kill_calls == 1, "the backstop gave up on the worker without ending the tree it held"
+    finally:
+        release.set()
+
+
+@pytest.mark.timeout(90)
+def test_slot_hold_after_cancel_kills() -> None:
+    """A tree handed to a slot that was already cancelled is ended at once, and ``hold`` says so."""
+    control = _FakeTree()
+    assert ProcessTreeSlot().hold(control) is True, "control: a live slot refused a tree"
+    assert control.kill_calls == 0, "control: a live slot ended the tree it was handed"
+
+    slot = ProcessTreeSlot()
+    slot.cancel()
+    tree = _FakeTree()
+    assert slot.hold(tree) is False
+    assert tree.kill_calls == 1
+    assert slot.cancelled() is True
+
+
+@pytest.mark.timeout(90)
+def test_slot_release_then_cancel_noop() -> None:
+    """A tree the worker has released is no longer the slot's to end: a late ``cancel`` leaves it alone."""
+    held = _FakeTree()
+    control = ProcessTreeSlot()
+    assert control.hold(held) is True
+    control.cancel()
+    assert held.kill_calls == 1, "control: cancel did not end a tree the slot still held"
+
+    released = _FakeTree()
+    slot = ProcessTreeSlot()
+    assert slot.hold(released) is True
+    slot.release()
+    slot.cancel()
+    assert released.kill_calls == 0
+    assert slot.cancelled() is True
+
+
+@pytest.mark.timeout(90)
+def test_slot_cancel_swallows_a_failing_kill(caplog: pytest.LogCaptureFixture) -> None:
+    """``cancel`` never raises when ending the held tree fails: it logs, so the caller's own cancellation survives."""
+    healthy = _FakeTree()
+    control = ProcessTreeSlot()
+    control.hold(healthy)
+    control.cancel()
+    assert healthy.kill_calls == 1, "control: cancel did not end a tree the slot still held"
+
+    failing = _FakeTree(kill_error=OSError("cannot end it"))
+    slot = ProcessTreeSlot()
+    slot.hold(failing)
+    with caplog.at_level(logging.WARNING, logger="probos.execution.process_tree"):
+        slot.cancel()
+    assert failing.kill_calls == 1
+    assert slot.cancelled() is True
+    assert any("BF-893" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.timeout(90)
+async def test_swe_run_command_cancel_ends_tree(tmp_path: Path, beater: Path) -> None:
+    """Cancelling ``RunCommandTool.invoke`` while its command runs ends the command's whole tree."""
+    tool = RunCommandTool(_FakeRuntime())
+    control_marker = tmp_path / "control"
+    marker = tmp_path / "marker"
+    try:
+        # Control: never cancelled, the same call keeps beating.
+        control = asyncio.create_task(tool.invoke(
+            {"command": _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=False), "timeout": 20},
+        ))
+        await _beats_until_ended(control_marker, control)
+
+        call = asyncio.create_task(tool.invoke(
+            {"command": _spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=False), "timeout": 20},
+        ))
+        try:
+            await _heartbeat_is_running(marker, call)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+            await _assert_silent_after_the_call(marker)
+        finally:
+            _request_stop(marker)  # a command the cancellation failed to end ends now, so the call can settle
+            await asyncio.gather(call, return_exceptions=True)
+    finally:
+        _stop_heartbeat(control_marker)
+        _stop_heartbeat(marker)
+
+
+@pytest.mark.timeout(90)
+async def test_in_time_result_unchanged_with_slot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An in-time command answers exactly as before the slot existed; the slot is held and released, never cancelled."""
+    printer = tmp_path / "printer.py"
+    printer.write_text("print('bf893-ok')\n", encoding="utf-8")
+    command = _printer_command(printer, powershell=_ON_WINDOWS)
+
+    # Control: the recording slot does see a cancel, so "never cancelled" below can fail.
+    probe: list[str] = []
+    _recording_slot(probe)().cancel()
+    assert probe == ["cancel"], "control: the recording slot did not record a cancel"
+
+    shell_events: list[str] = []
+    monkeypatch.setattr("probos.agents.shell_command.ProcessTreeSlot", _recording_slot(shell_events))
+    answered = await ShellCommandAgent(pool="shell")._run_command(command)
+    assert set(answered) == {"success", "data"}
+    assert set(answered["data"]) == {"stdout", "stderr", "exit_code", "command"}
+    assert answered["success"] is True
+    assert answered["data"]["exit_code"] == 0
+    assert "bf893-ok" in answered["data"]["stdout"]
+    assert shell_events == ["hold", "release"]
+
+    red_events: list[str] = []
+    monkeypatch.setattr("probos.agents.red_team.ProcessTreeSlot", _recording_slot(red_events))
+    agent = RedTeamAgent(pool="red_team")
+    agreed = await _rerun(agent, command, claimed_stdout="bf893-ok")
+    assert agreed.verified is True
+    assert agreed.discrepancy == ""
+    assert red_events == ["hold", "release"]
+    red_events.clear()
+    disagreed = await _rerun(agent, command, claimed_stdout="something else")
+    assert disagreed.verified is False
+    assert disagreed.discrepancy == "Stdout mismatch"
+    assert red_events == ["hold", "release"]

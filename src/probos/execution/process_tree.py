@@ -28,6 +28,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import types
 from typing import Any, Protocol
 
@@ -203,3 +204,47 @@ class ProcessTree:
     def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None,
                  tb: types.TracebackType | None) -> None:
         self.close()
+
+
+class ProcessTreeSlot:
+    """Lets an async caller end a worker thread's tree when the caller gives up (BF-893).
+
+    The worker holds its tree (:meth:`hold`) right after :meth:`ProcessTree.attach` and releases
+    it (:meth:`release`) before the tree is closed; :meth:`cancel` ends a held tree and makes a
+    later :meth:`hold` end its tree at once. Cancelling and holding share one lock, and the kill
+    runs under it, so a job handle is never closed while it is being ended.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tree: ProcessTree | None = None
+        self._cancelled = False
+
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def hold(self, tree: ProcessTree) -> bool:
+        """Register *tree*. When the slot is already cancelled, end it and return False."""
+        with self._lock:
+            if not self._cancelled:
+                self._tree = tree
+                return True
+        tree.kill()
+        return False
+
+    def release(self) -> None:
+        with self._lock:
+            self._tree = None
+
+    def cancel(self) -> None:
+        """Mark the slot cancelled and end any held tree. A failure to end it is logged, not raised."""
+        with self._lock:
+            self._cancelled = True
+            tree, self._tree = self._tree, None
+            if tree is None:
+                return
+            try:
+                tree.kill()
+            except Exception:
+                logger.warning("BF-893: ending a cancelled command's tree failed", exc_info=True)

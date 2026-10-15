@@ -1,6 +1,8 @@
 # Build contract: BF-892 (#1543) and BF-893 (#1544), one batch
 
-**Corrections (orchestrator, after slice 893 review round 1, 2026-10-15; the sentences below are corrected in place):** (1) a Windows descendant that asks for `CREATE_BREAKAWAY_FROM_JOB` is neither refused nor does it escape the job: it starts and a timeout still ends it (reproduced with a real grandchild, twice); (2) the POSIX claim that the kill "runs before any `wait`, so the pid cannot be reused" is false for the asyncio path (3.12's child watcher reaps independently while the caller can still be awaiting the pipes), so it is not claimed; the CI tests show group ownership, an already-exited command and a grandchild, and process-group-id reuse is recorded as a follow-up; (3) the caller's `wait_for` and the worker thread's own `communicate` timeout were two budgets that started at different times, so under executor contention a caller was told "timed out" while the command was still running: one submission deadline is now shared with the worker (the review's P1); (4) Section 3.3's "SEARCH (delete the old outer handler)" was an annotated label the installer skipped; the orchestrator applied it.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-15, through the bridge: slice 893 review rounds 1 and 2 (a shared submission deadline; cancellation folded into BF-893; two corrected claims) and slice b review round 1 (the builder's git launches moved to the allowlist; the guard hardened; the path-validation gap filed as BF-894, #1547, and the Windows ripgrep parse bug as BF-895, #1548).
+
+**Corrections (orchestrator, after slice 893 review rounds 1 and 2, 2026-10-15; the sentences below are corrected in place):** (0) round 2 found that an enclosing timeout or cancellation (the runtime wraps the red team's re-run in a shorter `wait_for`) left the worker thread's command running: the Architect reversed "No cancellation-path kill" and follow-up 4 and added a `ProcessTreeSlot`; (1) a Windows descendant that asks for `CREATE_BREAKAWAY_FROM_JOB` is neither refused nor does it escape the job: it starts and a timeout still ends it (reproduced with a real grandchild, twice); (2) the POSIX claim that the kill "runs before any `wait`, so the pid cannot be reused" is false for the asyncio path (3.12's child watcher reaps independently while the caller can still be awaiting the pipes), so it is not claimed; the CI tests show group ownership, an already-exited command and a grandchild, and process-group-id reuse is recorded as a follow-up; (3) the caller's `wait_for` and the worker thread's own `communicate` timeout were two budgets that started at different times, so under executor contention a caller was told "timed out" while the command was still running: one submission deadline is now shared with the worker (the review's P1); (4) Section 3.3's "SEARCH (delete the old outer handler)" was an annotated label the installer skipped; the orchestrator applied it.
 
 **Verdict: ready to build as 3 slices (892a, 892b, 893), one gate and one PR.** Three of the orchestrator's facts were wrong, and the contract corrects them:
 
@@ -29,7 +31,7 @@ src/probos/execution/command_env.py:98-122  build_command_env(declared=(), *, so
   No PROXY, PIP_*, GH_*, DOCKER_*, OLLAMA_*, RIPGREP_*, VIRTUAL_ENV.
 cognitive/builder.py:2433-2442  _run_tests: env = os.environ.copy() + PYTHONPATH; subprocess.run(..., env=env)
 cognitive/builder.py:2511-2520  _run_targeted_tests: same shape
-cognitive/builder.py:97-98     _FORBIDDEN_PATHS = (".git/", ...)  (the model cannot write git hooks)
+cognitive/builder.py:97-98     _FORBIDDEN_PATHS = (".git/", ...)  (premise withdrawn 2026-10-15: case-variant names and unvalidated repair writes bypass it; see BF-894, #1547)
 security/container_sandbox.py:168  env = {**os.environ, **request.env}; :173 subprocess.run(... env=env)
 security/container_sandbox.py:53  'import os'; its only use is :168
 security/container_sandbox.py:255  DockerContainerSandbox.run: subprocess.run(args, ...) with no env
@@ -106,8 +108,8 @@ Helper: `trusted_command_env() -> dict[str, str]` in `execution/command_env.py`,
 | piper `synthesize._run_sync` | piper; text on stdin | data | ESPEAK_* | trusted |
 | blender `render` | blender with ProbOS's own script | fixed | BLENDER_* | trusted |
 | rhubarb ×3 (`_convert_to_wav`, `probe_version`, `_run_rhubarb`) | ffmpeg/rhubarb | fixed | PATH | trusted |
-| builder `_run_git._sync_run` | git branch/checkout/add/commit (`.git/` not writable by the model, :97-98) | data | git identity, GIT_SSH* | trusted |
-| builder `_is_dirty_working_tree` ×2 | git rev-parse/status | fixed | HOME | trusted |
+| builder `_run_git._sync_run` | git branch/checkout/add/commit in the model-written tree (slice b review round 1: the :97-98 premise was false) | data | home vars for identity | allowlist |
+| builder `_is_dirty_working_tree` ×2 | git rev-parse/status in the same tree | fixed | home vars | allowlist |
 | artifact_extractor `_to_docx_libreoffice` | soffice converting **model-authored content** | data (document) | profile dirs | trusted (follow-up 6) |
 | referent_gate `GitObjectResolver._resolve_sync` | `git cat-file -e -- <token>` | data | HOME | trusted |
 | scout `ScoutAgent._search_github` (by reference) | gh api | data | GH_TOKEN/gh config | trusted |
@@ -570,8 +572,6 @@ TRUSTED_ENV_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("src/probos/avatars/rhubarb_backend.py", "_convert_to_wav._run_sync"): (1, "ffmpeg, fixed argv"),
     ("src/probos/avatars/rhubarb_backend.py", "probe_version._probe_sync"): (1, "rhubarb --version"),
     ("src/probos/avatars/rhubarb_backend.py", "_run_rhubarb._run_sync"): (1, "rhubarb, fixed argv"),
-    ("src/probos/cognitive/builder.py", "_run_git._sync_run"): (1, "git verbs ProbOS chooses; .git/ is not model-writable (_FORBIDDEN_PATHS)"),
-    ("src/probos/cognitive/builder.py", "_is_dirty_working_tree"): (2, "git rev-parse/status"),
     ("src/probos/cognitive/dm/artifact_extractor.py", "_to_docx_libreoffice"): (1, "soffice convert; content is data (follow-up: narrow)"),
     ("src/probos/cognitive/referent_gate.py", "GitObjectResolver._resolve_sync"): (1, "git cat-file -e -- <token>"),
     ("src/probos/cognitive/scout.py", "ScoutAgent._search_github"): (1, "gh api needs GH_TOKEN or gh config"),
@@ -1434,7 +1434,7 @@ Tracker updates (in milestone 3's commit or a docs commit inside the batch):
 - No change to timeouts, output caps or result shapes.
 - No kill-on-close and no `BREAKAWAY_OK`.
 - No `psutil` and no `taskkill`.
-- No cancellation-path kill.
+- ~~No cancellation-path kill.~~ Reversed by the Architect after slice 893 review round 2 (2026-10-15): at the default settings the outer timers (the runtime's 5 s verification timeout, the bus's 30 s signal TTL) equal the workers' budgets and fire first, so cancellation is the normal path for a hung command; a `ProcessTreeSlot` lets a cancelled caller end the worker's tree (shell agent, red team, `run_command`).
 
 ## Orchestrator regeneration commands
 
@@ -1461,7 +1461,7 @@ d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf892-893 --
 1. Pass `execution.command_env_passthrough` to the builder, the container sandbox and the dependency resolver. Today a proxy, index or CA set only in the runtime's environment no longer reaches pip, uv or model tests. *Ordinary.*
 2. Timeouts that still kill only the direct child: `subprocess.run(timeout=)` in `_run_tests`, `InProcessContainerSandbox`, piper, rhubarb, referent_gate and episodic_health. Model tests that use xdist workers would orphan them. They could adopt `ProcessTree`. *Ordinary.*
 3. run_python's Windows `_kill`, which still ends only the child (#1417 is closed, the code comment remains). Could adopt `ProcessTree`. *Ordinary.*
-4. A cancelled `run_command` turn (`CancelledError`) leaves the tree running. *Ordinary.*
+4. ~~A cancelled `run_command` turn (`CancelledError`) leaves the tree running.~~ Folded into BF-893 (see "Do not build"): the shell agent, the red team's re-run and `run_command` end their tree when the awaiting task is cancelled or its own timeout fires first.
 5. MCP stdio servers, which are third-party code, still get the full environment; it is now explicit. *Ordinary.*
 6. soffice converts model-authored documents with the full environment. *Injected:* needs a macro or exploit path.
 7. Docker `-e k=v` exposes `request.env` values in the host process listing. *Ordinary, local.*
