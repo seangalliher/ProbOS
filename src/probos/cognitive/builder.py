@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
-from probos.execution.command_env import build_command_env, trusted_command_env
+from probos.execution.command_env import build_command_env
 from probos.execution.isolation import remove_workdir_off_loop
 
 if TYPE_CHECKING:
@@ -1627,9 +1627,12 @@ async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
     """
 
     def _sync_run() -> tuple[int, str, str]:
+        # BF-892 (#1543): the allowlist. This git runs in the tree the model writes
+        # into, so its config and hooks are not ProbOS's own; these local verbs need
+        # only PATH and the home variables (identity from ~/.gitconfig).
         result = subprocess.run(
             ["git", *args],
-            env=trusted_command_env(),
+            env=build_command_env(),
             cwd=work_dir,
             capture_output=True,
         )
@@ -2575,7 +2578,7 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         # First verify we're inside a git repo
         proc = await asyncio.create_subprocess_exec(
             "git", "rev-parse", "--git-dir",
-            env=trusted_command_env(),
+            env=build_command_env(),
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -2587,7 +2590,7 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         # Check for uncommitted changes
         proc = await asyncio.create_subprocess_exec(
             "git", "status", "--porcelain",
-            env=trusted_command_env(),
+            env=build_command_env(),
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

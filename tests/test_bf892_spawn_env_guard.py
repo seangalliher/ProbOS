@@ -10,9 +10,12 @@ listed in INDIRECT_ENV_SITES. Anything else fails: no env, env=None, a None bran
 ``**kwargs`` without env, os.environ used whole by any route, a launch API bound by
 reference, or a launch API that cannot take an environment.
 
-Limits (a static scan cannot see these, so they cannot pass silently through it either,
-but nor are they checked): getattr(subprocess, "run"), importlib-loaded modules, and
-launches inside third-party libraries (Playwright's driver, webbrowser).
+Limits: a static scan cannot see these and they pass it silently, so they are a review
+question, not a guard one: getattr(subprocess, "run") and other dynamic calls,
+importlib-loaded modules, launches inside third-party libraries (Playwright's driver,
+webbrowser), an environment mutated under a second name (``e = env; e.update(...)``), and a
+mapping from elsewhere merged into a sanctioned base, which counts as an addition
+(``{**build_command_env(), **request.env}`` stays allowlist).
 """
 
 from __future__ import annotations
@@ -43,6 +46,10 @@ _ENV_LAUNCHERS = frozenset({
     "asyncio.subprocess.create_subprocess_exec", "asyncio.subprocess.create_subprocess_shell",
 })
 _LOOP_LAUNCH_ATTRS = frozenset({"subprocess_exec", "subprocess_shell"})
+#: Launch APIs the guard rejects: they take no environment (os.system, os.popen, getoutput,
+#: pty.spawn, multiprocessing) or take one only positionally (os.execve/execle/execvpe,
+#: os.spawnve/spawnle/spawnvpe/spawnlpe, os.posix_spawn[p]). Launch through subprocess or
+#: asyncio with env=, which the guard can read.
 _NO_ENV_LAUNCHERS = frozenset({
     "os.system", "os.popen", "os.startfile", "os.posix_spawn", "os.posix_spawnp",
     "subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn",
@@ -62,8 +69,6 @@ TRUSTED_ENV_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("src/probos/avatars/rhubarb_backend.py", "_convert_to_wav._run_sync"): (1, "ffmpeg, fixed argv"),
     ("src/probos/avatars/rhubarb_backend.py", "probe_version._probe_sync"): (1, "rhubarb --version"),
     ("src/probos/avatars/rhubarb_backend.py", "_run_rhubarb._run_sync"): (1, "rhubarb, fixed argv"),
-    ("src/probos/cognitive/builder.py", "_run_git._sync_run"): (1, "git verbs ProbOS chooses; .git/ is not model-writable (_FORBIDDEN_PATHS)"),
-    ("src/probos/cognitive/builder.py", "_is_dirty_working_tree"): (2, "git rev-parse/status"),
     ("src/probos/cognitive/dm/artifact_extractor.py", "_to_docx_libreoffice"): (1, "soffice convert; content is data (follow-up: narrow)"),
     ("src/probos/cognitive/referent_gate.py", "GitObjectResolver._resolve_sync"): (1, "git cat-file -e -- <token>"),
     ("src/probos/cognitive/scout.py", "ScoutAgent._search_github"): (1, "gh api needs GH_TOKEN or gh config"),
@@ -138,6 +143,21 @@ def _dotted(node: ast.AST, aliases: dict[str, str]) -> str | None:
     return ".".join(reversed(parts))
 
 
+def _is_type_reference(node: ast.AST) -> bool:
+    """A pure type expression: (dotted) names, constants, subscripts, unions, tuples/lists of these."""
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _dotted(node, {}) is not None
+    if isinstance(node, ast.Subscript):
+        return _is_type_reference(node.value) and _is_type_reference(node.slice)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return all(_is_type_reference(e) for e in node.elts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _is_type_reference(node.left) and _is_type_reference(node.right)
+    return False
+
+
 def _launcher(node: ast.AST, aliases: dict[str, str]) -> tuple[str, bool] | None:
     """(callee, takes_env) when *node* names a launch API."""
     dotted = _dotted(node, aliases)
@@ -167,7 +187,11 @@ def _reads_whole_environment(expr: ast.AST, aliases: dict[str, str]) -> bool:
 
 
 def _bindings(function: ast.AST, name: str) -> tuple[list[ast.AST | None], list[ast.AST]]:
-    """(values bound to *name* in *function*'s own body, augmented values); None = unreadable binding."""
+    """(values bound to *name* in *function*'s own body, contributions merged into it); None = unreadable.
+
+    A contribution is ``name |= x``, ``name[k] = v``, or an argument of ``name.update(...)`` /
+    ``name.setdefault(...)``.
+    """
     values: list[ast.AST | None] = []
     augmented: list[ast.AST] = []
     stack = list(ast.iter_child_nodes(function))
@@ -179,6 +203,8 @@ def _bindings(function: ast.AST, name: str) -> tuple[list[ast.AST | None], list[
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == name:
                     values.append(node.value)
+                elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == name:
+                    augmented.append(node.value)
                 elif not isinstance(target, (ast.Subscript, ast.Attribute)) and any(
                     isinstance(n, ast.Name) and n.id == name for n in ast.walk(target)
                 ):
@@ -190,6 +216,10 @@ def _bindings(function: ast.AST, name: str) -> tuple[list[ast.AST | None], list[
             values.append(node.value)
         elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
             augmented.append(node.value)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr in ("update", "setdefault")
+              and isinstance(node.func.value, ast.Name) and node.func.value.id == name):
+            augmented.extend([*node.args, *(kw.value for kw in node.keywords)])
         elif isinstance(node, (ast.For, ast.AsyncFor)) and any(
             isinstance(n, ast.Name) and n.id == name for n in ast.walk(node.target)
         ):
@@ -239,9 +269,10 @@ class _Scanner(ast.NodeVisitor):
         self._enter(node, node.name, True)
 
     def _skip_annotations(self, *annotations: ast.AST | None) -> None:
-        """A launch API named only in a type annotation is not a launch or a binding."""
+        """A launch API named in a pure type annotation is not a launch or a binding; an
+        annotation holding anything else (a call, a walrus) is scanned like code."""
         for annotation in annotations:
-            if annotation is not None:
+            if annotation is not None and _is_type_reference(annotation):
                 self._consumed.update(id(n) for n in ast.walk(annotation))
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
@@ -278,7 +309,10 @@ class _Scanner(ast.NodeVisitor):
 
     def _record(self, call: ast.Call, launcher: tuple[str, bool], shape: str) -> None:
         callee, takes_env = launcher
-        verdict = self._verdict(call) if takes_env else "fail: this launch API cannot be given an environment"
+        verdict = self._verdict(call) if takes_env else (
+            "fail: this launch API cannot be given env= (it takes none, or only positionally); "
+            "launch through subprocess/asyncio with env="
+        )
         self.launches.append(Launch(self.path, call.lineno, callee, shape, ".".join(self.scope) or "<module>", verdict))
 
     def _verdict(self, call: ast.Call) -> str:
@@ -302,40 +336,67 @@ class _Scanner(ast.NodeVisitor):
                 return ALLOWLIST
             if owner == _TRUSTED_OWNER:
                 return TRUSTED
-            return INDIRECT
+            return self._other(expr)
         if isinstance(expr, ast.Dict):
             if not expr.keys or expr.keys[0] is not None:
                 return "fail: a dict environment must start with **build_command_env(...) or **trusted_command_env()"
             base = self._classify(expr.values[0], depth + 1)
-            if base in (ALLOWLIST, TRUSTED) or base.startswith("fail"):
+            if base.startswith("fail"):
                 return base
-            return "fail: a dict environment must start from a sanctioned owner"
+            if base not in (ALLOWLIST, TRUSTED):
+                return "fail: a dict environment must start from a sanctioned owner"
+            verdicts = [base]
+            for key, value in zip(expr.keys[1:], expr.values[1:]):
+                if key is None:
+                    added = self._contribution(value, depth)
+                    if added is not None and added.startswith("fail"):
+                        return added
+                    if added is not None:
+                        verdicts.append(added)
+            return _widest(verdicts)
         if isinstance(expr, ast.IfExp):
             branches = [self._classify(expr.body, depth + 1), self._classify(expr.orelse, depth + 1)]
             failed = [b for b in branches if b.startswith("fail")]
             return failed[0] if failed else _widest(branches)
         if isinstance(expr, ast.Name):
             return self._classify_name(expr.id, depth)
+        return self._other(expr)
+
+    def _other(self, expr: ast.AST) -> str:
+        """A non-owner expression: trusted when it carries trusted_command_env anywhere."""
+        if any(_dotted(n, self.aliases) == _TRUSTED_OWNER for n in ast.walk(expr)):
+            return TRUSTED
         return INDIRECT
 
+    def _contribution(self, expr: ast.AST, depth: int) -> str | None:
+        """What merging *expr* into an environment adds: the whole-environment failure, TRUSTED,
+        or None (an addition such as ``request.env`` or ``os.environ.get(...)``)."""
+        verdict = self._classify(expr, depth + 1)
+        return verdict if verdict in (_FAIL_WHOLE_ENV, TRUSTED) else None
+
     def _classify_name(self, name: str, depth: int) -> str:
+        added: list[str] = []
         for function in reversed(self.functions):
             args = function.args
             params = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
             params |= {a.arg for a in (args.vararg, args.kwarg) if a is not None}
-            values, augmented = _bindings(function, name)
-            if any(_reads_whole_environment(v, self.aliases) for v in augmented):
-                return _FAIL_WHOLE_ENV
+            values, contributions = _bindings(function, name)
+            for contribution in contributions:
+                extra = self._contribution(contribution, depth)
+                if extra is not None and extra.startswith("fail"):
+                    return extra
+                if extra is not None:
+                    added.append(extra)
             if values:
                 verdicts = [
                     self._classify(v, depth + 1) if v is not None else "fail: environment bound in a way the guard cannot read"
                     for v in values
                 ]
                 failed = [v for v in verdicts if v.startswith("fail")]
-                return failed[0] if failed else _widest(verdicts)
+                return failed[0] if failed else _widest([*verdicts, *added])
             if name in params:
-                return INDIRECT
-        return INDIRECT
+                return _widest([INDIRECT, *added])
+        return _widest([INDIRECT, *added])
 
 
 def _scan_source(source: str, rel_path: str) -> list[Launch]:
@@ -567,6 +628,81 @@ _SHAPE_CASES = [
             return {}
         subprocess.run(['x'], env=build_command_env())
         """, "direct", INDIRECT),
+    _case("trusted-spread-widens", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        subprocess.run(['x'], env={**build_command_env(), **trusted_command_env()})
+        """, "direct", TRUSTED),
+    _case("trusted-wrapped", """\
+        import subprocess
+        from probos.execution.command_env import trusted_command_env
+        subprocess.run(['x'], env=dict(trusted_command_env()))
+        """, "direct", TRUSTED),
+    _case("environ-update", """\
+        import os, subprocess
+        from probos.execution.command_env import build_command_env
+        def f():
+            env = build_command_env()
+            env.update(os.environ)
+            subprocess.run(['x'], env=env)
+        """, "direct", "fail: the runtime environment"),
+    _case("environ-name-spread", """\
+        import os, subprocess
+        from probos.execution.command_env import build_command_env
+        def f():
+            extra = os.environ.copy()
+            subprocess.run(['x'], env={**build_command_env(), **extra})
+        """, "direct", "fail: the runtime environment"),
+    _case("trusted-update-widens", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            env = build_command_env()
+            env.update(trusted_command_env())
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("trusted-ior-widens", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            env = build_command_env()
+            env |= trusted_command_env()
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    # Negative controls: merging a mapping from elsewhere stays allowlist (container sandbox shape).
+    _case("allowlist-request-spread", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env
+        def f(request):
+            env = {**build_command_env(), **request.env}
+            subprocess.run(['x'], env=env)
+        """, "direct", ALLOWLIST),
+    _case("allowlist-update-parameter", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env
+        def f(extra):
+            env = build_command_env()
+            env.update(extra)
+            env.setdefault('LANG', 'C')
+            subprocess.run(['x'], env=env)
+        """, "direct", ALLOWLIST),
+    _case("annotation-walrus", """\
+        import subprocess
+        x: (launch := subprocess.run) = None
+        """, "bound", "fail: a launch API bound"),
+    _case("parameter-annotation-walrus", """\
+        import subprocess
+        def f(a: (launch := subprocess.run) = None):
+            return a
+        """, "bound", "fail: a launch API bound"),
+    _case("annotation-call", """\
+        import subprocess
+        x: subprocess.run(['x']) = None
+        """, "direct", "fail: no env="),
+    _case("os-spawnve", """\
+        import os
+        os.spawnve(os.P_WAIT, '/bin/x', ['x'], {})
+        """, "direct", "fail: this launch API cannot"),
 ]
 
 
@@ -586,6 +722,7 @@ _ANNOTATION_ONLY = textwrap.dedent("""\
     import subprocess
     def f(p: subprocess.Popen[bytes], q: subprocess.Popen, /, *a: subprocess.Popen, r: subprocess.Popen, **k: subprocess.Popen) -> subprocess.Popen | None:
         x: subprocess.Popen | None = None
+        y: list[subprocess.Popen[bytes]] | tuple[subprocess.Popen, ...] = []
         return p
     class C:
         proc: subprocess.Popen

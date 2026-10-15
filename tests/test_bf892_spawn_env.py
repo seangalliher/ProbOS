@@ -5,20 +5,26 @@ container sandbox, and the three dependency installs): each plants a synthetic c
 first proves that a child which INHERITS this process's environment sees it (the premise), then proves the
 site's child does not. One test is that premise on its own (a control: it stays green if the fix is
 reverted). Two check the VIRTUAL_ENV extension of the install environment (passed when set, omitted when
-unset). Children print or write only booleans, never an environment value or listing.
+unset). Two check the builder's git launches (each is handed the allowlist; a commit still finds its
+identity through the home variables the allowlist keeps). Children print or write only booleans,
+never an environment value or listing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from probos.cognitive import builder as builder_module
 from probos.cognitive import dependency_resolver as dependency_resolver_module
-from probos.cognitive.builder import _run_targeted_tests, _run_tests
+from probos.cognitive.builder import _is_dirty_working_tree, _run_git, _run_targeted_tests, _run_tests
 from probos.cognitive.dependency_resolver import DependencyResolver
 from probos.security.container_sandbox import ContainerExec, InProcessContainerSandbox, SandboxLimits
 
@@ -164,3 +170,64 @@ async def test_dependency_install_omits_unset_virtual_env(monkeypatch: pytest.Mo
     assert launch_count == 3, "premise: pip, uv pip and uv add must each be reached"
     assert all(env is not None for env in envs), "premise: every method must be handed an explicit environment"
     assert ["VIRTUAL_ENV" not in env for env in envs] == [True, True, True]
+
+
+async def test_builder_git_launches_get_the_allowlist(
+    plant: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Captured BEFORE the patches below: both are module-wide attributes, so each recorder
+    # must call through to the real function, not to itself.
+    real_run = subprocess.run
+    real_exec = asyncio.create_subprocess_exec
+    seen: list[dict[str, str] | None] = []
+
+    def _record_run(*args, **kwargs):
+        seen.append(kwargs.get("env"))
+        return real_run(*args, **kwargs)
+
+    async def _record_exec(*args, **kwargs):
+        seen.append(kwargs.get("env"))
+        return await real_exec(*args, **kwargs)
+
+    monkeypatch.setattr(builder_module.subprocess, "run", _record_run)
+    monkeypatch.setattr(builder_module.asyncio, "create_subprocess_exec", _record_exec)
+
+    await _run_git(["init", "-q"], str(tmp_path))
+    await _is_dirty_working_tree(str(tmp_path))
+
+    # A count in a local, not len(seen) inside the assert: a failed assert must never render the environments.
+    launch_count = len(seen)
+    assert launch_count == 3, "premise: _run_git (one run) and _is_dirty_working_tree (two exec calls) must each be reached"
+    assert all(env is not None for env in seen), "premise: every git launch must be handed an explicit environment"
+    assert [PLANT_NAME in env for env in seen] == [False, False, False]
+    assert ["PATH" in env for env in seen] == [True, True, True]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+async def test_builder_git_commit_finds_identity_under_the_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(
+        "[user]\n\tname = BF892 Tester\n\temail = bf892@example.invalid\n", encoding="utf-8"
+    )
+    if sys.platform == "win32":
+        drive, rest = os.path.splitdrive(str(home))
+        monkeypatch.setenv("HOMEDRIVE", drive)
+        monkeypatch.setenv("HOMEPATH", rest)
+        monkeypatch.setenv("USERPROFILE", str(home))
+    else:
+        monkeypatch.setenv("HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    init_rc, _, _ = await _run_git(["init", "-q"], str(repo))
+    commit_rc, _, _ = await _run_git(["commit", "--allow-empty", "-m", "bf892"], str(repo))
+    _, author, _ = await _run_git(["log", "-1", "--format=%an"], str(repo))
+
+    assert init_rc == 0, "premise: git init must succeed in the temp repository"
+    assert commit_rc == 0, "the commit must find an identity under the allowlisted environment"
+    # The premise check: the name can only have come from the temp home's .gitconfig, reached
+    # through the home variables the allowlist keeps.
+    assert author == "BF892 Tester"
