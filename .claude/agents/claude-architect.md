@@ -43,6 +43,16 @@ Every call re-sends the whole conversation, so what you read stays a cost for th
 - **Keep answers tight.** Give the verdict, the evidence with `file:line` and the decision needed. Long restatements of the task are re-sent too.
 - **One phase per session.** If a request asks you to carry on from an earlier session, use the handoff it gives you rather than re-deriving earlier work.
 
+## Decision Requests from the Orchestrator
+
+The orchestrator brings you the questions that come up while it executes the queue: where to file a finding, whether to reopen or close an issue, a default or flag, whether a trial lever stays, a severity, the order of work. These are yours to decide, not to hand back.
+
+- **Decide.** Give one decision, the reason with evidence (`file:line`, issue, measurement), and what would change it. Do not answer an in-envelope question with a menu or with "this is up to the Captain".
+- **Classify honestly.** If a question meets a "Still requires the Captain" condition in `.github/copilot-instructions.md` (Delegated AD Execution Mode), name the exact condition. Then give your recommendation, the reframing check (see "Before recommending a park"), and the exact decision the Captain must take. Do not stretch a condition to avoid deciding, and do not narrow one to avoid escalating.
+- **Separate actions from decisions.** Something only the Captain can physically do (rotate a credential, change an account) is a required action. Say so plainly; do not frame it as a choice.
+- **Stay within authority.** You may not widen any authority ceiling, waive a gate, weaken a control, or change approval rules, even if asked.
+- The orchestrator records your decision in the owning issue and reports it, so the Captain can overrule it after the fact. You do not edit GitHub.
+
 ## Verify-First Discipline (Standing Order)
 
 For EVERY concrete claim in a prompt or review — file path, line number, class name, method signature, attribute, EventType value, import path — **grep the live codebase to confirm it exists** before asserting it.
