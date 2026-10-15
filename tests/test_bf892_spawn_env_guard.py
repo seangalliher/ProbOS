@@ -20,12 +20,18 @@ parts, so an empty or None branch never hides a trusted one.
 Limits: a static scan cannot see these and they pass it silently, so they are a review
 question, not a guard one: getattr(subprocess, "run"), sys.modules, importlib and other
 dynamic lookups; ``from subprocess import *``; a launch API re-exported by another module;
-a module or launch API reached through anything but a name (a container, an attribute such
-as ``self.sp = subprocess``, a function's return, a for/with/unpacking target) or through a
-copy chain deeper than _COPY_DEPTH; launches inside third-party libraries (Playwright's
-driver, webbrowser); an environment mutated under a second name (``e = env; e.update(...)``);
-and a mapping from elsewhere merged into a sanctioned base, which counts as an addition
-(``{**build_command_env(), **request.env}`` stays allowlist).
+a MODULE reached through anything but a name (a container, ``mods[0].run``; an attribute,
+``self.sp = subprocess``; a function's return; a for/with/unpacking target; a parameter or
+its default, ``def f(sp=subprocess)``) or through a copy chain deeper than _COPY_DEPTH (a
+launch API itself placed in a container, returned or used as a loop iterable is flagged as a
+bound reference, not missed); launches inside third-party libraries (Playwright's driver,
+webbrowser); an environment mutated under a second name (``e = env; e.update(...)``); a
+contribution that reaches the environment through a name bound to a conditional with an empty
+branch (``extra = trusted_command_env() if flag else {}`` then ``env.update(extra)``), which
+reads as an addition; and a mapping from elsewhere merged into a sanctioned base, which counts
+as an addition (``{**build_command_env(), **request.env}`` stays allowlist). A name that may be
+the allowlist owner or anything else (``f = build_command_env`` in a try, ``f = os.environ.copy``
+in its except) is not an allowlist owner: it is INDIRECT and must be listed.
 """
 
 from __future__ import annotations
@@ -369,7 +375,7 @@ class _Scanner(ast.NodeVisitor):
             owners = _resolve(expr.func, self.aliases)
             if _TRUSTED_OWNER in owners:
                 return TRUSTED
-            if _ALLOWLIST_OWNER in owners:
+            if owners == {_ALLOWLIST_OWNER}:
                 return ALLOWLIST
             return self._other(expr)
         if isinstance(expr, ast.Dict):
@@ -893,6 +899,15 @@ _SHAPE_CASES = [
             from probos.execution.command_env import trusted_command_env as owner
         subprocess.run(['x'], env=owner())
         """, "direct", TRUSTED),
+    # A name that may be the allowlist owner or anything else is not an allowlist owner.
+    _case("ambiguous-factory-is-not-allowlist", """\
+        import os, subprocess
+        try:
+            from probos.execution.command_env import build_command_env as factory
+        except ImportError:
+            factory = os.environ.copy
+        subprocess.run(['x'], env=factory())
+        """, "direct", INDIRECT),
     # A contribution reads as the widest of its parts: an empty or None branch never hides a
     # trusted one, and a trusted environment carried by a name in a branch, `or`, `|`, a spread
     # or a call still counts.
