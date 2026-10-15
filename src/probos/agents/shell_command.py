@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 
 from probos.execution.command_env import build_command_env
@@ -59,6 +60,9 @@ class ShellCommandAgent(BaseAgent):
     # Security constants
     DEFAULT_TIMEOUT: float = 30.0
     MAX_OUTPUT_BYTES: int = 64 * 1024  # 64KB cap on stdout/stderr
+    # BF-893 (#1544): how long past the deadline the worker has to end the command's tree and return its
+    # own timeout result; the caller's wait is only a backstop for a worker that never starts or wedges.
+    WORKER_TEARDOWN_GRACE: float = 5.0
 
     def __init__(self, pool: str = "default", **kwargs: Any) -> None:
         # BF-890 (#1529): names from execution.command_env_passthrough, injected
@@ -169,10 +173,14 @@ class ShellCommandAgent(BaseAgent):
         command = self._rewrite_python_interpreter(command)
 
         loop = asyncio.get_running_loop()
+        # BF-893 (#1544): one deadline, measured from submission, is shared with the worker. Its own
+        # budget used to start when a pool thread picked the job up, so with the shared executor busy the
+        # caller reported a timeout while the command it had started was still running.
+        deadline = time.monotonic() + self.DEFAULT_TIMEOUT
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._run_sync, command),
-                timeout=self.DEFAULT_TIMEOUT,
+                loop.run_in_executor(None, self._run_sync, command, deadline),
+                timeout=self.DEFAULT_TIMEOUT + self.WORKER_TEARDOWN_GRACE,
             )
             return result
         except asyncio.TimeoutError:
@@ -214,8 +222,18 @@ class ShellCommandAgent(BaseAgent):
             return f'{prefix}"{sys.executable}"' + command[m.end(1):]
         return command
 
-    def _run_sync(self, command: str) -> dict[str, Any]:
-        """Blocking subprocess execution (called via run_in_executor)."""
+    def _run_sync(self, command: str, deadline: float | None = None) -> dict[str, Any]:
+        """Blocking subprocess execution (called via run_in_executor).
+
+        ``deadline`` is the ``time.monotonic()`` instant the caller's budget ends (BF-893): a worker
+        that starts past it runs nothing, and one that starts inside it never outlives it, so a caller
+        told "timed out" has no command still running. Omitted, the budget starts now.
+        """
+        if deadline is None:
+            deadline = time.monotonic() + self.DEFAULT_TIMEOUT
+        timed_out = {"success": False, "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s"}
+        if time.monotonic() >= deadline:
+            return timed_out
         try:
             # BF-890 (#1529): an allowlisted environment, not the runtime's.
             env = build_command_env(self._command_env_passthrough)
@@ -241,16 +259,13 @@ class ShellCommandAgent(BaseAgent):
             with ProcessTree.attach(proc) as tree:
                 try:
                     stdout_bytes, stderr_bytes = proc.communicate(
-                        timeout=self.DEFAULT_TIMEOUT,
+                        timeout=max(deadline - time.monotonic(), 0.0),
                     )
                 except subprocess.TimeoutExpired:
                     # BF-893 (#1544): end the command's whole tree, not only the shell.
                     tree.kill()
                     proc.wait()
-                    return {
-                        "success": False,
-                        "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
-                    }
+                    return timed_out
 
             stdout = stdout_bytes[:self.MAX_OUTPUT_BYTES].decode(
                 "utf-8", errors="replace"
@@ -267,13 +282,6 @@ class ShellCommandAgent(BaseAgent):
                     "exit_code": proc.returncode,
                     "command": command,
                 },
-            }
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            return {
-                "success": False,
-                "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
             }
         except Exception as e:
             return {"success": False, "error": repr(e)}

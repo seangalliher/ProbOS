@@ -6,6 +6,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,11 @@ from probos.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# BF-893 (#1544): the re-run's budget, counted from submission and shared with the worker thread, and how
+# long past it the worker has to end the re-run's tree (the caller's wait is only a backstop).
+_RERUN_TIMEOUT_S = 5.0
+_RERUN_TEARDOWN_GRACE_S = 5.0
 
 
 class RedTeamAgent(BaseAgent):
@@ -300,12 +306,13 @@ class RedTeamAgent(BaseAgent):
         command = params.get("command", "")
         try:
             loop = asyncio.get_running_loop()
+            deadline = time.monotonic() + _RERUN_TIMEOUT_S
             run_result = await asyncio.wait_for(
                 loop.run_in_executor(
                     None, self._run_verify_sync, command,
-                    build_command_env(self._command_env_passthrough),
+                    build_command_env(self._command_env_passthrough), deadline,
                 ),
-                timeout=5.0,
+                timeout=_RERUN_TIMEOUT_S + _RERUN_TEARDOWN_GRACE_S,
             )
 
             if run_result is None:
@@ -383,8 +390,19 @@ class RedTeamAgent(BaseAgent):
             )
 
     @staticmethod
-    def _run_verify_sync(command: str, env: dict[str, str] | None) -> tuple[int, str] | None:
-        """Blocking subprocess for verification (called via run_in_executor)."""
+    def _run_verify_sync(
+        command: str, env: dict[str, str] | None, deadline: float | None = None,
+    ) -> tuple[int, str] | None:
+        """Blocking subprocess for verification (called via run_in_executor).
+
+        ``deadline`` is the ``time.monotonic()`` instant the caller's budget ends (BF-893): a worker that
+        starts past it runs nothing, and one that starts inside it never outlives it. Omitted, the
+        budget starts now.
+        """
+        if deadline is None:
+            deadline = time.monotonic() + _RERUN_TIMEOUT_S
+        if time.monotonic() >= deadline:
+            return None
         try:
             if sys.platform == "win32":
                 args = ["powershell", "-NoProfile", "-Command", command]
@@ -400,7 +418,7 @@ class RedTeamAgent(BaseAgent):
                 )
             with ProcessTree.attach(proc) as tree:
                 try:
-                    stdout_bytes, _ = proc.communicate(timeout=5)
+                    stdout_bytes, _ = proc.communicate(timeout=max(deadline - time.monotonic(), 0.0))
                 except subprocess.TimeoutExpired:
                     # BF-893 (#1544): end the re-run's whole tree, not only the shell.
                     tree.kill()

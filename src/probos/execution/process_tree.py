@@ -16,8 +16,8 @@ Not covered: a descendant that leaves on purpose (``setsid`` or a double fork on
 work handed to a scheduler, service or COM server on either platform) outlives the
 timeout, as before. Only a timeout kills: a command that finishes in time leaves its
 background descendants running, as before (the job is not kill-on-close).
-Compatibility cost: on Windows a descendant that asks to break away from its job
-(``CREATE_BREAKAWAY_FROM_JOB``) is refused, because this job does not allow it.
+The job sets no breakaway-OK limit; a Windows descendant that asks to break away from it
+(``CREATE_BREAKAWAY_FROM_JOB``) was observed to start normally and still be ended by a timeout.
 """
 
 from __future__ import annotations

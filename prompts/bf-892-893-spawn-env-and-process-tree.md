@@ -1,5 +1,7 @@
 # Build contract: BF-892 (#1543) and BF-893 (#1544), one batch
 
+**Corrections (orchestrator, after slice 893 review round 1, 2026-10-15; the sentences below are corrected in place):** (1) a Windows descendant that asks for `CREATE_BREAKAWAY_FROM_JOB` is neither refused nor does it escape the job: it starts and a timeout still ends it (reproduced with a real grandchild, twice); (2) the POSIX claim that the kill "runs before any `wait`, so the pid cannot be reused" is false for the asyncio path (3.12's child watcher reaps independently while the caller can still be awaiting the pipes), so it is not claimed; the CI tests show group ownership, an already-exited command and a grandchild, and process-group-id reuse is recorded as a follow-up; (3) the caller's `wait_for` and the worker thread's own `communicate` timeout were two budgets that started at different times, so under executor contention a caller was told "timed out" while the command was still running: one submission deadline is now shared with the worker (the review's P1); (4) Section 3.3's "SEARCH (delete the old outer handler)" was an annotated label the installer skipped; the orchestrator applied it.
+
 **Verdict: ready to build as 3 slices (892a, 892b, 893), one gate and one PR.** Three of the orchestrator's facts were wrong, and the contract corrects them:
 
 1. **The AST scan undercounts.** There are **39 launches, not 38**. The scan missed `swe_harness/tools.py:1150`, which calls `_asyncio.create_subprocess_shell` through `import asyncio as _asyncio` (:1136). It already passes `env=`, so the true split is **13 with `env=`, 26 without**.
@@ -150,7 +152,7 @@ None of the three sites passes `creationflags` or `start_new_session` today (Abs
 
 Known limit: a descendant that detaches on purpose (`setsid`, a double fork, work handed to a service) escapes on both platforms.
 
-Compatibility cost: on Windows, a grandchild that asks for `CREATE_BREAKAWAY_FROM_JOB` is refused. This is rare; it is documented in the module, and the follow-up is to set `BREAKAWAY_OK` if it is ever seen.
+Windows: a grandchild that asks for `CREATE_BREAKAWAY_FROM_JOB` is neither refused nor does it escape: it starts and a timeout still ends it (reproduced by probe in review round 1). The job sets no breakaway-OK limit.
 
 **(f) Unchanged**
 
@@ -922,8 +924,8 @@ Not covered: a descendant that leaves on purpose (``setsid`` or a double fork on
 work handed to a scheduler, service or COM server on either platform) outlives the
 timeout, as before. Only a timeout kills: a command that finishes in time leaves its
 background descendants running, as before (the job is not kill-on-close).
-Compatibility cost: on Windows a descendant that asks to break away from its job
-(``CREATE_BREAKAWAY_FROM_JOB``) is refused, because this job does not allow it.
+The job sets no breakaway-OK limit; a Windows descendant that asks to break away from it
+(``CREATE_BREAKAWAY_FROM_JOB``) was observed to start normally and still be ended by a timeout.
 """
 
 from __future__ import annotations
@@ -1338,7 +1340,7 @@ The test cases:
 - `setsid` succeeds in runners.
 - The premise in test 1 holds whether or not dash execs.
 - `killpg` reaches the spawner and its grandchild.
-- asyncio's child watcher (3.12) does not reap before `kill()`. The kill runs before any `wait`, so the pid cannot be reused.
+- asyncio's child watcher (3.12) can reap the shell independently of `kill()` while a caller is still awaiting the pipes, so "the kill runs before any `wait`, so the pid cannot be reused" is not claimed. What CI must show: the group is owned (`getpgid(proc.pid) == proc.pid`), an already-exited command is not an error, and a grandchild is ended. Reuse of the process-group id after the group is empty is a follow-up (the group id is kept as a bare number).
 - The timing margins (`.started` premise, S−timeout ≥ 3 s) tolerate a slow runner. A premise failure is a loud fail, never a vacuous pass.
 
 **Focused check (893):**
