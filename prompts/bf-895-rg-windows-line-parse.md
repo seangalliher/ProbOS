@@ -1,7 +1,7 @@
 # Build contract: BF-895 (#1548): the rg engine parses Windows paths and never reports a false zero
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-15
-**Status:** built as one slice (2026-10-15) · **Depends on:** none (`agents/code_search.py` and its tests as on `main` `f2a0db6d`; unchanged on `579b5530`, where it was built) · **New tests:** 25 collected, in one new file (23 run everywhere; the two real-rg cases skip when `rg` is not on PATH).
+**Status:** built as one slice (2026-10-15) · **Depends on:** none (`agents/code_search.py` and its tests as on `main` `f2a0db6d`; unchanged on `579b5530`, where it was built) · **New tests:** 26 collected, in one new file (24 run everywhere; the two real-rg cases skip when `rg` is not on PATH). The contract's 25 plus one the orchestrator added: the fallback warning carries the exit code, a byte count and the root, and never match text.
 
 **Verdict: build it.** Three changes in one file:
 

@@ -1,6 +1,7 @@
 """BF-895 (#1548): the rg engine parses Windows paths and never reports a false zero."""
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -99,6 +100,19 @@ async def test_empty_rg_result_stays_a_zero_success(tmp_path, monkeypatch):
     _fake_rg(monkeypatch, 1, b"")
     result = await _run(_tree(tmp_path), "absent")
     assert result == {"success": True, "data": [], "count": 0, "engine": "rg", "truncated": False}
+
+
+async def test_fallback_warning_names_exit_bytes_and_root_but_not_match_text(tmp_path, monkeypatch, caplog):
+    unparsed = b"api_key = hunter2 is not an rg line\n"
+    _fake_rg(monkeypatch, 0, unparsed)
+    with caplog.at_level(logging.WARNING, logger=code_search.logger.name):
+        await _run(_tree(tmp_path), "hello")
+    messages = [r.getMessage() for r in caplog.records if "BF-895" in r.getMessage()]
+    assert len(messages) == 1
+    assert "exited 0" in messages[0]
+    assert f"{len(unparsed)} output bytes" in messages[0]
+    assert tmp_path.name in messages[0]
+    assert "hunter2" not in messages[0]
 
 
 async def test_parsed_drive_letter_output_is_reported_by_rg(tmp_path, monkeypatch):
