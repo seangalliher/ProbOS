@@ -67,13 +67,13 @@ def _sleeping_python(marker: Path) -> str:
     return f'{_PYTHON} -c "{code}"'
 
 
-async def _wait_out_the_orphan(marker: Path, *, seconds: float = 5.0) -> None:
-    """Let the child a timed-out call left behind finish, while the event loop still runs.
+async def _wait_out_the_orphan(marker: Path, *, seconds: float = 0.5) -> None:
+    """Let the event loop see a timed-out call's pipes close before the test ends.
 
-    ``RunCommandTool`` kills the shell on a timeout, not the command under it, so
-    the command keeps the output pipes open until it exits. Waiting for it here
-    lets the pipes reach EOF and asyncio close the transport normally, instead of
-    leaving it for a finalizer that runs after the loop is closed.
+    BF-893 (#1544): ``RunCommandTool`` now ends the command's whole tree on a timeout,
+    so no orphan holds the pipes open and the marker should never appear; this short
+    wait only lets asyncio finish the transport inside the loop rather than in a
+    finalizer after the loop closes. (Before BF-893 it waited up to 5 s for the orphan.)
     """
     deadline = time.monotonic() + seconds
     while not marker.exists() and time.monotonic() < deadline:

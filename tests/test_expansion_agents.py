@@ -10,6 +10,7 @@ from probos.agents.file_search import FileSearchAgent
 from probos.agents.http_fetch import HttpFetchAgent
 from probos.agents.shell_command import ShellCommandAgent
 from probos.cognitive.llm_client import MockLLMClient
+from probos.execution.process_tree import ProcessTree
 from probos.runtime import ProbOSRuntime
 from probos.types import IntentMessage
 
@@ -27,6 +28,14 @@ async def runtime(tmp_path):
     await rt.start()
     yield rt
     await rt.stop()
+
+
+@pytest.fixture
+def direct_kill_process_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BF-893: these tests hand the agents a MagicMock process, not a real child; a real
+    ProcessTree would open the mock's pid on Windows. A tree with no job or group is the
+    shape ProcessTree takes when the platform gives no tree."""
+    monkeypatch.setattr(ProcessTree, "attach", classmethod(lambda cls, proc: cls(proc)))
 
 
 # ---------------------------------------------------------------
@@ -200,6 +209,7 @@ class TestShellCommandAgent:
         assert any(c.can == "run_command" for c in agent.capabilities)
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("direct_kill_process_tree")
     async def test_echo_hello(self):
         agent = ShellCommandAgent()
         intent = IntentMessage(
@@ -217,6 +227,7 @@ class TestShellCommandAgent:
         assert "hello" in result.result["stdout"]
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("direct_kill_process_tree")
     async def test_failing_command(self):
         agent = ShellCommandAgent()
         # 'exit 42' works on both bash and cmd
@@ -643,6 +654,7 @@ class TestExpansionIntegration:
         assert result["completed_count"] == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("direct_kill_process_tree")
     async def test_nl_run_command(self, runtime):
         """NL 'run the command echo hello' -> run_command with consensus."""
         mock_proc = MagicMock()
@@ -700,6 +712,7 @@ class TestExpansionIntegration:
             assert r.success
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("direct_kill_process_tree")
     async def test_submit_run_command_with_consensus(self, runtime):
         """Direct submit_intent_with_consensus for run_command."""
         mock_proc = MagicMock()
@@ -744,6 +757,7 @@ class TestExpansionErrors:
             assert not r.success
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("direct_kill_process_tree")
     async def test_failing_command_via_runtime(self, runtime):
         mock_proc = MagicMock()
         mock_proc.communicate.return_value = (b"", b"")

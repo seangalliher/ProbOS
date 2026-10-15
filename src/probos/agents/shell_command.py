@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 from probos.execution.command_env import build_command_env
+from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
@@ -225,6 +226,7 @@ class ShellCommandAgent(BaseAgent):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
+                    **process_tree_popen_kwargs(),
                 )
             else:
                 proc = subprocess.Popen(
@@ -233,11 +235,22 @@ class ShellCommandAgent(BaseAgent):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
+                    **process_tree_popen_kwargs(),
                 )
 
-            stdout_bytes, stderr_bytes = proc.communicate(
-                timeout=self.DEFAULT_TIMEOUT,
-            )
+            with ProcessTree.attach(proc) as tree:
+                try:
+                    stdout_bytes, stderr_bytes = proc.communicate(
+                        timeout=self.DEFAULT_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired:
+                    # BF-893 (#1544): end the command's whole tree, not only the shell.
+                    tree.kill()
+                    proc.wait()
+                    return {
+                        "success": False,
+                        "error": f"Command timed out after {self.DEFAULT_TIMEOUT}s",
+                    }
 
             stdout = stdout_bytes[:self.MAX_OUTPUT_BYTES].decode(
                 "utf-8", errors="replace"

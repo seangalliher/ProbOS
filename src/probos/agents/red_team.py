@@ -13,6 +13,7 @@ import httpx
 
 from probos.agents.http_fetch import safe_fetch_method
 from probos.execution.command_env import build_command_env
+from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -389,18 +390,23 @@ class RedTeamAgent(BaseAgent):
                 args = ["powershell", "-NoProfile", "-Command", command]
                 proc = subprocess.Popen(
                     args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                    **process_tree_popen_kwargs(),
                 )
             else:
                 proc = subprocess.Popen(
                     command, shell=True, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    **process_tree_popen_kwargs(),
                 )
-            stdout_bytes, _ = proc.communicate(timeout=5)
+            with ProcessTree.attach(proc) as tree:
+                try:
+                    stdout_bytes, _ = proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # BF-893 (#1544): end the re-run's whole tree, not only the shell.
+                    tree.kill()
+                    return None
             stdout = stdout_bytes[:64 * 1024].decode("utf-8", errors="replace")
             return (proc.returncode, stdout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            return None
         except Exception:
             logger.debug("Subprocess failed", exc_info=True)
             return None
