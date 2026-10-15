@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,7 @@ class WorktreeManager:
         proc = await asyncio.create_subprocess_exec(
             "git",
             *args,
+            env=trusted_command_env(),
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

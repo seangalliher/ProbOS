@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, TypeVar
 
 from probos.config import KnowledgeConfig
+from probos.execution.command_env import trusted_command_env
 from probos.security.pii_redaction import PIIRedactor
 from probos.types import AnchorFrame, Episode
 
@@ -1229,6 +1230,7 @@ class KnowledgeStore:
             None,
             lambda: subprocess.run(
                 ["git", "-C", str(self._repo_path), *args],
+                env=trusted_command_env(),
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",

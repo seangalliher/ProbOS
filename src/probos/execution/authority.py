@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol, TypeAlias
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.execution.command_env import trusted_command_env
 from probos.execution.effect_types import (
     DelegationRunBinding,
     EffectAttemptView,
@@ -777,7 +778,7 @@ class _ManifestPreparer:
     def _repository_binding(self, root: Path) -> RepositoryBinding:
         if not root.is_dir():
             raise ManifestValidationError("repository root is unavailable")
-        git_environment = os.environ.copy()
+        git_environment = trusted_command_env()
         for name in tuple(git_environment):
             if name.startswith("GIT_CONFIG_"):
                 del git_environment[name]

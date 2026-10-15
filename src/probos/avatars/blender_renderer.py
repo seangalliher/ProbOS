@@ -23,6 +23,8 @@ from typing import Any, TYPE_CHECKING
 
 import yaml
 
+from probos.execution.command_env import trusted_command_env
+
 if TYPE_CHECKING:
     from probos.avatars.dsl import AvatarDSL
 
@@ -183,6 +185,7 @@ class BlenderRenderer:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                env=trusted_command_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

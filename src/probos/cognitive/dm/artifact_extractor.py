@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from probos.artifacts import Artifact, ArtifactStore
+from probos.execution.command_env import trusted_command_env
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,7 @@ def _to_docx_libreoffice(text: str, soffice: str) -> bytes | None:
                 f.write(html)
             subprocess.run(
                 [soffice, "--headless", "--convert-to", "docx", "--outdir", d, src],
+                env=trusted_command_env(),
                 check=True, capture_output=True, timeout=60,
             )
             out = os.path.join(d, "doc.docx")

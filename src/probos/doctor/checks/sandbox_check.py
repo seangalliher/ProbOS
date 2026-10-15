@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from probos.doctor.protocol import CheckOutcome, CheckResult, DoctorContext
 from probos.doctor.registry import register_check
+from probos.execution.command_env import trusted_command_env
 
 
 def _docker_info_sync(timeout_s: float) -> tuple[bool, str]:
@@ -21,6 +22,7 @@ def _docker_info_sync(timeout_s: float) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             ["docker", "info", "--format", "{{.ServerVersion}}"],
+            env=trusted_command_env(),
             capture_output=True,
             text=True,
             timeout=timeout_s,

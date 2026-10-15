@@ -68,11 +68,13 @@ class _FakePopen:
         *,
         stdout: Any = None,
         stderr: Any = None,
+        env: Any = None,
         output_bytes: bytes = b"RIFFfake_wav_data",
         returncode: int = 0,
         raise_timeout: bool = False,
     ) -> None:
         self.args = args
+        self.env = env  # BF-892: the launch states its environment
         self.returncode = returncode
         self._output_bytes = output_bytes
         self._raise_timeout = raise_timeout

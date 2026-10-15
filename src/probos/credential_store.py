@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -356,6 +358,7 @@ class CredentialStore:
             try:
                 result = subprocess.run(
                     spec.cli_command,
+                    env=trusted_command_env(),
                     capture_output=True, encoding="utf-8", errors="replace", timeout=5,
                 )
                 if result.returncode == 0 and result.stdout.strip():

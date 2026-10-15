@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 # AD-721b-1: rhubarb's Preston Blair 9-set → AD-721b v1 Oculus 15-set.
@@ -174,6 +176,7 @@ async def _convert_to_wav(
     def _run_sync() -> tuple[int, bytes]:
         proc = subprocess.Popen(
             args,
+            env=trusted_command_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
@@ -249,6 +252,7 @@ async def probe_version(
         def _probe_sync() -> tuple[int, bytes, bytes]:
             proc = subprocess.Popen(
                 [str(binary_path), "--version"],
+                env=trusted_command_env(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -385,6 +389,7 @@ async def _run_rhubarb(
                     str(audio_path),
                 ],
                 stdout=subprocess.PIPE,
+                env=trusted_command_env(),
                 stderr=subprocess.PIPE,
             )
             try:

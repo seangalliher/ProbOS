@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
-from probos.execution.command_env import build_command_env
+from probos.execution.command_env import build_command_env, trusted_command_env
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,7 @@ class DockerContainerSandbox:
                 None,
                 lambda: subprocess.run(  # noqa: S603
                     args,
+                    env=trusted_command_env(),
                     capture_output=True,
                     text=True,
                     timeout=request.limits.wall_timeout_seconds + 10,
