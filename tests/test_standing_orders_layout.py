@@ -110,6 +110,9 @@ PROCEDURE = (
     "Do not start a fourth round on your own, whatever leads to it",
     "the exact command that shows the delta (`git diff <base> <head>` for a committed candidate",
     "`git diff --cached <base>` in the worktree for a staged one",
+    "or staged in full (`git add <paths>`, new files included; never `git add -N`",
+    "that exists only in the working tree is not frozen, so stage it before the call and never hand it off unstaged",
+    "kept out of the index and named by `git diff` in the worktree for a staged candidate or by `git diff <head>` for a committed one",
     "**Progress comments (Captain, 2026-10-15).**",
     "Phase: draft | build | review round N | gate | CI",
 )
