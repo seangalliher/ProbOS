@@ -7,7 +7,9 @@ Lexical rules apply on every platform. Each path component is put in the form
 Windows and macOS compare names in (HFS+ ignorable code points dropped, trailing
 dots and spaces trimmed, upper-cased), so ``.GiT``, ``.git.``, ``.git `` and a
 ``.git`` carrying a zero-width joiner all equal ``.GIT``. A ``:`` (an NTFS stream or
-a drive-relative form) and an 8.3 short-name form (``GIT~1``) are refused outright.
+a drive-relative form), an 8.3 short-name form (``GIT~1``) and a Windows device name
+(``NUL``, ``con.py``: a write to one succeeds and the file cannot be removed) are refused
+outright.
 The rules follow git's own ``is_ntfs_dotgit`` and ``is_hfs_dotgit`` (CVE-2014-9390).
 A case variant is refused on case-sensitive filesystems too: no builder write needs
 one, and the rule is then the same everywhere.
@@ -45,6 +47,9 @@ FORBIDDEN_PATHS = (
 _HFS_IGNORABLE = re.compile("[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]")
 # An 8.3 short-name form: GIT~1, GITHUB~1, PYPROJ~1.TOM, or a hashed GI7EBA~1.
 _SHORT_NAME = re.compile(r"~[0-9]")
+# A Windows device name, with or without an extension: CON, PRN, AUX, NUL, COM0-9, LPT0-9
+# (and the superscript digits Windows also reserves). Writing NUL succeeds and cannot be unlinked.
+_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[0-9\u00b9\u00b2\u00b3]|LPT[0-9\u00b9\u00b2\u00b3]) *(\..*)?$")
 
 
 def _canonical(part: str) -> str:
@@ -73,6 +78,8 @@ def builder_write_refusal(
             return f"Forbidden path (stream or drive form): {path_str}"
         if _SHORT_NAME.search(part):
             return f"Forbidden path (8.3 short-name form): {path_str}"
+        if _RESERVED.match(_canonical(part)):
+            return f"Forbidden path (Windows device name): {path_str}"
         if _canonical(part) == ".GIT":
             return f"Forbidden path (.git alias): {path_str}"
 

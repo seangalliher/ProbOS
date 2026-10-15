@@ -63,6 +63,22 @@ def test_validate_rejects_hfs_ignorable_forms(alias: str) -> None:
     assert "Forbidden" in _refused(alias)
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["nul", "src/NUL", "src/con.py", "src/aux.tar.gz", "tests/com1.py", "src/lpt9 .py", "src/Nul.", "src/com\u00b9.py"],
+)
+def test_validate_rejects_windows_device_names(name: str) -> None:
+    assert builder_write_refusal("src/console.py") is None  # control: a name that only starts like a device
+    assert "device" in _refused(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["src/console.py", "src/auxiliary.py", "src/null_test.py", "src/com10.py", "docs/nulls.md", "src/prn_table.py"],
+)
+def test_validate_accepts_names_that_only_resemble_devices(name: str) -> None:
+    assert builder_write_refusal(name) is None
+
+
 @pytest.mark.parametrize("alias", [".ENV", ".env.", "PyProject.toml", "pyproject.toml ", ".GitHub/workflows/ci.yml"])
 def test_validate_rejects_variants_of_the_other_forbidden_paths(alias: str) -> None:
     assert "Forbidden" in _refused(".env") and "Forbidden" in _refused("pyproject.toml")  # premise

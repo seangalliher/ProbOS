@@ -3,6 +3,10 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-15, through the bridge (read-only). Saved by the orchestrator from the Architect's answer; its cover note is carried into the follow-ups below: every line number is from `5aaa7c00`, the model-authored tests (run as the builder's own user in `work_dir`) are a larger route to `.git` than the declared write paths and are follow-up 1, and `red_team.py:584` has a second case-only `.git` check (follow-up 3). Base for the build: `main` at `f2a0db6d` (BF-892 and BF-893 merged); the contract's edits were dry-run against that tree's `builder.py` before the build.
 **Status:** ready to build as one slice · **Depends on:** BF-892 on `main` (builder.py environment edits) · **New tests:** about 45 cases, most of them parametrized rows, in one new file.
 
+**Corrections (orchestrator, after review round 1, 2026-10-15; claude-architect decided each):** (1) the Absence row "No other module writes into a builder work_dir" was incomplete: the Copilot SDK agent writes through its own tools into the worktree on the queued `BuildDispatcher` route, which no grep for write calls can see; that route is descoped to BF-896 (#1550), where it fails closed at the clean-tree guard, and this change does **not** bound it (wording below); (2) Windows device names (`NUL`, `con.py`) are now refused here: a write to `NUL` succeeds and its cleanup `unlink` then raises `PermissionError` (executed), so the build crashed instead of returning a result; the Architect's pattern `^(CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])(\..*)?$` did not match `lpt9 .py`, which his own test list requires, so the built rule allows spaces before the extension (`^(...) *(\..*)?$`); (3) the repair loop now passes the same boundary as the approved writes, so a repair outside `src/ tests/ config/ docs/ prompts/` (for example `ui/`) is refused: intended, because the approved writes were always limited to those prefixes and the repair loop only fixes pytest failures.
+
+**What this change guarantees, and what it does not.** Every path `execute_approved_build` writes into a builder `work_dir` (the approved writes and the test-fix repair loop) passes `builder_write_refusal`. It does **not** bound writes made by the Copilot SDK agent's own tools on the queued `BuildDispatcher` route (`build_dispatcher.py:161-163`, `copilot_adapter.py:509-510`, `approve_all`): there the agent writes into the worktree before any validation, the executor's clean-tree guard (`builder.py:2679`) then refuses the build so no unvalidated write is committed, but the route cannot succeed and the agent is unconfined. Tracked in BF-896 (#1550).
+
 **Verdict: build it.** Both checks are used together:
 
 - **Name rules on every platform.** Each path component is compared in canonical form: HFS+ ignorable code points dropped, trailing dots and spaces trimmed, upper-cased. Any `:` and any 8.3 `~<digit>` form are refused.
@@ -56,7 +60,7 @@ cognitive/swe_harness/tools.py:229-232 _resolve_path -> _PROJECT_ROOT / p (absol
 | Claim | Run | Found | Holds |
 |---|---|---|---|
 | The validator has no other production caller | Grep `_validate_file_path` src/probos | builder.py:106, :2710 | yes |
-| No other module writes into a builder work_dir | Grep write/open/unlink/mkdir in build_dispatcher.py, routers/build.py, build_pipeline.py | none | yes |
+| No other module **in ProbOS code** writes into a builder work_dir | Grep write/open/unlink/mkdir in build_dispatcher.py, routers/build.py, build_pipeline.py | none in code; **but the Copilot SDK agent writes through its own tools** (`copilot_adapter.py:509-510`, `approve_all`, `cwd` = worktree via `build_dispatcher.py:163`), which no grep can see | **no, partial: the SDK route is descoped to BF-896 (#1550) and fails closed at the clean-tree guard (`builder.py:2679`)** |
 | No other builder.py argv carries a model-authored path that could start with `-` | Grep `_run_git\(\|subprocess.run\(\|create_subprocess_exec` builder.py | :1651, :1659/:1662/:1663 (branch name via `_sanitize_branch_name`: `[a-z0-9-]` then `.strip("-")`, so never a leading `-`), :1673 add (**fixed here**), :1677 `commit -m message` (an option value), :1682, :1688, :2965 (sanitized branch), :2449 (no paths), :2525 (all under `tests_dir`), :2579/:2591 (no paths) | yes; pytest argv is pinned by a test rather than changed |
 | No test pins the lines this contract edits | Grep `getsource\(.*(execute_approved_build\|_git_add_and_commit)\|\["add", \*files\]\|Path\(work_dir\) / change` tests/ | none | yes |
 | No test patches `_validate_file_path` | Grep `_validate_file_path` tests/ | only the test_builder_guardrails import and calls | yes |
@@ -637,6 +641,10 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf894_builder_write_boun
 | 15 | builder.py | `                        if repair_error:` | `if False:` | repair[*] |
 | 16 | builder.py | `                            validation_errors.append(repair_error)` | `pass` | repair[*] ("Forbidden" missing from the error) |
 | 17 | builder.py | `    rc, _out, err = await _run_git(["add", "--", *files], work_dir)` | remove `"--", ` | git_add_option_shaped |
+| 18 | builder_paths.py | `        if _RESERVED.match(_canonical(part)):` | `if False:` | windows_device_names[`nul`] (review round 1) |
+| 19 | builder_paths.py | the `_RESERVED` pattern line | drop the `(\..*)?` extension group | windows_device_names[`src/con.py`] |
+| 20 | builder_paths.py | the `_RESERVED` pattern line | drop the `^` anchor (match anywhere) | names_that_only_resemble_devices[`src/console.py`] |
+| 21 | builder_paths.py | `        if _RESERVED.match(_canonical(part)):` | `_canonical(part)` → `part` | windows_device_names[`src/Nul.`] |
 
 If a file differs from the campaign's overlay, rerun only the rows anchored in that file.
 
@@ -684,7 +692,7 @@ If a file differs from the campaign's overlay, rerun only the rows anchored in t
 3. Legitimate `src/…`, `tests/…` and root-level writes are unchanged, and the legitimate build commits in the linked worktree.
 4. An option-shaped name stages and commits through `_git_add_and_commit`.
 5. `tests/test_builder_guardrails.py`, `tests/test_builder_agent.py` and `tests/test_bf892_spawn_env.py` pass unchanged.
-6. All 17 mutants are killed (one campaign).
+6. All 21 mutants are killed (one campaign).
 7. Reviewed by the Copilot Diff Reviewer (security-relevant). Brief it with properties: one function on both paths; fail-closed on a prefix that cannot be examined; old messages preserved; no new launch.
 8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
@@ -697,9 +705,9 @@ If a file differs from the campaign's overlay, rerun only the rows anchored in t
    - Highest value of the follow-ups. OS-level sandboxing stays a separate decision.
 2. **The SWE-harness write tools have no `.git` guard** (`tools.py:963`, `:1080`, `_resolve_path` `:229-232` accepts absolute paths). Reach: the native agentic builder writing against `_PROJECT_ROOT`. File it (I could not confirm an existing issue; `gh search` returned nothing for my query).
 3. **`red_team.py:584`'s forbidden list has the same alias gap** (exact, case-sensitive). Reach: the verifier passes a `.GiT` write. Reuse `builder_write_refusal` there.
-4. **Symlink and device names.**
+4. **Symlink names.**
    - A dangling or outward symlink inside `work_dir` lets a write land outside it (the identity check follows symlinks only to compare with `.git`).
-   - Windows reserved names (`nul`, `con.py`) write to devices.
+   - ~~Windows reserved names (`nul`, `con.py`) write to devices.~~ Done in review round 1: the rule refuses them.
    - Reach: small.
 5. **Cosmetic:** a path refusal is reported under "Syntax errors:" (`builder.py:2913`).
 
