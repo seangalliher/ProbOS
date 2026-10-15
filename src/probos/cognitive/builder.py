@@ -1618,6 +1618,13 @@ def _sanitize_branch_name(name: str) -> str:
     return slug[:50]
 
 
+#: BF-892 (#1543): the names the builder's git launches add to the allowlist. Git for Windows
+#: reads HOME before USERPROFILE (Git Bash sets it); without it a commit can lose the identity
+#: in ~/.gitconfig and a globally ignored file makes a clean tree look dirty. XDG_CONFIG_HOME
+#: is git's other global-config location. Neither name is credential-shaped.
+_GIT_HOME_NAMES: tuple[str, ...] = ("HOME", "XDG_CONFIG_HOME")
+
+
 async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
     """Run a git command asynchronously.  Returns (returncode, stdout, stderr).
 
@@ -1629,10 +1636,10 @@ async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
     def _sync_run() -> tuple[int, str, str]:
         # BF-892 (#1543): the allowlist. This git runs in the tree the model writes
         # into, so its config and hooks are not ProbOS's own; these local verbs need
-        # only PATH and the home variables (identity from ~/.gitconfig).
+        # only PATH and the home variables (identity from ~/.gitconfig), HOME included.
         result = subprocess.run(
             ["git", *args],
-            env=build_command_env(),
+            env=build_command_env(_GIT_HOME_NAMES),
             cwd=work_dir,
             capture_output=True,
         )
@@ -2575,10 +2582,11 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
     subprocess.run mocks in existing tests.
     """
     try:
+        git_env = build_command_env(_GIT_HOME_NAMES)
         # First verify we're inside a git repo
         proc = await asyncio.create_subprocess_exec(
             "git", "rev-parse", "--git-dir",
-            env=build_command_env(),
+            env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -2590,7 +2598,7 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         # Check for uncommitted changes
         proc = await asyncio.create_subprocess_exec(
             "git", "status", "--porcelain",
-            env=build_command_env(),
+            env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

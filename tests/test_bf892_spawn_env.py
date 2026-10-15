@@ -212,13 +212,13 @@ async def test_builder_git_commit_finds_identity_under_the_allowlist(
     (home / ".gitconfig").write_text(
         "[user]\n\tname = BF892 Tester\n\temail = bf892@example.invalid\n", encoding="utf-8"
     )
-    if sys.platform == "win32":
-        drive, rest = os.path.splitdrive(str(home))
-        monkeypatch.setenv("HOMEDRIVE", drive)
-        monkeypatch.setenv("HOMEPATH", rest)
-        monkeypatch.setenv("USERPROFILE", str(home))
-    else:
-        monkeypatch.setenv("HOME", str(home))
+    # Every home variable points at the temp home, so a runner's own HOME (Git Bash) cannot leak in.
+    drive, rest = os.path.splitdrive(str(home))
+    monkeypatch.setenv("HOMEDRIVE", drive)
+    monkeypatch.setenv("HOMEPATH", rest)
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -231,3 +231,45 @@ async def test_builder_git_commit_finds_identity_under_the_allowlist(
     # The premise check: the name can only have come from the temp home's .gitconfig, reached
     # through the home variables the allowlist keeps.
     assert author == "BF892 Tester"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+async def test_builder_git_reads_home_when_it_differs_from_the_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Git for Windows reads HOME before USERPROFILE. The profile is a decoy with no identity and
+    # no excludes, so both results below can only come from HOME's .gitconfig.
+    home = tmp_path / "home"
+    profile = tmp_path / "profile"
+    home.mkdir()
+    profile.mkdir()
+    excludes = home / "global-ignore"
+    excludes.write_text("ignored.txt\n", encoding="utf-8")
+    (home / ".gitconfig").write_text(
+        "[user]\n\tname = BF892 Home\n\temail = bf892-home@example.invalid\n"
+        f"[core]\n\texcludesFile = {excludes.as_posix()}\n",
+        encoding="utf-8",
+    )
+    drive, rest = os.path.splitdrive(str(profile))
+    monkeypatch.setenv("HOMEDRIVE", drive)
+    monkeypatch.setenv("HOMEPATH", rest)
+    monkeypatch.setenv("USERPROFILE", str(profile))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "tracked.txt").write_text("x\n", encoding="utf-8")
+    (repo / "ignored.txt").write_text("x\n", encoding="utf-8")
+
+    init_rc, _, _ = await _run_git(["init", "-q"], str(repo))
+    committed, _ = await builder_module._git_add_and_commit(["tracked.txt"], "bf892", str(repo))
+    _, author, _ = await _run_git(["log", "-1", "--format=%an"], str(repo))
+    dirty_with_only_ignored_file = await _is_dirty_working_tree(str(repo))
+    (repo / "untracked.txt").write_text("x\n", encoding="utf-8")
+    dirty_with_untracked_file = await _is_dirty_working_tree(str(repo))
+
+    assert init_rc == 0, "premise: git init must succeed in the temp repository"
+    assert dirty_with_untracked_file is True, "premise: the dirty check must see an untracked file"
+    assert committed, "the builder's commit must find the identity in HOME's .gitconfig"
+    assert author == "BF892 Home"
+    assert dirty_with_only_ignored_file is False, "a file HOME's excludesFile ignores must not make the tree dirty"

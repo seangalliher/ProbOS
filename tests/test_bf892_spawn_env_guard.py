@@ -10,16 +10,22 @@ listed in INDIRECT_ENV_SITES. Anything else fails: no env, env=None, a None bran
 ``**kwargs`` without env, os.environ used whole by any route, a launch API bound by
 reference, or a launch API that cannot take an environment.
 
+Names resolve per file, not per scope: a name stands for every target it is imported as or
+copied from anywhere in the file (any function, ``global``/``nonlocal``, try/except twins,
+``sp = subprocess``), so no shadowing trick hides a launch. The cost is a possible extra flag
+when one name is bound to two modules and the other has an attribute named like a launch API
+(none under src when this was written). A merged contribution counts as the widest of its
+parts, so an empty or None branch never hides a trusted one.
+
 Limits: a static scan cannot see these and they pass it silently, so they are a review
-question, not a guard one: getattr(subprocess, "run") and other dynamic calls,
-importlib-loaded modules, launches inside third-party libraries (Playwright's driver,
-webbrowser), an environment mutated under a second name (``e = env; e.update(...)``), and a
-mapping from elsewhere merged into a sanctioned base, which counts as an addition
-(``{**build_command_env(), **request.env}`` stays allowlist). Import aliases resolve by
-lexical scope (a function's own imports, then each enclosing function's, then the
-module's); a name bound in no scope of that chain falls back to any scope's import of it,
-so ``global``/``nonlocal`` imports are still seen; a later rebinding by assignment is not
-tracked.
+question, not a guard one: getattr(subprocess, "run"), sys.modules, importlib and other
+dynamic lookups; ``from subprocess import *``; a launch API re-exported by another module;
+a module or launch API reached through anything but a name (a container, an attribute such
+as ``self.sp = subprocess``, a function's return, a for/with/unpacking target) or through a
+copy chain deeper than _COPY_DEPTH; launches inside third-party libraries (Playwright's
+driver, webbrowser); an environment mutated under a second name (``e = env; e.update(...)``);
+and a mapping from elsewhere merged into a sanctioned base, which counts as an addition
+(``{**build_command_env(), **request.env}`` stays allowlist).
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from __future__ import annotations
 import ast
 import os
 import textwrap
-from collections import ChainMap, Counter, deque
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
@@ -63,6 +69,8 @@ _NO_ENV_LAUNCHERS = frozenset({
 _NO_ENV_PREFIXES = ("os.exec", "os.spawn")
 #: Launches found at 7301f647 (2026-10-14). The scan must reach at least these.
 _KNOWN_LAUNCH_FLOOR = 39
+#: How many plain copies (``a = subprocess; b = a``) a name is followed through.
+_COPY_DEPTH = 4
 
 TRUSTED_ENV_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("src/probos/__main__.py", "_ensure_ollama"): (1, "ollama serve: OLLAMA_* and GPU variables"),
@@ -114,26 +122,22 @@ def _module_parts(rel_path: str) -> tuple[list[str], bool]:
     return (parts[:-1] if is_package else parts), is_package
 
 
-def _scope_aliases(scope: ast.AST, rel_path: str) -> dict[str, str]:
-    """Import aliases bound directly in *scope*'s own body (the module, or one function).
+def _file_aliases(tree: ast.Module, rel_path: str) -> dict[str, frozenset[str]]:
+    """Every target each name is bound to anywhere in the file: imports in every scope and plain
+    copies (``sp = subprocess``, ``b = a``). A name bound by none of these stands for itself.
 
-    A nested function is its own scope and is not entered; a class body is entered.
+    One candidate set per file, not per scope, so a name that may denote a launch API anywhere
+    is checked as one everywhere.
     """
     module, is_package = _module_parts(rel_path)
     package = module if is_package else module[:-1]
-    names: dict[str, str] = {}
-    pending = deque(ast.iter_child_nodes(scope))
-    while pending:
-        node = pending.popleft()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            continue
+    names: dict[str, set[str]] = {}
+    copies: list[tuple[str, ast.AST]] = []
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.asname:
-                    names[alias.asname] = alias.name
-                else:
-                    head = alias.name.split(".")[0]
-                    names[head] = head
+                head = alias.name.split(".")[0]
+                names.setdefault(alias.asname or head, set()).add(alias.name if alias.asname else head)
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 base = package[: len(package) - (node.level - 1)]
@@ -141,20 +145,31 @@ def _scope_aliases(scope: ast.AST, rel_path: str) -> dict[str, str]:
             else:
                 origin = node.module or ""
             for alias in node.names:
-                names[alias.asname or alias.name] = f"{origin}.{alias.name}"
-        pending.extend(ast.iter_child_nodes(node))
-    return names
+                names.setdefault(alias.asname or alias.name, set()).add(f"{origin}.{alias.name}")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and isinstance(node.value, (ast.Name, ast.Attribute)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            copies.extend((t.id, node.value) for t in targets if isinstance(t, ast.Name))
+    resolved = {name: frozenset(targets) for name, targets in names.items()}
+    for _ in range(_COPY_DEPTH):
+        grown = dict(resolved)
+        for name, value in copies:
+            grown[name] = grown.get(name, frozenset({name})) | _resolve(value, resolved)
+        if grown == resolved:
+            break
+        resolved = grown
+    return resolved
 
 
-def _dotted(node: ast.AST, aliases: Mapping[str, str]) -> str | None:
+def _resolve(node: ast.AST, aliases: Mapping[str, frozenset[str]]) -> frozenset[str]:
+    """Every dotted name *node* may denote; empty when it is not a (dotted) name."""
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
         node = node.value
     if not isinstance(node, ast.Name):
-        return None
-    parts.append(aliases.get(node.id, node.id))
-    return ".".join(reversed(parts))
+        return frozenset()
+    tail = "".join(f".{part}" for part in reversed(parts))
+    return frozenset(head + tail for head in aliases.get(node.id, (node.id,)))
 
 
 def _is_type_reference(node: ast.AST) -> bool:
@@ -162,7 +177,7 @@ def _is_type_reference(node: ast.AST) -> bool:
     if isinstance(node, (ast.Name, ast.Constant)):
         return True
     if isinstance(node, ast.Attribute):
-        return _dotted(node, {}) is not None
+        return bool(_resolve(node, {}))
     if isinstance(node, ast.Subscript):
         return _is_type_reference(node.value) and _is_type_reference(node.slice)
     if isinstance(node, (ast.Tuple, ast.List)):
@@ -172,24 +187,26 @@ def _is_type_reference(node: ast.AST) -> bool:
     return False
 
 
-def _launcher(node: ast.AST, aliases: Mapping[str, str]) -> tuple[str, bool] | None:
-    """(callee, takes_env) when *node* names a launch API."""
-    dotted = _dotted(node, aliases)
-    if dotted is not None:
-        if dotted in _ENV_LAUNCHERS:
-            return dotted, True
-        if dotted in _NO_ENV_LAUNCHERS or dotted.startswith(_NO_ENV_PREFIXES):
-            return dotted, False
+def _launcher(node: ast.AST, aliases: Mapping[str, frozenset[str]]) -> tuple[str, bool] | None:
+    """(callee, takes_env) when any target *node* may denote is a launch API. A target that is
+    unsupported wins over one that takes env=, since it fails whatever env= says."""
+    candidates = sorted(_resolve(node, aliases))
+    no_env = [d for d in candidates if d in _NO_ENV_LAUNCHERS or d.startswith(_NO_ENV_PREFIXES)]
+    with_env = [d for d in candidates if d in _ENV_LAUNCHERS]
+    if no_env:
+        return no_env[0], False
+    if with_env:
+        return with_env[0], True
     if isinstance(node, ast.Attribute) and node.attr in _LOOP_LAUNCH_ATTRS:
         return f"<loop>.{node.attr}", True
     return None
 
 
-def _reads_whole_environment(expr: ast.AST, aliases: Mapping[str, str]) -> bool:
+def _reads_whole_environment(expr: ast.AST, aliases: Mapping[str, frozenset[str]]) -> bool:
     """True when *expr* uses os.environ whole (copy, spread, pass), not one .get()/[...] read."""
     parents = {id(child): node for node in ast.walk(expr) for child in ast.iter_child_nodes(node)}
     for node in ast.walk(expr):
-        if _dotted(node, aliases) != "os.environ":
+        if "os.environ" not in _resolve(node, aliases):
             continue
         parent = parents.get(id(node))
         if isinstance(parent, ast.Subscript) and parent.value is node:
@@ -255,35 +272,21 @@ def _widest(verdicts: list[str]) -> str:
 class _Scanner(ast.NodeVisitor):
     def __init__(self, tree: ast.Module, rel_path: str) -> None:
         self.path = rel_path
-        module_aliases = _scope_aliases(tree, rel_path)
-        self._alias_stack: list[dict[str, str]] = [module_aliases]  # module first
-        # Every scope's imports in one map (what the whole-tree walk used to build): the fallback
-        # for a name the lexical chain does not bind, i.e. a `global`/`nonlocal` import.
-        self._every_alias: dict[str, str] = dict(module_aliases)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._every_alias.update(_scope_aliases(node, rel_path))
+        self.aliases = _file_aliases(tree, rel_path)
         self.scope: list[str] = []
         self.functions: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
         self.launches: list[Launch] = []
         self._consumed: set[int] = set()
 
-    @property
-    def aliases(self) -> ChainMap[str, str]:
-        """Import aliases in force here: the lexical chain (innermost function first), then every scope's."""
-        return ChainMap(*reversed(self._alias_stack), self._every_alias)
-
     def _enter(self, node: ast.AST, name: str, is_function: bool) -> None:
         self.scope.append(name)
         if is_function:
             self.functions.append(node)  # type: ignore[arg-type]
-            self._alias_stack.append(_scope_aliases(node, self.path))
             args = node.args  # type: ignore[attr-defined]
             params = (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg)
             self._skip_annotations(node.returns, *(p.annotation for p in params if p is not None))  # type: ignore[attr-defined]
         self.generic_visit(node)
         if is_function:
-            self._alias_stack.pop()
             self.functions.pop()
         self.scope.pop()
 
@@ -330,6 +333,10 @@ class _Scanner(ast.NodeVisitor):
     def _bound(self, node: ast.AST) -> None:
         if id(node) in self._consumed:
             return
+        # A name being assigned is a binding, not a reference: `launch = subprocess.run` is
+        # flagged once, at its value (the copy itself is followed by _file_aliases).
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            return
         ref = _launcher(node, self.aliases)
         if ref is not None:
             self.launches.append(Launch(self.path, node.lineno, ref[0], "bound", ".".join(self.scope) or "<module>",
@@ -338,8 +345,8 @@ class _Scanner(ast.NodeVisitor):
     def _record(self, call: ast.Call, launcher: tuple[str, bool], shape: str) -> None:
         callee, takes_env = launcher
         verdict = self._verdict(call) if takes_env else (
-            "fail: this launch API cannot be given env= (it takes none, or only positionally); "
-            "launch through subprocess/asyncio with env="
+            "fail: this launch API is unsupported by this guard (it takes no environment, or takes "
+            "it positionally); launch through subprocess/asyncio with env="
         )
         self.launches.append(Launch(self.path, call.lineno, callee, shape, ".".join(self.scope) or "<module>", verdict))
 
@@ -359,11 +366,11 @@ class _Scanner(ast.NodeVisitor):
         if _reads_whole_environment(expr, self.aliases):
             return _FAIL_WHOLE_ENV
         if isinstance(expr, ast.Call):
-            owner = _dotted(expr.func, self.aliases)
-            if owner == _ALLOWLIST_OWNER:
-                return ALLOWLIST
-            if owner == _TRUSTED_OWNER:
+            owners = _resolve(expr.func, self.aliases)
+            if _TRUSTED_OWNER in owners:
                 return TRUSTED
+            if _ALLOWLIST_OWNER in owners:
+                return ALLOWLIST
             return self._other(expr)
         if isinstance(expr, ast.Dict):
             if not expr.keys or expr.keys[0] is not None:
@@ -392,15 +399,40 @@ class _Scanner(ast.NodeVisitor):
 
     def _other(self, expr: ast.AST) -> str:
         """A non-owner expression: trusted when it carries trusted_command_env anywhere."""
-        if any(_dotted(n, self.aliases) == _TRUSTED_OWNER for n in ast.walk(expr)):
-            return TRUSTED
-        return INDIRECT
+        return TRUSTED if self._mentions_trusted(expr) else INDIRECT
+
+    def _mentions_trusted(self, expr: ast.AST) -> bool:
+        return any(_TRUSTED_OWNER in _resolve(n, self.aliases) for n in ast.walk(expr))
 
     def _contribution(self, expr: ast.AST, depth: int) -> str | None:
-        """What merging *expr* into an environment adds: the whole-environment failure, TRUSTED,
-        or None (an addition such as ``request.env`` or ``os.environ.get(...)``)."""
-        verdict = self._classify(expr, depth + 1)
-        return verdict if verdict in (_FAIL_WHOLE_ENV, TRUSTED) else None
+        """What merging *expr* into an environment adds, read as the widest of its parts: the
+        whole-environment failure, TRUSTED, or None (an addition such as ``request.env``). A part
+        that fails for another reason (``{}``, None) adds nothing, so it cannot hide a trusted one."""
+        if depth > 6:
+            return None
+        if _reads_whole_environment(expr, self.aliases):
+            return _FAIL_WHOLE_ENV
+        if self._mentions_trusted(expr):
+            return TRUSTED
+        if isinstance(expr, ast.Name):
+            verdict = self._classify_name(expr.id, depth + 1)
+            return verdict if verdict in (_FAIL_WHOLE_ENV, TRUSTED) else None
+        if isinstance(expr, ast.IfExp):
+            parts = [expr.body, expr.orelse]
+        elif isinstance(expr, ast.BoolOp):
+            parts = expr.values
+        elif isinstance(expr, ast.BinOp):
+            parts = [expr.left, expr.right]
+        elif isinstance(expr, ast.Dict):
+            parts = list(expr.values)
+        elif isinstance(expr, ast.Call):
+            parts = [*expr.args, *(kw.value for kw in expr.keywords)]
+        else:
+            return None
+        added = [self._contribution(part, depth + 1) for part in parts]
+        if _FAIL_WHOLE_ENV in added:
+            return _FAIL_WHOLE_ENV
+        return TRUSTED if TRUSTED in added else None
 
     def _classify_name(self, name: str, depth: int) -> str:
         added: list[str] = []
@@ -526,8 +558,8 @@ _SHAPE_CASES = [
         async def f():
             await _a.create_subprocess_shell('x')
         """, "direct", "fail: no env="),
-    # Import aliases resolve by lexical scope: a function's own import shadows the module's only
-    # inside that function (and the functions nested in it), never in a sibling function.
+    # A name stands for every target it is bound to anywhere in the file: neither a function's
+    # own import nor a sibling's hides a launch.
     _case("local-import-shadows-module-alias", """\
         import subprocess as sp
         def other():
@@ -552,8 +584,7 @@ _SHAPE_CASES = [
                 return sp.run(['x'])
             return inner
         """, "direct", "fail: no env="),
-    # A name bound in no scope of that chain falls back to any scope's import of it, so an import
-    # bound through `global` in one function is still seen from another.
+    # An import bound through `global` in one function is seen from another.
     _case("global-import-seen-from-another-function", """\
         def setup():
             global sp
@@ -596,27 +627,27 @@ _SHAPE_CASES = [
     _case("os-system", """\
         import os
         os.system('x')
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("os-popen", """\
         import os
         os.popen('x')
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("os-execv", """\
         import os
         os.execv('/bin/x', ['x'])
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("os-spawnl", """\
         import os
         os.spawnl(os.P_WAIT, '/bin/x', 'x')
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("getoutput", """\
         import subprocess
         subprocess.getoutput('x')
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("multiprocessing", """\
         import multiprocessing
         multiprocessing.Process(target=print)
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
     _case("environ-copy", """\
         import os, subprocess
         subprocess.run(['x'], env=os.environ.copy())
@@ -789,10 +820,157 @@ _SHAPE_CASES = [
             import subprocess as sp
             return sp.run(['x'])
         """, "direct", "fail: no env="),
+    # Round-2 repro: a module-level binding must not hide a `global` import of the same name.
+    _case("global-import-over-module-alias", """\
+        import json as sp
+        def setup():
+            global sp
+            import subprocess as sp
+        def launch():
+            return sp.run(['x'])
+        """, "direct", "fail: no env="),
+    _case("nonlocal-import-over-outer-alias", """\
+        def outer():
+            import json as sp
+            def setup():
+                nonlocal sp
+                import subprocess as sp
+            def launch():
+                return sp.run(['x'])
+            return setup, launch
+        """, "direct", "fail: no env="),
+    # The launcher is imported first and the decoy last, so "the last import wins" misses it.
+    _case("try-except-import-twin", """\
+        try:
+            import subprocess as sp
+        except ImportError:
+            import json as sp
+        sp.run(['x'])
+        """, "direct", "fail: no env="),
+    _case("module-copied-to-a-name", """\
+        import subprocess
+        sp = subprocess
+        sp.run(['x'])
+        """, "direct", "fail: no env="),
+    _case("module-copied-through-a-chain", """\
+        import subprocess
+        a = subprocess
+        b = a
+        b.run(['x'])
+        """, "direct", "fail: no env="),
+    # The documented cost of one candidate set per file: `sp` is json in b, subprocess in a.
+    _case("candidate-set-over-approximates", """\
+        def a():
+            import subprocess as sp
+            return sp
+        def b():
+            import json as sp
+            return sp.run(['x'])
+        """, "direct", "fail: no env="),
+    # A name that may be either API is checked as the one that takes no environment.
+    _case("either-launcher-unsupported-wins", """\
+        try:
+            from subprocess import run as go
+        except ImportError:
+            from os import system as go
+        from probos.execution.command_env import build_command_env
+        go(['x'], env=build_command_env())
+        """, "direct", "fail: this launch API is unsupported"),
+    # A contribution reads as the widest of its parts: an empty or None branch never hides a
+    # trusted one, and a trusted environment carried by a name in a branch, `or`, `|`, a spread
+    # or a call still counts.
+    _case("update-conditional-trusted-or-empty", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f(flag):
+            env = build_command_env()
+            env.update(trusted_command_env() if flag else {})
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("ior-conditional-trusted-or-empty", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f(flag):
+            env = build_command_env()
+            env |= (trusted_command_env() if flag else {})
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("spread-conditional-trusted-or-empty", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f(flag):
+            subprocess.run(['x'], env={**build_command_env(), **(trusted_command_env() if flag else {})})
+        """, "direct", TRUSTED),
+    _case("update-conditional-trusted-or-none", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f(flag):
+            env = build_command_env()
+            env.update(trusted_command_env() if flag else None)
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-trusted-name-in-branch", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f(flag):
+            extra = trusted_command_env()
+            env = build_command_env()
+            env.update(extra if flag else {})
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-trusted-name-or-empty", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            extra = trusted_command_env()
+            env = build_command_env()
+            env.update(extra or {})
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-trusted-name-merged", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            extra = trusted_command_env()
+            env = build_command_env()
+            env.update({} | extra)
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-trusted-name-spread", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            extra = trusted_command_env()
+            env = build_command_env()
+            env.update({**extra})
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-trusted-name-through-a-call", """\
+        import subprocess
+        from probos.execution.command_env import build_command_env, trusted_command_env
+        def f():
+            extra = trusted_command_env()
+            env = build_command_env()
+            env.update(dict(extra))
+            subprocess.run(['x'], env=env)
+        """, "direct", TRUSTED),
+    _case("update-environ-name-in-branch", """\
+        import os, subprocess
+        from probos.execution.command_env import build_command_env
+        def f(flag):
+            whole = dict(os.environ)
+            env = build_command_env()
+            env.update(whole if flag else {})
+            subprocess.run(['x'], env=env)
+        """, "direct", "fail: the runtime environment"),
     _case("os-spawnve", """\
         import os
         os.spawnve(os.P_WAIT, '/bin/x', ['x'], {})
-        """, "direct", "fail: this launch API cannot"),
+        """, "direct", "fail: this launch API is unsupported"),
+    _case("os-execve-positional-env", """\
+        import os
+        os.execve('/bin/x', ['x'], {})
+        """, "direct", "fail: this launch API is unsupported"),
 ]
 
 
