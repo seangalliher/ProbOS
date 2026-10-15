@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 # Verdict labels (single source of truth for the RESOLVED/UNRESOLVED strings).
@@ -466,6 +468,7 @@ class GitObjectResolver:
             try:
                 proc = subprocess.Popen(
                     ["git", "cat-file", "-e", "--", f"{token}^{{object}}"],
+                    env=trusted_command_env(),
                     cwd=str(self._repo_root),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

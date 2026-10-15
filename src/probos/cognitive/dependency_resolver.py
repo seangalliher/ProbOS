@@ -13,6 +13,8 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
+from probos.execution.command_env import build_command_env
+
 logger = logging.getLogger(__name__)
 
 # Maps Python import names to their pip/uv package names when they differ.
@@ -211,13 +213,18 @@ class DependencyResolver:
             return await self._install_fn(package_name)
 
         loop = asyncio.get_running_loop()
+        # BF-892 (#1543): a package's build step runs third-party code. It gets the
+        # command allowlist plus VIRTUAL_ENV (so uv targets the same venv), never
+        # the runtime's environment. A proxy or index set only in the runtime's
+        # environment is not passed; pip's own config file (APPDATA/HOME) still is.
+        install_env = build_command_env(("VIRTUAL_ENV",))
 
         # Method 1: pip via the running Python (most reliable)
         try:
             result = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    [sys.executable, "-m", "pip", "install", package_name],
+                    [sys.executable, "-m", "pip", "install", package_name], env=install_env,
                     capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                 ),
             )
@@ -234,7 +241,7 @@ class DependencyResolver:
                 result = await loop.run_in_executor(
                     None,
                     lambda: subprocess.run(
-                        [uv_path, "pip", "install", package_name],
+                        [uv_path, "pip", "install", package_name], env=install_env,
                         capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                     ),
                 )
@@ -248,7 +255,7 @@ class DependencyResolver:
                 result = await loop.run_in_executor(
                     None,
                     lambda: subprocess.run(
-                        [uv_path, "add", package_name],
+                        [uv_path, "add", package_name], env=install_env,
                         capture_output=True, encoding="utf-8", errors="replace", timeout=120,
                     ),
                 )

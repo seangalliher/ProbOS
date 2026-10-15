@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from probos.execution.command_env import build_command_env
+from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
 from probos.execution.workspace_results import (
     RecoverRead,
     SourceRef,
@@ -1154,17 +1155,22 @@ class RunCommandTool:
                 cwd=cwd,
                 # BF-890 (#1529): an allowlisted environment, not the runtime's.
                 env=build_command_env(self._command_env_passthrough),
+                # BF-893 (#1544): the command's whole tree can be ended on a timeout.
+                **process_tree_popen_kwargs(),
             )
+            tree = ProcessTree.attach(proc)
             try:
                 stdout_b, stderr_b = await _asyncio.wait_for(
                     proc.communicate(), timeout=timeout
                 )
             except _asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                tree.kill()
                 return ToolResult(error=f"run_command timed out after {timeout}s")
+            except _asyncio.CancelledError:
+                tree.kill()  # BF-893: an enclosing timeout or cancellation must not leave the tree running
+                raise
+            finally:
+                tree.close()
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             return ToolResult(

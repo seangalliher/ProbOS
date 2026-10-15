@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 # Directory structure per AD-434 design
@@ -1238,6 +1240,7 @@ class RecordsStore:
         """Synchronous git execution."""
         result = subprocess.run(
             ["git"] + list(args),
+            env=trusted_command_env(),
             cwd=str(self._repo_path),
             capture_output=True,
             text=True,

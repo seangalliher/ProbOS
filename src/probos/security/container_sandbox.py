@@ -50,13 +50,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
+
+from probos.execution.command_env import build_command_env, trusted_command_env
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,9 @@ class InProcessContainerSandbox:
             )
         loop = asyncio.get_running_loop()
         cwd = str(request.workspace_root) if request.workspace_root else None
-        env = {**os.environ, **request.env}
+        # BF-892 (#1543): the command allowlist, then request.env as the caller's
+        # explicit extension -- never the runtime's environment.
+        env = {**build_command_env(), **request.env}
         t0 = time.monotonic()
         try:
             result = await loop.run_in_executor(
@@ -254,6 +257,7 @@ class DockerContainerSandbox:
                 None,
                 lambda: subprocess.run(  # noqa: S603
                     args,
+                    env=trusted_command_env(),
                     capture_output=True,
                     text=True,
                     timeout=request.limits.wall_timeout_seconds + 10,

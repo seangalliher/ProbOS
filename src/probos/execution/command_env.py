@@ -120,3 +120,21 @@ def build_command_env(
         if name in source_env:
             env[name] = source_env[name]
     return env
+
+
+def trusted_command_env() -> dict[str, str]:
+    """BF-892 (#1543): the runtime's whole environment, for a command ProbOS builds itself.
+
+    For a launch whose program and argument shape ProbOS fixes -- ``git`` on its own
+    repositories, ``gh``, ``docker``, ``ollama``, ``nats-server``, ``rg``, ``blender``,
+    ``rhubarb``, ``piper``, ``soffice``, a credential helper, ProbOS's own probe, an
+    operator-approved MCP server -- that may need the operator's toolchain variables
+    (credentials, proxies, config paths). Never for a command or code the model or an
+    agent wrote: those use :func:`build_command_env`.
+
+    Returns a copy, so a caller's additions never reach ``os.environ``. Every caller is
+    listed with its reason in ``tests/test_bf892_spawn_env_guard.py``
+    (``TRUSTED_ENV_SITES``); a new caller fails that guard until it is listed, so choosing
+    this environment is always a reviewed decision.
+    """
+    return dict(os.environ)

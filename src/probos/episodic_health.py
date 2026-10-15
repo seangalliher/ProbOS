@@ -35,6 +35,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from probos.execution.command_env import trusted_command_env
+
 logger = logging.getLogger(__name__)
 
 SKIP_ENV_VAR = "PROBOS_SKIP_EPISODIC_HEALTH_CHECK"
@@ -394,6 +396,7 @@ def check_episodic_health(
         with open(stderr_path, "wb") as stderr_sink:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "probos._episodic_probe", str(data_dir)],
+                env=trusted_command_env(),
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_sink,
             )

@@ -57,6 +57,7 @@ from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient, _
 from probos.cognitive.model_router import build_model_routing, ceiling_denials, routed_tiers
 from probos.cognitive.verifier_independence import VerifierJudgePolicy, verifier_independence_report
 from probos.config import load_config
+from probos.execution.command_env import trusted_command_env
 from probos.runtime import ProbOSRuntime
 from probos.experience.shell import ProbOSShell
 
@@ -250,6 +251,7 @@ async def _ensure_ollama(config, console: Console) -> None:
         try:
             subprocess.Popen(
                 [ollama_bin, "serve"],
+                env=trusted_command_env(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -458,6 +460,7 @@ async def _check_nats(config, console: Console) -> None:
     try:
         subprocess.Popen(
             cmd,
+            env=trusted_command_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -2997,11 +3000,13 @@ def _cmd_reset(args: argparse.Namespace) -> None:
         try:
             subprocess.run(
                 ["git", "-C", str(repo_path), "add", "-A"],
+                env=trusted_command_env(),
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
             subprocess.run(
                 ["git", "-C", str(repo_path), "commit", "-m",
                  f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
+                env=trusted_command_env(),
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
         except Exception:

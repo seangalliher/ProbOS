@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from probos.execution.command_env import trusted_command_env
 from probos.substrate.agent import BaseAgent
 from probos.substrate.file_walk import iter_files
 from probos.substrate.safe_regex import UnsafePatternError, safe_compile
@@ -176,6 +177,7 @@ class CodeSearchAgent(BaseAgent):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                env=trusted_command_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

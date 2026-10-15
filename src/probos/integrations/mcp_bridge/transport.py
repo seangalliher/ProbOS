@@ -23,11 +23,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
+from probos.execution.command_env import trusted_command_env
 from probos.integrations.mcp_bridge.client import MCPProtocolError
 
 logger = logging.getLogger(__name__)
@@ -268,7 +268,10 @@ class StdioTransport:
         return self._proc is not None and self._proc.returncode is None
 
     async def start(self) -> None:
-        env = {**os.environ, **self._env} if self._env else None
+        # BF-892 (#1543): stated, not inherited by omission. An operator-approved
+        # server gets the runtime's environment plus its own declared variables,
+        # exactly as before (None used to inherit the same environment).
+        env = {**trusted_command_env(), **self._env}
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 self._command,

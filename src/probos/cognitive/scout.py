@@ -18,6 +18,7 @@ from probos.cognitive.process_chains import (
     ProcessChainStep,
     ProcessChainStepKind,
 )
+from probos.execution.command_env import trusted_command_env
 from probos.types import CapabilityDescriptor, IntentDescriptor
 
 logger = logging.getLogger(__name__)
@@ -408,6 +409,7 @@ class ScoutAgent(CognitiveAgent):
                  "-f", f"q={encoded_query}",
                  "-f", "sort=stars",
                  "-f", "per_page=30"],
+                env=trusted_command_env(),
                 capture_output=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if result.returncode != 0:

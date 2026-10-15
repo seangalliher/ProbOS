@@ -24,6 +24,7 @@ from pathlib import Path
 
 from probos.audio.tts.backends import TTSResult
 from probos.audio.tts.prosody import resolve_prosody_overrides
+from probos.execution.command_env import trusted_command_env
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ class PiperBackend:
                             "--sentence_silence", str(_sentence_silence),
                         ],
                         stdin=subprocess.PIPE,
+                        env=trusted_command_env(),
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                     )

@@ -106,7 +106,8 @@ def _ship(*, exposed=("run_command", "list_directory"), token=_TOKEN, registry=N
     lister = DirectoryListAgent(pool="directory")
     shell_calls: list[str] = []
 
-    def _record(command: str) -> dict:
+    def _record(command: str, deadline: float | None = None, slot: object | None = None) -> dict:
+        # BF-893: the shell agent also hands its worker the shared deadline and the cancellation slot.
         shell_calls.append(command)
         return {"success": True, "stdout": "recorded", "stderr": "", "exit_code": 0}
 

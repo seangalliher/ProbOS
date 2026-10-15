@@ -572,6 +572,12 @@ async def test_git_resolver_argv_is_shell_free_and_option_terminated(
         "probos.cognitive.referent_gate.subprocess.Popen",
         _popen,
     )
+    # BF-892: a sentinel, so the exact-kwargs diff can never print the real environment.
+    sentinel_env = {"BF892_SENTINEL": "1"}
+    monkeypatch.setattr(
+        "probos.cognitive.referent_gate.trusted_command_env",
+        lambda: sentinel_env,
+    )
     resolver = GitObjectResolver(repo_root=tmp_path)
     assert await resolver.resolve("--help") is False
     assert recorded["args"] == [
@@ -583,6 +589,7 @@ async def test_git_resolver_argv_is_shell_free_and_option_terminated(
     ]
     assert isinstance(recorded["args"], list)
     assert recorded["kwargs"] == {
+        "env": sentinel_env,
         "cwd": str(tmp_path),
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,

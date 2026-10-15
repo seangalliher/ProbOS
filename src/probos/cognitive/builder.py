@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
+from probos.execution.command_env import build_command_env
 from probos.execution.isolation import remove_workdir_off_loop
 
 if TYPE_CHECKING:
@@ -1617,6 +1618,13 @@ def _sanitize_branch_name(name: str) -> str:
     return slug[:50]
 
 
+#: BF-892 (#1543): the names the builder's git launches add to the allowlist. Git for Windows
+#: reads HOME before USERPROFILE (Git Bash sets it); without it a commit can lose the identity
+#: in ~/.gitconfig and a globally ignored file makes a clean tree look dirty. XDG_CONFIG_HOME
+#: is git's other global-config location. Neither name is credential-shaped.
+_GIT_HOME_NAMES: tuple[str, ...] = ("HOME", "XDG_CONFIG_HOME")
+
+
 async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
     """Run a git command asynchronously.  Returns (returncode, stdout, stderr).
 
@@ -1626,8 +1634,12 @@ async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
     """
 
     def _sync_run() -> tuple[int, str, str]:
+        # BF-892 (#1543): the allowlist. This git runs in the tree the model writes
+        # into, so its config and hooks are not ProbOS's own; these local verbs need
+        # only PATH and the home variables (identity from ~/.gitconfig), HOME included.
         result = subprocess.run(
             ["git", *args],
+            env=build_command_env(_GIT_HOME_NAMES),
             cwd=work_dir,
             capture_output=True,
         )
@@ -2424,22 +2436,28 @@ def _validate_python(path: Path) -> str | None:
 # Test & fix helpers (AD-314)
 # ---------------------------------------------------------------------------
 
+def _pytest_pythonpath(work_dir: str) -> str:
+    """The work tree and its ``src``, then the runtime's own ``PYTHONPATH`` (the pre-BF-892 order)."""
+    src_dir = str(Path(work_dir) / "src")
+    existing = os.environ.get("PYTHONPATH", "")
+    return f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+
+
 async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
     """Run pytest and return (passed, output)."""
     import sys
 
     def _sync_run() -> tuple[int, str]:
         try:
-            env = os.environ.copy()
-            src_dir = str(Path(work_dir) / "src")
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+            # BF-892 (#1543): the tests are model-authored; they get the command
+            # allowlist plus PYTHONPATH, never the runtime's environment.
+            run_env = {**build_command_env(), "PYTHONPATH": _pytest_pythonpath(work_dir)}
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"],
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
-                env=env,
+                env=run_env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")
@@ -2508,16 +2526,14 @@ async def _run_targeted_tests(
 
     def _sync_run() -> tuple[int, str]:
         try:
-            env = os.environ.copy()
-            src_dir = str(Path(work_dir) / "src")
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+            # BF-892 (#1543): model-authored tests; allowlist plus PYTHONPATH only.
+            targeted_env = {**build_command_env(), "PYTHONPATH": _pytest_pythonpath(work_dir)}
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"] + test_files,
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
-                env=env,
+                env=targeted_env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")
@@ -2566,9 +2582,11 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
     subprocess.run mocks in existing tests.
     """
     try:
+        git_env = build_command_env(_GIT_HOME_NAMES)
         # First verify we're inside a git repo
         proc = await asyncio.create_subprocess_exec(
             "git", "rev-parse", "--git-dir",
+            env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -2580,6 +2598,7 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         # Check for uncommitted changes
         proc = await asyncio.create_subprocess_exec(
             "git", "status", "--porcelain",
+            env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
