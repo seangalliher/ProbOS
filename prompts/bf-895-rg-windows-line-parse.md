@@ -1,20 +1,22 @@
 # Build contract: BF-895 (#1548): the rg engine parses Windows paths and never reports a false zero
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-15
-**Status:** built as one slice (2026-10-15) · **Depends on:** none (`agents/code_search.py` and its tests as on `main` `f2a0db6d`; unchanged on `579b5530`, where it was built) · **New tests:** 26 collected, in one new file (24 run everywhere; the two real-rg cases skip when `rg` is not on PATH). The contract's 25 plus one the orchestrator added: the fallback warning carries the exit code, a byte count and the root, and never match text.
+**Revised by:** `claude-architect` (Opus 5.5), 2026-10-15, after review round 1 (see Revision 1)
+**Status:** built as one slice, revised after review round 1 (2026-10-15) · **Depends on:** none (`agents/code_search.py` and its tests as on `main` `f2a0db6d`; unchanged on `579b5530`, where it was built) · **New tests:** 37 collected, in one new file (33 run everywhere; four cases from three test functions need `rg` on PATH, one of them Windows-only). The first build's 25, plus one the orchestrator added (the fallback warning carries the exit code, a byte count and the root, and never match text), reworked for the `--null` shape in round 1.
 
 **Verdict: build it.** Three changes in one file:
 
-1. **Parser.** `_parse_rg_line` uses a lazy regex, `(.+?):([0-9]+):(.*)` with `fullmatch`. The path is everything up to the FIRST `:<digits>:`. This handles a Windows drive (`C:\`), `\\?\C:\` long paths, UNC paths, a POSIX filename that contains a colon (`/tmp/a:b.txt`), and match text that itself starts `12:`.
-   - What it cannot parse: a path segment that contains `:<digits>:` (POSIX only, since Windows names cannot hold `:`). That line is split at the wrong place: the path is cut short, and the line number is taken from inside the name.
+1. **Parser (revised after review round 1).** rg runs with `--null`, so every line is `path<NUL>lineno:text`, and `_parse_rg_line` splits at the first NUL and then at the first `:`; the line-number field must be ASCII digits within `int()`'s digit limit (the old parser's `ValueError` guard is kept), or the line is unparsed. No path can hold NUL, so this is exact on every OS: a Windows drive, `\\?\C:\` long paths, UNC paths, NTFS streams (`f.txt:7`), a POSIX filename with a colon or a `:<digits>:` segment, and match text that itself starts `12:`.
+   - History: the first build used a lazy colon pattern, `(.+?):([0-9]+):(.*)` with `fullmatch`. Review round 1 reproduced that it mis-splits an NTFS stream file root (`f.txt:7` came back as `f.txt`, line 7), so the "POSIX only" limit this contract first stated was wrong; `--null` removes the ambiguity instead of working around it.
    - Rejected alternatives:
      - **`rg --json`** would replace the whole output format and add `begin`/`end`/`summary`/`context` event handling plus base64 decoding of `path.bytes` and `lines.bytes`. That is a larger change to fix one line shape.
      - **The anchored drive-letter regex** (`^((?:[A-Za-z]:)?[^:]*):…`) drops `\\?\C:\…` paths and every POSIX filename that contains a colon.
-2. **One rg argument is added: `--with-filename`.**
-   - The issue's "no change to the rg arguments" yields for this one flag. ripgrep's docs say it never prints the path "when ripgrep is explicitly instructed to search one file", and `act` accepts a file root (`_search_python` handles `root.is_file()`, code_search.py:222). So a file root returns `3:hello`, which has no path and can never satisfy acceptance (1).
-   - The flag adds an argument and changes no existing one; the timeout is untouched.
+     - **Stripping the known `str(root)` prefix** (a file root only, or both root kinds) depends on rg echoing the root byte for byte and keeps a pattern as the fallback.
+2. **Two rg arguments are added: `--with-filename` and `--null`.**
+   - The issue's "no change to the rg arguments" yields for these two flags. ripgrep's docs say it never prints the path "when ripgrep is explicitly instructed to search one file", and `act` accepts a file root (`_search_python` handles `root.is_file()`, code_search.py:222). So a file root returns `3:hello`, which has no path and can never satisfy acceptance (1). `--null` (round 1) ends each printed path with NUL for the parse above; it changes nothing when no path is printed, so `--with-filename` stays.
+   - The flags add arguments and change no existing one; the timeout is untouched.
    - The spawn-env guard counts launches per function, not argv, so its inventory does not change.
-3. **No false zero.** If rg exits 0 (which means it found a match) or prints anything, and nothing parsed, `_search_rg` logs a warning and returns `None`. `act` then falls back to the Python engine (code_search.py:153-156).
+3. **No false zero.** If rg exits 0 (which means it found a match) or prints anything (any byte, whitespace included: round 1), and nothing parsed, `_search_rg` logs a warning and returns `None`. `act` then falls back to the Python engine (code_search.py:153-156).
    - Exit 1 with no output stays `success: True, count: 0, engine: "rg"`.
    - Context lines (`path-3-text`) and `--` separators cannot occur, because the arguments never include `-A`/`-B`/`-C`.
    - Warnings go to stderr, which is not parsed. A launch that hits a file error exits 2, which already falls back (:191).
@@ -57,12 +59,16 @@ ripgrep crates/core/flags/defs.rs (WithFilenameNo): "never print the file path .
 
 | Pin | Why | Action |
 |---|---|---|
-| `tests/test_ad989_code_search.py:166-173` `test_parse_rg_line` | asserts `src/main.py:12:…`, `a.py:3:x = {1: 2}` text, `garbage` → None, `a.py:notnum:text` → None | all four still hold under the regex; do not edit it |
+| `tests/test_ad989_code_search.py:166-173` `test_parse_rg_line` | asserts the parser's four properties: a parsed line, text containing colons, `garbage` → None, a non-numeric line number → None | rewritten to the NUL shape (`src/main.py\x0012:def foo():`), same four properties, reason inline (round 1 ruling: the old `path:lineno:text` shape is the ambiguous one) |
 | `tests/test_ad989_code_search.py:18-24` autouse fixture forces the Python engine | none of its tests reach `_search_rg` | unchanged; the new tests live in a new file without that fixture |
 | `tests/test_bf892_spawn_env_guard.py:86` keys `CodeSearchAgent._search_rg` with 1 launch | moving the launch or adding a second one breaks the inventory | keep the single `create_subprocess_exec` inside `_search_rg`; adding an argument is safe |
 | `tests/test_ad1025b_path_anchoring.py:94-125` patches `_resolve_rg_binary`/`shutil.which` | binary resolution only | untouched |
 
-## Section 1: `src/probos/agents/code_search.py`
+## Revision 1 (2026-10-15, after review round 1; claude-architect consult, session `60f918ad`)
+
+Round 1 (GPT-6.1 Sol) found three P2s, all reproduced by the orchestrator: (1) ordinary reach: a file root that is an NTFS stream with a numeric name (`f.txt:7`) is mis-split by the lazy colon pattern (path `f.txt`, line 7); (2) a regression: the old parser's `ValueError` guard was lost, so a line-number field over `int()`'s 4,300-digit limit (reachable through an operator's ripgreprc, which `trusted_command_env()` passes to rg) aborts the search; (3) whitespace-only stdout with exit 1 was reported as an rg zero. Decisions: **D1 = `--null`** (ranked above stripping the known root prefix, for a file root only or for both root kinds); **D2 = keep the guard** (the field must be ASCII digits; `try/except ValueError`); **D3 = fix here** (`stdout` in place of `stdout.strip()`). **Sections 1 and 2 below are the first build and are superseded.** The current code and tests are `src/probos/agents/code_search.py` (`--null` in the argv, `_parse_rg_line` on `path<NUL>lineno:text`, `or stdout`), `tests/test_bf895_rg_line_parse.py` (37 tests) and the rewritten pin `tests/test_ad989_code_search.py::test_parse_rg_line`.
+
+## Section 1: `src/probos/agents/code_search.py` (first build; superseded by Revision 1)
 
 <<<<<<< SEARCH
         args = [rg, "--line-number", "--no-heading", "--color", "never",
@@ -132,7 +138,7 @@ def _parse_rg_line(line: str) -> dict | None:
     return {"path": m.group(1), "line": int(m.group(2)), "text": m.group(3)[:_LINE_PREVIEW_CHARS]}
 >>>>>>> REPLACE
 
-## Section 2: `tests/test_bf895_rg_line_parse.py` (new, whole file)
+## Section 2: `tests/test_bf895_rg_line_parse.py` (first build; superseded by Revision 1: the file was replaced by the 37-test version)
 
 ```python
 """BF-895 (#1548): the rg engine parses Windows paths and never reports a false zero."""
@@ -290,7 +296,7 @@ async def test_real_rg_matches_python_engine(tmp_path, file_root):
 
 **Focused gate:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf895_rg_line_parse.py tests/test_ad989_code_search.py tests/test_bf892_spawn_env_guard.py tests/test_ad1025b_path_anchoring.py -q -n 0`
 
-## Mutation table (single-line anchors; CRLF tree; one campaign on the frozen candidate)
+## Mutation table, first build (superseded by Revision 1; kept as history)
 
 | # | File | Anchor line | Mutant | Killed by |
 |---|---|---|---|---|
@@ -306,23 +312,49 @@ async def test_real_rg_matches_python_engine(tmp_path, file_root):
 | 10 | same line | | drop `not matches and` | parsed_drive_letter (falls back to python, so engine != "rg"); empty control unaffected |
 | 11 | code_search.py | `        args = [rg, "--line-number", "--with-filename", "--no-heading",` | drop `"--with-filename", ` | fallback[*] argv assertion; real_rg[file_root=True] |
 
+## Mutation table (Revision 1; single-line anchors; CRLF tree; one campaign on the frozen candidate)
+
+Rows 1-11 above are void: `_RG_LINE` and its `fullmatch` and `return` lines are gone. N1 to N16 are the Architect's; N18 to N21 are the orchestrator's (analogues of the first build's rows 12 to 15). N17, the AD-989 pin, is a test edit and not a mutant. Acceptance 3: the campaign kills every row except N5, which is equivalent.
+
+| # | File | Anchor | Replacement | Expected killer |
+|---|---|---|---|---|
+| N1 | code_search.py | `args = [rg, "--line-number", "--with-filename", "--null", "--no-heading",` | `args = [rg, "--line-number", "--null", "--no-heading",` | fallback argv assertion; real_rg[file_root=True]; numeric_stream |
+| N2 | same line | | `args = [rg, "--line-number", "--with-filename", "--no-heading",` | fallback argv assertion; real_rg (no NUL, so None); numeric_stream |
+| N3 | code_search.py | `path, sep, rest = line.partition("\x00")` | `path, sep, rest = line.rpartition("\x00")` | posix[`3:x<NUL>y`] |
+| N4 | code_search.py | `if not sep or not path:` | `if not sep:` | malformed[`<NUL>3:x`] |
+| N5 | same line | | `if not path:` | none: with no NUL, `rest` is empty and the second partition rejects it. Equivalent |
+| N6 | code_search.py | `lineno, sep, text = rest.partition(":")` | `lineno, sep, text = rest.rpartition(":")` | windows[`3:12:34 text`]; posix[`3:12:x`] |
+| N7 | code_search.py | `if not sep or not (lineno.isascii() and lineno.isdigit()):` | `if not (lineno.isascii() and lineno.isdigit()):` | malformed[`a.py<NUL>3`] |
+| N8 | same line | | `if not sep or not (lineno.isdigit()):` | malformed[`\u0663:x`] |
+| N9 | same line | | `if not sep or not (lineno.isascii()):` | malformed[`+3:x`] |
+| N10 | code_search.py | `except ValueError:  # over Python's int() digit limit: not a line number` | `except TypeError:  # over Python's int() digit limit: not a line number` | oversized_is_unparsed; oversized_line_number_field_from_rg_config |
+| N11 | code_search.py | `return {"path": path, "line": number, "text": text[:_LINE_PREVIEW_CHARS]}` | `return {"path": path, "line": number, "text": text}` | test_text_is_truncated_to_preview |
+| N12 | code_search.py | `if not matches and (proc.returncode == 0 or stdout):` | `if False:` | fallback[*] |
+| N13 | same line | | `if not matches and (stdout):` | fallback[(0, empty)] |
+| N14 | same line | | `if not matches and (proc.returncode == 0):` | fallback[(1, stray); (1, whitespace)] |
+| N15 | same line | | `if (proc.returncode == 0 or stdout):` | parsed_drive_letter (engine becomes python) |
+| N16 | same line | | `if not matches and (proc.returncode == 0 or stdout.strip()):` | fallback[(1, whitespace)] |
+| N18 | same line | | `if not matches and (proc.returncode != 0 or stdout):` | fallback[(0, empty)]; empty_rg_result_stays_zero |
+| N19 | code_search.py | `proc.returncode, len(stdout), root,` | `proc.returncode, len(stdout), stdout,` | fallback_warning content test |
+| N20 | code_search.py | `return {"path": path, "line": number, "text": text[:_LINE_PREVIEW_CHARS]}` | `return {"path": path, "line": number + 1, "text": text[:_LINE_PREVIEW_CHARS]}` | parse rows; real_rg comparison |
+| N21 | same line | | `return {"path": text, "line": number, "text": path[:_LINE_PREVIEW_CHARS]}` | parse rows |
+
 ## Do not build
-- Any change to `_search_python`, the timeout or the existing rg arguments (only `--with-filename` is added).
-- `rg --json` (see the verdict; it is follow-up 1 if the colon-segment limit ever bites).
+- Any change to `_search_python`, the timeout or the existing rg arguments (only `--with-filename` and `--null` are added).
+- `rg --json` (rejected; see the verdict).
 - Moving the launch out of `_search_rg` or adding a second launch (guard row :86).
-- Edits to `tests/test_ad989_code_search.py` (its parser assertions still hold).
 - Detecting partial drops (some lines parsed, others not); see follow-up 2.
 
 ## Acceptance
 1. A real rg match on Windows is reported with its path and line, and the count equals the Python engine's for the same query (`test_real_rg_matches_python_engine`, directory and file root, run locally on Windows).
-2. A POSIX line and a path without a colon parse as before. A malformed line is still dropped. If rg exits 0 or prints output but nothing parses, the search falls back to the Python engine. Exit 1 with no output stays `success`, `count: 0`, `engine: "rg"`.
-3. The focused gate is green. The mutation campaign kills 1-3 and 6-11; 4 and 5 are recorded as equivalent.
+2. A POSIX line and a path without a colon parse as before; a path holding `:<digits>:` (a POSIX segment, an NTFS stream file root) parses exactly. A malformed line is still dropped. If rg exits 0 or prints any byte but nothing parses, the search falls back to the Python engine. Exit 1 with no output stays `success`, `count: 0`, `engine: "rg"`.
+3. The focused gate is green. The mutation campaign kills every Revision 1 row except N5, which is recorded as equivalent.
 4. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 **Tracking:** a BF-895 entry in `PROGRESS.md` and a short `DECISIONS.md` entry (the rg argument and the fallback are design decisions). No Bug Tracker row: that table in `docs/development/roadmap.md` lists only bugs "filed but deliberately not fixed", and this one is fixed here (the contract as drafted asked for a row and no `DECISIONS.md` entry; the orchestrator changed both when installing it).
 
 ## Prior Art and Blind Spots
-- Prior art: ripgrep's flag docs (`crates/core/flags/defs.rs`, WithFilename/WithFilenameNo) and its `--json` format. JSON was considered and deferred, because the regex plus `--with-filename` covers every path shape `resolve_for_runtime` can produce on the supported platforms.
+- Prior art: ripgrep's flag docs (`crates/core/flags/defs.rs`, WithFilename/WithFilenameNo; `-0/--null`) and its `--json` format. JSON was considered and rejected (a new event format). The first build's colon regex plus `--with-filename` was shown by review round 1 not to cover every path shape (an NTFS stream file root), so `--null` was adopted: a long-standing flag that makes the path/line split exact without a new output format.
 - Blind spot found: the single-file root dropped the path on every OS. This was not in the issue; `--with-filename` fixes it.
 - Blind spot left: the two engines differ in what they search.
   - rg does not skip lines over 2000 bytes; `_search_python` does (:234).
@@ -331,6 +363,7 @@ async def test_real_rg_matches_python_engine(tmp_path, file_root):
   - These are pre-existing and out of scope (follow-up 3).
 
 ## Follow-ups (with reach)
-1. **`rg --json`**: only if a POSIX path segment containing `:<digits>:` is ever observed. Reach: `_search_rg` only.
-2. **Detect a partial drop**: count output lines against parsed lines, and fall back when any line is unparsed. Reach: `_search_rg`; small. Defer until a real case shows up.
-3. **Engine parity**: long-line skip, ignore rules and the per-file `--max-count` semantics. One AD that compares the two engines on a fixture tree. Reach: `_search_rg`, `_search_python`, `substrate/file_walk.py`.
+1. ~~`rg --json`~~: withdrawn. Its trigger, the colon-segment limit, no longer exists: `--null` closes it (and F-71 on #1523).
+2. **Detect a partial drop**: count output lines against parsed lines, and fall back when any line is unparsed. Reach: `_search_rg`; small. Defer until a real case shows up. With `--null`, a line without a NUL is by definition unparsed, which makes this check sharper.
+3. **Engine parity**: long-line skip, ignore rules, the per-file `--max-count` semantics and lone-`\r` line numbering. One AD that compares the two engines on a fixture tree. Reach: `_search_rg`, `_search_python`, `substrate/file_walk.py`.
+4. **`splitlines()` on rg's output** (narrowed by `--null`): it may cut a match's preview text at `\x0c`, `\x85` or `\u2028`; the fragment has no NUL, so it can no longer become a false match. Reach: `_search_rg` preview text.
