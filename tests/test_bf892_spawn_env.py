@@ -1,8 +1,11 @@
 """BF-892 (#1543): model-authored code outside the run_python sandbox no longer inherits the runtime's environment.
 
-Each test plants a synthetic credential-shaped variable, first proves a child that INHERITS
-this process's environment sees it (the premise), then proves the site's child does not.
-Children print or write only booleans, never an environment value or listing.
+Four tests are child-boundary checks (the two pytest runners over model-written tests, the in-process
+container sandbox, and the three dependency installs): each plants a synthetic credential-shaped variable,
+first proves that a child which INHERITS this process's environment sees it (the premise), then proves the
+site's child does not. One test is that premise on its own (a control: it stays green if the fix is
+reverted). Two check the VIRTUAL_ENV extension of the install environment (passed when set, omitted when
+unset). Children print or write only booleans, never an environment value or listing.
 """
 
 from __future__ import annotations
@@ -138,7 +141,8 @@ async def test_dependency_install_keeps_virtual_env(monkeypatch: pytest.MonkeyPa
 
     await DependencyResolver(allowed_imports=[])._install_package("bf892-not-a-package")
 
-    assert len(envs) == 3, "premise: pip, uv pip and uv add must each be reached"
+    launch_count = len(envs)
+    assert launch_count == 3, "premise: pip, uv pip and uv add must each be reached"
     assert all(env is not None for env in envs), "premise: every method must be handed an explicit environment"
     assert [env.get("VIRTUAL_ENV") == str(tmp_path) for env in envs] == [True, True, True]
 
@@ -156,6 +160,7 @@ async def test_dependency_install_omits_unset_virtual_env(monkeypatch: pytest.Mo
 
     await DependencyResolver(allowed_imports=[])._install_package("bf892-not-a-package")
 
-    assert len(envs) == 3, "premise: pip, uv pip and uv add must each be reached"
+    launch_count = len(envs)
+    assert launch_count == 3, "premise: pip, uv pip and uv add must each be reached"
     assert all(env is not None for env in envs), "premise: every method must be handed an explicit environment"
     assert ["VIRTUAL_ENV" not in env for env in envs] == [True, True, True]
