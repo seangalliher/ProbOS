@@ -164,10 +164,12 @@ def test_intent_descriptor_exposes_search_content():
 
 
 def test_parse_rg_line():
-    assert _parse_rg_line("src/main.py:12:def foo():") == {
+    # BF-895 (#1548): rg now runs with --null, so a line is ``path<NUL>lineno:text``;
+    # the old ``path:lineno:text`` shape was ambiguous for paths holding ``:<digits>:``.
+    assert _parse_rg_line("src/main.py\x0012:def foo():") == {
         "path": "src/main.py", "line": 12, "text": "def foo():"
     }
     # text may contain colons
-    assert _parse_rg_line("a.py:3:x = {1: 2}")["text"] == "x = {1: 2}"
+    assert _parse_rg_line("a.py\x003:x = {1: 2}")["text"] == "x = {1: 2}"
     assert _parse_rg_line("garbage") is None
-    assert _parse_rg_line("a.py:notnum:text") is None
+    assert _parse_rg_line("a.py\x00notnum:text") is None

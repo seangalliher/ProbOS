@@ -165,9 +165,10 @@ class CodeSearchAgent(BaseAgent):
     async def _search_rg(self, rg: str, plan: dict, root: Path) -> dict | None:
         """Run ``rg`` via subprocess (no shell -> no injection). Returns a result
         dict, or ``None`` to signal the caller to fall back to Python."""
-        # BF-895 (#1548): --with-filename keeps the path on every line; rg omits it
-        # when the root is a single file.
-        args = [rg, "--line-number", "--with-filename", "--no-heading",
+        # BF-895 (#1548): --with-filename keeps the path on every line (rg omits it
+        # when the root is a single file); --null ends the path with NUL, which no
+        # path can hold, so a path that contains ``:<digits>:`` is never mis-split.
+        args = [rg, "--line-number", "--with-filename", "--null", "--no-heading",
                 "--color", "never", "--max-count", str(plan["max_results"])]
         if plan["case_insensitive"]:
             args.append("--ignore-case")
@@ -201,7 +202,7 @@ class CodeSearchAgent(BaseAgent):
                     break
         # BF-895 (#1548): exit 0 means rg found a match. If nothing parsed, the parser
         # and rg disagree: report nothing rather than a false zero, so act() falls back.
-        if not matches and (proc.returncode == 0 or stdout.strip()):
+        if not matches and (proc.returncode == 0 or stdout):
             logger.warning(
                 "BF-895: rg exited %s with %d output bytes but no parsable match under %s; "
                 "falling back to the Python engine",
@@ -291,15 +292,19 @@ def _resolve_rg_binary() -> str | None:
     return None
 
 
-# BF-895 (#1548): ``path:lineno:text``. The path may hold colons (a Windows drive,
-# ``\\?\C:\``), so the lazy path ends at the FIRST ``:<digits>:``; text holding ``12:``
-# stays text. Limit: a path segment holding ``:<digits>:`` (POSIX only) is mis-split.
-_RG_LINE = re.compile(r"(.+?):([0-9]+):(.*)", re.DOTALL)
-
-
 def _parse_rg_line(line: str) -> dict | None:
-    """Parse an ``rg --no-heading --line-number --with-filename`` line."""
-    m = _RG_LINE.fullmatch(line)
-    if m is None:
+    """BF-895 (#1548): parse an ``rg --null --no-heading --line-number --with-filename``
+    line, ``path<NUL>lineno:text``. No path can hold NUL, so the first NUL ends the path
+    on every OS (drive letters, ``\\?\\``, NTFS streams, POSIX names with colons); the
+    first ``:`` after it ends the line number, so text holding ``12:`` stays text."""
+    path, sep, rest = line.partition("\x00")
+    if not sep or not path:
         return None
-    return {"path": m.group(1), "line": int(m.group(2)), "text": m.group(3)[:_LINE_PREVIEW_CHARS]}
+    lineno, sep, text = rest.partition(":")
+    if not sep or not (lineno.isascii() and lineno.isdigit()):
+        return None
+    try:
+        number = int(lineno)
+    except ValueError:  # over Python's int() digit limit: not a line number
+        return None
+    return {"path": path, "line": number, "text": text[:_LINE_PREVIEW_CHARS]}
