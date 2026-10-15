@@ -39,7 +39,7 @@ Gate history shows the broad suite catches real cross-cutting defects: untouched
 
 ## 2. Quality constraints (non-negotiable)
 
-These come from the AD-1270f acceptance criteria and the Testing Standards in `.github/copilot-instructions.md`.
+These come from the AD-1270f acceptance criteria and the Testing Standards in `docs/development/engineering-principles.md`.
 
 - **Every collected node runs exactly once** in the canonical gate. The target may not be met with a skip, a deselection, a timeout change, or a semantic change. The frozen full gate remains the only release authority.
 - **No test is deleted, merged, or scaled down to save time.** For example, the 1000-row capacity proof stays at 1000 rows. A test may still be retired for *value* reasons — a literal duplicate, or a test that can't fail — but only through the V7 protocol (§9.4).

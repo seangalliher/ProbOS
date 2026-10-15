@@ -27,6 +27,8 @@ tests rather than behavioural ones: the defect #1116 reports is not that the
 code is wrong, it is that the code and the contract describe different systems.
 A behavioural test cannot catch that — it was the absence of this kind of
 assertion that let the drift persist.
+
+Principle 1 moved to architecture-reference.md in the 2026-10 split; the old path is still checked.
 """
 
 from __future__ import annotations
@@ -37,7 +39,8 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_INSTRUCTIONS = _REPO_ROOT / ".github" / "copilot-instructions.md"
+_INSTRUCTIONS = _REPO_ROOT / "docs" / "development" / "architecture-reference.md"
+_CONSTITUTION = _REPO_ROOT / ".github" / "copilot-instructions.md"
 
 
 @pytest.fixture(scope="module")
@@ -45,16 +48,23 @@ def instructions() -> str:
     return _INSTRUCTIONS.read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def constitution() -> str:
+    return _CONSTITUTION.read_text(encoding="utf-8")
+
+
 # ── the contract states the hybrid ────────────────────────────────
 
 
 def test_principle_one_no_longer_claims_there_is_no_central_scheduler(
     instructions: str,
+    constitution: str,
 ) -> None:
     """The bare claim was false against nine live boots. Its replacement has to
     say something a reviewer can apply, not merely something true.
     """
     assert "No central scheduler." not in instructions
+    assert "No central scheduler." not in constitution
 
 
 def test_principle_one_names_both_halves(instructions: str) -> None:

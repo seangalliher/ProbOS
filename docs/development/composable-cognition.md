@@ -317,7 +317,7 @@ calls/hour); a regression backs out the flag.
 ## 10. Decisions (2026-06-18)
 
 1. **Design-Principle elevation — DONE.** "Composable cognition (agents are
-   organisms)" is now **Design Principle #12** in `.github/copilot-instructions.md`,
+   organisms)" is now **Design Principle #12** in `docs/development/architecture-reference.md`,
    with the cognitive-organ layer noted in the Agent Classification Framework. We
    elevated *now* rather than after the pilot — the Captain judged it the right
    foundation (and an early miss not to have started here), under the hard constraint

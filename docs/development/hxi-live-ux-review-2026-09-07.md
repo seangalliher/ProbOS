@@ -35,7 +35,7 @@ Design references:
 - [HXI Glass Bridge](../design/hxi-glass-bridge.md): preserve the mesh; make the
   current task central; keep controls accessible; surface decisions in context;
   make work visible rather than merely displaying a loading indicator.
-- [Repository HXI principles](../../.github/copilot-instructions.md): human-first
+- [Repository HXI principles](architecture-reference.md): human-first
   interaction, state-bearing motion, progressive disclosure, alert-driven layout,
   and agentic-first work with embedded workstations.
 

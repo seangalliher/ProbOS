@@ -733,7 +733,7 @@ issues), but the agent may now sequence the remaining AD-1270 slices by this
 plan's dependency graph and make in-envelope reversible decisions without
 separate Captain admission. This delegation does not waive acceptance evidence,
 compatibility, adversarial review, canonical-gate receipts, repository-boundary
-rules, or the hard escalation boundaries in `.github/copilot-instructions.md`.
+rules, or the hard escalation boundaries in `.github/agents/orchestrator.agent.md`.
 
 ### Wave 0 — Authority
 
