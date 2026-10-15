@@ -52,20 +52,9 @@ async def create_agent_fleet(
         ("shell", "shell_command", 3),
         ("http", "http_fetch", 3),
     ]
-    # BF-890 (#1529): the operator's declared names reach every shell agent,
-    # including one a pool respawns, through the pool's spawn kwargs (BF-808).
-    execution_cfg = getattr(config, "execution", None)
-    shell_env_names: tuple[str, ...] = (
-        tuple(execution_cfg.command_env_passthrough) if execution_cfg is not None else ()
-    )
     for pool_name, agent_type, size in _builtin_pools:
         ids = generate_pool_ids(agent_type, pool_name, size)
-        shell_kwargs: dict[str, Any] = (
-            {"command_env_passthrough": shell_env_names}
-            if agent_type == "shell_command"
-            else {}
-        )
-        await create_pool_fn(pool_name, agent_type, target_size=size, agent_ids=ids, **shell_kwargs)
+        await create_pool_fn(pool_name, agent_type, target_size=size, agent_ids=ids)
 
     # Introspect pool (needs runtime kwarg)
     ids = generate_pool_ids("introspect", "introspect", 2)

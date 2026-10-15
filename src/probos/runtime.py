@@ -2528,6 +2528,14 @@ class ProbOSRuntime:
             logger.warning("Pool '%s' already exists — skipping duplicate creation", name)
             return self.pools[name]
 
+        if agent_type == ShellCommandAgent.agent_type:
+            # BF-890 (#1529): every shell pool, whoever creates it, hands the operator's declared
+            # names to each member it makes; the pool keeps its spawn kwargs, so a respawned or
+            # added member gets them too. A caller's own value for the kwarg wins.
+            spawn_kwargs.setdefault(
+                "command_env_passthrough", tuple(self.config.execution.command_env_passthrough),
+            )
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None

@@ -20,6 +20,7 @@ import ast
 import importlib.util
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -535,6 +536,27 @@ async def test_a_changed_shared_set_reaches_both_shell_paths(
     assert _CONTROL_NAME not in command_env_allowlist()
     planted = sorted(name for name, value in plants.items() if os.environ.get(name) == value)
     assert planted == sorted(plants)
+    # Premise (an inheriting child): a child that INHERITS this process's environment sees
+    # BOTH planted values. Without it, the control's absence below could mean only that the
+    # probe cannot see what it says is hidden. No env argument: inheriting is the point.
+    # Only the derived NAMES are asserted on, never the child's output.
+    if variant == "windows":
+        inheriting_runs: dict[str, tuple[str | list[str], bool]] = {
+            "cmd.exe": (tool_command, True),
+            "PowerShell": (["powershell", "-NoProfile", "-Command", agent_command], False),
+        }
+    else:
+        inheriting_runs = {"sh": (tool_command, True)}
+    inheriting_seen: dict[str, list[str]] = {}
+    for label, (inheriting_command, uses_shell) in inheriting_runs.items():
+        inheriting_child = subprocess.run(
+            inheriting_command, shell=uses_shell, stdin=subprocess.DEVNULL,
+            capture_output=True, timeout=60,
+        )
+        inheriting_seen[label] = _names_seen_in(
+            inheriting_child.stdout.decode("utf-8", errors="replace"), plants,
+        )
+    assert inheriting_seen == {label: sorted(plants) for label in inheriting_runs}
 
     tool_result = await RunCommandTool(_FakeRuntime()).invoke({"command": tool_command, "timeout": 30})
     assert tool_result.success is True, f"run_command did not run: {tool_result.error}"

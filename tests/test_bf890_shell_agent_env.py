@@ -3,13 +3,16 @@
 Before the fix ``ShellCommandAgent`` and the red team's re-run of its command inherited the runtime's whole process
 environment, so ``echo``, ``set`` or ``env`` in a command carried a provider key into an agent's context. Both now
 start from ``probos.execution.command_env`` (``build_command_env``) plus the names an operator declares in
-``execution.command_env_passthrough``; ``create_agent_fleet`` injects those names into the shell pool, a real
-``ResourcePool`` hands them to each member it makes (initial, replacement, added), and
-``ProbOSRuntime._spawn_red_team`` injects them into the red team.
+``execution.command_env_passthrough``. ``ProbOSRuntime.create_pool`` injects those names into every shell pool (a
+caller's own value wins, and no other pool type gets them), a real ``ResourcePool`` hands them to each member it makes
+(initial, replacement, added), and ``ProbOSRuntime._spawn_red_team`` injects them into the red team.
 
-Every test plants a credential-shaped variable and a plain one with ``monkeypatch.setenv`` and drives a real child
-process. Each asserts its own premise first -- a child that INHERITS this process's environment shows the plant, so
-the probe can see what it looks for -- and carries a control that shows what changes the outcome.
+The tests plant a credential-shaped variable and a plain one with ``monkeypatch.setenv``. Every test that probes a
+planted variable in a child asserts its inheriting-child premise first -- a child that INHERITS this process's
+environment shows the plant, so the probe can see what it looks for -- and carries a control that shows what changes
+the outcome. The two tests that plant nothing assert their own premises instead (the sandbox set cannot resolve
+``git``; the agent runs ``sys.executable``, not a bare ``python``). The pure wiring checks (the recorder pool, which
+only records the kwarg names its members were built with) start no child.
 
 SECRETS RULE: a child's output, an ``IntentResult`` and ``os.environ`` never appear in an ``assert``, an assert
 message, a ``print`` or a log. Each test derives first (the NAMES of the plants whose value is in the output, an exit
@@ -36,7 +39,7 @@ from probos.agents.shell_command import ShellCommandAgent
 from probos.config import ExecutionConfig, PoolConfig, SystemConfig
 from probos.execution.command_env import SANDBOX_ENV_PASSTHROUGH
 from probos.runtime import ProbOSRuntime
-from probos.startup.agent_fleet import create_agent_fleet
+from probos.substrate.agent import BaseAgent
 from probos.substrate.pool import ResourcePool
 from probos.substrate.registry import AgentRegistry
 from probos.substrate.spawner import AgentSpawner
@@ -333,44 +336,8 @@ async def test_red_team_declared_name_reaches_the_rerun(shell: _Shell) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The two wiring sites
+# The red team's wiring site: ProbOSRuntime._spawn_red_team
 # ---------------------------------------------------------------------------
-
-
-class _StopAfterShell(Exception):
-    """Raised by the fake ``create_pool`` at the shell pool, which ends ``create_agent_fleet`` there."""
-
-
-class _FakeCreatePool:
-    """Records ``(pool, agent_type, kwargs)`` for each pool ``create_agent_fleet`` asks for; stops at "shell"."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    async def __call__(self, pool: str, agent_type: str, **kwargs: Any) -> None:
-        self.calls.append((pool, agent_type, kwargs))
-        if pool == "shell":
-            raise _StopAfterShell
-
-
-async def test_agent_fleet_injects_declared_names_into_the_shell_pool_only() -> None:
-    """Kills M29 (``{}`` for the shell pool's spawn kwargs): the declared names reach the shell pool, no other."""
-    config = SystemConfig(execution=ExecutionConfig(command_env_passthrough=[PLAIN_NAME]))
-    create_pool = _FakeCreatePool()
-
-    with pytest.raises(_StopAfterShell):
-        await create_agent_fleet(
-            config=config, pools={}, llm_client=None, decomposer=None, strategy_advisor=None, runtime=None,
-            create_pool_fn=create_pool, spawn_red_team_fn=None, collect_intent_descriptors_fn=None,
-        )
-
-    *earlier, (stop_pool, stop_agent_type, shell_kwargs) = create_pool.calls
-    # Premise: the walk ended at the shell pool after other pools, so "no earlier pool got the names" is not vacuous.
-    assert (stop_pool, stop_agent_type, len(earlier) > 0) == ("shell", "shell_command", True)
-
-    assert shell_kwargs.get("command_env_passthrough") == (PLAIN_NAME,)
-    earlier_pools_with_names = [pool for pool, _, kwargs in earlier if "command_env_passthrough" in kwargs]
-    assert earlier_pools_with_names == []
 
 
 class _FakeAgentRegistry:
@@ -461,25 +428,68 @@ async def test_spawn_red_team_injects_declared_names(shell: _Shell) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The real pool seam
+# The shell pool's wiring site: ProbOSRuntime.create_pool, and the real pool behind it
 # ---------------------------------------------------------------------------
 
 
-def _shell_pool(name: str, **spawn_kwargs: Any) -> tuple[ResourcePool, AgentRegistry]:
-    """A real pool of two ``ShellCommandAgent`` members, not yet started, with its own registry and spawner."""
-    registry = AgentRegistry()
-    spawner = AgentSpawner(registry)
-    spawner.register_template("shell_command", ShellCommandAgent)
-    pool = ResourcePool(
-        name=name,
-        agent_type="shell_command",
-        spawner=spawner,
-        registry=registry,
-        config=PoolConfig(default_pool_size=2, min_pool_size=1, max_pool_size=3),
-        target_size=2,
-        **spawn_kwargs,
-    )
-    return pool, registry
+class _RecorderAgent(BaseAgent):
+    """A pool member that records the NAMES of the spawn kwargs its pool handed its constructor.
+
+    It does nothing else: a pool of this type is how the tests see what ``create_pool`` hands a non-shell pool.
+    """
+
+    agent_type = "recorder"
+
+    def __init__(self, pool: str = "default", **kwargs: Any) -> None:
+        self.received_kwarg_names: tuple[str, ...] = tuple(sorted(kwargs))
+        super().__init__(pool, **kwargs)
+
+    async def perceive(self, intent: dict[str, Any]) -> Any:
+        return None
+
+    async def decide(self, observation: Any) -> Any:
+        return None
+
+    async def act(self, plan: Any) -> Any:
+        return None
+
+    async def report(self, result: Any) -> dict[str, Any]:
+        return {}
+
+
+class _FakePoolRuntime:
+    """The attributes ``ProbOSRuntime.create_pool`` reads, around a real ``SystemConfig``, registry and spawner.
+
+    ``declared`` is ``execution.command_env_passthrough``. There is deliberately no ``onboarding`` attribute: the
+    factory reads it with ``getattr``, and without it a pool is wired to nothing.
+    """
+
+    def __init__(self, declared: tuple[str, ...] = ()) -> None:
+        self.config = SystemConfig(
+            execution=ExecutionConfig(command_env_passthrough=list(declared)),
+            pools=PoolConfig(default_pool_size=2, min_pool_size=1, max_pool_size=3),
+        )
+        self.pools: dict[str, ResourcePool] = {}
+        self.registry = AgentRegistry()
+        self.spawner = AgentSpawner(self.registry)
+        self.spawner.register_template("shell_command", ShellCommandAgent)
+        self.spawner.register_template("recorder", _RecorderAgent)
+        self.acm = None
+        self.ontology = None
+        self.event_log = _FakeEventLog()
+
+
+async def _stop_pools(*runtimes: _FakePoolRuntime) -> None:
+    """Stop every pool the fake runtimes hold; a stop that raises does not skip the pools after it."""
+    errors: list[Exception] = []
+    for runtime in runtimes:
+        for pool in list(runtime.pools.values()):
+            try:
+                await pool.stop()
+            except Exception as error:  # reported below, once every pool has been asked to stop
+                errors.append(error)
+    if errors:
+        raise errors[0]
 
 
 async def _probe_member(member: Any, command: str) -> tuple[int | None, bool, list[str]]:
@@ -498,30 +508,34 @@ async def _probe_member(member: Any, command: str) -> tuple[int | None, bool, li
 
 @pytest.mark.usefixtures("plants")
 async def test_real_pool_hands_declared_names_to_members_replacements_and_additions(shell: _Shell) -> None:
-    """A real ``ResourcePool`` hands its spawn kwarg ``command_env_passthrough`` to every member it makes.
+    """``ProbOSRuntime.create_pool`` and a real ``ResourcePool`` hand the declared names to every shell member.
 
-    The fleet test reaches only a fake ``create_pool``, so nothing else proves that a real member -- or the replacement
-    of a recycled one, or a member added later -- gets the declared names. This checks behaviour, not attributes: each
-    member's command goes through ``handle_intent`` and the plain value is looked for in what its child printed. A
-    second pool made without the kwarg is the control.
+    Each pool is made through the public factory with NO explicit kwarg: the names come from the runtime's config.
+    The checks are behavioural, not attribute reads: a member's command goes through ``handle_intent`` and the plain
+    value is looked for in what its child printed. The members checked are an initial one, the replacement of a
+    recycled one, and one added later; a pool made on a runtime whose config declares nothing is the control.
 
-    Kills the mutant in ``src/probos/substrate/pool.py`` that replaces the line
-    ``        self._spawn_kwargs = spawn_kwargs`` with ``        self._spawn_kwargs = {}``.
-    Reasoned, not run (no campaign in the repo): the pool then builds every member -- initial (``_start_inner``),
-    replacement (``_recycle_registered_agent_inner``) and added (``_add_agent_inner``) -- without the names, which is
-    exactly what the control pool's member shows below, so each of the three positive probes would see ``[]`` instead
-    of ``[PLAIN_NAME]``.
+    Kills two mutants, both reasoned, not run (no campaign in the repo):
+
+    * M29, ``src/probos/runtime.py``: the line ``        if agent_type == ShellCommandAgent.agent_type:`` replaced
+      by ``        if False:``. The factory then never injects the names, so all three positive probes see ``[]``
+      instead of ``[PLAIN_NAME]``.
+    * M32, ``src/probos/substrate/pool.py``: the line ``        self._spawn_kwargs = spawn_kwargs`` replaced by
+      ``        self._spawn_kwargs = {}``. The factory injects the names but the pool drops them, so every member it
+      builds -- initial (``_start_inner``), replacement (``_recycle_registered_agent_inner``) and added
+      (``_add_agent_inner``) -- prints ``[]``, which is exactly what the control pool's member shows below.
     """
     command = _marked(shell.echo(PLAIN_NAME))
-    declared_pool, declared_registry = _shell_pool("shell", command_env_passthrough=(PLAIN_NAME,))
-    control_pool, control_registry = _shell_pool("shell-control")
+    declared_runtime = _FakePoolRuntime(declared=(PLAIN_NAME,))
+    control_runtime = _FakePoolRuntime()
     try:
-        await declared_pool.start()
-        await control_pool.start()
+        # No explicit kwarg anywhere: the factory takes the names from the runtime's config.
+        declared_pool = await ProbOSRuntime.create_pool(declared_runtime, "shell", "shell_command", target_size=2)
+        await ProbOSRuntime.create_pool(control_runtime, "shell-control", "shell_command", target_size=2)
 
         # Premise: both pools came up with two members each.
-        initial = declared_registry.get_by_pool("shell")
-        control_members = control_registry.get_by_pool("shell-control")
+        initial = declared_runtime.registry.get_by_pool("shell")
+        control_members = control_runtime.registry.get_by_pool("shell-control")
         sizes = (len(initial), len(control_members))
         assert sizes == (2, 2)
 
@@ -533,7 +547,7 @@ async def test_real_pool_hands_declared_names_to_members_replacements_and_additi
         # The replacement of a recycled member does too.
         victim_id = victim.id
         await declared_pool._recycle_registered_agent_inner(victim_id)
-        replacement = declared_registry.get(victim_id)
+        replacement = declared_runtime.registry.get(victim_id)
         # Premise: the recycle put a different object under the same id.
         swapped = replacement is not None and replacement is not victim and replacement.id == victim_id
         assert swapped
@@ -542,18 +556,61 @@ async def test_real_pool_hands_declared_names_to_members_replacements_and_additi
 
         # So does a member added later.
         new_id = await declared_pool.add_agent()
-        added = declared_registry.get(new_id) if new_id else None
+        added = declared_runtime.registry.get(new_id) if new_id else None
         # Premise: add_agent returned an id, and the registry holds the member it names.
         registered = added is not None and added.id == new_id
         assert registered
         added_probe = await _probe_member(added, command)
         assert added_probe == (0, True, [PLAIN_NAME])
 
-        # Control: a pool made without the kwarg builds members that print nothing.
+        # Control: a pool made on a runtime whose config declares nothing builds members that print nothing.
         control_probe = await _probe_member(control_members[0], command)
         assert control_probe == (0, True, [])
     finally:
-        try:
-            await declared_pool.stop()
-        finally:
-            await control_pool.stop()
+        await _stop_pools(declared_runtime, control_runtime)
+
+
+@pytest.mark.usefixtures("plants")
+async def test_create_pool_hands_names_to_shell_pools_only_and_a_callers_value_wins(shell: _Shell) -> None:
+    """``ProbOSRuntime.create_pool`` injects the declared names into shell pools only, and a caller's own value wins.
+
+    Kills two mutants in ``src/probos/runtime.py``, both reasoned, not run (no campaign in the repo):
+
+    * M33, the line ``        if agent_type == ShellCommandAgent.agent_type:`` replaced by ``        if True:``. The
+      ``recorder`` pool's members would then be built with ``command_env_passthrough``, which their recorded kwarg
+      names would show.
+    * M34, ``spawn_kwargs.setdefault(`` replaced by ``spawn_kwargs.__setitem__(``. The declared names would then
+      overwrite the caller's explicit ``()``, so the caller's pool would print the plain value.
+
+    The recorder pool starts no child. It is created with a marker kwarg (``recorded_marker``) that its members must
+    record, which proves the recorder sees what the pool hands over, so "no ``command_env_passthrough``" means
+    something.
+    """
+    command = _marked(shell.echo(PLAIN_NAME))
+    runtime = _FakePoolRuntime(declared=(PLAIN_NAME,))
+    try:
+        await ProbOSRuntime.create_pool(runtime, "shell", "shell_command", target_size=1)
+        await ProbOSRuntime.create_pool(
+            runtime, "shell-caller", "shell_command", target_size=1, command_env_passthrough=(),
+        )
+        await ProbOSRuntime.create_pool(runtime, "recorder-pool", "recorder", target_size=2, recorded_marker=True)
+
+        # Premise: a shell pool from this runtime, made without the kwarg, carries the declared names.
+        shell_member = runtime.registry.get_by_pool("shell")[0]
+        shell_probe = await _probe_member(shell_member, command)
+        assert shell_probe == (0, True, [PLAIN_NAME])
+
+        # A pool of another type is not handed them. Premise: it has members, and they recorded the kwargs the pool
+        # handed over (the marker), so an absent ``command_env_passthrough`` is not just an empty record.
+        recorded = [member.received_kwarg_names for member in runtime.registry.get_by_pool("recorder-pool")]
+        saw_the_marker = (len(recorded) > 0, all("recorded_marker" in names for names in recorded))
+        assert saw_the_marker == (True, True)
+        handed_the_names = [names for names in recorded if "command_env_passthrough" in names]
+        assert handed_the_names == []
+
+        # The caller's own value wins: a pool created with an explicit ``()`` builds members that print nothing.
+        caller_member = runtime.registry.get_by_pool("shell-caller")[0]
+        caller_probe = await _probe_member(caller_member, command)
+        assert caller_probe == (0, True, [])
+    finally:
+        await _stop_pools(runtime)
