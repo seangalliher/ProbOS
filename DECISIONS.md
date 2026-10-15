@@ -10,6 +10,15 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### Review-round brake and progress comments; convergence rule codified (2026-10-15)
+
+- *Scope.* Standing-order text and its layout test only. Nothing under `src/` or `scripts/`, no automation. One new section in `.github/agents/orchestrator.agent.md` (`Review Rounds and Progress (Standing Order)`), pointers in the constitution, `CLAUDE.md` and `claude-architect.md`, one layout test and four procedure needles.
+- *Convergence is a codification, not a new rule.* It was used in kickoff text and review briefs but was not written in the constitution or the profile. Written as "P2 or lower" for injected-only findings: a P1 is always fixed, so the clause covers the rest. The orchestrator may strike "or lower" if the original wording meant P2 only.
+- *Rescope is a bounded exception to convergence.* The brake fires only when a must-fix finding is still open, so a rescope that could move only recordable findings would never apply. The bound reuses existing limits: never a P1, a regression or a finding that would break the next run (the constitution, Act on the findings), and no unresolved Critical or High defect (the profile, Definition of done). It narrows the Captain's option, it does not widen it.
+- *Clock and cadence.* The clock starts at the first Architect bridge call or Builder delegation; an overlapped read-only consult does not start it. After the first post, the last comment's timestamp is the clock. A session that has lost the start falls back to the worktree's evidence (its first `logs/architect/` file, its branch's `git reflog`) or posts at once. Posted on the owning issue, its parent, or its PR; no timers: the check happens before each delegation or gate and on every wake.
+- *Caller and callee.* `claude-architect.md` names the same three options, and a test pins the agreement (this closes follow-up F-79 for this pair).
+- Contract `prompts/review-rounds-and-progress-comments.md` (claude-architect, read-only consult, effort high; its five edit blocks installed by script after every anchor was verified once against the committed text).
+
 ### Standing orders split into constitution, orchestrator profile and reference docs; one owner per rule; layout pinned by `tests/test_standing_orders_layout.py` (2026-10-15)
 
 - *Scope.* Standing-order and docs work, no AD or BF number. `.github/copilot-instructions.md` keeps the shared standing orders (a constitution); the orchestration procedure moves to the new `.github/agents/orchestrator.agent.md` (ProbOS Orchestrator); the full Engineering Principles, the Architect standards and the Architecture Reference move to `docs/development/engineering-principles.md`, `docs/development/architect-standards.md` and `docs/development/architecture-reference.md`. Nothing under `src/`, `desktop/`, `ui/e2e` or `scripts/`, and no existing prompt other than `prompts/BUILDER-EXECUTION-PLAN.md`, changes.

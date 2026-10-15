@@ -35,6 +35,23 @@ You orchestrate the ProbOS issue queue. This profile carries the orchestration p
 
 - **Prompts from the Claude Architect (split workflow, see `CLAUDE.md`):** a prompt in `prompts/` whose header carries `**Drafted by:** \`claude-architect\`` (or `**Revised by:**`) and a dated "Verified Against Codebase" section came from the Claude Code Architect and is build-ready. Build it rather than redrafting it, keep its provenance line, and send Builder hard stops to `claude-architect` through `scripts/claude_architect.py` (see **Delegation and Waiting**).
 
+## Review Rounds and Progress (Standing Order)
+
+**Convergence (codified 2026-10-15).** Fix every P1, every finding with ordinary reach and every regression a repair introduced. Record a P2 or lower that only injected faults reach, and that is not a regression, as a follow-up with its reach, under the filing policy in **Backlog Burn-Down Mode**. Every reviewer brief asks for each finding's severity, reach (ordinary or injected-only) and regression flag.
+
+**A round** is one completed Diff Reviewer pass over a frozen candidate: the first review and each repair re-review, delta or whole. Reviewers run in parallel on one candidate count once; a relaunch after a reviewer failed to start or was refused does not count. Each item or slice in a batch keeps its own count.
+
+**Round-three brake (Captain, 2026-10-15).** When round three leaves a finding that convergence says to fix, do not start round four on your own. Make a fresh `--read-only` bridge call with every finding of rounds one to three (severity, reach, regression flag, and fixed, open or recorded), the candidate's `git diff --stat` against its base and that of any unreviewed repair in hand, and the minutes spent building, in each round and in each repair. Ask for one decision, answered as the option, its scope (findings and files) and the reason: **continue** (round four, with that scope), **rescope** (land what has converged and move the remaining findings to the follow-up; never a P1, a regression or a finding that would break the next run) or **split** (land the converged part; the rest becomes a new slice of the same issue, left open, or is filed under the filing policy). Record the decision in the owning issue and follow it. A continue, or a split's review of its reduced candidate, allows one more round; any later round needs a new decision. Measured: BF-892/893 took five rounds and 189 review minutes against 44 build minutes; one round ran 76 minutes.
+
+**Progress comments (Captain, 2026-10-15).** An item's clock starts at its first Architect bridge call or Builder delegation; an overlapped read-only consult does not start it. Check the clock before each delegation or gate and on every wake; set no timer and schedule no post. Two hours after the start, and two hours after each later progress comment, post one on the owning issue (a slice without one: its parent issue; no issue: its PR once open; neither: say so in your report). Skip it when the phase, the work left and the blocker are unchanged since your last one. A session without the start time takes the earliest the worktree proves (its first `logs/architect/` file, its branch's `git reflog`), or posts at once. At most five lines, no findings detail:
+
+```text
+Progress <UTC time>, <hours> h since start
+Phase: draft | build | review round N | gate | CI
+Left: <remaining steps>
+Blocker: <none, or one line>
+```
+
 ## Backlog Burn-Down Mode (Standing Order)
 
 **Activates whenever the Captain asks to reduce or close the issue backlog.** Its primary metric is **net reduction in open GitHub issues** — not findings, commits, test count, architectural coverage, or roadmap breadth. It exists because a review discipline that files everything it notices can discover faster than it closes, and a backlog that grows while work is being done is indistinguishable from no work at all.

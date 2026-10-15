@@ -53,7 +53,7 @@ Invoke it with a different model than the one that wrote the code (`.github/agen
 
 **A repair round re-reviews the delta, not the whole candidate (Captain, 2026-10-14).** Brief it with the previous round's findings, the files and line ranges the repair changed, and anything the previous round said it did not check; it confirms each finding is resolved and traces the delta through every consumer the delta touches, as above. Review the whole candidate again when the delta changes a **shared contract** — a public signature or return shape used outside its module, a persisted schema or on-disk format, a config field, an event type or payload, an API or wire shape, a test another component relies on (including `?raw` source-scan tests), or a gate, CI or tooling script — or adds behaviour the findings did not ask for. Decide this from the diff plus a search for the consumers of every changed name, never from the diff alone.
 
-**Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. For findings you are not fixing here, follow the filing policy in **Backlog Burn-Down Mode** (`.github/agents/orchestrator.agent.md`) rather than opening an issue per finding.
+**Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. Which findings you fix here, which you record, and when to stop after round three: **Review Rounds and Progress** in `.github/agents/orchestrator.agent.md`; file what you record under its **Backlog Burn-Down Mode** filing policy rather than opening an issue per finding.
 
 Why this is a standing order rather than advice: on 2026-08-11 an external review of BF-753/AD-1239 found five defects in one wave, and the immediate re-review of the fix (BF-754) found four more — including a docstring claiming a validation property the code did not provide, in a commit written minutes after recording that exact lesson. The author had verified every change against the thing they had just changed, which is the one check that cannot see a seam. Every finding sat between the changed component and its consumer.
 
@@ -115,7 +115,7 @@ Architect-drafted prompts and roadmap edits must be audited for this leak class 
 
 | Material | File |
 |---|---|
-| Orchestration: delegation, waiting, Backlog Burn-Down, Delegated AD Execution (including routing decisions through the Architect), gate, batch, push, closure, reporting | `.github/agents/orchestrator.agent.md` |
+| Orchestration: delegation, waiting, review rounds and progress comments, Backlog Burn-Down, Delegated AD Execution (including routing decisions through the Architect), gate, batch, push, closure, reporting | `.github/agents/orchestrator.agent.md` |
 | Engineering Principles, full text | `docs/development/engineering-principles.md` |
 | Architect review checklist, Common Review Flags, prompt drafting, strategy | `docs/development/architect-standards.md` |
 | ProbOS Architecture Reference | `docs/development/architecture-reference.md` |

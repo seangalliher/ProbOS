@@ -71,6 +71,7 @@ OWNERS: dict[str, Path] = {
     "Backlog Burn-Down Mode (Standing Order)": ORCHESTRATOR,
     "Delegated AD Execution Mode (Standing Order)": ORCHESTRATOR,
     "Gate, Batch and Push (Standing Order)": ORCHESTRATOR,
+    "Review Rounds and Progress (Standing Order)": ORCHESTRATOR,
     "SOLID Principles": ENGINEERING,
     "Testing Standards": ENGINEERING,
     "Architect: Review Checklist": STANDARDS,
@@ -104,6 +105,10 @@ PROCEDURE = (
     "**Route decisions through the Architect, not the Captain (Captain, 2026-10-14).**",
     "**decided by the Architect**",
     "Before parking, ask whether the blocking requirement itself can be narrowed or reframed",
+    "**Convergence (codified 2026-10-15).**",
+    "**Round-three brake (Captain, 2026-10-15).**",
+    "**Progress comments (Captain, 2026-10-15).**",
+    "Phase: draft | build | review round N | gate | CI",
 )
 
 # Shared rules the constitution keeps.
@@ -114,6 +119,12 @@ SHARED_RULES = (
     "`ad_ceiling.py` does not cover BF numbers",
     "How the product makes money",
 )
+
+# The review-rounds section: its owner is O; C, CLAUDE.md and the Architect's profile point to it by name,
+# and both sides of the round-three brake name the same three options.
+ARCHITECT_PROFILE = _REPO_ROOT / ".claude" / "agents" / "claude-architect.md"
+REVIEW_ROUNDS = "Review Rounds and Progress"
+BRAKE_OPTIONS = ("**continue**", "**rescope**", "**split**")
 
 _POINTER = re.compile(r"`((?:\.github|\.claude|docs|scripts)/[^`\s]*\.(?:md|py))`")
 # Local role profiles that exist only in a developer's checkout (.claude/ is gitignored).
@@ -419,6 +430,25 @@ def test_constitution_keeps_the_shared_rules() -> None:
     constitution = _text(CONSTITUTION)
     missing = [needle for needle in SHARED_RULES if needle not in constitution]
     assert not missing, f"missing from the constitution: {missing}"
+
+
+def test_review_rounds_pointers_and_brake_options_agree() -> None:
+    """C, CLAUDE.md and claude-architect.md point to the review-rounds section by name
+    instead of restating it, and both sides of the round-three brake name the same options."""
+    pointers = (CONSTITUTION, CLAUDE_MD, ARCHITECT_PROFILE)
+    absent = [_rel(path) for path in (ORCHESTRATOR, *pointers) if not path.is_file()]
+    assert not absent, f"files are missing: {absent}"
+    assert f"{REVIEW_ROUNDS} (Standing Order)" in _headings(ORCHESTRATOR), "the section heading moved"
+
+    unpointed = [_rel(path) for path in pointers if f"**{REVIEW_ROUNDS}**" not in _text(path)]
+    assert not unpointed, f"no pointer to **{REVIEW_ROUNDS}** in: {unpointed}"
+
+    orchestrator, architect = _text(ORCHESTRATOR), _text(ARCHITECT_PROFILE)
+    missing = {
+        _rel(ORCHESTRATOR): [option for option in BRAKE_OPTIONS if option not in orchestrator],
+        _rel(ARCHITECT_PROFILE): [option for option in BRAKE_OPTIONS if option not in architect],
+    }
+    assert not any(missing.values()), f"brake options the two sides do not share: {missing}"
 
 
 # ── pointers and the retired profiles ──────────────────────────────
