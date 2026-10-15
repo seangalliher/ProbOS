@@ -10,6 +10,16 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-895 -- The ripgrep parser reads the shape ripgrep prints, and a match it cannot parse is never reported as "no matches" (2026-10-15, #1548)
+
+- *Scope.* One file, `agents/code_search.py`: the line parser, one rg argument and the fallback in `_search_rg`. The Python engine, the timeout, the result shape and every other rg argument are unchanged.
+- *Parser: a lazy pattern, not `rg --json`.* `(.+?):([0-9]+):(.*)` with `fullmatch`; the path is everything up to the first `:<digits>:`. It reads a Windows drive (`C:\`), `\\?\C:\` long paths, UNC paths, a POSIX name with a colon (`/tmp/a:b.txt`) and match text that starts `12:`. Rejected: `--json` (a new output format with `begin`/`end`/`summary`/`context` events and base64 `path.bytes` and `lines.bytes`: a larger change to fix one line shape) and an anchored drive-letter pattern (it drops `\\?\C:\` and every POSIX name with a colon). Known limit: a POSIX path segment that itself holds `:<digits>:` is split at that segment; `--json` is the follow-up if one is ever observed.
+- *An argument added, against the issue's "no change to the rg arguments".* `--with-filename`. ripgrep prints no path when it is told to search one file, and `act()` accepts a file root, so a file root printed `N:text`, which has no path to parse on any platform. Executed on Windows with the unfixed code: a file root and a directory root both came back `success`, `count: 0`. The flag adds an argument and changes none.
+- *The fallback.* A parser can be wrong again (an rg release, a platform), and a silent zero is the worst answer a search can give, so `_search_rg` returns `None` when rg exited 0, or printed output, and nothing parsed; `act()` then runs the Python engine, which is the existing route for every other rg failure. Exit 1 with no output stays `success`, `count: 0`. A partial drop (some lines parsed, some not) is not detected: a follow-up on #1523 with its reach.
+- *Not in this change.* Differences between the two engines (the 2000-byte line skip, ignore rules, per-file `--max-count`), which are pre-existing (a follow-up on #1523).
+- Contract `prompts/bf-895-rg-windows-line-parse.md` (claude-architect; its three edit pairs applied to `main` `579b5530` with no conflict).
+- *Review and evidence.* Diff Reviewer (GPT-6.1 Sol) on a frozen snapshot, findings reproduced before repair; the rounds, the mutation campaign of record and the gate are recorded in the PR and in the #1548 closure comment.
+
 ### BF-894 -- The builder's write validator is one boundary on both write paths: name rules plus an identity check (2026-10-15, #1547)
 
 - *Scope.* `BuilderAgent` wrote model-authored paths on two routes: the approved writes (validated by `_validate_file_path`) and the test-fix repair loop (not validated at all). The validator compared forbidden names exactly, so aliases of a linked worktree's `.git` pointer file were accepted. One function, `builder_write_refusal(path, work_dir)` in the new `cognitive/builder_paths.py`, now runs on both routes; a refusal on either goes into `validation_errors`, which blocks the commit (the result shape the initial route already had). `git add` gains `--`.
