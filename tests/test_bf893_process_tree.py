@@ -765,6 +765,40 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
 
 
 @pytest.mark.timeout(90)
+async def test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop(
+    tmp_path: Path, beater: Path,
+) -> None:
+    """A worker picked up late reports the timeout at the shared deadline, not at the caller's backstop.
+
+    The slot ends the tree at the backstop anyway, so the heartbeat stops before the call returns whichever budget
+    the worker runs on; what the single deadline changes is WHEN the report arrives. A worker whose own budget
+    restarted at pickup (1.0 s late) would end its tree, and the call would report, at about 3.0 s instead of
+    2.0 s. The grace is 6.0 s (backstop at 8 s), so the backstop cannot be mistaken for the pickup delay.
+    """
+    agent = ShellCommandAgent(pool="shell")
+    agent.DEFAULT_TIMEOUT = 2.0
+    agent.WORKER_TEARDOWN_GRACE = 6.0
+    marker = tmp_path / "marker"
+    try:
+        async with _ContendedCall(heartbeats=(marker,)) as contended:
+            started = time.monotonic()
+            call = contended.submit(
+                agent._run_command(_spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
+            )
+            await asyncio.sleep(1.0)
+            assert not _started(marker).exists(), "premise: the command started while the executor was still held"
+            contended.release()
+            await _heartbeat_is_running(marker, call)
+            result = await asyncio.wait_for(call, timeout=15)
+            elapsed = time.monotonic() - started
+            assert result == {"success": False, "error": "Command timed out after 2.0s"}
+            assert elapsed < 2.7, "the caller waited for the backstop, not the shared deadline"
+            await _assert_silent_after_the_call(marker)
+    finally:
+        _stop_heartbeat(marker)
+
+
+@pytest.mark.timeout(90)
 async def test_red_team_rerun_queued_past_the_deadline_never_starts_the_command(
     tmp_path: Path, spawner: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
