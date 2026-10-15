@@ -1,7 +1,7 @@
 # BF-891 (#1542): ProcedureStore's write lock blocks the event loop
 
 **Drafted by:** claude-architect (read-only consult, session id from the bridge header; saved verbatim by the orchestrator)
-**Corrections (orchestrator, after review round 1, 2026-10-15; the rows and sentences below are corrected in place):** mutant M3 is killed by the contention check (`contended >= 1`) and the AST guard, not by a hang, because only `deactivate` takes the mutant lock; the aiosqlite worker thread inherits `daemon` from the thread that creates the connection (non-daemon in production, daemon inside the harness's private-loop thread); `runtime.py:3953` dispatches the backup snapshot to a thread, so "no thread dispatch" is narrowed to "no store writer is dispatched to a thread".
+**Corrections (orchestrator, after review round 1, 2026-10-15; the rows and sentences below are corrected in place):** mutant M3 is killed by the contention check (`contended >= 1`) and the AST guard, not by a hang, because only `deactivate` takes the mutant lock; the aiosqlite worker thread inherits `daemon` from the thread that creates the connection (non-daemon in production, daemon inside the harness's private-loop thread); `runtime.py:3953` dispatches the backup snapshot to a thread, so "no thread dispatch" is narrowed to "no store writer is dispatched to a thread" (the store is referenced by 17 modules, not 14, and `runtime.py:3953` is the only dispatch among them).
 **Status:** Ready to build. One slice. **Dependencies:** none. **Estimated tests:** 18 new, 1 pin updated.
 
 **Verdict:** ✅ Buildable. The orchestrator's facts hold, with two corrections:
@@ -56,7 +56,7 @@ The overlap is reachable in production. One store, built at `runtime.py:2917`, i
 
 ### Threads (fact 2)
 
-- **Callers:** no `run_in_executor`, `to_thread`, `threading.Thread` or `run_coroutine_threadsafe` appears in any of the 14 caller modules, so no store writer is dispatched to a thread. (`runtime.py:3953` runs the backup `snapshot` in a thread; it copies files through `sqlite3`'s backup API on its own connections and calls no store method.)
+- **Callers:** of the 17 modules that reference `ProcedureStore` or `procedure_store` (`git grep -l -E "ProcedureStore|procedure_store" -- src/probos`, excluding the store itself), the only thread-dispatch primitive (`run_in_executor`, `to_thread`, `threading.Thread`, `run_coroutine_threadsafe`, `ThreadPoolExecutor`) is `runtime.py:3953`, which runs the backup `snapshot` in a thread; it copies files through `sqlite3`'s backup API on its own connections and calls no store method. So no store writer is dispatched to a thread.
 - **API server:** uvicorn runs as a task on the runtime loop (`__main__.py:932`: `asyncio.create_task(server.serve())`).
 - **aiosqlite's worker thread** runs queued SQL only (`aiosqlite/core.py:48-66`, `150-160`). It never touches store attributes or the lock.
 - **Chroma calls** are synchronous on the loop thread, outside the lock.
@@ -453,7 +453,7 @@ Read storage/sqlite_factory.py   -> plain aiosqlite.connect (no isolation_level 
 Read aiosqlite/core.py 28-72, 84-93, 150-160   -> one worker thread (daemon flag inherited from the creating thread), FIFO, set_result only if not done
 Read cpython-3.12 asyncio/locks.py 92-139, mixins.py 12-21   -> lazy loop binding, FIFO, cancelled waiter cleanup
 Read d:/ProbOS/.venv/pyvenv.cfg   -> 3.12.13
-Grep "run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe" (14 caller modules)   -> none (runtime.py:3953 dispatches the backup snapshot to a thread; it calls no store method)
+Grep "run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe|ThreadPoolExecutor" (the 17 modules that reference the store)   -> only runtime.py:3953 (the backup snapshot; it calls no store method)
 Grep "store\.(save|deactivate|...)\(" src/probos   -> callers listed in Problem
 Read runtime.py 2913-2925; Grep __main__.py "server.serve" -> 932 create_task on runtime loop
 Grep "_write_lock" repo (excluding module)   -> tests/test_procedure_store.py:1292-1297 (only code pin)
@@ -472,10 +472,10 @@ RUN:   Read of all 17 block bodies (ranges above)
 FOUND: only self._db.execute / cursor.fetchone / self._db.commit inside; re-acquisitions at 996→999 and 1920→1959→1975 are sequential
 HOLDS: yes
 
-CLAIM: no other thread calls the store
-RUN:   Grep run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe over the 14 caller modules
-FOUND: no matches
-HOLDS: yes, for the listed callers; uvicorn shares the loop (__main__.py:932)
+CLAIM: no store writer is dispatched to another thread
+RUN:   Grep run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe|ThreadPoolExecutor over the 17 modules that reference the store (git grep -l -E "ProcedureStore|procedure_store" -- src/probos, minus the store itself)
+FOUND: only runtime.py:3953 (to_thread of the backup snapshot, which copies files through sqlite3's backup API and calls no store method)
+HOLDS: yes; uvicorn shares the loop (__main__.py:932)
 
 CLAIM: no other test or script pins _write_lock's type
 RUN:   Grep "_write_lock" across the repo, excluding the module

@@ -173,7 +173,9 @@ class ProcedureStore:
         Waiters wake in FIFO order. The lock is not re-entrant: no block may call another writer.
         Every caller has checked ``self._db`` before entering.
 
-        An exception or cancellation that leaves the block is rolled back before it propagates.
+        An exception or cancellation that leaves the block is rolled back before it propagates; a
+        ``ROLLBACK`` that itself fails is logged at ERROR and the statements stay pending, as before
+        this change (see ``_roll_back_index_write``).
         This store's writes share one connection and run in SQLite's implicit transaction, so a
         block abandoned after its first statement would otherwise be committed by the next
         writer's ``commit`` (a half-written row). aiosqlite runs one connection's calls in order

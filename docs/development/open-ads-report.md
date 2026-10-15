@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-15T05:22:15+00:00 at `1d2c641e` | 2886 subjects, 1011 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-15T05:43:44+00:00 at `455d4d5b` | 2887 subjects, 1011 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |
@@ -46,15 +46,15 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 
 | State | AD | BF | Meaning |
 |---|---|---|---|
-| `allocated-open` | 52 | 8 | assigned, issue open, no shipped code |
+| `allocated-open` | 52 | 9 | assigned, issue open, no shipped code |
 | `deferred` | 0 | 0 | assigned, explicitly postponed |
 | `superseded` | 1 | 0 | replaced by a later number |
-| `retired` | 10 | 1 | abandoned, number **not** reusable |
+| `retired` | 10 | 0 | abandoned, number **not** reusable |
 | `shipped` | 991 | 551 | code in history |
 
 ## Allocated and open — **do not reuse these numbers**
 
-60 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
+61 numbers. Every one is assigned. A recursive tree scan reports the ones without code as free.
 
 | Number | Issue | Why | Title |
 |---|---|---|---|
@@ -110,6 +110,7 @@ The two pinned layers are refreshed by running the generator (`--online` for iss
 | `AD-277` | — | mentioned by an authority, no code and no closure |  |
 | `AD-276` | — | mentioned by an authority, no code and no closure |  |
 | `AD-274` | — | mentioned by an authority, no code and no closure |  |
+| `BF-891` | — | mentioned by an authority, no code and no closure |  |
 | `BF-888` | — | a tracker head marks it open |  |
 | `BF-887` | — | a tracker head marks it open |  |
 | `BF-885` | — | a tracker head marks it open |  |
@@ -143,7 +144,6 @@ _(none)_
 | `AD-840` | [#815](https://github.com/seangalliher/ProbOS/issues/815), [#819](https://github.com/seangalliher/ProbOS/issues/819) | issue #819 closed as not planned, no code | AD-840: HXI Skill Registry + per-agent ACM skill-assignment surface |
 | `AD-709` | [#485](https://github.com/seangalliher/ProbOS/issues/485) | issue #485 closed as not planned, no code | AD-709: MemoryForge — implanted birth memories + curated memory banks (Long Horizon) |
 | `AD-693` | [#387](https://github.com/seangalliher/ProbOS/issues/387) | issue #387 closed as not planned, no code | AD-693: Federation Knowledge Sync |
-| `BF-891` | — | a tracker head marks it retired |  |
 
 ## Shipped
 
