@@ -1,6 +1,7 @@
 # BF-891 (#1542): ProcedureStore's write lock blocks the event loop
 
 **Drafted by:** claude-architect (read-only consult, session id from the bridge header; saved verbatim by the orchestrator)
+**Corrections (orchestrator, after review round 1, 2026-10-15; the rows and sentences below are corrected in place):** mutant M3 is killed by the contention check (`contended >= 1`) and the AST guard, not by a hang, because only `deactivate` takes the mutant lock; the aiosqlite worker thread inherits `daemon` from the thread that creates the connection (non-daemon in production, daemon inside the harness's private-loop thread); `runtime.py:3953` dispatches the backup snapshot to a thread, so "no thread dispatch" is narrowed to "no store writer is dispatched to a thread".
 **Status:** Ready to build. One slice. **Dependencies:** none. **Estimated tests:** 18 new, 1 pin updated.
 
 **Verdict:** ✅ Buildable. The orchestrator's facts hold, with two corrections:
@@ -55,7 +56,7 @@ The overlap is reachable in production. One store, built at `runtime.py:2917`, i
 
 ### Threads (fact 2)
 
-- **Callers:** no `run_in_executor`, `to_thread`, `threading.Thread` or `run_coroutine_threadsafe` appears in any of the 14 caller modules.
+- **Callers:** no `run_in_executor`, `to_thread`, `threading.Thread` or `run_coroutine_threadsafe` appears in any of the 14 caller modules, so no store writer is dispatched to a thread. (`runtime.py:3953` runs the backup `snapshot` in a thread; it copies files through `sqlite3`'s backup API on its own connections and calls no store method.)
 - **API server:** uvicorn runs as a task on the runtime loop (`__main__.py:932`: `asyncio.create_task(server.serve())`).
 - **aiosqlite's worker thread** runs queued SQL only (`aiosqlite/core.py:48-66`, `150-160`). It never touches store attributes or the lock.
 - **Chroma calls** are synchronous on the loop thread, outside the lock.
@@ -101,7 +102,7 @@ The runtime check `isinstance(store._write_lock, asyncio.Lock)` complements G1.
 - **Harness.** Each scenario runs `asyncio.run(...)` on a daemon thread, with its own store created on that loop. The pytest thread waits on `threading.Event`s, with one budget for start-up and another for the scenario.
 - **On a hang** the harness:
   - records `hung=True`;
-  - releases every locked plain `threading.Lock` found in `vars(store)` (any thread may release one), so the loop and the store's non-daemon aiosqlite worker (`core.py:90`) can finish instead of holding the xdist worker at exit;
+  - releases every locked plain `threading.Lock` found in `vars(store)` (any thread may release one), so the loop thread can finish its scenario and close the store instead of staying blocked with an open connection;
   - returns.
   The test then fails without hanging the suite.
 - **Controls first:** a single save, then sequential saves, both with `contended == 0`.
@@ -299,7 +300,7 @@ REPLACE:
 | `test_control_single_save_completes` | `save(p0)` → `get(p0)` is not None; `lock.contended == 0`; not hung. | Overlap tests below require `contended >= 1`. |
 | `test_control_sequential_saves_complete` | Saves p1 then p2 → both present; `contended == 0`. | As above. |
 | `test_overlapping_saves_complete` | `gather(save(p3), save(p4))` → both rows present; `contended >= 1` (site 1). | M2 hangs it, and the harness reports it. |
-| `test_save_overlapping_deactivate_completes` | Seed p1; `gather(save(p5), deactivate("p1", superseded_by="p5"))` → p5 active; p1's column and snapshot both inactive and superseded by p5; `contended >= 1` (sites 1 and 9). This is the challenger-promotion overlap. | M3 hangs it. |
+| `test_save_overlapping_deactivate_completes` | Seed p1; `gather(save(p5), deactivate("p1", superseded_by="p5"))` → p5 active; p1's column and snapshot both inactive and superseded by p5; `contended >= 1` (sites 1 and 9). This is the challenger-promotion overlap. | M3 fails it: only `deactivate` takes the mutant lock, so nothing contends (`contended == 0`) and no hang is possible. |
 | `test_overlapping_counter_writes_complete` | Seed p1; `gather(record_selection, record_applied, record_completion, record_fallback, record_consecutive_success)` → metrics 1/1/1/1 and `consecutive_successes == 1`; `contended >= 1` (sites 3, 4, 8). | `contended == 0` under M9. |
 | `test_overlapping_compilation_level_writes_complete` | Seed p1-p3; `gather(promote(p1,3), demote(p2,1), reset_consecutive_successes(p3))` → levels 3 and 1, p3 at 0 (sites 5, 6, 7). | M9 |
 | `test_overlapping_promotion_status_writes_complete` | Seed p3 at level 4 with 10 selections and 10 completions (written sequentially); `gather(request_promotion(p3), approve_promotion(p1,"captain","d1"), reject_promotion(p2,"captain","r"))` → p3 eligible and pending, p1 approved, p2 rejected (sites 10, 11, 12). | M9 |
@@ -322,7 +323,7 @@ Anchors marked *(occurrence k/17)* are the k-th line, in file order, whose strip
 |---|---|---|---|---|
 | M1 | `src/probos/cognitive/procedure_store.py` | `self._write_lock = asyncio.Lock()` | `self._write_lock = __import__("threading").Lock()` | `test_write_lock_is_loop_owned`, `tests/test_procedure_store.py::TestThreadSafety::test_write_lock_exists` |
 | M2 | `src/probos/cognitive/procedure_store.py` | `async with self._index_write():` *(occurrence 1/17, `_save_to_index`)* | `with self.__dict__.setdefault("_bf891_mutant_lock", __import__("threading").Lock()):` | `test_no_sync_with_block_in_procedure_store_awaits`, `test_overlapping_saves_complete` (hung) |
-| M3 | `src/probos/cognitive/procedure_store.py` | `async with self._index_write():` *(occurrence 9/17, `deactivate`)* | `with self.__dict__.setdefault("_bf891_mutant_lock", __import__("threading").Lock()):` | `test_no_sync_with_block_in_procedure_store_awaits`, `test_save_overlapping_deactivate_completes` (hung) |
+| M3 | `src/probos/cognitive/procedure_store.py` | `async with self._index_write():` *(occurrence 9/17, `deactivate`)* | `with self.__dict__.setdefault("_bf891_mutant_lock", __import__("threading").Lock()):` | `test_no_sync_with_block_in_procedure_store_awaits`, `test_save_overlapping_deactivate_completes` (fails `contended >= 1`; no hang) |
 | M4 | `src/probos/cognitive/procedure_store.py` | `cleanup = asyncio.create_task(_roll_back_index_write(db))` | `cleanup = asyncio.create_task(asyncio.sleep(0))` | `test_cancel_while_holding_rolls_back_the_partial_deactivate`, `test_failed_statement_rolls_back_the_partial_save` |
 | M5 | `src/probos/cognitive/procedure_store.py` | `await asyncio.shield(cleanup)` | `await cleanup` | `test_second_cancel_during_rollback_holds_the_lock_until_it_ran` |
 | M6 | `src/probos/cognitive/procedure_store.py` | `if cancelled_again and not isinstance(exc, asyncio.CancelledError):` | `if False:` | `test_cancel_during_rollback_of_an_error_is_not_swallowed` |
@@ -449,10 +450,10 @@ Grep "\"(UPDATE|INSERT|DELETE|ALTER|CREATE)|\.commit\(\)" procedure_store.py   -
 Read procedure_challenges.py 152-221   -> _roll_back / _write_transaction (prior art)
 Read protocols.py 325-358   -> DatabaseConnection has no rollback
 Read storage/sqlite_factory.py   -> plain aiosqlite.connect (no isolation_level set)
-Read aiosqlite/core.py 28-72, 84-93, 150-160   -> one worker thread, FIFO, non-daemon, set_result only if not done
+Read aiosqlite/core.py 28-72, 84-93, 150-160   -> one worker thread (daemon flag inherited from the creating thread), FIFO, set_result only if not done
 Read cpython-3.12 asyncio/locks.py 92-139, mixins.py 12-21   -> lazy loop binding, FIFO, cancelled waiter cleanup
 Read d:/ProbOS/.venv/pyvenv.cfg   -> 3.12.13
-Grep "run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe" (14 caller modules)   -> none
+Grep "run_in_executor|to_thread|threading\.Thread|run_coroutine_threadsafe" (14 caller modules)   -> none (runtime.py:3953 dispatches the backup snapshot to a thread; it calls no store method)
 Grep "store\.(save|deactivate|...)\(" src/probos   -> callers listed in Problem
 Read runtime.py 2913-2925; Grep __main__.py "server.serve" -> 932 create_task on runtime loop
 Grep "_write_lock" repo (excluding module)   -> tests/test_procedure_store.py:1292-1297 (only code pin)

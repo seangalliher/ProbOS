@@ -10,8 +10,8 @@ How these tests prove it:
 - Overlap tests run each scenario on a private event loop in a daemon thread
   (``_run_on_private_loop``). A writer that blocks the loop thread cannot report its own hang, so
   the pytest thread is the watchdog: a hang FAILS the test (``hung``) instead of hanging the suite,
-  and the harness frees any plain ``threading.Lock`` the store holds so the loop and aiosqlite's
-  non-daemon worker thread can still exit.
+  and the harness frees any plain ``threading.Lock`` the store holds so the loop thread can finish
+  its scenario and close the store instead of staying blocked with an open connection.
 - Every overlap swaps in an ``_ObservedLock`` and requires ``contended >= 1``: the calls really met
   inside the critical section. The single-save and sequential controls require ``contended == 0``.
 - Cancellation and failure tests run on the pytest loop against a gated connection
