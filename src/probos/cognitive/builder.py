@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from probos.cognitive.builder_paths import builder_write_refusal
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
 from probos.execution.command_env import build_command_env
@@ -85,53 +86,10 @@ def _normalize_change_paths(file_changes: list[dict[str, Any]]) -> list[dict[str
     return file_changes
 
 
-# Allowed top-level directories for builder file operations
-_ALLOWED_PATH_PREFIXES = (
-    "src/",
-    "tests/",
-    "config/",
-    "docs/",
-    "prompts/",
-)
-
-# Paths that must never be written by the builder
-_FORBIDDEN_PATHS = (
-    ".git/",
-    ".env",
-    "pyproject.toml",
-    ".github/",
-)
-
-
-def _validate_file_path(path_str: str) -> str | None:
-    """Validate a file path is safe for the builder to write.
-
-    Returns None if valid, or an error message if invalid.
-    """
-    # Normalize separators
-    normalized = path_str.replace("\\", "/")
-
-    # Block path traversal
-    if ".." in normalized:
-        return f"Path traversal blocked: {path_str}"
-
-    # Block forbidden paths
-    for forbidden in _FORBIDDEN_PATHS:
-        if normalized.startswith(forbidden) or normalized == forbidden.rstrip("/"):
-            return f"Forbidden path: {path_str}"
-
-    # Block absolute paths
-    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
-        return f"Absolute path blocked: {path_str}"
-
-    # Must be under an allowed prefix
-    if not any(normalized.startswith(prefix) for prefix in _ALLOWED_PATH_PREFIXES):
-        # Allow top-level known files (conftest.py, test scripts, etc.)
-        if "/" not in normalized:
-            return None  # Root-level file — allow
-        return f"Path outside allowed directories: {path_str} (allowed: {', '.join(_ALLOWED_PATH_PREFIXES)})"
-
-    return None
+# BF-894 (#1547): the write-path boundary is builder_paths.builder_write_refusal, called
+# from both write paths in execute_approved_build. This name is kept for
+# tests/test_builder_guardrails.py.
+_validate_file_path = builder_write_refusal
 
 
 from probos.types import IntentDescriptor, LLMRequest
@@ -1677,7 +1635,8 @@ async def _git_add_and_commit(
     files: list[str], message: str, work_dir: str,
 ) -> tuple[bool, str]:
     """Stage *files* and commit.  Returns (success, commit_hash_or_error)."""
-    rc, _out, err = await _run_git(["add", *files], work_dir)
+    # BF-894 (#1547): "--" so a model-authored name beginning with "-" is a path, not an option.
+    rc, _out, err = await _run_git(["add", "--", *files], work_dir)
     if rc != 0:
         return False, err
 
@@ -2714,8 +2673,8 @@ async def execute_approved_build(
     try:
         # 4. Write/modify files
         for change in file_changes:
-            # Validate file path before any disk operations
-            path_error = _validate_file_path(change["path"])
+            # Validate file path before any disk operations (BF-894: lexical and identity)
+            path_error = builder_write_refusal(change["path"], work_dir)
             if path_error:
                 logger.warning("BuilderAgent: %s — skipping", path_error)
                 validation_errors.append(path_error)
@@ -2878,6 +2837,13 @@ async def execute_approved_build(
 
                     # Apply fix changes
                     for change in fix_changes:
+                        # BF-894 (#1547): the same boundary as the approved writes; a refusal
+                        # blocks the commit the same way (validation_errors).
+                        repair_error = builder_write_refusal(change["path"], work_dir)
+                        if repair_error:
+                            logger.warning("BuilderAgent: repair %s, skipping", repair_error)
+                            validation_errors.append(repair_error)
+                            continue
                         path = Path(work_dir) / change["path"]
                         if change["mode"] == "modify":
                             if not path.exists():
