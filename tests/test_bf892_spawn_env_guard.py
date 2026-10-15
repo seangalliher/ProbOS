@@ -762,6 +762,33 @@ _SHAPE_CASES = [
         import subprocess
         x: subprocess.run(['x']) = None
         """, "direct", "fail: no env="),
+    _case("environ-subscript-assign", """\
+        import os, subprocess
+        from probos.execution.command_env import build_command_env
+        def f():
+            env = build_command_env()
+            env['X'] = os.environ
+            subprocess.run(['x'], env=env)
+        """, "direct", "fail: the runtime environment"),
+    _case("environ-setdefault", """\
+        import os, subprocess
+        from probos.execution.command_env import build_command_env
+        def f():
+            env = build_command_env()
+            env.setdefault('X', os.environ)
+            subprocess.run(['x'], env=env)
+        """, "direct", "fail: the runtime environment"),
+    _case("annotation-call-holding-reference", """\
+        import subprocess
+        def make(x): return x
+        y: make([subprocess.run]) = None
+        """, "bound", "fail: a launch API bound"),
+    _case("inner-import-takes-precedence-over-module-alias", """\
+        import json as sp
+        def launch():
+            import subprocess as sp
+            return sp.run(['x'])
+        """, "direct", "fail: no env="),
     _case("os-spawnve", """\
         import os
         os.spawnve(os.P_WAIT, '/bin/x', ['x'], {})
