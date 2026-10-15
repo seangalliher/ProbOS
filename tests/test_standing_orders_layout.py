@@ -108,7 +108,8 @@ PROCEDURE = (
     "**Convergence (codified 2026-10-15).**",
     "**Round-three brake (Captain, 2026-10-15).**",
     "Do not start a fourth round on your own, whatever leads to it",
-    "the exact `git diff <base> <head>` command",
+    "the exact command that shows the delta (`git diff <base> <head>` for a committed candidate",
+    "`git diff --cached <base>` in the worktree for a staged one",
     "**Progress comments (Captain, 2026-10-15).**",
     "Phase: draft | build | review round N | gate | CI",
 )
