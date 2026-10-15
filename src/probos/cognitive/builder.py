@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
+from probos.execution.command_env import build_command_env
 from probos.execution.isolation import remove_workdir_off_loop
 
 if TYPE_CHECKING:
@@ -2424,22 +2425,28 @@ def _validate_python(path: Path) -> str | None:
 # Test & fix helpers (AD-314)
 # ---------------------------------------------------------------------------
 
+def _pytest_pythonpath(work_dir: str) -> str:
+    """The work tree and its ``src``, then the runtime's own ``PYTHONPATH`` (the pre-BF-892 order)."""
+    src_dir = str(Path(work_dir) / "src")
+    existing = os.environ.get("PYTHONPATH", "")
+    return f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+
+
 async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
     """Run pytest and return (passed, output)."""
     import sys
 
     def _sync_run() -> tuple[int, str]:
         try:
-            env = os.environ.copy()
-            src_dir = str(Path(work_dir) / "src")
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+            # BF-892 (#1543): the tests are model-authored; they get the command
+            # allowlist plus PYTHONPATH, never the runtime's environment.
+            run_env = {**build_command_env(), "PYTHONPATH": _pytest_pythonpath(work_dir)}
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"],
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
-                env=env,
+                env=run_env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")
@@ -2508,16 +2515,14 @@ async def _run_targeted_tests(
 
     def _sync_run() -> tuple[int, str]:
         try:
-            env = os.environ.copy()
-            src_dir = str(Path(work_dir) / "src")
-            existing = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
+            # BF-892 (#1543): model-authored tests; allowlist plus PYTHONPATH only.
+            targeted_env = {**build_command_env(), "PYTHONPATH": _pytest_pythonpath(work_dir)}
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "--tb=short", "-q"] + test_files,
                 cwd=work_dir,
                 capture_output=True,
                 timeout=timeout,
-                env=env,
+                env=targeted_env,
             )
             test_out = (result.stdout or b"").decode(errors="replace")
             test_err = (result.stderr or b"").decode(errors="replace")
