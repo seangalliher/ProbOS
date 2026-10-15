@@ -2528,6 +2528,17 @@ class ProbOSRuntime:
             logger.warning("Pool '%s' already exists — skipping duplicate creation", name)
             return self.pools[name]
 
+        if agent_type == ShellCommandAgent.agent_type and "command_env_passthrough" not in spawn_kwargs:
+            # BF-890 (#1529): a shell pool made without an explicit value hands the operator's
+            # declared names to each member it makes; the pool keeps its spawn kwargs, so a
+            # respawned or added member gets them too. A caller's own value wins and the
+            # execution section is then not read; a config with no execution section declares
+            # nothing.
+            execution = getattr(self.config, "execution", None)
+            spawn_kwargs["command_env_passthrough"] = tuple(
+                getattr(execution, "command_env_passthrough", ()),
+            )
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None
@@ -2608,7 +2619,13 @@ class ProbOSRuntime:
         """Spawn red team agents (separate from pools — not on intent bus)."""
         for i in range(count):
             agent_id = generate_agent_id("red_team_verifier", "red_team", i)
-            agent = RedTeamAgent(pool="red_team", agent_id=agent_id)
+            # BF-890 (#1529): the red team re-runs a command with the names the
+            # configuration declares, so it matches a shell pool made without an
+            # explicit value (a pool made with a caller's own value can differ).
+            agent = RedTeamAgent(
+                pool="red_team", agent_id=agent_id,
+                command_env_passthrough=tuple(self.config.execution.command_env_passthrough),
+            )
             await self.registry.register(agent)
             await agent.start()
             self.red_team_agents.append(agent)

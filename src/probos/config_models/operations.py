@@ -7,7 +7,21 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field, field_validator
+
+# BF-890 (#1529): literal twins of probos.execution.command_env's
+# CREDENTIAL_NAME_WORDS, CREDENTIAL_NAME_SEGMENTS, RUNTIME_NAME_PREFIX and
+# ENV_NAME_SHAPE_PATTERN. This module may not import probos, so
+# tests/test_bf890_command_env.py asserts each twin equals its owner.
+_CREDENTIAL_ENV_NAME_WORDS = (
+    "KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "PASSPHRASE",
+    "CREDENTIAL", "AUTH", "COOKIE", "SESSION", "PRIVATE",
+)
+_CREDENTIAL_ENV_NAME_SEGMENTS = ("PAT", "PASS", "PWD", "DSN", "CREDS")
+_RUNTIME_ENV_NAME_PREFIX = "PROBOS_"
+_ENV_NAME_SHAPE_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 
 
 class ExecutionConfig(BaseModel):
@@ -146,6 +160,41 @@ class ExecutionConfig(BaseModel):
     # AD-1246: kept as shipped. It covers a cold venv plus a handful of wheels and
     # cuts off an install stuck on the network, at the cost of a slow source build.
     install_timeout_seconds: float = 180.0  # venv create + pip install is slower
+    # BF-890 (#1529): extra environment variable NAMES that a command started by
+    # `run_command`, ShellCommandAgent or the red team's re-run may inherit, on
+    # top of the built-in allowlist in probos.execution.command_env. The operator
+    # sets this; no tool parameter can. A name that is not a plain identifier,
+    # starts with PROBOS_, or contains a word in _CREDENTIAL_ENV_NAME_WORDS (or a
+    # segment in _CREDENTIAL_ENV_NAME_SEGMENTS) is refused when the config loads.
+    # A declared name that is not set is absent from the child. The run_python
+    # sandbox does not read this field.
+    command_env_passthrough: list[str] = Field(default_factory=list)
+
+    @field_validator("command_env_passthrough")
+    @classmethod
+    def _declared_env_names_are_plain_and_not_credentials(cls, v: list[str]) -> list[str]:
+        names: list[str] = []
+        for raw in v:
+            name = raw.strip()
+            if re.fullmatch(_ENV_NAME_SHAPE_PATTERN, name) is None:
+                raise ValueError(
+                    f"execution.command_env_passthrough: {raw!r} is not a plain "
+                    "environment variable name (letters, digits, underscore)"
+                )
+            upper = name.upper()
+            if (
+                upper.startswith(_RUNTIME_ENV_NAME_PREFIX)
+                or any(word in upper for word in _CREDENTIAL_ENV_NAME_WORDS)
+                or any(part in _CREDENTIAL_ENV_NAME_SEGMENTS for part in upper.split("_"))
+            ):
+                raise ValueError(
+                    f"execution.command_env_passthrough: {name!r} is shaped like a "
+                    "credential or is a ProbOS runtime variable, and is never passed "
+                    "to a command; declare a non-secret variable instead"
+                )
+            if name not in names:
+                names.append(name)
+        return names
 
     @field_validator("max_runtime_seconds")
     @classmethod

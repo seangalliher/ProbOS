@@ -10,6 +10,7 @@ import subprocess
 import sys
 from typing import Any
 
+from probos.execution.command_env import build_command_env
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
@@ -57,6 +58,12 @@ class ShellCommandAgent(BaseAgent):
     # Security constants
     DEFAULT_TIMEOUT: float = 30.0
     MAX_OUTPUT_BYTES: int = 64 * 1024  # 64KB cap on stdout/stderr
+
+    def __init__(self, pool: str = "default", **kwargs: Any) -> None:
+        # BF-890 (#1529): names from execution.command_env_passthrough, injected
+        # through the shell pool's spawn kwargs.
+        self._command_env_passthrough: tuple[str, ...] = tuple(kwargs.pop("command_env_passthrough", ()))
+        super().__init__(pool, **kwargs)
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
@@ -209,12 +216,15 @@ class ShellCommandAgent(BaseAgent):
     def _run_sync(self, command: str) -> dict[str, Any]:
         """Blocking subprocess execution (called via run_in_executor)."""
         try:
+            # BF-890 (#1529): an allowlisted environment, not the runtime's.
+            env = build_command_env(self._command_env_passthrough)
             if sys.platform == "win32":
                 args = ["powershell", "-NoProfile", "-Command", command]
                 proc = subprocess.Popen(
                     args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=env,
                 )
             else:
                 proc = subprocess.Popen(
@@ -222,6 +232,7 @@ class ShellCommandAgent(BaseAgent):
                     shell=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=env,
                 )
 
             stdout_bytes, stderr_bytes = proc.communicate(

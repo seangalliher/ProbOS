@@ -534,6 +534,7 @@ AD-993/994: sandboxed code execution (tiered isolation).
 | `allow_package_install` | `bool` | `False` | — |  |
 | `pip_index_url` | `str` | `'https://pypi.org/simple'` | — |  |
 | `install_timeout_seconds` | `float` | `180.0` | — |  |
+| `command_env_passthrough` | `list[str]` | `[]` | — |  |
 
 ## `protected_execution`
 

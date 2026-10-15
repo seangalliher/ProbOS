@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from probos.agents.http_fetch import safe_fetch_method
+from probos.execution.command_env import build_command_env
 from probos.substrate.agent import BaseAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -63,6 +64,12 @@ class RedTeamAgent(BaseAgent):
 
     # Red team agents do NOT subscribe to the normal intent bus.
     # They are invoked directly by the consensus layer.
+
+    def __init__(self, pool: str = "default", **kwargs: Any) -> None:
+        # BF-890 (#1529): the same declared names the shell agent got, injected
+        # by the runtime, so a re-run sees the environment the command saw.
+        self._command_env_passthrough: tuple[str, ...] = tuple(kwargs.pop("command_env_passthrough", ()))
+        super().__init__(pool, **kwargs)
 
     async def verify(
         self,
@@ -293,7 +300,10 @@ class RedTeamAgent(BaseAgent):
         try:
             loop = asyncio.get_running_loop()
             run_result = await asyncio.wait_for(
-                loop.run_in_executor(None, self._run_verify_sync, command),
+                loop.run_in_executor(
+                    None, self._run_verify_sync, command,
+                    build_command_env(self._command_env_passthrough),
+                ),
                 timeout=5.0,
             )
 
@@ -372,17 +382,17 @@ class RedTeamAgent(BaseAgent):
             )
 
     @staticmethod
-    def _run_verify_sync(command: str) -> tuple[int, str] | None:
+    def _run_verify_sync(command: str, env: dict[str, str] | None) -> tuple[int, str] | None:
         """Blocking subprocess for verification (called via run_in_executor)."""
         try:
             if sys.platform == "win32":
                 args = ["powershell", "-NoProfile", "-Command", command]
                 proc = subprocess.Popen(
-                    args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                 )
             else:
                 proc = subprocess.Popen(
-                    command, shell=True,
+                    command, shell=True, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 )
             stdout_bytes, _ = proc.communicate(timeout=5)

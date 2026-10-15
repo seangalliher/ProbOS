@@ -105,6 +105,8 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from probos.execution.command_env import SANDBOX_ENV_PASSTHROUGH
+
 logger = logging.getLogger(__name__)
 
 # POSIX-only resource limits; absent on Windows (Tier 1 there degrades to
@@ -639,7 +641,8 @@ class IsolationBackend(Protocol):
 
 
 # Environment variables kept from the host for a minimal, predictable base env.
-_ENV_PASSTHROUGH = ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL", "TZ")
+# BF-890: one owner, shared with the shell paths (execution/command_env.py).
+_ENV_PASSTHROUGH = SANDBOX_ENV_PASSTHROUGH
 # Discard-port proxy: a SOFT network deterrent for well-behaved libraries
 # (requests/urllib honor *_proxy). Hard network isolation is Tier 2.
 _BLACKHOLE_PROXY = "http://127.0.0.1:9"

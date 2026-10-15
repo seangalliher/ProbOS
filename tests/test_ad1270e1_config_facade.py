@@ -1547,7 +1547,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1316 adds three default-off effect-broker controls (1836 -> 1839).
     # AD-1327 adds the five cognitive.*_verifier fields of the crew verifier tier (1839 -> 1844).
     # AD-1326 adds the eight dreaming.procedure_challenger_* fields (1844 -> 1852).
-    assert counts["field_definitions"] == 1852  # AD-1206 intentionally adds github_repository.
+    # BF-890 adds execution.command_env_passthrough (1852 -> 1853).
+    assert counts["field_definitions"] == 1853  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 305
     assert len(baseline["models"]) == 226

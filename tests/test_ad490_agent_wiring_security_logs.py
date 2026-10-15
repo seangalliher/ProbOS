@@ -31,9 +31,12 @@ class _FakeAgent:
 
 
 class _FakeRedTeamAgent:
-    def __init__(self, *, pool: str, agent_id: str) -> None:
+    def __init__(
+        self, *, pool: str, agent_id: str, command_env_passthrough: tuple[str, ...] = (),
+    ) -> None:
         self.id = agent_id
         self.pool = pool
+        self.command_env_passthrough = command_env_passthrough
         self.agent_type = "red_team"
         self.state = SimpleNamespace(value="active")
         self.capabilities: list[object] = []
@@ -212,6 +215,7 @@ async def test_red_team_agent_wired_has_department() -> None:
     from probos.runtime import ProbOSRuntime
 
     runtime = ProbOSRuntime.__new__(ProbOSRuntime)
+    runtime.config = SystemConfig()
     runtime.registry = MagicMock()
     runtime.registry.register = AsyncMock()
     runtime.capability_registry = MagicMock()

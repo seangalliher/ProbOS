@@ -48,7 +48,7 @@ pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
   canonical_dump_leaves: 1875
-  field_definitions: 1852
+  field_definitions: 1853
   incidental: 13
   own_models: 225
   owned: 292
@@ -1773,7 +1773,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b37ea7a1fd4614c81e195df060a521abf1ec24e28a90d1b78bde2eaef81d7848
+    schema_sha256: 6ed5825ae6292fc6ea7b56ba53993588097baa84287a77fff2eb03965ffcb077
     fields:
     - {default: 'False', name: enabled}
     - {default: '1', name: default_tier}
@@ -1793,6 +1793,7 @@ models:
     - {default: 'False', name: allow_package_install}
     - {default: '''https://pypi.org/simple''', name: pip_index_url}
     - {default: '180.0', name: install_timeout_seconds}
+    - {default: <required>, has_default_factory: true, name: command_env_passthrough}
   ExpertiseConfig:
     qualname: ExpertiseConfig
     bases:
@@ -3360,7 +3361,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: d53a8131f2d633bfa8f75847596f8761270aca03d6407a6a208f6593fb77d659
+    schema_sha256: 07c770dcdfba808cae26e4828773559f7f08b8fb8e6702cb3c368bd82559351a
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
