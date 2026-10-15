@@ -4,8 +4,9 @@ Before the fix ``ShellCommandAgent`` and the red team's re-run of its command in
 environment, so ``echo``, ``set`` or ``env`` in a command carried a provider key into an agent's context. Both now
 start from ``probos.execution.command_env`` (``build_command_env``) plus the names an operator declares in
 ``execution.command_env_passthrough``. ``ProbOSRuntime.create_pool`` injects those names into every shell pool (a
-caller's own value wins, and no other pool type gets them), a real ``ResourcePool`` hands them to each member it makes
-(initial, replacement, added), and ``ProbOSRuntime._spawn_red_team`` injects them into the red team.
+caller's own value wins, no other pool type gets them, and a config with no ``execution`` section declares nothing),
+a real ``ResourcePool`` hands them to each member it makes (initial, replacement, added), and
+``ProbOSRuntime._spawn_red_team`` injects them into the red team.
 
 The tests plant a credential-shaped variable and a plain one with ``monkeypatch.setenv``. Every test that probes a
 planted variable in a child asserts its inheriting-child premise first -- a child that INHERITS this process's
@@ -29,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import time
+import types
 from dataclasses import dataclass
 from typing import Any
 
@@ -479,6 +481,16 @@ class _FakePoolRuntime:
         self.event_log = _FakeEventLog()
 
 
+class _FakePoolRuntimeWithoutExecution(_FakePoolRuntime):
+    """A fake runtime whose config has no ``execution`` section at all: a namespace that holds only ``pools``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = types.SimpleNamespace(
+            pools=PoolConfig(default_pool_size=2, min_pool_size=1, max_pool_size=3),
+        )
+
+
 async def _stop_pools(*runtimes: _FakePoolRuntime) -> None:
     """Stop every pool the fake runtimes hold; a stop that raises does not skip the pools after it."""
     errors: list[Exception] = []
@@ -517,9 +529,10 @@ async def test_real_pool_hands_declared_names_to_members_replacements_and_additi
 
     Kills two mutants, both reasoned, not run (no campaign in the repo):
 
-    * M29, ``src/probos/runtime.py``: the line ``        if agent_type == ShellCommandAgent.agent_type:`` replaced
-      by ``        if False:``. The factory then never injects the names, so all three positive probes see ``[]``
-      instead of ``[PLAIN_NAME]``.
+    * M29, ``src/probos/runtime.py``: the line
+      ``        if agent_type == ShellCommandAgent.agent_type and "command_env_passthrough" not in spawn_kwargs:``
+      replaced by ``        if False:``. The factory then never injects the names, so all three positive probes see
+      ``[]`` instead of ``[PLAIN_NAME]``.
     * M32, ``src/probos/substrate/pool.py``: the line ``        self._spawn_kwargs = spawn_kwargs`` replaced by
       ``        self._spawn_kwargs = {}``. The factory injects the names but the pool drops them, so every member it
       builds -- initial (``_start_inner``), replacement (``_recycle_registered_agent_inner``) and added
@@ -574,13 +587,15 @@ async def test_real_pool_hands_declared_names_to_members_replacements_and_additi
 async def test_create_pool_hands_names_to_shell_pools_only_and_a_callers_value_wins(shell: _Shell) -> None:
     """``ProbOSRuntime.create_pool`` injects the declared names into shell pools only, and a caller's own value wins.
 
-    Kills two mutants in ``src/probos/runtime.py``, both reasoned, not run (no campaign in the repo):
+    Kills two mutants in ``src/probos/runtime.py``, both reasoned, not run (no campaign in the repo). Each replaces
+    the line
+    ``        if agent_type == ShellCommandAgent.agent_type and "command_env_passthrough" not in spawn_kwargs:``
 
-    * M33, the line ``        if agent_type == ShellCommandAgent.agent_type:`` replaced by ``        if True:``. The
+    * M33, with ``        if "command_env_passthrough" not in spawn_kwargs:`` (the shell-type check dropped). The
       ``recorder`` pool's members would then be built with ``command_env_passthrough``, which their recorded kwarg
       names would show.
-    * M34, ``spawn_kwargs.setdefault(`` replaced by ``spawn_kwargs.__setitem__(``. The declared names would then
-      overwrite the caller's explicit ``()``, so the caller's pool would print the plain value.
+    * M34, with ``        if agent_type == ShellCommandAgent.agent_type:`` (the presence check dropped). The declared
+      names would then overwrite the caller's explicit ``()``, so the caller's pool would print the plain value.
 
     The recorder pool starts no child. It is created with a marker kwarg (``recorded_marker``) that its members must
     record, which proves the recorder sees what the pool hands over, so "no ``command_env_passthrough``" means
@@ -614,3 +629,58 @@ async def test_create_pool_hands_names_to_shell_pools_only_and_a_callers_value_w
         assert caller_probe == (0, True, [])
     finally:
         await _stop_pools(runtime)
+
+
+@pytest.mark.usefixtures("plants")
+async def test_create_pool_tolerates_a_config_without_an_execution_section(shell: _Shell) -> None:
+    """``ProbOSRuntime.create_pool`` works on a config with no ``execution`` section, and that config declares nothing.
+
+    Review round 2 found that the factory read the config's ``execution`` section even when the caller supplied
+    ``command_env_passthrough``, so a config without that section raised for a caller who needed nothing from it. Now a
+    caller's value is respected without the ``execution`` section being read, and no section means no declared names.
+
+    * (a) A shell pool made with an explicit ``command_env_passthrough=()`` on a config with no ``execution`` section
+      is created and prints nothing. It pins the caller-supplied path: the ``execution`` section is not read.
+    * (b) A shell pool made with no kwarg on that runtime is created and prints nothing. It kills two mutants in
+      ``src/probos/runtime.py``, both reasoned, not run (no campaign in the repo): M35, the line
+      ``            execution = getattr(self.config, "execution", None)`` replaced by
+      ``            execution = self.config.execution`` (``AttributeError`` on the missing section), and M36, the line
+      ``                getattr(execution, "command_env_passthrough", ()),`` replaced by
+      ``                execution.command_env_passthrough,`` (``AttributeError`` on ``None``).
+    * (c) Control: a normal runtime that declares the name, with a pool made the same way as (b), prints the plain
+      value, so the probe can see it.
+    """
+    command = _marked(shell.echo(PLAIN_NAME))
+    bare_runtime = _FakePoolRuntimeWithoutExecution()
+    declared_runtime = _FakePoolRuntime(declared=(PLAIN_NAME,))
+    try:
+        # Premise: this runtime's config has no execution section at all.
+        has_execution = hasattr(bare_runtime.config, "execution")
+        assert not has_execution
+
+        await ProbOSRuntime.create_pool(
+            bare_runtime, "shell-explicit", "shell_command", target_size=2, command_env_passthrough=(),
+        )
+        await ProbOSRuntime.create_pool(bare_runtime, "shell-default", "shell_command", target_size=2)
+        await ProbOSRuntime.create_pool(declared_runtime, "shell-control", "shell_command", target_size=2)
+
+        explicit_members = bare_runtime.registry.get_by_pool("shell-explicit")
+        default_members = bare_runtime.registry.get_by_pool("shell-default")
+        control_members = declared_runtime.registry.get_by_pool("shell-control")
+        # Premise: each pool was created, with two members.
+        sizes = (len(explicit_members), len(default_members), len(control_members))
+        assert sizes == (2, 2, 2)
+
+        # (a) The caller's explicit value is respected: its member prints nothing.
+        explicit_probe = await _probe_member(explicit_members[0], command)
+        assert explicit_probe == (0, True, [])
+
+        # (b) With no kwarg, a config with no execution section declares nothing: its member prints nothing.
+        default_probe = await _probe_member(default_members[0], command)
+        assert default_probe == (0, True, [])
+
+        # (c) Control: the same call on a runtime that declares the name prints it, so the probe can see it.
+        control_probe = await _probe_member(control_members[0], command)
+        assert control_probe == (0, True, [PLAIN_NAME])
+    finally:
+        await _stop_pools(bare_runtime, declared_runtime)
