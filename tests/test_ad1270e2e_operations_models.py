@@ -150,6 +150,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
         "allow_package_install": False,
         "pip_index_url": "https://pypi.org/simple",
         "install_timeout_seconds": 180.0,
+        # BF-890: operator-declared command environment names (none by default).
+        "command_env_passthrough": [],
     },
     "InfrastructureConfig": {
         "enabled": True,

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.execution.command_env import build_command_env
 from probos.execution.workspace_results import (
     RecoverRead,
     SourceRef,
@@ -1121,8 +1122,13 @@ class RunCommandTool:
         },
     }
 
-    def __init__(self, runtime: "ProbOSRuntime") -> None:
+    def __init__(
+        self, runtime: "ProbOSRuntime", *, command_env_passthrough: tuple[str, ...] = (),
+    ) -> None:
         self._runtime = runtime
+        # BF-890 (#1529): names from execution.command_env_passthrough, injected
+        # at registration; input_schema declares no such parameter.
+        self._command_env_passthrough: tuple[str, ...] = tuple(command_env_passthrough)
 
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
@@ -1146,6 +1152,8 @@ class RunCommandTool:
                 stdout=_asyncio.subprocess.PIPE,
                 stderr=_asyncio.subprocess.PIPE,
                 cwd=cwd,
+                # BF-890 (#1529): an allowlisted environment, not the runtime's.
+                env=build_command_env(self._command_env_passthrough),
             )
             try:
                 stdout_b, stderr_b = await _asyncio.wait_for(
@@ -1177,7 +1185,10 @@ class RunCommandTool:
 
 
 def register_native_swe_tools(
-    registry: "ToolRegistry", runtime: "ProbOSRuntime"
+    registry: "ToolRegistry",
+    runtime: "ProbOSRuntime",
+    *,
+    command_env_passthrough: tuple[str, ...] = (),
 ) -> int:
     """AD-544: Register all 12 native SWE tools into the registry.
 
@@ -1214,7 +1225,8 @@ def register_native_swe_tools(
         (SystemSelfModelTool(runtime), read_perms),
         (WriteFileTool(runtime), write_perms),
         (EditFileTool(runtime), write_perms),
-        (RunCommandTool(runtime), shell_perms),
+        # BF-890: the operator's declared names (execution.command_env_passthrough).
+        (RunCommandTool(runtime, command_env_passthrough=command_env_passthrough), shell_perms),
     ]
     count = 0
     for tool, perms in entries:

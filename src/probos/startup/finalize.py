@@ -1773,7 +1773,10 @@ def _wire_native_swe_harness(
         if cfg is None:
             return False
 
-        count = register_native_swe_tools(registry, runtime)
+        count = register_native_swe_tools(
+            registry, runtime,
+            command_env_passthrough=tuple(config.execution.command_env_passthrough),
+        )
         if cfg.blocked_paths:
             tool_executor.add_pre_hook(make_blocked_paths_hook(cfg.blocked_paths))
 

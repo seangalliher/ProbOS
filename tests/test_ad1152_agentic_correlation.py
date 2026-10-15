@@ -290,6 +290,9 @@ async def _off_observation(
     assert config["dreaming"].pop("procedure_challenger_max_judge_calls_per_cycle") == 16
     assert config["dreaming"].pop("procedure_challenger_max_pending_cycles") == 5
     assert config["dreaming"].pop("procedure_challenger_max_pending_per_champion") == 2
+    # BF-890's operator-declared command environment names were added after this capture too
+    # (empty by default); this agentic-loop observation starts no shell child.
+    assert config["execution"].pop("command_env_passthrough") == []
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

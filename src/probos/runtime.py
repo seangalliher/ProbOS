@@ -2608,7 +2608,12 @@ class ProbOSRuntime:
         """Spawn red team agents (separate from pools — not on intent bus)."""
         for i in range(count):
             agent_id = generate_agent_id("red_team_verifier", "red_team", i)
-            agent = RedTeamAgent(pool="red_team", agent_id=agent_id)
+            # BF-890 (#1529): the red team re-runs a command with the same
+            # allowlisted environment the shell agent used.
+            agent = RedTeamAgent(
+                pool="red_team", agent_id=agent_id,
+                command_env_passthrough=tuple(self.config.execution.command_env_passthrough),
+            )
             await self.registry.register(agent)
             await agent.start()
             self.red_team_agents.append(agent)
