@@ -50,6 +50,8 @@ the existing tests don't reach.
 
 ## Checklist
 
+Project standards behind these checks: Engineering Principles in `docs/development/engineering-principles.md`; Common Review Flags in `docs/development/architect-standards.md`; Evidence Standard and Adversarial Review in `.github/copilot-instructions.md`. Read them by section.
+
 Work through these explicitly and report each one.
 
 **Contracts at the boundary**

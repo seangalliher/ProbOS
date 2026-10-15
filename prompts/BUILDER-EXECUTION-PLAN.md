@@ -25,7 +25,7 @@ This addendum supersedes any conflicting test cadence below.
 
 Read these in full **before** writing any code:
 
-1. `.github/copilot-instructions.md` — engineering principles, testing standards, logging standards, type-annotation rules. Every commit must comply.
+1. `.github/copilot-instructions.md` and `docs/development/engineering-principles.md` — engineering principles, testing standards, logging standards, type-annotation rules. Every commit must comply.
 2. `prompts/Reviews/README-wave-1-4-fourth-pass.md` — final wave verdicts and the false-positive resolution. **Do not re-flag the items listed there as buildable; their fixes are inside the prompts.**
 3. The 20 wave 1-4 prompt files at `prompts/ad-*.md`.
 4. The corresponding per-prompt review files at `prompts/Reviews/ad-*-review.md` — each has a "Re-review" section with non-blocking nits to apply at code-review time.
@@ -232,7 +232,7 @@ After the 19 prompts are committed:
 5. Surface a final summary message: commit hashes, final test count vs baseline, any deferred nits, and confirmation that AD-678 remains on hold pending AD-677 (now buildable in this wave but tracked as the lone sequenced item).
 6. **Forward-marker filing (HARD RULE, added 2026-05-08 after Wave 132; bounded 2026-08-24).** Before push, scan every shipped prompt's "Forward markers" / "Out of scope" / "Defer to AD-NNNx" lines and the corresponding build report's deferred section. **Deferred work must still be recorded** — forward markers in prompts alone are not sufficient tracking. Recurring lesson: Wave 132 had 6 unfiled deferrals (AD-706a..f); Captain backfilled them as #516-#521 the same day. Don't repeat.
 
-   **A forward marker does NOT automatically become one GitHub issue.** Outside burn-down mode, file each with priority + verify-first anchor citations + cross-references to the parent AD, and add a row to the roadmap's deferred-AD table. **In Backlog Burn-Down Mode** (see `.github/copilot-instructions.md`), non-blocking forward markers are consolidated into **one wave follow-up issue**, each retained as its own checklist item with severity, evidence, reproduction detail and code anchors so it stays independently actionable. Separate issues stay reserved for security, data integrity, independently reachable production failures, and blockers. The roadmap row is still added either way.
+   **A forward marker does NOT automatically become one GitHub issue.** Outside burn-down mode, file each with priority + verify-first anchor citations + cross-references to the parent AD, and add a row to the roadmap's deferred-AD table. **In Backlog Burn-Down Mode** (see `.github/agents/orchestrator.agent.md`), non-blocking forward markers are consolidated into **one wave follow-up issue**, each retained as its own checklist item with severity, evidence, reproduction detail and code anchors so it stays independently actionable. Separate issues stay reserved for security, data integrity, independently reachable production failures, and blockers. The roadmap row is still added either way.
 7. At the orchestrator's `push` stage, run `./scripts/wave-orchestrator.ps1 verify`. It revalidates the unchanged canonical-gate receipt, performs `git push`, confirms the upstream commit, and records the push receipt required by `advance`.
 
 ---

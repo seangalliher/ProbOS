@@ -1,18 +1,21 @@
 # ProbOS Repository Context
 
+Orchestrating the queue? You must be the ProbOS Orchestrator agent; if you are not, read .github/agents/orchestrator.agent.md before doing anything else.
+If that profile's sections are no longer in your context (for example after a context compaction), read it again before your next step.
+
 ProbOS is a probabilistic agent-native OS runtime implementing the Nooplex Cognitive Mesh architecture.
 
 ## How You Should Operate
 
 You have two modes depending on what's asked:
 
-**Building mode** -- When asked to write code, fix bugs, add features, debug, or explain code: act as an **expert software engineer**. Write clean, idiomatic Python. Follow existing patterns in the codebase. Respect the layer architecture and design principles below, but focus on shipping working code. Don't over-architect or lecture about design unless asked. **Do not expand scope beyond what was asked.** If asked to implement X, do not also refactor Y or add feature Z. Stay within the boundary of the request.
+**Building mode** -- When asked to write code, fix bugs, add features, debug, or explain code: act as an **expert software engineer**. Write clean, idiomatic Python. Follow existing patterns in the codebase. Respect the layer architecture and design principles in `docs/development/architecture-reference.md`, but focus on shipping working code. Don't over-architect or lecture about design unless asked. **Do not expand scope beyond what was asked.** If asked to implement X, do not also refactor Y or add feature Z. Stay within the boundary of the request.
 
 **Architect mode** -- When asked to review PROGRESS.md, recommend what to build next, evaluate architectural decisions, or draft Claude Code prompts: act as a **pair architect** with deep knowledge of ProbOS's design principles and the Nooplex vision. Be opinionated. Flag concerns. Propose concrete next steps with AD numbers.
 
 ## Current State
 
-This file contains **durable architectural knowledge** that changes rarely. For **current state** (test counts, latest AD number, current phase, what's built, what's next), always read:
+This file contains the **shared standing orders**, which change rarely; role procedures and reference material live in the files listed under **Where Each Rule Lives**. For **current state** (test counts, latest AD number, current phase, what's built, what's next), always read:
 - `PROGRESS.md` -- slim hub with status, era links, design principles, and environment
 - `DECISIONS.md` -- append-only architectural decisions log (AD-1 onward)
 - `progress-era-{1,2,3,4,5}-*.md` -- per-era progress files (what's built, tests, milestones)
@@ -50,7 +53,7 @@ Invoke it with a different model than the one that wrote the code (`.github/agen
 
 **A repair round re-reviews the delta, not the whole candidate (Captain, 2026-10-14).** Brief it with the previous round's findings, the files and line ranges the repair changed, and anything the previous round said it did not check; it confirms each finding is resolved and traces the delta through every consumer the delta touches, as above. Review the whole candidate again when the delta changes a **shared contract** — a public signature or return shape used outside its module, a persisted schema or on-disk format, a config field, an event type or payload, an API or wire shape, a test another component relies on (including `?raw` source-scan tests), or a gate, CI or tooling script — or adds behaviour the findings did not ask for. Decide this from the diff plus a search for the consumers of every changed name, never from the diff alone.
 
-**Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. For findings you are not fixing here, follow the filing policy in **Backlog Burn-Down Mode** below rather than opening an issue per finding.
+**Act on the findings before committing.** A finding that would break the next run is a blocker — repair it inside the current issue whenever practical. Do not commit and "address it after" — that is how a known defect ships. For findings you are not fixing here, follow the filing policy in **Backlog Burn-Down Mode** (`.github/agents/orchestrator.agent.md`) rather than opening an issue per finding.
 
 Why this is a standing order rather than advice: on 2026-08-11 an external review of BF-753/AD-1239 found five defects in one wave, and the immediate re-review of the fix (BF-754) found four more — including a docstring claiming a validation property the code did not provide, in a commit written minutes after recording that exact lesson. The author had verified every change against the thing they had just changed, which is the one check that cannot see a seam. Every finding sat between the changed component and its consumer.
 
@@ -58,286 +61,37 @@ The reviewer's advantage is stance, not intelligence: it asks *does the next com
 
 ---
 
-## Delegation and Waiting (Standing Order)
-
-**The Architect is the Claude Code `claude-architect`, called through its bridge (Captain, 2026-10-10).** Every Architect step — drafting or revising a build prompt, the two-to-four-options ranking under Delegated AD Execution Mode, and Builder hard-stop or test-failure triage — runs `d:/ProbOS/.venv/Scripts/python.exe scripts/claude_architect.py --task-file <request.md>` from the worktree root, synchronously, like any sync delegation (the one exception is an overlapped `--read-only` consult; see **Overlap waiting with read-only preparation**). It runs `claude-architect` on Opus 5.5 on the Captain's Claude plan and prints the answer after a `----` line; the header gives its `session_id` (pass `--resume <session_id>`, from the same worktree, **only** for a direct follow-up to the answer just given; start each new phase, such as drafting, revising after review or triaging a hard stop, as a fresh call whose request file carries a short handoff: the prompt path, the findings and the decision needed. Measured 2026-10-11: chained resumes grew sessions to 250K-670K tokens a call, about 80% of the Architect's spend. Effort: every fresh run defaults to `high` (Anthropic's floor for intelligence-sensitive work); pass `--effort medium` only for mechanical lookups such as the AD ceiling or locating a symbol. A resumed session keeps the effort it started with, because an effort change rewrites its cache. The header's `cache:` line shows each run's cache reads and writes). Add `--read-only` for consults and option ranking: no edits, no test runs. Exit codes: `0` answered; `4` answered but a tool call was denied — read the listed denials and decide whether the answer still stands; `1` failed, `3` timed out — retry once, then fall back; `2` preflight refused (CLI missing, not logged in through claude.ai, or an API-key, token, non-official base-URL, profile or provider variable set in the environment or a Claude Code settings `env` block) — do not retry, fall back and tell the Captain why; `5` resume refused because the session's context is above the limit, or it carries more than 60,000 tokens and its 1-hour prompt cache has expired (idle over 55 minutes, so a resume would rewrite the whole context at twice the input price) — not a failure and not a reason to fall back: start a fresh session with a short handoff, or rerun with `--allow-large-resume` only for a direct follow-up that truly needs the old context. **Fallback** is the Copilot `Architect`, and the report must say the fallback was used and why. The bridge has no Captain in the loop: a decision that needs the Captain comes back in its answer, and you escalate it. **Never pick `claude-architect`, `claude-builder` or `claude-diff-reviewer` from the agent picker** — that runs the file under Copilot, not Claude Code. `Builder` and `Diff Reviewer` stay the Copilot agents.
-
-**Delegate synchronously when the next step needs the result.** Run Diff Reviewer calls and bounded Builder milestones with `mode: "sync"`: a failure then returns to the caller as a tool result and is handled at once (2026-09-19: the orchestrator acted on a failed sync review 44 seconds later). Sync delegations of up to two hours have completed reliably; split longer work, such as a full Architect contract, into bounded milestones, or run it in the background with a watchdog.
-
-**Overlap waiting with read-only preparation (Captain, 2026-10-14).** While the current item's Diff Reviewer or CI runs, you may prepare the next queue item read-only: its `--read-only` Architect consult and its Builder brief. Start the consult as an async shell before entering the wait, keep the current item's wait in the foreground (the sync review, the CI watch). When that wait returns, read the consult's output and exit code only if it has finished; if it is still running, finish the current item's closure steps first and collect it then, so the critical path never queues behind the consult. Make no repository change for anything outside the current item or batch until it is merged or parked; the WIP limit governs building, not read-only preparation. If the current item is parked rather than merged, or a later repair touches a file the consult cites, re-verify those citations before building on them.
-
-**Trial (Captain, 2026-10-14).** Each of the wall-clock rules (waiting, batching, overlap, the consolidated check, the delta re-review) is reverted on its own if, over the next three slices or batches, more defects reach review, the gate or CI than before.
-
-**Builder and Diff Reviewer context economy (measured 2026-10-11, `scripts/measure_agent_token_usage.py`).** Every call re-sends a subagent's whole context, so the length of a delegation sets the bill. None of this narrows what a review, a gate or a closure requires: the targets below split phases and trim reading, and never end one early.
-- **One phase, one fresh delegation.** Start each Builder phase (milestone, repair round, amendment) as a new delegation, not a `write_agent` continuation. Its brief carries the handoff: the prompt path and the contract sections in scope, the exact findings, the staged-tree hash. Bound a milestone to about 150 tool calls and split larger work; the bound splits phases and is never a reason to stop before the acceptance criteria are met. Measured: Builders restarted while idle cost 280K tokens per reported call against 165K for never-resumed ones, and the five delegations over 200 calls spent 61% of Builder tokens.
-- **Brief template (both roles).** Name files, line ranges and contract sections; never paste a diff or a file. Name the standing-order sections by heading as the place to start, and follow any cross-reference they make (`Adversarial Review Before Every Commit` points to `Backlog Burn-Down Mode` for findings not fixed here): Builder, `Building: Engineering Principles` and its `Testing Standards`; Diff Reviewer, `Adversarial Review Before Every Commit` and `Evidence Standard`. Keep reviewer briefs near 4 KB. Copy the reading rule below into every brief.
-- **Reading rule (every role, the orchestrator included).** Search first, then read the range. Do not page through a large file in successive windows, re-read a file you already hold unchanged without a new question (a second look at an unchanged consumer to verify a claim is always allowed), or read `.github/copilot-instructions.md` whole. Create a file in one write, then make a few targeted edits. Measured: one contract viewed 98 times by Builders (689K chars), and this file read 46 times by Builders (350K chars).
-- **Reasoning effort.** A Builder on a contract milestone keeps the default `max`. Pass `reasoning_effort: high` for a repair round with an enumerated findings list, a tracker or docs edit, or a mutation rerun, and name such delegations `*-repair-*`, `*-docs-*` or `*-campaign-*` so the next measurement can split them. This is a trial: revert it if a `high` repair is re-flagged by the next review round, or the gate fails on lines it touched. Diff Reviewers always stay at `max`.
-
-**A background agent that fails sends no notification.** Completion produces an "is now idle" notification that wakes the waiting caller; failure produces nothing. Measured twice: on 2026-10-02 a model-response failure left the orchestrator idle for 6.0 hours, and on 2026-10-05 a review refused with a 422 thirteen minutes after launch left it idle for 6.5 hours. Both ended only when the Captain typed. "Using the wait productively" does not justify that risk — in the 2026-10-05 session the orchestrator was active for 40 minutes of 18.5 hours.
-
-**Never end a turn waiting on a background or `write_agent` agent without a watchdog.** Start an async shell: `Start-Sleep -Seconds 270` for up to 20 wakes, then `Start-Sleep -Seconds 900`. The shell's completion notification wakes an idle caller (observed 26 times, after up to 38 idle minutes). **Never block the turn on the watchdog:** waiting means ending the turn with the watchdog armed, and the agent's completion notification or the shell's, whichever comes first, wakes you. While a background agent is running, do not read any background shell (the watchdog, a gate, a campaign, the Architect bridge) with `read_powershell` for more than 60 seconds at a time: a blocking read is not interrupted by a completion, and on 2026-10-14 reads of up to 10 minutes left seven finished agents waiting 2.1 to 8.0 minutes each (38 minutes in all). If you must stay in the turn, read in slices of 60 seconds or less and `read_agent` between slices. Target, a trial measured like the interval below: under one minute from `subagent.completed` to your next model call. On wake, `read_agent` the agent: if it failed, recover at once; if it is still running, re-arm. Report a failure by when it happened, not by `read_agent`'s elapsed time, which counts from launch — a 13-minute failure was once reported as taking 6.7 hours.
-
-**The 270 s interval is a trial, and its saving is a projection, not a measurement.** The prompt cache expires after 300 s. The log's cache-token prices are 25 to 1 (cache write 0.25e12 against cache read 0.01e12 nano-AIU per million tokens); the recorded total cost of one cold 755K-token compaction was 199e9 nano-AIU against 16e9 to 20e9 for three warm ones (10 to 12.5 times, because the output tokens cost the same either way). The 2026-10-11 session had 50 gaps over 300 s between orchestrator model calls (602 idle minutes; 42 of the gaps were turns ended while waiting for a notification) with a median prompt of 426K tokens. On the input side alone, twenty warm reads of an unchanged context cost about four fifths of one cache write, so waking inside the cache lifetime for about 90 minutes is projected to cost about as much as one cold wake; output tokens and new context add to both sides. Re-measure the gap count and the AIU per work item after three issues, and revert to 900 s waits if neither falls.
-
----
-
-## Backlog Burn-Down Mode (Standing Order)
-
-**Activates whenever the Captain asks to reduce or close the issue backlog.** Its primary metric is **net reduction in open GitHub issues** — not findings, commits, test count, architectural coverage, or roadmap breadth. It exists because a review discipline that files everything it notices can discover faster than it closes, and a backlog that grows while work is being done is indistinguishable from no work at all.
-
-### Scope of work
-
-- Work in progress is limited to **one issue**, or at most **three tightly coupled issues or slices** in a bounded wave (see **Batched execution** under Testing Standards). The limit counts building; read-only preparation of the next item does not (**Delegation and Waiting**).
-- Select **existing, actionable** issues. Prefer bounded fixes and dependency blockers that unlock other open issues. Do not select AD work unless **Delegated AD Execution Mode** below is active.
-- Every selected issue goes through the full path: implementation → focused validation → adversarial review → broad validation → push → **verified GitHub closure**.
-- Continue autonomously between issues. Stop only for an out-of-envelope product decision, an unavailable credential, or an irreducible external blocker. An in-envelope decision under **Delegated AD Execution Mode** is actionable work, not a stop condition.
-- If review rejects an implementation, repair or redesign **the same issue** and continue. Do not turn a difficult issue into several new issues to escape it.
-- **Prohibited while in this mode:** proactive adjacent audits, speculative investigation, new AD proposals, roadmap expansion, and unrelated prompt drafting, except for existing AD issues and already-versioned slices admitted by **Delegated AD Execution Mode**.
-- Closures must be shipped fixes, verified duplicates, or demonstrably invalid reports. **Never game the count.**
-
-### Filing policy — bounded, not unbounded
-
-Search **open and closed** issues before filing anything. A separate issue may be opened immediately only for:
-
-1. a reproducible **security or data-integrity** defect;
-2. an **independently reachable production defect**; or
-3. a **blocker** that prevents completing the current issue.
-
-Everything else is consolidated into **at most one follow-up issue per wave**. Do not open standalone issues for speculative, latent, cleanup, or architectural observations during burn-down.
-
-**Consolidation must not destroy information.** Each finding stays a separate checklist item carrying its severity, evidence, reproduction detail, and code anchors. Batching is a filing convenience, not a summarisation step — independent findings must remain independently actionable.
-
-**Discovery budget: at most one new issue per three pre-existing issues closed.** Security and data-integrity findings may exceed it, but the report must justify each exception. Every new issue must state why it could not be fixed inside the current issue, and show the duplicate search performed.
-
-### Reporting
-
-After every three closures, report: open at wave start · pre-existing closed · new opened · net change · open at wave end · commit hashes · test and review results · any blocker or budget exception · **decided by the Architect** (one line each: the question, the decision, the issue where it is recorded) · **needs the Captain** (each with the Architect's recommendation and the exact decision required, plus any action only the Captain can perform).
-
-### Definition of done
-
-A change is done when it satisfies its acceptance criteria, works through **all affected production consumers**, passes required tests and scoped review, carries **no unresolved Critical or High defect**, is committed and pushed, and its issue closure is **verified**. Medium and Low residual risks may be recorded for scheduled quality review and do not block completion. Done means *fit for intended purpose with understood and acceptable residual risk* — not that no further improvement exists.
-
----
-
-## Delegated AD Execution Mode (Standing Order)
-
-**Activation.** This mode activates only when the Captain explicitly delegates autonomous completion of the existing open GitHub issue queue including AD, enhancement, or epic work. At activation, enumerate the complete open queue through authenticated GitHub tooling. The queue is that snapshot, issues properly created under the filing policy while executing it, and already-versioned incomplete slices in the authorities linked by those issues. Do not invent unrelated roadmap programs merely to remain active.
-
-**Overrides while active.** This mode supersedes only the Backlog Burn-Down prohibitions on selecting existing AD work, making in-scope product/architecture decisions, and executing already-versioned roadmap slices without separate Captain admission. It also satisfies issue text that asks the Captain to choose among in-envelope options. The one-issue/three-coupled-issue WIP bound, net-reduction accounting, filing budget, engineering principles, adversarial review, canonical-gate receipt, compatibility obligations, and verified closure rules remain mandatory.
-
-**Delegated authority.** For an existing open issue in the activated queue, an issue properly created under the filing policy while executing it, or an already-versioned incomplete slice in an authority linked by one of those issues, the agent may autonomously:
-
-1. order work by dependencies, risk, and ability to unlock other issues;
-2. verify the premise, ask Architect for two to four viable options when a design choice exists, rank them by correctness, safety, compatibility, architectural fit, reversibility, and validation cost, and choose the highest-ranked option;
-3. make reversible product and architecture decisions that stay inside the issue objective and existing ProbOS principles;
-4. create or revise the bounded build prompt, record the rationale in the owning issue and in `DECISIONS.md` / `PROGRESS.md` when those trackers own the decision, then run Architect -> Builder -> Diff Reviewer without an approval pause between stages;
-5. allocate an AD number only when the existing work genuinely needs one, using `scripts/ad_ceiling.py`; and
-6. implement, repair review findings, validate, commit, bank gate evidence, push, close or reclassify an issue-backed item with the correct `state_reason`, re-enumerate, and continue. For a parent-backed slice without its own issue, bank the reviewed commit, the durable canonical receipt (one batch receipt covers every slice in the batch), and the parent checklist/evidence update while leaving the parent open until its acceptance criteria are complete.
-
-A decision is inside the envelope only when it has evidence, is backward-compatible or carries a tested compatibility/migration path, preserves or strengthens security/governance/privacy/audit controls, stays within the OSS/commercial repository boundary, and has bounded rollback through Git or an explicitly tested recovery path. Choosing among implementation strategies, defaults that preserve current behavior, dependency ordering, retiring demonstrably unreachable duplication, and resolving stale or superseded issue framing are in-envelope decisions.
-
-**Route decisions through the Architect, not the Captain (Captain, 2026-10-14).** A question that comes up while executing the queue goes to the Architect first, through the bridge (`scripts/claude_architect.py --read-only`), with the evidence and the options. Examples: where a finding is filed (folded into a follow-up or filed separately under the filing policy), whether to reopen, close or reclassify an issue, a default or feature flag, whether a trial lever stays, a severity or risk classification, the order of work. The Architect decides. Record its decision and reason in the owning issue and act on it; do not wait for the Captain. Report it under "decided by the Architect", so the Captain can overrule it after the fact. Only a decision that meets a condition below goes to the Captain, and only after the Architect has confirmed that classification and given its recommendation, the reframing check and the exact decision required. An action only the Captain can perform, such as rotating a credential or changing an account, is reported as a required action, not asked as a decision.
-
-**Still requires the Captain.** Escalate only when every viable option requires one or more of:
-
-- an irreversible or destructive production-data operation;
-- weakening security, privacy, consensus, authorization, audit, or safety controls;
-- breaking a public API, persisted schema, federation protocol, or compatibility promise without a backward-compatible migration path;
-- new external spending, a paid or license-incompatible dependency, a secret/credential, or any access to or operation against a live production system;
-- moving information or implementation across the OSS/commercial boundary; or
-- accepting unresolved Critical/High risk or changing the product objective beyond the existing issue or the linked versioned slice.
-
-When one issue crosses this boundary, durably park it with the verified premise, ranked options, recommendation, exact decision required, and resumption condition, then continue every independent in-envelope item. Stop only when a fresh complete enumeration proves that every remaining item is parked behind such a boundary or is dependency-blocked by one and no independent work remains. Before parking, ask whether the blocking requirement itself can be narrowed or reframed (what it protects, and from whom, after existing controls); if it can, include that as a ranked option with its trade-off, so the park ends in a decision rather than a wait (#1239 lesson, 2026-10-11).
-
----
-
 ## Building: Engineering Principles (Standing Order)
 
 All code MUST maintain the **ProbOS Principles Stack**. These are enforced during architect review and apply to all contributors.
 
-### SOLID Principles
+The full text is `docs/development/engineering-principles.md`; the standing acceptance line "Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`" refers to it through this section. Read it by section:
 
-- **(S) Single Responsibility**: One reason to change per class. No god objects. Extract focused modules when classes exceed ~500 lines or ~15 methods.
-- **(O) Open/Closed**: Extend via public APIs, not private member patching. Never access `obj._private_attr` from outside the owning class. If you need to modify behavior, define a public method on the target.
-- **(L) Liskov Substitution**: Subtypes must honor base contracts. If `BaseAgent` defines `act()`, every subclass must implement it compatibly.
-- **(I) Interface Segregation**: Depend on narrow `typing.Protocol` interfaces, not entire classes. Consumers should only see the methods they use.
-- **(D) Dependency Inversion**: Constructor injection. Depend on abstractions (protocols), not concretions. New services should accept dependencies as parameters, not import and instantiate them internally.
-
-### Additional Engineering Principles
-
-- **Law of Demeter**: Don't reach through objects. No `a.b._c` chains. If wiring is needed, define a public API on the target.
-- **Fail Fast**: Default to log-and-degrade. Three tiers for exception handling:
-
-  | Tier | When | Pattern |
-  |------|------|---------|
-  | Swallow | Non-critical, no user impact | `except: pass` (rare, must justify) |
-  | Log-and-degrade | Visible degradation acceptable | `except: logger.warning(...); return fallback` |
-  | Propagate | Security, data integrity, safety | `except: logger.error(...); raise` |
-
-- **Defense in Depth**: Validate at every boundary. Input sanitization at API AND service layers. Never assume the caller already checked.
-- **DRY**: Search for existing implementations before writing new ones. If same logic exists in 2+ places, extract it.
-- **Cloud-Ready Storage**: New database modules must use an abstract connection interface (`typing.Protocol`), not direct `aiosqlite.connect()`. This enables the commercial overlay to swap storage backends (SQLite → Postgres) without changing business logic.
-
-### Coding Standards
-
-- Follow existing patterns. Check how similar things are already done before inventing new approaches.
-- New agents must follow the `perceive -> decide -> act -> report` lifecycle. CognitiveAgent subclasses use `instructions`-first design.
-- Destructive intents must set `requires_consensus=True` in their IntentDescriptor.
-- Store raw trust parameters `(alpha, beta)`, never derived mean scores. Derived scores lose the full Beta distribution information.
-- Restored designed agent code must pass `CodeValidator` validation before `importlib` loading. No exceptions on warm boot.
-
-### Testing Standards
-
-- **Framework**: pytest + pytest-asyncio. Prefer `_Fake*` stub classes over complex mock chains. Test files mirror source paths.
-- **Test gates**: The Builder runs focused tests for the changed slice and its immediate consumers after each milestone; do not re-run each milestone's tests yourself. Instead run **one consolidated focused check** — the Builder's tests plus the immediate consumers, with the focused command below — on each frozen candidate: before the Diff Reviewer's first round, and again before commit if a repair changed the tree. A subagent's test claim stays a hypothesis until that check passes. Run the **full repository suite once, after the issue or tightly coupled wave is frozen** — not after every slice, which spends the broad-gate budget on a tree that is still moving. Run the adversarial review once the implementation is stable and repair its findings *before* spending that budget. Run `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label <issue-or-wave>` against the staged candidate and repair every cheap deterministic failure it reports. Then commit the reviewed tree locally before the broad gate; the full wrapper deliberately refuses an index that differs from `HEAD`. Report the test count at each step.
-- **Broad-gate currency**: A source or test change made after a broad gate **invalidates that gate** — rerun it. No source commit may be pushed, and no issue closed, on stale gate evidence. Shared-contract and other high-risk changes may warrant an earlier broad gate; use one when the blast radius justifies it. None of this weakens coverage, boundary testing, final full-suite validation, or review requirements.
-- **Batched execution (Captain, 2026-08-25; slices 2026-10-14)**: Batch up to **three tightly coupled items**: slices of the same AD or parent issue, or issues where one depends on another's change, or that change the same production file or the same shared contract (defined under **Adversarial Review Before Every Commit**). Process them sequentially; each keeps its own Builder milestone, consolidated focused check, Diff Reviewer pass and local commit. **Freeze the batch, then run ONE full repository gate** on it, push it as one PR so one CI run covers the gated tree, and verify every closure (or parent-checklist update) only after that gate is green. Gate an item alone when no coupled item is next, when the next coupled item's review is not ready, or when its blast radius warrants an earlier gate (**Broad-gate currency**). Never batch unrelated items, and never hold a batch open for an item whose review is not ready: freeze what is reviewed. Triage a red batch gate to the slice that caused it, repair and re-review that slice, then re-gate the whole batch. The batch exists to stop paying ~15 minutes per item for the same tree.
-- **Run broad gates through the canonical wrapper, synchronously, with no terminal timeout**: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json`. Do not invoke `pytest tests/` directly, append a live output filter, poll a log, or reuse a log filename. Preflight-only may materialize the staged candidate; the full wrapper requires and materializes the committed `HEAD` tree in an isolated linked worktree, runs preflight first, neutralizes hidden collection selectors, and writes unique log/JUnit/manifest timing artifacts. Its caller-specified success receipt binds the committed tree to hashed manifest/JUnit evidence; the wave orchestrator must validate that receipt before advancement and again before explicitly pushing the configured branch ref. A surviving janitor removes the materialized worktree after abrupt wrapper death. A serial rerun is diagnostic only: advancement and push require a fresh canonical exit-0 receipt for the unchanged commit. The full suite takes roughly 15–19 minutes and sits at `[ 99%]` for several of them before the summary line appears — that is normal, not a hang.
-- **Mutation testing is targeted, not routine (Captain, 2026-08-25)**: use it when acceptance criteria demand it, when scoped review raises a test-validity concern ordinary regression tests cannot settle, or for Critical/High-risk behaviour. Do not run routine mutation campaigns.
-  - Run the unmutated baseline FIRST and abort if it is already red, or every mutant looks killed.
-  - Mutate **in place** with a `.mutbak` sibling and restore in `finally`. A copied tree is inert under an editable install.
-  - **Single-line anchors only** — this is a CRLF tree and multi-line anchors silently match nothing. An anchor that is not found is an INERT mutant, not a killed one; say so.
-  - Classify a timeout banner as **INVALID, never SURVIVED**: a run that never completed proves nothing.
-  - **A surviving mutant may mean the MUTANT is wrong, not the test.** Measured twice this session: a mutant that dropped a `<redacted>@` marker rather than the stripping itself, and one whose subclass was rejected by an earlier gate so the bound under test was never reached. Before concluding a test is weak, check that the mutant actually reaches the behaviour it claims to break.
-  - **One campaign per candidate.** When a build contract pins byte-exact files and carries its author's executed mutation table for them, a Builder whose base tree and file hashes match does not repeat the campaign; it reruns only the mutants whose files differ, or those a review's test-validity concern names. Measured 2026-10-05 (#1135 slice 2a): repeating it on byte-identical files cost the Builder about 50 minutes across two rounds.
-- **Run focused tests with**: `d:/ProbOS/.venv/Scripts/pytest.exe <test-files-or-node-ids> -q -n 0 -p no:randomly`
-- **Coverage rule**: All new public methods and branches must have tests. Target 100% coverage on new code — gaps require justification.
-- **Test structure**: Follow Arrange-Act-Assert. Each test should verify one behavior. Name tests descriptively: `test_{method}_{scenario}_{expected}` (e.g., `test_get_template_missing_key_returns_none`).
-- **Boundary testing**: Every public method must test at minimum: (1) happy path, (2) error/edge case, (3) empty/None input where applicable.
-- **Test isolation**: Tests must not depend on execution order. No shared mutable state between tests. Each test creates its own fixtures. If a test fails when run alone, it's broken.
-- **No test pollution**: Tests must clean up any resources they create (temp files, background tasks, DB entries). Use `tmp_path` fixture for files, `try/finally` or context managers for cleanup.
-- **API test requirement**: Every new API endpoint (`api.py`) must have at least 3 tests — happy path, error case, and input validation. Test in `tests/test_distribution.py` or `tests/test_hxi_chat_integration.py`.
-- **UI test requirement**: Every UI change (TypeScript/React) must include a Vitest component test. The HXI has broken from untested UI changes multiple times — tooltips, bloom position, chat rendering. No UI PR without tests.
-- **UI tests run with**: `cd ui && npx vitest run` (when Vitest is set up)
-
-### Type Annotation Standards
-
-- **Public API rule**: All public methods and properties must have full type annotations (parameters + return type). No exceptions.
-- **Protocol compliance**: When a class structurally implements a `typing.Protocol`, its method signatures must match exactly — annotate to prove it.
-- **Use modern Python typing**: `X | None` over `Optional[X]`, `list[str]` over `List[str]` (Python 3.10+ syntax). Use `from __future__ import annotations` in modules with complex types.
-- **Internal methods**: Type annotations recommended but not required on private (`_method`) internals.
-
-### Logging Standards
-
-- **Structured context**: Every log message must include *what* failed, *why* it matters, and *what happens next*. Bad: `logger.warning("error")`. Good: `logger.warning("Template %s not found in spawner; falling back to default", template_name)`.
-- **Log levels**:
-
-  | Level | When |
-  |-------|------|
-  | `debug` | Internal state useful during development only |
-  | `info` | System lifecycle events (startup, shutdown, agent spawned, pool created) |
-  | `warning` | Degraded operation — something failed but the system compensated |
-  | `error` | Operation failed, user impact, requires investigation |
-  | `exception` | Same as error but with traceback — use inside `except` blocks |
-
-- **No bare `print()`**: Use `logger` for all operational output. `print()` is only for CLI/shell user-facing output.
-- **No sensitive data in logs**: Never log API keys, tokens, full file contents, or user credentials.
-
-### Async Discipline
-
-- Always use `asyncio.get_running_loop()`, never `get_event_loop()`.
-- **Task references**: Always hold a reference to tasks created with `asyncio.create_task()`. Fire-and-forget tasks silently swallow exceptions and can be garbage collected. Store in a set or instance variable and remove on completion.
-- **Never use `asyncio.ensure_future()`** — use `asyncio.create_task()`. `ensure_future` is ambiguous about whether it receives a coroutine or future.
-- **Cancellation handling**: Long-running async methods should catch `asyncio.CancelledError`, perform cleanup, and re-raise. Never swallow cancellation.
-- **Async context cleanup**: Use `async with` for resources that need async teardown. If a class has `async def start()`, it must have `async def stop()` with corresponding cleanup.
-
-### Import & Module Standards
-
-- **Layer discipline**: Lower layers must not import from higher layers (Substrate cannot import from Cognitive). Cross-cutting modules (`federation/`, `knowledge/`, `runtime.py`) may import from any layer.
-- **Circular import prevention**: Use `TYPE_CHECKING` guard for type-only imports that would create cycles:
-  ```python
-  from __future__ import annotations
-  from typing import TYPE_CHECKING
-  if TYPE_CHECKING:
-      from probos.runtime import ProbOSRuntime
-  ```
-- **Import order**: stdlib → third-party → local, separated by blank lines. Tools like `isort` conventions.
-- **No wildcard imports**: Never use `from module import *`. Always import specific names.
-
-### Configuration Standards
-
-- **Pydantic models only**: New configuration must be added to the existing Pydantic models in `config.py`. Never read config from raw dicts, environment variables, or ad-hoc YAML parsing.
-- **Defaults required**: Every config field must have a sensible default so ProbOS runs out of the box with zero configuration.
-- **Validation at parse time**: Use Pydantic validators. Invalid config should fail at startup, not at runtime when the feature is first used.
+| Section | Governs |
+|---|---|
+| SOLID Principles | class responsibility, extension through public APIs, protocols, constructor injection |
+| Additional Engineering Principles | Law of Demeter, exception-handling tiers, defense in depth, DRY, cloud-ready storage |
+| Coding Standards | existing patterns, agent lifecycle, consensus on destructive intents, raw trust parameters, warm-boot validation |
+| Testing Standards | focused tests, mutation testing, coverage, structure, isolation, API and UI test requirements |
+| Type Annotation Standards | public API annotations, protocol compliance, modern typing |
+| Logging Standards | structured context, levels, no print, no sensitive data |
+| Async Discipline | running loop, task references, cancellation, async cleanup |
+| Import & Module Standards | layer discipline, circular imports, import order, wildcards |
+| Configuration Standards | Pydantic models, defaults, parse-time validation |
 
 ---
 
-## Architect: Review Checklist
+## AD and BF Numbering — Hard Rule
 
-When reviewing PROGRESS.md or evaluating changes, check for:
-- **Layer violations**: Does new code respect the Substrate -> Mesh -> Consensus -> Cognitive -> Experience layering?
-- **Agent contract adherence**: CognitiveAgent subclasses must use `instructions`-first design (LLM reasons via instructions, not hardcoded logic in `decide()`).
-- **Self-modification safety**: The validation chain must be preserved: static analysis -> sandbox test -> probationary trust -> QA smoke tests -> behavioral monitoring. On warm boot: CodeValidator must validate restored agent code before `importlib` loading.
-- **Consensus integrity**: New destructive intents must require consensus.
-- **Trust/Hebbian coherence**: The learning loop must remain intact: trust influences consensus -> outcomes update trust + Hebbian -> Hebbian influences routing. Trust must store raw `(alpha, beta)` parameters.
-- **Test coverage**: Check the test count in `PROGRESS.md` line 2. New features need tests. Flag untested code paths. New public methods must have boundary tests (happy path + error + edge case).
-- **Episodic completeness**: Every execution path should store an episode, or the learning loop breaks.
-- **Agent tier correctness**: Is this agent classified as core/utility/domain appropriately? Domain agents should not have direct access to internal system state. Utility agents operate on the system, not for the user.
-- **Governance axioms**: Evaluate against the three axioms — Safety Budget (risk-proportional consensus), Reversibility Preference (prefer reversible strategies), Minimal Authority (scoped capabilities, earned trust).
-- **Nooplex alignment**: Does this change close a gap, maintain alignment, or introduce a regression against the Nooplex paper (`Vibes/Nooplex_Final.md`)?
-- **Type annotations**: All new public methods must have full type annotations. Missing return types or untyped parameters on public APIs are a review blocker.
-- **Logging quality**: Log messages must include context (what, why, what next). Bare `logger.warning("error")` or `logger.error("failed")` are review blockers.
-- **Async hygiene**: `create_task()` calls must store the reference. `ensure_future()` usage is flagged. Cancellation must be handled in long-running loops.
-
-### Common Review Flags
-
-- **Layer violation**: "X in the experience layer is importing from cognitive internals -- use the runtime API instead."
-- **Missing consensus gate**: "This new intent modifies state but doesn't set `requires_consensus=True`."
-- **Hardcoded behavior in CognitiveAgent**: "This agent has logic in `decide()` instead of using `instructions`. Move the reasoning to the instructions string."
-- **Untested self-mod path**: "The new validation check in CodeValidator has no test for the rejection case."
-- **Trust bypass**: "This code path skips trust scoring for designed agents."
-- **Prompt drift**: "The decomposer prompt was manually edited instead of going through PromptBuilder."
-- **Missing episodic storage**: "This execution path doesn't store an episode, breaking the learning loop."
-- **Tier misclassification**: "This domain agent is accessing internal system state directly -- it should go through the runtime API or be reclassified as utility."
-- **Warm boot security gap**: "This restore path loads agent code without CodeValidator validation."
-- **Scope creep**: "This change adds [feature] which was not in the prompt. Revert and keep to the stated deliverables."
-- **Prompt text triggering gap regex**: "This response/example text contains phrases ('can't', 'don't have', 'unable to') that match `_CAPABILITY_GAP_RE`. Review all prompt example text against the gap regex before shipping."
-- **IntentBus fan-out side effects**: "This change adds HTTP calls in agent code. Remember: `IntentBus.broadcast()` fans out to ALL subscribers. 3 HttpFetchAgents × N broadcasts = 3N HTTP calls. Use `_mesh_fetch()` for designed agents — rate limiter handles the rest."
-- **Inline blob in IntentMessage.params**: "ANY new code path that puts >4 KB into `IntentMessage.params` should be flagged. Use a content-addressable ref to `AttachmentStore` (AD-731 pattern). The bus carries refs; the store carries bytes. The 2026-05-11 OOM crash (#636) and the BF-265 → BF-267 → AD-731 wave-151/152 sequence is the canonical lesson on why inline blobs in RPC messages is the wrong shape."
-- **LLM tier tuple duplication**: "New tier added to LLM client: every `(\"fast\", \"standard\", \"deep\")` tuple in the file must be replaced by the single-source-of-truth constant `_LLM_TIERS`. The fallback chain `_TIER_ORDER` is a separate concern — vision does NOT join it (standard/deep cannot see images, so falling back to them is silent failure). AD-732 (wave 153) is the canonical example: 12 tuple sites grep-replaced, only `_TIER_ORDER` retained the 3-tier shape."
-- **HXI Canvas regression**: "This UI change touches agents.tsx, animations.tsx, or CognitiveCanvas.tsx. Verify tooltips, bloom position, and raycasting still work after the change."
-- **HXI emoji violation**: "This UI code uses emoji (👍, 🔊, ✨, etc.) instead of inline SVG glyphs. Replace with stroke-based SVG icons per HXI Design Principle #3."
-- **Missing type annotations**: "This public method has no return type annotation. All public APIs must be fully typed."
-- **Bare log message**: "This log message has no context. Include what failed and what the system did about it."
-- **Fire-and-forget task**: "This `create_task()` doesn't store the task reference. Exceptions will be silently lost."
-- **Test isolation violation**: "This test relies on state from a previous test. Each test must create its own fixtures."
-- **Missing boundary test**: "This public method has a happy-path test but no error/edge case test."
-- **Circular import risk**: "This import creates a cycle between [X] and [Y]. Use `TYPE_CHECKING` guard for type-only imports."
-- **Raw config access**: "This reads configuration from a raw dict/env var instead of using the Pydantic models in config.py."
-- **Half-chain evidence**: "A test proves the producer fires and another proves the consumer works, but nothing crosses the seam. That is the signature of this repo's most common defect — every link correct, the chain dead. Require one test spanning file → approve → fulfil → resume."
-- **Test pinning the defect as contract**: "This assertion encodes the buggy behaviour as a requirement — highest risk in `?raw` source scans, which cannot tell 'required' from 'what shipped'. Update the assertion and record why inline; never delete it."
-- **Unverified absence**: "This asserts something does not exist / is not wired without showing the enumeration that proves it. Run the search and paste it."
-
-## Architect: Claude Code Prompt Drafting
-
-When asked to draft implementation prompts for Claude Code sessions:
-- Each prompt should target a single AD (Architecture Decision) or a small group of related ADs.
-- Reference specific files, line numbers, and existing patterns.
-- Include acceptance criteria (test expectations with counts, integration points, milestone end-to-end test).
-- Specify what NOT to change (avoid scope creep).
-- **Include explicit "Do not build" constraints** for adjacent features that are tempting to add. Name them specifically. Example: "Do not build federation routing in this phase. Do not refactor the intent bus."
-- Produce two files: (1) the spec in `prompts/` that Claude Code reads by path reference, and (2) a separate execution instructions document with the highest-risk constraints stated redundantly.
-- Follow the pattern: "Phase X, Step Y: [title]. Implement [specific thing] in [specific file]. It should [behavior]. Wire it from [caller]. Add tests in [test file]. Do not change [boundaries]."
-- **Every build prompt must include this line in its acceptance criteria:** "Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`."
-- **Verify all references against the live codebase before marking a prompt ready.** Never draft from memory — always grep/read the actual code. Check: (1) import paths exist, (2) constructor/function signatures match (parameter names, types), (3) interface patterns match reality (e.g. `_emit_event_fn` callable, not `event_bus.emit()`), (4) startup wiring location is correct (check which `startup/*.py` module has the analogous pattern), (5) enum vs string constants, casing. AD-566a lesson: 4 would-break-build errors from assumed patterns.
-- **Prior art and blind spots (design ADs):** before drafting, ask whether there is anything not yet considered, or prior work that should be leveraged: `docs/research/`, the Nooplex paper, related decisions, and a bounded search of open-source implementations and research papers. The Architect decides what to absorb, adapt or reject and records it in the prompt's **Prior Art and Blind Spots** section; this does not pause for the Captain. Describe other projects only as technical design references, never as competitive analysis (OSS boundary).
-- **Prompts from the Claude Architect (split workflow, see `CLAUDE.md`):** a prompt in `prompts/` whose header carries `**Drafted by:** \`claude-architect\`` (or `**Revised by:**`) and a dated "Verified Against Codebase" section came from the Claude Code Architect and is build-ready. Build it rather than redrafting it, keep its provenance line, and send Builder hard stops to `claude-architect` through `scripts/claude_architect.py` (see **Delegation and Waiting**).
-
-### AD Numbering — Hard Rule
+All changes are tracked by AD number (e.g., AD-229, AD-230).
 
 Before proposing ANY new AD, read PROGRESS.md and find the actual highest AD number. State it explicitly in your response ("Current highest: AD-NNN"). Then assign sequentially from there. **Never guess. Never assume. Never reuse.** A near-collision was caught during Phase 8 review — this is now a hard rule.
 
 **Do not take the number from `docs/development/open-ads-report.md` or `ad-ledger-snapshot.json`.** Measured 2026-08-25: the committed report was **51 ADs stale** (claiming AD-1218 while the real ceiling was AD-1268), because regenerating it is a separate step that is deliberately not run during feature work. Run `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` as the canonical ceiling check; it enumerates `git log --all --format='%s'` subjects, GitHub issue titles in **all** states, and in-flight `prompts/ad-*.md` filenames. Never reimplement GitHub issue enumeration with raw REST pagination. If the script exits nonzero, do not allocate from the partial sources: leave the number unresolved and continue only work that does not depend on numbering. State which source produced the reported ceiling — an allocated-but-unbuilt AD lives only in the last two.
 
-## Architect: Strategy
+**BF numbers.** `ad_ceiling.py` does not cover BF numbers. Enumerate the same three sources yourself — `git log --all --format='%s'` subjects, GitHub issue titles in all states, and `prompts/bf-*.md` filenames — plus the Bug Tracker in `docs/development/roadmap.md`, and paste what you ran.
 
-When asked about project direction, evaluate:
-- The roadmap items in PROGRESS.md (look for "Roadmap" or "What's Next" sections).
-- Architectural gaps relative to the Nooplex paper (`Vibes/Nooplex_Final.md`).
-- The three governance axioms (Safety Budget, Reversibility Preference, Minimal Authority) -- does the proposed work respect or advance these?
-- Competitive positioning vs projects like OpenClaw, AutoGPT, CrewAI.
-- Open-source readiness (what needs cleanup before public release).
+Each AD should be a single, testable change.
 
 ## Repository Boundary — OSS vs Commercial
 
@@ -357,234 +111,14 @@ Architect-drafted prompts and roadmap edits must be audited for this leak class 
 
 ---
 
-## ProbOS Architecture Reference
+## Where Each Rule Lives
 
-### Layer Architecture
-
-```
-Experience Layer (shell.py, renderer.py, panels.py)
-    |
-Cognitive Layer (decomposer.py, llm_client.py, episodic.py, attention.py,
-                 dreaming.py, agent_designer.py, self_mod.py, feedback.py,
-                 correction_detector.py, agent_patcher.py, ...)
-    |
-Consensus Layer (quorum.py, trust.py, escalation.py, shapley.py)
-    |
-Mesh Layer (intent.py, routing.py, capability.py, gossip.py, signal.py)
-    |
-Substrate Layer (agent.py, registry.py, spawner.py, pool.py, scaler.py,
-                 heartbeat.py, event_log.py, identity.py, skill_agent.py)
-```
-
-Cross-cutting: `federation/` (bridge, router, transport), `knowledge/` (Git-backed store), `runtime.py` (orchestrator).
-
-### Design Principles
-
-1. **Agent-native OS, hybrid coordination (AD-1231)**: Every component is an autonomous agent, and coordination is **hybrid by design** — not because a central scheduler crept in, but because neither pure model is right for every kind of work.
-
-    **Agents choose what to work on** wherever the work is cognitive, discretionary, or discoverable: intent routing, capability matching, Hebbian-learned pairings, proactive attention, self-claiming from the work board. There is **no central dispatcher deciding which agent thinks about what**, and adding one would be a regression. This is the half the Nooplex thesis rests on, and the half that must never quietly erode.
-
-    **A deterministic service owns durable workflow time** where the requirement is a guarantee rather than a judgement: admission and concurrency bounds, compare-and-set state transitions, crash recovery, exactly-once delivery, cancellation and drain. `CrewOrchestrator` is the reference case. These are properties an emergent negotiation cannot promise, and pretending otherwise costs correctness for no gain in autonomy.
-
-    **The boundary test — who is deciding *what*, not who is deciding.** A service may decide *when a durable step runs, in what order, and whether it may run twice*. An agent decides *what the work is, whether to take it, and how to do it*. A service that starts choosing which agent is best suited, or ranking work by relevance, has crossed the line and belongs back in the mesh. An agent that starts owning CAS or exactly-once delivery has crossed it in the other direction and belongs behind a service.
-
-    **The bottleneck is the thing being avoided, not the scheduler.** The objection to conventional multi-agent orchestrators is that one planner becomes the single point of thought — every decision queues behind it, and the system's ceiling is that planner's context window. A service that sequences durable state while N agents reason concurrently is not that. Review the *scope* of what a central component decides, not merely its existence.
-
-    Review flag: *"this service decides which agent, or how good the work is"* (pull it back to the mesh) and *"this agent owns a durable transition"* (push it behind a service).
-2. **Probabilistic consensus**: Destructive ops require multi-agent quorum voting with confidence weighting and Shapley attribution.
-3. **Bayesian trust**: Beta(alpha, beta) reputation per agent. Built-in: Beta(2,2)=0.50. Self-designed: Beta(1,3)=0.25 (probationary). Always store raw (alpha, beta), never derived means.
-4. **Hebbian routing**: "Neurons that fire together wire together." Successful intent-agent pairings strengthen, failures weaken.
-5. **Self-modification**: Capability gaps trigger LLM-based agent/skill design -> static analysis -> sandbox -> probationary trust -> QA -> behavioral monitoring.
-6. **Instructions-first CognitiveAgent**: Self-designed agents are CognitiveAgent subclasses whose behavior is defined by an `instructions` string (system prompt for the LLM), not procedural code. The LLM does the reasoning at runtime.
-7. **Dynamic intent discovery**: Agents declare `IntentDescriptor` metadata. The decomposer's system prompt is built at runtime from whatever agents are registered. New agents self-integrate.
-8. **Episodic learning**: ChromaDB semantic memory. Every interaction stored, similar past recalled, dreaming consolidates during idle.
-9. **Correction feedback loop**: Human corrections are the richest learning signal. CorrectionDetector -> AgentPatcher -> hot-reload -> auto-retry -> trust/Hebbian/episodic update.
-10. **Mesh-fetch for HTTP**: Designed agents must route HTTP through `self._runtime.intent_bus.broadcast(IntentMessage(intent="http_fetch"))` — not raw httpx. This preserves governance (consensus, trust, event logging) and benefits from the per-domain rate limiter in HttpFetchAgent. The AgentDesigner template enforces this pattern.
-11. **Per-domain rate limiting**: HttpFetchAgent has a class-level `_domain_state` dict with per-domain request intervals (default 2s, CoinGecko 3s). Adaptive: reads `Retry-After` and `X-RateLimit-*` headers. Auto-retries once on 429. All mesh HTTP goes through this.
-12. **Composable cognition (agents are organisms)**: Principle #1 applied *fractally, inward*. A cognitive agent is an **organism** — a **spine** plus a set of **cognitive organs** (attention, memory, valuation, perception, dreaming, …). The **spine** is the agent's central nervous system (synchronous, in-process, private: organ composition + the cognitive cycle + intra-organ signaling); the **mesh** is the ship's nervous system across agents (asynchronous, governed) — same pattern, scale-appropriate properties. **Organs are child components**: born with the parent, die with the parent, identity namespaced under it (`{parent_id}.attention`) — **not** mesh-registered agents (organs are components; agents are mesh peers; do not build an `AttentionAgent`). A capability is an organ only if it passes the five-part test (distinct cognitive function · persistent cross-cycle state · `perceive→decide→act` shape · 1:1 ownership · introspectable); compose **organs, not neurons** — do not metastasize. **Migration MUST be behavior-preserving** (default-OFF / zero-organ byte-identical first) — moving to this model must never disrupt or break existing cognitive agents. See `docs/development/composable-cognition.md`.
-13. **Secure but not limited (governance buys autonomy)**: A ProbOS agent must reach the same productive ceiling as a foreground coding agent, while running unattended. Governance is not the tax paid for capability — it is what *purchases* the autonomy that makes the capability worth having. A foreground assistant pays for its freedom with the human's continuous attention; a persistent agent pays with SSRF checks, rate limits, consensus and audit, and in exchange may act at 02:00 with nobody watching. Three hard rules follow.
-
-    **(a) A capability ceiling must be a decision, never an inheritance.** Every constraint states what it defends and what it costs. A cap nobody chose is a defect, not a safeguard. Measured 2026-08-07: an agent asked for live PyPI versions fetched all fifteen successfully and then answered from training data, because `MAX_BODY_BYTES` (1 MB), `tool_result_max_chars` (6000), a stdlib-only auto-approve allowlist, and an AD-1066 dependency extra that was declared but never installed all silently narrowed it. **Not one of those was a security decision.** They were defaults that calcified, and together they cost the Captain a correct answer while defending nothing.
-
-    **(b) Prefer a governed path over a removed one.** When an agent cannot do something a coding agent can, the fix is to route the capability through the mesh's controls — not to delete the control, and not to leave the agent short. Widening `allow_network` on the AD-993 sandbox would be literal parity and would silently discard SSRF, per-domain rate limiting and audit in one line; brokering the same fetch through `HttpFetchAgent` reaches parity while leaving the agent **more** governed than the coding agent it is matching. Review flag: *"this constraint has no stated rationale"* and *"this fix buys capability by removing a control."*
-
-    **(c) Authority routes capability; it does not ration it.** The chain of command decides **who authorises** an action and **who is accountable** for it — never **whether the capability exists**. An agent whose rank or department cannot authorise something escalates it to one that can; it does not answer "you may not." A refusal that ends the work is a capability ceiling wearing a governance costume, and it is the failure this principle exists to prevent: the ship looks governed while the Captain simply does not get the thing they asked for. Captain's standing directive, 2026-08-15: *"crew agents should be able to do everything a foreground coding agent can, as persistent autonomous agents. Of course they need governed, and the chain of command should be followed. It should not block capability."* Review flag: *"this returns a refusal where it should return an escalation."*
-
-### HXI Design Principles
-
-The HXI (Human Experience Interface) is not a dashboard or a chat app. It is the sensory surface through which a human participates in the cognitive mesh. Every visual element must follow these principles:
-
-1. **The system understands the human, not the reverse.** Never require the user to learn terminology, memorize commands, or decode symbols. Every affordance communicates its purpose through form. If someone has to ask "what does this button do?" — the design failed.
-2. **Organic but digitally authentic.** The aesthetic is bioluminescent — living light rendered through a digital lens. Not skeuomorphic nature, not sterile minimalism. Icons are geometric SVG glyphs (stroke-based, no fills), not emoji or Material Design. The color palette is amber/blue/violet trust spectrum.
-3. **No emoji in the UI.** All icons are inline SVG with `strokeWidth: 1.5`, `strokeLinecap: round`. Active state: amber (`#f0b060`). Inactive: dim (`#666680`). Glow on hover via `drop-shadow`. Emoji break the immersion — they belong to messaging apps, not an alien intelligence interface.
-4. **Motion communicates state.** Pulsing = alive/processing. Breathing = healthy/idle. Flash = event occurred. Fade = dissolving/removing. Static = disconnected/dead. Motion is never decorative — it always encodes information.
-5. **Progressive disclosure driven by engagement.** Show less by default. Expand when the human engages. First-time users see calm, structured, high-contrast views. Experienced users see denser, more ambient displays. The interface recedes as fluency grows.
-6. **The canvas IS the information.** Veteran users don't need `/agents` or `/trust` commands — luminance = confidence, color temperature = trust, pulse rate = activity, spatial density = population health. The visual language is self-documenting.
-7. **Delight through competence, not decoration.** The "wow" comes from the system doing something impressive (designing an agent live), not from gratuitous animation. Every visual flourish must earn its place by communicating real system state.
-8. **Generative, not designed.** Fixed UI elements are bootstrap — the minimum viable visual language before the system knows the human. As the mesh evolves, the UI should be increasingly generated: agent icons created by the agents themselves, layout driven by Hebbian topology, density adapted to cognitive style, labels generated contextually by LLMs. Nothing is pre-designed that could be emergent. The HXI is not a skin applied on top — it is a visual projection of the mesh's internal state.
-9. **Alert-driven layout reconfiguration (LCARS pattern).** When the system needs human attention — approve a build, review a proposal, respond to a question — the HXI surfaces the decision, not the other way around. The Captain should never have to dig through the UI to find pending work. Pending decisions rise to the top. Resolved items recede. The layout reshapes around what matters *right now*, like LCARS bridge stations reconfiguring during Red Alert. Department-colored context (Science=teal, Engineering=orange, Medical=green, Security=red) tells the Captain which domain needs attention before they read a word.
-10. **The Ship's Computer is the voice.** The runtime's conversational identity is the Ship's Computer — LCARS-era, TNG/Voyager. Calm, precise, authoritative, never fabricates. It reports from sensors (CodebaseIndex, registered agents, runtime state), not from imagination. "Unable to comply" over hallucination. "Specify parameters" over guessing. The Computer and the HXI are two projections of the same system — one verbal, one visual.
-11. **Agentic-first, apps are workstations.** The Captain commands, agents execute. The default interaction is agentic — "write a summary" not "open a text editor." When traditional applications must surface (document editing, spreadsheets, browsers), they appear as embedded *workstations* within the HXI, not as external windows the human switches to. Agents can observe and assist within workstations. But workstations are transitional — the UX should make the agentic path the path of least resistance, nudging the Captain toward delegation over manual work. Never optimize the workstation experience so much that it discourages the agentic one. Three tiers: **Agentic** (agent handles it end-to-end), **Workstation** (app embedded in HXI, agents assist), **Airlock** (external app, ProbOS contextually aware). Move interactions up the tiers over time.
-
-### Agent Classification Framework
-
-Three architectural tiers mapping to the Nooplex's layered architecture:
-
-- **Core** (Infrastructure) — deterministic tool agents: file I/O, shell, HTTP, heartbeat. Domain-agnostic. Never removed, always available.
-- **Utility** (Meta-Cognitive) — system maintenance: introspection, QA, red team. Operate on the system, not for the user. Access to internal state.
-- **Domain** (Cognitive) — user-facing work. Where CognitiveAgents live. Designed agents land here by default. Each domain develops its own Hebbian topology.
-
-**Orthogonal layer — Cognitive Organs (intra-agent composition, AD-1033+).** The three tiers classify an agent's *mesh role*. Beneath that, a cognitive agent is *composed of* **cognitive organs** — child components on the agent's **spine**, born/die with the parent (Design Principle #12). Organs are **not** a mesh tier and **not** registered agents; they are components, with identity namespaced under the parent. The Core/Utility/Domain tiers classify the agent; organs classify its internal composition. See `docs/development/composable-cognition.md`.
-
-### The Nooplex Connection
-
-ProbOS implements one **Cognitive Mesh** from the Nooplex architecture (see `Vibes/Nooplex_Final.md`). The Nooplex thesis: general intelligence emerges from cooperative, governed ecosystems of agents, not from scaling individual models.
-
-Key mappings:
-- `NodeSelfModel` = Nooplex Psi (peer self-assessment via gossip)
-- Federation layer = multi-mesh interconnection
-- Consensus + Trust = governance substrate
-- Episodic memory + Dreaming = shared cognitive fabric
-- Self-modification = capability evolution without central planning
-
-### Request Processing Flow
-
-```
-User NL input
-  -> Working memory assembly (token-budgeted context)
-  -> Episodic recall (top-3 semantic matches from ChromaDB)
-  -> Correction detection (is this a correction of last execution?) [before decompose]
-  -> Workflow cache check (exact, then fuzzy match)
-  -> LLM decomposition (NL -> TaskDAG of typed intents)
-  -> Capability gap? -> Self-modification pipeline
-  -> Attention scoring (urgency x relevance x deadline x dependency)
-  -> DAG execution (parallel where possible, respecting dependencies)
-  -> Consensus gating (quorum vote + red team for destructive ops)
-  -> Escalation cascade (retry -> LLM arbitration -> user) on failure
-  -> Reflection (optional LLM synthesis of results)
-  -> Learning updates (Hebbian + Trust + Episodic + Workflow cache)
-  -> Dreaming (offline consolidation during idle)
-```
-
-### Agent Inventory
-
-The built-in agent pool topology is defined in `src/probos/runtime.py` (search for `_create_pools` or pool creation calls). Self-designed agents are added dynamically. For the current inventory, read runtime.py directly rather than relying on a static list.
-
-Core pools (stable):
-
-| Pool | Type | Consensus | Tier | Notes |
-|------|------|-----------|------|-------|
-| system | SystemHeartbeatAgent | No | Core | CPU, load, PID |
-| filesystem | FileReaderAgent | No | Core | read_file, stat_file |
-| filesystem_writers | FileWriterAgent | Yes | Core | write_file |
-| directory | DirectoryListAgent | No | Core | list_directory |
-| search | FileSearchAgent | No | Core | search_files |
-| shell | ShellCommandAgent | Yes | Core | run_command |
-| http | HttpFetchAgent | Yes | Core | http_fetch |
-| introspect | IntrospectionAgent | No | Utility | explain_last, agent_info, system_health, why |
-| skills | SkillBasedAgent | varies | Domain | Only when self_mod.enabled |
-| system_qa | SystemQAAgent | N/A | Utility | Only when self_mod + qa enabled |
-| red_team | RedTeamAgent | N/A | Utility | Independent verification |
-
-### Key Files (structural -- see PROGRESS.md for complete current list)
-
-| File | Role |
-|------|------|
-| `src/probos/runtime.py` | Top-level orchestrator. Boots pools, wires layers, processes NL. |
-| `src/probos/types.py` | Core dataclasses (IntentMessage, IntentResult, TaskDAG, etc.) |
-| `src/probos/config.py` | Pydantic config models. Loaded from YAML. |
-| `src/probos/substrate/agent.py` | BaseAgent ABC. The agent contract. |
-| `src/probos/cognitive/cognitive_agent.py` | CognitiveAgent. Instructions-driven LLM agent. |
-| `src/probos/cognitive/decomposer.py` | NL -> TaskDAG. Also contains DAGExecutor. |
-| `src/probos/cognitive/self_mod.py` | Self-modification pipeline orchestrator. |
-| `src/probos/cognitive/feedback.py` | Human feedback -> trust/Hebbian/episodic updates. |
-| `src/probos/cognitive/correction_detector.py` | Distinguishes corrections from new requests. |
-| `src/probos/cognitive/agent_patcher.py` | Hot-patches designed agent code. |
-| `src/probos/cognitive/architect.py` | ArchitectAgent. Deep-localize + LLM proposal generation. |
-| `src/probos/cognitive/builder.py` | BuilderAgent. Executes BuildSpecs, writes/tests code. |
-| `src/probos/cognitive/codebase_index.py` | CodebaseIndex. AST-based structural self-awareness. |
-| `src/probos/cognitive/llm_client.py` | Tiered LLM client (deep/fast/standard via Copilot proxy). |
-| `src/probos/consensus/trust.py` | Bayesian Beta trust network. |
-| `src/probos/consensus/quorum.py` | Confidence-weighted quorum voting. |
-| `src/probos/consensus/shapley.py` | Shapley value attribution for voters. |
-| `src/probos/mesh/routing.py` | Hebbian connection weights. |
-| `src/probos/mesh/intent.py` | Pub/sub intent bus. |
-| `src/probos/experience/shell.py` | Interactive REPL with slash commands. |
-| `src/probos/experience/panels.py` | Rich-rendered output panels for shell commands. |
-| `src/probos/knowledge/store.py` | Git-backed artifact persistence. |
-| `PROGRESS.md` | Comprehensive status tracker. Source of truth. |
-| `Vibes/Nooplex_Final.md` | The Nooplex paper (theoretical foundation). |
-| `config/system.yaml` | System configuration. |
-| `docs/development/roadmap.md` | Full roadmap with crew structure and phase details. |
-
-### Northstar: Automated Build Pipeline (AD-311+)
-
-The Architect and Builder agents form an automated design-and-build pipeline:
-
-```
-Captain types /design → Architect perceives (7 layers) → LLM generates proposal
-  → Captain reviews & approves → Builder executes BuildSpec → git branch/commit
-  → Captain reviews & merges
-```
-
-**Architect Agent** (`cognitive/architect.py`):
-- `perceive()` assembles 7 context layers: file tree, LLM-selected source files (2000-line budget, 300/file cap), test/caller/API discovery, slash commands, API routes, agent map, docs
-- Layer 2a: fast-tier LLM selects 8 most relevant files from 20 keyword candidates
-- Layer 2a+: import graph expansion adds collaborating modules (up to 12 files total)
-- Contextual file hints: slash command requests guarantee `shell.py`/`panels.py`; API requests guarantee `api.py`
-- Selective API surface: only includes method signatures for classes found in selected files
-- `instructions` string has 6 verification rules including "never reference an unverified method"
-- Enhancement proposals: when a feature partially exists, Architect must produce a FULL proposal (not punt)
-- Uses deep tier (Opus) through Copilot proxy at `127.0.0.1:8080`
-
-**Builder Agent** (`cognitive/builder.py`):
-- Accepts `BuildSpec` (title, description, target_files, reference_files, test_files)
-- CREATE mode: `===FILE: path===` blocks for new files
-- MODIFY mode (AD-313): `===SEARCH===`/`===REPLACE===`/`===END REPLACE===` pairs within `===MODIFY: path===` blocks. Replacements applied sequentially, first occurrence only
-- `perceive()` reads both reference_files and target_files (so LLM sees current content for accurate SEARCH blocks)
-- `ast.parse()` validation after writes/modifies
-- Test-fix loop (AD-314): runs pytest after writes, feeds failures back to LLM for up to 2 fix attempts. `_run_tests()` helper, `_build_fix_prompt()` for fix context. `max_fix_attempts` parameter on `execute_approved_build()`
-
-**CodebaseIndex** (`cognitive/codebase_index.py`):
-- AST-based, no LLM calls, built at startup
-- `_import_graph` / `_reverse_import_graph`: forward and reverse import relationships
-- `get_imports(path)` / `find_importers(path)`: query import relationships
-- `find_callers(method)` / `find_tests_for(path)` / `get_full_api_surface()`: structural queries
-- `query(concept)`: word-level keyword scoring across files and docs
-- `read_doc_sections(doc_path, keywords, max_lines)`: targeted doc reading
-
-**Ship's Computer / Decomposer Grounding** (AD-317):
-- `PROMPT_PREAMBLE` in `prompt_builder.py` carries LCARS-era Ship's Computer identity with 6 grounding rules
-- Dynamic `System Configuration` section counts registered intents by tier (core/utility/domain)
-- `decompose()` accepts `runtime_summary` parameter — injected as `SYSTEM CONTEXT` in the user prompt
-- `runtime.py._build_runtime_summary()` provides pool count, agent count, departments, intent count (synchronous, in-memory only)
-- Example responses grounded — no longer claim unregistered capabilities
-- Legacy prompt path (`_LEGACY_SYSTEM_PROMPT`) unchanged
-- Self-knowledge progression: AD-317 (rules) → AD-318 (SystemSelfModel) → AD-319 (pre-response verification) → AD-320 (introspection delegation)
-
-**LLM Tiers** (configured in `config/system.yaml`):
-- `deep`: Claude Opus via Copilot proxy, 300s timeout. Used by Architect.
-- `fast`: Claude Sonnet via Copilot proxy, 30s timeout. Used for file selection.
-- `standard`: Claude Sonnet, 30s timeout. General use + fallback.
-- All tiers route through `127.0.0.1:8080` (Copilot proxy extension, `REQUEST_TIMEOUT_MS` = 300s hardcoded)
-- Fallback chain: deep → fast → standard (deduped)
-
-**Context Budget Constraints** (critical for avoiding timeouts):
-- Source budget: 2000 lines total across all selected files
-- Per-file cap: 300 lines (truncated with note)
-- Import expansion: up to 12 files total (8 LLM-selected + 4 import-traced)
-- Docs: roadmap 100 lines, progress 50 lines, decisions 40 lines
-- Test file headers: 5 lines each (imports + class name only)
-- Agent map: compact format (type + tier, no module paths)
-- Total context target: ~60K-100K chars (~15K-25K tokens)
-- If context grows beyond this, Opus will timeout through the Copilot proxy
-
-### AD (Architecture Decision) Numbering — Hard Rule
-
-All changes are tracked by AD number (e.g., AD-229, AD-230). Before proposing ANY new AD:
-1. Read PROGRESS.md
-2. Find the actual highest AD number — by enumerating `git log` subjects, GitHub issues in **all** states, and `prompts/ad-*.md`, NOT from `open-ads-report.md` (measured 51 ADs stale on 2026-08-25)
-3. State it explicitly ("Current highest: AD-NNN") and say which source gave it
-4. Assign the next sequential number
-
-**Never guess. Never assume. Never reuse.** Each AD should be a single, testable change.
+| Material | File |
+|---|---|
+| Orchestration: delegation, waiting, Backlog Burn-Down, Delegated AD Execution (including routing decisions through the Architect), gate, batch, push, closure, reporting | `.github/agents/orchestrator.agent.md` |
+| Engineering Principles, full text | `docs/development/engineering-principles.md` |
+| Architect review checklist, Common Review Flags, prompt drafting, strategy | `docs/development/architect-standards.md` |
+| ProbOS Architecture Reference | `docs/development/architecture-reference.md` |
+| Copilot Diff Reviewer | `.github/agents/diff-reviewer.agent.md` |
+| Claude Code roles and the split workflow | `CLAUDE.md`, `.claude/agents/claude-*.md` |
+| Copilot Builder and Architect | local `.claude/agents/builder.md`, `architect.md` (untracked) |

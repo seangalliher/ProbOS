@@ -52,7 +52,7 @@ dashboard.
   qualified issue candidates, working capabilities, and untested boundaries.
 - [Original Glass Bridge design](../design/hxi-glass-bridge.md): the mesh stays;
   current work is foregrounded; decisions rise; input and return paths stay usable.
-- [Repository principles](../../.github/copilot-instructions.md): agent-native
+- [Repository principles](architecture-reference.md): agent-native
   hybrid coordination, governance, HXI, tests, and release obligations.
 - [Roadmap](roadmap.md): existing programs and work ownership.
 - [Nooplex readiness](nooplex-readiness.md): evidence tiers are not advanced by
