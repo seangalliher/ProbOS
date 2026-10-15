@@ -31,7 +31,8 @@ branch (``extra = trusted_command_env() if flag else {}`` then ``env.update(extr
 reads as an addition; and a mapping from elsewhere merged into a sanctioned base, which counts
 as an addition (``{**build_command_env(), **request.env}`` stays allowlist). A name that may be
 the allowlist owner or anything else (``f = build_command_env`` in a try, ``f = os.environ.copy``
-in its except) is not an allowlist owner: it is INDIRECT and must be listed.
+in its except) is not an allowlist owner: it is INDIRECT (TRUSTED when a trusted-owner candidate
+widens it) and must be listed.
 """
 
 from __future__ import annotations
