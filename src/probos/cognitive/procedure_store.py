@@ -14,8 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import threading
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,26 @@ if TYPE_CHECKING:
     from probos.protocols import ConnectionFactory, DatabaseConnection
 
 logger = logging.getLogger(__name__)
+
+
+async def _roll_back_index_write(db: "DatabaseConnection") -> None:
+    """BF-891: ``ROLLBACK`` an abandoned index write; a failure other than "nothing to undo" is logged at ERROR.
+
+    SQLite refuses a ``ROLLBACK`` when no transaction is open ("cannot rollback - no transaction
+    is active"): the block issued no statement, or a cancelled ``commit`` still completed on the
+    worker thread. Either way nothing is pending, so that refusal is not logged.
+    """
+    try:
+        await db.execute("ROLLBACK")
+    except Exception as exc:
+        if "no transaction is active" in str(exc):
+            return
+        # Propagate (the caller re-raises its original error); this log is the only trace of the open transaction.
+        logger.error(
+            "BF-891: an abandoned procedure index write could not be rolled back; its statements "
+            "remain pending on the store's connection and the next write's commit would make them durable",
+            exc_info=True,
+        )
 
 
 # ------------------------------------------------------------------
@@ -133,7 +154,9 @@ class ProcedureStore:
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
             self._connection_factory = default_factory
-        self._write_lock = threading.Lock()
+        # BF-891: loop-owned. The threading.Lock this replaced was held across the awaits of every index
+        # write, so a second writer blocked the event-loop thread (#1542). Binds to the loop on first contention.
+        self._write_lock = asyncio.Lock()
         self._chroma_collection: Any = None
         self._chroma_client: Any = None
         # AD-1326 (D1b): the ledger's connection is held here, one attribute level deep, so
@@ -141,6 +164,41 @@ class ProcedureStore:
         # this store's stop() fails during a startup rollback.
         self._challenges_db: DatabaseConnection | None = None
         self._challenges: ProcedureChallengeLedger | None = None  # AD-1326
+
+    @asynccontextmanager
+    async def _index_write(self) -> AsyncIterator[None]:
+        """BF-891: one SQLite index write, serialised by the loop-owned ``_write_lock``.
+
+        A writer that finds the lock held suspends instead of blocking the event-loop thread.
+        Waiters wake in FIFO order. The lock is not re-entrant: no block may call another writer.
+        Every caller has checked ``self._db`` before entering.
+
+        An exception or cancellation that leaves the block is rolled back before it propagates; a
+        ``ROLLBACK`` that itself fails is logged at ERROR and the statements stay pending, as before
+        this change (see ``_roll_back_index_write``).
+        This store's writes share one connection and run in SQLite's implicit transaction, so a
+        block abandoned after its first statement would otherwise be committed by the next
+        writer's ``commit`` (a half-written row). aiosqlite runs one connection's calls in order
+        on one worker thread, so a cancelled statement may still run; the ``ROLLBACK`` is queued
+        behind it, and the lock is held, through further cancellations, until it has run (the
+        AD-1326 ledger's R4-1 rule in ``procedure_challenges._write_transaction``). A second
+        cancellation during the rollback of another error is re-raised, not swallowed.
+        """
+        async with self._write_lock:
+            db = self._db
+            try:
+                yield
+            except BaseException as exc:
+                cleanup = asyncio.create_task(_roll_back_index_write(db))
+                cancelled_again = False
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        cancelled_again = True
+                if cancelled_again and not isinstance(exc, asyncio.CancelledError):
+                    raise asyncio.CancelledError() from exc
+                raise
 
     async def start(self) -> None:
         """Initialize SQLite index and ChromaDB collection."""
@@ -598,7 +656,7 @@ class ProcedureStore:
         if not self._db:
             return
         content_snapshot = json.dumps(procedure.to_dict(), default=str)
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 """INSERT OR REPLACE INTO procedure_records
                 (id, name, description, origin_cluster_id, evolution_type,
@@ -844,7 +902,7 @@ class ProcedureStore:
         )
         if not await cursor.fetchone():
             return False
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "DELETE FROM procedure_lineage_parents WHERE procedure_id = ? OR parent_procedure_id = ?",
                 (procedure_id, procedure_id),
@@ -996,7 +1054,7 @@ class ProcedureStore:
         await self._increment_counter(procedure_id, "total_selections")
         # AD-538: Update last_used_at — this resets the decay clock
         if self._db:
-            with self._write_lock:
+            async with self._index_write():
                 await self._db.execute(
                     "UPDATE procedure_records SET last_used_at = ? WHERE id = ?",
                     (time.time(), procedure_id),
@@ -1019,7 +1077,7 @@ class ProcedureStore:
         """AD-535: Increment consecutive_successes counter. Return new count."""
         if not self._db:
             return 0
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET consecutive_successes = consecutive_successes + 1, "
                 "updated_at = ? WHERE id = ?",
@@ -1037,7 +1095,7 @@ class ProcedureStore:
         """AD-535: Reset consecutive_successes to 0 (on any failure)."""
         if not self._db:
             return
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET consecutive_successes = 0, updated_at = ? WHERE id = ?",
                 (time.time(), procedure_id),
@@ -1048,7 +1106,7 @@ class ProcedureStore:
         """AD-535: Promote procedure to a higher compilation level. Reset consecutive_successes."""
         if not self._db:
             return
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
                 "updated_at = ? WHERE id = ?",
@@ -1063,7 +1121,7 @@ class ProcedureStore:
         """AD-535: Demote procedure to a lower compilation level. Reset consecutive_successes."""
         if not self._db:
             return
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
                 "updated_at = ? WHERE id = ?",
@@ -1126,7 +1184,7 @@ class ProcedureStore:
         allowed = {"total_selections", "total_applied", "total_completions", "total_fallbacks"}
         if column not in allowed:
             raise ValueError(f"Invalid counter column: {column}")
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 f"UPDATE procedure_records SET {column} = {column} + 1, updated_at = ? WHERE id = ?",
                 (time.time(), procedure_id),
@@ -1204,7 +1262,7 @@ class ProcedureStore:
         """Mark a procedure as inactive. Used when a FIX replacement is created."""
         if not self._db:
             return
-        with self._write_lock:
+        async with self._index_write():
             # Update index columns
             await self._db.execute(
                 "UPDATE procedure_records SET is_active = 0, superseded_by = ?, updated_at = ? WHERE id = ?",
@@ -1322,7 +1380,7 @@ class ProcedureStore:
 
         # All checks passed — mark as pending
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET promotion_status = 'pending', "
                 "promotion_requested_at = ?, updated_at = ? WHERE id = ?",
@@ -1361,7 +1419,7 @@ class ProcedureStore:
         if not self._db:
             return
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET promotion_status = 'approved', "
                 "promotion_decided_at = ?, promotion_decided_by = ?, "
@@ -1378,7 +1436,7 @@ class ProcedureStore:
         if not self._db:
             return
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET promotion_status = 'rejected', "
                 "promotion_decided_at = ?, promotion_decided_by = ?, "
@@ -1562,7 +1620,7 @@ class ProcedureStore:
             proc_id, name, old_level, snapshot_json = row[0], row[1], row[2], row[3]
             new_level = old_level - 1
 
-            with self._write_lock:
+            async with self._index_write():
                 await self._db.execute(
                     "UPDATE procedure_records SET compilation_level = ?, "
                     "consecutive_successes = 0, updated_at = ? WHERE id = ?",
@@ -1636,7 +1694,7 @@ class ProcedureStore:
             proc_id, name, last_used = row[0], row[1], row[2]
             days_unused = int((now - last_used) / 86400)
 
-            with self._write_lock:
+            async with self._index_write():
                 await self._db.execute(
                     "UPDATE procedure_records SET is_active = 0, is_archived = 1, "
                     "updated_at = ? WHERE id = ?",
@@ -1713,7 +1771,7 @@ class ProcedureStore:
             return False  # Not found or not archived
 
         now = time.time()
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET is_active = 1, is_archived = 0, "
                 "compilation_level = 1, last_used_at = ?, consecutive_successes = 0, "
@@ -1917,7 +1975,7 @@ class ProcedureStore:
         d_metrics = await self.get_quality_metrics(duplicate_id) or {}
 
         # Transfer stats
-        with self._write_lock:
+        async with self._index_write():
             await self._db.execute(
                 """UPDATE procedure_records SET
                     total_selections = total_selections + ?,
@@ -1956,7 +2014,7 @@ class ProcedureStore:
                 data = json.loads(row[0]) if row[0] else {}
                 data["tags"] = merged_tags
                 data["intent_types"] = merged_intents
-                with self._write_lock:
+                async with self._index_write():
                     await self._db.execute(
                         "UPDATE procedure_records SET content_snapshot = ?, "
                         "tags = ?, intent_types = ? WHERE id = ?",

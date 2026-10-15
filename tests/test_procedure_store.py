@@ -1290,8 +1290,10 @@ class TestThreadSafety:
 
     @pytest.mark.asyncio
     async def test_write_lock_exists(self, store):
-        """Store has a threading.Lock for write serialization."""
-        assert hasattr(store, '_write_lock')
-        # Verify it's a lock by checking it has acquire/release
-        assert hasattr(store._write_lock, 'acquire')
-        assert hasattr(store._write_lock, 'release')
+        """Store serialises writes with a loop-owned asyncio.Lock.
+
+        BF-891: was a threading.Lock, which blocked the event loop when two writes overlapped
+        (#1542); the old acquire/release check passed for either type, so it pinned nothing.
+        """
+        assert isinstance(store._write_lock, asyncio.Lock)
+        assert not store._write_lock.locked()
