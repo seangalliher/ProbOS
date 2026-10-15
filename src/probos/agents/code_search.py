@@ -165,8 +165,11 @@ class CodeSearchAgent(BaseAgent):
     async def _search_rg(self, rg: str, plan: dict, root: Path) -> dict | None:
         """Run ``rg`` via subprocess (no shell -> no injection). Returns a result
         dict, or ``None`` to signal the caller to fall back to Python."""
-        args = [rg, "--line-number", "--no-heading", "--color", "never",
-                "--max-count", str(plan["max_results"])]
+        # BF-895 (#1548): --with-filename keeps the path on every line (rg omits it
+        # when the root is a single file); --null ends the path with NUL, which no
+        # path can hold, so a path that contains ``:<digits>:`` is never mis-split.
+        args = [rg, "--line-number", "--with-filename", "--null", "--no-heading",
+                "--color", "never", "--max-count", str(plan["max_results"])]
         if plan["case_insensitive"]:
             args.append("--ignore-case")
         if plan["include_ignored"]:
@@ -191,12 +194,25 @@ class CodeSearchAgent(BaseAgent):
         if proc.returncode not in (0, 1):
             return None
         matches: list[dict] = []
-        for line in stdout.decode("utf-8", errors="replace").splitlines():
-            parsed = _parse_rg_line(line)
+        # BF-895 (#1548): frame on LF only. str.splitlines() also splits at U+2028, U+2029,
+        # U+0085, form feed and others, which a file name or a match can hold: it cut a path
+        # short and minted a record from the tail of a match. One trailing CR (a CRLF file's
+        # line) is part of the terminator, as splitlines() treated it.
+        for line in stdout.decode("utf-8", errors="replace").split("\n"):
+            parsed = _parse_rg_line(line.removesuffix("\r"))
             if parsed is not None:
                 matches.append(parsed)
                 if len(matches) >= plan["max_results"]:
                     break
+        # BF-895 (#1548): exit 0 means rg found a match. If nothing parsed, the parser
+        # and rg disagree: report nothing rather than a false zero, so act() falls back.
+        if not matches and (proc.returncode == 0 or stdout):
+            logger.warning(
+                "BF-895: rg exited %s with %d output bytes but no parsable match under %s; "
+                "falling back to the Python engine",
+                proc.returncode, len(stdout), root,
+            )
+            return None
         return {
             "success": True,
             "data": matches,
@@ -281,19 +297,18 @@ def _resolve_rg_binary() -> str | None:
 
 
 def _parse_rg_line(line: str) -> dict | None:
-    """Parse an ``rg --no-heading --line-number`` line: ``path:lineno:text``."""
-    # Split only on the first two colons (paths/lines never contain them; text may).
-    first = line.find(":")
-    if first <= 0:
+    """BF-895 (#1548): parse an ``rg --null --no-heading --line-number --with-filename``
+    line, ``path<NUL>lineno:text``. No path can hold NUL, so the first NUL ends the path
+    on every OS (drive letters, ``\\?\\``, NTFS streams, POSIX names with colons); the
+    first ``:`` after it ends the line number, so text holding ``12:`` stays text."""
+    path, sep, rest = line.partition("\x00")
+    if not sep or not path:
         return None
-    second = line.find(":", first + 1)
-    if second < 0:
+    lineno, sep, text = rest.partition(":")
+    if not sep or not (lineno.isascii() and lineno.isdigit()):
         return None
-    path = line[:first]
-    lineno_str = line[first + 1:second]
-    text = line[second + 1:]
     try:
-        lineno = int(lineno_str)
-    except ValueError:
+        number = int(lineno)
+    except ValueError:  # over Python's int() digit limit: not a line number
         return None
-    return {"path": path, "line": lineno, "text": text[:_LINE_PREVIEW_CHARS]}
+    return {"path": path, "line": number, "text": text[:_LINE_PREVIEW_CHARS]}
