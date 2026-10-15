@@ -876,6 +876,23 @@ _SHAPE_CASES = [
         from probos.execution.command_env import build_command_env
         go(['x'], env=build_command_env())
         """, "direct", "fail: this launch API is unsupported"),
+    # The `from ... import` twin of try-except-import-twin: the launcher first, the decoy last.
+    _case("try-except-from-import-twin", """\
+        try:
+            from subprocess import run as go
+        except ImportError:
+            from json import dumps as go
+        go(['x'])
+        """, "direct", "fail: no env="),
+    # A name that may be either owner is classified as the widest one.
+    _case("either-owner-trusted-wins", """\
+        import subprocess
+        try:
+            from probos.execution.command_env import build_command_env as owner
+        except ImportError:
+            from probos.execution.command_env import trusted_command_env as owner
+        subprocess.run(['x'], env=owner())
+        """, "direct", TRUSTED),
     # A contribution reads as the widest of its parts: an empty or None branch never hides a
     # trusted one, and a trusted environment carried by a name in a branch, `or`, `|`, a spread
     # or a call still counts.
