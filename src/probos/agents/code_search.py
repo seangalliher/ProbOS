@@ -165,8 +165,10 @@ class CodeSearchAgent(BaseAgent):
     async def _search_rg(self, rg: str, plan: dict, root: Path) -> dict | None:
         """Run ``rg`` via subprocess (no shell -> no injection). Returns a result
         dict, or ``None`` to signal the caller to fall back to Python."""
-        args = [rg, "--line-number", "--no-heading", "--color", "never",
-                "--max-count", str(plan["max_results"])]
+        # BF-895 (#1548): --with-filename keeps the path on every line; rg omits it
+        # when the root is a single file.
+        args = [rg, "--line-number", "--with-filename", "--no-heading",
+                "--color", "never", "--max-count", str(plan["max_results"])]
         if plan["case_insensitive"]:
             args.append("--ignore-case")
         if plan["include_ignored"]:
@@ -197,6 +199,15 @@ class CodeSearchAgent(BaseAgent):
                 matches.append(parsed)
                 if len(matches) >= plan["max_results"]:
                     break
+        # BF-895 (#1548): exit 0 means rg found a match. If nothing parsed, the parser
+        # and rg disagree: report nothing rather than a false zero, so act() falls back.
+        if not matches and (proc.returncode == 0 or stdout.strip()):
+            logger.warning(
+                "BF-895: rg exited %s with %d output bytes but no parsable match under %s; "
+                "falling back to the Python engine",
+                proc.returncode, len(stdout), root,
+            )
+            return None
         return {
             "success": True,
             "data": matches,
@@ -280,20 +291,15 @@ def _resolve_rg_binary() -> str | None:
     return None
 
 
+# BF-895 (#1548): ``path:lineno:text``. The path may hold colons (a Windows drive,
+# ``\\?\C:\``), so the lazy path ends at the FIRST ``:<digits>:``; text holding ``12:``
+# stays text. Limit: a path segment holding ``:<digits>:`` (POSIX only) is mis-split.
+_RG_LINE = re.compile(r"(.+?):([0-9]+):(.*)", re.DOTALL)
+
+
 def _parse_rg_line(line: str) -> dict | None:
-    """Parse an ``rg --no-heading --line-number`` line: ``path:lineno:text``."""
-    # Split only on the first two colons (paths/lines never contain them; text may).
-    first = line.find(":")
-    if first <= 0:
+    """Parse an ``rg --no-heading --line-number --with-filename`` line."""
+    m = _RG_LINE.fullmatch(line)
+    if m is None:
         return None
-    second = line.find(":", first + 1)
-    if second < 0:
-        return None
-    path = line[:first]
-    lineno_str = line[first + 1:second]
-    text = line[second + 1:]
-    try:
-        lineno = int(lineno_str)
-    except ValueError:
-        return None
-    return {"path": path, "line": lineno, "text": text[:_LINE_PREVIEW_CHARS]}
+    return {"path": m.group(1), "line": int(m.group(2)), "text": m.group(3)[:_LINE_PREVIEW_CHARS]}
