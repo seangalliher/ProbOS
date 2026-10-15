@@ -14,14 +14,14 @@ For current state (latest AD/BF, test counts, what's next) read `PROGRESS.md` an
 
 `.gitignore` excludes `.claude/`; these agent files are force-added. Add new agent files with `git add -f`.
 
-## Workflow (one issue, or a batch of up to three)
+## Workflow (one issue or slice, or a batch of up to three coupled ones)
 
 1. **Architect** drafts or reviews the build prompt in `prompts/` (verify-first, grep evidence, AD/BF number via `scripts/ad_ceiling.py`).
-2. **Builder** implements it section by section, running only the **focused tests** for each changed slice and its immediate consumers. No full suite.
-3. **Diff Reviewer** reviews the staged or working-tree diff. Tell it what the change claims to do and name the consumer that must accept it. Repair its findings before committing; anything that would break the next run is a blocker.
-4. **Commit locally** — after the pre-commit deletion check (`git diff --cached --stat`; stop on any unexpected file with more than 200 deletions). Never `git add -A`.
-5. **Broad gate, once** for the issue or batch: `scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json`. Always pass `--receipt`: without it the gate writes no receipt and the run does not count as evidence. Merge the base branch into the work *before* this step, not after — a base that moves after the gate invalidates it. It refuses an index that differs from `HEAD`, which is why step 4 comes first. The main session runs it, not the Builder. A change after the gate invalidates it — rerun.
-6. **Push and verify closure** only after a green gate.
+2. **Builder** implements it section by section, running only the **focused tests** for each changed slice and its immediate consumers. No full suite. The main session does not re-run each milestone's tests; it runs one consolidated focused check on each frozen candidate (Testing Standards).
+3. **Diff Reviewer** reviews the staged or working-tree diff. Tell it what the change claims to do and name the consumer that must accept it. Repair its findings before committing; anything that would break the next run is a blocker. A repair round re-reviews the delta unless it changes a shared contract (Adversarial Review Before Every Commit).
+4. **Commit locally** — each slice or issue separately, after the pre-commit deletion check (`git diff --cached --stat`; stop on any unexpected file with more than 200 deletions). Never `git add -A`.
+5. **Broad gate, once** for the issue or batch (slices of one AD, or up to three coupled issues: Testing Standards, Batched execution): `scripts/run_test_gate.py --label <issue-or-wave> --receipt logs/gates/<issue-or-wave>.receipt.json`. Always pass `--receipt`: without it the gate writes no receipt and the run does not count as evidence. Merge the base branch into the work *before* this step, not after — a base that moves after the gate invalidates it. It refuses an index that differs from `HEAD`, which is why step 4 comes first. The main session runs it, not the Builder. A change after the gate invalidates it — rerun.
+6. **Push and verify closure** only after a green gate: one PR for the batch, then every issue or parent checklist it closes.
 
 If the Builder hits a hard stop, hand its report to the Architect for triage; relay any question that needs the Captain. (This is the all-Claude workflow; under the split workflow below, the Copilot orchestrator calls the Architect itself.)
 
@@ -41,7 +41,9 @@ Use `claude-architect` for this role. The Copilot `Architect` and `Builder` defi
 
 **Running a subagent when the next step needs the result** (Copilot `mode: "sync"`): launch it with `run_in_background: false`. A failure then comes back as the tool result and is handled at once.
 
-**Watchdog for background agents** (Copilot `Start-Sleep` + `read_agent`): never end a turn waiting on a background agent without a watchdog. Start a background Bash command such as `sleep 900` (`run_in_background: true`); its exit wakes the idle session. On wake, check the agent: if it failed, recover at once; if it is still running, start another `sleep`. Report a failure by when it happened, not by elapsed time since launch.
+**Watchdog for background agents** (Copilot `Start-Sleep` + `read_agent`): never end a turn waiting on a background agent without a watchdog. Start a background Bash command such as `sleep 900` (`run_in_background: true`), then end the turn: the agent's completion notification or the sleep's exit, whichever comes first, wakes the idle session. While a background agent is running, never block in the foreground on a background command or its watchdog for more than 60 seconds; a blocking wait delays the resume past the completion (a sync delegation returns when it completes, so it is not covered). On wake, check the agent: if it failed, recover at once; if it is still running, start another `sleep`. Report a failure by when it happened, not by elapsed time since launch.
+
+**Overlap with read-only preparation** (Delegation and Waiting): launch the next item's `claude-architect` consult with `run_in_background: true` before the current item's foreground wait (a sync Diff Reviewer, a CI watch), and read it when that wait returns if it has finished (otherwise after the current item's closure steps). Change nothing for that item until the current one is merged or parked.
 
 **Reviewer model independence.** The Copilot `Diff Reviewer` pins GPT models so the reviewer is a different model family from a Claude author. Claude Code subagents run Claude models only, so `claude-diff-reviewer` runs Haiku against a Sonnet Builder: a fresh read, not a different family. For security, data-integrity or other high-risk changes, also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`). Brief either reviewer with properties to verify, not attack scenarios.
 
