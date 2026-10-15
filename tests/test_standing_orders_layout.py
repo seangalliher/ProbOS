@@ -107,6 +107,8 @@ PROCEDURE = (
     "Before parking, ask whether the blocking requirement itself can be narrowed or reframed",
     "**Convergence (codified 2026-10-15).**",
     "**Round-three brake (Captain, 2026-10-15).**",
+    "Do not start a fourth round on your own, whatever leads to it",
+    "the exact `git diff <base> <head>` command",
     "**Progress comments (Captain, 2026-10-15).**",
     "Phase: draft | build | review round N | gate | CI",
 )
