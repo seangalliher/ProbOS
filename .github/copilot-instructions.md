@@ -106,7 +106,7 @@ Everything else is consolidated into **at most one follow-up issue per wave**. D
 
 ### Reporting
 
-After every three closures, report: open at wave start · pre-existing closed · new opened · net change · open at wave end · commit hashes · test and review results · any blocker or budget exception.
+After every three closures, report: open at wave start · pre-existing closed · new opened · net change · open at wave end · commit hashes · test and review results · any blocker or budget exception · **decided by the Architect** (one line each: the question, the decision, the issue where it is recorded) · **needs the Captain** (each with the Architect's recommendation and the exact decision required, plus any action only the Captain can perform).
 
 ### Definition of done
 
@@ -130,6 +130,8 @@ A change is done when it satisfies its acceptance criteria, works through **all 
 6. implement, repair review findings, validate, bank gate evidence, commit, push, close or reclassify an issue-backed item with the correct `state_reason`, re-enumerate, and continue. For a parent-backed slice without its own issue, bank the reviewed commit, durable canonical receipt, and parent checklist/evidence update while leaving the parent open until its acceptance criteria are complete.
 
 A decision is inside the envelope only when it has evidence, is backward-compatible or carries a tested compatibility/migration path, preserves or strengthens security/governance/privacy/audit controls, stays within the OSS/commercial repository boundary, and has bounded rollback through Git or an explicitly tested recovery path. Choosing among implementation strategies, defaults that preserve current behavior, dependency ordering, retiring demonstrably unreachable duplication, and resolving stale or superseded issue framing are in-envelope decisions.
+
+**Route decisions through the Architect, not the Captain (Captain, 2026-10-14).** A question that comes up while executing the queue goes to the Architect first, through the bridge (`scripts/claude_architect.py --read-only`), with the evidence and the options. Examples: where a finding is filed (folded into a follow-up or filed separately under the filing policy), whether to reopen, close or reclassify an issue, a default or feature flag, whether a trial lever stays, a severity or risk classification, the order of work. The Architect decides. Record its decision and reason in the owning issue and act on it; do not wait for the Captain. Report it under "decided by the Architect", so the Captain can overrule it after the fact. Only a decision that meets a condition below goes to the Captain, and only after the Architect has confirmed that classification and given its recommendation, the reframing check and the exact decision required. An action only the Captain can perform, such as rotating a credential or changing an account, is reported as a required action, not asked as a decision.
 
 **Still requires the Captain.** Escalate only when every viable option requires one or more of:
 
