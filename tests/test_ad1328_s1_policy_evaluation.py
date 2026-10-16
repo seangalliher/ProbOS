@@ -1055,59 +1055,74 @@ def test_malformed_text_is_judged_not_raised() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# 16. Not wired: nothing under src/ constructs the policy (S2 changes this deliberately: O-S1-9)
+# 16. Wired in one place: only the gate constructs the policy (AD-1328 S2a changed O-S1-9)
 # --------------------------------------------------------------------------------------
 
 _SRC_PROBOS = Path(__file__).resolve().parent.parent / "src" / "probos"
-_OWNER = "execution/command_policy.py"  # the module that defines the policy: spared by the whole scan
-_MODELS = "config_models/operations.py"  # the module that defines its models: spared by the names rule only
+_OWNER = "execution/command_policy.py"  # the module that defines the policy
+_MODELS = "config_models/operations.py"  # the module that defines its models
+_GATE = "execution/command_gate.py"  # AD-1328 S2a: the one place that takes the policy's module and builds the policy
+_CONFIG = "config.py"  # AD-1328 S2a: re-exports the two models
+_PACKAGE = "config_models/__init__.py"  # AD-1328 S2a: lists the two models
 _MODULE = "command_policy"
 _CONSTRUCTED = "CommandPolicy"
-_IMPORTED_NAMES = frozenset(
-    {
-        "CommandPolicyConfig",
-        "CommandPolicyRule",
-        "CommandPolicy",
-        "evaluate_command",
-        "canonical_command",
-        "policy_digest",
-    }
-)
+_CONFIG_NAMES = frozenset({"CommandPolicyConfig", "CommandPolicyRule"})
+_POLICY_NAMES = frozenset({"CommandPolicy", "evaluate_command", "canonical_command", "policy_digest"})
+_IMPORTED_NAMES = _CONFIG_NAMES | _POLICY_NAMES
 # ``policy_digest`` is also an ordinary local name: execution/authority.py binds one and reads it a few lines on, and
 # cognitive/execution_profile.py has a field of that name. A bare read of it proves nothing, so it counts only when
 # imported (the contract's literal rule, any ``ast.Name`` load of it, flags authority.py).
 _LOADED_NAMES = _IMPORTED_NAMES - {"policy_digest"}
+# AD-1328 S2a: the scan's four rules, so that a file can be spared one without being spared the others.
+_RULES = frozenset({"module", "call", "config_names", "policy_names"})
+# AD-1328 S2a: the rules the scan spares, per file, and nothing else is spared: the gate (the module import, the
+# constructor call and every name), the policy module (every name), and the models' module, ``config.py`` and
+# ``config_models/__init__.py`` (the two models' names only).
+_SPARED: dict[str, frozenset[str]] = {
+    _GATE: _RULES,
+    _OWNER: frozenset({"config_names", "policy_names"}),
+    _MODELS: frozenset({"config_names"}),
+    _CONFIG: frozenset({"config_names"}),
+    _PACKAGE: frozenset({"config_names"}),
+}
 
 
-def _references(tree: ast.AST, *, names: bool = True) -> list[str]:
-    """Direct syntactic references in ``tree`` to the policy.
+def _found(tree: ast.AST) -> list[tuple[str, str]]:
+    """Direct syntactic references in ``tree`` to the policy, each as ``(rule, description)``.
 
-    Always: an import of a module named ``command_policy`` (``import``, ``from ... import``, relative), and a call
-    whose callee is ``CommandPolicy`` (a name or an attribute). With ``names``: an imported name from
-    ``_IMPORTED_NAMES`` and a load of a name in ``_LOADED_NAMES``. Not found here: a lookup by string (``getattr``,
-    ``importlib``), which this scan does not assert either way, and an attribute load such as
-    ``module.evaluate_command``.
+    The rules (``_RULES``): ``module``, an import of a module named ``command_policy`` (``import``, ``from ... import``,
+    relative); ``call``, a call whose callee is ``CommandPolicy`` (a name or an attribute); ``config_names``, an
+    imported name from ``_CONFIG_NAMES`` or a load of one; ``policy_names``, an imported name from ``_POLICY_NAMES``
+    or a load of one in ``_LOADED_NAMES``. Not found here: a lookup by string (``getattr``, ``importlib``), which this
+    scan does not assert either way, and an attribute load such as ``module.evaluate_command``.
     """
-    found: list[str] = []
+    found: list[tuple[str, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[-1] == _MODULE:
-                    found.append(f"import of {alias.name} at line {node.lineno}")
+                    found.append(("module", f"import of {alias.name} at line {node.lineno}"))
         elif isinstance(node, ast.ImportFrom):
             if _MODULE in [(node.module or "").split(".")[-1], *(alias.name for alias in node.names)]:
-                found.append(f"import-from of {_MODULE} at line {node.lineno}")
-            if names:
-                taken = [alias.name for alias in node.names if alias.name in _IMPORTED_NAMES]
-                found.extend(f"import of {name} at line {node.lineno}" for name in taken)
+                found.append(("module", f"import-from of {_MODULE} at line {node.lineno}"))
+            for alias in node.names:
+                if alias.name in _IMPORTED_NAMES:
+                    rule = "config_names" if alias.name in _CONFIG_NAMES else "policy_names"
+                    found.append((rule, f"import of {alias.name} at line {node.lineno}"))
         elif isinstance(node, ast.Call):
             func = node.func
             callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
             if callee == _CONSTRUCTED:
-                found.append(f"call of {callee} at line {node.lineno}")
-        elif names and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in _LOADED_NAMES:
-            found.append(f"load of {node.id} at line {node.lineno}")
+                found.append(("call", f"call of {callee} at line {node.lineno}"))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in _LOADED_NAMES:
+            rule = "config_names" if node.id in _CONFIG_NAMES else "policy_names"
+            found.append((rule, f"load of {node.id} at line {node.lineno}"))
     return found
+
+
+def _references(tree: ast.AST, *, spare: frozenset[str] = frozenset()) -> list[str]:
+    """The references in ``tree`` (see ``_found``) whose rule is not in ``spare``."""
+    return [description for rule, description in _found(tree) if rule not in spare]
 
 
 def _parse(path: Path) -> ast.Module:
@@ -1115,12 +1130,13 @@ def _parse(path: Path) -> ast.Module:
 
 
 def _scan(
-    root: Path, owner: str | None, models: str | None,
+    root: Path, spared: dict[str, frozenset[str]],
 ) -> tuple[list[str], list[str], dict[str, list[str]]]:
-    """Every ``*.py`` under ``root`` bar ``owner``: ``(considered, parsed, offenders)`` as relative posix paths.
+    """Every ``*.py`` under ``root``: ``(considered, parsed, offenders)`` as relative posix paths.
 
-    ``models`` is scanned, but the names rule is off for it. A file is parsed only when its text names the module or
-    one of the names (no other file can reference them), and ``offenders`` maps each parsed file to its references.
+    ``spared`` maps a relative path to the rules the scan does not apply to that file; nothing is spared elsewhere. A
+    file is parsed only when its text names the module or one of the names (no other file can reference them), and
+    ``offenders`` maps each parsed file to the references that are not spared.
     """
     needles = (_MODULE, *_IMPORTED_NAMES)
     considered: list[str] = []
@@ -1128,14 +1144,12 @@ def _scan(
     offenders: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root).as_posix()
-        if relative == owner:
-            continue
         considered.append(relative)
         text = path.read_text(encoding="utf-8-sig")
         if not any(needle in text for needle in needles):
             continue
         parsed.append(relative)
-        references = _references(ast.parse(text, filename=str(path)), names=relative != models)
+        references = _references(ast.parse(text, filename=str(path)), spare=spared.get(relative, frozenset()))
         if references:
             offenders[relative] = references
     return considered, parsed, offenders
@@ -1166,45 +1180,90 @@ _FORBIDDEN_SHAPES = (
     "key = canonical_command",
     "config = CommandPolicyConfig.model_validate({})",
 )
+# AD-1328 S2a: one shape per rule that trips that rule and no other, to prove each spare is exactly one rule.
+_ONE_RULE_SHAPES = {
+    "module": "from . import command_policy",
+    "call": "registry.CommandPolicy(cfg)",
+    "config_names": "from probos.config_models.operations import CommandPolicyRule as Rule",
+    "policy_names": "key = canonical_command",
+}
 
 
-def test_nothing_in_src_constructs_the_policy(tmp_path: Path) -> None:
-    """No file under ``src/probos`` bar the policy module itself imports it, constructs it or takes its names.
+# AD-1328 S2a: renamed from test_nothing_in_src_constructs_the_policy; S2a wires the policy through one gate, so the scan now spares exactly the places the S2a contract lists instead of the whole tree bar two files.
+def test_only_the_gate_constructs_the_policy(tmp_path: Path) -> None:
+    """No file under ``src/probos`` takes the policy's module, names or constructor, bar the places ``_SPARED`` lists.
 
-    The scan is AST-based, so a string or a docstring that merely names the module or a class is not a reference, and
-    it is not vacuous: each shape it exists to forbid is flagged, in a snippet, in a scratch tree and in the real files
-    that define the names.
+    The gate (``execution/command_gate.py``) imports the policy module and builds the policy; the policy module and
+    the models' module hold the names; ``config.py`` and ``config_models/__init__.py`` re-export the two models. The
+    scan is AST-based, so a string or a docstring that merely names the module or a class is not a reference, and it
+    is not vacuous: each shape it exists to forbid is flagged, in a snippet, in a scratch tree and in the real files
+    that use the names, and each spare is exactly one rule in exactly the files the table names.
     """
-    # premise: the two modules the scan spares are where it expects them, and define what the scan is about
+    # premise: the files the scan spares are where it expects them, and define or use what the scan is about
     owner_tree = _parse(_SRC_PROBOS / _OWNER)
     models_tree = _parse(_SRC_PROBOS / _MODELS)
+    gate_tree = _parse(_SRC_PROBOS / _GATE)
     owner_defs = {n.name for n in ast.walk(owner_tree) if isinstance(n, (ast.ClassDef, ast.FunctionDef))}
     assert {"CommandPolicy", "evaluate_command", "canonical_command", "policy_digest"} <= owner_defs
     model_classes = {n.name for n in ast.walk(models_tree) if isinstance(n, ast.ClassDef)}
     assert {"CommandPolicyConfig", "CommandPolicyRule"} <= model_classes
+    assert "CommandPolicyGate" in {n.name for n in ast.walk(gate_tree) if isinstance(n, ast.ClassDef)}
+    assert set(_SPARED) == {_GATE, _OWNER, _MODELS, _CONFIG, _PACKAGE}
+    for relative in _SPARED:
+        assert (_SRC_PROBOS / relative).is_file(), relative
 
     # the walker flags each shape it forbids, and not a string, a docstring, a near miss or an unrelated local name
     for snippet in _ALLOWED_SHAPES:
         assert _references(ast.parse(snippet)) == [], snippet
     for snippet in _FORBIDDEN_SHAPES:
         assert _references(ast.parse(snippet)), snippet
-    # the models module is spared the names rule only: it still may not import the policy module
-    assert _references(ast.parse("from probos.config_models.operations import CommandPolicyConfig"), names=False) == []
-    assert _references(ast.parse("from probos.execution import command_policy"), names=False)
-    assert _references(ast.parse("CommandPolicy(cfg)"), names=False)
-    # ... nor only on snippets: the real files that define the names are flagged when nothing spares them
-    assert _references(owner_tree)
-    assert _references(models_tree)
-    assert _references(models_tree, names=False) == []  # ... and the exemption is what spares the models module
+    # each spare is one rule: a shape that trips exactly one rule is hidden by sparing that rule and by nothing else
+    for rule, shape in _ONE_RULE_SHAPES.items():
+        shape_tree = ast.parse(shape)
+        assert {found_rule for found_rule, _ in _found(shape_tree)} == {rule}, shape  # premise: it trips this rule only
+        assert _references(shape_tree, spare=frozenset({rule})) == [], shape
+        assert _references(shape_tree, spare=_RULES - {rule}), shape
 
-    # a scratch tree: every shape in a file of its own (flagged or not), plus the owner, the models module, neighbours
+    # the contract's list, file by file: what each spared file may do, and what it still may not
+    def flagged(snippet: str, relative: str) -> bool:
+        return bool(_references(ast.parse(snippet), spare=_SPARED[relative]))
+
+    gate_takes = (
+        "from probos.execution.command_policy import CommandPolicy, policy_digest\n"
+        "policy = CommandPolicy(cfg, dialect=d)\nconfig = CommandPolicyConfig"
+    )
+    assert not flagged(gate_takes, _GATE)  # imports of the module, its names and the constructor call: the gate only
+    for relative in (_OWNER, _MODELS, _CONFIG, _PACKAGE):
+        assert flagged("from probos.execution import command_policy", relative), relative  # the module import
+        assert flagged("registry.CommandPolicy(cfg)", relative), relative  # the constructor call: the gate only
+    for relative in (_MODELS, _CONFIG, _PACKAGE):  # the two models' names, and nothing of the policy's
+        assert not flagged("from probos.config_models.operations import CommandPolicyConfig, CommandPolicyRule", relative)
+        for name_use in ("key = canonical_command", "result = evaluate_command", "from x import policy_digest"):
+            assert flagged(name_use, relative), (relative, name_use)
+    assert not flagged("key = canonical_command\nresult = evaluate_command\nfrom x import policy_digest", _OWNER)
+    assert not flagged("config = CommandPolicyRule\nconfig = CommandPolicyConfig", _OWNER)
+
+    # the real files: with nothing spared each is flagged, under exactly the rules the table spares for it
+    for relative, spared in _SPARED.items():
+        real_tree = _parse(_SRC_PROBOS / relative)
+        assert {rule for rule, _ in _found(real_tree)} == spared, relative  # no stale spare, and no hidden reference
+        assert _references(real_tree, spare=spared) == [], relative
+        assert _references(real_tree), relative
+
+    # a scratch tree: every shape in a file of its own (flagged or not), plus each spared file at its own path (holding
+    # only what the table spares it), and neighbours in the same directories
     scratch = tmp_path / "scratch"
     files = {
-        "execution/command_policy.py": "from probos.config_models.operations import CommandPolicyConfig\n"
-        "class CommandPolicy:\n    pass\nPOLICY = CommandPolicy(None)\n",
-        "config_models/operations.py": "class CommandPolicyRule:\n    pass\nclass CommandPolicyConfig:\n"
+        _GATE: "from probos.execution.command_policy import CommandPolicy, policy_digest\n"
+        "from probos.config_models.operations import CommandPolicyConfig\nPOLICY = CommandPolicy(None)\n",
+        _OWNER: "from probos.config_models.operations import CommandPolicyConfig\n"
+        "class CommandPolicy:\n    pass\nVALUE = evaluate_command\n",
+        _MODELS: "class CommandPolicyRule:\n    pass\nclass CommandPolicyConfig:\n"
         "    rules: tuple[CommandPolicyRule, ...] = ()\n",
+        _CONFIG: "from probos.config_models.operations import CommandPolicyConfig, CommandPolicyRule\n",
+        _PACKAGE: "from probos.config_models.operations import CommandPolicyConfig, CommandPolicyRule\n",
         "config_models/other.py": "from probos.config_models.operations import CommandPolicyRule\n",
+        "execution/other.py": "from probos.execution.command_policy import evaluate_command\n",
         "tools/declares.py": '"""Names CommandPolicy and probos.execution.command_policy in text only."""\n'
         "MODULE = 'probos.execution.command_policy'\nCLASS = 'CommandPolicy'\n",
         "tools/unrelated.py": "VALUE = 1\n",
@@ -1218,30 +1277,43 @@ def test_nothing_in_src_constructs_the_policy(tmp_path: Path) -> None:
         target = scratch / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
-    considered, parsed, offenders = _scan(scratch, _OWNER, _MODELS)
+    considered, parsed, offenders = _scan(scratch, _SPARED)
     assert [path for path in offenders if path.startswith("forbidden/")] == forbidden_files  # each forbidden shape
     assert not [path for path in offenders if path.startswith("allowed/")]  # and none of the allowed ones
-    # exempt per file, not per directory
-    assert sorted(set(offenders) - set(forbidden_files)) == ["config_models/other.py"]
+    # exempt per file, not per directory: the neighbours of the spared files are flagged
+    assert sorted(set(offenders) - set(forbidden_files)) == ["config_models/other.py", "execution/other.py"]
     assert "tools/declares.py" in parsed and "tools/declares.py" not in offenders  # strings only: parsed, not flagged
     assert "tools/unrelated.py" in considered and "tools/unrelated.py" not in parsed  # it names nothing: not parsed
-    assert _OWNER not in considered  # premise: the owner was spared
-    assert _MODELS in considered and _MODELS in parsed  # premise: the models module was scanned, names rule off
-    assert _MODELS not in offenders
-    # control: the two exemptions are the only things sparing the owner and the models module
-    _, _, unspared = _scan(scratch, None, None)
-    assert {_OWNER, _MODELS} <= set(unspared)
+    for relative in _SPARED:  # premise: every spared file was scanned, with its spared rules off, and is clean
+        assert relative in considered and relative in parsed and relative not in offenders, relative
+    # control: the table is the only thing sparing them
+    _, _, unspared = _scan(scratch, {})
+    assert set(_SPARED) <= set(unspared)
+    # each spared file, one reference beyond its table entry, is flagged at its own path (the gate has no beyond)
+    beyond = tmp_path / "beyond"
+    beyond_files = {
+        _OWNER: "POLICY = registry.CommandPolicy(None)\n",
+        _MODELS: "key = canonical_command\n",
+        _CONFIG: "from probos.execution.command_policy import evaluate_command\n",
+        _PACKAGE: "from . import command_policy\n",
+    }
+    for relative, text in beyond_files.items():
+        target = beyond / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    assert sorted(_scan(beyond, _SPARED)[2]) == sorted(beyond_files)
 
-    # the real tree: the scan reached it, and it holds no reference ...
-    considered, parsed, offenders = _scan(_SRC_PROBOS, _OWNER, _MODELS)
-    assert {"execution/authority.py", "config_models/__init__.py", "config.py"} <= set(considered)  # it walked the tree
-    assert _OWNER not in considered  # premise: the owner was spared
-    assert _MODELS in considered  # premise: the models module was scanned, with the names rule off
+    # the real tree: the scan reached it, and it holds no reference beyond the spared ones ...
+    considered, parsed, offenders = _scan(_SRC_PROBOS, _SPARED)
+    assert {"execution/authority.py", "runtime.py", "config_models/__init__.py", "config.py"} <= set(considered)
+    assert "runtime.py" in parsed  # premise: the gate's owner names the policy in text, was parsed and is clean
+    for relative in _SPARED:  # premise: every spared file was reached, and was scanned with its spared rules off
+        assert relative in considered and relative in parsed, relative
     assert offenders == {}
-    # ... and the same scan with nothing spared finds the real files that define the names, so no path or layout slip
-    # can hide a reference
-    _, _, unspared = _scan(_SRC_PROBOS, None, None)
-    assert set(unspared) == {_OWNER, _MODELS}
+    # ... and the same scan with nothing spared finds exactly the spared files, so no path or layout slip can hide a
+    # reference
+    _, _, unspared = _scan(_SRC_PROBOS, {})
+    assert set(unspared) == set(_SPARED)
 
 
 # --------------------------------------------------------------------------------------

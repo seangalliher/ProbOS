@@ -642,21 +642,47 @@ def test_policy_digest_tracks_every_change(change: Callable[[dict[str, Any]], ob
 # M1 #13-14: the config surface and the program stem
 # ---------------------------------------------------------------------------
 
-_S1_NAMES = ("CommandPolicyConfig", "CommandPolicyRule", "windows_program_stem")
+_POLICY_MODELS = ("CommandPolicyConfig", "CommandPolicyRule")
 
 
-def test_s1_models_are_off_the_config_surface() -> None:
-    """S1 neither attaches nor re-exports its models (D2). S2 changes this deliberately (O-S1-1)."""
-    for name in _S1_NAMES:  # controls: the names exist where S1 put them ...
+# AD-1328 S2a: replaces test_s1_models_are_off_the_config_surface, which pinned S1's "not attached, not re-exported" (D2); S2a attaches and re-exports the models on purpose (O-S1-1).
+def test_policy_models_are_on_the_config_surface() -> None:
+    """S2a attaches the models as ``ExecutionConfig.command_policy`` and re-exports them from ``probos.config``."""
+    for name in _POLICY_MODELS:  # controls: the classes still live where S1 put them ...
         assert hasattr(operations, name)
     assert hasattr(config_facade, "ExecutionConfig")  # ... and these are the surfaces that list a re-export
     assert "ExecutionConfig" in config_package.__all__
     assert "enabled" in ExecutionConfig.model_fields
 
-    for name in _S1_NAMES:
-        assert not hasattr(config_facade, name), name
-        assert name not in config_package.__all__, name
-    assert "command_policy" not in ExecutionConfig.model_fields
+    for name in _POLICY_MODELS:  # the facade and the package hand out the very classes the policy engine reads
+        assert getattr(config_facade, name) is getattr(operations, name), name
+        assert getattr(config_package, name) is getattr(operations, name), name
+        assert name in config_package.__all__, name
+    # the program stem is S1's helper, not a model: it stays off both surfaces
+    assert hasattr(operations, "windows_program_stem")
+    assert not hasattr(config_facade, "windows_program_stem")
+    assert "windows_program_stem" not in config_package.__all__
+
+    # the field is attached to ExecutionConfig, and its default is the empty (inert) policy
+    field = ExecutionConfig.model_fields["command_policy"]
+    assert field.get_default(call_default_factory=True) == CommandPolicyConfig()
+    assert ExecutionConfig().command_policy.rules == ()
+    assert config_facade.SystemConfig().execution.command_policy.rules == ()  # control: nothing is configured by default
+
+    # a policy under execution.command_policy loads through SystemConfig, as a model, and round-trips
+    raw = {"execution": {"command_policy": _config(_rule("no-curl", ["curl"], "forbid"), unmatched_decision="allow")}}
+    loaded = config_facade.SystemConfig.model_validate(raw)
+    policy = loaded.execution.command_policy
+    assert type(policy) is CommandPolicyConfig
+    assert [type(rule) for rule in policy.rules] == [CommandPolicyRule]
+    assert [(rule.name, rule.decision) for rule in policy.rules] == [("no-curl", "forbid")]
+    assert config_facade.SystemConfig.model_validate(loaded.model_dump(mode="json")).execution.command_policy == policy
+    # negative control: the accepted neighbour above, one change away (an invalid name), is refused through SystemConfig
+    # too, so the field is the model and not a loose dict
+    with pytest.raises(ValidationError):
+        config_facade.SystemConfig.model_validate(
+            {"execution": {"command_policy": _config(_rule("Not A Name", ["curl"], "forbid"), unmatched_decision="allow")}},
+        )
 
 
 @pytest.mark.parametrize(

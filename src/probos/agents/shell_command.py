@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from probos.execution.command_env import build_command_env
+from probos.execution.command_gate import COMMAND_POLICY_UNAVAILABLE_MESSAGE, CommandPolicyGate
 from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
@@ -68,6 +69,9 @@ class ShellCommandAgent(BaseAgent):
         # BF-890 (#1529): names from execution.command_env_passthrough, injected
         # through the shell pool's spawn kwargs.
         self._command_env_passthrough: tuple[str, ...] = tuple(kwargs.pop("command_env_passthrough", ()))
+        # AD-1328 S2a (#1530): the runtime's command policy, injected through the shell
+        # pool's spawn kwargs (ProbOSRuntime.create_pool). None: no policy.
+        self._command_policy_gate: CommandPolicyGate | None = kwargs.pop("command_policy_gate", None)
         super().__init__(pool, **kwargs)
 
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
@@ -172,6 +176,12 @@ class ShellCommandAgent(BaseAgent):
 
         command = self._rewrite_python_interpreter(command)
 
+        # AD-1328 S2a (#1530): judged as it will run -- after the two rewrites above, in the
+        # dialect of the shell _run_sync starts. With no policy this returns None at once.
+        refusal = self._command_policy_refusal(command)
+        if refusal is not None:
+            return refusal
+
         loop = asyncio.get_running_loop()
         # BF-893 (#1544): one deadline, measured from submission, is shared with the worker. Its own
         # budget used to start when a pool thread picked the job up, so with the shared executor busy the
@@ -195,6 +205,29 @@ class ShellCommandAgent(BaseAgent):
             }
         except Exception as e:
             return {"success": False, "error": repr(e)}
+
+    def _command_policy_refusal(self, command: str) -> dict[str, Any] | None:
+        """AD-1328 S2a: the refusal to return instead of running ``command``, or None to run it.
+
+        No gate or no rules: None, and nothing else is done. A judgement that raises is a
+        refusal: the command is not run.
+        """
+        gate = self._command_policy_gate
+        if gate is None or not gate.configured:
+            return None
+        try:
+            # The child's PATH, from the owner _run_sync builds the child's environment with.
+            child_env = build_command_env(self._command_env_passthrough)
+            verdict = gate.judge(command, site="shell_command_agent", search_path=child_env.get("PATH"))
+        except Exception:
+            logger.warning(
+                "AD-1328: the command policy could not judge a run_command intent; it was not run",
+                exc_info=True,
+            )
+            return {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE}
+        if verdict.runs:
+            return None
+        return {"success": False, "error": verdict.refusal_message}
 
     @staticmethod
     def _strip_ps_wrapper(command: str) -> str:

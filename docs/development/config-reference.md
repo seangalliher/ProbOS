@@ -536,6 +536,19 @@ AD-993/994: sandboxed code execution (tiered isolation).
 | `install_timeout_seconds` | `float` | `180.0` | — |  |
 | `command_env_passthrough` | `list[str]` | `[]` | — |  |
 
+## `command_policy`
+
+The command execution policy for ``run_command`` (AD-1328, #1530).
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `rules` | `tuple[probos.config_models.operations.CommandPolicyRule, ...]` | `()` | — |  |
+| `unmatched_decision` | `Optional[Literal['allow', 'escalate', 'forbid']]` | `None` | — |  |
+| `unparseable_decision` | `Literal['allow', 'escalate', 'forbid']` | `'escalate'` | — |  |
+| `max_command_chars` | `int` | `8192` | ≥ 64, ≤ 65536 |  |
+| `max_segments` | `int` | `32` | ≥ 1, ≤ 256 |  |
+| `max_nesting` | `int` | `3` | ≥ 0, ≤ 8 |  |
+
 ## `protected_execution`
 
 Default-off strict protected-execution authority configuration.

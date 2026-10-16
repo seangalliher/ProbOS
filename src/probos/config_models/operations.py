@@ -1,7 +1,8 @@
 """Operations, quality and engineering configuration models (AD-1270e2).
 
 Batch 5 of the ``config.py`` extraction. Every model here is self-contained:
-it references no other config model and no module-level helper in
+it references no config model outside this module (``ExecutionConfig`` holds
+``CommandPolicyConfig``, defined here; AD-1328) and no module-level helper in
 ``config.py``. Import these from ``probos.config``, which re-exports them.
 """
 
@@ -25,11 +26,11 @@ _CREDENTIAL_ENV_NAME_SEGMENTS = ("PAT", "PASS", "PWD", "DSN", "CREDS")
 _RUNTIME_ENV_NAME_PREFIX = "PROBOS_"
 _ENV_NAME_SHAPE_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 
-# AD-1328 S1 (#1530): the command execution policy's models. They sit beside
-# ExecutionConfig because S2 attaches them as ExecutionConfig.command_policy and
-# this module may not import probos. S1 neither attaches nor re-exports them: their
-# only reader is probos.execution.command_policy, which no file under src/ imports
-# yet (tests/test_ad1328_s1_policy_evaluation.py pins that).
+# AD-1328 (#1530): the command execution policy's models. They sit beside
+# ExecutionConfig, which holds one as ExecutionConfig.command_policy, because this
+# module may not import probos. probos.config re-exports the two models; the
+# engine is probos.execution.command_policy and the runtime's one gate is
+# probos.execution.command_gate (built in ProbOSRuntime.__init__).
 CommandDecisionName = Literal["allow", "escalate", "forbid"]
 #: Strictness: forbid > escalate > allow. The strictest decision wins.
 COMMAND_DECISION_RANK: dict[str, int] = {"allow": 0, "escalate": 1, "forbid": 2}
@@ -391,6 +392,21 @@ class ExecutionConfig(BaseModel):
     # A declared name that is not set is absent from the child. The run_python
     # sandbox does not read this field.
     command_env_passthrough: list[str] = Field(default_factory=list)
+    # AD-1328 (#1530): the command execution policy for run_command. No rules (the
+    # default) is no policy: every command runs exactly as without one.
+    command_policy: CommandPolicyConfig = Field(
+        default_factory=CommandPolicyConfig,
+        description=(
+            "AD-1328: ordered token-prefix rules that decide allow, escalate or forbid for "
+            "each command run_command executes (the native tool, the shell agent and the red "
+            "team's re-run). The strictest matching rule wins; a forbid rule names its "
+            "alternative. Every rule's match / not_match examples are checked at startup under "
+            "each shell dialect this platform's run_command paths use, and a failing example "
+            "stops startup naming the rule. No rules (the default) means no policy. An opt-in "
+            "starter policy is config/command_policy/starter.yaml; probos doctor reports the "
+            "loaded policy, its self-test and its digest."
+        ),
+    )
 
     @field_validator("command_env_passthrough")
     @classmethod

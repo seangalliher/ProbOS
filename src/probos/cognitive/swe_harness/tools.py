@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from probos.execution.command_env import build_command_env
+from probos.execution.command_gate import (
+    COMMAND_POLICY_UNAVAILABLE,
+    CommandGateVerdict,
+    CommandPolicyGate,
+    policy_result_metadata,
+)
 from probos.execution.process_tree import ProcessTree, process_tree_popen_kwargs
 from probos.execution.workspace_results import (
     RecoverRead,
@@ -1124,12 +1130,54 @@ class RunCommandTool:
     }
 
     def __init__(
-        self, runtime: "ProbOSRuntime", *, command_env_passthrough: tuple[str, ...] = (),
+        self,
+        runtime: "ProbOSRuntime",
+        *,
+        command_env_passthrough: tuple[str, ...] = (),
+        command_policy_gate: CommandPolicyGate | None = None,
     ) -> None:
         self._runtime = runtime
         # BF-890 (#1529): names from execution.command_env_passthrough, injected
         # at registration; input_schema declares no such parameter.
         self._command_env_passthrough: tuple[str, ...] = tuple(command_env_passthrough)
+        # AD-1328 S2a (#1530): the runtime's command policy (ProbOSRuntime.command_policy_gate),
+        # injected at registration. None: no policy.
+        self._command_policy_gate = command_policy_gate
+
+    def _policy_verdict(self, command: Any, cwd: object) -> CommandGateVerdict | None:
+        """AD-1328 S2a: the policy's verdict on ``command`` as this tool spawns it, or None
+        with no policy (no gate, or no rules), in which case nothing else is done and
+        ``command`` is not read. ``judge`` raises for anything but an exact ``str``, so the
+        object judged is the object spawned (repair r1, F3)."""
+        gate = self._command_policy_gate
+        if gate is None or not gate.configured:
+            return None
+        # The child's PATH and PATHEXT, from the owner that builds the child's environment below.
+        child_env = build_command_env(self._command_env_passthrough)
+        return gate.judge(
+            command,
+            site="run_command_tool",
+            search_path=child_env.get("PATH"),
+            cwd=cwd if type(cwd) is str else None,
+            pathext=child_env.get("PATHEXT"),
+        )
+
+    def command_policy_preflight(self, params: dict[str, Any]) -> str:
+        """AD-1328 S2a: the AD-1316 shell adapter's question, asked before the broker reserves
+        the effect. The policy's reason code for refusing this call, or "" when it does not
+        refuse it (the adapter still refuses an unproven shell)."""
+        command = params.get("command") if type(params) is dict else None
+        if type(command) is not str or not command.strip():
+            return ""
+        try:
+            verdict = self._policy_verdict(command, params.get("working_directory"))
+        except Exception:
+            logger.warning(
+                "AD-1328: the command policy could not judge a run_command call before broker "
+                "admission; it is refused", exc_info=True,
+            )
+            return COMMAND_POLICY_UNAVAILABLE
+        return "" if verdict is None or verdict.runs else verdict.denial_reason
 
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
@@ -1146,10 +1194,22 @@ class RunCommandTool:
             return ToolResult(error="command is required")
         timeout = float(params.get("timeout", 30.0))
         cwd = params.get("working_directory")
+        verdict: CommandGateVerdict | None = None
         try:
+            # AD-1328 S2a (#1530): the command policy judges the command before it runs. With
+            # no policy the verdict is None and nothing else here changes. A judgement that
+            # raises lands in the handler below: the command is not run. Repair r1 (review F3):
+            # the policy judges the object itself and the same object is spawned; a command that
+            # is not exactly a str raises in judge. With no policy it is converted as before.
+            verdict = self._policy_verdict(command, cwd)
+            if verdict is not None and not verdict.runs:
+                return ToolResult(
+                    error=verdict.refusal_message,
+                    metadata=policy_result_metadata(verdict),
+                )
             # Cross-platform: use shell=True via create_subprocess_shell
             proc = await _asyncio.create_subprocess_shell(
-                str(command),
+                str(command) if verdict is None else command,
                 stdout=_asyncio.subprocess.PIPE,
                 stderr=_asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -1165,7 +1225,10 @@ class RunCommandTool:
                 )
             except _asyncio.TimeoutError:
                 tree.kill()
-                return ToolResult(error=f"run_command timed out after {timeout}s")
+                return ToolResult(
+                    error=f"run_command timed out after {timeout}s",
+                    metadata=policy_result_metadata(verdict),
+                )
             except _asyncio.CancelledError:
                 tree.kill()  # BF-893: an enclosing timeout or cancellation must not leave the tree running
                 raise
@@ -1178,11 +1241,14 @@ class RunCommandTool:
                     "stdout": stdout,
                     "stderr": stderr,
                     "exit_code": proc.returncode if proc.returncode is not None else -1,
-                }
+                },
+                metadata=policy_result_metadata(verdict),
             )
         except Exception as exc:
             logger.warning("AD-544 RunCommandTool failed for command=%s: %s", command, exc)
-            return ToolResult(error=f"run_command failed: {exc}")
+            # AD-1328 S2a repair r1 (review F2): a failure after the policy judged the command keeps
+            # its decision; before that, and with no policy, the metadata stays empty as before.
+            return ToolResult(error=f"run_command failed: {exc}", metadata=policy_result_metadata(verdict))
 
 
 # --------------------------------------------------------------------------
@@ -1195,6 +1261,7 @@ def register_native_swe_tools(
     runtime: "ProbOSRuntime",
     *,
     command_env_passthrough: tuple[str, ...] = (),
+    command_policy_gate: CommandPolicyGate | None = None,
 ) -> int:
     """AD-544: Register all 12 native SWE tools into the registry.
 
@@ -1232,7 +1299,15 @@ def register_native_swe_tools(
         (WriteFileTool(runtime), write_perms),
         (EditFileTool(runtime), write_perms),
         # BF-890: the operator's declared names (execution.command_env_passthrough).
-        (RunCommandTool(runtime, command_env_passthrough=command_env_passthrough), shell_perms),
+        (
+            RunCommandTool(
+                runtime,
+                command_env_passthrough=command_env_passthrough,
+                # AD-1328 S2a: the runtime's command policy.
+                command_policy_gate=command_policy_gate,
+            ),
+            shell_perms,
+        ),
     ]
     count = 0
     for tool, perms in entries:

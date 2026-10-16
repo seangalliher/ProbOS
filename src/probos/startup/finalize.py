@@ -1776,6 +1776,8 @@ def _wire_native_swe_harness(
         count = register_native_swe_tools(
             registry, runtime,
             command_env_passthrough=tuple(config.execution.command_env_passthrough),
+            # AD-1328 S2a (#1530): the runtime's one command policy (ProbOSRuntime.__init__).
+            command_policy_gate=getattr(runtime, "command_policy_gate", None),
         )
         if cfg.blocked_paths:
             tool_executor.add_pre_hook(make_blocked_paths_hook(cfg.blocked_paths))

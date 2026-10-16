@@ -1518,10 +1518,10 @@ def test_committed_baseline_records_the_measured_surface(
     """The numbers AD-1270e1 was drafted against, re-measured on this tree."""
     counts = baseline["surface_counts"]
 
-    assert counts["public_names"] == 305
-    assert counts["owned"] == 292
+    assert counts["public_names"] == 307
+    assert counts["owned"] == 294
     assert counts["incidental"] == 13
-    assert counts["own_models"] == 225
+    assert counts["own_models"] == 227
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
     # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
     # AD-1189 adds the default-0 deferred_tool_schema_threshold_bytes (1791 -> 1792).
@@ -1548,10 +1548,11 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1327 adds the five cognitive.*_verifier fields of the crew verifier tier (1839 -> 1844).
     # AD-1326 adds the eight dreaming.procedure_challenger_* fields (1844 -> 1852).
     # BF-890 adds execution.command_env_passthrough (1852 -> 1853).
-    assert counts["field_definitions"] == 1853  # AD-1206 intentionally adds github_repository.
+    # AD-1328 S2a adds execution.command_policy and the CommandPolicyConfig / CommandPolicyRule models, 15 fields (1853 -> 1868).
+    assert counts["field_definitions"] == 1868  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
-    assert len(baseline["names"]) == 305
-    assert len(baseline["models"]) == 226
+    assert len(baseline["names"]) == 307
+    assert len(baseline["models"]) == 228
 
 
 def test_committed_baseline_records_the_awkward_models(
@@ -1560,13 +1561,15 @@ def test_committed_baseline_records_the_awkward_models(
     assert baseline["non_instantiable"] == [
         "A2APeerConfig",
         "BaseModel",
+        "CommandPolicyRule",
         "DutyDefinition",
         "EPSDepartmentConfig",
         "MCPServerConfig",
         "PeerConfig",
     ]
     assert baseline["schema_unavailable"] == ["BaseModel"]
-    assert baseline["models_with_model_config"] == []
+    # AD-1328 S2a: the two policy models are frozen and closed (extra="forbid") on purpose, so a mistyped key cannot silently drop a rule.
+    assert baseline["models_with_model_config"] == ["CommandPolicyConfig", "CommandPolicyRule"]
 
 
 def test_committed_baseline_freezes_the_one_aliased_field(
@@ -1784,7 +1787,7 @@ def test_check_is_green_on_the_committed_baseline() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
-    assert "names=305" in proc.stdout
+    assert "names=307" in proc.stdout
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:
