@@ -116,15 +116,84 @@ class TestBuildDispatcher:
         mock_adapter.execute = AsyncMock(return_value=mock_copilot_result)
 
         good_result = _build_result(success=True)
+        # BF-896: the executor commits on a branch of its own, which the manager adopts onto the worktree's branch.
+        good_result.commit_hash = "abc"
+        good_result.branch_name = "builder/test-build"
+        wm.adopt_commit = AsyncMock(return_value=(True, "abc"))
+        # BF-896: "/tmp/wt" does not exist and the route now fails closed on an unpinnable worktree, so the pin is supplied.
 
         with patch("probos.build_dispatcher._SDK_AVAILABLE", True), \
              patch("probos.build_dispatcher.CopilotBuilderAdapter", return_value=mock_adapter) as MockCls, \
-             patch("probos.build_dispatcher.execute_approved_build", new_callable=AsyncMock, return_value=good_result):
+             patch("probos.build_dispatcher.repository_identity", new_callable=AsyncMock, return_value="/tmp/wt/.git"), \
+             patch("probos.build_dispatcher.execute_approved_build", new_callable=AsyncMock, return_value=good_result) as mock_exec:
             MockCls.is_available.return_value = True
             d = BuildDispatcher(queue=q, worktree_mgr=wm)
             await d._execute_build(build)
 
         assert build.status == "reviewing"
+        # BF-896: the commit was adopted from the executor's branch, and the result now names the worktree's branch.
+        wm.adopt_commit.assert_awaited_once_with(build.id, "builder/test-build")
+        assert build.result.branch_name == f"builder-{build.id[:8]}"
+        assert build.result.commit_hash == "abc"
+        # BF-896: generation runs in its own session directory, never in the worktree;
+        # the worktree is only where repository instructions are discovered.
+        adapter_kwargs = MockCls.call_args.kwargs
+        assert adapter_kwargs["instruction_work_dir"] == "/tmp/wt"
+        assert adapter_kwargs["cwd"] != "/tmp/wt"
+        # BF-896: the executor is handed the pinned identity, and the session directory is gone.
+        assert mock_exec.await_args.kwargs["expected_git_dir"] == "/tmp/wt/.git"
+        assert not Path(adapter_kwargs["cwd"]).exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scenario", ["adoption_fails", "no_commit", "identity_changed"])
+    async def test_execute_build_success_not_adopted_fails(self, scenario: str) -> None:
+        """BF-896: a successful executor result that was not adopted never reaches reviewing."""
+        from probos.build_dispatcher import BuildDispatcher
+
+        q = BuildQueue()
+        build = q.enqueue(_spec("adopt build", target_files=["foo.py"]))
+        q.update_status(build.id, "dispatched")
+
+        wm = MagicMock(spec=WorktreeManager)
+        wm.create = AsyncMock(return_value=_worktree_info(build.id))
+        wm.adopt_commit = AsyncMock(return_value=(False, "merge --ff-only builder/adopt-build: not possible"))
+
+        mock_copilot_result = MagicMock()
+        mock_copilot_result.success = True
+        mock_copilot_result.file_blocks = [{"path": "foo.py", "content": "x = 1"}]
+        mock_copilot_result.error = ""
+        mock_adapter = MagicMock(spec=CopilotBuilderAdapter)
+        mock_adapter.start = AsyncMock()
+        mock_adapter.stop = AsyncMock()
+        mock_adapter.execute = AsyncMock(return_value=mock_copilot_result)
+
+        result = _build_result(success=True)
+        result.branch_name = "builder/adopt-build"
+        result.commit_hash = "" if scenario == "no_commit" else "abc123"
+        identity = AsyncMock(
+            side_effect=["/tmp/wt/.git", "/tmp/other/.git"] if scenario == "identity_changed" else None,
+            return_value="/tmp/wt/.git",
+        )
+
+        with patch("probos.build_dispatcher._SDK_AVAILABLE", True), \
+             patch("probos.build_dispatcher.CopilotBuilderAdapter", return_value=mock_adapter) as MockCls, \
+             patch("probos.build_dispatcher.repository_identity", identity), \
+             patch("probos.build_dispatcher.execute_approved_build", new_callable=AsyncMock, return_value=result):
+            MockCls.is_available.return_value = True
+            await BuildDispatcher(queue=q, worktree_mgr=wm)._execute_build(build)
+
+        assert build.status == "failed"
+        if scenario == "adoption_fails":
+            wm.adopt_commit.assert_awaited_once()
+            assert "abc123" in build.error and "builder/adopt-build" in build.error
+            assert "not possible" in build.error
+        elif scenario == "no_commit":
+            wm.adopt_commit.assert_not_awaited()
+            assert build.error == "no change reached the worktree"
+        else:
+            wm.adopt_commit.assert_not_awaited()
+            assert "identity" in build.error
+        assert build.result is result
 
     @pytest.mark.asyncio
     async def test_execute_build_adapter_failure(self) -> None:
@@ -148,7 +217,9 @@ class TestBuildDispatcher:
         mock_adapter.stop = AsyncMock()
         mock_adapter.execute = AsyncMock(return_value=mock_copilot_result)
 
+        # BF-896: "/tmp/wt" does not exist and the route now fails closed on an unpinnable worktree, so the pin is supplied.
         with patch("probos.build_dispatcher._SDK_AVAILABLE", True), \
+             patch("probos.build_dispatcher.repository_identity", new_callable=AsyncMock, return_value="/tmp/wt/.git"), \
              patch("probos.build_dispatcher.CopilotBuilderAdapter", return_value=mock_adapter) as MockCls:
             MockCls.is_available.return_value = True
             d = BuildDispatcher(queue=q, worktree_mgr=wm)
