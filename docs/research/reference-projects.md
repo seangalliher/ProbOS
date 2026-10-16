@@ -35,7 +35,7 @@ Projects appear here only as technical design references. Positioning against th
 | Cline | 2026-03-20 | passing | AD-360 (shadow git checkpoints, workspace access tiers) |
 | Cursor | 2026-06-13 | passing | AD-989 (lexical search); also named as an AgentSkills.io adopter |
 | Goose | 2026-04-08 | passing | `universal-agent-activation-research.md` (as an MCP Apps host) |
-| Darwin Gödel Machine (Sakana) | never | never | a self-modifying coding agent. Relevant to the self-maintenance epics AD-1299 (#1352) and AD-1336 (#1558); neither cites it yet |
+| Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md` (this PR); drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Hyperagents (its follow-up) is abstract-only |
 
 ## Agent frameworks and SDKs (interval: 180 days)
 
