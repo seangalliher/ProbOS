@@ -7,9 +7,11 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import ntpath
 import re
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # BF-890 (#1529): literal twins of probos.execution.command_env's
 # CREDENTIAL_NAME_WORDS, CREDENTIAL_NAME_SEGMENTS, RUNTIME_NAME_PREFIX and
@@ -22,6 +24,226 @@ _CREDENTIAL_ENV_NAME_WORDS = (
 _CREDENTIAL_ENV_NAME_SEGMENTS = ("PAT", "PASS", "PWD", "DSN", "CREDS")
 _RUNTIME_ENV_NAME_PREFIX = "PROBOS_"
 _ENV_NAME_SHAPE_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+
+# AD-1328 S1 (#1530): the command execution policy's models. They sit beside
+# ExecutionConfig because S2 attaches them as ExecutionConfig.command_policy and
+# this module may not import probos. S1 neither attaches nor re-exports them: their
+# only reader is probos.execution.command_policy, which no file under src/ imports
+# yet (tests/test_ad1328_s1_policy_evaluation.py pins that).
+CommandDecisionName = Literal["allow", "escalate", "forbid"]
+#: Strictness: forbid > escalate > allow. The strictest decision wins.
+COMMAND_DECISION_RANK: dict[str, int] = {"allow": 0, "escalate": 1, "forbid": 2}
+_COMMAND_RULE_NAME_PATTERN = r"[a-z0-9][a-z0-9_.-]{0,63}"
+_WINDOWS_PROGRAM_SUFFIXES = (".exe", ".com", ".bat", ".cmd")
+_MAX_COMMAND_RULES = 256
+_MAX_PATTERN_POSITIONS = 32
+_MAX_TOKEN_ALTERNATIVES = 32
+_MAX_TOKEN_CHARS = 256
+_MAX_RULE_PROSE_CHARS = 500
+_MAX_RULE_EXAMPLES = 32
+_MAX_EXAMPLE_CHARS = 1024
+_MAX_PINNED_PATHS = 16
+_MAX_PINNED_PATH_CHARS = 1024
+
+
+def windows_program_stem(program: str) -> str:
+    """A program's name as Windows finds it: the basename, lower-cased, without
+    ``.exe``, ``.com``, ``.bat`` or ``.cmd``. ``ntpath`` splits on both separators,
+    so a POSIX path gives its basename too."""
+    base = ntpath.basename(program).lower()
+    for suffix in _WINDOWS_PROGRAM_SUFFIXES:
+        if base.endswith(suffix) and len(base) > len(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
+def _has_control_character(value: str, allowed: str = "") -> bool:
+    return any((ord(char) < 32 and char not in allowed) or ord(char) == 127 for char in value)
+
+
+def _has_surrogate(value: str) -> bool:
+    """True when ``value`` holds a lone surrogate: text that is not valid Unicode, which the RFC 8785
+    policy digest cannot encode (AD-1328 S1 repair, finding 12)."""
+    return any("\ud800" <= char <= "\udfff" for char in value)
+
+
+def _check_policy_text(value: str, what: str, limit: int, *, newlines: bool = False) -> None:
+    if not value.strip():
+        raise ValueError(f"{what} must not be blank")
+    if len(value) > limit:
+        raise ValueError(f"{what} is longer than {limit} characters")
+    if _has_control_character(value, "\t\n" if newlines else ""):
+        raise ValueError(f"{what} contains a control character")
+    if _has_surrogate(value):
+        raise ValueError(f"{what} is not valid Unicode text (a lone surrogate)")
+
+
+def _check_pattern(pattern: tuple[str | tuple[str, ...], ...], where: str) -> None:
+    if not 1 <= len(pattern) <= _MAX_PATTERN_POSITIONS:
+        raise ValueError(f"{where}: pattern must have 1 to {_MAX_PATTERN_POSITIONS} positions")
+    for position, entry in enumerate(pattern):
+        options = (entry,) if isinstance(entry, str) else entry
+        if not 1 <= len(options) <= _MAX_TOKEN_ALTERNATIVES or len(set(options)) != len(options):
+            raise ValueError(
+                f"{where}: pattern position {position} must list 1 to "
+                f"{_MAX_TOKEN_ALTERNATIVES} distinct words"
+            )
+        for token in options:
+            if not token or len(token) > _MAX_TOKEN_CHARS or _has_control_character(token):
+                raise ValueError(
+                    f"{where}: pattern position {position} has an empty, over-long or "
+                    "control-character word"
+                )
+            if _has_surrogate(token):
+                raise ValueError(f"{where}: pattern position {position} is not valid Unicode text (a lone surrogate)")
+            if position == 0 and any(char in token for char in "/\\ \t"):
+                raise ValueError(
+                    f"{where}: the program {token!r} must be a bare name; pin paths "
+                    "with host_executable"
+                )
+
+
+def _check_pins(rule: CommandPolicyRule, where: str) -> None:
+    pins = rule.host_executable
+    if not pins:
+        return
+    if rule.decision != "allow":
+        raise ValueError(
+            f"{where}: host_executable pins an allow rule only; a {rule.decision} rule "
+            "matches its program at every path"
+        )
+    program = rule.pattern[0]
+    if not isinstance(program, str):
+        raise ValueError(f"{where}: a pinned rule names one program, not alternatives")
+    if len(pins) > _MAX_PINNED_PATHS or len(set(pins)) != len(pins):
+        raise ValueError(f"{where}: host_executable must list at most {_MAX_PINNED_PATHS} distinct paths")
+    for pin in pins:
+        absolute = pin.startswith(("/", "\\\\")) or re.match(r"[A-Za-z]:[\\/]", pin) is not None
+        if _has_surrogate(pin):
+            raise ValueError(f"{where}: a host_executable path is not valid Unicode text (a lone surrogate)")
+        if not absolute or len(pin) > _MAX_PINNED_PATH_CHARS or _has_control_character(pin):
+            raise ValueError(f"{where}: host_executable path {pin!r} is not an absolute path")
+        if any(part in (".", "..") for part in re.split(r"[\\/]", pin)):
+            # AD-1328 S1 r3 (review r3, F3): such a pin is not canonical, and a POSIX '..' is resolved after symbolic
+            # links, so it might never prove its program. Write the path without '.' and '..' components.
+            raise ValueError(f"{where}: host_executable path {pin!r} has a '.' or '..' component; write the path without them")
+        if windows_program_stem(pin) != windows_program_stem(program):
+            raise ValueError(f"{where}: host_executable path {pin!r} does not name the program {program!r}")
+
+
+def _check_examples(rule: CommandPolicyRule, where: str) -> None:
+    for kind, examples in (("match", rule.match), ("not_match", rule.not_match)):
+        if len(examples) > _MAX_RULE_EXAMPLES:
+            raise ValueError(f"{where}: at most {_MAX_RULE_EXAMPLES} {kind} examples")
+        for example in examples:
+            _check_policy_text(example, f"{where}: {kind} example", _MAX_EXAMPLE_CHARS, newlines=True)
+    both = sorted(set(rule.match) & set(rule.not_match))
+    if both:
+        raise ValueError(f"{where}: {both[0]!r} is both a match and a not_match example")
+
+
+class CommandPolicyRule(BaseModel):
+    """One ordered token-prefix rule of the command execution policy (AD-1328, #1530).
+
+    ``pattern`` is matched against a simple command's words from the first.
+    Position 0 is the program: a bare name, compared by basename (in the Windows
+    dialects case-insensitively and without its extension). Every later position is
+    an exact word. A tuple at any position lists alternatives. A rule matches a
+    command that starts with its pattern; later words are unconstrained.
+
+    ``decision`` is ``allow``, ``escalate`` or ``forbid``; the strictest decision of
+    every matching rule wins. ``justification`` says why; a ``forbid`` rule names the
+    ``alternative`` to use instead (often the governed path), an ``escalate`` rule may.
+
+    ``host_executable`` pins an ``allow`` rule to absolute program paths: the rule
+    allows its program only at one of them, and the same name anywhere else is
+    refused. ``match`` and ``not_match`` are commands the rule must and must not
+    match; ``probos.execution.command_policy.self_test`` judges them with the
+    evaluator itself, and a failure is a startup error naming the rule.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    pattern: tuple[str | tuple[str, ...], ...]
+    decision: CommandDecisionName
+    justification: str
+    alternative: str | None = None
+    host_executable: tuple[str, ...] = ()
+    match: tuple[str, ...] = ()
+    not_match: tuple[str, ...] = ()
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_a_slug(cls, v: str) -> str:
+        if re.fullmatch(_COMMAND_RULE_NAME_PATTERN, v) is None:
+            raise ValueError(
+                f"command policy rule name {v!r} must be 1 to 64 lower-case letters, "
+                "digits, '_', '.' or '-', starting with a letter or digit"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _rule_is_well_formed(self) -> CommandPolicyRule:
+        where = f"command policy rule {self.name!r}"
+        _check_pattern(self.pattern, where)
+        _check_policy_text(self.justification, f"{where}: justification", _MAX_RULE_PROSE_CHARS)
+        if self.decision == "forbid" and self.alternative is None:
+            raise ValueError(f"{where}: a forbid rule must name its alternative")
+        if self.decision == "allow" and self.alternative is not None:
+            raise ValueError(f"{where}: an allow rule has no alternative")
+        if self.alternative is not None:
+            _check_policy_text(self.alternative, f"{where}: alternative", _MAX_RULE_PROSE_CHARS)
+        _check_pins(self, where)
+        _check_examples(self, where)
+        return self
+
+
+class CommandPolicyConfig(BaseModel):
+    """The command execution policy for ``run_command`` (AD-1328, #1530).
+
+    With no ``rules`` there is no policy: every command runs exactly as it does
+    without one. With rules, a command is split into simple commands (segments);
+    each segment takes the strictest decision of the rules that match it, or
+    ``unmatched_decision`` when none does, or ``unparseable_decision`` when the
+    policy cannot read it, and the command takes the strictest decision of its
+    segments. The policy only adds gates: it never bypasses consensus or the
+    permission ladder. The ``max_*`` fields bound the work of one evaluation.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rules: tuple[CommandPolicyRule, ...] = ()
+    unmatched_decision: CommandDecisionName | None = None
+    unparseable_decision: CommandDecisionName = "escalate"
+    max_command_chars: int = Field(default=8192, ge=64, le=65536)
+    max_segments: int = Field(default=32, ge=1, le=256)
+    max_nesting: int = Field(default=3, ge=0, le=8)
+
+    @model_validator(mode="after")
+    def _decisions_open_no_bypass(self) -> CommandPolicyConfig:
+        if len(self.rules) > _MAX_COMMAND_RULES:
+            raise ValueError(f"command policy: at most {_MAX_COMMAND_RULES} rules")
+        seen: set[str] = set()
+        for rule in self.rules:
+            if rule.name in seen:
+                raise ValueError(f"command policy: rule name {rule.name!r} is declared twice")
+            seen.add(rule.name)
+        if not self.rules:
+            return self
+        if self.unmatched_decision is None:
+            raise ValueError(
+                "command policy: rules are configured, so declare unmatched_decision "
+                "(allow for a deny-list, escalate for an allow-list)"
+            )
+        if self.unparseable_decision == "allow":
+            raise ValueError(
+                "command policy: unparseable_decision may not be allow; a command the "
+                "policy cannot read could hide any forbidden one"
+            )
+        if COMMAND_DECISION_RANK[self.unparseable_decision] < COMMAND_DECISION_RANK[self.unmatched_decision]:
+            raise ValueError("command policy: unparseable_decision must be at least as strict as unmatched_decision")
+        return self
 
 
 class ExecutionConfig(BaseModel):
