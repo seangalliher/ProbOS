@@ -182,6 +182,25 @@ class _CodeExecutionEffectAdapter(_BaseEffectAdapter):
 class _ShellEffectAdapter(_BaseEffectAdapter):
     kind = "opaque"
 
+    def __init__(self, tool: Tool) -> None:
+        self._tool = tool
+
+    def _policy_denial(self, params: dict[str, Any]) -> str:
+        """AD-1328 S2a (#1530): the command policy's reason code, asked before the broker
+        reserves anything; "" when the policy does not refuse the call.
+
+        The tool owns the judgement (``RunCommandTool.command_policy_preflight``). A
+        preflight that raises or answers oddly is ``command_policy_unavailable``.
+        """
+        preflight = getattr(self._tool, "command_policy_preflight", None)
+        if preflight is None:
+            return ""
+        try:
+            reason = preflight(params)
+        except Exception:
+            return "command_policy_unavailable"
+        return reason if type(reason) is str else "command_policy_unavailable"
+
     def prepare(
         self,
         *,
@@ -189,6 +208,8 @@ class _ShellEffectAdapter(_BaseEffectAdapter):
         params: dict[str, Any],
         context: dict[str, Any],
     ) -> PreparedEffect:
+        # A policy refusal is the more specific reason; otherwise an unproven shell is refused.
+        policy_denial = self._policy_denial(params)
         return PreparedEffect(
             requested_tool_id=tool_id,
             resolved_tool_id=tool_id,
@@ -202,7 +223,7 @@ class _ShellEffectAdapter(_BaseEffectAdapter):
             isolation_binding_sha256="",
             idempotency="opaque",
             retry_disposition="blocked",
-            denial_reason="shell_isolation_unproven",
+            denial_reason=policy_denial or "shell_isolation_unproven",
         )
 
 
@@ -338,7 +359,7 @@ class _EffectAdapterRegistry:
         if module == "probos.tools.code_execution_tool" and name == "CodeExecutionTool":
             return _CodeExecutionEffectAdapter()
         if module == "probos.cognitive.swe_harness.tools" and name == "RunCommandTool":
-            return _ShellEffectAdapter()
+            return _ShellEffectAdapter(tool)
         if name == "_McpTool":
             return _McpEffectAdapter(tool)
         if name == "_MeshIntentTool":

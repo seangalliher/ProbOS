@@ -1131,6 +1131,21 @@ def _bounded_record(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _bounded_policy_record(payload: dict[str, Any]) -> dict[str, Any]:
+    """AD-1328 S2a repair r1 (review F5): the whole envelope stays within ``_RECORD_MAX_BYTES``
+    with the command policy record in it. ``_bounded_record`` has already dropped the parameter
+    detail; then the record loses its two lists (counted as omitted), and last the field
+    itself, which leaves the payload the base emitted."""
+    if "command_policy" not in payload or _record_size(payload) <= _RECORD_MAX_BYTES:
+        return payload
+    from probos.execution.command_gate import compact_command_policy_record
+
+    compact = {**payload, "command_policy": compact_command_policy_record(payload["command_policy"])}
+    if _record_size(compact) <= _RECORD_MAX_BYTES:
+        return compact
+    return {key: value for key, value in payload.items() if key != "command_policy"}
+
+
 def _emit_record(
     emit_fn: Callable[[Any, dict[str, Any]], None] | None,
     event: Any,
@@ -1198,12 +1213,22 @@ def make_audit_hook(
             error_code=category or "",
         )
         if payload is None:
-            payload = _bounded_record({
+            fields: dict[str, Any] = {
                 **metadata,
                 "duration_ms": duration,
                 "timestamp": time.time(), "is_error": result.error is not None,
                 "error_category": category,
-            })
+            }
+            # AD-1328 S2a (#1530): the command policy's decision, when the tool reports one
+            # (RunCommandTool's ToolResult.metadata), re-validated; it never holds the command.
+            from probos.execution.command_gate import command_policy_record_of
+
+            # S2a repair r1 (review F4): only the resolved run_command tool's own result is read.
+            policy_record = command_policy_record_of(result, tool_id=ctx.get("tool_id"))
+            if policy_record is not None:
+                fields["command_policy"] = policy_record
+            # S2a repair r1 (review F5): the whole envelope stays within budget with the record.
+            payload = _bounded_policy_record(_bounded_record(fields))
 
         def emit() -> None:
             emitted = (

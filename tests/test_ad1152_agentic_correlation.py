@@ -293,6 +293,9 @@ async def _off_observation(
     # BF-890's operator-declared command environment names were added after this capture too
     # (empty by default); this agentic-loop observation starts no shell child.
     assert config["execution"].pop("command_env_passthrough") == []
+    # AD-1328's command execution policy was added after this capture too. It has no rules by default, and with
+    # no rules nothing is evaluated; this agentic-loop observation starts no shell child.
+    assert config["execution"].pop("command_policy")["rules"] == []
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
