@@ -640,6 +640,9 @@ _GATE_NAMES = (
     "RegistryComponentSource",
     "record_component_drift",
 )
+# AD-1288 S1: the one consumer allowed to import the S1/S2a modules and call the gate (O-1). Not a gate module, so it
+# is spared as an owner here rather than added to ``_S1_MODULES`` (which the S2b test imports).
+_ADMISSION_CONSUMERS = ("elastic_commission",)
 
 
 def _gate_references(tree: ast.AST) -> list[str]:
@@ -721,6 +724,10 @@ def test_nothing_in_src_constructs_the_store_or_calls_the_gate(tmp_path: Path) -
     """
     owned = [_SRC_PROBOS / "cognitive" / f"{name}.py" for name in _S1_MODULES]
     assert all(path.is_file() for path in owned)  # premise: the modules the scan excludes are where it expects them
+    # AD-1288 S1: commission admission is spared too, and it really references the gate, so sparing it is not vacuous
+    consumers = [_SRC_PROBOS / "cognitive" / f"{name}.py" for name in _ADMISSION_CONSUMERS]
+    assert all(path.is_file() for path in consumers)
+    assert all(_gate_references(ast.parse(path.read_bytes())) for path in consumers)
 
     # the scanner is not vacuous: it flags each shape it exists to forbid, and not a string that merely names one
     for snippet in _FORBIDDEN_SHAPES:
@@ -754,7 +761,7 @@ def test_nothing_in_src_constructs_the_store_or_calls_the_gate(tmp_path: Path) -
     assert sorted(scratch_parsed) == ["cognitive/declares.py", "cognitive/offender.py"]
     assert list(scratch_offenders) == ["cognitive/offender.py"]
 
-    parsed, offenders = _scan_tree(_SRC_PROBOS, owned)
+    parsed, offenders = _scan_tree(_SRC_PROBOS, owned + consumers)
     # premise: the scan reached the tree, and parsed files that only mention the names (``execution_profile_ref``,
     # strings) rather than skipping or flagging them
     assert {"cognitive/elastic_team.py", "cognitive/storage_declarations.py"} <= set(parsed)
