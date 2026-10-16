@@ -1657,6 +1657,26 @@ async def _git_checkout_main(work_dir: str) -> tuple[bool, str]:
     return True, "switched to main"
 
 
+async def repository_identity(work_dir: str) -> str | None:
+    """BF-896: the repository *work_dir* names, as git resolves it, or None.
+
+    ``git rev-parse --absolute-git-dir`` follows a linked worktree's ``.git``
+    pointer file, so rewriting that file changes the answer. The value is
+    normalized (real path, OS case) so two captures compare with ``==``. None
+    means it could not be determined; a caller pinning identity refuses on None.
+    """
+    try:
+        rc, out, _err = await _run_git(["rev-parse", "--absolute-git-dir"], work_dir)
+    except (OSError, ValueError):
+        return None
+    if rc != 0 or not out:
+        return None
+    try:
+        return os.path.normcase(os.path.realpath(out))
+    except (OSError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # BuilderAgent (AD-302)
 # ---------------------------------------------------------------------------
@@ -2029,18 +2049,18 @@ Rules for MODIFY blocks:
         ):
             tmp_dir = None
             try:
-                from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+                from probos.cognitive.copilot_adapter import (
+                    CopilotBuilderAdapter,
+                    seed_session_directory,
+                )
 
                 # Create isolated temp dir so SDK doesn't write into project root
                 tmp_dir = tempfile.mkdtemp(prefix="probos_build_")
-                tmp_path = Path(tmp_dir)
 
-                # Copy existing target files into temp dir (preserving structure)
-                for file_path, content in all_files.items():
-                    if content:  # Only copy files that exist
-                        dest = tmp_path / file_path
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_text(content, encoding="utf-8")
+                # Copy existing target files into temp dir (preserving structure).
+                # BF-896: the helper the dispatcher uses; a key naming a path outside
+                # the temp dir (an absolute target) is skipped, not written there.
+                seed_session_directory(tmp_dir, all_files)
 
                 model = params.get("model", "")
                 adapter = CopilotBuilderAdapter(
@@ -2615,6 +2635,7 @@ async def execute_approved_build(
     builder_source: str = "native",
     runtime: ProbOSRuntime | None = None,
     specialty: str = "general",
+    expected_git_dir: str | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -2626,8 +2647,24 @@ async def execute_approved_build(
             all fix attempts are exhausted. Receives a BuildFailureReport and
             returns either a resolved BuildResult or None to escalate to Captain.
             Future: wired to chain of command (Phase-33).
+        expected_git_dir: BF-896. A value ``repository_identity(work_dir)``
+            returned before generation began. When given, the build is refused
+            at entry (before any git command or write) and again before the
+            commit if *work_dir* no longer names that repository.
     """
     result = BuildResult(success=False, spec=spec)
+    identity_lost = False
+
+    # 0. BF-896: the tree must still name the repository pinned before generation.
+    if expected_git_dir is not None:
+        current_git_dir = await repository_identity(work_dir)
+        if current_git_dir != expected_git_dir:
+            result.error = (
+                "Repository identity changed since the build was pinned "
+                f"(expected {expected_git_dir!r}, found {current_git_dir!r}); "
+                "refused before any write"
+            )
+            return result
 
     # 1. Save current branch
     original_branch = await _git_current_branch(work_dir)
@@ -2681,6 +2718,38 @@ async def execute_approved_build(
                 continue
 
             path = Path(work_dir) / change["path"]
+            if "base" in change:
+                # BF-896: a block carrying "base" (the visiting adapter's disk scan,
+                # create or modify) applies only while the target's current text
+                # equals it ("" when the target does not exist); otherwise it is
+                # refused, never skipped or overwritten.
+                if path.exists() and not path.is_file():
+                    validation_errors.append(
+                        f"Whole-file change to {change['path']} targets a "
+                        "non-regular file; refused"
+                    )
+                    continue
+                if path.exists():
+                    try:
+                        current_text = path.read_text(encoding="utf-8")
+                    except (OSError, ValueError):
+                        validation_errors.append(
+                            f"Whole-file change to {change['path']} could not be "
+                            "compared with its current content; refused"
+                        )
+                        continue
+                else:
+                    current_text = ""
+                if (
+                    not isinstance(change["base"], str)
+                    or change["base"] != current_text
+                    or (change["mode"] == "modify" and not path.exists())
+                ):
+                    validation_errors.append(
+                        f"Whole-file change to {change['path']} was generated "
+                        "against different content; refused"
+                    )
+                    continue
             if change["mode"] == "modify":
                 if not path.exists():
                     logger.warning(
@@ -2691,6 +2760,18 @@ async def execute_approved_build(
 
                 original = path.read_text(encoding="utf-8")
                 modified = original
+
+                if "replacements" not in change and isinstance(change.get("content"), str):
+                    # BF-896: a whole-file MODIFY (the visiting adapter's disk scan).
+                    # It applies only while the target still holds the text it was
+                    # generated against; otherwise it is refused, never dropped.
+                    if change.get("base") != original:
+                        validation_errors.append(
+                            f"Whole-file change to {change['path']} was generated "
+                            "against different content; refused"
+                        )
+                        continue
+                    modified = change["content"]
 
                 for i, repl in enumerate(change.get("replacements", [])):
                     search_text = repl["search"]
@@ -2729,9 +2810,18 @@ async def execute_approved_build(
 
             path.parent.mkdir(parents=True, exist_ok=True)
             _check_sealed_path(path, runtime)
+            pre_existing = path.exists() and change["path"] not in written
             path.write_text(change["content"], encoding="utf-8")
-            written.append(change["path"])
-            logger.info("BuilderAgent: wrote %s", change["path"])
+            if pre_existing:
+                # BF-896: a CREATE over a file that existed before this build is a
+                # modification. The failed-build cleanup unlinks files_written, so a
+                # pre-existing file must never be listed there.
+                if change["path"] not in modified_files:
+                    modified_files.append(change["path"])
+                logger.info("BuilderAgent: overwrote %s", change["path"])
+            elif change["path"] not in written:
+                written.append(change["path"])
+                logger.info("BuilderAgent: wrote %s", change["path"])
 
             # Validate Python files after create
             err = _validate_python(path)
@@ -2863,10 +2953,15 @@ async def execute_approved_build(
                         else:
                             path.parent.mkdir(parents=True, exist_ok=True)
                             _check_sealed_path(path, runtime)
+                            pre_existing = path.exists() and change["path"] not in written
                             path.write_text(
                                 change["content"], encoding="utf-8",
                             )
-                            if change["path"] not in written:
+                            if pre_existing:
+                                # BF-896: never list a pre-existing file in files_written.
+                                if change["path"] not in modified_files:
+                                    modified_files.append(change["path"])
+                            elif change["path"] not in written:
                                 written.append(change["path"])
                         err = _validate_python(path)
                         if err:
@@ -2882,8 +2977,25 @@ async def execute_approved_build(
             result.files_written = written
             result.files_modified = modified_files
 
+        # 5.4. BF-896: the tests may have run arbitrary code; the tree must still
+        # name the pinned repository before anything is committed.
+        if expected_git_dir is not None:
+            current_git_dir = await repository_identity(work_dir)
+            if current_git_dir != expected_git_dir:
+                identity_lost = True
+                logger.error(
+                    "BuilderAgent: repository identity changed during the build "
+                    "(expected %r, found %r); refusing to commit",
+                    expected_git_dir, current_git_dir,
+                )
+
         # 5.5. Block commit if validation errors (syntax errors) exist
-        if validation_errors:
+        if identity_lost:
+            result.error = (
+                "Repository identity changed during the build; refused before commit"
+            )
+            result.success = False
+        elif validation_errors:
             result.error = "Syntax errors:\n" + "\n".join(validation_errors)
             result.success = False
         # 6. Commit — only if tests passed OR tests were not run
@@ -2931,12 +3043,15 @@ async def execute_approved_build(
     except Exception as exc:
         result.error = str(exc)
     finally:
-        # 7. Return to original branch
-        await _git_checkout_main(work_dir)
+        # 7. Return to original branch. BF-896: not when the tree now names a
+        # repository other than the pinned one (its hooks would run).
+        if not identity_lost:
+            await _git_checkout_main(work_dir)
         # Clean up build branch if no commit was made (failed build)
         if not result.commit_hash and result.branch_name:
-            logger.info("Cleaning up failed build branch '%s'", result.branch_name)
-            await _run_git(["branch", "-D", result.branch_name], work_dir)
+            if not identity_lost:
+                logger.info("Cleaning up failed build branch '%s'", result.branch_name)
+                await _run_git(["branch", "-D", result.branch_name], work_dir)
             # Delete files created during the failed build (untracked on main)
             for created_path in written:
                 full = Path(work_dir) / created_path

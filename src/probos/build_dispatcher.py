@@ -9,17 +9,24 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from probos.build_queue import BuildQueue, QueuedBuild
-from probos.cognitive.builder import BuildResult, BuildSpec, execute_approved_build
+from probos.cognitive.builder import (
+    BuildResult,
+    BuildSpec,
+    execute_approved_build,
+    repository_identity,
+)
+from probos.execution.isolation import remove_workdir_off_loop
 from probos.worktree_manager import WorktreeManager
 
 try:
-    from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+    from probos.cognitive.copilot_adapter import CopilotBuilderAdapter, seed_session_directory
     _SDK_AVAILABLE = True
 except ImportError:
     _SDK_AVAILABLE = False
@@ -141,8 +148,20 @@ class BuildDispatcher:
     # -- build execution -----------------------------------------------------
 
     async def _execute_build(self, build: QueuedBuild) -> None:
-        """Execute a single build: worktree -> adapter -> apply -> result."""
+        """Execute a single build: worktree -> adapter -> apply -> result.
+
+        BF-896: generation runs in a fresh session directory, never in the
+        worktree. The worktree's repository identity is pinned before the
+        adapter exists and is checked by ``execute_approved_build``, the only
+        route by which blocks reach the worktree. The session directory is
+        always removed.
+        """
         worktree_info = None
+        session_dir: str | None = None
+        # BF-896: once the executor returns, its result (and the commit it made on
+        # its own branch) must survive any later exit: an error or a cancellation.
+        build_result: BuildResult | None = None
+        executor_branch = ""
         try:
             # 1. Create worktree
             worktree_info = await self._worktree_mgr.create(build.id)
@@ -158,9 +177,23 @@ class BuildDispatcher:
             if not _SDK_AVAILABLE:
                 raise RuntimeError("Copilot SDK not available")
 
+            # BF-896: pin the repository the worktree names before anything
+            # model-driven runs; a tree whose identity cannot be read is refused.
+            expected_git_dir = await repository_identity(worktree_info.path)
+            if expected_git_dir is None:
+                raise RuntimeError(
+                    f"Cannot pin the repository identity of worktree {worktree_info.path}"
+                )
+
+            # BF-896: the session runs in its own directory, seeded with the files
+            # it may change, so the scan reports only what the session changed.
+            session_dir = tempfile.mkdtemp(prefix="probos_visiting_")
+            file_contents = seed_session_directory(session_dir, file_contents)
+
             adapter = CopilotBuilderAdapter(
                 model=self._builder_model,
-                cwd=worktree_info.path,
+                cwd=session_dir,
+                instruction_work_dir=worktree_info.path,
             )
             if not CopilotBuilderAdapter.is_available():
                 raise RuntimeError("Copilot SDK not available")
@@ -185,14 +218,66 @@ class BuildDispatcher:
                 work_dir=worktree_info.path,
                 run_tests=self._run_tests,
                 builder_source="visiting",
+                expected_git_dir=expected_git_dir,
             )
+            executor_branch = build_result.branch_name
 
             # 5. Update queue with result
             if build_result.success:
-                self._queue.update_status(
-                    build.id, "reviewing",
-                    result=build_result,
-                )
+                # BF-896: the executor committed on a branch of its own, but review
+                # (collect_diff) and approval (merge_to_main) read the worktree's
+                # branch. Adopt the commit there, or the approval would report
+                # "merged" while main was unchanged.
+                sha = build_result.commit_hash
+                if not sha:
+                    self._queue.update_status(
+                        build.id, "failed",
+                        result=build_result,
+                        error="no change reached the worktree",
+                        completed_at=time.monotonic(),
+                    )
+                elif await repository_identity(worktree_info.path) != expected_git_dir:
+                    # The pin must cover the hooks adoption runs (checkout, merge).
+                    self._queue.update_status(
+                        build.id, "failed",
+                        result=build_result,
+                        error=(
+                            f"Repository identity changed after the build; "
+                            f"commit {sha} left on {build_result.branch_name}, not adopted"
+                        ),
+                        completed_at=time.monotonic(),
+                    )
+                else:
+                    try:
+                        adopted, detail = await self._worktree_mgr.adopt_commit(
+                            build.id, executor_branch,
+                        )
+                    except Exception as adopt_exc:
+                        # An adoption that raises is an adoption failure: keep
+                        # build_result and the recovery branch/commit. Cancellation
+                        # (BaseException) still propagates.
+                        logger.error(
+                            "build-dispatcher adopt_commit raised id=%s commit=%s "
+                            "branch=%s: %s: %s; build marked failed, commit left on "
+                            "the executor branch",
+                            build.id, sha, executor_branch,
+                            type(adopt_exc).__name__, adopt_exc,
+                        )
+                        adopted = False
+                        detail = f"{type(adopt_exc).__name__}: {adopt_exc}"
+                    if adopted:
+                        build_result.branch_name = worktree_info.branch
+                        self._queue.update_status(
+                            build.id, "reviewing",
+                            result=build_result,
+                        )
+                    else:
+                        self._queue.update_status(
+                            build.id, "failed",
+                            result=build_result,
+                            error=f"commit {sha} left on {executor_branch}: {detail}",
+                            completed_at=time.monotonic(),
+                        )
             else:
                 self._queue.update_status(
                     build.id, "failed",
@@ -203,12 +288,67 @@ class BuildDispatcher:
 
         except Exception as exc:
             logger.error("build-dispatcher build failed id=%s: %s", build.id, exc)
+            error = str(exc)
+            if build_result is not None and build_result.commit_hash:
+                error = (
+                    f"{error}; commit {build_result.commit_hash} on {executor_branch} "
+                    f"or {worktree_info.branch}"
+                )
             self._queue.update_status(
                 build.id, "failed",
-                error=str(exc),
+                result=build_result,
+                error=error,
                 completed_at=time.monotonic(),
             )
+        except asyncio.CancelledError:
+            # Before the executor returned there is nothing to record. After it,
+            # keep the result and name where its commit is (it is on the executor
+            # branch, or on the worktree branch if adoption got that far).
+            # update_status is synchronous and never raises.
+            if build_result is not None:
+                if build_result.commit_hash:
+                    cancel_error = (
+                        f"cancelled after commit {build_result.commit_hash}; "
+                        f"on {executor_branch} or {worktree_info.branch}"
+                    )
+                else:
+                    cancel_error = (
+                        "cancelled after the build ran, before its outcome was recorded"
+                    )
+                logger.warning(
+                    "build-dispatcher cancelled after the build ran id=%s: %s",
+                    build.id, cancel_error,
+                )
+                try:
+                    self._queue.update_status(
+                        build.id, "failed",
+                        result=build_result,
+                        error=cancel_error,
+                        completed_at=time.monotonic(),
+                    )
+                except Exception:
+                    # Best effort: whatever stops here must still see the
+                    # cancellation, never the failure to record it.
+                    logger.error(
+                        "build-dispatcher could not record the cancelled build id=%s",
+                        build.id, exc_info=True,
+                    )
+            raise
         finally:
+            if session_dir is not None:
+                # BF-896: the session directory is the SDK client's cwd. Removal
+                # retries (BF-844); its failure must not change the recorded outcome,
+                # and a cancellation still escapes.
+                try:
+                    await remove_workdir_off_loop(Path(session_dir))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "build-dispatcher: could not remove session directory %s "
+                        "(%s: %s); it may remain on disk. The build result is unaffected.",
+                        session_dir, type(cleanup_exc).__name__, cleanup_exc,
+                    )
             # Fire callback if provided
             updated_build = self._queue.get(build.id)
             if updated_build and self._on_build_complete:

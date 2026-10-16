@@ -14,10 +14,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.builder_paths import builder_write_refusal
 from probos.repository_instructions import (
     append_repository_instructions,
     discover_build_repository_instructions,
@@ -31,7 +35,7 @@ if TYPE_CHECKING:
 
 _SDK_AVAILABLE = False
 try:
-    from copilot import CopilotClient, PermissionHandler, Tool, ToolResult  # type: ignore[import-untyped]
+    from copilot import CopilotClient, PermissionRequestResult, Tool, ToolResult  # type: ignore[import-untyped]
     from copilot.generated.session_events import SessionEventType  # type: ignore[import-untyped]
 
     _SDK_AVAILABLE = True
@@ -40,6 +44,12 @@ except ImportError:
     class ToolResult:  # type: ignore[no-redef]
         def __init__(self, *, text_result_for_llm: str = "") -> None:
             self.text_result_for_llm = text_result_for_llm
+
+    @dataclass
+    class PermissionRequestResult:  # type: ignore[no-redef]
+        """BF-896: stand-in with the SDK's ``kind`` field; used only without the SDK."""
+
+        kind: str = "denied-no-approval-rule-and-could-not-request-from-user"
 
 logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -67,6 +77,7 @@ _VISITING_BUILDER_INSTRUCTIONS = (
     "- Do NOT explore the filesystem (no ls, find, tree, cat of project files)\n"
     "- All project context is available through your MCP tools (codebase_query, codebase_read_source, etc.)\n"
     "- Write all output files directly to the current directory using the paths from the build spec\n"
+    "- Shell commands, and reads or writes outside the current directory, are denied by the session's permission policy\n"
     "- For existing files that need modification, their current content is provided in the prompt below\n"
     "- Source files go under src/probos/ — test files go under tests/\n\n"
     "PROJECT STRUCTURE:\n"
@@ -147,6 +158,167 @@ def _normalize_sdk_path(raw_path: str, cwd: Path) -> str:
     return normalized
 
 
+# ── BF-896: session confinement ────────────────────────────────────────────
+
+_PERMISSION_APPROVED = "approved"
+_PERMISSION_DENIED = "denied-by-rules"  # a denial kind in SDK 0.1.30 and 0.1.32
+# 0.1.32 sends a dataclass (snake_case attributes); 0.1.30 a wire dict (camelCase keys).
+_PATH_FIELDS = ("file_name", "fileName", "path")
+_POSSIBLE_PATH_FIELDS = ("possible_paths", "possiblePaths")
+_TOOL_NAME_FIELDS = ("tool_name", "toolName")
+
+
+def _request_field(request: Any, name: str) -> Any:
+    """One field of a permission request, from either SDK shape."""
+    if isinstance(request, dict):
+        return request.get(name)
+    return getattr(request, name, None)
+
+
+def _request_kind(request: Any) -> str | None:
+    """The request's kind as an exact ``str`` (0.1.32 sends an ``Enum``), or None."""
+    kind = _request_field(request, "kind")
+    if isinstance(kind, Enum):
+        kind = kind.value
+    return kind if type(kind) is str else None
+
+
+def _session_root(session_dir: Any) -> tuple[str, str] | None:
+    """(real path, case-folded real path) of an existing, absolute session directory, or None."""
+    if type(session_dir) is not str or not session_dir or "\x00" in session_dir:
+        return None
+    if not os.path.isabs(session_dir):
+        return None  # a relative name would resolve against whatever the process cwd is
+    try:
+        real = os.path.realpath(session_dir)
+        if not os.path.isdir(real):
+            return None
+        return real, os.path.normcase(real)
+    except (OSError, ValueError):
+        return None
+
+
+def _session_relative(root: tuple[str, str], raw: Any) -> str | None:
+    """The forward-slash path *raw* names strictly inside the session root, or None.
+
+    Fails closed: a non-string, an empty value, a NUL, a ``..`` component, a ``:``
+    anywhere but an absolute path's drive (an NTFS stream or a drive-relative form),
+    and anything that resolves (symlinks followed) outside the root, or to the root
+    itself, are all None.
+    """
+    if type(raw) is not str or not raw or "\x00" in raw:
+        return None
+    if ".." in raw.replace("\\", "/").split("/"):
+        return None
+    drive, tail = os.path.splitdrive(raw)
+    if ":" in tail or (drive and not os.path.isabs(raw)):
+        return None
+    real_root, folded_root = root
+    try:
+        candidate = raw if os.path.isabs(raw) else os.path.join(real_root, raw)
+        real = os.path.realpath(candidate)
+        folded = os.path.normcase(real)
+        if folded == folded_root or os.path.commonpath([folded_root, folded]) != folded_root:
+            return None
+        return os.path.relpath(real, real_root).replace("\\", "/")
+    except (OSError, ValueError):
+        return None
+
+
+def _permission_verdict(
+    request: Any, root: tuple[str, str] | None, tools: frozenset[str],
+) -> bool:
+    """True only for a request the session policy approves (see the factory)."""
+    kind = _request_kind(request)
+    if kind == "custom-tool":
+        names = [n for n in (_request_field(request, f) for f in _TOOL_NAME_FIELDS) if n is not None]
+        return bool(names) and all(type(n) is str and n in tools for n in names)
+    if kind not in ("write", "read") or root is None:
+        return False
+    targets: list[Any] = [
+        value for value in (_request_field(request, f) for f in _PATH_FIELDS) if value is not None
+    ]
+    for name in _POSSIBLE_PATH_FIELDS:
+        extra = _request_field(request, name)
+        if extra is None:
+            continue
+        if not isinstance(extra, (list, tuple)):
+            return False
+        targets.extend(extra)
+    if not targets:
+        return False
+    for raw in targets:
+        rel = _session_relative(root, raw)
+        if rel is None:
+            return False
+        if kind == "write" and builder_write_refusal(rel) is not None:
+            return False
+    return True
+
+
+def build_session_permission_handler(
+    session_dir: Any, tool_names: Iterable[Any],
+) -> Callable[..., Any]:
+    """BF-896: the permission policy of a visiting build session, deny by default.
+
+    Approves only: a ``write`` whose every named target lies strictly inside
+    *session_dir* and passes the builder's lexical write rules
+    (``builder_write_refusal``); a ``read`` strictly inside *session_dir*; a
+    ``custom-tool`` call to one of *tool_names* (the adapter's registered tools).
+    Every other kind (``shell``, ``url``, ``mcp``, ``memory``, anything new), a
+    request it cannot parse, and any error are denied. Never raises: an unusable
+    *session_dir* denies every path request.
+    """
+    root = _session_root(session_dir)
+    try:
+        allowed = frozenset(name for name in tool_names if type(name) is str)
+    except Exception:
+        allowed = frozenset()
+
+    def handler(request: Any, invocation: Any = None) -> Any:
+        try:
+            label = _request_kind(request)
+            approved = _permission_verdict(request, root, allowed)
+        except Exception:
+            label, approved = "unparsed", False
+            logger.warning("BF-896: a permission request could not be evaluated; denied", exc_info=True)
+        if not approved:
+            logger.info("BF-896: visiting build session denied a %s permission request", label)
+        return PermissionRequestResult(kind=_PERMISSION_APPROVED if approved else _PERMISSION_DENIED)
+
+    return handler
+
+
+def seed_session_directory(session_dir: str, files: Mapping[str, str]) -> dict[str, str]:
+    """BF-896: copy a build's existing files into its session directory.
+
+    Writes each non-empty entry at its session-relative path; an empty entry (a file
+    that does not exist yet) is kept in the result but not written. A key that does
+    not name a path strictly inside *session_dir* is logged and dropped. Returns the
+    entries keyed by session-relative path, which is the key the adapter's scan
+    compares against. Raises ValueError when *session_dir* is not an existing
+    directory.
+    """
+    root = _session_root(session_dir)
+    if root is None:
+        raise ValueError(f"BF-896: session directory {session_dir!r} is not an existing directory")
+    seeded: dict[str, str] = {}
+    for raw, content in files.items():
+        if type(content) is not str:
+            continue
+        rel = _session_relative(root, raw)
+        if rel is None:
+            logger.warning("BF-896: not seeding %r: it names no path inside the session directory", raw)
+            continue
+        seeded[rel] = content
+        if not content:
+            continue
+        dest = Path(root[0]) / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+    return seeded
+
+
 class CopilotBuilderAdapter:
     """Wraps the GitHub Copilot SDK to execute build tasks as a visiting officer.
 
@@ -166,12 +338,19 @@ class CopilotBuilderAdapter:
         model: str = "claude-sonnet-5.5",
         cwd: str = "",
         github_token: str = "",
+        instruction_work_dir: str | None = None,
     ) -> None:
         self._codebase_index = codebase_index
         self._runtime = runtime
         self._model = model
-        self._instruction_work_dir = cwd
+        # BF-896: repository instructions are discovered from instruction_work_dir
+        # (the worktree on the queued route); the session runs in cwd. A caller that
+        # names only cwd keeps AD-1200's behaviour (both the same directory).
+        self._instruction_work_dir = cwd if instruction_work_dir is None else instruction_work_dir
         self._cwd = cwd or str(_PROJECT_ROOT)
+        # BF-896: execute() runs a session only in a directory its caller named;
+        # the _PROJECT_ROOT fallback above is the client cwd for start() alone.
+        self._session_dir_given = bool(cwd)
         self._github_token = github_token
         self._client: Any | None = None
         self._started = False
@@ -483,6 +662,16 @@ class CopilotBuilderAdapter:
         """
         if not self._started:
             raise RuntimeError("Adapter not started")
+        if not self._session_dir_given:
+            # BF-896: without an explicit session directory the session would run in
+            # the project root with write permission there.
+            return CopilotBuildResult(
+                success=False,
+                error=(
+                    "BF-896: no session directory was given; a visiting build session "
+                    "runs only in a directory its caller created"
+                ),
+            )
 
         try:
             system_message = self._compose_system_message()
@@ -507,7 +696,11 @@ class CopilotBuilderAdapter:
                 "system_message": system_message,
                 "tools": tools,
                 "working_directory": self._cwd,
-                "on_permission_request": PermissionHandler.approve_all,
+                # BF-896: deny by default; writes and reads only inside the session
+                # directory, and only the adapter's own registered tools.
+                "on_permission_request": build_session_permission_handler(
+                    self._cwd, [getattr(tool, "name", None) for tool in tools],
+                ),
             }
             if self._model:
                 session_config["model"] = self._model
@@ -580,11 +773,17 @@ class CopilotBuilderAdapter:
                         content = abs_path.read_text(encoding="utf-8", errors="replace")
                         original = file_contents.get(rel_path, "")
                         mode = "modify" if original else "create"
-                        file_blocks.append({
+                        block: dict[str, Any] = {
                             "path": rel_path,
                             "mode": mode,
                             "content": content,
-                        })
+                            # BF-896: every whole-file block carries the text it was
+                            # generated against ("" for an absent or empty file);
+                            # execute_approved_build applies it only while the target
+                            # still holds exactly that text.
+                            "base": original,
+                        }
+                        file_blocks.append(block)
                         logger.debug("Captured changed file: %s (%s)", rel_path, mode)
 
             logger.info("Visiting builder: %d messages, %d files captured", len(messages), len(file_blocks))
@@ -593,6 +792,15 @@ class CopilotBuilderAdapter:
             if not file_blocks:
                 from probos.cognitive.builder import BuilderAgent
                 file_blocks = BuilderAgent._parse_file_blocks(full_output)
+                for block in file_blocks:
+                    if "replacements" not in block:
+                        # BF-896: a whole-file block parsed from the text carries the
+                        # text it was generated against too ("" for a path the seed does
+                        # not name), so execute_approved_build refuses it over a file that
+                        # holds anything else instead of overwriting it. A MODIFY block
+                        # (it has "replacements") is applied by exact SEARCH text and
+                        # stays base-free.
+                        block["base"] = file_contents.get(block["path"], "")
 
             return CopilotBuildResult(
                 success=bool(file_blocks),

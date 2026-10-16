@@ -150,9 +150,10 @@ class TestCopilotBuilderAdapterExecution:
             assert "def test(): pass" in result.file_blocks[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_execute_timeout(self):
+    async def test_execute_timeout(self, tmp_path):
         """send_and_wait raising TimeoutError should return failure."""
-        adapter = CopilotBuilderAdapter()
+        # BF-896: execute() refuses to run without a session directory; name one so this still reaches the timeout path.
+        adapter = CopilotBuilderAdapter(cwd=str(tmp_path))
         adapter._started = True
 
         mock_session = AsyncMock()
@@ -169,9 +170,10 @@ class TestCopilotBuilderAdapterExecution:
         assert "timed out" in result.error.lower() or "timeout" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_execute_sdk_error(self):
+    async def test_execute_sdk_error(self, tmp_path):
         """SDK error should return failure result, not crash."""
-        adapter = CopilotBuilderAdapter()
+        # BF-896: execute() refuses to run without a session directory; name one so this still reaches create_session.
+        adapter = CopilotBuilderAdapter(cwd=str(tmp_path))
         adapter._started = True
 
         mock_client = AsyncMock()
