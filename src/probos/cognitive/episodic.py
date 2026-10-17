@@ -24,11 +24,26 @@ from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
 from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_tcm_vector
+from probos.cognitive.episode_archive import (
+    ARCHIVE_FILENAME,
+    EVICTION_MODES,
+    ArchiveRecord,
+    EpisodeArchive,
+    EpisodeArchiveUnavailable,
+    EpisodeErasureIncomplete,
+    primary_agent_id,
+    resolve_disposition,
+)
+from probos.cognitive.eviction_audit import (
+    DISPOSITION_ARCHIVED,
+    DISPOSITION_ERASED,
+)
 from probos.types import (
     AnchorFrame,
     Episode,
     EpisodeDuplicatePolicy,
     EpisodeStoreOutcome,
+    EvictionDisposition,
     MemorySource,
     RecallScore,
     episode_is_self_contradicted,
@@ -37,6 +52,9 @@ from probos.types import (
 from probos.types import EBBINGHAUS_DEFAULT_STABILITY_SECONDS
 
 logger = logging.getLogger(__name__)
+
+# AD-1340: at most one "episode archive unavailable" warning per interval.
+_ARCHIVE_WARN_INTERVAL_S = 300.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1177,6 +1195,11 @@ def resolve_recall_tier_params(
     return source.get(tier, source.get("enhanced", defaults["enhanced"]))
 
 
+def _metadata_by_id(ids: list[str], metadatas: Any) -> dict[str, dict]:
+    metas = list(metadatas or [])
+    return {eid: (dict(metas[i] or {}) if i < len(metas) else {}) for i, eid in enumerate(ids)}
+
+
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 
@@ -1207,6 +1230,8 @@ class EpisodicMemory:
         reconsolidation_enabled: bool = False,
         affect_capture_enabled: bool = False,
         self_contradiction_recall_enabled: bool = True,
+        eviction_disposition: str = "delete",  # AD-1340 (M4 flips the default to "archive")
+        archive_connection_factory: Any = None,  # AD-1340: ConnectionFactory for episode_archive.db
     ) -> None:
         self.db_path = str(db_path)
         self.max_episodes = max_episodes
@@ -1243,6 +1268,15 @@ class EpisodicMemory:
         self._self_contradiction_recall_enabled = bool(self_contradiction_recall_enabled)
         self._verify_on_recall = verify_content_hash
         self._eviction_audit = eviction_audit
+        # AD-1340: archive-or-delete for dream and capacity eviction; erasure
+        # always erases. The archive is an owned sidecar, opened in start().
+        if eviction_disposition not in EVICTION_MODES:
+            raise ValueError("eviction_disposition_invalid")
+        self._eviction_disposition_mode = eviction_disposition
+        self._archive_connection_factory = archive_connection_factory
+        self._episode_archive: EpisodeArchive | None = None
+        self._archive_state = "absent"  # "absent" | "open" | "failed"
+        self._archive_warned_at = float("-inf")
         self._agent_recall_threshold = agent_recall_threshold  # BF-134
         self._fts_keyword_floor = fts_keyword_floor  # BF-134
         self._query_reformulation_enabled = query_reformulation_enabled  # AD-584
@@ -1390,6 +1424,16 @@ class EpisodicMemory:
         """AD-570b: Wire the participant index after construction."""
         self._participant_index = index
 
+    @property
+    def eviction_disposition_mode(self) -> str:
+        """AD-1340: ``"archive"`` or ``"delete"``."""
+        return self._eviction_disposition_mode
+
+    @property
+    def archive_available(self) -> bool:
+        """AD-1340: True when the episode archive is open."""
+        return self._archive_state == "open" and self._episode_archive is not None
+
     def set_tcm(self, tcm: Any) -> None:
         """AD-601: Wire the Temporal Context Model after construction.
 
@@ -1506,6 +1550,9 @@ class EpisodicMemory:
             logger.debug("AD-567b: FTS5 sidecar init failed — keyword search disabled", exc_info=True)
             self._fts_db = None
 
+        # AD-1340: episode archive (cold, never read by recall)
+        await self._start_episode_archive(db_dir)
+
     async def stop(self) -> None:
         self._collection = None
         # AD-567b: Close FTS5 sidecar
@@ -1522,6 +1569,14 @@ class EpisodicMemory:
             except Exception:
                 pass
             self._participant_index = None
+        # AD-1340: close the episode archive
+        if self._episode_archive is not None:
+            try:
+                await self._episode_archive.stop()
+            except Exception:
+                logger.debug("AD-1340: episode archive close failed", exc_info=True)
+            self._episode_archive = None
+        self._archive_state = "absent"
         if self._client is not None:
             try:
                 self._client.close()
@@ -2312,6 +2367,165 @@ class EpisodicMemory:
             metadatas=[metadata],
         )
 
+    async def _start_episode_archive(self, db_dir: Path) -> None:
+        """AD-1340: open the archive. Delete mode never creates the file.
+
+        In delete mode the archive is opened only if a file from earlier
+        archive mode exists, so that erasure can still clear it; eviction
+        never writes to it in that mode.
+        """
+        path = db_dir / ARCHIVE_FILENAME
+        if self._eviction_disposition_mode == "delete" and not path.exists():
+            self._archive_state = "absent"
+            return
+        archive = EpisodeArchive(str(path), connection_factory=self._archive_connection_factory)
+        try:
+            await archive.start()
+        except Exception:
+            logger.warning(
+                "AD-1340: episode archive failed to open at %s; archive-mode eviction keeps "
+                "episodes live and erasure refuses until it opens",
+                path, exc_info=True,
+            )
+            self._archive_state = "failed"
+            return
+        self._episode_archive = archive
+        self._archive_state = "open"
+
+    def _archive_or_none(self) -> EpisodeArchive | None:
+        """The open archive; None if there is none to read; raise if it failed to open."""
+        if self._archive_state == "open" and self._episode_archive is not None:
+            return self._episode_archive
+        if self._archive_state == "failed":
+            raise EpisodeArchiveUnavailable("episode_archive_unavailable_for_erase")
+        return None
+
+    def _warn_archive_unavailable(self, count: int) -> None:
+        now = time.monotonic()
+        if now - self._archive_warned_at < _ARCHIVE_WARN_INTERVAL_S:
+            return
+        self._archive_warned_at = now
+        logger.warning(
+            "AD-1340: episode archive unavailable; %d episode(s) kept live instead of archived "
+            "(the store may exceed max_episodes until the archive opens)",
+            count,
+        )
+
+    async def _archive_records(self, ids: list[str], reason: str) -> dict[str, str]:
+        """Archive these live ids; return ``{id: archive_ref}`` for the committed ones."""
+        archive = self._episode_archive
+        if self._archive_state != "open" or archive is None:
+            self._warn_archive_unavailable(len(ids))
+            return {}
+        try:
+            result = self._collection.get(ids=list(ids), include=["documents", "metadatas"])
+            got_ids = list((result or {}).get("ids") or [])
+            docs = list((result or {}).get("documents") or [])
+            metas = _metadata_by_id(got_ids, (result or {}).get("metadatas"))
+            records = [
+                ArchiveRecord(
+                    episode_id=eid,
+                    document=(docs[i] if i < len(docs) else "") or "",
+                    metadata=metas[eid],
+                )
+                for i, eid in enumerate(got_ids)
+            ]
+            committed = await archive.archive(records, reason=reason)
+        except Exception:
+            logger.warning(
+                "AD-1340: archive write failed; %d episode(s) stay live", len(ids), exc_info=True,
+            )
+            return {}
+        return {record.episode_id: record.archive_ref for record in records if record.episode_id in committed}
+
+    async def _cleanup_sidecars(self, ids: list[str], *, strict: bool = False) -> None:
+        """FTS5, activation and participant cleanup (AD-567b/d, AD-570b).
+
+        Best-effort for archive/delete eviction, as before AD-1340. With
+        ``strict`` (ERASE) a failure raises after every cleanup was attempted.
+        """
+        failures: list[str] = []
+        if self._fts_db is not None:
+            try:
+                for eid in ids:
+                    await self._fts_db.execute(
+                        "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
+                    )
+                await self._fts_db.commit()
+            except Exception:
+                logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
+                failures.append("episode_fts")
+        if self._activation_tracker:
+            try:
+                await self._activation_tracker.delete_episode_accesses(ids)
+            except Exception:
+                logger.debug("AD-567d: Activation cleanup failed", exc_info=True)
+                failures.append("activation")
+        if self._participant_index:
+            try:
+                await self._participant_index.delete_episodes(ids)
+            except Exception:
+                logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
+                failures.append("participant_index")
+        if strict and failures:
+            logger.error(
+                "AD-1340: erasure could not clear %s for %d episode(s)", ", ".join(failures), len(ids),
+            )
+            raise EpisodeErasureIncomplete("erasure_sidecar_cleanup_failed:" + ",".join(failures))
+
+    async def _remove_from_live(
+        self,
+        candidate_ids: list[str],
+        metadata_by_id: dict[str, dict],
+        *,
+        reason: str,
+        process: str,
+        details: str,
+        outcome: str,
+    ) -> list[str]:
+        """AD-1340: the one removal sequence for capacity, dream and erase evictions.
+
+        Archive mode: archive and commit, then audit, then delete from ChromaDB
+        ONLY the ids whose archive row committed, then clean the sidecars.
+        Delete and erase: the same sequence without the archive step.
+        """
+        ids = list(candidate_ids)
+        archive_refs: dict[str, str] = {}
+        if outcome == DISPOSITION_ARCHIVED:
+            committed = await self._archive_records(ids, reason)
+            ids = [eid for eid in ids if eid in committed]
+            if not ids:
+                return []
+            archive_refs = committed
+        if self._eviction_audit:
+            records = []
+            for eid in ids:
+                meta = metadata_by_id.get(eid) or {}
+                records.append({
+                    "episode_id": eid,
+                    "agent_id": primary_agent_id(meta),
+                    "content_hash": meta.get("content_hash", ""),
+                    "episode_timestamp": meta.get("timestamp", 0.0),
+                    "archive_ref": archive_refs.get(eid, ""),
+                })
+            try:
+                await self._eviction_audit.record_batch_eviction(
+                    records,
+                    reason=reason,
+                    process=process,
+                    details=details,
+                    disposition=outcome,
+                )
+            except Exception as exc:
+                logger.warning("Eviction audit failed: %s", exc)
+        self._collection.delete(ids=list(ids))
+        await self._cleanup_sidecars(ids, strict=(outcome == DISPOSITION_ERASED))
+        return ids
+
+    async def _erase_ids(self, episode_ids: list[str], reason: str) -> int:
+        # AD-1340 M3 replaces this stub with the erase sequence.
+        raise NotImplementedError("AD-1340 M3")
+
     async def _evict(self) -> None:
         assert self._collection
         count = self._collection.count()
@@ -2327,130 +2541,59 @@ class EpisodicMemory:
                 paired.sort(key=lambda x: x[1].get("timestamp", 0))
                 to_evict = paired[:excess]
                 ids_to_delete = [p[0] for p in to_evict]
-                # AD-541f: Record evictions before deletion
-                if ids_to_delete and self._eviction_audit:
-                    records = []
-                    for eid, meta in to_evict:
-                        agent_ids_raw = meta.get("agent_ids_json", "[]")
-                        try:
-                            agent_ids = json.loads(agent_ids_raw)
-                            agent_id = agent_ids[0] if agent_ids else "unknown"
-                        except (json.JSONDecodeError, TypeError):
-                            agent_id = "unknown"
-                        records.append({
-                            "episode_id": eid,
-                            "agent_id": agent_id,
-                            "content_hash": meta.get("content_hash", ""),
-                            "episode_timestamp": meta.get("timestamp", 0.0),
-                        })
-                    try:
-                        await self._eviction_audit.record_batch_eviction(
-                            records,
-                            reason="capacity",
-                            process="_evict",
-                            details=f"batch of {len(ids_to_delete)}, budget={self.max_episodes}",
-                        )
-                    except Exception as exc:
-                        logger.warning("Eviction audit failed: %s", exc)
                 if ids_to_delete:
-                    self._collection.delete(ids=ids_to_delete)
-                    # AD-567b: FTS5 cleanup on eviction
-                    if self._fts_db is not None:
-                        try:
-                            for eid in ids_to_delete:
-                                await self._fts_db.execute(
-                                    "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
-                                )
-                            await self._fts_db.commit()
-                        except Exception:
-                            logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
-                    # AD-567d: Clean up activation records for evicted episodes
-                    if self._activation_tracker:
-                        try:
-                            await self._activation_tracker.delete_episode_accesses(ids_to_delete)
-                        except Exception:
-                            logger.debug("AD-567d: Activation cleanup on eviction failed", exc_info=True)
-                    # AD-570b: Participant index cleanup on eviction
-                    if self._participant_index:
-                        try:
-                            await self._participant_index.delete_episodes(ids_to_delete)
-                        except Exception:
-                            logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
+                    # AD-1340: archive (or delete) through the one removal sequence.
+                    await self._remove_from_live(
+                        ids_to_delete,
+                        {eid: dict(meta or {}) for eid, meta in to_evict},
+                        reason="capacity",
+                        process="_evict",
+                        details=f"batch of {len(ids_to_delete)}, budget={self.max_episodes}",
+                        outcome=resolve_disposition("capacity", None, self._eviction_disposition_mode),
+                    )
 
-    async def evict_by_ids(self, episode_ids: list[str], reason: str = "activation_pruning") -> int:
-        """AD-567d: Evict specific episodes by ID. Handles audit, FTS5, ChromaDB, and activation cleanup.
+    async def evict_by_ids(
+        self,
+        episode_ids: list[str],
+        reason: str = "activation_pruning",
+        *,
+        disposition: EvictionDisposition | None = None,
+    ) -> int:
+        """AD-567d / AD-1340: evict specific episodes by id.
 
-        Used by dream Step 12 for activation-based pruning.
-        Returns count of episodes actually evicted.
+        Dream Step 12, erasure and test cleanup call this. The disposition is
+        decided once, by :func:`resolve_disposition`: an explicit
+        ``EvictionDisposition.ERASE`` erases every copy (only the AD-754
+        erasure manager and qualification-test cleanup pass it); anything else
+        archives (``memory.eviction_disposition: archive``) or deletes
+        (``delete``). No reason string ever erases.
+
+        Returns the count of episodes removed from the live store; for ERASE,
+        removed from the live store or the archive. ERASE propagates failures.
         """
-        if not self._collection or not episode_ids:
+        outcome = resolve_disposition(reason, disposition, self._eviction_disposition_mode)
+        if not episode_ids:
+            return 0
+        if outcome == DISPOSITION_ERASED:
+            return await self._erase_ids(list(episode_ids), reason)
+        if not self._collection:
             return 0
 
-        # Gather metadata for audit trail
         evicted = 0
         try:
             result = self._collection.get(ids=episode_ids, include=["metadatas"])
             if not result or not result["ids"]:
                 return 0
-
             valid_ids = result["ids"]
-
-            # AD-541f: Record evictions before deletion
-            if valid_ids and self._eviction_audit:
-                records = []
-                for i, eid in enumerate(valid_ids):
-                    meta = result["metadatas"][i] if result["metadatas"] and i < len(result["metadatas"]) else {}
-                    agent_ids_raw = meta.get("agent_ids_json", "[]")
-                    try:
-                        agent_ids = json.loads(agent_ids_raw)
-                        agent_id = agent_ids[0] if agent_ids else "unknown"
-                    except (json.JSONDecodeError, TypeError):
-                        agent_id = "unknown"
-                    records.append({
-                        "episode_id": eid,
-                        "agent_id": agent_id,
-                        "content_hash": meta.get("content_hash", ""),
-                        "episode_timestamp": meta.get("timestamp", 0.0),
-                    })
-                try:
-                    await self._eviction_audit.record_batch_eviction(
-                        records,
-                        reason=reason,
-                        process="evict_by_ids",
-                        details=f"batch of {len(valid_ids)}, reason={reason}",
-                    )
-                except Exception as exc:
-                    logger.warning("Eviction audit failed: %s", exc)
-
-            # Delete from ChromaDB
-            self._collection.delete(ids=valid_ids)
-            evicted = len(valid_ids)
-
-            # AD-567b: FTS5 cleanup
-            if self._fts_db is not None:
-                try:
-                    for eid in valid_ids:
-                        await self._fts_db.execute(
-                            "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
-                        )
-                    await self._fts_db.commit()
-                except Exception:
-                    logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
-
-            # AD-567d: Activation cleanup
-            if self._activation_tracker:
-                try:
-                    await self._activation_tracker.delete_episode_accesses(valid_ids)
-                except Exception:
-                    logger.debug("AD-567d: Activation cleanup failed", exc_info=True)
-
-            # AD-570b: Participant index cleanup
-            if self._participant_index:
-                try:
-                    await self._participant_index.delete_episodes(valid_ids)
-                except Exception:
-                    logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
-
+            removed = await self._remove_from_live(
+                valid_ids,
+                _metadata_by_id(valid_ids, result["metadatas"]),
+                reason=reason,
+                process="evict_by_ids",
+                details=f"batch of {len(valid_ids)}, reason={reason}",
+                outcome=outcome,
+            )
+            evicted = len(removed)
         except Exception as e:
             logger.debug("evict_by_ids failed: %s", e)
 
