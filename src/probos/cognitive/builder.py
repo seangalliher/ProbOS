@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from probos.cognitive.builder_paths import builder_write_refusal
+from probos.cognitive.builder_paths import builder_write_refusal, operator_checkout_refusal
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
 from probos.execution.command_env import build_command_env
@@ -2422,8 +2422,25 @@ def _pytest_pythonpath(work_dir: str) -> str:
     return f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
 
 
+# BF-897 (#1559): the builder runs only the targeted tests. The full suite (about 48K
+# tests, 14 to 19 minutes) never fit the 180 s phase 2 or the 60 s fallback, so every
+# build with tests failed. It belongs to the receipted gate (AD-1336 child 2); the
+# builder records it as not run, at the one place a governed runner later replaces.
+TARGETED_TEST_TIMEOUT_S = 60
+FULL_SUITE_NOT_RUN = "not_run"
+NO_TARGETED_TESTS = (
+    "No targeted tests map to the changed files, and the builder does not run the "
+    "full suite (BF-897), so the change was not tested and is not committed."
+)
+_PYTEST_TIMEOUT_PREFIX = "pytest timed out after"
+
+
 async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
-    """Run pytest and return (passed, output)."""
+    """Run the whole pytest suite in *work_dir* and return (passed, output).
+
+    BF-897: no build path calls this any more (the full suite is the receipted
+    gate's). It is kept because BF-892's environment boundary is tested through it.
+    """
     import sys
 
     def _sync_run() -> tuple[int, str]:
@@ -2492,14 +2509,14 @@ async def _run_targeted_tests(
     """Run only tests related to changed files (AD-344).
 
     Returns (passed, output, test_files_run).
-    If no matching test files found, falls back to full suite.
+    BF-897 (#1559): when no test file maps to the changed files nothing runs and
+    the result is ``(False, NO_TARGETED_TESTS, [])``. The full suite never finished
+    within this budget; it belongs to the receipted gate (AD-1336 child 2).
     """
     test_files = _map_source_to_tests(changed_files, work_dir)
 
     if not test_files:
-        # No targeted tests found, run full suite
-        passed, output = await _run_tests(work_dir, timeout=timeout)
-        return passed, output, []
+        return False, NO_TARGETED_TESTS, []
 
     import sys
 
@@ -2524,6 +2541,22 @@ async def _run_targeted_tests(
     loop = asyncio.get_running_loop()
     returncode, output = await loop.run_in_executor(None, _sync_run)
     return returncode == 0, output, test_files
+
+
+def _classify_test_run(passed: bool, output: str) -> str:
+    """BF-897: ``passed``, ``timed_out``, ``not_run`` or ``failed``.
+
+    Only ``failed`` reaches the fix loop: a timeout or an untested change is
+    nothing a model's repair can fix, and asking for one spends a deep-tier call
+    on output that names no failing test.
+    """
+    if passed:
+        return "passed"
+    if output.startswith(_PYTEST_TIMEOUT_PREFIX):
+        return "timed_out"
+    if output == NO_TARGETED_TESTS:
+        return "not_run"
+    return "failed"
 
 
 def _build_fix_prompt(
@@ -2654,6 +2687,14 @@ async def execute_approved_build(
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
+
+    # 0a. BF-897 (#1559): refuse the checkout the runtime started from (a location
+    # check, see operator_checkout_refusal). Before any git command or write; no
+    # subprocess, so tests that patch subprocess.run see none.
+    checkout_refusal = operator_checkout_refusal(work_dir, _PROJECT_ROOT)
+    if checkout_refusal is not None:
+        result.error = checkout_refusal
+        return result
 
     # 0. BF-896: the tree must still name the repository pinned before generation.
     if expected_git_dir is not None:
@@ -2873,22 +2914,23 @@ async def execute_approved_build(
             all_changed_files = written + modified_files
 
             for attempt in range(1 + max_fix_attempts):
-                # Phase 1: Targeted tests only (fast, AD-344)
-                passed, test_output, targeted_files = await _run_targeted_tests(
-                    work_dir, all_changed_files, timeout=60,
+                # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
+                passed, test_output, _targeted_files = await _run_targeted_tests(
+                    work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,
                 )
                 result.test_result = test_output
                 result.tests_passed = passed
-
-                if passed and targeted_files:
-                    # Phase 2: Full suite only if targeted passed (AD-344)
-                    passed_full, full_output = await _run_tests(work_dir, timeout=180)
-                    if not passed_full:
-                        result.test_result = full_output
-                        result.tests_passed = False
-                        passed = False
+                test_outcome = _classify_test_run(passed, test_output)
+                result.metadata["targeted_tests"] = test_outcome
 
                 if passed:
+                    break
+                if test_outcome != "failed":
+                    # BF-897: a timeout or an untested change never enters the fix loop.
+                    logger.warning(
+                        "BuilderAgent: targeted tests %s on attempt %d; no fix requested",
+                        test_outcome, attempt + 1,
+                    )
                     break
 
                 if attempt < max_fix_attempts and llm_client is not None:
@@ -2970,12 +3012,15 @@ async def execute_approved_build(
                     all_changes.extend(fix_changes)
                     result.fix_attempts += 1
                 else:
-                    # No LLM client or exhausted retries
-                    if attempt < max_fix_attempts:
-                        result.fix_attempts += 1
+                    # BF-897: no repair client, or the attempts are used up. The tree is
+                    # unchanged, so another run would only repeat this one, and no repair was
+                    # requested.
+                    break  # BF-897 review r1: fix_attempts counts repair requests only
 
             result.files_written = written
             result.files_modified = modified_files
+            # BF-897: the full suite is the receipted gate's (AD-1336 child 2); not run here.
+            result.metadata["full_suite"] = FULL_SUITE_NOT_RUN
 
         # 5.4. BF-896: the tests may have run arbitrary code; the tree must still
         # name the pinned repository before anything is committed.
@@ -3013,9 +3058,17 @@ async def execute_approved_build(
 
                 # If still failing after escalation attempt, report to Captain
                 if run_tests and not result.tests_passed:
+                    # BF-897: only a failure is "Tests failed".
+                    test_outcome = result.metadata.get("targeted_tests", "failed")
+                    if test_outcome == "timed_out":
+                        lead = "Targeted tests timed out; no fix was requested. "
+                    elif test_outcome == "not_run":
+                        lead = "No targeted tests ran. "
+                    else:
+                        lead = "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
                     result.error = (
-                        "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
-                        "Code written to branch but NOT committed.\n"
+                        lead
+                        + "Code written to branch but NOT committed.\n"
                         + (result.test_result or "")[-1000:]
                     )
                     result.success = False

@@ -144,32 +144,28 @@ class WorktreeManager:
         return out
 
     async def merge_to_main(self, build_id: str) -> tuple[bool, str]:
-        """Merge the worktree's branch into main.
+        """BF-897 (#1559): refuse; this method never merges in the checkout ProbOS runs from.
 
-        Returns (success, commit_hash_or_error).
-        Must be called from the main repo (not the worktree).
+        This used to run ``git checkout main`` and ``git merge`` in ``repo_root``,
+        the operator's own checkout: it switched their branch and merged beside
+        their uncommitted edits. A merge in another worktree is no better while
+        ``main`` is checked out here, because moving ``refs/heads/main`` moves this
+        checkout's HEAD. Delivery is the pull-request route (AD-1336 child 6,
+        AD-1299), which replaces this body and keeps the ``(ok, detail)`` contract.
+
+        Runs no git command. Returns ``(False, reason)``; the build's branch and
+        worktree are kept, so it can still be delivered or rejected.
         """
         info = self._worktrees.get(build_id)
         if info is None:
             return False, "unknown build_id"
-
-        # Checkout main
-        rc, out, err = await self._run_git("checkout", "main")
-        if rc != 0:
-            return False, f"checkout main failed: {err}"
-
-        # Merge branch
-        rc, out, err = await self._run_git("merge", info.branch, "--no-edit")
-        if rc != 0:
-            return False, f"merge failed: {err}"
-
-        # Get the merge commit hash
-        rc, commit_hash, err = await self._run_git("rev-parse", "HEAD")
-        if rc != 0:
-            return False, f"rev-parse failed: {err}"
-
-        logger.info("worktree merged build_id=%s branch=%s commit=%s", build_id, info.branch, commit_hash)
-        return True, commit_hash
+        reason = (
+            "This merge request was refused (BF-897): the merge step is not available. "
+            f"Branch {info.branch} is kept in {info.path}; deliver it through a pull "
+            "request, or reject the build to discard it."
+        )
+        logger.warning("worktree merge refused build_id=%s branch=%s", build_id, info.branch)
+        return False, reason
 
     async def adopt_commit(self, build_id: str, branch: str) -> tuple[bool, str]:
         """BF-896: move the commit on *branch* onto the worktree's own branch.

@@ -1,7 +1,8 @@
 # BF-897 (#1559): the builder runs targeted tests only, and nothing in the build pipeline merges or executes in the operator's checkout
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-16
-**Revised by:** the orchestrator, 2026-10-17: one anchor only (Section 8, the `PROGRESS.md` SEARCH, re-anchored on the AD-1328 S2c entry after PR #1574 added it at the head of the file); no design change.
+**Revised by:** the orchestrator, 2026-10-17: Section 8 (the `PROGRESS.md` SEARCH) re-anchored on the AD-1328 S2c entry after PR #1574 added it at the head of the file; tests 10 and 11 corrected after the Builder ran them against real git (a worktree branch named `builder-bf897` clashes with the executor's branch; the executor leaves its work tree on `main`; `create()` cuts the branch from the operator's HEAD); and three prose spots reworded (two UI file names and a FastAPI class mention) because the phantom-API precheck is a heuristic that reads them as phantom symbols. No design change.
+**Amended by:** the orchestrator, 2026-10-17, after review round 1, as decided by the Architect (recorded on #1559): the approve refusal's event carries a `not_executed` marker that the Night Orders hook skips, and its emit cannot turn the refusal into an error; the fix loop stops when there is no repair client, so `fix_attempts` counts repair requests only; the DECISIONS heading, the PROGRESS lead and the isolation sentences state the control's two limits, recorded on #1523. Revised in round 4 (wording, a round-3 finding, decided by the Architect): the two refusal messages are scoped to the refused operation, and the contract's copies of them match the code.
 **Status:** ready to build. Drafted on `origin/main` `2400b14c`; built on `b91448c1` (PR #1574 merged: it touched `DECISIONS.md` and `PROGRESS.md`, no file this contract changes). No new AD or BF number; BF-897 is allocated by the title of #1559.
 **Dependencies:** none. This contract does not touch anything AD-1328 owns (`execution/command_policy.py`, `run_command`, the escalation store); its S2b and S2c are on another branch.
 **Estimated tests:** about 24 new tests in one new file, 3 new tests in existing files, 8 existing tests updated (named under Tests).
@@ -62,7 +63,7 @@ None. Every part is fail-closed, reversible and inside #1559's acceptance. No se
 ## Problem (verified on `2400b14c`)
 
 1. **Timeouts.** `src/probos/cognitive/builder.py:2877-2889`: phase 1 runs `_run_targeted_tests(..., timeout=60)`. If that passes with mapped files, phase 2 runs `_run_tests(work_dir, timeout=180)` (the whole suite) and sets `tests_passed=False` on any failure, including `"pytest timed out after 180s"` (`builder.py:2445-2446`). `_run_targeted_tests` (`builder.py:2499-2502`) runs the whole suite under the targeted 60 s budget when nothing maps. The suite is about 48K tests and takes 14-19 minutes, so both paths always fail, and the fix loop (`builder.py:2894-2971`) then asks the model to "fix" a timeout. **Reachable today:** `BuildDispatcher(run_tests=True)` is the default (`build_dispatcher.py:49`, `structural_services.py:113-117` passes no `run_tests`), and its route calls `execute_approved_build(..., run_tests=self._run_tests)` (`build_dispatcher.py:215-222`).
-2. **Merge.** `WorktreeManager.merge_to_main` (`worktree_manager.py:146-172`) runs `git checkout main` and `git merge <branch> --no-edit` with `cwd=self._repo_root` (`_run_git` default, `worktree_manager.py:53`). `repo_root` is the source checkout (`structural_services.py:110-112`). The only caller is `BuildDispatcher.approve_and_merge` (`build_dispatcher.py:388`), reached from `POST /api/build/queue/approve` (`routers/build.py:158`), which `FullKanban.tsx:74` and `IntentSurface.tsx:2063` call. **The BF-896 visiting route itself does not call `merge_to_main`.** Its build step (`build_dispatcher.py:150-358`) ends at `reviewing`, and the Captain's approval of that build calls it.
+2. **Merge.** `WorktreeManager.merge_to_main` (`worktree_manager.py:146-172`) runs `git checkout main` and `git merge <branch> --no-edit` with `cwd=self._repo_root` (`_run_git` default, `worktree_manager.py:53`). `repo_root` is the source checkout (`structural_services.py:110-112`). The only caller is `BuildDispatcher.approve_and_merge` (`build_dispatcher.py:388`), reached from `POST /api/build/queue/approve` (`routers/build.py:158`), which two HXI components call (the HXI reads are listed under Verified Against Codebase). **The BF-896 visiting route itself does not call `merge_to_main`.** Its build step (`build_dispatcher.py:150-358`) ends at `reviewing`, and the Captain's approval of that build calls it.
 3. **Execute.** `POST /api/build/approve` (`routers/build.py:43-71`) sets `work_dir` to the repository root (`routers/build.py:60`) and schedules `_execute_build` (`routers/build.py:374-445`). That calls `execute_approved_build` (`routers/build.py:394-401`), which creates a branch (`builder.py:2701`), writes files, runs pytest, commits and finally runs `git checkout main` (`builder.py:3049`) in that tree. On a dirty tree it refuses at `builder.py:2673-2678`; on the Captain's machine today that is the uncommitted `config/system.yaml`. In a clean checkout (CI, a fresh clone) it runs. The test `tests/test_builder_api.py:139` (`test_approve_returns_started`) schedules exactly this against the real repository root through a real runtime. A failure is cached with that `work_dir` (`routers/build.py:426-432`), and then `/resolve` "abort" runs `git checkout main` and "commit_override" commits, both in the operator's checkout (`routers/build.py:91-125`). The dispatcher route passes `work_dir=worktree_info.path` (`build_dispatcher.py:218`), a linked worktree under `<repo>/../ProbOS-builders/`. **The router is the only place that executes in the repository root.**
 
 ## Solution
@@ -376,7 +377,7 @@ def _build_fix_prompt(
         if info is None:
             return False, "unknown build_id"
         reason = (
-            "Not merged (BF-897): ProbOS does not merge in the checkout it runs from. "
+            "This merge request was refused (BF-897): the merge step is not available. "
             f"Branch {info.branch} is kept in {info.path}; deliver it through a pull "
             "request, or reject the build to discard it."
         )
@@ -478,6 +479,8 @@ from probos.routers.deps import get_runtime, get_task_tracker
 
 ### 5.2 Constants
 
+`APIRouter` is not a ProbOS symbol: it is FastAPI's class, imported in 5.1. The SEARCH line below is the file's existing router line.
+
 <<<<<<< SEARCH
 router = APIRouter(prefix="/api/build", tags=["build"])
 =======
@@ -486,7 +489,7 @@ router = APIRouter(prefix="/api/build", tags=["build"])
 # BF-897 (#1559): the checkout this runtime runs from (src/probos/routers -> repository).
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 APPROVE_REFUSED = (
-    "Approved builds do not run in the checkout ProbOS runs from (BF-897). "
+    "/api/build/approve no longer runs a build (BF-897). "
     "Queue the build instead (/api/build/enqueue): it runs in its own worktree, "
     "and its branch is kept for delivery."
 )
@@ -670,14 +673,14 @@ Premise assertions: the branch is `captain-work`, and `status --porcelain` lists
 9. `test_execute_refusal_runs_no_git` (premise for the "before any git command" claim): with `_PROJECT_ROOT` patched as above, patch `probos.cognitive.builder.subprocess.run` with a `MagicMock` and `probos.cognitive.builder.asyncio.create_subprocess_exec` with an `AsyncMock`. After the refused call, both have no calls.
 
 **T-A3: control, a linked worktree of the same repository builds normally**
-10. `test_execute_runs_in_a_linked_worktree_and_the_operator_checkout_is_unchanged`: `wt = git -C op worktree add -b builder-bf897 <tmp>/wts/b main`, then `before = checkout_state(op)` with `_PROJECT_ROOT` patched to `op`. `execute_approved_build(..., str(wt), run_tests=False)` gives `success is True` and a non-empty `commit_hash`, and the file exists in `wt`. `git -C op cat-file -e <commit_hash>` succeeds, and `checkout_state(op) == before`. This proves the guard does not over-refuse, and the branch, HEAD and uncommitted edits survive a real build in the shared repository.
+10. `test_execute_runs_in_a_linked_worktree_and_the_operator_checkout_is_unchanged`: `wt = git -C op worktree add -b wt-bf897 <tmp>/wts/b main` (not `builder-bf897`: the executor's own branch for `BuildSpec(title="bf897")` is `builder-bf897`, and a clash fails the build), then `before = checkout_state(op)` with `_PROJECT_ROOT` patched to `op`. `execute_approved_build(..., str(wt), run_tests=False)` gives `success is True` and a non-empty `commit_hash`; the executor then runs `git checkout main` in `wt`, so the file is not in the work tree: assert `git show <commit_hash>:src/probos/new_mod.py` equals the content and that the executor's branch tip starts with the commit hash. `git -C op cat-file -e <commit_hash>` succeeds, and `checkout_state(op) == before`. This proves the guard does not over-refuse, and the branch, HEAD and uncommitted edits survive a real build in the shared repository.
 
 **T-A4: `merge_to_main` refuses and runs no git (kills M4)**
 11. `test_merge_to_main_refuses_runs_no_git_and_keeps_the_branch`:
     - Setup: `mgr = WorktreeManager(repo_root=str(op), worktree_base=str(tmp/"wts"))` and `info = await mgr.create("bf897build01")`. Commit a change to `src/probos/a.py` on `info.branch` inside `info.path` (git with `cwd=info.path`), then `before = snapshot(op)`.
     - Spy: `monkeypatch.setattr(mgr, "_run_git", spy)`, where the spy records its calls and delegates.
     - Act: `ok, reason = await mgr.merge_to_main("bf897build01")`.
-    - Assert: `ok is False`; `"BF-897"`, `info.branch` and `info.path` are in `reason`; the spy has no calls; `snapshot(op) == before` (the `main` sha and `captain-work` HEAD are unchanged); `git -C op rev-list --count main..<info.branch> == "1"`; `mgr.get("bf897build01") is info`.
+    - Assert: `ok is False`; `"BF-897"`, `info.branch` and `info.path` are in `reason`; the spy has no calls; `snapshot(op) == before` (the `main` sha and `captain-work` HEAD are unchanged); `git -C op rev-list --count main..<info.branch>` is `"2"` before and after the act (`create()` cuts the branch from the operator's HEAD, `captain-work`, which is already one commit ahead of `main`) and `captain-work..<info.branch>` is `"1"`; `mgr.get("bf897build01") is info`.
 12. `test_merge_to_main_unknown_build`: `(False, "unknown build_id")`.
 
 **T-C: the test phase (fake runner, standard)**
@@ -721,7 +724,7 @@ Premise assertions: the branch is `captain-work`, and `status --porcelain` lists
 | `tests/test_builder_guardrails.py::TestBranchLifecycle::test_failed_build_deletes_branch` (156, patch at 195) and `::TestUntrackedFileCleanup::test_untracked_files_cleaned_on_failure` (253, patch at 289) | Patch `_run_tests` (False, "FAILED"). The patch is reached only through the removed fallback | Patch `probos.cognitive.builder._run_targeted_tests` to return `(False, "FAILED", [])` instead, so the premise stays "tests failed". Inline reason. |
 
 New tests in existing files:
-- `tests/test_build_dispatcher.py::test_approve_and_merge_refusal_keeps_the_build_in_review` (kills M5). Mock `wm.merge_to_main` to return `(False, "Not merged (BF-897): ...")`. Assert: `(False, reason)` is returned; `build.status == "reviewing"`; `build.error == ""`; `wm.remove` not awaited. Then `await d.reject_build(build.id)` returns `True`, and the status is `failed`.
+- `tests/test_build_dispatcher.py::test_approve_and_merge_refusal_keeps_the_build_in_review` (kills M5). Mock `wm.merge_to_main` to return `(False, "This merge request was refused (BF-897): ...")`. Assert: `(False, reason)` is returned; `build.status == "reviewing"`; `build.error == ""`; `wm.remove` not awaited. Then `await d.reject_build(build.id)` returns `True`, and the status is `failed`.
 
 Unchanged, and they must stay green (verify; do not edit):
 - `tests/test_build_dispatcher.py::test_approve_and_merge` (the mocked ok path);
@@ -787,7 +790,7 @@ The campaign of record is the Builder's, on the frozen candidate. Record the bas
 - `/api/build/queue/approve`'s response (`{"status":"error","message":...}` on refusal, already the shape); `/submit`, `/enqueue`, `/queue` and `/queue/reject`.
 - Generation-phase reads of `_PROJECT_ROOT` (transporter, perceive), and the opt-in AD-546 harness (recorded, not fixed).
 - Anything AD-1328 owns.
-- HXI code. The consumers are `IntentSurface.tsx:924` (it ignores the body; the outcome comes from events), `useStore.ts:3807-3818` (`build_failure` without `report` shows `data.message`), and `FullKanban.tsx:74` and `IntentSurface.tsx:2063` (they ignore the queue-approve body). The `BuildResult` readers are `routers/build.py:403-419` (fields unchanged), `build_dispatcher.py:223-287` (`branch_name`, `commit_hash`, `success`, `error`) and `routers/build.py:226,253` (`commit_hash`).
+- HXI code. The consumers (the HXI reads under Verified Against Codebase) ignore the `/approve` and `/queue/approve` bodies and take the outcome from events; `useStore.ts:3807-3818` is the one that renders the reason (`build_failure` without `report` shows `data.message`). The `BuildResult` readers are `routers/build.py:403-419` (fields unchanged), `build_dispatcher.py:223-287` (`branch_name`, `commit_hash`, `success`, `error`) and `routers/build.py:226,253` (`commit_hash`).
 
 ## Tracking
 
@@ -871,5 +874,5 @@ gh issue view 1559                "BF-897: the native build pipeline cannot pass
 | Only one `WorktreeManager(` in production | grep `WorktreeManager\(` in `src/` | `structural_services.py:112` | yes |
 | `cleanup_all` has no caller | grep `cleanup_all\(` in `src/` | `worktree_manager.py:231` (the definition only) | yes |
 | No existing executor test passes the project root as `work_dir` | grep `_PROJECT_ROOT\|work_dir="\."\|Path\.cwd\(\)` in the builder test files | `test_bf896_session_permission_handler.py:882` and `test_bf896_executor_identity_and_blocks.py:1046` (neither is a `work_dir`) | yes |
-| No HXI caller reads the `/approve` or `/queue/approve` body | grep `build/approve\|queue/approve` in `ui/src` | `IntentSurface.tsx:924,2063`, `FullKanban.tsx:74`, all `await fetch(...)` with the result discarded | yes |
+| No HXI caller reads the `/approve` or `/queue/approve` body | grep `build/approve\|queue/approve` in `ui/src` | the three call sites in the HXI reads above, all `await fetch(...)` with the result discarded | yes |
 | No test pins "Merge failed" | grep `Merge failed\|merge failed\|checkout main failed` in `tests/` | none | yes |

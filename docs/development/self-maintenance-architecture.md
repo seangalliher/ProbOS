@@ -99,14 +99,18 @@ conversational turns). `verify_and_close` has no production caller.
 and when its database write fails it logs and keeps the new status in its cache.
 `/api/health` (`routers/system.py:35`) reports liveness but no release identity.
 
-**Existing paths that patch the running checkout (constraint).**
-`WorktreeManager.merge_to_main` checks out `main` and merges in the repository
-root (`worktree_manager.py:143-169`), reached through
-`BuildDispatcher.approve_and_merge` and `routers/build.py:158`;
-`WorktreeManager.remove` uses `worktree remove --force` and `branch -D`
-(`worktree_manager.py:105,112`); `routers/build.py:60` builds with the repository
-root as `work_dir`. **AD-1299 work must never route through them.** A separate
-BF is recommended; it is not filed by this rescope.
+**Paths that patched the running checkout (closed by BF-897, #1559).**
+`WorktreeManager.merge_to_main` used to check out `main` and merge in the
+repository root, and `/api/build/approve` (`routers/build.py`) used to build with
+the repository root as `work_dir`. Both now refuse with a reason, and
+`execute_approved_build` refuses any `work_dir` inside the checkout the runtime
+started from (`builder_paths.operator_checkout_refusal`). It compares locations,
+not the repository a `.git` entry names, and assumes the runtime's environment
+sets no `GIT_DIR` or `GIT_WORK_TREE`; both limits are recorded on #1523.
+`WorktreeManager.remove`
+(`worktree remove --force`, `branch -D`) acts on the build's own worktree and
+branch, not on the operator's checkout. **AD-1299 work must still never route
+through `merge_to_main`;** delivery is the pull-request route (AD-1336 child 6).
 
 ## Design references from the retired Supervised Worker Doctor
 

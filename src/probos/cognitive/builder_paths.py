@@ -121,3 +121,43 @@ def _git_identity_refusal(parts: list[str], path_str: str, root: Path) -> str | 
         if os.path.samestat(current, git_entry):
             return f"Forbidden path (same file as .git): {path_str}"
     return None
+
+
+def operator_checkout_refusal(
+    work_dir: str | os.PathLike[str], operator_root: str | os.PathLike[str],
+) -> str | None:
+    """BF-897 (#1559): why a build must not run in *work_dir*, or None if it may.
+
+    *operator_root* is the checkout the runtime started from. A build that runs
+    there switches the operator's branch, writes beside their uncommitted edits
+    and commits in their tree, so it is refused. Git finds a work tree's
+    repository at the nearest ``.git`` entry (a directory, or a linked
+    worktree's pointer file) at or above it; *work_dir* is refused when that
+    entry is *operator_root*'s. A linked worktree, nested inside the checkout or
+    not, has its own ``.git`` entry and is allowed, and so is a tree outside any
+    checkout. No git command runs, so a test that patches ``subprocess.run``
+    sees no extra call. A path that cannot be examined is refused.
+
+    The check compares locations, not the repository a ``.git`` entry names: a
+    pointer file or junction to *operator_root*'s git directory passes it
+    (recorded, #1523).
+    """
+    root = Path(operator_root)
+    try:
+        if not os.path.lexists(root / ".git"):
+            return None  # the runtime does not run from a checkout: nothing to protect
+        target = Path(work_dir).resolve()
+        for candidate in (target, *target.parents):
+            if os.path.lexists(candidate / ".git"):
+                if os.path.samefile(candidate, root):
+                    return (
+                        f"Refused (BF-897): {work_dir} is in the checkout ProbOS runs from "
+                        f"({root}); a build runs only in a linked worktree"
+                    )
+                return None
+    except OSError as exc:
+        return (
+            "Refused (BF-897): cannot verify the build work tree against the checkout "
+            f"ProbOS runs from ({type(exc).__name__}): {work_dir}"
+        )
+    return None

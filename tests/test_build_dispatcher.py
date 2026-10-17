@@ -270,6 +270,49 @@ class TestBuildDispatcher:
         wm.remove.assert_awaited_once_with(build.id)
 
     @pytest.mark.asyncio
+    async def test_approve_and_merge_refusal_keeps_the_build_in_review(self) -> None:
+        """BF-897 (#1559): a refused merge leaves the build in review with its worktree, so it can still be rejected."""
+        from probos.build_dispatcher import BuildDispatcher
+
+        refusal = "This merge request was refused (BF-897): the merge step is not available."
+        q = BuildQueue()
+        build = q.enqueue(_spec("refused merge"))
+        control = q.enqueue(_spec("accepted merge"))
+        for queued in (build, control):
+            q.update_status(queued.id, "dispatched")
+            q.update_status(queued.id, "building")
+            q.update_status(queued.id, "reviewing")
+
+        wm = MagicMock(spec=WorktreeManager)
+        # One mocked merge: it refuses for `build` and accepts for `control`, so the two outcomes differ only by its answer.
+        wm.merge_to_main = AsyncMock(
+            side_effect=lambda build_id: (True, "abc123def") if build_id == control.id else (False, refusal),
+        )
+        wm.remove = AsyncMock(return_value=True)
+
+        d = BuildDispatcher(queue=q, worktree_mgr=wm)
+        ok, reason = await d.approve_and_merge(build.id)
+
+        # Premise: the merge was asked for and the mocked refusal came back (not "not in reviewing status").
+        wm.merge_to_main.assert_awaited_once_with(build.id)
+        assert (ok, reason) == (False, refusal)
+        assert build.status == "reviewing"
+        assert build.error == ""
+        wm.remove.assert_not_awaited()
+
+        # Control: the same dispatcher and mock, with the merge accepted, still merges and removes the worktree.
+        assert await d.approve_and_merge(control.id) == (True, "abc123def")
+        assert control.status == "merged"
+        wm.remove.assert_awaited_once_with(control.id)
+        assert build.status == "reviewing"
+
+        # The refused build was never marked failed, so it can still be rejected.
+        assert await d.reject_build(build.id) is True
+        assert build.status == "failed"
+        assert build.error == "rejected by Captain"
+        assert wm.remove.await_args_list[-1].args == (build.id,)
+
+    @pytest.mark.asyncio
     async def test_reject_build(self) -> None:
         """reject_build removes worktree and sets status to failed."""
         from probos.build_dispatcher import BuildDispatcher

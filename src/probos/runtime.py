@@ -2102,6 +2102,8 @@ class ProbOSRuntime:
             return
 
         # Additional condition checks
+        if trigger == "build_failure" and details and details.get("not_executed") is True:
+            return  # BF-897: a refused request ran nothing, so there is no failure to escalate
         if trigger == "trust_drop" and details:
             # Only escalate if trust dropped below floor
             new_trust = details.get("new_trust", 1.0)

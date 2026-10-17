@@ -192,14 +192,16 @@ class TestBranchLifecycle:
             {"path": "src/probos/new_guardrail_test.py", "mode": "create", "content": "# test"},
         ]
 
-        with patch("probos.cognitive.builder._run_tests", new_callable=AsyncMock) as mock_tests:
-            mock_tests.return_value = (False, "FAILED")
+        # BF-897 (#1559): the targeted phase is the only test run; _run_tests was reached only through the removed fallback.
+        with patch("probos.cognitive.builder._run_targeted_tests", new_callable=AsyncMock) as mock_tests:
+            mock_tests.return_value = (False, "FAILED", [])
             result = await execute_approved_build(
                 file_changes, spec, work_dir,
                 run_tests=True,
             )
 
         assert result.success is False
+        assert mock_tests.await_count >= 1, "premise: the failing test run was reached, not skipped as untested"
         # Branch should be cleaned up
         proc = await asyncio.create_subprocess_exec(
             "git", "branch", "--list", "builder-test-fail",
@@ -286,14 +288,16 @@ class TestUntrackedFileCleanup:
             {"path": "src/probos/deep/nested/file.py", "mode": "create", "content": "# test"},
         ]
 
-        with patch("probos.cognitive.builder._run_tests", new_callable=AsyncMock) as mock_tests:
-            mock_tests.return_value = (False, "FAILED")
+        # BF-897 (#1559): the targeted phase is the only test run; _run_tests was reached only through the removed fallback.
+        with patch("probos.cognitive.builder._run_targeted_tests", new_callable=AsyncMock) as mock_tests:
+            mock_tests.return_value = (False, "FAILED", [])
             result = await execute_approved_build(
                 file_changes, spec, work_dir,
                 run_tests=True,
             )
 
         assert result.success is False
+        assert mock_tests.await_count >= 1, "premise: the failing test run was reached, not skipped as untested"
         # File should be cleaned up
         assert not (tmp_path / "src" / "probos" / "deep" / "nested" / "file.py").exists()
         # Empty parent dirs should also be removed
