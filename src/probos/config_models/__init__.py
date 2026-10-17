@@ -73,6 +73,8 @@ from probos.config_models.integrations import (
 )
 from probos.config_models.operations import (
     AnomalyWindowConfig,
+    CommandPolicyConfig,
+    CommandPolicyRule,
     ConfidenceConfig,
     DegradationConfig,
     EngineeringConfig,
@@ -228,6 +230,8 @@ __all__ = [
     "ClinicalTelemetryConfig",
     "CloudPickerProviderConfig",
     "CognitiveJournalConfig",
+    "CommandPolicyConfig",
+    "CommandPolicyRule",
     "CommunicationBenchmarksConfig",
     "CommunicationsConfig",
     "ConcurrencyConfig",

@@ -19,7 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from probos.cognitive.builder_paths import builder_write_refusal
+from probos.cognitive.builder_paths import (
+    builder_write_refusal,
+    fix_loop_path,
+    fix_loop_write_refusal,
+    operator_checkout_refusal,
+)
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
 from probos.execution.command_env import build_command_env
@@ -1657,6 +1662,26 @@ async def _git_checkout_main(work_dir: str) -> tuple[bool, str]:
     return True, "switched to main"
 
 
+async def repository_identity(work_dir: str) -> str | None:
+    """BF-896: the repository *work_dir* names, as git resolves it, or None.
+
+    ``git rev-parse --absolute-git-dir`` follows a linked worktree's ``.git``
+    pointer file, so rewriting that file changes the answer. The value is
+    normalized (real path, OS case) so two captures compare with ``==``. None
+    means it could not be determined; a caller pinning identity refuses on None.
+    """
+    try:
+        rc, out, _err = await _run_git(["rev-parse", "--absolute-git-dir"], work_dir)
+    except (OSError, ValueError):
+        return None
+    if rc != 0 or not out:
+        return None
+    try:
+        return os.path.normcase(os.path.realpath(out))
+    except (OSError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # BuilderAgent (AD-302)
 # ---------------------------------------------------------------------------
@@ -2029,18 +2054,18 @@ Rules for MODIFY blocks:
         ):
             tmp_dir = None
             try:
-                from probos.cognitive.copilot_adapter import CopilotBuilderAdapter
+                from probos.cognitive.copilot_adapter import (
+                    CopilotBuilderAdapter,
+                    seed_session_directory,
+                )
 
                 # Create isolated temp dir so SDK doesn't write into project root
                 tmp_dir = tempfile.mkdtemp(prefix="probos_build_")
-                tmp_path = Path(tmp_dir)
 
-                # Copy existing target files into temp dir (preserving structure)
-                for file_path, content in all_files.items():
-                    if content:  # Only copy files that exist
-                        dest = tmp_path / file_path
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_text(content, encoding="utf-8")
+                # Copy existing target files into temp dir (preserving structure).
+                # BF-896: the helper the dispatcher uses; a key naming a path outside
+                # the temp dir (an absolute target) is skipped, not written there.
+                seed_session_directory(tmp_dir, all_files)
 
                 model = params.get("model", "")
                 adapter = CopilotBuilderAdapter(
@@ -2391,6 +2416,14 @@ def _validate_python(path: Path) -> str | None:
         return f"{path}: line {exc.lineno}: {exc.msg}"
 
 
+def _fix_loop_changed(path: Path, before: bytes | None) -> bool:
+    """BF-898: whether a repair block left *path* holding other bytes than *before* (None: absent)."""
+    try:
+        return path.is_file() and path.read_bytes() != before
+    except OSError:
+        return True  # cannot be read back, so it cannot be shown unchanged
+
+
 # ---------------------------------------------------------------------------
 # Test & fix helpers (AD-314)
 # ---------------------------------------------------------------------------
@@ -2402,8 +2435,25 @@ def _pytest_pythonpath(work_dir: str) -> str:
     return f"{work_dir}{os.pathsep}{src_dir}" + (f"{os.pathsep}{existing}" if existing else "")
 
 
+# BF-897 (#1559): the builder runs only the targeted tests. The full suite (about 48K
+# tests, 14 to 19 minutes) never fit the 180 s phase 2 or the 60 s fallback, so every
+# build with tests failed. It belongs to the receipted gate (AD-1336 child 2); the
+# builder records it as not run, at the one place a governed runner later replaces.
+TARGETED_TEST_TIMEOUT_S = 60
+FULL_SUITE_NOT_RUN = "not_run"
+NO_TARGETED_TESTS = (
+    "No targeted tests map to the changed files, and the builder does not run the "
+    "full suite (BF-897), so the change was not tested and is not committed."
+)
+_PYTEST_TIMEOUT_PREFIX = "pytest timed out after"
+
+
 async def _run_tests(work_dir: str, timeout: int = 120) -> tuple[bool, str]:
-    """Run pytest and return (passed, output)."""
+    """Run the whole pytest suite in *work_dir* and return (passed, output).
+
+    BF-897: no build path calls this any more (the full suite is the receipted
+    gate's). It is kept because BF-892's environment boundary is tested through it.
+    """
     import sys
 
     def _sync_run() -> tuple[int, str]:
@@ -2472,14 +2522,14 @@ async def _run_targeted_tests(
     """Run only tests related to changed files (AD-344).
 
     Returns (passed, output, test_files_run).
-    If no matching test files found, falls back to full suite.
+    BF-897 (#1559): when no test file maps to the changed files nothing runs and
+    the result is ``(False, NO_TARGETED_TESTS, [])``. The full suite never finished
+    within this budget; it belongs to the receipted gate (AD-1336 child 2).
     """
     test_files = _map_source_to_tests(changed_files, work_dir)
 
     if not test_files:
-        # No targeted tests found, run full suite
-        passed, output = await _run_tests(work_dir, timeout=timeout)
-        return passed, output, []
+        return False, NO_TARGETED_TESTS, []
 
     import sys
 
@@ -2506,6 +2556,22 @@ async def _run_targeted_tests(
     return returncode == 0, output, test_files
 
 
+def _classify_test_run(passed: bool, output: str) -> str:
+    """BF-897: ``passed``, ``timed_out``, ``not_run`` or ``failed``.
+
+    Only ``failed`` reaches the fix loop: a timeout or an untested change is
+    nothing a model's repair can fix, and asking for one spends a deep-tier call
+    on output that names no failing test.
+    """
+    if passed:
+        return "passed"
+    if output.startswith(_PYTEST_TIMEOUT_PREFIX):
+        return "timed_out"
+    if output == NO_TARGETED_TESTS:
+        return "not_run"
+    return "failed"
+
+
 def _build_fix_prompt(
     spec_title: str,
     test_output: str,
@@ -2524,7 +2590,11 @@ def _build_fix_prompt(
         "Fix the failing tests. Output ONLY the file changes needed to fix the "
         "failures. Use the same ===MODIFY: path=== or ===FILE: path=== format. "
         "Do NOT rewrite files that don't need changes. Keep fixes minimal — "
-        "fix the bug, don't refactor."
+        "fix the bug, don't refactor.\n\n"
+        "You may change only source files under src/probos/ (BF-898). Do not change "
+        "any test, conftest.py or test configuration, or the builder, its reviewer or "
+        "its write boundary: a response with such a block is refused whole and the "
+        "build is not committed. If a test itself is wrong, say so and output no blocks."
     )
 
 
@@ -2615,6 +2685,7 @@ async def execute_approved_build(
     builder_source: str = "native",
     runtime: ProbOSRuntime | None = None,
     specialty: str = "general",
+    expected_git_dir: str | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -2626,8 +2697,32 @@ async def execute_approved_build(
             all fix attempts are exhausted. Receives a BuildFailureReport and
             returns either a resolved BuildResult or None to escalate to Captain.
             Future: wired to chain of command (Phase-33).
+        expected_git_dir: BF-896. A value ``repository_identity(work_dir)``
+            returned before generation began. When given, the build is refused
+            at entry (before any git command or write) and again before the
+            commit if *work_dir* no longer names that repository.
     """
     result = BuildResult(success=False, spec=spec)
+    identity_lost = False
+
+    # 0a. BF-897 (#1559): refuse the checkout the runtime started from (a location
+    # check, see operator_checkout_refusal). Before any git command or write; no
+    # subprocess, so tests that patch subprocess.run see none.
+    checkout_refusal = operator_checkout_refusal(work_dir, _PROJECT_ROOT)
+    if checkout_refusal is not None:
+        result.error = checkout_refusal
+        return result
+
+    # 0. BF-896: the tree must still name the repository pinned before generation.
+    if expected_git_dir is not None:
+        current_git_dir = await repository_identity(work_dir)
+        if current_git_dir != expected_git_dir:
+            result.error = (
+                "Repository identity changed since the build was pinned "
+                f"(expected {expected_git_dir!r}, found {current_git_dir!r}); "
+                "refused before any write"
+            )
+            return result
 
     # 1. Save current branch
     original_branch = await _git_current_branch(work_dir)
@@ -2681,6 +2776,38 @@ async def execute_approved_build(
                 continue
 
             path = Path(work_dir) / change["path"]
+            if "base" in change:
+                # BF-896: a block carrying "base" (the visiting adapter's disk scan,
+                # create or modify) applies only while the target's current text
+                # equals it ("" when the target does not exist); otherwise it is
+                # refused, never skipped or overwritten.
+                if path.exists() and not path.is_file():
+                    validation_errors.append(
+                        f"Whole-file change to {change['path']} targets a "
+                        "non-regular file; refused"
+                    )
+                    continue
+                if path.exists():
+                    try:
+                        current_text = path.read_text(encoding="utf-8")
+                    except (OSError, ValueError):
+                        validation_errors.append(
+                            f"Whole-file change to {change['path']} could not be "
+                            "compared with its current content; refused"
+                        )
+                        continue
+                else:
+                    current_text = ""
+                if (
+                    not isinstance(change["base"], str)
+                    or change["base"] != current_text
+                    or (change["mode"] == "modify" and not path.exists())
+                ):
+                    validation_errors.append(
+                        f"Whole-file change to {change['path']} was generated "
+                        "against different content; refused"
+                    )
+                    continue
             if change["mode"] == "modify":
                 if not path.exists():
                     logger.warning(
@@ -2691,6 +2818,18 @@ async def execute_approved_build(
 
                 original = path.read_text(encoding="utf-8")
                 modified = original
+
+                if "replacements" not in change and isinstance(change.get("content"), str):
+                    # BF-896: a whole-file MODIFY (the visiting adapter's disk scan).
+                    # It applies only while the target still holds the text it was
+                    # generated against; otherwise it is refused, never dropped.
+                    if change.get("base") != original:
+                        validation_errors.append(
+                            f"Whole-file change to {change['path']} was generated "
+                            "against different content; refused"
+                        )
+                        continue
+                    modified = change["content"]
 
                 for i, repl in enumerate(change.get("replacements", [])):
                     search_text = repl["search"]
@@ -2729,9 +2868,18 @@ async def execute_approved_build(
 
             path.parent.mkdir(parents=True, exist_ok=True)
             _check_sealed_path(path, runtime)
+            pre_existing = path.exists() and change["path"] not in written
             path.write_text(change["content"], encoding="utf-8")
-            written.append(change["path"])
-            logger.info("BuilderAgent: wrote %s", change["path"])
+            if pre_existing:
+                # BF-896: a CREATE over a file that existed before this build is a
+                # modification. The failed-build cleanup unlinks files_written, so a
+                # pre-existing file must never be listed there.
+                if change["path"] not in modified_files:
+                    modified_files.append(change["path"])
+                logger.info("BuilderAgent: overwrote %s", change["path"])
+            elif change["path"] not in written:
+                written.append(change["path"])
+                logger.info("BuilderAgent: wrote %s", change["path"])
 
             # Validate Python files after create
             err = _validate_python(path)
@@ -2781,24 +2929,26 @@ async def execute_approved_build(
         if run_tests and (written or modified_files):
             all_changes = list(file_changes)  # track for fix prompt
             all_changed_files = written + modified_files
+            fix_loop_files: list[str] = []  # BF-898: the paths the fix loop changed
 
             for attempt in range(1 + max_fix_attempts):
-                # Phase 1: Targeted tests only (fast, AD-344)
-                passed, test_output, targeted_files = await _run_targeted_tests(
-                    work_dir, all_changed_files, timeout=60,
+                # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
+                passed, test_output, _targeted_files = await _run_targeted_tests(
+                    work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,
                 )
                 result.test_result = test_output
                 result.tests_passed = passed
-
-                if passed and targeted_files:
-                    # Phase 2: Full suite only if targeted passed (AD-344)
-                    passed_full, full_output = await _run_tests(work_dir, timeout=180)
-                    if not passed_full:
-                        result.test_result = full_output
-                        result.tests_passed = False
-                        passed = False
+                test_outcome = _classify_test_run(passed, test_output)
+                result.metadata["targeted_tests"] = test_outcome
 
                 if passed:
+                    break
+                if test_outcome != "failed":
+                    # BF-897: a timeout or an untested change never enters the fix loop.
+                    logger.warning(
+                        "BuilderAgent: targeted tests %s on attempt %d; no fix requested",
+                        test_outcome, attempt + 1,
+                    )
                     break
 
                 if attempt < max_fix_attempts and llm_client is not None:
@@ -2815,6 +2965,8 @@ async def execute_approved_build(
                         system_prompt=BuilderAgent.instructions,
                         tier="deep",
                     )
+                    # BF-898 review r1: a request counts when it is sent, so an error below keeps it.
+                    result.fix_attempts += 1
                     try:
                         fix_response = await llm_client.complete(fix_request)
                         fix_changes = BuilderAgent._parse_file_blocks(
@@ -2832,58 +2984,104 @@ async def execute_approved_build(
                             "skipping attempt %d",
                             attempt + 1,
                         )
-                        result.fix_attempts += 1
                         continue
+
+                    # BF-898 (#1563): the repair is model-authored and unreviewed, so it may
+                    # change source only (builder_paths.fix_loop_write_refusal, which refuses a
+                    # control or line-break character first, then applies BF-894's boundary). A
+                    # response with any refused block is refused whole and the fix loop stops;
+                    # the refusal blocks the commit (validation_errors) and names the path. Each
+                    # path is put in one spelling first, so the rule judges the string written.
+                    for change in fix_changes:
+                        change["path"] = fix_loop_path(change["path"])
+                    fix_refusals = [
+                        refusal
+                        for refusal in (
+                            fix_loop_write_refusal(change["path"], work_dir)
+                            for change in fix_changes
+                        )
+                        if refusal is not None
+                    ]
+                    if fix_refusals:
+                        for refusal in fix_refusals:
+                            logger.warning("BuilderAgent: repair refused: %s", refusal)
+                        validation_errors.extend(fix_refusals)
+                        break  # BF-898: no further repair attempt
 
                     # Apply fix changes
                     for change in fix_changes:
-                        # BF-894 (#1547): the same boundary as the approved writes; a refusal
-                        # blocks the commit the same way (validation_errors).
-                        repair_error = builder_write_refusal(change["path"], work_dir)
-                        if repair_error:
-                            logger.warning("BuilderAgent: repair %s, skipping", repair_error)
-                            validation_errors.append(repair_error)
-                            continue
                         path = Path(work_dir) / change["path"]
-                        if change["mode"] == "modify":
-                            if not path.exists():
-                                continue
-                            original = path.read_text(encoding="utf-8")
-                            mod = original
-                            for repl in change.get("replacements", []):
-                                if repl["search"] in mod:
-                                    mod = mod.replace(
-                                        repl["search"], repl["replace"], 1,
-                                    )
-                            if mod != original:
+                        before_fix = path.read_bytes() if path.is_file() else None
+                        try:
+                            if change["mode"] == "modify":
+                                if not path.exists():
+                                    continue
+                                original = path.read_text(encoding="utf-8")
+                                mod = original
+                                for repl in change.get("replacements", []):
+                                    if repl["search"] in mod:
+                                        mod = mod.replace(
+                                            repl["search"], repl["replace"], 1,
+                                        )
+                                if mod != original:
+                                    _check_sealed_path(path, runtime)
+                                    path.write_text(mod, encoding="utf-8")
+                                    if change["path"] not in modified_files:
+                                        modified_files.append(change["path"])
+                            else:
+                                path.parent.mkdir(parents=True, exist_ok=True)
                                 _check_sealed_path(path, runtime)
-                                path.write_text(mod, encoding="utf-8")
-                                if change["path"] not in modified_files:
-                                    modified_files.append(change["path"])
-                        else:
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            _check_sealed_path(path, runtime)
-                            path.write_text(
-                                change["content"], encoding="utf-8",
-                            )
-                            if change["path"] not in written:
-                                written.append(change["path"])
-                        err = _validate_python(path)
-                        if err:
-                            validation_errors.append(err)
+                                pre_existing = path.exists() and change["path"] not in written
+                                path.write_text(
+                                    change["content"], encoding="utf-8",
+                                )
+                                if pre_existing:
+                                    # BF-896: never list a pre-existing file in files_written.
+                                    if change["path"] not in modified_files:
+                                        modified_files.append(change["path"])
+                                elif change["path"] not in written:
+                                    written.append(change["path"])
+                            err = _validate_python(path)
+                            if err:
+                                validation_errors.append(err)
+                        finally:
+                            # Settled however the block ends: a write or the validation can raise
+                            # after the file has changed, and the change must still be disclosed.
+                            if _fix_loop_changed(path, before_fix) and change["path"] not in fix_loop_files:
+                                fix_loop_files.append(change["path"])
+                                result.metadata["fix_loop_files"] = sorted(fix_loop_files)
 
                     all_changes.extend(fix_changes)
-                    result.fix_attempts += 1
                 else:
-                    # No LLM client or exhausted retries
-                    if attempt < max_fix_attempts:
-                        result.fix_attempts += 1
+                    # BF-897: no repair client, or the attempts are used up. The tree is
+                    # unchanged, so another run would only repeat this one, and no repair was
+                    # requested.
+                    break  # BF-897 review r1: fix_attempts counts repair requests only
 
             result.files_written = written
             result.files_modified = modified_files
+            # BF-897: the full suite is the receipted gate's (AD-1336 child 2); not run here.
+            result.metadata["full_suite"] = FULL_SUITE_NOT_RUN
+
+        # 5.4. BF-896: the tests may have run arbitrary code; the tree must still
+        # name the pinned repository before anything is committed.
+        if expected_git_dir is not None:
+            current_git_dir = await repository_identity(work_dir)
+            if current_git_dir != expected_git_dir:
+                identity_lost = True
+                logger.error(
+                    "BuilderAgent: repository identity changed during the build "
+                    "(expected %r, found %r); refusing to commit",
+                    expected_git_dir, current_git_dir,
+                )
 
         # 5.5. Block commit if validation errors (syntax errors) exist
-        if validation_errors:
+        if identity_lost:
+            result.error = (
+                "Repository identity changed during the build; refused before commit"
+            )
+            result.success = False
+        elif validation_errors:
             result.error = "Syntax errors:\n" + "\n".join(validation_errors)
             result.success = False
         # 6. Commit — only if tests passed OR tests were not run
@@ -2901,18 +3099,34 @@ async def execute_approved_build(
 
                 # If still failing after escalation attempt, report to Captain
                 if run_tests and not result.tests_passed:
+                    # BF-897: only a failure is "Tests failed".
+                    test_outcome = result.metadata.get("targeted_tests", "failed")
+                    if test_outcome == "timed_out":
+                        lead = "Targeted tests timed out; no fix was requested. "
+                    elif test_outcome == "not_run":
+                        lead = "No targeted tests ran. "
+                    else:
+                        lead = "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
                     result.error = (
-                        "Tests failed after " + str(result.fix_attempts) + " fix attempt(s). "
-                        "Code written to branch but NOT committed.\n"
+                        lead
+                        + "Code written to branch but NOT committed.\n"
                         + (result.test_result or "")[-1000:]
                     )
                     result.success = False
             else:
                 desc_short = spec.description[:200] if spec.description else ""
+                # BF-898: the files the unreviewed fix loop changed are named in the commit.
+                disclosed_fix_files = result.metadata.get("fix_loop_files", [])
                 commit_msg = (
                     f"{spec.title}"
                     + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
                     + (f"\n\n{desc_short}" if desc_short else "")
+                    + (
+                        "\n\nChanged by the unreviewed test-fix loop (BF-898): "
+                        + ", ".join(disclosed_fix_files)
+                        if disclosed_fix_files
+                        else ""
+                    )
                     + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
                 )
                 ok, sha = await _git_add_and_commit(
@@ -2931,12 +3145,15 @@ async def execute_approved_build(
     except Exception as exc:
         result.error = str(exc)
     finally:
-        # 7. Return to original branch
-        await _git_checkout_main(work_dir)
+        # 7. Return to original branch. BF-896: not when the tree now names a
+        # repository other than the pinned one (its hooks would run).
+        if not identity_lost:
+            await _git_checkout_main(work_dir)
         # Clean up build branch if no commit was made (failed build)
         if not result.commit_hash and result.branch_name:
-            logger.info("Cleaning up failed build branch '%s'", result.branch_name)
-            await _run_git(["branch", "-D", result.branch_name], work_dir)
+            if not identity_lost:
+                logger.info("Cleaning up failed build branch '%s'", result.branch_name)
+                await _run_git(["branch", "-D", result.branch_name], work_dir)
             # Delete files created during the failed build (untracked on main)
             for created_path in written:
                 full = Path(work_dir) / created_path

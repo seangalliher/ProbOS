@@ -121,7 +121,11 @@ RULES:
         for change in file_changes:
             path = change.get("path", "unknown")
             mode = change.get("mode", "create")
-            if mode == "modify":
+            if mode == "modify" and "replacements" not in change:
+                # BF-896: a whole-file MODIFY carries the new text, not SEARCH/REPLACE pairs.
+                content = str(change.get("content", ""))[:3000]
+                parts.append(f"### MODIFY (whole file): {path}\n```python\n{content}\n```")
+            elif mode == "modify":
                 repls = change.get("replacements", [])
                 repl_text = "\n".join(
                     f"SEARCH:\n{r['search']}\nREPLACE:\n{r['replace']}"

@@ -2190,19 +2190,21 @@ class TestTestFixLoop:
     @pytest.mark.asyncio
     async def test_fix_loop_fixes_on_second_try(self, tmp_path: Path):
         """Tests fail once, LLM fix succeeds on retry."""
-        target = tmp_path / "fixme.py"
+        # BF-898 (#1563): the unreviewed fix loop edits src/probos/ only; a root fixme.py would be refused.
+        target = tmp_path / "src" / "probos" / "fixme.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("x = 1\n", encoding="utf-8")
 
         spec = BuildSpec(title="Fix Build", description="Needs fix")
         file_changes = [
-            {"path": "fixme.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+            {"path": "src/probos/fixme.py", "content": "x = 1\n", "mode": "create", "after_line": None},
         ]
 
         # LLM returns a MODIFY block to fix the issue
         llm_client = AsyncMock(spec=BaseLLMClient)
         llm_fix_response = MagicMock()
         llm_fix_response.content = (
-            "===MODIFY: fixme.py===\n"
+            "===MODIFY: src/probos/fixme.py===\n"
             "===SEARCH===\nx = 1\n===REPLACE===\nx = 2\n===END REPLACE===\n"
             "===END MODIFY==="
         )
@@ -2234,18 +2236,20 @@ class TestTestFixLoop:
     @pytest.mark.asyncio
     async def test_fix_loop_exhausts_retries(self, tmp_path: Path):
         """Tests fail on all attempts — retries exhausted."""
-        target = tmp_path / "broken.py"
+        # BF-898 (#1563): as above; a root broken.py would be refused and fix_attempts would stop at 1.
+        target = tmp_path / "src" / "probos" / "broken.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("x = 1\n", encoding="utf-8")
 
         spec = BuildSpec(title="Broken Build", description="Always fails")
         file_changes = [
-            {"path": "broken.py", "content": "x = 1\n", "mode": "create", "after_line": None},
+            {"path": "src/probos/broken.py", "content": "x = 1\n", "mode": "create", "after_line": None},
         ]
 
         llm_client = AsyncMock(spec=BaseLLMClient)
         llm_fix_response = MagicMock()
         llm_fix_response.content = (
-            "===MODIFY: broken.py===\n"
+            "===MODIFY: src/probos/broken.py===\n"
             "===SEARCH===\nx = 1\n===REPLACE===\nx = 2\n===END REPLACE===\n"
             "===END MODIFY==="
         )
@@ -3111,7 +3115,10 @@ class TestEscalationHook:
         changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
 
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", ["test.py"])):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "2254 passed")):
+            # BF-897 (#1559): the full suite no longer runs in the builder; the old phase-2 patch must stay unawaited.
+            with patch(
+                "probos.cognitive.builder._run_tests", new_callable=AsyncMock, return_value=(True, "2254 passed"),
+            ) as full_suite:
                 with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                     with patch("probos.cognitive.builder._git_checkout_main"):
                         with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
@@ -3125,6 +3132,7 @@ class TestEscalationHook:
 
         assert len(hook_called) == 0
         assert result.success
+        assert not full_suite.await_count
 
     @pytest.mark.asyncio
     async def test_no_hook_provided(self, tmp_path):

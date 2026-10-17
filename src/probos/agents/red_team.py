@@ -14,6 +14,7 @@ import httpx
 
 from probos.agents.http_fetch import safe_fetch_method
 from probos.execution.command_env import build_command_env
+from probos.execution.command_gate import CommandPolicyGate
 from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -76,6 +77,9 @@ class RedTeamAgent(BaseAgent):
         # BF-890 (#1529): the same declared names the shell agent got, injected
         # by the runtime, so a re-run sees the environment the command saw.
         self._command_env_passthrough: tuple[str, ...] = tuple(kwargs.pop("command_env_passthrough", ()))
+        # AD-1328 S2a (#1530): the runtime's command policy (ProbOSRuntime._spawn_red_team).
+        # The re-run is a place a command executes, so the policy gates it too. None: no policy.
+        self._command_policy_gate: CommandPolicyGate | None = kwargs.pop("command_policy_gate", None)
         super().__init__(pool, **kwargs)
 
     async def verify(
@@ -304,6 +308,11 @@ class RedTeamAgent(BaseAgent):
         to avoid asyncio.create_subprocess_shell issues on Windows.
         """
         command = params.get("command", "")
+        # AD-1328 S2a (#1530): a command the policy would not run is not re-run here either;
+        # the verdict alone answers the claim. With no policy this returns None at once.
+        refused = self._command_policy_verification(target_agent_id, intent, claimed, command)
+        if refused is not None:
+            return refused
         try:
             loop = asyncio.get_running_loop()
             deadline = time.monotonic() + _RERUN_TIMEOUT_S
@@ -393,6 +402,55 @@ class RedTeamAgent(BaseAgent):
                 discrepancy=f"Verification error: {e}",
                 confidence=self.confidence,
             )
+
+    def _command_policy_verification(
+        self,
+        target_agent_id: str,
+        intent: IntentMessage,
+        claimed: IntentResult,
+        command: Any,
+    ) -> VerificationResult | None:
+        """AD-1328 S2a: answer a run_command claim without re-running a command the policy refuses.
+
+        None with no policy, or when the policy lets the command run (re-run as before). A
+        refused command is consistent only with a claimed failure. A judgement that raises
+        is not a re-run: the claim is left unverified.
+        """
+        gate = self._command_policy_gate
+        if gate is None or not gate.configured:
+            return None
+        try:
+            child_env = build_command_env(self._command_env_passthrough)
+            # Repair r1 (review F3): the object re-run below, not a conversion; a non-str raises here.
+            verdict = gate.judge(command, site="shell_command_agent", search_path=child_env.get("PATH"))
+        except Exception:
+            logger.warning(
+                "AD-1328: the command policy could not judge a run_command re-run; it was not re-run",
+                exc_info=True,
+            )
+            return VerificationResult(
+                verifier_id=self.id,
+                target_agent_id=target_agent_id,
+                intent_id=intent.id,
+                verified=False,
+                discrepancy="The command policy could not judge the command, so it was not re-run",
+                confidence=self.confidence,
+            )
+        if verdict.runs:
+            return None
+        self.update_confidence(True)
+        return VerificationResult(
+            verifier_id=self.id,
+            target_agent_id=target_agent_id,
+            intent_id=intent.id,
+            verified=not claimed.success,
+            discrepancy=(
+                ""
+                if not claimed.success
+                else f"Agent claims success but the command policy refuses this command ({verdict.decision})"
+            ),
+            confidence=self.confidence,
+        )
 
     @staticmethod
     def _run_verify_sync(

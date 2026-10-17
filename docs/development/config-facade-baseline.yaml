@@ -47,23 +47,26 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1875
-  field_definitions: 1853
+  canonical_dump_leaves: 1880
+  field_definitions: 1868
   incidental: 13
-  own_models: 225
-  owned: 292
-  public_names: 305
-canonical_dump_sha256: 32c4a7d5c0a5c87897f93abdd47cdf75701991e66495b9f19b692451570da9d1
+  own_models: 227
+  owned: 294
+  public_names: 307
+canonical_dump_sha256: d620be10cd858e9d1ee75fc8a7ae55eb888e5b96688a5f7458d320debd91d474
 non_instantiable:
 - A2APeerConfig
 - BaseModel
+- CommandPolicyRule
 - DutyDefinition
 - EPSDepartmentConfig
 - MCPServerConfig
 - PeerConfig
 schema_unavailable:
 - BaseModel
-models_with_model_config: []
+models_with_model_config:
+- CommandPolicyConfig
+- CommandPolicyRule
 environment:
   control_variable: PROBOS_CONFIG_FACADE_CONTROL_SENTINEL
   reads:
@@ -192,6 +195,8 @@ names:
   CloudPickersConfig: {kind: model, tier: owned}
   CognitiveConfig: {kind: model, tier: owned}
   CognitiveJournalConfig: {kind: model, tier: owned}
+  CommandPolicyConfig: {kind: model, tier: owned}
+  CommandPolicyRule: {kind: model, tier: owned}
   CommunicationBenchmarksConfig: {kind: model, tier: owned}
   CommunicationsConfig: {kind: model, tier: owned}
   ConcurrencyConfig: {kind: model, tier: owned}
@@ -1135,6 +1140,34 @@ models:
     - {default: '14', name: retention_days}
     - {default: '500000', name: max_rows}
     - {default: '3600.0', name: prune_interval_seconds}
+  CommandPolicyConfig:
+    qualname: CommandPolicyConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: ec50c8843a8f296e5194d56b6fbf167e8b2063f2d52d5d822d0e468a07ef1c13
+    fields:
+    - {default: (), name: rules}
+    - {default: None, name: unmatched_decision}
+    - {default: '''escalate''', name: unparseable_decision}
+    - {default: '8192', name: max_command_chars}
+    - {default: '32', name: max_segments}
+    - {default: '3', name: max_nesting}
+  CommandPolicyRule:
+    qualname: CommandPolicyRule
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: fed89593365289f9c018217088293695d0fdb7e89b71f6b5796966934b9a2ae4
+    fields:
+    - {default: <required>, name: name}
+    - {default: <required>, name: pattern}
+    - {default: <required>, name: decision}
+    - {default: <required>, name: justification}
+    - {default: None, name: alternative}
+    - {default: (), name: host_executable}
+    - {default: (), name: match}
+    - {default: (), name: not_match}
   CommunicationBenchmarksConfig:
     qualname: CommunicationBenchmarksConfig
     bases:
@@ -1773,7 +1806,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6ed5825ae6292fc6ea7b56ba53993588097baa84287a77fff2eb03965ffcb077
+    schema_sha256: 8c54c5560cf2ae1ef504230148492ea968b12d9dd682072e49ccee08e4dcfcfb
     fields:
     - {default: 'False', name: enabled}
     - {default: '1', name: default_tier}
@@ -1794,6 +1827,7 @@ models:
     - {default: '''https://pypi.org/simple''', name: pip_index_url}
     - {default: '180.0', name: install_timeout_seconds}
     - {default: <required>, has_default_factory: true, name: command_env_passthrough}
+    - {default: <required>, has_default_factory: true, name: command_policy}
   ExpertiseConfig:
     qualname: ExpertiseConfig
     bases:
@@ -3361,7 +3395,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 07c770dcdfba808cae26e4828773559f7f08b8fb8e6702cb3c368bd82559351a
+    schema_sha256: 097b83d1b5343f1a18885bc792b8bbd7922f3f8d93ede1f3e7fa98e97a3c863f
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

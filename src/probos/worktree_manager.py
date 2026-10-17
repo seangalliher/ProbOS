@@ -144,32 +144,83 @@ class WorktreeManager:
         return out
 
     async def merge_to_main(self, build_id: str) -> tuple[bool, str]:
-        """Merge the worktree's branch into main.
+        """BF-897 (#1559): refuse; this method never merges in the checkout ProbOS runs from.
 
-        Returns (success, commit_hash_or_error).
-        Must be called from the main repo (not the worktree).
+        This used to run ``git checkout main`` and ``git merge`` in ``repo_root``,
+        the operator's own checkout: it switched their branch and merged beside
+        their uncommitted edits. A merge in another worktree is no better while
+        ``main`` is checked out here, because moving ``refs/heads/main`` moves this
+        checkout's HEAD. Delivery is the pull-request route (AD-1336 child 6,
+        AD-1299), which replaces this body and keeps the ``(ok, detail)`` contract.
+
+        Runs no git command. Returns ``(False, reason)``; the build's branch and
+        worktree are kept, so it can still be delivered or rejected.
+        """
+        info = self._worktrees.get(build_id)
+        if info is None:
+            return False, "unknown build_id"
+        reason = (
+            "This merge request was refused (BF-897): the merge step is not available. "
+            f"Branch {info.branch} is kept in {info.path}; deliver it through a pull "
+            "request, or reject the build to discard it."
+        )
+        logger.warning("worktree merge refused build_id=%s branch=%s", build_id, info.branch)
+        return False, reason
+
+    async def adopt_commit(self, build_id: str, branch: str) -> tuple[bool, str]:
+        """BF-896: move the commit on *branch* onto the worktree's own branch.
+
+        ``execute_approved_build`` commits on a branch of its own, but ``collect_diff``
+        and ``merge_to_main`` only look at ``info.branch``. This fast-forwards
+        ``info.branch`` to *branch*, verifies it, then deletes *branch*.
+
+        Returns ``(True, sha)``. A failure before the delete returns
+        ``(False, "<step>: <stderr>")`` and leaves *branch* in place, so the commit
+        stays recoverable. Every git call runs in the worktree and nothing assumes
+        where its HEAD is.
         """
         info = self._worktrees.get(build_id)
         if info is None:
             return False, "unknown build_id"
 
-        # Checkout main
-        rc, out, err = await self._run_git("checkout", "main")
-        if rc != 0:
-            return False, f"checkout main failed: {err}"
+        rc, sha, err = await self._run_git(
+            "rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}", cwd=info.path,
+        )
+        if rc != 0 or not sha:
+            return False, f"rev-parse {branch}: {err}"
 
-        # Merge branch
-        rc, out, err = await self._run_git("merge", info.branch, "--no-edit")
+        rc, _out, err = await self._run_git("checkout", info.branch, cwd=info.path)
         if rc != 0:
-            return False, f"merge failed: {err}"
+            return False, f"checkout {info.branch}: {err}"
 
-        # Get the merge commit hash
-        rc, commit_hash, err = await self._run_git("rev-parse", "HEAD")
+        rc, _out, err = await self._run_git("merge", "--ff-only", branch, cwd=info.path)
         if rc != 0:
-            return False, f"rev-parse failed: {err}"
+            return False, f"merge --ff-only {branch}: {err}"
 
-        logger.info("worktree merged build_id=%s branch=%s commit=%s", build_id, info.branch, commit_hash)
-        return True, commit_hash
+        rc, tip, err = await self._run_git(
+            "rev-parse", f"refs/heads/{info.branch}", cwd=info.path,
+        )
+        if rc != 0 or tip != sha:
+            return False, f"verify {info.branch}: expected {sha}, found {tip or err}"
+
+        try:
+            rc, _out, err = await self._run_git("branch", "-D", branch, cwd=info.path)
+        except Exception as delete_exc:
+            # The commit is already on info.branch and verified; a failing delete
+            # must not make the adoption look failed. Cancellation still propagates.
+            rc, err = 1, f"{type(delete_exc).__name__}: {delete_exc}"
+        if rc != 0:
+            logger.warning(
+                "worktree adopt_commit could not delete branch %s build_id=%s: %s; "
+                "the commit is on %s and the executor branch may remain",
+                branch, build_id, err, info.branch,
+            )
+
+        logger.info(
+            "worktree adopted build_id=%s from=%s into=%s commit=%s",
+            build_id, branch, info.branch, sha,
+        )
+        return True, sha
 
     # -- cleanup -------------------------------------------------------------
 

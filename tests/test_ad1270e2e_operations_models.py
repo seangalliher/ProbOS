@@ -152,6 +152,15 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
         "install_timeout_seconds": 180.0,
         # BF-890: operator-declared command environment names (none by default).
         "command_env_passthrough": [],
+        # AD-1328 S2a: ExecutionConfig now holds the command policy, off by default (no rules), so its dump carries it.
+        "command_policy": {
+            "rules": [],
+            "unmatched_decision": None,
+            "unparseable_decision": "escalate",
+            "max_command_chars": 8192,
+            "max_segments": 32,
+            "max_nesting": 3,
+        },
     },
     "InfrastructureConfig": {
         "enabled": True,

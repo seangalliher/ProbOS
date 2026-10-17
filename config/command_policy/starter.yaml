@@ -1,0 +1,32 @@
+# AD-1328 (#1530): the opt-in starter command policy for run_command.
+#
+# Not loaded by default. With no rules every command runs exactly as it would
+# without a policy. To adopt this one, copy the mapping under `command_policy:`
+# into config/system.yaml under `execution:` (as `execution.command_policy`),
+# review each rule, run `probos doctor` (it reports the rule count, the digest
+# and the self-test under each shell dialect your platform's run_command paths
+# use), and restart.
+#
+# A deny-list: a command no rule names runs (unmatched_decision: allow); a
+# download started from a shell is forbidden in favour of the governed fetch;
+# a push waits for the chain of command; a command the policy cannot read waits
+# for approval too (unparseable_decision: escalate). Every example below holds
+# under the posix, cmd and powershell dialects
+# (tests/test_ad1328_s2a_startup_and_doctor.py).
+command_policy:
+  unmatched_decision: allow
+  unparseable_decision: escalate
+  rules:
+    - name: shell-download
+      pattern: [[curl, wget, Invoke-WebRequest, iwr, Invoke-RestMethod, irm]]
+      decision: forbid
+      justification: A download started from a shell bypasses the ship's governed fetch path
+      alternative: use http_fetch, the ship's governed fetch
+      match: ["curl -sS example.com", "wget example.com", "Invoke-WebRequest example.com"]
+      not_match: ["git status", "curlie example.com"]
+    - name: git-push
+      pattern: [git, push]
+      decision: escalate
+      justification: A push publishes the ship's work, so the chain of command approves each one
+      match: ["git push", "git push origin main"]
+      not_match: ["git pull", "git status"]

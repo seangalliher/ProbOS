@@ -20,6 +20,7 @@ from probos.doctor.checks import (  # noqa: F401
     federation_check,
     overlay_check,
     sandbox_check,
+    command_policy_check,
     pairing_check,
     channel_telegram_check,
     channel_slack_check,

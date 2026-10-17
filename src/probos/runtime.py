@@ -152,6 +152,7 @@ from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
 from probos.build_pipeline import BuildPipeline
 from probos.warm_boot import WarmBootService
+from probos.execution.command_gate import CommandPolicyGate  # AD-1328 S2a
 from probos.execution.workspace_results import UnavailableWorkspaceResults, WorkspaceResults  # AD-1240
 
 if TYPE_CHECKING:
@@ -630,6 +631,15 @@ class ProbOSRuntime:
         # (the test suite's PROBOS_DATA_DIR) is honoured.
         self._data_dir = Path(data_dir) if data_dir else _platform_data_dir()
         self._checkpoint_dir = self._data_dir / "checkpoints"
+
+        # AD-1328 S2a (#1530): the one command execution policy of this runtime, injected
+        # into every place a run_command executes. Building it checks every rule's
+        # examples under each shell dialect those places use here and raises
+        # CommandPolicySelfTestError naming the rule, which stops startup before any I/O.
+        # With no rules (the default) it is inert.
+        self.command_policy_gate: CommandPolicyGate = CommandPolicyGate(
+            self.config.execution.command_policy,
+        )
 
         # AD-823: daily episodic backup task handle. Created in start();
         # held here so async hygiene rules (no fire-and-forget) are met.
@@ -2092,6 +2102,8 @@ class ProbOSRuntime:
             return
 
         # Additional condition checks
+        if trigger == "build_failure" and details and details.get("not_executed") is True:
+            return  # BF-897: a refused request ran nothing, so there is no failure to escalate
         if trigger == "trust_drop" and details:
             # Only escalate if trust dropped below floor
             new_trust = details.get("new_trust", 1.0)
@@ -2539,6 +2551,15 @@ class ProbOSRuntime:
                 getattr(execution, "command_env_passthrough", ()),
             )
 
+        if agent_type == ShellCommandAgent.agent_type and "command_policy_gate" not in spawn_kwargs:
+            # AD-1328 S2a (#1530): every member judges commands against this runtime's one
+            # policy; the pool keeps its spawn kwargs, so respawned and added members do too.
+            # A caller's own value wins. A runtime double without a gate hands none, and its
+            # members run without a policy (a real runtime always has one).
+            gate = getattr(self, "command_policy_gate", None)
+            if gate is not None:
+                spawn_kwargs["command_policy_gate"] = gate
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None
@@ -2625,6 +2646,8 @@ class ProbOSRuntime:
             agent = RedTeamAgent(
                 pool="red_team", agent_id=agent_id,
                 command_env_passthrough=tuple(self.config.execution.command_env_passthrough),
+                # AD-1328 S2a (#1530): a command the policy would not run is not re-run.
+                command_policy_gate=getattr(self, "command_policy_gate", None),
             )
             await self.registry.register(agent)
             await agent.start()
@@ -3273,6 +3296,7 @@ class ProbOSRuntime:
         self.skill_grant_store = comm.skill_grant_store
         self.intent_grant_store = comm.intent_grant_store
         self.action_approval_store = comm.action_approval_store  # AD-1154
+        self.command_approval_store = comm.command_approval_store  # AD-1328 S2b
         self.hook_bus = comm.hook_bus  # AD-1004 substrate / AD-1012 wiring
         self.acm = comm.acm
         self.ontology = comm.ontology

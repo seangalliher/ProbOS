@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from probos.config import SystemConfig
     from probos.continue_extension_permits import SqliteContinueExtensionPermitStore
     from probos.decision_pre_clearance import DecisionPreClearanceStore
+    from probos.execution.command_approvals import SqliteCommandApprovalStore  # AD-1328 S2b
     from probos.identity import AgentIdentityRegistry
     from probos.mesh.intent import IntentBus
     from probos.protocols import EventLogQueryAuditSink, EventLogReaderProtocol
@@ -297,6 +298,21 @@ async def _start_continue_extension_permit_store(
     )
     await store.start()
     logger.info("AD-1323: continue-extension permit store started")
+    return store
+
+
+async def _start_command_approval_store(
+    config: "SystemConfig", data_dir: Path,
+) -> "SqliteCommandApprovalStore | None":
+    """AD-1328 S2b: command approvals; None unless execution.command_policy has rules,
+    so a runtime without a policy creates no database (zero-config boot unchanged)."""
+    if not config.execution.command_policy.rules:
+        return None
+    from probos.execution.command_approvals import SqliteCommandApprovalStore
+
+    store = SqliteCommandApprovalStore(db_path=str(data_dir / "command_approvals.db"))
+    await store.start()
+    logger.info("AD-1328: command approval store started")
     return store
 
 
@@ -730,6 +746,10 @@ async def init_communication(
     await action_approval_store.start()
     logger.info("action-approval-store started")
 
+    # --- Command Approval Store (AD-1328 S2b) -- the Captain's decisions on escalated
+    #     run_command calls and the runs they admitted. Only with policy rules.
+    command_approval_store = await _start_command_approval_store(config, data_dir)
+
     # --- Lifecycle-hook bus (AD-1004 substrate / AD-1012 wiring) ---
     # Off by default (config.hooks.enabled=False) -> hook_bus stays None and the
     # dispatch path keeps its inline AD-1007 capability gate (byte-identical).
@@ -934,4 +954,5 @@ async def init_communication(
         approval_authority_store=approval_authority_store,
         decision_pre_clearance_store=decision_pre_clearance_store,
         continue_extension_permit_store=continue_extension_permit_store,  # AD-1323
+        command_approval_store=command_approval_store,  # AD-1328 S2b
     )

@@ -1773,9 +1773,25 @@ def _wire_native_swe_harness(
         if cfg is None:
             return False
 
+        # AD-1328 S2b (#1530): the approval route for an escalated command; None unless the
+        # policy has rules and the approval and request stores run. Exposed for the
+        # capability-request router, which records the Captain's decision through it.
+        from probos.execution.command_escalation import build_command_escalations
+
+        command_escalations = build_command_escalations(
+            gate=getattr(runtime, "command_policy_gate", None),
+            approvals=getattr(runtime, "command_approval_store", None),
+            requests=getattr(runtime, "capability_request_store", None),
+            work_items=getattr(runtime, "work_item_store", None),
+            inbox=getattr(config, "approval_inbox", None),
+        )
+        runtime.command_escalations = command_escalations
         count = register_native_swe_tools(
             registry, runtime,
             command_env_passthrough=tuple(config.execution.command_env_passthrough),
+            # AD-1328 S2a (#1530): the runtime's one command policy (ProbOSRuntime.__init__).
+            command_policy_gate=getattr(runtime, "command_policy_gate", None),
+            command_escalations=command_escalations,
         )
         if cfg.blocked_paths:
             tool_executor.add_pre_hook(make_blocked_paths_hook(cfg.blocked_paths))

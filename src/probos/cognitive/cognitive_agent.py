@@ -2216,6 +2216,9 @@ class CognitiveAgent(BaseAgent):
         # so the agent can call tools across iterations. Otherwise fall back to
         # the single-shot direct-message lifecycle (AD-839 behaviour).
         _dispatch_failures: dict = {}
+        # AD-1328 S2c (#1530): when this run began. A command escalation settled since then
+        # still parks the item below (BF-878 resolves it); one settled before never does.
+        _dispatch_started = time.time()
         reply_text = await self._run_agentic_dispatch(
             work_item_id=work_item_id,
             task_text=task_text,
@@ -2293,6 +2296,17 @@ class CognitiveAgent(BaseAgent):
                     "it remains in its prior status",
                     work_item_id, exc_info=True,
                 )
+            # AD-1328 S2c (#1530): park the item on the escalated command it waits for,
+            # so the Captain's approval resumes it (AD-855). Never raises; inert without
+            # a command policy.
+            from probos.cognitive.command_escalation_park import (
+                park_on_command_escalation,
+            )
+
+            await park_on_command_escalation(
+                runtime, agent_id=self.id, work_item_id=str(work_item_id),
+                since=_dispatch_started,
+            )
 
         return IntentResult(
             intent_id=intent.id,
@@ -2343,6 +2357,20 @@ class CognitiveAgent(BaseAgent):
             return None
 
         from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+        from probos.execution.command_escalation import (
+            DISPATCHED_WORK_ITEM_KEY,
+            CommandEscalations,
+        )
+
+        # AD-1328 S2c (#1530): with the command approval route wired, the tool context
+        # names this work item, so an escalated run_command is filed in its scope and
+        # linked to it, and ``_handle_work_item_dispatch`` can park the item on it.
+        # Without the route the arguments are unchanged.
+        _scope_kwargs: dict[str, Any] = {}
+        if work_item_id and isinstance(
+            getattr(runtime, "command_escalations", None), CommandEscalations
+        ):
+            _scope_kwargs["extra_context"] = {DISPATCHED_WORK_ITEM_KEY: str(work_item_id)}
 
         executor = WorkItemAgenticExecutor(llm_client=llm)
         outcome = await executor.run(
@@ -2353,6 +2381,7 @@ class CognitiveAgent(BaseAgent):
             # AD-1248: a work item has no cognitive correlation id -- this path
             # never calls ``perceive()`` -- so the item's own id is the scope.
             failure_scope=str(work_item_id or ""),
+            **_scope_kwargs,
         )
         if failures_sink is not None:
             failures_sink["tool_failures"] = getattr(outcome, "tool_failures", None)

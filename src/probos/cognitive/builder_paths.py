@@ -3,6 +3,16 @@
 ``builder_write_refusal`` is the one check for every path ``execute_approved_build``
 writes on a model's behalf: the approved writes and the test-fix repair loop.
 
+BF-898 (#1563): the repair loop's blocks are model-authored and unreviewed, and the
+tests it reruns decide the commit, so the loop also applies ``fix_loop_write_refusal``:
+a block's path must be under ``src/probos/``, must not name a test, a ``conftest.py``,
+pytest configuration or the build's own grader (``FIX_LOOP_PROTECTED_PATHS``), and must
+not contain a control or line-break character. The rule judges the path as written, so
+it is a write boundary on the repair channel, not an immutable grader: it does not follow
+a hard link, junction or symlink to a protected file, and it does not limit what repaired
+source does when the tests import it (DECISIONS.md, BF-898). The rule's examples
+(``FIX_LOOP_SELF_TEST``) are judged by ``fix_loop_self_test``.
+
 Lexical rules apply on every platform. Each path component is put in the form
 Windows and macOS compare names in (HFS+ ignorable code points dropped, trailing
 dots and spaces trimmed, upper-cased), so ``.GiT``, ``.git.``, ``.git `` and a
@@ -24,6 +34,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 # Allowed top-level directories for builder file operations (moved from builder.py).
@@ -120,4 +131,219 @@ def _git_identity_refusal(parts: list[str], path_str: str, root: Path) -> str | 
             return f"Cannot verify write path ({type(exc).__name__}): {path_str}"
         if os.path.samestat(current, git_entry):
             return f"Forbidden path (same file as .git): {path_str}"
+    return None
+
+
+# BF-898 (#1563): the unreviewed test-fix loop may change source only. A repair that
+# changed a test, a conftest.py, pytest configuration or the build's own grader would
+# make its own rerun pass; a failure caused by a wrong test goes back to the Captain.
+FIX_LOOP_WRITABLE_ROOT = ("src", "probos")
+
+# Source the fix loop must not change: the fix loop, test runner and commit gate, the
+# write boundary, the AD-341 reviewer, the visiting session's permission policy, the test
+# environment, the sealed-core check and the build pipeline's own refusals.
+FIX_LOOP_PROTECTED_PATHS = (
+    "src/probos/cognitive/builder.py",
+    "src/probos/cognitive/builder_paths.py",
+    "src/probos/cognitive/code_reviewer.py",
+    "src/probos/cognitive/copilot_adapter.py",
+    "src/probos/execution/command_env.py",
+    "src/probos/extensions/sealed_core.py",
+    "src/probos/build_dispatcher.py",
+    "src/probos/build_pipeline.py",
+    "src/probos/worktree_manager.py",
+    "src/probos/routers/build.py",
+)
+
+# File names pytest reads as configuration or plugins; refused at any depth.
+FIX_LOOP_REFUSED_NAMES = (
+    "conftest.py",
+    "pytest.ini",
+    ".pytest.ini",
+    "tox.ini",
+    "setup.cfg",
+)
+
+_FIX_LOOP_PROTECTED = frozenset(
+    "/".join(_canonical(part) for part in path.split("/")) for path in FIX_LOOP_PROTECTED_PATHS
+)
+_FIX_LOOP_REFUSED = frozenset(_canonical(name) for name in FIX_LOOP_REFUSED_NAMES)
+
+# Control characters (Cc) and the line and paragraph separators (Zl, Zp): a path that holds
+# one can add a paragraph to the commit message that discloses it, and os.stat raises on a NUL.
+_FIX_LOOP_LINE_BREAKING = frozenset({"Cc", "Zl", "Zp"})
+
+
+def fix_loop_path(path_str: str) -> str:
+    """The one spelling the fix loop judges and writes: separators as ``/``."""
+    return path_str.replace("\\", "/")
+
+
+def fix_loop_write_refusal(
+    path_str: str, work_dir: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """BF-898 (#1563): why the test-fix loop must not write *path_str*, or None if it may.
+
+    A control or line-break character is refused first (the reason quotes the path with
+    ``repr`` so it stays one line); then everything ``builder_write_refusal`` refuses is
+    refused, with its reason.
+    Then the path must be plain (no empty or ``.`` component), must start with the
+    components ``src`` and ``probos`` exactly as written, must not be one of
+    ``FIX_LOOP_PROTECTED_PATHS`` and must not be named one of
+    ``FIX_LOOP_REFUSED_NAMES`` (both compared in the canonical form, so a case,
+    trailing-dot or ignorable-code-point variant is the same name).
+    """
+    if any(unicodedata.category(char) in _FIX_LOOP_LINE_BREAKING for char in path_str):
+        return (
+            f"Fix-loop write refused (BF-898): {path_str!r} contains a control or "
+            "line-break character"
+        )
+    refusal = builder_write_refusal(path_str, work_dir)
+    if refusal is not None:
+        return refusal
+    parts = fix_loop_path(path_str).split("/")
+    if any(part in ("", ".") for part in parts):
+        return f"Fix-loop write refused (BF-898): {path_str} is not a plain relative path"
+    if len(parts) < 3 or tuple(parts[:2]) != FIX_LOOP_WRITABLE_ROOT:
+        return (
+            f"Fix-loop write refused (BF-898): {path_str} is outside src/probos/; an "
+            "unreviewed repair changes source only, never a test, a conftest.py or "
+            "test configuration"
+        )
+    canonical = "/".join(_canonical(part) for part in parts)
+    if canonical in _FIX_LOOP_PROTECTED:
+        return (
+            f"Fix-loop write refused (BF-898): {path_str} is part of the build's grader "
+            "or write boundary"
+        )
+    if _canonical(parts[-1]) in _FIX_LOOP_REFUSED:
+        return f"Fix-loop write refused (BF-898): {path_str} is pytest configuration"
+    return None
+
+
+# (path, refused): judged by fix_loop_self_test with the lexical rules only.
+FIX_LOOP_SELF_TEST: tuple[tuple[str, bool], ...] = (
+    # tests, conftest and pytest configuration, wherever they are
+    ("tests/test_widget.py", True),
+    ("tests/conftest.py", True),
+    ("tests/unit/conftest.py", True),
+    ("conftest.py", True),
+    ("pytest.ini", True),
+    (".pytest.ini", True),
+    ("tox.ini", True),
+    ("setup.cfg", True),
+    ("src/probos/conftest.py", True),
+    ("src/probos/pkg/conftest.py", True),
+    ("src/probos/CONFTEST.PY", True),
+    ("src/probos/pytest.ini", True),
+    ("src/probos/.pytest.ini", True),
+    ("src/probos/tox.ini", True),
+    ("src/probos/setup.cfg", True),
+    # outside src/probos/: top-level modules on the pytest PYTHONPATH, other trees
+    ("src/sitecustomize.py", True),
+    ("src/pytest.py", True),
+    ("src/_pytest/runner.py", True),
+    ("config/sealed_modules.yaml", True),
+    ("docs/notes.md", True),
+    ("prompts/notes.md", True),
+    ("src/PROBOS/widget.py", True),
+    ("src/probos", True),
+    ("src/probos/", True),
+    # non-plain forms
+    ("src/probos//cognitive/builder.py", True),
+    ("src/probos/./cognitive/builder.py", True),
+    # control and line-break characters, refused before anything else
+    ("src/probos/a\nb.py", True),
+    ("src/probos/a\rb.py", True),
+    ("src/probos/a\tb.py", True),
+    ("src/probos/a\x0bb.py", True),
+    ("src/probos/a\x0cb.py", True),
+    ("src/probos/a\x00b.py", True),
+    ("src/probos/a\x1bb.py", True),
+    ("src/probos/a\x7fb.py", True),
+    ("src/probos/a\x85b.py", True),
+    ("src/probos/a\u2028b.py", True),
+    ("src/probos/a\u2029b.py", True),
+    # builder_write_refusal's own rules apply next
+    ("src/probos/con.py", True),
+    # the grader and the boundary
+    ("src/probos/cognitive/builder.py", True),
+    ("src/probos/cognitive/builder_paths.py", True),
+    ("src/probos/cognitive/code_reviewer.py", True),
+    ("src/probos/cognitive/copilot_adapter.py", True),
+    ("src/probos/execution/command_env.py", True),
+    ("src/probos/extensions/sealed_core.py", True),
+    ("src/probos/build_dispatcher.py", True),
+    ("src/probos/build_pipeline.py", True),
+    ("src/probos/worktree_manager.py", True),
+    ("src/probos/routers/build.py", True),
+    ("src/probos/cognitive/Builder.py", True),
+    ("src/probos/cognitive/builder.py.", True),
+    ("src/probos/cognitive/build\u200cer.py", True),
+    ("src\\probos\\routers\\build.py", True),
+    # source the loop may change, including near misses of protected names
+    ("src/probos/widget.py", False),
+    ("src/probos/newpkg/fresh.py", False),
+    ("src/probos/cognitive/builder_helpers.py", False),
+    ("src/probos/cognitive/code_reviewer_rules.py", False),
+    ("src/probos/routers/builds.py", False),
+    ("src/probos/conftest_helpers.py", False),
+    ("src/probos/execution/command_policy.py", False),
+    ("src\\probos\\widget.py", False),
+)
+
+
+def fix_loop_self_test() -> tuple[str, ...]:
+    """Judge every ``FIX_LOOP_SELF_TEST`` example with ``fix_loop_write_refusal``.
+
+    Lexical rules only (no ``work_dir``), so the result does not depend on the host.
+    Returns one line per example whose outcome differs from its expectation.
+    """
+    failures: list[str] = []
+    for path, refused in FIX_LOOP_SELF_TEST:
+        observed = fix_loop_write_refusal(path) is not None
+        if observed != refused:
+            expected_word = "refused" if refused else "allowed"
+            observed_word = "refused" if observed else "allowed"
+            failures.append(f"{path!r}: expected {expected_word}, got {observed_word}")
+    return tuple(failures)
+
+
+def operator_checkout_refusal(
+    work_dir: str | os.PathLike[str], operator_root: str | os.PathLike[str],
+) -> str | None:
+    """BF-897 (#1559): why a build must not run in *work_dir*, or None if it may.
+
+    *operator_root* is the checkout the runtime started from. A build that runs
+    there switches the operator's branch, writes beside their uncommitted edits
+    and commits in their tree, so it is refused. Git finds a work tree's
+    repository at the nearest ``.git`` entry (a directory, or a linked
+    worktree's pointer file) at or above it; *work_dir* is refused when that
+    entry is *operator_root*'s. A linked worktree, nested inside the checkout or
+    not, has its own ``.git`` entry and is allowed, and so is a tree outside any
+    checkout. No git command runs, so a test that patches ``subprocess.run``
+    sees no extra call. A path that cannot be examined is refused.
+
+    The check compares locations, not the repository a ``.git`` entry names: a
+    pointer file or junction to *operator_root*'s git directory passes it
+    (recorded, #1523).
+    """
+    root = Path(operator_root)
+    try:
+        if not os.path.lexists(root / ".git"):
+            return None  # the runtime does not run from a checkout: nothing to protect
+        target = Path(work_dir).resolve()
+        for candidate in (target, *target.parents):
+            if os.path.lexists(candidate / ".git"):
+                if os.path.samefile(candidate, root):
+                    return (
+                        f"Refused (BF-897): {work_dir} is in the checkout ProbOS runs from "
+                        f"({root}); a build runs only in a linked worktree"
+                    )
+                return None
+    except OSError as exc:
+        return (
+            "Refused (BF-897): cannot verify the build work tree against the checkout "
+            f"ProbOS runs from ({type(exc).__name__}): {work_dir}"
+        )
     return None

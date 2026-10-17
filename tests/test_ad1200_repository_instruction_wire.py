@@ -8,7 +8,8 @@ import hashlib
 import json
 import re
 import sys
-from dataclasses import FrozenInstanceError, asdict, fields
+from dataclasses import FrozenInstanceError, asdict, dataclass, fields
+from enum import Enum
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
@@ -804,6 +805,29 @@ async def test_cancelled_loop_drops_guidance_before_next_run(tmp_path: Path) -> 
     assert llm.requests[-1].system_prompt == "BASE"
 
 
+class _PermissionKind(Enum):
+    """BF-896: the SDK's request kind is an Enum (0.1.32), never a str."""
+
+    WRITE = "write"
+    SHELL = "shell"
+    CUSTOM_TOOL = "custom-tool"
+
+
+@dataclass
+class _PermissionRequest:
+    """BF-896: the 0.1.32 permission request shape the session's handler receives."""
+
+    kind: _PermissionKind
+    file_name: str | None = None
+    tool_name: str | None = None
+    full_command_text: str | None = None
+
+
+def _permission_kind(result: Any) -> Any:
+    """BF-896: a verdict's kind from either SDK result shape (a dict in 0.1.30, a dataclass in 0.1.32)."""
+    return result["kind"] if isinstance(result, dict) else result.kind
+
+
 @pytest.mark.asyncio
 async def test_fake_sdk_session_receives_bounded_scoped_guidance_without_permission_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -863,7 +887,14 @@ async def test_fake_sdk_session_receives_bounded_scoped_guidance_without_permiss
     assert len(configs) == 1
     config = configs[0]
     assert config["working_directory"] == str(repo)
-    assert config["on_permission_request"] is approved
+    # BF-896: this used to pin `is approved` (SDK approve-all); the session's policy is now a deny-by-default handler, on purpose.
+    handler = config["on_permission_request"]
+    assert callable(handler)
+    assert handler is not approved
+    assert _permission_kind(handler(_PermissionRequest(_PermissionKind.WRITE, file_name="src/new.py"), {})) == "approved"
+    assert _permission_kind(
+        handler(_PermissionRequest(_PermissionKind.SHELL, full_command_text="git status"), {}),
+    ) == "denied-by-rules"
     assert config["system_message"]["mode"] == base_message["mode"]
     prompt = config["system_message"]["content"]
     assert prompt.startswith(base_message["content"])
@@ -925,9 +956,20 @@ async def test_fake_sdk_unusable_seed_keeps_session_instructions_and_cwd(
         result = await adapter.execute(BuildSpec(title="Legacy context", description="Report."), {})
     finally:
         await adapter.stop()
+    if not cwd:
+        # BF-896: a missing session directory ("" or None) is refused before create_session (it used to start a session in the project root); the client still starts there.
+        assert configs == []
+        assert len(options) == 1 and options[0]["cwd"] == str(sdk._PROJECT_ROOT)
+        assert lifecycle == ["start", "stop"]
+        assert result.success is False
+        assert "session directory" in result.error
+        return
     assert len(configs) == len(options) == 1
     assert configs[0]["system_message"] == expected
-    assert configs[0]["working_directory"] == options[0]["cwd"] == (cwd or str(sdk._PROJECT_ROOT))
-    assert configs[0]["on_permission_request"] is approved
+    assert configs[0]["working_directory"] == options[0]["cwd"] == cwd
+    # BF-896: this used to pin `is approved` (SDK approve-all); the session's policy is now a deny-by-default handler, on purpose.
+    handler = configs[0]["on_permission_request"]
+    assert callable(handler)
+    assert handler is not approved
     assert lifecycle == ["start", "disconnect", "stop"]
     assert result.error == "captured session configuration"
