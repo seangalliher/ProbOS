@@ -1145,6 +1145,7 @@ _STOPPED_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("tool_permission_store", "tool permission store stop"),
     ("skill_grant_store", "skill grant store stop"),
     ("intent_grant_store", "intent grant store stop"),
+    ("command_approval_store", "command approval store stop"),  # AD-1328 S2b
     ("action_approval_store", "action approval store stop"),
     ("mcp_server_store", "MCP server store stop"),
     ("department_tool_grant_store", "department tool grant store stop"),

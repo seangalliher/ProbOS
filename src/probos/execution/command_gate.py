@@ -23,9 +23,12 @@ told (each cause: rule and justification, the alternative for ``forbid``, or the
 reason when no rule decided it), the AD-1316 reason code, and a bounded record for
 the AD-1224 tool record that carries no command text.
 
-AD-1328 S2a refuses an ``escalate`` truthfully without asking anyone; S2b routes it
-to the AD-1154 approval inbox. The policy only adds gates: it never admits a command
-that the permission ladder, consensus or the effect broker would refuse.
+An ``escalate`` is refused here with ``_ESCALATE_FRAME`` (no approval was requested).
+``RunCommandTool`` hands it to ``probos.execution.command_escalation`` (AD-1328 S2b),
+which files it in the AD-1154 approval inbox and runs it once the Captain approved it
+in the same scope; the mesh path (``ShellCommandAgent``) has no approval route and
+keeps the refusal. The policy only adds gates: it never admits a command that the
+permission ladder, consensus or the effect broker would refuse.
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ import re
 import shutil
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 from probos.config_models.operations import (
@@ -66,7 +69,7 @@ CallSite = Literal["run_command_tool", "shell_command_agent"]
 #: names the red team's re-run, which starts the same shell.
 CALL_SITES: Final[tuple[CallSite, ...]] = ("run_command_tool", "shell_command_agent")
 #: The version of the record a run_command result carries to the AD-1224 tool record.
-RECORD_SCHEMA: Final = "probos.command_policy.record/v1"
+RECORD_SCHEMA: Final = "probos.command_policy.record/v2"  # AD-1328 S2b: + approval
 #: A record's JSON text is at most this long; one AD-1224 record is at most 4,096 bytes.
 MAX_RECORD_CHARS: Final = 2048
 #: The AD-1316 reason code when the policy could not judge a command before admission.
@@ -79,7 +82,8 @@ _FORBID_FRAME: Final = (
     "The command policy forbids this command, so it was not run. {causes} "
     "Do not repeat it; use the alternative named, or report that this step is blocked."
 )
-#: AD-1328 S2a: refused without asking anyone. S2b replaces this with the approval inbox.
+#: AD-1328: an escalation with no approval route -- the mesh path, or a tool with no
+#: approval service (S2b's ``command_escalation`` files the rest).
 _ESCALATE_FRAME: Final = (
     "The command policy requires approval from the chain of command before this command "
     "runs, and no approval was requested from here, so it was not run. {causes} Do not "
@@ -92,7 +96,29 @@ _MAX_REASON_CHARS: Final = 300
 _RECORD_KEYS: Final = frozenset({
     "schema", "call_site", "decision", "dialect", "policy_digest", "canonical_key",
     "canonical_kind", "matched_rules", "matched_rules_omitted", "causes", "causes_omitted",
+    "approval",
 })
+#: AD-1328 S2b: what the approval route did for an escalated command (a record's
+#: ``approval`` entry; None when no route was asked), and which ids each state carries:
+#: (the AD-1154 request id, the approval-store use id). Only the last two run it.
+_APPROVAL_SHAPES: Final = {
+    "filed": (True, False),
+    "denied": (True, False),
+    "inbox_full": (False, False),
+    "unfiled": (False, False),
+    "approved_run": (True, True),
+    "reuse": (True, True),
+}
+APPROVAL_STATES: Final = frozenset(_APPROVAL_SHAPES)
+APPROVED_STATES: Final = frozenset({"approved_run", "reuse"})
+_APPROVAL_KEYS: Final = frozenset({"state", "request_id", "use_id"})
+#: The closed forms of those ids: ``str(uuid.uuid4())`` (``CapabilityRequestStore``) and
+#: ``uuid.uuid4().hex`` (``SqliteCommandApprovalStore.use``). No id can carry free text.
+_APPROVAL_REQUEST_ID: Final = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_APPROVAL_USE_ID: Final = re.compile(r"[0-9a-f]{32}")
+#: AD-1328 S2b (O-S2a-5): marks a shell agent's policy refusal, which is the policy's
+#: decision and not the agent's failure, so it does not move the agent's confidence.
+COMMAND_POLICY_REFUSAL_KEY: Final = "command_policy_refusal"
 
 
 def run_command_tool_dialect(platform: str | None = None) -> Dialect:
@@ -320,6 +346,9 @@ class CommandGateVerdict:
     call_site: CallSite | None
     evaluation: CommandEvaluation | None
     canonical: CanonicalCommand | None
+    # AD-1328 S2b: set only by probos.execution.command_escalation.with_approval. A dict,
+    # so it is left out of the generated __hash__.
+    approval: dict[str, Any] | None = field(default=None, hash=False)
 
     @property
     def decision(self) -> CommandDecisionName | None:
@@ -327,8 +356,18 @@ class CommandGateVerdict:
 
     @property
     def runs(self) -> bool:
-        """Whether the caller runs the command: no policy, or ``allow``."""
-        return self.status == "no_policy" or self.decision == "allow"
+        """Whether the caller runs the command: no policy, ``allow``, or an ``escalate``
+        the Captain's approval admitted in its scope (AD-1328 S2b). An approval never
+        runs a command whose own decision is ``forbid``."""
+        if self.status == "no_policy" or self.decision == "allow":
+            return True
+        approved = type(self.approval) is dict and self.approval.get("state") in APPROVED_STATES
+        return approved and self.decision == "escalate"
+
+    @property
+    def cause_text(self) -> str:
+        """AD-1328 S2b: each cause as the agent is told it (five, then a count)."""
+        return _describe(self.causes)
 
     @property
     def causes(self) -> tuple[CommandPolicyCause, ...]:
@@ -369,6 +408,7 @@ class CommandGateVerdict:
                 for cause in causes[:_MAX_RECORDED]
             ],
             "causes_omitted": max(len(causes) - _MAX_RECORDED, 0),
+            "approval": None if self.approval is None else dict(self.approval),
         }
 
 
@@ -428,6 +468,29 @@ def _cause_of(value: object) -> dict[str, Any] | None:
     return {"kind": kind, "segment": segment, "rule": rule}
 
 
+def _valid_id(value: object, required: bool, form: re.Pattern[str]) -> bool:
+    if not required:
+        return value is None
+    return type(value) is str and form.fullmatch(value) is not None
+
+
+def _valid_approval(value: object, decision: object) -> bool:
+    """AD-1328 S2b: a record's ``approval`` entry is None, or -- on an ``escalate`` record
+    only -- exactly its three keys: a known state and the ids that state carries, each in
+    its closed form (``_APPROVAL_SHAPES``)."""
+    if value is None:
+        return True
+    if decision != "escalate" or type(value) is not dict or set(value) != _APPROVAL_KEYS:
+        return False
+    state = value["state"]
+    if type(state) is not str or state not in _APPROVAL_SHAPES:
+        return False
+    has_request, has_use = _APPROVAL_SHAPES[state]
+    return _valid_id(value["request_id"], has_request, _APPROVAL_REQUEST_ID) and _valid_id(
+        value["use_id"], has_use, _APPROVAL_USE_ID,
+    )
+
+
 def command_policy_record_of(result: object, *, tool_id: object) -> dict[str, Any] | None:
     """The decision record a tool result carries, projected for the AD-1224 sink; else None.
 
@@ -458,6 +521,7 @@ def command_policy_record_of(result: object, *, tool_id: object) -> dict[str, An
         _is_count(record["causes_omitted"]),
         type(rules) is list and len(rules) <= _MAX_RECORDED and all(_is_rule_name(name) for name in rules),
         type(causes) is list and len(causes) <= _MAX_RECORDED,
+        _valid_approval(record["approval"], record["decision"]),  # AD-1328 S2b
     )
     if not all(checks):
         return None
@@ -476,9 +540,15 @@ def command_policy_record_of(result: object, *, tool_id: object) -> dict[str, An
         "matched_rules_omitted": record["matched_rules_omitted"],
         "causes": projected,
         "causes_omitted": record["causes_omitted"],
+        # AD-1328 S2b: rebuilt field by field, like the causes.
+        "approval": None if record["approval"] is None else {
+            "state": record["approval"]["state"],
+            "request_id": record["approval"]["request_id"],
+            "use_id": record["approval"]["use_id"],
+        },
     }
     if len(json.dumps(copied, sort_keys=True)) > MAX_RECORD_CHARS:
-        return None  # not reachable for an S2a record (at most about 1,900 characters)
+        return None  # not reachable: the typed maximum is 2,037 characters with S2b's approval
     return copied
 
 

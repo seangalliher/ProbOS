@@ -40,6 +40,7 @@ from probos.delegated_approvals import (
     captain_decision_guard,
     classify_capability_request,
 )
+from probos.execution.command_approvals import command_approval_request  # AD-1328 S2b
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -460,6 +461,28 @@ async def _maybe_fulfil_on_approval(
             await consumer.decline(decided.id)
             return False
         return await consumer.fulfil(decided.id) is not None
+    if command_approval_request(decided) is not None:
+        # AD-1328 S2b (#1530): a command escalation. Approval records an approval the
+        # agent's next identical call in the same scope uses; it never runs the command
+        # from here (AD-1154, BF-830). A denial is recorded so the scope stays denied.
+        escalations = getattr(runtime, "command_escalations", None)
+        if escalations is None:
+            logger.warning(
+                "AD-1328: no command approval route is wired; the decision on request %s "
+                "is recorded and grants nothing", decided.id[:12],
+            )
+            return False
+        try:
+            if not approve:
+                await escalations.record_denial(decided)
+                return False
+            return await escalations.fulfil_approval(store, decided) is not None
+        except Exception:
+            logger.warning(
+                "AD-1328: recording the decision on command request %s failed; the decision "
+                "stands and an approval can be retried", decided.id[:12], exc_info=True,
+            )
+            return False
     if not approve:
         return False
     fulfiller = _APPROVAL_FULFILLERS.get(decided.kind)
@@ -580,6 +603,13 @@ async def _maybe_issue_standing_rule(
         logger.info(
             "AD-1206: repair request %s cannot grant standing authority; "
             "only the recorded Captain decision authorizes this issue filing",
+            decided.id[:12],
+        )
+        return None
+    if command_approval_request(decided) is not None:  # AD-1328 S2b: no standing rule
+        logger.info(
+            "AD-1328: command request %s cannot grant a standing rule; an approved command "
+            "is reused only in its own scope, policy and approver (command_approvals.db)",
             decided.id[:12],
         )
         return None

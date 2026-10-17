@@ -1448,10 +1448,12 @@ async def test_r1_the_typed_record_fits_the_real_envelope_at_maximal_provenance(
     Measured 2026-10-16 (review round 2): the durable envelope is about 3,900 bytes with this record and ``'"' * 200``
     provenance (``_bounded_text`` caps each string at 128 JSON bytes, so 63 quotes, the worst escaping case), and, with the
     largest admitted record (1,898 characters) in its place (B31), 3,994 bytes in the emitted envelope and 3,975 bytes in
-    the durable EventLog row: about 100 bytes of headroom under 4,096, not the 207 first stated. A record that grows
-    (S2b's ``approval`` field, about 200 characters) fails B31 and may fail this test; S2b must re-measure and re-anchor
-    B16, B16b and B31.
+    the durable EventLog row: about 100 bytes of headroom under 4,096, not the 207 first stated. AD-1328 S2b re-measured
+    (the record is v2 and carries ``approval: null``, about 20 bytes more): this test's envelope is 3,930 bytes emitted and
+    3,908 durable, and B31's is 4,013 emitted and 3,993 durable (83 bytes under 4,096). The maximal approved record is
+    tests/test_ad1328_s2b_tool_router_shell.py M3 #12.
     """
+    # AD-1328 S2b: the docstring's S2b sentence became the measured sizes above; the assertions below are unchanged.
     bound = executor_module._RECORD_MAX_BYTES
     assert bound == 4096  # premise: the real bound
     size = executor_module._record_size
@@ -1570,7 +1572,8 @@ async def test_r2_the_largest_admitted_record_fits_the_real_envelope(tmp_path: P
     names = [    f"r{index}-" + "x" * 61 for index in range(8)]
     assert [len(name) for name in names] == [64] * 8
     record: dict[str, Any] = {
-        "schema": "probos.command_policy.record/v1",
+        # AD-1328 S2b: the record is v2 and carries "approval" (None, as a gate verdict's does), else the projection refuses it.
+        "schema": "probos.command_policy.record/v2",
         "call_site": "run_command_tool",
         "decision": "escalate",
         "dialect": "posix",
@@ -1581,6 +1584,7 @@ async def test_r2_the_largest_admitted_record_fits_the_real_envelope(tmp_path: P
         "matched_rules_omitted": 2**31 - 1,
         "causes": [{"kind": "rule", "segment": 2**31 - 1, "rule": name} for name in names],
         "causes_omitted": 2**31 - 1,
+        "approval": None,
     }
     # premise: the record is admitted unchanged and is within its own character bound
     result = ToolResult(output={}, metadata={"command_policy": record})
@@ -1614,7 +1618,7 @@ async def test_r2_the_largest_admitted_record_fits_the_real_envelope(tmp_path: P
         assert len(rows) == 1
         data = rows[0]["data"]
         assert data["command_policy"] == record
-        # measured by review round 2: 3,994 bytes emitted, 3,975 bytes durable (1,898-character record, 200-quote provenance)
+        # AD-1328 S2b: re-measured with "approval": null and record/v2 (1,916 chars): 4,013 bytes emitted, 3,993 durable (was 3,994 and 3,975); the maximal approved record is M3 #12
         assert size(data) <= bound
     finally:
         await log.stop()

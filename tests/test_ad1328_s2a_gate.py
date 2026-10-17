@@ -170,9 +170,10 @@ _SITE_MATRIX = [
     pytest.param("linux", "run_command_tool", "posix", id="linux-tool-posix"),
 ]
 
+# AD-1328 S2b: the record gained "approval" (None until the approval route acts), so its key set has one more.
 _RECORD_KEYS = {
     "schema", "call_site", "decision", "dialect", "policy_digest", "canonical_key", "canonical_kind",
-    "matched_rules", "matched_rules_omitted", "causes", "causes_omitted",
+    "matched_rules", "matched_rules_omitted", "causes", "causes_omitted", "approval",
 }
 
 
@@ -758,7 +759,8 @@ def test_record_shape_and_no_command_text(command: str, kind: str, resolved: str
     record = verdict.record
 
     assert set(record) == _RECORD_KEYS
-    assert record["schema"] == RECORD_SCHEMA == "probos.command_policy.record/v1"
+    # AD-1328 S2b: the record schema is v2 now that the record carries "approval".
+    assert record["schema"] == RECORD_SCHEMA == "probos.command_policy.record/v2"
     assert record["call_site"] == "run_command_tool"
     assert record["decision"] == "forbid"
     assert record["dialect"] == "posix"
@@ -829,7 +831,8 @@ def _recorded() -> dict:
         pytest.param(lambda r: {"command_policy": r}, True, id="gate_record"),
         pytest.param(lambda r: {"command_policy": {**r, "command": "curl x"}}, False, id="extra_key"),
         pytest.param(lambda r: {"command_policy": {k: v for k, v in r.items() if k != "causes_omitted"}}, False, id="missing_key"),
-        pytest.param(lambda r: {"command_policy": {**r, "schema": "probos.command_policy.record/v2"}}, False, id="wrong_schema"),
+        # AD-1328 S2b: v2 is the right schema now, so the wrong one this forges is the old v1.
+        pytest.param(lambda r: {"command_policy": {**r, "schema": "probos.command_policy.record/v1"}}, False, id="wrong_schema"),
         pytest.param(lambda r: {"command_policy": {**r, "decision": "maybe"}}, False, id="bad_decision"),
         pytest.param(lambda r: {"command_policy": {**r, "call_site": "elsewhere"}}, False, id="bad_site"),
         pytest.param(lambda r: {"command_policy": {**r, "decision": ["allow"]}}, False, id="unhashable_decision"),
@@ -1211,7 +1214,8 @@ def _a_cause(index: int) -> dict:
 
 
 _FORGERIES = [
-    pytest.param(_forge(schema="probos.command_policy.record/v2"), id="schema_v2"),
+    # AD-1328 S2b: v2 is the right schema now, so the forged one is the old v1 (the id was schema_v2).
+    pytest.param(_forge(schema="probos.command_policy.record/v1"), id="schema_v1"),
     pytest.param(_forge(call_site="shell_command_agent"), id="call_site_agent"),
     pytest.param(_forge(decision="Allow"), id="decision_case"),
     pytest.param(_forge(dialect="powershell"), id="dialect_powershell"),
@@ -1317,7 +1321,8 @@ def test_r1_compact_record() -> None:
     assert compact["matched_rules"] == [] and compact["causes"] == []
     assert compact["matched_rules_omitted"] == 20 and compact["causes_omitted"] == 20  # the entries moved into the counts
     kept = set(_RECORD_KEYS) - {"matched_rules", "matched_rules_omitted", "causes", "causes_omitted"}
-    assert len(kept) == 7
+    # AD-1328 S2b: this pinned the seven kept keys of the v1 record; "approval" is kept too (the contract's "unchanged" missed it).
+    assert len(kept) == 8
     assert {key: compact[key] for key in compact if key in kept} == {key: record[key] for key in kept}
     assert set(compact) == _RECORD_KEYS
     assert json.dumps(record, sort_keys=True) == before  # the full record is left as it was
