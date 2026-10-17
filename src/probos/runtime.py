@@ -3294,6 +3294,7 @@ class ProbOSRuntime:
         self.skill_grant_store = comm.skill_grant_store
         self.intent_grant_store = comm.intent_grant_store
         self.action_approval_store = comm.action_approval_store  # AD-1154
+        self.command_approval_store = comm.command_approval_store  # AD-1328 S2b
         self.hook_bus = comm.hook_bus  # AD-1004 substrate / AD-1012 wiring
         self.acm = comm.acm
         self.ontology = comm.ontology

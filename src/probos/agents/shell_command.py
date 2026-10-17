@@ -12,7 +12,11 @@ import time
 from typing import Any
 
 from probos.execution.command_env import build_command_env
-from probos.execution.command_gate import COMMAND_POLICY_UNAVAILABLE_MESSAGE, CommandPolicyGate
+from probos.execution.command_gate import (
+    COMMAND_POLICY_REFUSAL_KEY,
+    COMMAND_POLICY_UNAVAILABLE_MESSAGE,
+    CommandPolicyGate,
+)
 from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
@@ -88,7 +92,10 @@ class ShellCommandAgent(BaseAgent):
         report = await self.report(result)
 
         success = report.get("success", False)
-        self.update_confidence(success)
+        # AD-1328 S2b (O-S2a-5): a command-policy refusal is the policy's decision, not
+        # this agent's failure, so it does not move the agent's confidence.
+        if not report.get(COMMAND_POLICY_REFUSAL_KEY):
+            self.update_confidence(success)
 
         return IntentResult(
             intent_id=intent.id,
@@ -224,10 +231,12 @@ class ShellCommandAgent(BaseAgent):
                 "AD-1328: the command policy could not judge a run_command intent; it was not run",
                 exc_info=True,
             )
-            return {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE}
+            return {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE, COMMAND_POLICY_REFUSAL_KEY: True}
         if verdict.runs:
             return None
-        return {"success": False, "error": verdict.refusal_message}
+        # AD-1328 S2b: the mesh path has no approval route (every pool member runs the
+        # command and the red team re-runs it), so an escalation keeps the S2a refusal.
+        return {"success": False, "error": verdict.refusal_message, COMMAND_POLICY_REFUSAL_KEY: True}
 
     @staticmethod
     def _strip_ps_wrapper(command: str) -> str:

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from probos.execution.command_env import build_command_env
+from probos.execution.command_escalation import CommandEscalations
 from probos.execution.command_gate import (
     COMMAND_POLICY_UNAVAILABLE,
     CommandGateVerdict,
@@ -1135,6 +1136,7 @@ class RunCommandTool:
         *,
         command_env_passthrough: tuple[str, ...] = (),
         command_policy_gate: CommandPolicyGate | None = None,
+        command_escalations: CommandEscalations | None = None,
     ) -> None:
         self._runtime = runtime
         # BF-890 (#1529): names from execution.command_env_passthrough, injected
@@ -1143,6 +1145,21 @@ class RunCommandTool:
         # AD-1328 S2a (#1530): the runtime's command policy (ProbOSRuntime.command_policy_gate),
         # injected at registration. None: no policy.
         self._command_policy_gate = command_policy_gate
+        # AD-1328 S2b (#1530): the runtime's approval route for an escalated command
+        # (runtime.command_escalations), injected at registration. None: S2a's refusal.
+        self._command_escalations = command_escalations
+
+    async def _escalate(
+        self, verdict: CommandGateVerdict, command: str, context: dict[str, Any] | None,
+    ) -> tuple[CommandGateVerdict, str | None]:
+        """AD-1328 S2b: the verdict to record and the refusal to return for a command the
+        policy does not run on its own. ``forbid``, and an ``escalate`` with no approval
+        route, keep the S2a refusal; an ``escalate`` goes to ``CommandEscalations``."""
+        escalations = self._command_escalations
+        if verdict.decision != "escalate" or escalations is None:
+            return verdict, verdict.refusal_message
+        outcome = await escalations.resolve(verdict, command=command, context=context)
+        return outcome.verdict, outcome.message
 
     def _policy_verdict(self, command: Any, cwd: object) -> CommandGateVerdict | None:
         """AD-1328 S2a: the policy's verdict on ``command`` as this tool spawns it, or None
@@ -1203,10 +1220,17 @@ class RunCommandTool:
             # is not exactly a str raises in judge. With no policy it is converted as before.
             verdict = self._policy_verdict(command, cwd)
             if verdict is not None and not verdict.runs:
-                return ToolResult(
-                    error=verdict.refusal_message,
-                    metadata=policy_result_metadata(verdict),
-                )
+                # AD-1328 S2b (#1530): an escalation goes to the chain of command. It runs
+                # here only under the Captain's approval in this scope, recorded first.
+                # ``command`` is the exact str judge accepted (S2a repair r1, F3), so the
+                # filed text, the judged text and the spawned text are one object; a raise
+                # lands in the handler below with the escalate record and nothing runs.
+                verdict, refusal = await self._escalate(verdict, command, context)
+                if refusal is not None or not verdict.runs:
+                    return ToolResult(
+                        error=refusal or verdict.refusal_message,
+                        metadata=policy_result_metadata(verdict),
+                    )
             # Cross-platform: use shell=True via create_subprocess_shell
             proc = await _asyncio.create_subprocess_shell(
                 str(command) if verdict is None else command,
@@ -1262,6 +1286,7 @@ def register_native_swe_tools(
     *,
     command_env_passthrough: tuple[str, ...] = (),
     command_policy_gate: CommandPolicyGate | None = None,
+    command_escalations: CommandEscalations | None = None,
 ) -> int:
     """AD-544: Register all 12 native SWE tools into the registry.
 
@@ -1305,6 +1330,8 @@ def register_native_swe_tools(
                 command_env_passthrough=command_env_passthrough,
                 # AD-1328 S2a: the runtime's command policy.
                 command_policy_gate=command_policy_gate,
+                # AD-1328 S2b: its approval route for an escalated command.
+                command_escalations=command_escalations,
             ),
             shell_perms,
         ),

@@ -1749,6 +1749,13 @@ async def shutdown(
         runtime.intent_grant_store = None
         runtime.hook_bus = None  # AD-1012
 
+    # AD-1328 S2b: command approval store (approvals of escalated commands and their runs)
+    if getattr(runtime, 'command_approval_store', None):
+        with steps("command approval store stop", runtime.command_approval_store):
+            await runtime.command_approval_store.stop()
+        runtime.command_approval_store = None
+        runtime.command_escalations = None
+
     # AD-1154: Action approval store (standing, TTL-bounded action approvals)
     if getattr(runtime, 'action_approval_store', None):
         with steps("action approval store stop", runtime.action_approval_store):

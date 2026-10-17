@@ -32,6 +32,7 @@ from probos.agents.shell_command import ShellCommandAgent
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.config_models.operations import CommandPolicyConfig
 from probos.execution.command_gate import (
+    COMMAND_POLICY_REFUSAL_KEY,
     COMMAND_POLICY_UNAVAILABLE_MESSAGE,
     CommandGateVerdict,
     CommandPolicyGate,
@@ -270,7 +271,8 @@ async def test_forbid_and_escalate_are_not_run(runs: _Runs, env_spy: _EnvSpy, de
     result = await agent._run_command("git push")
 
     assert runs.calls == []
-    assert result == {"success": False, "error": verdict.refusal_message}
+    # AD-1328 S2b: the refusal dict carries COMMAND_POLICY_REFUSAL_KEY, so the agent's confidence does not move on it.
+    assert result == {"success": False, "error": verdict.refusal_message, COMMAND_POLICY_REFUSAL_KEY: True}
     error = result["error"]
     assert f"Rule '{rule['name']}'" in error
     assert rule["justification"] in error
@@ -379,7 +381,8 @@ async def test_judged_after_the_python_rewrite(
     assert verdict.decision == "escalate"
     assert [cause.kind for cause in verdict.causes] == ["unmatched"]
     assert verdict.evaluation.governing == ()  # O-S1-11: no rule decided it, and the refusal still says why
-    assert result == {"success": False, "error": verdict.refusal_message}
+    # AD-1328 S2b: the refusal dict carries COMMAND_POLICY_REFUSAL_KEY, so the agent's confidence does not move on it.
+    assert result == {"success": False, "error": verdict.refusal_message, COMMAND_POLICY_REFUSAL_KEY: True}
     assert "no approval was requested" in result["error"]
     # control: the text as asked IS allowed by that rule, so the rewrite is what changed the outcome
     as_asked = gate.judge(asked, site="shell_command_agent", search_path=env_spy.PATH)
@@ -426,7 +429,8 @@ async def test_judged_after_the_powershell_unwrap(
 
     assert runs.calls == []
     assert [call["command"] for call in judge_spy.calls] == [wrapped]
-    assert unstripped == {"success": False, "error": refused.refusal_message}
+    # AD-1328 S2b: the refusal dict carries COMMAND_POLICY_REFUSAL_KEY, so the agent's confidence does not move on it.
+    assert unstripped == {"success": False, "error": refused.refusal_message, COMMAND_POLICY_REFUSAL_KEY: True}
 
 
 # --------------------------------------------------------------------------------------
@@ -450,7 +454,8 @@ async def test_judgement_error_is_a_refusal(
     with caplog.at_level(logging.WARNING, logger="probos.agents.shell_command"):
         result = await agent._run_command("git status")
 
-    assert result == {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE}
+    # AD-1328 S2b: the unavailable-policy refusal carries COMMAND_POLICY_REFUSAL_KEY too (not the agent's failure).
+    assert result == {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE, COMMAND_POLICY_REFUSAL_KEY: True}
     assert runs.commands == ["git status"]  # still only the control's run: this one never started
     assert not _CAPABILITY_GAP_RE.search(COMMAND_POLICY_UNAVAILABLE_MESSAGE)
     assert any(
@@ -627,7 +632,8 @@ async def test_r1_shell_agent_refuses_a_command_that_is_not_text(runs: _Runs, en
 
     result = await agent._run_command(_TextWithAnotherStr("curl x"))
 
-    assert result == {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE}
+    # AD-1328 S2b: the unavailable-policy refusal carries COMMAND_POLICY_REFUSAL_KEY too (not the agent's failure).
+    assert result == {"success": False, "error": COMMAND_POLICY_UNAVAILABLE_MESSAGE, COMMAND_POLICY_REFUSAL_KEY: True}
     assert runs.calls == []
 
     # control: a plain str runs, as the identical object
