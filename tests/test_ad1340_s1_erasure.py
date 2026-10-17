@@ -10,9 +10,11 @@ sidecars, and a direct ChromaDB read for the live store. Every test states its p
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import hashlib
 import logging
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -20,10 +22,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from probos.cognitive.activation_tracker import ActivationTracker
 from probos.cognitive.episode_archive import (
     ARCHIVE_FILENAME,
     ARCHIVE_REASONS,
     EpisodeArchive,
+    EpisodeArchiveIntegrityError,
     EpisodeArchiveUnavailable,
     EpisodeErasureIncomplete,
     decode_payload,
@@ -32,6 +36,11 @@ from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.memory_probes import _cleanup_test_episodes
 from probos.cognitive.participant_index import ParticipantIndex
 from probos.knowledge.erasure import ErasureCascadeIncomplete, ErasureManager
+from probos.startup.cognitive_services import (
+    ACTIVATION_TRACKER_DB,
+    PARTICIPANT_INDEX_DB,
+    wire_erasure_sidecar_paths,
+)
 from probos.types import Episode, EpisodeStoreOutcome, EvictionDisposition
 from tests.test_ad1340_s1_eviction import (
     _archive_rows,
@@ -672,3 +681,341 @@ async def test_retry_after_a_partial_erase_sweeps_what_was_left(
         assert ids[0] not in await _participants_named(rig.root, "agent-a")
         # Targeted: the sweep is keyed on the requested id, so the other episode stands untouched.
         assert _sidecar_counts(rig.root, ids[1]) == {"fts": 1, "activation": 1, "participants": 2}
+
+
+# --- R16 - R23: the sidecar sweep reaches a store that has no open handle (AD-1340 R1, F1) ---------------------
+
+_CLEARED = {"fts": 0, "activation": 0, "participants": 0}
+
+
+async def test_erase_clears_activation_rows_when_the_tracker_is_not_wired(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [episode])
+        await rig.activations.stop()  # the standalone tracker wrote its row and is done
+        em.set_activation_tracker(None)  # activation tracking is off: no tracker is wired, the file is declared
+        assert _sidecar_counts(rig.root, episode.id) == {"fts": 1, "activation": 1, "participants": 2}  # premise
+
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _sidecar_counts(rig.root, episode.id) == _CLEARED
+
+
+async def test_erase_clears_participant_rows_after_a_failed_index_start(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [episode])
+        await rig.participants.stop()
+        em.set_participant_index(None)  # the index failed to start: nothing is wired, the file still holds rows
+        assert _sidecar_counts(rig.root, episode.id)["participants"] == 2  # premise
+
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _sidecar_counts(rig.root, episode.id) == _CLEARED
+
+
+async def test_erase_raises_when_an_unwired_store_cannot_be_opened(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        await rig.activations.record_access(episode.id)
+        assert await em.evict_by_ids([episode.id], reason="activation_decay") == 1
+        await em.restore_from_archive(episode.id)  # live again, with its archive row kept
+        assert _raw(em, [episode.id])["ids"] == [episode.id]
+        assert len(_archive_rows(rig.root)) == 1
+        assert _sidecar_counts(rig.root, episode.id)["fts"] == 1
+        await rig.participants.stop()
+        em.set_participant_index(None)
+        (rig.root / "participant_index.db").write_bytes(b"this is not an sqlite database " * 64)
+
+        with pytest.raises(EpisodeErasureIncomplete, match="participant_index"):
+            await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        # Every other copy was still cleared: the failure is reported, not allowed to spare anything else.
+        assert _raw(em, [episode.id])["ids"] == []
+        assert _archive_rows(rig.root) == []
+        counts = _sidecar_counts_without_participants(rig.root, episode.id)
+        assert counts == {"fts": 0, "activation": 0}
+
+
+def _sidecar_counts_without_participants(root: Path, episode_id: str) -> dict[str, int]:
+    return {
+        "fts": _query(root / "chroma" / "episode_fts.db", "SELECT count(*) FROM episode_fts WHERE episode_id = ?", (episode_id,))[0][0],
+        "activation": _query(root / "activation.db", "SELECT count(*) FROM episode_access_log WHERE episode_id = ?", (episode_id,))[0][0],
+    }
+
+
+async def test_erase_with_no_sidecar_file_is_complete_and_creates_none(tmp_path: Path) -> None:
+    episode = _episode(0)
+    activation_path = tmp_path / "activation.db"
+    participants_path = tmp_path / "participant_index.db"
+    em = EpisodicMemory(
+        db_path=str(tmp_path / "chroma" / "episodes.db"), relevance_threshold=0.0, eviction_disposition="archive",
+    )
+    em.set_erasure_sidecar_paths(
+        activation_db_path=str(activation_path), participant_index_db_path=str(participants_path),
+    )
+    await em.start()
+    try:
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        assert not activation_path.exists() and not participants_path.exists()  # premise: no sidecar file was ever made
+
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _raw(em, [episode.id])["ids"] == []
+        assert not activation_path.exists() and not participants_path.exists()  # erasing created neither
+    finally:
+        await em.stop()
+
+
+async def test_erase_clears_fts_text_when_the_fts_handle_is_closed(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [episode])
+        await em._fts_db.close()  # test-only private access: the FTS handle is closed ...
+        em._fts_db = None  # ... and no longer wired, as after a failed FTS open
+        assert _sidecar_counts(rig.root, episode.id)["fts"] == 1  # premise: the file still holds the text
+
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _sidecar_counts(rig.root, episode.id)["fts"] == 0
+
+
+async def test_erase_clears_stores_whose_handles_were_stopped(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [episode])
+        await rig.activations.stop()  # still wired, but stopped: its delete would silently do nothing
+        await rig.participants.stop()
+        assert not rig.activations.is_open and not rig.participants.is_open  # premise
+        assert _sidecar_counts(rig.root, episode.id) == {"fts": 1, "activation": 1, "participants": 2}
+
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _sidecar_counts(rig.root, episode.id) == _CLEARED
+
+
+class _FtsProxy:
+    """Forwards to the real FTS connection, but its DELETE raises for one episode id."""
+
+    def __init__(self, inner: Any, failing_id: str) -> None:
+        self.inner = inner
+        self.failing_id = failing_id
+
+    async def execute(self, sql: str, params: Any = ()) -> Any:
+        if sql.startswith("DELETE") and params and params[0] == self.failing_id:
+            raise RuntimeError("injected: the FTS delete failed")
+        return await self.inner.execute(sql, params)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+async def test_one_failing_fts_delete_does_not_spare_the_other_ids(tmp_path: Path) -> None:
+    ids = _ids(2)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [_episode(0), _episode(1)])
+        real = em._fts_db  # test-only private access
+        em._fts_db = _FtsProxy(real, ids[0])
+        try:
+            with pytest.raises(EpisodeErasureIncomplete, match="episode_fts"):
+                await em.evict_by_ids(ids, reason="user_request", disposition=EvictionDisposition.ERASE)
+        finally:
+            em._fts_db = real
+
+        assert _sidecar_counts(rig.root, ids[0])["fts"] == 1  # premise: the injected failure is what was left
+        assert _sidecar_counts(rig.root, ids[1])["fts"] == 0  # the sweep went on to the second id
+
+
+async def test_erase_on_a_stopped_memory_raises(tmp_path: Path) -> None:
+    episode = _episode(0)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [episode])
+        await em.stop()
+
+        with pytest.raises(EpisodeErasureIncomplete, match="live_store"):
+            await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+
+# --- R24 - R28: cascades see every archived version (AD-1340 R1, F2, F3, S2) ----------------------------------
+
+_ATT1 = hashlib.sha256(b"ad1340-r1-attachment-1").hexdigest()
+_ATT2 = hashlib.sha256(b"ad1340-r1-attachment-2").hexdigest()
+
+
+def _versions() -> tuple[Episode, Episode]:
+    """Two versions of one episode id: v1 (agent-a, declares ATT1) and v2 (agent-b, declares ATT2)."""
+    v1 = dataclasses.replace(
+        _episode(1), agent_ids=["agent-a"], user_input="alpha reactor section coolant reading one",
+        outcomes=[{"intent": "report", "success": True, "attachment_ids": [_ATT1]}],
+    )
+    v2 = dataclasses.replace(
+        v1, agent_ids=["agent-b"], user_input="bravo hangar section cargo manifest two",
+        outcomes=[{"intent": "report", "success": True, "attachment_ids": [_ATT2]}],
+    )
+    return v1, v2
+
+
+async def test_cascade_matches_an_archived_version_shadowed_by_a_live_one(tmp_path: Path) -> None:
+    v1, v2 = _versions()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, _ = _manager(em)
+        assert await em.store(v1) is EpisodeStoreOutcome.STORED
+        assert await em.evict_by_ids([v1.id], reason="activation_decay") == 1
+        assert await em.store(v2) is EpisodeStoreOutcome.STORED
+        # premise: v1 (agent-a) archived, v2 (agent-b) live, under the one id
+        assert [(row["episode_id"], row["agent_id"]) for row in _archive_rows(rig.root)] == [(v1.id, "agent-a")]
+        assert [(e.id, e.agent_ids) for e in await em.list_episodes()] == [(v1.id, ["agent-b"])]
+
+        result = await manager.forget_agent_memory("agent-a")
+
+        assert result.deleted_episode_ids == [v1.id]
+        assert _archive_rows(rig.root) == []
+        assert _raw(em, [v1.id])["ids"] == []  # erased by id, as D6 states: the unit of erasure is the episode id
+
+
+async def test_forget_episode_unlinks_attachments_of_every_archived_version(tmp_path: Path) -> None:
+    v1, v2 = _versions()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, attachments = _manager(em)
+        assert await em.store(v1) is EpisodeStoreOutcome.STORED
+        assert await em.evict_by_ids([v1.id], reason="activation_decay") == 1
+        assert await em.store(v2) is EpisodeStoreOutcome.STORED
+        assert await em.evict_by_ids([v2.id], reason="activation_decay") == 1
+        assert len(_archive_rows(rig.root)) == 2  # premise: two archived versions, none live
+        assert _raw(em, [v1.id])["ids"] == []
+        assert attachments.unlinked == []
+
+        result = await manager.forget_episode(v1.id)
+
+        assert sorted(attachments.unlinked) == sorted([_ATT1, _ATT2])
+        assert result.deleted_attachment_ids == sorted([_ATT1, _ATT2])
+        assert _archive_rows(rig.root) == []
+
+
+async def test_forget_episode_unions_live_and_archived_attachments(tmp_path: Path) -> None:
+    v1, v2 = _versions()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, attachments = _manager(em)
+        assert await em.store(v1) is EpisodeStoreOutcome.STORED
+        assert await em.evict_by_ids([v1.id], reason="activation_decay") == 1
+        assert await em.store(v2) is EpisodeStoreOutcome.STORED
+        assert len(_archive_rows(rig.root)) == 1  # premise: v1 archived, v2 live
+        assert _ATT2 in _raw(em, [v2.id])["metadatas"][0]["outcomes_json"]
+        assert attachments.unlinked == []
+
+        await manager.forget_episode(v1.id)
+
+        assert sorted(attachments.unlinked) == sorted([_ATT1, _ATT2])
+
+
+async def test_cascade_reports_an_archived_record_that_cannot_rehydrate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad, good = _episode(0), _episode(1)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, _ = _manager(em)
+        await _seed(rig, [bad, good], archive=[bad.id, good.id])
+        original = em._metadata_to_episode
+
+        def _fail_for_bad(episode_id: str, document: str, metadata: dict[str, Any]) -> Any:
+            if episode_id == bad.id:
+                raise ValueError("injected: this record cannot be rehydrated")
+            return original(episode_id, document, metadata)
+
+        monkeypatch.setattr(em, "_metadata_to_episode", _fail_for_bad)
+
+        with pytest.raises(ErasureCascadeIncomplete) as info:
+            await manager.forget_agent_memory("agent-a")
+
+        error = info.value
+        assert isinstance(error.enumeration_error, EpisodeArchiveIntegrityError)
+        assert str(error.enumeration_error) == "episode_archive_rows_unrehydratable:1"
+        assert error.failures == {}
+        assert error.result.deleted_episode_ids == [good.id]  # the other match was erased
+        assert await _traces(em, rig.root, good.id) == _GONE
+        # premise of the report: the record it names is still archived
+        assert await _traces(em, rig.root, bad.id) == _ARCHIVED_TRACES
+
+
+async def test_cascade_scans_past_an_undecodable_archived_row(tmp_path: Path) -> None:
+    first, second = _episode(0), _episode(1)  # ep-000 sorts before ep-001: the corrupt row is met first
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, _ = _manager(em)
+        await _seed(rig, [first, second], archive=[first.id, second.id])
+        with contextlib.closing(sqlite3.connect(rig.root / "chroma" / ARCHIVE_FILENAME, timeout=5)) as connection:
+            connection.execute("UPDATE episode_archive SET payload = ? WHERE episode_id = ?", (b"not zlib", first.id))
+            connection.commit()
+
+        with pytest.raises(ErasureCascadeIncomplete) as info:
+            await manager.forget_agent_memory("agent-a")
+
+        error = info.value
+        assert isinstance(error.enumeration_error, EpisodeArchiveIntegrityError)
+        assert str(error.enumeration_error) == "episode_archive_rows_undecodable:1"
+        assert error.result.deleted_episode_ids == [second.id]  # the higher-key match, found past the bad row
+        assert await _traces(em, rig.root, second.id) == _GONE
+        assert [row["episode_id"] for row in _archive_rows(rig.root)] == [first.id]  # the bad row is what is left
+
+
+# --- R29 -----------------------------------------------------------------------------------------------------
+
+
+async def test_startup_sidecar_paths_reach_erase(tmp_path: Path) -> None:
+    """The production layout: startup declares the files, ERASE clears them. This crosses that seam."""
+    episode = _episode(0)
+    activation_path = tmp_path / ACTIVATION_TRACKER_DB
+    participants_path = tmp_path / PARTICIPANT_INDEX_DB
+    fts_path = tmp_path / "episode_fts.db"  # beside EpisodicMemory(db_path=data_dir/"episodic.db")
+    activations = ActivationTracker(db_path=str(activation_path))
+    participants = ParticipantIndex(db_path=str(participants_path))
+    await activations.start()
+    await participants.start()
+    try:
+        await activations.record_access(episode.id)
+        await participants.record_episode(episode.id, ["agent-a"], ["worf"])
+    finally:
+        await activations.stop()
+        await participants.stop()
+    em = EpisodicMemory(db_path=str(tmp_path / "episodic.db"), relevance_threshold=0.0, eviction_disposition="archive")
+    await em.start()
+    try:
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        assert _query(fts_path, "SELECT count(*) FROM episode_fts WHERE episode_id = ?", (episode.id,))[0][0] == 1
+        assert _query(
+            activation_path, "SELECT count(*) FROM episode_access_log WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 1
+        assert _query(
+            participants_path, "SELECT count(*) FROM episode_participants WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 2  # premise: every sidecar holds the episode, and nothing is wired to the memory
+
+        wire_erasure_sidecar_paths(em, tmp_path)
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _query(fts_path, "SELECT count(*) FROM episode_fts WHERE episode_id = ?", (episode.id,))[0][0] == 0
+        assert _query(
+            activation_path, "SELECT count(*) FROM episode_access_log WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 0
+        assert _query(
+            participants_path, "SELECT count(*) FROM episode_participants WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 0
+    finally:
+        await em.stop()

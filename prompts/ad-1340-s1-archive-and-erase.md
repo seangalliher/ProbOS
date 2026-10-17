@@ -13,7 +13,7 @@
 | Base | `origin/main` `b8849e34` (the consult read `f89d72a9`; the only change since is `ui/src/components/mcp/McpServersPanel.test.tsx`, so no `src/` anchor moved). |
 | Depends on | Nothing. Overlaps BF-902 (#1579); see D8. |
 | Live-ship effect | **Yes.** After M4 the code default is `archive`, so the standard tier (still hard-deleting on the live ship today) and the aggressive tier archive instead. `config/system.yaml` is not touched. |
-| Estimated tests | planned about 34 new tests in four files; built 45 test functions in four files (A1-A10, E1-E12, R1-R15, T1-T8), signature edits to five test fakes, one config-test pop and one field-count pin bump |
+| Estimated tests | planned about 34 new tests in four files; built 65 test functions in four files (A1-A15, E1-E12, R1-R29, T1-T9; A11-A15, R16-R29 and T9 came with Amendment R1), signature edits to five test fakes, one config-test pop and one field-count pin bump |
 | Milestones | M1 store and policy · M2 eviction paths, flag, audit · M3 erasure · M4 restore, reset, declaration, wiring, **default flip** · M5 trackers. Cut point S1a/S1b: see "Builder briefs". |
 | CRLF | Every existing file this contract edits is LF in the index and CRLF in the working tree (`git ls-files --eol`). Edit with anchored replacements and never rewrite a whole existing file. |
 
@@ -54,18 +54,18 @@ Ordinary recall never reads the archive. Lookup surfaces (by agent and time, by 
 
 ### D2. Payload and byte-equal restore
 - The record is exactly what `collection.get(ids=..., include=["documents", "metadatas"])` returns per id: `{id, document, metadata}`. It is serialised with `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)` and compressed with `zlib.compress(..., 6)`. No embedding is stored. Restore calls `collection.add` with the same document and metadata, so the collection's embedding function re-embeds the document, as `store()` does at `:1883-1887`. Metadata, including `content_hash` and `tcm_vector_json`, is unchanged, so AD-541e hash verification still passes.
-- Primary key `(episode_id, content_hash)`; insert `ON CONFLICT ... DO NOTHING`, so a retried archive is idempotent. On read, the decoded `id` and `metadata.content_hash` must equal the key columns, or the read raises `EpisodeArchiveIntegrityError`.
-- **A restored episode keeps its archive row.** Removing it would be a delete path outside erasure. Re-evicting the episode is idempotent, and erasure removes both copies.
+- Primary key `(episode_id, content_hash)`; one row per key. Re-archiving a byte-identical record changes nothing (`reason` and `archived_at` are kept), so a retried archive is idempotent. **(R1)** Re-archiving the same key with a different payload (metadata changed after a restore; the content hash excludes mutable metadata) replaces the payload, `reason`, `archived_at`, agent and timestamp, and `secure_delete` overwrites the old bytes. `archive_ref` names the slot, not a payload revision, so the audit's `archive_ref` and `content_hash` are unchanged and resolve to the newest payload. On read, the decoded `id` and `metadata.content_hash` must equal the key columns, or the read raises `EpisodeArchiveIntegrityError`.
+- **A restored episode keeps its archive row.** Removing it would be a delete path outside erasure. Re-evicting the episode stores its current payload (R1), and erasure removes both copies.
 - `archive_ref` is `episode_archive:<episode_id>:<content_hash>`.
 
 ### D3. Ordering and failure windows (archive first)
-Archive mode, per batch: (1) read the full records; (2) write the archive rows in one transaction, commit, then read back which `(id, hash)` pairs are present; (3) write the audit rows (best-effort, as today); (4) `collection.delete` **only** the ids from (2); (5) clean FTS5, activation and the participant index (best-effort, as today).
+Archive mode, per batch: (1) read the full records; (2) write the archive rows in one transaction, commit, then read back which ids hold **exactly the payload just written (key and bytes)** (R1); (3) write the audit rows (best-effort, as today); (4) `collection.delete` **only** the ids from (2); (5) clean FTS5, activation and the participant index (best-effort, as today).
 
 | Window | Effect |
 |---|---|
 | Archive write or commit raises | Rolled back. Nothing is deleted, the batch stays live, and a WARNING is logged |
 | Archive unavailable (failed to open, or never started) | Nothing is deleted. A WARNING is logged at most once per 300 s. Capacity can exceed `max_episodes`: degradation by growth, never by loss |
-| Crash after (2), before (4) | The episode is both live and archived: a duplicate, never a loss. The retry inserts nothing new (conflict do-nothing), then deletes |
+| Crash after (2), before (4) | The episode is both live and archived: a duplicate, never a loss. The retry writes nothing new for an identical record, then deletes |
 | Audit write fails | The archive row is self-describing (reason, `archived_at`, `content_hash`, agent, episode timestamp) |
 | Record cannot be encoded | That record is skipped with a WARNING and stays live; the rest of the batch proceeds |
 | Reverse order (delete first) | **Rejected**: this is the loss window |
@@ -93,7 +93,7 @@ Do not describe `delete` mode as making "the schema byte-identical": the table g
 ### D6. ERASE semantics
 - ERASE removes: the ChromaDB row, the `episode_fts` row, the activation records, the participant-index rows, every `episode_archive` row for the id (whatever its content hash), and its `archive_access` rows. The eviction-audit row (a hash, not content) is the only trace left. This holds whether the episode was live, archived or both.
 - ERASE works for **archive-only** ids. It writes one audit row each, with `disposition = 'erased'`, and they count towards the return value, so `ErasureResult.deleted_episode_ids` names them.
-- ERASE **propagates** failures, unlike archive and delete eviction. It raises `EpisodeArchiveUnavailable` if the archive failed to open (it may hold copies), after deleting the live rows. It raises `EpisodeErasureIncomplete` if a sidecar cleanup failed. An erasure that silently leaves a copy behind is the worse failure (BF-868). In `delete` mode with no archive file, ERASE skips the archive. **(M3r)** Every phase is attempted before the first failure is raised; the sidecar sweep is keyed on the requested ids; `forget_episode` unlinks attachments before erasing the episode; the cascades attempt every match and then raise one `ErasureCascadeIncomplete` (see "Amendment M3r").
+- ERASE **propagates** failures, unlike archive and delete eviction. It raises `EpisodeArchiveUnavailable` if the archive failed to open (it may hold copies), after deleting the live rows. It raises `EpisodeErasureIncomplete` if a sidecar cleanup failed. An erasure that silently leaves a copy behind is the worse failure (BF-868). In `delete` mode with no archive file, ERASE skips the archive. **(M3r)** Every phase is attempted before the first failure is raised; the sidecar sweep is keyed on the requested ids; `forget_episode` unlinks attachments before erasing the episode; the cascades attempt every match and then raise one `ErasureCascadeIncomplete` (see "Amendment M3r"). **(R1)** A sidecar with no open handle is cleared through its declared file; only a missing file means there is nothing to clear. ERASE on a stopped memory raises. Every version of the id (live and archived) is matched, and every version's attachments are unlinked before the erase (see "Amendment R1").
 - `secure_delete` overwrites erased rows in the archive. Backup snapshots taken earlier keep erased content until they age out, as ChromaDB's do today. That is out of scope.
 
 ### D7. Reset Tier 2 deletes the archive (decided in envelope; the Captain may overrule)
@@ -1315,6 +1315,30 @@ Add to `EpisodicMemory` after `iter_archived_episodes`:
 
 ---
 
+## Amendment R1 (2026-10-17): review round 1 (F1-F4, S1, S2)
+
+**Revised by:** the orchestrator, 2026-10-17, on the Architect's decision (read-only consult `5418932c`, answering round 1 of the Diff Reviewer on `gpt-6.1-sol`). The Captain may overrule. Where Sections 7-11 or Amendment M3r differ, **this amendment is what the code does**. D2, D3 and D6 above carry the matching "(R1)" sentences.
+
+**The gaps.** (F1) The strict sidecar sweep treated a store with no open handle as cleaned. That covers `activation_enabled: false`, a non-fatal start failure and a stopped handle, so ERASE could return success with activation or participant rows left. (F2) Cascades skipped an archived version whose id was also live before applying the predicate. (F3) Attachments came from the live episode or the latest archived version, while ERASE deletes every version. (F4) A re-archive under an existing `(episode_id, content_hash)` kept the old payload, and the read-back checked only the key, so a record whose metadata changed after a restore was deleted from the live store without being archived. (S1) One failing FTS delete stopped the sweep for every later id. (S2) A cascade silently skipped an archived record that could not be rehydrated, and a row that could not be decoded stopped the scan. All four ordinary-reach findings were reproduced by the orchestrator with probes that assert their own premise before this amendment was written.
+
+**Decisions.**
+1. Startup (`wire_erasure_sidecar_paths`, unconditional, right after `episodic_memory.start()`) declares the activation and participant-index files to `EpisodicMemory` through `set_erasure_sidecar_paths`. Under ERASE, a store with no open handle is cleared through its own class opened on that file, and the FTS file through the `ConnectionFactory`. Only a missing file means there is nothing to clear. A file that cannot be opened or cleared raises `EpisodeErasureIncomplete`. ERASE on a stopped memory raises `erasure_live_store_unavailable`, after the archive and the sweep have been attempted. Rejected: failing closed on an absent handle (every erase would raise when the flag is off), wiring the stores regardless of the flag (re-enables the feature), reporting without raising (breaks D6), and a constructor parameter (it would copy the file names into `__main__.py`).
+2. Cascades apply the predicate to every live and every archived version, then remove duplicate ids. The unit of erasure stays the episode id: a match on any version erases every version.
+3. The attachments to unlink are the live episode's plus those of every archived version (`EpisodeArchive.get_versions`, `EpisodicMemory.get_archived_metadata_versions`, which replaces `get_archived_metadata`).
+4. The archive upserts, and an update applies only when the stored payload differs (D2, D3). Rejected: a new row per payload (a new row on every restore cycle, and "latest" gets harder to define) and keeping the old payload while keeping the live record (a restored episode could never be evicted again).
+5. The FTS sweep clears each id independently. Archive scans continue past bad rows and then raise `EpisodeArchiveIntegrityError`, which the cascade reports as `enumeration_error`.
+6. (Orchestrator, in envelope, found by the R1 build: the Architect's spec said it raises.) `EpisodicMemory.get_archived_metadata_versions` returns no versions, with a WARNING, when the archive failed to open. The attachment lookup now runs for every episode, and M3r's rule (tests R11 and R13) is that a live episode is still erased and its attachments still unlinked when the archive is unavailable; ERASE raises `episode_archive_unavailable_for_erase` from its archive phase after every other phase, so the failure is still reported and a retry finds the archived versions once the archive opens. A row that cannot be decoded still raises (follow-up (a)). Mutation row U2.
+
+**Follow-ups (#1523, not S1).** (a) A corrupt archived payload blocks erase by id, because the attachment lookup raises first (it fails closed and visibly; reached only by disk corruption); the decision to take later is "erase anyway, and report the attachment ids that could not be read". (b) `forget_episode` calls `mark_deleted` when no episodic memory is wired (existing at the base).
+
+**Tests (20 added; 65 in all).** R16 `test_erase_clears_activation_rows_when_the_tracker_is_not_wired`, R17 `test_erase_clears_participant_rows_after_a_failed_index_start`, R18 `test_erase_raises_when_an_unwired_store_cannot_be_opened`, R19 `test_erase_with_no_sidecar_file_is_complete_and_creates_none`, R20 `test_erase_clears_fts_text_when_the_fts_handle_is_closed`, R21 `test_erase_clears_stores_whose_handles_were_stopped`, R22 `test_one_failing_fts_delete_does_not_spare_the_other_ids`, R23 `test_erase_on_a_stopped_memory_raises`, R24 `test_cascade_matches_an_archived_version_shadowed_by_a_live_one`, R25 `test_forget_episode_unlinks_attachments_of_every_archived_version`, R26 `test_forget_episode_unions_live_and_archived_attachments`, R27 `test_cascade_reports_an_archived_record_that_cannot_rehydrate`, R28 `test_cascade_scans_past_an_undecodable_archived_row`, R29 `test_startup_sidecar_paths_reach_erase` (production layout: it crosses the seam between startup and erasure); A11 `test_rearchive_with_changed_metadata_replaces_the_payload`, A12 `test_archive_returns_only_ids_whose_stored_payload_matches` (a `BEFORE UPDATE` trigger with `RAISE(IGNORE)` on a second connection), A13 `test_rearchive_of_an_identical_record_is_a_no_op` (`reason` and `archived_at` unchanged), A14 `test_iter_records_continues_past_an_undecodable_row_then_raises`, A15 `test_get_versions_returns_every_row_for_the_id`; T9 `test_reevicting_a_restored_episode_archives_its_current_metadata`. The `_memory` rig declares its sidecar paths and exposes `participants`.
+
+**Mutation table.** G1-G8, L1, I1-I3, Q1-Q3, U2, V1, K9 and K10 are added, K3 is re-anchored, the `_present` exclusion is removed, and the whole campaign is re-run once on the final tree (53 rows; S2 by hand).
+
+**Diff Reviewer properties** 1, 2, 3, 5 and 8 are edited and 16 is added (below).
+
+---
+
 ## Mutation table (one campaign of record, after the last repair)
 
 **Tooling rules.** Every anchor below is the line's text with **leading indentation stripped**. The tool must find exactly one line in the named file whose `strip()` equals the anchor, replace it with the mutant, and keep that line's indentation. Count the matches first: zero or more than one means INERT, not killed. Run the unmodified baseline first. Mutate in place with a `.mutbak` sibling and restore in `finally`. A timeout is INVALID. Run each mutant against the M1-M4 test files plus the consumer list in the M4 brief. Record the base tree, the sha256 of each file in the "File" column and of the four `test_ad1340_s1_*.py` files, and KILLED / INERT / INVALID with the first failing test id. A later edit to a file invalidates only the mutants pinned to it. S2 is a two-anchor mutant: replace both lines in one run.
@@ -1347,7 +1371,7 @@ Add to `EpisodicMemory` after `iter_archived_episodes`:
 | R2m | `cognitive/episodic.py` | `self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])` -> `self._collection.upsert(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])` | T1 (proxy saw `upsert`) |
 | K1 | `knowledge/erasure.py` | `[episode_id], reason=reason, disposition=EvictionDisposition.ERASE,` -> `[episode_id], reason=reason,` | R5, R1 |
 | K2 | `knowledge/erasure.py` | `if self._episodic_memory is None or not hasattr(self._episodic_memory, "iter_archived_episodes"):` -> `if True:` | R2 |
-| K3 | `knowledge/erasure.py` | `if not episode_payload and hasattr(self._episodic_memory, "get_archived_metadata"):` -> `if False:` | R3 |
+| K3 | `knowledge/erasure.py` | `if hasattr(self._episodic_memory, "get_archived_metadata_versions"):` -> `if False:` | R3, R25 |
 | K4 | `cognitive/memory_probes.py` | `episode_ids, reason="qualification_test_cleanup", disposition=EvictionDisposition.ERASE,` -> `episode_ids, reason="qualification_test_cleanup",` | R6 |
 | K5 | `knowledge/erasure.py` | `unlinked = await self._delete_attachments(attachment_ids)` -> `unlinked = []` | R11, R3 |
 | K6 | `knowledge/erasure.py` | `failures[episode_id] = exc  # erase the rest, then raise one error naming every failure` -> `raise` | R12 |
@@ -1355,21 +1379,40 @@ Add to `EpisodicMemory` after `iter_archived_episodes`:
 | K8 | `knowledge/erasure.py` | `if failures or enumeration_error is not None:` -> `if failures:` | R7 |
 | R3m | `cognitive/episodic.py` | `await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")` -> `pass` | T1 (`archive_access` holds 1 row) |
 | T5m | `__main__.py` | `"episode_archive.db",` -> `"episode_archive_kept.db",` | T5 |
+| G1 | `cognitive/episodic.py` | `elif strict and not await self._erase_fts_file(ids):` -> `elif False:` | R20 |
+| G2 | `cognitive/episodic.py` | `elif strict and not await _erase_store_file("activation", self._activation_db_path, ids):` -> `elif False:` | R16, R29 |
+| G3 | `cognitive/episodic.py` | `elif strict and not await _erase_store_file("participant_index", self._participant_index_db_path, ids):` -> `elif False:` | R17, R29 |
+| G4 | `cognitive/episodic.py` | `if tracker is not None and (not strict or tracker.is_open):` -> `if tracker is not None:` | R21 |
+| G5 | `cognitive/episodic.py` | `if index is not None and (not strict or index.is_open):` -> `if index is not None:` | R21 |
+| G6 | `cognitive/episodic.py` | `return False  # the store file holds rows ERASE could not clear` -> `return True` | R18 |
+| G7 | `cognitive/episodic.py` | `if not path or not Path(path).exists():` -> `if not path:` | R19 (a file is created) |
+| G8 | `cognitive/episodic.py` | `cleared = False  # keep sweeping the remaining ids` -> `return False` | R22 |
+| L1 | `cognitive/episodic.py` | `raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # stopped or never started` -> `pass` | R23 (type and match) |
+| I1 | `cognitive/episodic.py` | `if unrehydrated:` -> `if False:` | R27 |
+| I2 | `cognitive/episode_archive.py` | `continue  # one bad row never hides the rows after it` -> `raise` | A14, R28 |
+| I3 | `cognitive/episode_archive.py` | `if undecodable:` -> `if False:` | A14, R28 |
+| Q1 | `cognitive/episode_archive.py` | `"payload = excluded.payload WHERE episode_archive.payload IS NOT excluded.payload",` -> `"payload = episode_archive.payload WHERE episode_archive.payload IS NOT excluded.payload",` | A11, T9 |
+| Q2 | `cognitive/episode_archive.py` | `if (episode_id, content_hash) in wanted and bytes(payload) == wanted[(episode_id, content_hash)]:` -> `if (episode_id, content_hash) in wanted:` | A12 |
+| Q3 | `cognitive/episode_archive.py` | `"payload = excluded.payload WHERE episode_archive.payload IS NOT excluded.payload",` -> `"payload = excluded.payload",` | A13 |
+| V1 | `knowledge/erasure.py` | `yield episode  # every archived version: the predicate decides, _matching_ids deduplicates` -> `if str(getattr(episode, "id", "")) not in {str(getattr(e, "id", "")) for e in await self._list_episodes()}: yield episode` | R24 |
+| K9 | `knowledge/erasure.py` | `for archived_meta in await self._episodic_memory.get_archived_metadata_versions(episode_id):` -> `for archived_meta in (await self._episodic_memory.get_archived_metadata_versions(episode_id))[-1:]:` | R25 |
+| K10 | `knowledge/erasure.py` | `if hasattr(self._episodic_memory, "get_archived_metadata_versions"):` -> `if not episode_payload and hasattr(self._episodic_memory, "get_archived_metadata_versions"):` | R26 |
+| U2 | `cognitive/episodic.py` | `return []  # the archive failed to open: ERASE reports it after every other phase` -> `raise` | R11, R13 |
 
-Not mutated, by design: `_present`'s read-back (equivalent to the inserted ids whenever the commit succeeded; kept as defence in depth), and the `delete`-mode call sequence (E9 pins it directly).
+Not mutated, by design: the `delete`-mode call sequence (E9 pins it directly), the `wire_erasure_sidecar_paths` call site (one unconditional line; property 16) and the FTS no-table branch.
 
 ---
 
 ## Diff Reviewer properties (verify each; data integrity and privacy)
 
-1. Default recall (`recall`, `recall_for_agent`, `recall_weighted`, `keyword_search`, the participant-index lookup, `recent_for_agent`, `get_by_ids`) never reads `episode_archive.db`; only `restore_from_archive`, `get_archived_metadata`, `iter_archived_episodes` and `_erase_ids` touch the archive's read methods.
-2. In archive mode, no `collection.delete` runs for an id whose archive row was not committed and read back; an unavailable or failing archive deletes nothing.
-3. ERASE leaves the episode's content in none of ChromaDB, `episode_fts`, the activation log, the participant index, `episode_archive` and `archive_access`, whether the episode was live, archived or both; only the eviction-audit row (a hash) remains. Any failure to clear a copy raises. (M3r) Every phase is attempted before the first failure is raised, and the sidecar sweep covers every requested id, so a retry after a partial erasure clears what the first attempt left.
+1. Default recall (`recall`, `recall_for_agent`, `recall_weighted`, `keyword_search`, the participant-index lookup, `recent_for_agent`, `get_by_ids`) never reads `episode_archive.db`; only `restore_from_archive`, `get_archived_metadata_versions` (through `EpisodeArchive.get_versions`), `iter_archived_episodes` and `_erase_ids` touch the archive's read methods.
+2. In archive mode, no `collection.delete` runs for an id whose archive row was not committed and read back with stored payload bytes equal to the record removed (R1); an unavailable or failing archive deletes nothing.
+3. ERASE leaves the episode's content in none of ChromaDB, `episode_fts`, the activation log, the participant index, `episode_archive` and `archive_access`, whether the episode was live, archived or both; only the eviction-audit row (a hash) remains. Any failure to clear a copy raises. (M3r) Every phase is attempted before the first failure is raised, and the sidecar sweep covers every requested id, so a retry after a partial erasure clears what the first attempt left. (R1) A store with no open handle (flag off, failed start, stopped) is cleared through its declared file; only a missing file counts as clean; a file that cannot be opened raises; ERASE on a stopped memory raises; one failing FTS id never spares the others.
 4. ERASE is reachable only through an explicit `EvictionDisposition.ERASE`; no reason string, default or unknown value produces it; a plain string `"erase"` raises.
-5. `forget_resource` and `forget_agent_memory` match archived episodes, and an archived episode's attachment ids come from its archived metadata. (M3r) `forget_episode` unlinks attachments before erasing the episode and calls `mark_deleted` only on success; the cascades attempt every match, including the live matches when the archive scan fails, and raise one `ErasureCascadeIncomplete` with the first failure as `__cause__`.
+5. `forget_resource` and `forget_agent_memory` match archived episodes, and an archived episode's attachment ids come from its archived metadata. (M3r) `forget_episode` unlinks attachments before erasing the episode and calls `mark_deleted` only on success; the cascades attempt every match, including the live matches when the archive scan fails, and raise one `ErasureCascadeIncomplete` with the first failure as `__cause__`. (R1) Every archived version is matched, even when the id is live; the attachments are the union over the live episode and every archived version; a scan continues past an undecodable or unrehydratable row and the cascade raises `ErasureCascadeIncomplete`.
 6. An archive payload's `metadata.content_hash` equals the audit row's `content_hash` and the pre-eviction live metadata.
 7. Restore never replaces a live id (checked under the store write lock, `add` not `upsert`, never `store()`), and the restored document, metadata and `Episode` equal the pre-eviction values.
-8. Archive writes are idempotent per `(episode_id, content_hash)`; a crash between the archive commit and the live delete yields a duplicate, never a loss.
+8. The archive keeps one row per `(episode_id, content_hash)`; a byte-identical re-archive changes nothing; a changed payload replaces the stored one (R1); a crash between the archive commit and the live delete yields a duplicate, never a loss.
 9. `delete` mode never creates `episode_archive.db`, issues the same live-store calls as today, and writes `disposition='deleted'`, `archive_ref=''`.
 10. Every archive connection sets `PRAGMA secure_delete=ON` and refuses to open if it does not read back 1.
 11. No agent-facing tool reaches ERASE: the only `EvictionDisposition.ERASE` references are in `episode_archive.py`, `erasure.py` and `memory_probes.py`, and `forget_*` is still called only from `routers/security.py:73-77` and `erasure.py`'s own cascades.
@@ -1377,6 +1420,7 @@ Not mutated, by design: `_present`'s read-back (equivalent to the inserted ids w
 13. `knowledge/erasure.py` imports nothing from `probos.cognitive` (layer rule; the enum is in `probos.types`).
 14. `dreaming.py` is unchanged, and so are its Step 12 calls.
 15. (M3r) `restore_from_archive` records the archive access inside the store write lock, after the live-id check and before the add, so an access that cannot be recorded stops the restore before anything changed and a refused restore records nothing.
+16. (R1) `wire_erasure_sidecar_paths` runs unconditionally after `episodic_memory.start()`. The creation sites and the declaration use the same constants. No new direct `aiosqlite.connect` (the `db-connect` gate). `EpisodicMemory` reaches other stores only through their own classes, opened briefly.
 
 Consumer that must accept the change: the dream cycle's Step 12 on the live ship (it calls `evict_by_ids(ids, reason=...)` unchanged) and the AD-754 route `POST` in `routers/security.py` (it calls `forget_*` unchanged).
 
@@ -1665,3 +1709,6 @@ General rules for every milestone: set `PYTHONPATH` to this worktree's `src` and
 
 ### Brief M5 — trackers (effort: high)
 **Section:** Tracking (M5). **May touch:** `DECISIONS.md` (append), `PROGRESS.md` (one line), the regenerated AD ledger. Copy the campaign of record into the `DECISIONS.md` entry after recomputing the file sha256s on disk; if any differs from the campaign report, stop (the campaign is stale). **Run:** `d:/ProbOS/.venv/Scripts/python.exe scripts/gen_ad_ledger.py`, then `--check`, then `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --preflight-only --label ad1340-s1` on the staged candidate, and repair any cheap failure it reports. No broad gate.
+
+### Brief R1 — review round 1 repair (effort: high)
+**Sections:** Amendment R1, D2, D3, D6, the mutation rows G1-G8, L1, I1-I3, Q1-Q3, U2, V1, K3, K9 and K10, and Diff Reviewer properties 1, 2, 3, 5, 8 and 16. **May touch:** `src/probos/cognitive/episodic.py`, `episode_archive.py`, `activation_tracker.py` and `participant_index.py` (an `is_open` property each), `episodic_mock.py` (a no-op `set_erasure_sidecar_paths`), `src/probos/knowledge/erasure.py`, `src/probos/startup/cognitive_services.py` (two file-name constants, `wire_erasure_sidecar_paths`, one unconditional call), and the four `tests/test_ad1340_s1_*.py` files (the `_memory` rig declares its sidecar paths and exposes `participants`). Write every anchor line of the new mutation rows VERBATIM, comment included, so that each occurs exactly once in its file. **Run:** the M4 focused command plus `tests/test_participant_index.py` and `tests/test_activation_tracker*.py`, then `scripts/check_store_registry.py --check` and `scripts/check_architecture_principles.py --check` (no new `db-connect`). **Stop if:** a pre-existing test fails for a reason other than a fake missing `is_open` (add the attribute to the fake and list it); a premise in the Architect's spec does not hold in the tree; any new test needs a weaker assertion than the table states. No broad gate and no staging.

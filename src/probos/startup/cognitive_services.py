@@ -33,6 +33,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# AD-1340 R1: the sidecar file names, owned here (the stores are created here and
+# ERASE reaches the files through the paths declared by wire_erasure_sidecar_paths).
+ACTIVATION_TRACKER_DB = "activation_tracker.db"
+PARTICIPANT_INDEX_DB = "participant_index.db"
+
+
+def wire_erasure_sidecar_paths(episodic_memory: Any, data_dir: Path) -> None:
+    """AD-1340 R1: declare the activation and participant-index files to episodic memory.
+
+    Unconditional (not gated on ``activation_enabled`` or a successful store
+    start), so ERASE can clear a store that has no open handle.
+    """
+    episodic_memory.set_erasure_sidecar_paths(
+        activation_db_path=str(data_dir / ACTIVATION_TRACKER_DB),
+        participant_index_db_path=str(data_dir / PARTICIPANT_INDEX_DB),
+    )
+
 
 async def _run_one_migration(
     label: str,
@@ -273,6 +290,7 @@ async def init_cognitive_services(
     # Start episodic memory if provided
     if episodic_memory:
         await episodic_memory.start()
+        wire_erasure_sidecar_paths(episodic_memory, data_dir)
 
     # AD-567d: Create and wire activation tracker
     activation_tracker = None
@@ -283,7 +301,7 @@ async def init_cognitive_services(
             activation_tracker = ActivationTracker(
                 decay_d=config.dreaming.activation_decay_d,
                 access_max_age_days=config.dreaming.activation_access_max_age_days,
-                db_path=str(data_dir / "activation_tracker.db"),
+                db_path=str(data_dir / ACTIVATION_TRACKER_DB),
             )
             await activation_tracker.start()
             episodic_memory.set_activation_tracker(activation_tracker)
@@ -433,7 +451,7 @@ async def init_cognitive_services(
             from probos.cognitive.participant_index import ParticipantIndex
 
             participant_index = ParticipantIndex(
-                db_path=str(data_dir / "participant_index.db"),
+                db_path=str(data_dir / PARTICIPANT_INDEX_DB),
             )
             await participant_index.start()
             episodic_memory.set_participant_index(participant_index)

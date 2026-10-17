@@ -30,6 +30,7 @@ from probos.cognitive.episode_archive import (
     ArchiveRecord,
     EpisodeArchive,
     EpisodeArchiveConflict,
+    EpisodeArchiveIntegrityError,
     EpisodeArchiveUnavailable,
     EpisodeErasureIncomplete,
     primary_agent_id,
@@ -56,6 +57,9 @@ logger = logging.getLogger(__name__)
 
 # AD-1340: at most one "episode archive unavailable" warning per interval.
 _ARCHIVE_WARN_INTERVAL_S = 300.0
+
+# AD-1340 R1: the FTS5 sidecar file, beside ``db_path``; ERASE reaches it by this name.
+_FTS_FILENAME = "episode_fts.db"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1201,6 +1205,58 @@ def _metadata_by_id(ids: list[str], metadatas: Any) -> dict[str, dict]:
     return {eid: (dict(metas[i] or {}) if i < len(metas) else {}) for i, eid in enumerate(ids)}
 
 
+async def _delete_fts_rows(db: Any, ids: list[str]) -> bool:
+    """AD-1340 R1: delete each id's FTS row independently; True only if every one and the commit succeeded."""
+    cleared = True
+    for eid in ids:
+        try:
+            await db.execute("DELETE FROM episode_fts WHERE episode_id = ?", (eid,))
+        except Exception:
+            logger.debug("AD-567b: FTS5 cleanup failed for %s", eid[:8], exc_info=True)
+            cleared = False  # keep sweeping the remaining ids
+    try:
+        await db.commit()
+    except Exception:
+        logger.debug("AD-567b: FTS5 cleanup commit failed", exc_info=True)
+        return False
+    return cleared
+
+
+async def _erase_store_file(kind: str, path: str | None, ids: list[str]) -> bool:
+    """AD-1340 R1: ERASE through the sidecar's own class when no open handle is wired.
+
+    Never creates the file: an undeclared path or a missing file means nothing
+    was ever written there. A file that cannot be opened or cleared returns False.
+    """
+    if not path or not Path(path).exists():
+        return True  # undeclared, or no file: nothing was ever written there
+    store: Any = None
+    try:
+        if kind == "activation":
+            from probos.cognitive.activation_tracker import ActivationTracker
+            store = ActivationTracker(db_path=path)
+            await store.start()
+            await store.delete_episode_accesses(ids)
+        else:
+            from probos.cognitive.participant_index import ParticipantIndex
+            store = ParticipantIndex(db_path=path)
+            await store.start()
+            await store.delete_episodes(ids)
+    except Exception:
+        logger.error(
+            "AD-1340: erasure could not open or clear the unwired %s store at %s; "
+            "the erase will report it incomplete", kind, path, exc_info=True,
+        )
+        return False  # the store file holds rows ERASE could not clear
+    finally:
+        if store is not None:
+            try:
+                await store.stop()
+            except Exception:
+                logger.debug("AD-1340: closing the erasure handle on %s failed", path, exc_info=True)
+    return True
+
+
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 
@@ -1299,6 +1355,10 @@ class EpisodicMemory:
         self._retroactive_evolver: Any = None  # AD-608: store-time metadata evolution
         self._anomaly_window_manager: Any = None  # AD-673: episode anomaly window stamping
         self._participant_index: Any = None  # AD-570b: Participant index sidecar
+        # AD-1340 R1: the sidecar files ERASE clears when no open handle is wired,
+        # declared by the lifecycle owner whether or not the store starts.
+        self._activation_db_path: str | None = None
+        self._participant_index_db_path: str | None = None
         self._tcm: Any = None  # AD-601: Temporal Context Model engine
         self._tcm_weight: float = 0.0             # AD-601: set by set_tcm() when wired
         self._tcm_fallback_watch_weight: float = 0.0   # AD-601: set by set_tcm() when wired
@@ -1425,6 +1485,13 @@ class EpisodicMemory:
         """AD-570b: Wire the participant index after construction."""
         self._participant_index = index
 
+    def set_erasure_sidecar_paths(
+        self, *, activation_db_path: str | None, participant_index_db_path: str | None,
+    ) -> None:
+        """AD-1340 R1: the sidecar files ERASE clears when no open handle is wired."""
+        self._activation_db_path = activation_db_path
+        self._participant_index_db_path = participant_index_db_path
+
     @property
     def eviction_disposition_mode(self) -> str:
         """AD-1340: ``"archive"`` or ``"delete"``."""
@@ -1540,7 +1607,7 @@ class EpisodicMemory:
         # AD-567b: FTS5 keyword search sidecar
         try:
             import aiosqlite
-            fts_path = str(db_dir / "episode_fts.db")
+            fts_path = str(db_dir / _FTS_FILENAME)
             self._fts_db = await aiosqlite.connect(fts_path)
             await self._fts_db.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS episode_fts USING fts5("
@@ -2439,35 +2506,70 @@ class EpisodicMemory:
             return {}
         return {record.episode_id: record.archive_ref for record in records if record.episode_id in committed}
 
+    async def _erase_fts_file(self, ids: list[str]) -> bool:
+        """AD-1340 R1: clear the FTS file through the ConnectionFactory when no FTS handle is open.
+
+        Never creates the file. True when there is nothing to clear or it was cleared.
+        """
+        path = Path(self.db_path).parent / _FTS_FILENAME
+        if not path.exists():
+            return True  # no FTS file: nothing was ever written there
+        from probos.storage.sqlite_factory import default_factory
+        db: Any = None
+        try:
+            db = await default_factory.connect(str(path))
+            cursor = await db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'episode_fts'"
+            )
+            if not await cursor.fetchone():
+                return True  # the FTS table was never created: nothing to clear
+            return await _delete_fts_rows(db, ids)
+        except Exception:
+            logger.error(
+                "AD-1340: erasure could not open or clear the FTS file at %s; "
+                "the erase will report it incomplete", path, exc_info=True,
+            )
+            return False  # the FTS file holds text ERASE could not clear
+        finally:
+            if db is not None:
+                try:
+                    await db.close()
+                except Exception:
+                    logger.debug("AD-1340: closing the FTS erasure handle failed", exc_info=True)
+
     async def _cleanup_sidecars(self, ids: list[str], *, strict: bool = False) -> None:
         """FTS5, activation and participant cleanup (AD-567b/d, AD-570b).
 
         Best-effort for archive/delete eviction, as before AD-1340. With
-        ``strict`` (ERASE) a failure raises after every cleanup was attempted.
+        ``strict`` (ERASE) a failure raises after every cleanup was attempted,
+        and a store with no open handle (the feature off, a failed start, a
+        stopped handle) is cleared through its own file; only a missing file
+        counts as nothing to clear (AD-1340 R1).
         """
         failures: list[str] = []
         if self._fts_db is not None:
-            try:
-                for eid in ids:
-                    await self._fts_db.execute(
-                        "DELETE FROM episode_fts WHERE episode_id = ?", (eid,)
-                    )
-                await self._fts_db.commit()
-            except Exception:
-                logger.debug("AD-567b: FTS5 eviction cleanup failed", exc_info=True)
+            if not await _delete_fts_rows(self._fts_db, ids):
                 failures.append("episode_fts")
-        if self._activation_tracker:
+        elif strict and not await self._erase_fts_file(ids):
+            failures.append("episode_fts")
+        tracker = self._activation_tracker
+        if tracker is not None and (not strict or tracker.is_open):
             try:
-                await self._activation_tracker.delete_episode_accesses(ids)
+                await tracker.delete_episode_accesses(ids)
             except Exception:
                 logger.debug("AD-567d: Activation cleanup failed", exc_info=True)
                 failures.append("activation")
-        if self._participant_index:
+        elif strict and not await _erase_store_file("activation", self._activation_db_path, ids):
+            failures.append("activation")
+        index = self._participant_index
+        if index is not None and (not strict or index.is_open):
             try:
-                await self._participant_index.delete_episodes(ids)
+                await index.delete_episodes(ids)
             except Exception:
                 logger.debug("AD-570b: Participant index eviction cleanup failed", exc_info=True)
                 failures.append("participant_index")
+        elif strict and not await _erase_store_file("participant_index", self._participant_index_db_path, ids):
+            failures.append("participant_index")
         if strict and failures:
             logger.error(
                 "AD-1340: erasure could not clear %s for %d episode(s)", ", ".join(failures), len(ids),
@@ -2541,18 +2643,19 @@ class EpisodicMemory:
         live_ids: list[str] = []
         only_ids: list[str] = []
         try:
-            if self._collection:
-                result = self._collection.get(ids=requested, include=["metadatas"])
-                if result and result["ids"]:
-                    live_ids = list(result["ids"])
-                    await self._remove_from_live(
-                        live_ids,
-                        _metadata_by_id(live_ids, result["metadatas"]),
-                        reason=reason,
-                        process="evict_by_ids",
-                        details=f"batch of {len(live_ids)}, reason={reason}",
-                        outcome=DISPOSITION_ERASED,
-                    )
+            if not self._collection:
+                raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # stopped or never started
+            result = self._collection.get(ids=requested, include=["metadatas"])
+            if result and result["ids"]:
+                live_ids = list(result["ids"])
+                await self._remove_from_live(
+                    live_ids,
+                    _metadata_by_id(live_ids, result["metadatas"]),
+                    reason=reason,
+                    process="evict_by_ids",
+                    details=f"batch of {len(live_ids)}, reason={reason}",
+                    outcome=DISPOSITION_ERASED,
+                )
         except Exception as exc:
             errors.append(exc)  # live phase: the archive and the sweep still run
         live_set = set(live_ids)
@@ -2598,33 +2701,49 @@ class EpisodicMemory:
             raise errors[0]
         return len(live_set | set(only_ids))
 
-    async def get_archived_metadata(self, episode_id: str) -> dict[str, Any] | None:
-        """AD-1340: raw metadata of an archived episode (erasure's attachment lookup).
+    async def get_archived_metadata_versions(self, episode_id: str) -> list[dict[str, Any]]:
+        """AD-1340 R1: raw metadata of EVERY archived version of an episode (erasure's attachment lookup).
 
-        A service read, not a recall surface. Raises if the archive failed to open.
+        ERASE deletes every archive row for the id, so every version's attachments
+        are in scope. A service read, not a recall surface. An archive that failed
+        to open yields no versions: ERASE raises `episode_archive_unavailable_for_erase`
+        after every other phase, so the live copy is still erased and a retry finds
+        the archived versions once the archive opens. Raises if a row cannot be decoded.
         """
-        archive = self._archive_or_none()
+        try:
+            archive = self._archive_or_none()
+        except EpisodeArchiveUnavailable:
+            logger.warning("AD-1340: the archive is unavailable; archived attachment ids cannot be read", exc_info=True)
+            return []  # the archive failed to open: ERASE reports it after every other phase
         if archive is None:
-            return None
-        records = await archive.get_records([episode_id])
-        return dict(records[0].metadata) if records else None
+            return []
+        return [dict(r.metadata) for r in await archive.get_versions([episode_id])]
 
     async def iter_archived_episodes(self, *, page_size: int = 500) -> AsyncIterator[Episode]:
         """AD-1340: every archived episode, rehydrated (erasure cascades).
 
         A service read, not a recall surface. Raises if the archive failed to open.
+        A record that cannot be rehydrated is logged and skipped; after the scan,
+        ``EpisodeArchiveIntegrityError`` reports how many (AD-1340 R1), so a cascade
+        never silently leaves a record out.
         """
         archive = self._archive_or_none()
         if archive is None:
             return
+        unrehydrated = 0
         async for record in archive.iter_records(page_size=page_size):
             try:
-                yield self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
+                episode = self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
             except Exception:
+                unrehydrated += 1
                 logger.warning(
                     "AD-1340: archived episode %s could not be rehydrated; erasure cascades cannot match it",
                     record.episode_id, exc_info=True,
                 )
+                continue
+            yield episode
+        if unrehydrated:
+            raise EpisodeArchiveIntegrityError(f"episode_archive_rows_unrehydratable:{unrehydrated}")
 
     async def restore_from_archive(self, episode_id: str) -> Episode:
         """AD-1340: put one archived episode back in the live store, byte-equal.
@@ -2632,7 +2751,8 @@ class EpisodicMemory:
         Internal service API (no agent-facing caller in S1). Never goes through
         store(): the rate limits, dedup and write-once guard would refuse or
         alter it. Refuses an id that is already live. The archive row is kept;
-        a later eviction of the same content is idempotent. Activation restarts
+        re-eviction stores the current payload when metadata changed after the
+        restore. Activation restarts
         from this one access, because the old access rows were deleted at eviction.
         Restore does not trigger capacity eviction; the next store() does.
         """

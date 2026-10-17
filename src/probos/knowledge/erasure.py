@@ -210,20 +210,20 @@ class ErasureManager:
         return list(await self._episodic_memory.list_episodes(limit=None))
 
     async def _candidate_episodes(self) -> AsyncIterator[Any]:
-        """Live episodes, then archived episodes not also live (AD-1340).
+        """Every live episode, then every archived version (AD-1340 R1).
 
         Under-erasing is the worse failure (BF-868): a cascade that skipped the
-        archive would leave the Captain's forgotten episode recoverable.
+        archive would leave the Captain's forgotten episode recoverable. An
+        archived version is NOT dropped because its id is also live: deterministic
+        ids can have a live rewrite that differs from the archived version, and
+        the predicate must see both. ``_matching_ids`` removes duplicate ids.
         """
-        seen: set[str] = set()
         for episode in await self._list_episodes():
-            seen.add(str(getattr(episode, "id", "")))
             yield episode
         if self._episodic_memory is None or not hasattr(self._episodic_memory, "iter_archived_episodes"):
             return
         async for episode in self._episodic_memory.iter_archived_episodes():
-            if str(getattr(episode, "id", "")) not in seen:
-                yield episode
+            yield episode  # every archived version: the predicate decides, _matching_ids deduplicates
 
     async def _attachment_ids_for_episode(self, episode_id: str) -> set[str]:
         """Collect every attachment id this episode declares.
@@ -247,8 +247,7 @@ class ErasureManager:
         If a live metadata-shaped producer ever appears, merge the two payloads
         here instead of treating them as alternatives.
 
-        AD-1340: when the episode is not live, the archived raw metadata is the
-        last fallback.
+        AD-1340 R1: every archived version's raw metadata is always added.
         """
         if self._episodic_memory is None:
             return set()
@@ -262,14 +261,15 @@ class ErasureManager:
             meta = await self._episodic_memory.get_episode_metadata(episode_id)
             if isinstance(meta, dict):
                 episode_payload = meta
-        # AD-1340: an archived (not live) episode's attachments come from the
-        # archived raw metadata -- the same flat shape _normalize_payload decodes.
-        if not episode_payload and hasattr(self._episodic_memory, "get_archived_metadata"):
-            archived_meta = await self._episodic_memory.get_archived_metadata(episode_id)
-            if isinstance(archived_meta, dict):
-                episode_payload = archived_meta
-
-        return self._extract_attachment_ids(episode_payload)
+        # AD-1340 R1: EVERY archived version's raw metadata (the same flat shape
+        # _normalize_payload decodes) is always added to the live episode's, not
+        # only when the episode is not live: ERASE deletes every archive row for
+        # the id, so every version's attachments are in scope.
+        ids = self._extract_attachment_ids(episode_payload)
+        if hasattr(self._episodic_memory, "get_archived_metadata_versions"):
+            for archived_meta in await self._episodic_memory.get_archived_metadata_versions(episode_id):
+                ids |= self._extract_attachment_ids(archived_meta)
+        return ids
 
     async def _delete_attachments(self, attachment_ids: set[str]) -> list[str]:
         """Unlink each attachment; return the sorted ids the store reported as removed."""

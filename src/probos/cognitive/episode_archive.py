@@ -285,7 +285,11 @@ class EpisodeArchive:
     async def archive(self, records: Iterable[ArchiveRecord], *, reason: str) -> frozenset[str]:
         """Insert each record once per ``(episode_id, content_hash)`` and commit.
 
-        Returns the ids whose row is present after the commit (read back): the
+        A re-archive under an existing key replaces the stored payload only when
+        it differs (AD-1340 R1: a record whose metadata changed after a restore
+        must not be dropped on its next eviction); an identical one changes nothing.
+        Returns the ids whose row is present with exactly this payload after the
+        commit (read back): the
         only ids the caller may delete from the live store. A record that cannot
         be encoded is skipped with a warning and stays live. A failed write is
         rolled back and raises.
@@ -312,28 +316,30 @@ class EpisodeArchive:
             await db.executemany(
                 "INSERT INTO episode_archive (episode_id, content_hash, agent_id, episode_timestamp, "
                 "reason, archived_at, payload_format, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(episode_id, content_hash) DO NOTHING",
+                "ON CONFLICT(episode_id, content_hash) DO UPDATE SET agent_id = excluded.agent_id, "
+                "episode_timestamp = excluded.episode_timestamp, reason = excluded.reason, "
+                "archived_at = excluded.archived_at, payload_format = excluded.payload_format, "
+                "payload = excluded.payload WHERE episode_archive.payload IS NOT excluded.payload",
                 rows,
             )
             await db.commit()  # the archive commit: nothing leaves the live store before this returns
         except Exception:
             await _rollback_quietly(db)
             raise
-        return await self._present([(row[0], row[1]) for row in rows])
+        return await self._present({(row[0], row[1]): row[7] for row in rows})
 
-    async def _present(self, pairs: list[tuple[str, str]]) -> frozenset[str]:
+    async def _present(self, wanted: dict[tuple[str, str], bytes]) -> frozenset[str]:
         db = self._require_open()
-        wanted = set(pairs)
         found: set[str] = set()
-        ids = list(dict.fromkeys(pair[0] for pair in pairs))
+        ids = list(dict.fromkeys(key[0] for key in wanted))
         for chunk in _chunks(ids, _SQL_CHUNK):
             marks = ",".join("?" * len(chunk))
             cursor = await db.execute(
-                f"SELECT episode_id, content_hash FROM episode_archive WHERE episode_id IN ({marks})",
+                f"SELECT episode_id, content_hash, payload FROM episode_archive WHERE episode_id IN ({marks})",
                 chunk,
             )
-            for episode_id, content_hash in await cursor.fetchall():
-                if (episode_id, content_hash) in wanted:
+            for episode_id, content_hash, payload in await cursor.fetchall():
+                if (episode_id, content_hash) in wanted and bytes(payload) == wanted[(episode_id, content_hash)]:
                     found.add(episode_id)
         return frozenset(found)
 
@@ -374,11 +380,38 @@ class EpisodeArchive:
             keys.extend(tuple(row) for row in await cursor.fetchall())
         return keys
 
+    async def get_versions(self, episode_ids: Sequence[str]) -> list[ArchiveRecord]:
+        """Service read (erasure's attachment lookup): EVERY archived row for the ids.
+
+        Ordered by ``episode_id, archived_at, content_hash``. A row that cannot be
+        decoded raises ``EpisodeArchiveIntegrityError``.
+        """
+        db = self._require_open()
+        wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
+        versions: list[ArchiveRecord] = []
+        for chunk in _chunks(wanted, _SQL_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            cursor = await db.execute(
+                "SELECT episode_id, content_hash, payload_format, payload "
+                f"FROM episode_archive WHERE episode_id IN ({marks}) "
+                "ORDER BY episode_id, archived_at, content_hash",
+                chunk,
+            )
+            for episode_id, content_hash, payload_format, payload in await cursor.fetchall():
+                versions.append(decode_payload(episode_id, content_hash, payload_format, payload))
+        return versions
+
     async def iter_records(self, *, page_size: int = 500) -> AsyncIterator[ArchiveRecord]:
-        """Every archived row, paged by key (erasure cascades)."""
+        """Every archived row, paged by key (erasure cascades).
+
+        A row that cannot be decoded is logged and skipped so it never hides the
+        rows after it; once the scan is complete, ``EpisodeArchiveIntegrityError``
+        reports how many were skipped (AD-1340 R1).
+        """
         if page_size < 1:
             raise ValueError("episode_archive_page_size_invalid")
         last = ("", "")
+        undecodable = 0
         while True:
             db = self._require_open()
             cursor = await db.execute(
@@ -388,10 +421,21 @@ class EpisodeArchive:
             )
             rows = await cursor.fetchall()
             if not rows:
-                return
+                break
             for episode_id, content_hash, payload_format, payload in rows:
-                yield decode_payload(episode_id, content_hash, payload_format, payload)
+                try:
+                    record = decode_payload(episode_id, content_hash, payload_format, payload)
+                except EpisodeArchiveIntegrityError:
+                    undecodable += 1
+                    logger.warning(
+                        "AD-1340: archived row %s could not be decoded; the scan continues and will report it",
+                        episode_id, exc_info=True,
+                    )
+                    continue  # one bad row never hides the rows after it
+                yield record
             last = (rows[-1][0], rows[-1][1])
+        if undecodable:
+            raise EpisodeArchiveIntegrityError(f"episode_archive_rows_undecodable:{undecodable}")
 
     async def record_access(self, episode_id: str, *, accessor: str, purpose: str) -> None:
         db = self._require_open()

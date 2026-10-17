@@ -366,3 +366,37 @@ async def test_restore_fails_closed_when_the_access_cannot_be_recorded(
         assert await _found_by(em, rig.root, _SUBJECT) == {"keyword": True, "participants": True}
         assert _activation_types(rig.root, _SUBJECT) == ["archive_restore"]  # one activation access
         assert _archive_accesses(rig.root, _SUBJECT) == [("episodic_memory", "restore")]  # and one archive_access row
+
+
+# --- T9 ------------------------------------------------------------------------------------------------------
+
+
+async def test_reevicting_a_restored_episode_archives_its_current_metadata(tmp_path: Path) -> None:
+    """AD-1340 R1 (F4): a metadata change after a restore must reach the archive on the next eviction.
+
+    Before R1 the second archive kept the first payload, the read-back checked only the key, and the live row
+    (carrying the change) was deleted: the restore below brought back the OLD ``valid_until``.
+    """
+    episode = _episode(2)
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        first = dict(_raw(em, [episode.id])["metadatas"][0])
+        assert await em.evict_by_ids([episode.id], reason="activation_decay") == 1
+        await em.restore_from_archive(episode.id)
+        restored = dict(_raw(em, [episode.id])["metadatas"][0])
+        assert restored == first  # premise: the first cycle is byte-equal
+
+        changed = dict(restored)
+        changed["valid_until"] = 1234567890.0  # a normal metadata update after the restore
+        em._collection.update(ids=[episode.id], metadatas=[changed])  # test-only private access
+        assert _raw(em, [episode.id])["metadatas"][0]["valid_until"] == 1234567890.0  # premise: the update landed
+        assert first.get("valid_until") != 1234567890.0  # premise: the archived copy holds a different value
+
+        assert await em.evict_by_ids([episode.id], reason="activation_decay") == 1
+        assert _raw(em, [episode.id])["ids"] == []
+        await em.restore_from_archive(episode.id)
+
+        again = dict(_raw(em, [episode.id])["metadatas"][0])
+        assert again["valid_until"] == 1234567890.0
+        assert len(_archive_rows(rig.root)) == 1  # the same (id, content_hash) slot, now holding the newest payload

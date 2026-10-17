@@ -66,6 +66,11 @@ CREATE INDEX IF NOT EXISTS idx_access_time ON episode_access_log(access_time);
         self._db_path = db_path
         self._db: Any = None
 
+    @property
+    def is_open(self) -> bool:
+        """AD-1340 R1: whether a database handle is open (ERASE needs a live one)."""
+        return self._db is not None
+
     async def start(self) -> None:
         """Initialize the SQLite database and create schema."""
         if self._connection_factory:

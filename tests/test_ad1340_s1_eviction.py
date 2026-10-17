@@ -81,6 +81,7 @@ class _Rig:
     em: EpisodicMemory
     root: Path
     activations: ActivationTracker
+    participants: ParticipantIndex
 
 
 @contextlib.asynccontextmanager
@@ -103,8 +104,13 @@ async def _memory(root: Path, mode: str, *, max_episodes: int = 100) -> AsyncIte
         await activations.start()
         em.set_participant_index(participants)
         em.set_activation_tracker(activations)
+        # AD-1340 R1: the rig's sidecar files, as startup declares them (ERASE reaches an unwired store through these).
+        em.set_erasure_sidecar_paths(
+            activation_db_path=str(root / "activation.db"),
+            participant_index_db_path=str(root / "participant_index.db"),
+        )
         await em.start()
-        yield _Rig(em, root, activations)
+        yield _Rig(em, root, activations, participants)
     finally:
         await em.stop()
         await participants.stop()

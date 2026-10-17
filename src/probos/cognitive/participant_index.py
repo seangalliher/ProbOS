@@ -53,6 +53,11 @@ CREATE INDEX IF NOT EXISTS idx_ep_part_role ON episode_participants(role);
         self._db_path = db_path
         self._db: Any = None
 
+    @property
+    def is_open(self) -> bool:
+        """AD-1340 R1: whether a database handle is open (ERASE needs a live one)."""
+        return self._db is not None
+
     async def start(self) -> None:
         """Initialize SQLite connection and create schema."""
         if self._connection_factory:

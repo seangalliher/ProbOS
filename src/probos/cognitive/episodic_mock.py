@@ -72,6 +72,11 @@ class MockEpisodicMemory:
         """Wire the participant sidecar owned by episodic-memory lifecycle."""
         self._participant_index = index
 
+    def set_erasure_sidecar_paths(
+        self, *, activation_db_path: str | None, participant_index_db_path: str | None,
+    ) -> None:
+        """AD-1340 R1: accepted and ignored (an in-memory mock has no sidecar files)."""
+
     def embedding_migration_required(
         self,
         active_model_name: str,

@@ -608,3 +608,113 @@ def test_eviction_disposition_lives_in_the_foundation_tier() -> None:
         eviction_audit.DISPOSITION_ARCHIVED, eviction_audit.DISPOSITION_ERASED, eviction_audit.DISPOSITION_DELETED,
     ) == ("archived", "erased", "deleted")
     assert set(typing.get_args(episode_archive.AuditDisposition)) == set(eviction_audit.DISPOSITIONS)
+
+
+# --- A11 -----------------------------------------------------------------------------------------------------
+
+
+async def test_rearchive_with_changed_metadata_replaces_the_payload(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    r1 = _record(1)
+    r1_changed = _record(1, valid_until=1234567890.0)  # same (episode_id, content_hash), new metadata
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive([r1], reason="activation_decay") == frozenset({r1.episode_id})
+        # premise: one row, holding the first payload
+        assert _count(path, "episode_archive") == 1
+        assert (await archive.get_records([r1.episode_id]))[0].metadata == r1.metadata
+        assert r1_changed.metadata != r1.metadata
+        assert (r1_changed.episode_id, r1_changed.content_hash) == (r1.episode_id, r1.content_hash)
+
+        assert await archive.archive([r1_changed], reason="activation_decay") == frozenset({r1.episode_id})
+
+        assert _count(path, "episode_archive") == 1
+        (record,) = await archive.get_records([r1.episode_id])
+        assert record.metadata == r1_changed.metadata
+
+
+# --- A12 -----------------------------------------------------------------------------------------------------
+
+
+async def test_archive_returns_only_ids_whose_stored_payload_matches(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    r1 = _record(1)
+    r1_changed = _record(1, valid_until=1234567890.0)
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive([r1], reason="activation_decay") == frozenset({r1.episode_id})
+        # A second connection makes every UPDATE of the table a silent no-op: the write "succeeds" and changes nothing.
+        _write(path, "CREATE TRIGGER ignore_updates BEFORE UPDATE ON episode_archive BEGIN SELECT RAISE(IGNORE); END")
+
+        # The key is present, but with the OLD payload: the read-back must not report the id as archived.
+        assert await archive.archive([r1_changed], reason="activation_decay") == frozenset()
+
+        assert _rows(path, "SELECT payload FROM episode_archive WHERE episode_id = ?", (r1.episode_id,)) == [
+            (encode_payload(r1),)
+        ]
+
+
+# --- A13 -----------------------------------------------------------------------------------------------------
+
+
+async def test_rearchive_of_an_identical_record_is_a_no_op(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    r1 = _record(1)
+    columns = "reason, archived_at, payload"
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive([r1], reason="activation_decay") == frozenset({r1.episode_id})
+        before = _rows(path, f"SELECT {columns} FROM episode_archive")
+        assert [row[0] for row in before] == ["activation_decay"]  # premise: the first reason is what a no-op keeps
+
+        assert await archive.archive([r1], reason="capacity") == frozenset({r1.episode_id})
+
+        assert _rows(path, f"SELECT {columns} FROM episode_archive") == before  # reason and archived_at unchanged
+
+
+# --- A14 -----------------------------------------------------------------------------------------------------
+
+
+async def test_iter_records_continues_past_an_undecodable_row_then_raises(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    records = [_record(1), _record(2), _record(3)]
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive(records, reason="capacity") == frozenset(r.episode_id for r in records)
+        _write(path, "UPDATE episode_archive SET payload = ? WHERE episode_id = ?", (b"not zlib", records[1].episode_id))
+
+        for page_size in (1, 500):  # one row per page, and everything in one page
+            seen: list[str] = []
+
+            with pytest.raises(EpisodeArchiveIntegrityError, match=r"^episode_archive_rows_undecodable:1$"):
+                async for record in archive.iter_records(page_size=page_size):
+                    seen.append(record.episode_id)
+
+            # The corrupt middle row did not hide the row after it, and the failure is raised only once the scan is done.
+            assert seen == [records[0].episode_id, records[2].episode_id], page_size
+
+
+# --- A15 -----------------------------------------------------------------------------------------------------
+
+
+async def test_get_versions_returns_every_row_for_the_id(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    r1 = _record(1)
+    r1_other = _record(1, content_hash=f"{99:064x}", variant="second")  # a second version of the same episode id
+    other_id = _record(2)
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive([r1, r1_other, other_id], reason="capacity") == frozenset(
+            {r1.episode_id, other_id.episode_id}
+        )
+        assert _count(path, "episode_archive", r1.episode_id) == 2  # premise: two rows for the id
+        # The later hash is archived EARLIER, so ``archived_at`` (not the key) must decide the order.
+        _write(path, "UPDATE episode_archive SET archived_at = 2000 WHERE content_hash = ?", (r1.content_hash,))
+        _write(path, "UPDATE episode_archive SET archived_at = 1000 WHERE content_hash = ?", (r1_other.content_hash,))
+
+        versions = await archive.get_versions([r1.episode_id])
+
+        assert [record.metadata for record in versions] == [r1_other.metadata, r1.metadata]
+        assert all(record.episode_id == r1.episode_id for record in versions)  # the other id is not returned
+        assert await archive.get_versions([]) == []
+        assert await archive.get_versions(["ep-unknown"]) == []
