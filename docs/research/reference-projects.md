@@ -34,14 +34,14 @@ Projects appear here only as technical design references. Positioning against th
 | Aider | 2026-06-13 | passing | AD-360 (pre-edit dirty commit, edit-lint-test-reflect); AD-989 (lexical search) |
 | Cline | 2026-10-16 | checked | command auto-approval for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md` (model-flagged `requires_approval`, no fixed allowlist); AD-360 (shadow git checkpoints, workspace access tiers) |
 | Cursor | 2026-06-13 | passing | AD-989 (lexical search); also named as an AgentSkills.io adopter |
-| Goose | 2026-04-08 | passing | `universal-agent-activation-research.md` (as an MCP Apps host) |
+| Goose | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (interactive permission modes only, nothing new); `universal-agent-activation-research.md` (as an MCP Apps host) |
 | Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md` (this PR); drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Hyperagents (its follow-up) is abstract-only |
 
 ## Agent frameworks and SDKs (interval: 180 days)
 
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
-| LangGraph | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
+| LangGraph | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (an interrupt's resume re-runs the node from its start, as an AD-855 re-dispatch is a fresh run of the task); `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
 | AutoGen | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md` |
 | CrewAI | 2026-09-03 | passing | the same two notes; `emergence-taxonomy.md` |
 | Letta (MemGPT) | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks) |

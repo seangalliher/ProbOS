@@ -116,6 +116,8 @@ _AGENTIC_EXTRA_CONTEXT_KEYS = frozenset(
         "_delegation_depth",
         "_crew_session_id",
         "_crew_work_item_id",
+        # AD-1328 S2c: probos.execution.command_escalation.DISPATCHED_WORK_ITEM_KEY
+        "_dispatched_work_item_id",
         "_crew_outcome_id",
         "_parent_operation_id",
         "_parent_attempt_id",

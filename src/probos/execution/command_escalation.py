@@ -90,6 +90,10 @@ _CAUSE_DISPLAY_CHARS: Final = (200, 80)
 _MAX_CAUSES_FILED: Final = 5
 _MAX_AGENT_ID_CHARS: Final = 128
 _RATIONALE_CHARS: Final = 280
+#: AD-1328 S2c: the tool-context key naming a plain dispatched work item
+#: (``CognitiveAgent._run_agentic_dispatch``). Distinct from ``_crew_work_item_id``, which
+#: means "crew child" to AD-1324 and to the crew tools.
+DISPATCHED_WORK_ITEM_KEY: Final = "_dispatched_work_item_id"
 
 
 @dataclass(frozen=True)
@@ -113,7 +117,8 @@ class EscalationOutcome:
 def escalation_scope(context: object) -> EscalationScope | None:
     """The asker and scope from the invocation context ``ToolRegistry.check_and_invoke``
     built: it sets ``agent_id`` over the caller's keys; a crew child's loop context
-    carries ``_crew_work_item_id``, a conversation's ``thread_id``. None without an
+    carries ``_crew_work_item_id``, a plain dispatched work item's
+    ``DISPATCHED_WORK_ITEM_KEY`` (S2c), a conversation's ``thread_id``. None without an
     agent identity."""
     if type(context) is not dict:
         return None
@@ -125,6 +130,9 @@ def escalation_scope(context: object) -> EscalationScope | None:
     crew_item = context.get("_crew_work_item_id")
     if type(crew_item) is str and scope_work_item_id(WORK_ITEM_SCOPE_PREFIX + crew_item) is not None:
         return EscalationScope(agent_id, WORK_ITEM_SCOPE_PREFIX + crew_item, crew_item, thread_id)
+    dispatched = context.get(DISPATCHED_WORK_ITEM_KEY)
+    if type(dispatched) is str and scope_work_item_id(WORK_ITEM_SCOPE_PREFIX + dispatched) is not None:
+        return EscalationScope(agent_id, WORK_ITEM_SCOPE_PREFIX + dispatched, dispatched, thread_id)
     if thread_id:
         return EscalationScope(agent_id, THREAD_SCOPE_PREFIX + thread_id, None, thread_id)
     return EscalationScope(agent_id, "", None, "")
