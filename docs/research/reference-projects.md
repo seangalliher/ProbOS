@@ -35,7 +35,7 @@ Projects appear here only as technical design references. Positioning against th
 | Cline | 2026-10-16 | checked | command auto-approval for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md` (model-flagged `requires_approval`, no fixed allowlist); AD-360 (shadow git checkpoints, workspace access tiers) |
 | Cursor | 2026-06-13 | passing | AD-989 (lexical search); also named as an AgentSkills.io adopter |
 | Goose | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (interactive permission modes only, nothing new); `universal-agent-activation-research.md` (as an MCP Apps host) |
-| Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md` (this PR); drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Hyperagents (its follow-up) is abstract-only |
+| Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md`; drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Its follow-up is the HyperAgents row |
 
 ## Agent frameworks and SDKs (interval: 180 days)
 
@@ -44,7 +44,8 @@ Projects appear here only as technical design references. Positioning against th
 | LangGraph | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (an interrupt's resume re-runs the node from its start, as an AD-855 re-dispatch is a fresh run of the task); `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
 | AutoGen | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md` |
 | CrewAI | 2026-09-03 | passing | the same two notes; `emergence-taxonomy.md` |
-| Letta (MemGPT) | 2026-10-17 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks); AD-1340 S1 (#1568), `prompts/ad-1340-s1-archive-and-erase.md` (an out-of-context archival tier, the same shape as the episode archive; nothing new) |
+| Letta (MemGPT) | 2026-10-17 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks); AD-1339 (#1566) Prior art (sleep-time agents, from a search summary); AD-1340 S1 (#1568), `prompts/ad-1340-s1-archive-and-erase.md` (an out-of-context archival tier, the same shape as the episode archive; nothing new) |
+| Voyager (skill library) | 2026-10-15 | passing | `cognitive-jit-procedural-learning-research.md`; AD-1338 (#1565) Prior art (from a search summary) |
 | Hermes Agent | 2026-06-06 | passing | `crew-capability-architecture.md` (self-improving skills, AD-596) |
 | Google Agent Development Kit | 2026-04-08 | passing | `universal-agent-activation-research.md` (the agent layer of Solace Agent Mesh) |
 | OpenAI Agents SDK | never | never | none |
@@ -77,6 +78,7 @@ Projects appear here only as technical design references. Positioning against th
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
 | MASS multi-agent self-supervision (UC Berkeley, Sakana AI) | 2026-10-11 | absorption | `mass-self-supervision-absorption.md` |
+| HyperAgents (arXiv 2603.19461) | 2026-10-15 | absorption | `hyperagents-absorption.md`; drove AD-1338 (#1565), AD-1339 (#1566) and the AD-1299 (#1352) meta-level amendment. Read in part (first 100K of about 179K characters) |
 | ImpossibleBench (reward hacking in coding agents, arXiv 2510.20270) | 2026-10-16 | checked | BF-898 (#1563) Prior art, `prompts/bf-898-fix-loop-grader-protection.md` (coding agents passing tests that contradict the specification) |
 
 A *passing* row is a weak signal: the project was named, not examined. When an AD's problem is the one a passing project addresses, treat the row as *never*.
