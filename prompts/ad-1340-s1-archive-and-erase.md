@@ -13,7 +13,7 @@
 | Base | `origin/main` `b8849e34` (the consult read `f89d72a9`; the only change since is `ui/src/components/mcp/McpServersPanel.test.tsx`, so no `src/` anchor moved). |
 | Depends on | Nothing. Overlaps BF-902 (#1579); see D8. |
 | Live-ship effect | **Yes.** After M4 the code default is `archive`, so the standard tier (still hard-deleting on the live ship today) and the aggressive tier archive instead. `config/system.yaml` is not touched. |
-| Estimated tests | about 34 new tests in four files, signature edits to five test fakes, one config-test pop |
+| Estimated tests | planned about 34 new tests in four files; built 45 test functions in four files (A1-A10, E1-E12, R1-R15, T1-T8), signature edits to five test fakes, one config-test pop and one field-count pin bump |
 | Milestones | M1 store and policy · M2 eviction paths, flag, audit · M3 erasure · M4 restore, reset, declaration, wiring, **default flip** · M5 trackers. Cut point S1a/S1b: see "Builder briefs". |
 | CRLF | Every existing file this contract edits is LF in the index and CRLF in the working tree (`git ls-files --eol`). Edit with anchored replacements and never rewrite a whole existing file. |
 
@@ -93,7 +93,7 @@ Do not describe `delete` mode as making "the schema byte-identical": the table g
 ### D6. ERASE semantics
 - ERASE removes: the ChromaDB row, the `episode_fts` row, the activation records, the participant-index rows, every `episode_archive` row for the id (whatever its content hash), and its `archive_access` rows. The eviction-audit row (a hash, not content) is the only trace left. This holds whether the episode was live, archived or both.
 - ERASE works for **archive-only** ids. It writes one audit row each, with `disposition = 'erased'`, and they count towards the return value, so `ErasureResult.deleted_episode_ids` names them.
-- ERASE **propagates** failures, unlike archive and delete eviction. It raises `EpisodeArchiveUnavailable` if the archive failed to open (it may hold copies), after deleting the live rows. It raises `EpisodeErasureIncomplete` if a sidecar cleanup failed. An erasure that silently leaves a copy behind is the worse failure (BF-868). In `delete` mode with no archive file, ERASE skips the archive.
+- ERASE **propagates** failures, unlike archive and delete eviction. It raises `EpisodeArchiveUnavailable` if the archive failed to open (it may hold copies), after deleting the live rows. It raises `EpisodeErasureIncomplete` if a sidecar cleanup failed. An erasure that silently leaves a copy behind is the worse failure (BF-868). In `delete` mode with no archive file, ERASE skips the archive. **(M3r)** Every phase is attempted before the first failure is raised; the sidecar sweep is keyed on the requested ids; `forget_episode` unlinks attachments before erasing the episode; the cascades attempt every match and then raise one `ErasureCascadeIncomplete` (see "Amendment M3r").
 - `secure_delete` overwrites erased rows in the archive. Backup snapshots taken earlier keep erased content until they age out, as ChromaDB's do today. That is out of scope.
 
 ### D7. Reset Tier 2 deletes the archive (decided in envelope; the Captain may overrule)
@@ -115,7 +115,7 @@ None. S1 adds no `EventType` value.
 
 ## Section 1 (M1): `EvictionDisposition` in `src/probos/types.py`
 
-Insert after `class Priority(StrEnum)` (it ends with `    LOW = "low"` at `:150`), with two blank lines before and after:
+Insert after the end of `class Priority(StrEnum)`, which is NOT its last member: `Priority.classify` follows `LOW = "low"` and ends with `return Priority.NORMAL` (`:176` on the base; the drafted "ends at `:150`" was wrong, found by the M1 Builder). Insert between that line and `@dataclass class GossipEntry`, with two blank lines before and after:
 
 ```python
 class EvictionDisposition(StrEnum):
@@ -1295,6 +1295,26 @@ Add to `EpisodicMemory` after `iter_archived_episodes`:
 
 ---
 
+## Amendment M3r (2026-10-17): the erasure failure path and the restore order
+
+**Revised by:** the orchestrator, 2026-10-17, on the Architect's decision (read-only consult `f63f663c`, #1568 comment 6236685149) and one orchestrator decision inside the envelope (the restore order). The Captain may overrule either. M3 built Sections 9a and 9b as drafted; milestone M3r then changed them as below, so where Section 9 and this amendment differ, **this amendment is what the code does**.
+
+**The gap.** M3's `ErasureManager.forget_episode` read the attachment ids from the live row, then ERASE deleted that row and raised (D6), so the attachment unlink never ran and a retry could not find the ids; the cascades stopped at the first failure, and a failed archive scan erased nothing. The Architect found two more places with the same shape in `_erase_ids`: the strict sidecar cleanup ran only for the ids a retry could still find, so a retry after a partial erase of an episode that was never archived swept nothing and left its FTS text; and a live-delete or sidecar failure raised before the archive copy was erased.
+
+**Decisions.** (1) `forget_episode` unlinks the attachments BEFORE the erase (delete what a record names before the record; `unlink` is idempotent; no exception masking; `mark_deleted` still runs only after a successful erase). Rejected: try/finally, attachment ids in the audit row, accepting the gap. (2) The cascades attempt every match, and the live matches when the archive scan fails, then raise one `ErasureCascadeIncomplete` (defined in `knowledge/erasure.py`; `.result`, `.failures`, `.enumeration_error`, `__cause__` the first failure). (3) `_erase_ids` attempts every phase (the live removal, the archive, the sidecar sweep), raises the first failure last, and sweeps the sidecars by the REQUESTED ids; `_remove_from_live` no longer runs the sidecar cleanup for ERASE. (4) The `'erased'` audit row stays written before the delete (append-only, a retry writes another, D3). (5) Deferred, not S1: `unlink` returns False on `OSError` as well as "not found" (the AD-733 store contract), so erasure cannot tell "already gone" from "failed".
+
+**D6 gains:** every phase is attempted before the first failure is raised; the sidecar sweep is keyed on the requested ids; `forget_episode` unlinks attachments before erasing the episode; the cascades attempt every match and then raise one `ErasureCascadeIncomplete`.
+
+**The restore order (orchestrator, in envelope).** The M4 Builder noted that Section 11's `restore_from_archive` recorded the archive access after the live add and unguarded: a failure there left the episode live without its FTS, participant and activation rows, and a retry hit the live-id refusal. The access is now recorded INSIDE the store write lock, after the live-id check and BEFORE the add (audit before action: an access that cannot be recorded stops the restore before anything changed, and a refused restore records nothing).
+
+**New and changed tests.** R7's last block expects `ErasureCascadeIncomplete` with `enumeration_error` an `EpisodeArchiveUnavailable`. R11 `test_failed_erase_still_unlinks_the_attachments` (the live row existed when unlink ran), R12 `test_cascade_continues_past_a_failing_episode`, R13 `test_cascade_erases_the_live_matches_when_the_archive_scan_fails`, R14 `test_a_failed_live_delete_still_erases_the_archive_copy`, R15 `test_retry_after_a_partial_erase_sweeps_what_was_left`, and T8 `test_restore_fails_closed_when_the_access_cannot_be_recorded`.
+
+**Mutation table.** E4m is re-anchored on the sweep line, and E5m to E8m, K5 to K8 and the restore row R3m are added (see the table).
+
+**Diff Reviewer properties 3, 5 and 15** carry the matching sentences (below).
+
+---
+
 ## Mutation table (one campaign of record, after the last repair)
 
 **Tooling rules.** Every anchor below is the line's text with **leading indentation stripped**. The tool must find exactly one line in the named file whose `strip()` equals the anchor, replace it with the mutant, and keep that line's indentation. Count the matches first: zero or more than one means INERT, not killed. Run the unmodified baseline first. Mutate in place with a `.mutbak` sibling and restore in `finally`. A timeout is INVALID. Run each mutant against the M1-M4 test files plus the consumer list in the M4 brief. Record the base tree, the sha256 of each file in the "File" column and of the four `test_ad1340_s1_*.py` files, and KILLED / INERT / INVALID with the first failing test id. A later edit to a file invalidates only the mutants pinned to it. S2 is a two-anchor mutant: replace both lines in one run.
@@ -1318,13 +1338,22 @@ Add to `EpisodicMemory` after `iter_archived_episodes`:
 | E1m | `cognitive/episodic.py` | `await archive.erase(requested)` -> `pass` | R1, R4, R8 |
 | E2m | `cognitive/episodic.py` | `archive_only = [key for key in archived_keys if key[0] not in live_set]` -> `archive_only = []` | R1 (archive-only `deleted_episode_ids`, `'erased'` audit) |
 | E3m | `cognitive/episodic.py` | `raise EpisodeArchiveUnavailable("episode_archive_unavailable_for_erase")` -> `return None` | R7 |
-| E4m | `cognitive/episodic.py` | `await self._cleanup_sidecars(ids, strict=(outcome == DISPOSITION_ERASED))` -> `await self._cleanup_sidecars(ids, strict=False)` | R9 |
+| E4m | `cognitive/episodic.py` | `await self._cleanup_sidecars(requested, strict=True)` -> `await self._cleanup_sidecars(requested, strict=False)` | R9 |
+| E5m | `cognitive/episodic.py` | `await self._cleanup_sidecars(requested, strict=True)` -> `await self._cleanup_sidecars(live_ids + only_ids, strict=True)` | R15 |
+| E6m | `cognitive/episodic.py` | `errors.append(exc)  # archive phase: raised after the sweep` -> `raise` | R7 (`fts == 0`) |
+| E7m | `cognitive/episodic.py` | `errors.append(exc)  # live phase: the archive and the sweep still run` -> `raise` | R14 |
+| E8m | `cognitive/episodic.py` | `if outcome != DISPOSITION_ERASED:  # ERASE: _erase_ids sweeps every requested id, strictly` -> `if False:` | E2, E3, R9 |
 | R1m | `cognitive/episodic.py` | `if live and live.get("ids"):` -> `if False:` | T2 |
 | R2m | `cognitive/episodic.py` | `self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])` -> `self._collection.upsert(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])` | T1 (proxy saw `upsert`) |
 | K1 | `knowledge/erasure.py` | `[episode_id], reason=reason, disposition=EvictionDisposition.ERASE,` -> `[episode_id], reason=reason,` | R5, R1 |
 | K2 | `knowledge/erasure.py` | `if self._episodic_memory is None or not hasattr(self._episodic_memory, "iter_archived_episodes"):` -> `if True:` | R2 |
 | K3 | `knowledge/erasure.py` | `if not episode_payload and hasattr(self._episodic_memory, "get_archived_metadata"):` -> `if False:` | R3 |
 | K4 | `cognitive/memory_probes.py` | `episode_ids, reason="qualification_test_cleanup", disposition=EvictionDisposition.ERASE,` -> `episode_ids, reason="qualification_test_cleanup",` | R6 |
+| K5 | `knowledge/erasure.py` | `unlinked = await self._delete_attachments(attachment_ids)` -> `unlinked = []` | R11, R3 |
+| K6 | `knowledge/erasure.py` | `failures[episode_id] = exc  # erase the rest, then raise one error naming every failure` -> `raise` | R12 |
+| K7 | `knowledge/erasure.py` | `enumeration_error = exc  # the archive scan failed: erase the matches found, then raise` -> `raise` | R13 |
+| K8 | `knowledge/erasure.py` | `if failures or enumeration_error is not None:` -> `if failures:` | R7 |
+| R3m | `cognitive/episodic.py` | `await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")` -> `pass` | T1 (`archive_access` holds 1 row) |
 | T5m | `__main__.py` | `"episode_archive.db",` -> `"episode_archive_kept.db",` | T5 |
 
 Not mutated, by design: `_present`'s read-back (equivalent to the inserted ids whenever the commit succeeded; kept as defence in depth), and the `delete`-mode call sequence (E9 pins it directly).
@@ -1335,9 +1364,9 @@ Not mutated, by design: `_present`'s read-back (equivalent to the inserted ids w
 
 1. Default recall (`recall`, `recall_for_agent`, `recall_weighted`, `keyword_search`, the participant-index lookup, `recent_for_agent`, `get_by_ids`) never reads `episode_archive.db`; only `restore_from_archive`, `get_archived_metadata`, `iter_archived_episodes` and `_erase_ids` touch the archive's read methods.
 2. In archive mode, no `collection.delete` runs for an id whose archive row was not committed and read back; an unavailable or failing archive deletes nothing.
-3. ERASE leaves the episode's content in none of ChromaDB, `episode_fts`, the activation log, the participant index, `episode_archive` and `archive_access`, whether the episode was live, archived or both; only the eviction-audit row (a hash) remains. Any failure to clear a copy raises.
+3. ERASE leaves the episode's content in none of ChromaDB, `episode_fts`, the activation log, the participant index, `episode_archive` and `archive_access`, whether the episode was live, archived or both; only the eviction-audit row (a hash) remains. Any failure to clear a copy raises. (M3r) Every phase is attempted before the first failure is raised, and the sidecar sweep covers every requested id, so a retry after a partial erasure clears what the first attempt left.
 4. ERASE is reachable only through an explicit `EvictionDisposition.ERASE`; no reason string, default or unknown value produces it; a plain string `"erase"` raises.
-5. `forget_resource` and `forget_agent_memory` match archived episodes, and an archived episode's attachment ids come from its archived metadata.
+5. `forget_resource` and `forget_agent_memory` match archived episodes, and an archived episode's attachment ids come from its archived metadata. (M3r) `forget_episode` unlinks attachments before erasing the episode and calls `mark_deleted` only on success; the cascades attempt every match, including the live matches when the archive scan fails, and raise one `ErasureCascadeIncomplete` with the first failure as `__cause__`.
 6. An archive payload's `metadata.content_hash` equals the audit row's `content_hash` and the pre-eviction live metadata.
 7. Restore never replaces a live id (checked under the store write lock, `add` not `upsert`, never `store()`), and the restored document, metadata and `Episode` equal the pre-eviction values.
 8. Archive writes are idempotent per `(episode_id, content_hash)`; a crash between the archive commit and the live delete yields a duplicate, never a loss.
@@ -1347,6 +1376,7 @@ Not mutated, by design: `_present`'s read-back (equivalent to the inserted ids w
 12. Reset Tier 2 removes `episode_archive.db`, and S1 adds no other file to any reset tier (BF-902).
 13. `knowledge/erasure.py` imports nothing from `probos.cognitive` (layer rule; the enum is in `probos.types`).
 14. `dreaming.py` is unchanged, and so are its Step 12 calls.
+15. (M3r) `restore_from_archive` records the archive access inside the store write lock, after the live-id check and before the add, so an access that cannot be recorded stops the restore before anything changed and a refused restore records nothing.
 
 Consumer that must accept the change: the dream cycle's Step 12 on the live ship (it calls `evict_by_ids(ids, reason=...)` unchanged) and the AD-754 route `POST` in `routers/security.py` (it calls `forget_*` unchanged).
 

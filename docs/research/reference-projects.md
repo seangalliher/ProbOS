@@ -44,7 +44,7 @@ Projects appear here only as technical design references. Positioning against th
 | LangGraph | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (an interrupt's resume re-runs the node from its start, as an AD-855 re-dispatch is a fresh run of the task); `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
 | AutoGen | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md` |
 | CrewAI | 2026-09-03 | passing | the same two notes; `emergence-taxonomy.md` |
-| Letta (MemGPT) | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks) |
+| Letta (MemGPT) | 2026-10-17 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks); AD-1340 S1 (#1568), `prompts/ad-1340-s1-archive-and-erase.md` (an out-of-context archival tier, the same shape as the episode archive; nothing new) |
 | Hermes Agent | 2026-06-06 | passing | `crew-capability-architecture.md` (self-improving skills, AD-596) |
 | Google Agent Development Kit | 2026-04-08 | passing | `universal-agent-activation-research.md` (the agent layer of Solace Agent Mesh) |
 | OpenAI Agents SDK | never | never | none |
@@ -77,5 +77,6 @@ Projects appear here only as technical design references. Positioning against th
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
 | MASS multi-agent self-supervision (UC Berkeley, Sakana AI) | 2026-10-11 | absorption | `mass-self-supervision-absorption.md` |
+| ImpossibleBench (reward hacking in coding agents, arXiv 2510.20270) | 2026-10-16 | checked | BF-898 (#1563) Prior art, `prompts/bf-898-fix-loop-grader-protection.md` (coding agents passing tests that contradict the specification) |
 
 A *passing* row is a weak signal: the project was named, not examined. When an AD's problem is the one a passing project addresses, treat the row as *never*.
