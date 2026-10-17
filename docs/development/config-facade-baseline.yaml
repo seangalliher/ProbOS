@@ -53,7 +53,7 @@ surface_counts:
   own_models: 227
   owned: 294
   public_names: 307
-canonical_dump_sha256: 2498bbe9e160040cf906ecc04523a6f09edbaf52e18314d73339cf26ef113123
+canonical_dump_sha256: 3a54bc4117dd58b8dae7371254f7ef4cde296052a2630ec049726d4a2fff579e
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2353,7 +2353,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f8d3091251ef16ad9bce31afa37bf943d62d749fe19c838830de940b0b4f9b51
+    schema_sha256: 940d067f7223f85e3a458caa9edb4ef8b1eea7dd05dae41a7ee8d64880ef3af3
     fields:
     - {default: '''probos_episodes''', name: collection_name}
     - {default: '100000', name: max_episodes}
@@ -2367,7 +2367,7 @@ models:
     - {default: '0.6', name: similarity_threshold}
     - {default: 'True', name: verify_content_hash}
     - {default: 'True', name: eviction_audit_enabled}
-    - {default: '''delete''', name: eviction_disposition}
+    - {default: '''archive''', name: eviction_disposition}
     - {default: '30.0', name: shutdown_consolidation_timeout_s}
     - {default: '300.0', name: migration_timeout_s}
     - {default: 'False', name: schema_version_tracking}
@@ -3396,7 +3396,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: e9801fe7348a5033f2980e5c6b29588fe4158a3b3ad337a3fb6878957387b387
+    schema_sha256: f9da0fa2302fc23a9155cf966dfc433ccc619db34e0dd21bbb83cb4214cb32fe
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

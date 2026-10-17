@@ -858,7 +858,7 @@ class MemoryConfig(BaseModel):
     # episode. "archive" moves it to episode_archive.db, out of recall;
     # "delete" restores the pre-AD-1340 hard delete. Erasure (AD-754) always
     # erases every copy, whatever this says.
-    eviction_disposition: Literal["archive", "delete"] = "delete"
+    eviction_disposition: Literal["archive", "delete"] = "archive"
     # AD-820: shutdown consolidation budget. Old default was a hardcoded 2s
     # which is too tight when the dream cycle has real work to do; a partial
     # consolidation tears ChromaDB's HNSW index. Default raised to 30s so

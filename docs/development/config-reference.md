@@ -182,7 +182,7 @@ Episodic memory configuration.
 | `similarity_threshold` | `float` | `0.6` | — |  |
 | `verify_content_hash` | `bool` | `True` | — |  |
 | `eviction_audit_enabled` | `bool` | `True` | — |  |
-| `eviction_disposition` | `Literal['archive', 'delete']` | `'delete'` | — |  |
+| `eviction_disposition` | `Literal['archive', 'delete']` | `'archive'` | — |  |
 | `shutdown_consolidation_timeout_s` | `float` | `30.0` | — |  |
 | `migration_timeout_s` | `float` | `300.0` | ≥ 10.0, ≤ 3600.0 | BF-295 (#748): per-migration timeout in seconds for episodic-memory startup migrations. Stuck migrations honest-degrade after this ceiling. Default 300s; range 10s–3600s. |
 | `schema_version_tracking` | `bool` | `False` | — |  |

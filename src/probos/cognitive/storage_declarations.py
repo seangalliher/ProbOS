@@ -260,4 +260,31 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "procedures.db leaves the older routing in place."
         ),
     ),
+    StoreDeclaration(
+        id="cognitive.episode-archive",
+        title="Episode archive: evicted episodes kept out of recall (AD-1340)",
+        owner_module="probos.cognitive.episode_archive",
+        owner_symbol="EpisodeArchive",
+        canonical_path="episode_archive.db",
+        criticality=StoreCriticality.FEATURE_GATED,
+        lifecycle_owner="probos.cognitive.episodic.EpisodicMemory",
+        retention=StoreRetention.UNBOUNDED,
+        backup="included",
+        restore="point-in-time",
+        retention_note=(
+            "Unbounded by design (AD-1340): dream pruning and capacity eviction move episodes here "
+            "instead of deleting them, and nothing in the loop drops archived content. Rows leave only "
+            "by the Captain's erasure (AD-754), which overwrites them (PRAGMA secure_delete=ON), and by "
+            "a Tier 2 reset, which deletes the file. A retention window is the Captain's policy (AD-1340 "
+            "S5) and the default is none. Estimated at about 150 MB compressed if every episode pruned to "
+            "date had been archived (an estimate, not a measurement); S3 surfaces the real size."
+        ),
+        notes=(
+            "Opened and closed by EpisodicMemory.start/stop beside episode_fts.db, through an injected "
+            "ConnectionFactory. Gated on memory.eviction_disposition: in 'delete' mode the file is "
+            "opened only if it already exists (so erasure can clear it) and is never created. Backed up "
+            "as INCLUDED; erased content persists in earlier snapshots until they age out, as ChromaDB's "
+            "does. Never read by default recall."
+        ),
+    ),
 )

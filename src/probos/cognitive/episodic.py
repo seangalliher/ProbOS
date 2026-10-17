@@ -29,6 +29,7 @@ from probos.cognitive.episode_archive import (
     EVICTION_MODES,
     ArchiveRecord,
     EpisodeArchive,
+    EpisodeArchiveConflict,
     EpisodeArchiveUnavailable,
     EpisodeErasureIncomplete,
     primary_agent_id,
@@ -1230,7 +1231,7 @@ class EpisodicMemory:
         reconsolidation_enabled: bool = False,
         affect_capture_enabled: bool = False,
         self_contradiction_recall_enabled: bool = True,
-        eviction_disposition: str = "delete",  # AD-1340 (M4 flips the default to "archive")
+        eviction_disposition: str = "archive",  # AD-1340
         archive_connection_factory: Any = None,  # AD-1340: ConnectionFactory for episode_archive.db
     ) -> None:
         self.db_path = str(db_path)
@@ -2599,6 +2600,53 @@ class EpisodicMemory:
                     "AD-1340: archived episode %s could not be rehydrated; erasure cascades cannot match it",
                     record.episode_id, exc_info=True,
                 )
+
+    async def restore_from_archive(self, episode_id: str) -> Episode:
+        """AD-1340: put one archived episode back in the live store, byte-equal.
+
+        Internal service API (no agent-facing caller in S1). Never goes through
+        store(): the rate limits, dedup and write-once guard would refuse or
+        alter it. Refuses an id that is already live. The archive row is kept;
+        a later eviction of the same content is idempotent. Activation restarts
+        from this one access, because the old access rows were deleted at eviction.
+        Restore does not trigger capacity eviction; the next store() does.
+        """
+        archive = self._archive_or_none()
+        if archive is None or not self._collection:
+            raise EpisodeArchiveUnavailable("episode_archive_unavailable")
+        records = await archive.get_records([episode_id])
+        if not records:
+            raise LookupError("episode_archive_not_found")
+        record = records[0]
+        episode = self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
+        async with self._get_store_write_lock():
+            live = self._collection.get(ids=[record.episode_id], include=[])
+            if live and live.get("ids"):
+                raise EpisodeArchiveConflict("episode_archive_restore_live_id")
+            self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
+        await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")
+        if self._fts_db is not None:
+            try:
+                fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
+                await self._fts_db.execute(
+                    "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
+                    (episode.id, fts_content),
+                )
+                await self._fts_db.commit()
+            except Exception:
+                logger.debug("AD-1340: FTS5 restore insert failed for %s", episode.id[:8], exc_info=True)
+        if self._participant_index is not None:
+            try:
+                participants = episode.anchors.participants if episode.anchors else []
+                await self._participant_index.record_episode(episode.id, episode.agent_ids, participants)
+            except Exception:
+                logger.debug("AD-1340: participant restore insert failed for %s", episode.id[:8], exc_info=True)
+        if self._activation_tracker:
+            try:
+                await self._activation_tracker.record_access(episode.id, access_type="archive_restore")
+            except Exception:
+                logger.debug("AD-1340: activation restore access failed for %s", episode.id[:8], exc_info=True)
+        return episode
 
     async def _evict(self) -> None:
         assert self._collection

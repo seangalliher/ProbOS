@@ -627,6 +627,7 @@ async def _boot_runtime(
         reconsolidation_enabled=config.memory.reconsolidation_enabled,  # AD-979e
         affect_capture_enabled=config.memory.affect_capture_enabled,  # AD-1037
         self_contradiction_recall_enabled=config.self_contradiction_recall.enabled,  # AD-1293 (#1200)
+        eviction_disposition=config.memory.eviction_disposition,  # AD-1340
     )
 
     runtime = ProbOSRuntime(
@@ -2248,6 +2249,7 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
             query_reformulation_enabled=cfg.memory.query_reformulation_enabled,
             hnsw_sync_threshold=cfg.memory.hnsw_sync_threshold,  # AD-821
             hnsw_batch_size=cfg.memory.hnsw_batch_size,  # AD-821
+            eviction_disposition=cfg.memory.eviction_disposition,  # AD-1340
         )
         await em.start()
 
@@ -2614,6 +2616,8 @@ RESET_TIERS = {
         "files": [
             # Cognition (former Shore Leave)
             "session_last.json", "chroma.sqlite3", "cognitive_journal.db",
+            # AD-1340: archived episodes are nurture; a new crew must not inherit them
+            "episode_archive.db",
             "hebbian_weights.db", "trust.db", "service_profiles.db",
             # Identity
             "identity.db", "acm.db", "skills.db", "directives.db",
@@ -2712,6 +2716,7 @@ def _file_purpose(name: str) -> str:
         "events.db": "Event log",
         "checkpoints": "DAG checkpoints",
         "chroma.sqlite3": "Episodic memory",
+        "episode_archive.db": "Episode archive",
         "cognitive_journal.db": "Cognitive journal",
         "hebbian_weights.db": "Hebbian weights",
         "trust.db": "Trust network",
