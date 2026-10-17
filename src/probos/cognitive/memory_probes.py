@@ -24,7 +24,7 @@ from probos.cognitive.qualification_tests import (
 )
 from probos.cognitive.source_governance import check_faithfulness
 from probos.knowledge.embeddings import _STOP_WORDS
-from probos.types import AnchorFrame, Episode
+from probos.types import AnchorFrame, Episode, EvictionDisposition
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,9 @@ async def _cleanup_test_episodes(
 ) -> None:
     """Remove seeded episodes after probe completes. Must be called in finally block."""
     try:
-        await episodic_memory.evict_by_ids(episode_ids, reason="qualification_test_cleanup")
+        await episodic_memory.evict_by_ids(
+            episode_ids, reason="qualification_test_cleanup", disposition=EvictionDisposition.ERASE,
+        )
     except Exception:
         logger.debug("Cleanup of test episodes failed", exc_info=True)
 

@@ -18,6 +18,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# AD-1340: the eviction audit owns its ``disposition`` vocabulary.
+DISPOSITION_ARCHIVED = "archived"
+DISPOSITION_ERASED = "erased"
+DISPOSITION_DELETED = "deleted"
+DISPOSITIONS: frozenset[str] = frozenset(
+    {DISPOSITION_ARCHIVED, DISPOSITION_ERASED, DISPOSITION_DELETED}
+)
+
 # Schema -------------------------------------------------------------------
 
 _SCHEMA = """\
@@ -43,6 +51,15 @@ CREATE INDEX IF NOT EXISTS idx_eviction_timestamp
     ON eviction_audit(timestamp);
 """
 
+# AD-1340: two columns added to existing and new files alike (one path). The
+# nine legacy columns are untouched; a row written by code that does not name
+# the new columns (the reset insert at __main__.py:2939-2947, KnowledgeStore)
+# reads disposition='deleted', archive_ref=''.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("disposition", "ALTER TABLE eviction_audit ADD COLUMN disposition TEXT NOT NULL DEFAULT 'deleted'"),
+    ("archive_ref", "ALTER TABLE eviction_audit ADD COLUMN archive_ref TEXT NOT NULL DEFAULT ''"),
+)
+
 
 # Data class ---------------------------------------------------------------
 
@@ -59,6 +76,8 @@ class EvictionRecord:
     details: str = ""
     content_hash: str = ""
     episode_timestamp: float = 0.0
+    disposition: str = DISPOSITION_DELETED
+    archive_ref: str = ""
 
 
 # Audit log ----------------------------------------------------------------
@@ -82,9 +101,17 @@ class EvictionAuditLog:
         """Initialize DB connection and create schema."""
         self._db = await self._connection_factory.connect(db_path)
         await self._db.executescript(_SCHEMA)
+        await self._migrate_columns()
         await self._db.commit()
         # Warm cache
         await self._refresh_cache()
+
+    async def _migrate_columns(self) -> None:
+        cursor = await self._db.execute("PRAGMA table_info(eviction_audit)")
+        present = {row[1] for row in await cursor.fetchall()}
+        for name, ddl in _ADDED_COLUMNS:
+            if name not in present:
+                await self._db.execute(ddl)
 
     async def stop(self) -> None:
         """Close DB connection."""
@@ -119,12 +146,17 @@ class EvictionAuditLog:
         details: str = "",
         content_hash: str = "",
         episode_timestamp: float = 0.0,
+        disposition: str = DISPOSITION_DELETED,
+        archive_ref: str = "",
     ) -> None:
         """Record a single eviction event. Append-only INSERT.
 
         Failure is caught and logged as WARNING — never blocks the
-        eviction itself.
+        eviction itself.  An unknown ``disposition`` raises ``ValueError``:
+        that is a caller bug, not an audit failure.
         """
+        if disposition not in DISPOSITIONS:
+            raise ValueError("eviction_disposition_invalid")
         if not self._db:
             return
         try:
@@ -132,11 +164,12 @@ class EvictionAuditLog:
             await self._db.execute(
                 "INSERT INTO eviction_audit "
                 "(id, episode_id, agent_id, timestamp, reason, process, "
-                "details, content_hash, episode_timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "details, content_hash, episode_timestamp, disposition, archive_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record_id, episode_id, agent_id, time.time(),
                     reason, process, details, content_hash, episode_timestamp,
+                    disposition, archive_ref,
                 ),
             )
             await self._db.commit()
@@ -153,12 +186,16 @@ class EvictionAuditLog:
         process: str,
         *,
         details: str = "",
+        disposition: str = DISPOSITION_DELETED,
     ) -> None:
         """Record multiple evictions in a single transaction.
 
         Each dict in records must have: episode_id, agent_id.
-        Optional: content_hash, episode_timestamp.
+        Optional: content_hash, episode_timestamp, archive_ref.
+        An unknown ``disposition`` raises ``ValueError``.
         """
+        if disposition not in DISPOSITIONS:
+            raise ValueError("eviction_disposition_invalid")
         if not self._db or not records:
             return
         try:
@@ -174,14 +211,16 @@ class EvictionAuditLog:
                     details,
                     r.get("content_hash", ""),
                     r.get("episode_timestamp", 0.0),
+                    disposition,
+                    r.get("archive_ref", ""),
                 )
                 for r in records
             ]
             await self._db.executemany(
                 "INSERT INTO eviction_audit "
                 "(id, episode_id, agent_id, timestamp, reason, process, "
-                "details, content_hash, episode_timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "details, content_hash, episode_timestamp, disposition, archive_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             await self._db.commit()
@@ -199,7 +238,7 @@ class EvictionAuditLog:
             return []
         cursor = await self._db.execute(
             "SELECT id, episode_id, agent_id, timestamp, reason, process, "
-            "details, content_hash, episode_timestamp "
+            "details, content_hash, episode_timestamp, disposition, archive_ref "
             "FROM eviction_audit WHERE agent_id = ? "
             "ORDER BY timestamp DESC LIMIT ?",
             (agent_id, limit),
@@ -215,7 +254,7 @@ class EvictionAuditLog:
             return None
         cursor = await self._db.execute(
             "SELECT id, episode_id, agent_id, timestamp, reason, process, "
-            "details, content_hash, episode_timestamp "
+            "details, content_hash, episode_timestamp, disposition, archive_ref "
             "FROM eviction_audit WHERE episode_id = ? LIMIT 1",
             (episode_id,),
         )
@@ -230,7 +269,7 @@ class EvictionAuditLog:
             return []
         cursor = await self._db.execute(
             "SELECT id, episode_id, agent_id, timestamp, reason, process, "
-            "details, content_hash, episode_timestamp "
+            "details, content_hash, episode_timestamp, disposition, archive_ref "
             "FROM eviction_audit ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         )

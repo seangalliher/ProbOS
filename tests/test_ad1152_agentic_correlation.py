@@ -275,6 +275,9 @@ async def _off_observation(
     # defaults are the pre-field waits (and their maximums), so production shutdown is unchanged.
     assert config["memory"].pop("shutdown_write_grace_s") == 1.0
     assert config["memory"].pop("shutdown_dispatch_grace_s") == 2.0
+    # AD-1340's eviction-disposition flag was added after this capture too. This
+    # agentic-loop observation never evicts, so the flag's default does not change it.
+    assert config["memory"].pop("eviction_disposition") == "archive"
     # AD-1316's authority broker is default-off. Its inert lease/attempt
     # defaults do not change this historical ordinary-mode observation.
     assert config["protected_execution"].pop("effect_broker_enabled") is False

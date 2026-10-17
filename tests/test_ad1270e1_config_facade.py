@@ -1549,7 +1549,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1326 adds the eight dreaming.procedure_challenger_* fields (1844 -> 1852).
     # BF-890 adds execution.command_env_passthrough (1852 -> 1853).
     # AD-1328 S2a adds execution.command_policy and the CommandPolicyConfig / CommandPolicyRule models, 15 fields (1853 -> 1868).
-    assert counts["field_definitions"] == 1868  # AD-1206 intentionally adds github_repository.
+    # AD-1340 adds memory.eviction_disposition (1868 -> 1869).
+    assert counts["field_definitions"] == 1869  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 307
     assert len(baseline["models"]) == 228

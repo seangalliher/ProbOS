@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1880
-  field_definitions: 1868
+  canonical_dump_leaves: 1881
+  field_definitions: 1869
   incidental: 13
   own_models: 227
   owned: 294
   public_names: 307
-canonical_dump_sha256: d620be10cd858e9d1ee75fc8a7ae55eb888e5b96688a5f7458d320debd91d474
+canonical_dump_sha256: 3a54bc4117dd58b8dae7371254f7ef4cde296052a2630ec049726d4a2fff579e
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2353,7 +2353,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 8feb6ee5deb6ce7a2ab044e27100a26bd87295b4cc1f980e846ca15c033ea15d
+    schema_sha256: 940d067f7223f85e3a458caa9edb4ef8b1eea7dd05dae41a7ee8d64880ef3af3
     fields:
     - {default: '''probos_episodes''', name: collection_name}
     - {default: '100000', name: max_episodes}
@@ -2367,6 +2367,7 @@ models:
     - {default: '0.6', name: similarity_threshold}
     - {default: 'True', name: verify_content_hash}
     - {default: 'True', name: eviction_audit_enabled}
+    - {default: '''archive''', name: eviction_disposition}
     - {default: '30.0', name: shutdown_consolidation_timeout_s}
     - {default: '300.0', name: migration_timeout_s}
     - {default: 'False', name: schema_version_tracking}
@@ -3395,7 +3396,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 097b83d1b5343f1a18885bc792b8bbd7922f3f8d93ede1f3e7fa98e97a3c863f
+    schema_sha256: f9da0fa2302fc23a9155cf966dfc433ccc619db34e0dd21bbb83cb4214cb32fe
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
