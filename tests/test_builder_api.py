@@ -136,21 +136,64 @@ class TestBuildSubmitEndpoint:
 
 class TestBuildApproveEndpoint:
     @pytest.mark.asyncio
-    async def test_approve_returns_started(self, chat_client):
-        """POST /api/build/approve returns status=started."""
-        resp = await chat_client.post("/api/build/approve", json={
-            "build_id": "test123",
-            "file_changes": [
-                {"path": "src/foo.py", "content": "print('hi')\n", "mode": "create"},
-            ],
-            "title": "Test Build",
-            "description": "A test",
-            "ad_number": 999,
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "started"
-        assert data["build_id"] == "test123"
+    async def test_approve_is_refused_and_executes_nothing(self, tmp_path):
+        """POST /api/build/approve is refused: nothing executes, and a build_failure event says why."""
+        # BF-897 (#1559): approval used to execute in the repository root.
+        from probos.routers.build import APPROVE_REFUSED
+
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
+        await rt.start()
+        scheduled: list[asyncio.Task] = []
+        try:
+            events: list[tuple[str, dict]] = []
+            original_emit = rt._emit_event
+
+            def capture_emit(event_type, data):
+                events.append((event_type, data))
+                original_emit(event_type, data)
+
+            rt._emit_event = capture_emit
+
+            app = create_app(rt)
+            real_track_task = app.state.track_task
+
+            def spy_track_task(coro, *, name=None):
+                task = real_track_task(coro, name=name)
+                scheduled.append(task)
+                return task
+
+            app.state.track_task = spy_track_task
+            transport = ASGITransport(app=app)
+
+            with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock) as executor:
+                async with AsyncClient(transport=transport, base_url="http://test") as client:
+                    resp = await client.post("/api/build/approve", json={
+                        "build_id": "test123",
+                        "file_changes": [
+                            {"path": "src/foo.py", "content": "print('hi')\n", "mode": "create"},
+                        ],
+                        "title": "Test Build",
+                        "description": "A test",
+                        "ad_number": 999,
+                    })
+                    await asyncio.sleep(0.2)  # a task the endpoint wrongly scheduled would have run by now
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "error"
+            assert data["build_id"] == "test123"
+            assert data["message"] == APPROVE_REFUSED
+            executor.assert_not_awaited()
+            assert scheduled == [], "the endpoint handed a build to the task tracker"
+            assert not [t for t in asyncio.all_tasks() if t.get_name() == "execute-test123"]
+            failures = [d for t, d in events if t == "build_failure" and d.get("build_id") == "test123"]
+            assert len(failures) == 1
+            assert "BF-897" in failures[0]["message"]
+        finally:
+            for task in scheduled:
+                task.cancel()
+            await asyncio.gather(*scheduled, return_exceptions=True)
+            await rt.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -275,89 +318,97 @@ class TestExecuteBuildEvents:
     @pytest.mark.asyncio
     async def test_emits_build_success(self, tmp_path):
         """_execute_build emits build_success on successful execution."""
+        # BF-897 (#1559): called directly; /approve is refused now and no longer reaches it (the /resolve retry still does).
         from probos.cognitive.builder import BuildResult, BuildSpec
+        from probos.routers.build import _execute_build
 
         rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
         await rt.start()
+        try:
+            events: list[tuple[str, dict]] = []
+            original_emit = rt._emit_event
 
-        events: list[tuple[str, dict]] = []
-        original_emit = rt._emit_event
+            def capture_emit(event_type, data):
+                events.append((event_type, data))
+                original_emit(event_type, data)
 
-        def capture_emit(event_type, data):
-            events.append((event_type, data))
-            original_emit(event_type, data)
+            rt._emit_event = capture_emit
 
-        rt._emit_event = capture_emit
+            mock_result = BuildResult(
+                success=True,
+                spec=BuildSpec(title="T", description="D"),
+                branch_name="builder/test",
+                commit_hash="abc123",
+                files_written=["src/foo.py"],
+                tests_passed=True,
+            )
 
-        mock_result = BuildResult(
-            success=True,
-            spec=BuildSpec(title="T", description="D"),
-            branch_name="builder/test",
-            commit_hash="abc123",
-            files_written=["src/foo.py"],
-            tests_passed=True,
-        )
+            with patch(
+                "probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=mock_result,
+            ) as executor:
+                await _execute_build(
+                    "test123",
+                    [{"path": "src/foo.py", "content": "pass\n", "mode": "create"}],
+                    BuildSpec(title="T", description="D"),
+                    str(tmp_path),
+                    rt,
+                )
 
-        app = create_app(rt)
-        transport = ASGITransport(app=app)
-
-        with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=mock_result):
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                await client.post("/api/build/approve", json={
-                    "build_id": "test123",
-                    "file_changes": [
-                        {"path": "src/foo.py", "content": "pass\n", "mode": "create"},
-                    ],
-                    "title": "T",
-                    "description": "D",
-                })
-                await asyncio.sleep(0.5)
-
-        event_types = [e[0] for e in events]
-        assert "build_success" in event_types
-
-        await rt.stop()
+            executor.assert_awaited_once()
+            event_types = [e[0] for e in events]
+            assert "build_success" in event_types
+        finally:
+            await rt.stop()
 
     @pytest.mark.asyncio
-    async def test_emits_build_failure(self, tmp_path):
+    async def test_emits_build_failure(self, tmp_path, monkeypatch):
         """_execute_build emits build_failure on failed execution."""
+        # BF-897 (#1559): called directly; /approve is refused now and no longer reaches it (the /resolve retry still does).
         from probos.cognitive.builder import BuildResult, BuildSpec
+        from probos.routers import build as build_router
+
+        # _execute_build caches a failed build for /resolve; keep that entry out of the shared probos.api cache.
+        failure_cache: dict[str, dict] = {}
+        monkeypatch.setattr(build_router, "_pending_failures", failure_cache)
 
         rt = ProbOSRuntime(data_dir=tmp_path / "data", llm_client=MockLLMClient())
         await rt.start()
+        try:
+            events: list[tuple[str, dict]] = []
+            original_emit = rt._emit_event
 
-        events: list[tuple[str, dict]] = []
-        original_emit = rt._emit_event
+            def capture_emit(event_type, data):
+                events.append((event_type, data))
+                original_emit(event_type, data)
 
-        def capture_emit(event_type, data):
-            events.append((event_type, data))
-            original_emit(event_type, data)
+            rt._emit_event = capture_emit
 
-        rt._emit_event = capture_emit
+            mock_result = BuildResult(
+                success=False,
+                spec=BuildSpec(title="T", description="D"),
+                error="Test failure",
+            )
 
-        mock_result = BuildResult(
-            success=False,
-            spec=BuildSpec(title="T", description="D"),
-            error="Test failure",
-        )
+            with patch(
+                "probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=mock_result,
+            ) as executor:
+                await build_router._execute_build(
+                    "test456",
+                    [],
+                    BuildSpec(title="T", description="D"),
+                    str(tmp_path),
+                    rt,
+                )
 
-        app = create_app(rt)
-        transport = ASGITransport(app=app)
-
-        with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=mock_result):
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                await client.post("/api/build/approve", json={
-                    "build_id": "test456",
-                    "file_changes": [],
-                    "title": "T",
-                    "description": "D",
-                })
-                await asyncio.sleep(0.5)
-
-        event_types = [e[0] for e in events]
-        assert "build_failure" in event_types
-
-        await rt.stop()
+            executor.assert_awaited_once()
+            event_types = [e[0] for e in events]
+            assert "build_failure" in event_types
+            failure = next(d for t, d in events if t == "build_failure")
+            assert failure["build_id"] == "test456"
+            assert "report" in failure, "the executor's reported failure was classified; the event is not the exception path's"
+            assert failure_cache["test456"]["work_dir"] == str(tmp_path)
+        finally:
+            await rt.stop()
 
 
 class TestTaskTracking:

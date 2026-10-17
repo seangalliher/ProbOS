@@ -377,9 +377,11 @@ class BuildDispatcher:
     # -- captain actions -----------------------------------------------------
 
     async def approve_and_merge(self, build_id: str) -> tuple[bool, str]:
-        """Captain approves a build — merge to main and clean up.
+        """Captain approves a build: deliver it, then clean up.
 
-        Returns (success, commit_hash_or_error).
+        Returns (success, commit_hash_or_reason). BF-897 (#1559): ``merge_to_main``
+        refuses until the pull-request route (AD-1336 child 6) replaces it, so this
+        returns ``(False, reason)`` and the build stays in review.
         """
         build = self._queue.get(build_id)
         if build is None or build.status != "reviewing":
@@ -394,12 +396,10 @@ class BuildDispatcher:
             )
             logger.info("build-dispatcher merged id=%s commit=%s", build_id, result)
         else:
-            self._queue.update_status(
-                build_id, "failed",
-                error=f"Merge failed: {result}",
-                completed_at=time.monotonic(),
-            )
-            logger.error("build-dispatcher merge failed id=%s: %s", build_id, result)
+            # BF-897: the build stays in review with its branch and worktree, so it
+            # can still be delivered or rejected. Marking it failed would misreport a
+            # correct build and strand its worktree.
+            logger.warning("build-dispatcher merge refused id=%s: %s", build_id, result)
 
         return ok, result
 

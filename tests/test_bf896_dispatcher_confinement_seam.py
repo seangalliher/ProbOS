@@ -628,7 +628,8 @@ async def test_an_unpinnable_worktree_is_refused_before_the_adapter_is_built(
 # The tests above stub the manager, which is how the defect survived: the executor commits on a branch
 # of its own, while review (collect_diff) and approval (merge_to_main) read the branch the manager made.
 # These tests use the real manager and the real executor over a real repository, and cross the whole
-# chain: create -> generate -> reviewing -> collect_diff -> approve -> main (or reject -> clean repository).
+# chain: create -> generate -> reviewing -> collect_diff -> approve -> refused, the branch kept (BF-897; it used to land
+# on main) (or reject -> clean repository).
 
 
 @dataclass
@@ -688,9 +689,10 @@ def _worktree_entries(repo: Path) -> int:
     return sum(1 for line in _out(repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree "))
 
 
-async def test_an_approved_queued_build_lands_the_generated_commit_on_main(
+async def test_an_approved_queued_build_is_refused_and_keeps_its_branch_for_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # BF-897 (#1559): this repository stands for the operator's checkout; approval used to merge here.
     state = _Sdk()
     state.script = _change_a
     real = _prepare_real(monkeypatch, tmp_path, state)
@@ -720,13 +722,38 @@ async def test_an_approved_queued_build_lands_the_generated_commit_on_main(
     assert _A in diff and "return 2" in diff
     assert _out(repo, "rev-parse", "main") == main_before, "nothing reaches main before approval"
 
+    # The operator's checkout holds an edit of its own, to a file the build never touched, when the build is approved. An
+    # old-style merge succeeds beside such an edit, so the tuple below is what the refusal must leave alone.
+    operator_edit = (_B_V1 + "# an edit the operator has not committed\n").encode("utf-8")
+    (repo / _B).write_bytes(operator_edit)
+
+    def operator_checkout() -> tuple[str, str, str, bytes]:
+        return (
+            _out(repo, "rev-parse", "main"),
+            _out(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+            _out(repo, "status", "--porcelain"),
+            (repo / _B).read_bytes(),
+        )
+
+    before = operator_checkout()
+    assert before[1] == "main" and _B in before[2] and before[3] == operator_edit, "premise: an uncommitted edit on main"
+
     approved, detail = await real.dispatcher.approve_and_merge(build.id)
 
-    assert approved is True, detail
-    assert build.status == "merged"
-    assert _show(repo, "main", _A) == _A_V2
-    assert _git(repo, "merge-base", "--is-ancestor", result.commit_hash, "main").returncode == 0
-    assert _out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert approved is False, detail
+    assert "BF-897" in detail
+    assert build.status == "reviewing"
+    assert operator_checkout() == before
+    assert _show(repo, "main", _A) == _A_V1
+    # The branch is kept for delivery: it still holds the generated commit, one ahead of main, with its worktree.
+    assert _out(repo, "rev-parse", real.branch) == real.before_adoption["executor_sha"]
+    assert _out(repo, "rev-list", "--count", f"main..{real.branch}") == "1"
+    assert _worktree_entries(repo) == 2
+
+    # The refused build stays in review, so it can still be rejected (the operator's edit is put back first).
+    (repo / _B).write_bytes(_B_V1.encode("utf-8"))
+    assert _out(repo, "status", "--porcelain") == "", "premise: the operator's checkout is clean again"
+    assert await real.dispatcher.reject_build(build.id) is True
     assert _branches(repo) == ["main"] and _worktree_entries(repo) == 1
 
 

@@ -3111,7 +3111,10 @@ class TestEscalationHook:
         changes = [{"path": "test_file.py", "mode": "create", "content": "x = 1"}]
 
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(True, "1 passed", ["test.py"])):
-            with patch("probos.cognitive.builder._run_tests", return_value=(True, "2254 passed")):
+            # BF-897 (#1559): the full suite no longer runs in the builder; the old phase-2 patch must stay unawaited.
+            with patch(
+                "probos.cognitive.builder._run_tests", new_callable=AsyncMock, return_value=(True, "2254 passed"),
+            ) as full_suite:
                 with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
                     with patch("probos.cognitive.builder._git_checkout_main"):
                         with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
@@ -3125,6 +3128,7 @@ class TestEscalationHook:
 
         assert len(hook_called) == 0
         assert result.success
+        assert not full_suite.await_count
 
     @pytest.mark.asyncio
     async def test_no_hook_provided(self, tmp_path):

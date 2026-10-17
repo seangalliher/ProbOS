@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends
@@ -12,6 +13,7 @@ from probos.api_models import (
     BuildApproveRequest, BuildEnqueueRequest, BuildQueueApproveRequest,
     BuildQueueRejectRequest, BuildRequest, BuildResolveRequest,
 )
+from probos.cognitive.builder_paths import operator_checkout_refusal
 from probos.events import EventType
 from probos.routers.deps import get_runtime, get_task_tracker
 
@@ -21,6 +23,14 @@ logger = logging.getLogger(__name__)
 from probos.api import _pending_failures, _clean_expired_failures, _FAILURE_CACHE_TTL
 
 router = APIRouter(prefix="/api/build", tags=["build"])
+
+# BF-897 (#1559): the checkout this runtime runs from (src/probos/routers -> repository).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+APPROVE_REFUSED = (
+    "/api/build/approve no longer runs a build (BF-897). "
+    "Queue the build instead (/api/build/enqueue): it runs in its own worktree, "
+    "and its branch is kept for delivery."
+)
 
 
 @router.post("/submit")
@@ -44,31 +54,31 @@ async def submit_build(
 async def approve_build(
     req: BuildApproveRequest,
     runtime: Any = Depends(get_runtime),
-    track_task: Callable = Depends(get_task_tracker),
 ) -> dict[str, Any]:
-    """Execute an approved build — write files, test, commit."""
-    from probos.cognitive.builder import BuildSpec
-    import pathlib
+    """Refuse: this route never executes an approved build (BF-897).
 
-    spec = BuildSpec(
-        title=req.title,
-        description=req.description,
-        ad_number=req.ad_number,
-        branch_name=req.branch_name,
-    )
-
-    work_dir = str(pathlib.Path(__file__).resolve().parent.parent.parent.parent)
-
-    track_task(
-        _execute_build(req.build_id, req.file_changes, spec, work_dir, runtime),
-        name=f"execute-{req.build_id}",
-    )
-
-    return {
-        "status": "started",
-        "build_id": req.build_id,
-        "message": "Executing approved build...",
-    }
+    This used to run ``execute_approved_build`` with ``work_dir`` set to the
+    repository root, so the build created a branch, wrote files, ran pytest and
+    committed in the operator's own checkout. Nothing here owns a worktree's
+    lifecycle; AD-1336 child 5 (the build lane) replaces this refusal with a run in
+    a governed worktree. The response keeps its keys; the HXI shows the reason from
+    the ``build_failure`` event (``useStore.ts``, the branch without a report).
+    The event carries ``not_executed`` so the Night Orders hook does not escalate a
+    refusal, and a failing listener cannot turn the refusal into an error.
+    """
+    logger.warning("build approve refused build_id=%s: %s", req.build_id, APPROVE_REFUSED)
+    try:
+        runtime.emit_event(EventType.BUILD_FAILURE, {
+            "build_id": req.build_id,
+            "message": f"Build not executed: {APPROVE_REFUSED}",
+            "error": APPROVE_REFUSED,
+            "not_executed": True,
+        })
+    except Exception:
+        # The refusal has already taken effect and nothing was scheduled: a failing
+        # listener degrades the notice, never the answer.
+        logger.warning("build approve refusal notice failed build_id=%s", req.build_id, exc_info=True)
+    return {"status": "error", "build_id": req.build_id, "message": APPROVE_REFUSED}
 
 
 @router.post("/resolve")
@@ -87,6 +97,14 @@ async def resolve_build(
     file_changes = cached["file_changes"]
     spec = cached["spec"]
     work_dir = cached["work_dir"]
+
+    # BF-897: abort and commit_override run git in work_dir, and a retry executes
+    # there; the guard refuses the checkout ProbOS runs from (it compares locations,
+    # see operator_checkout_refusal).
+    checkout_refusal = operator_checkout_refusal(work_dir, _REPO_ROOT)
+    if checkout_refusal is not None:
+        del _pending_failures[req.build_id]
+        return {"status": "error", "message": checkout_refusal}
 
     if req.resolution == "abort":
         from probos.cognitive.builder import _git_checkout_main
