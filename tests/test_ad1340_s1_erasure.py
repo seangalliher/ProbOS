@@ -16,6 +16,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -30,7 +31,7 @@ from probos.cognitive.episode_archive import (
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.memory_probes import _cleanup_test_episodes
 from probos.cognitive.participant_index import ParticipantIndex
-from probos.knowledge.erasure import ErasureManager
+from probos.knowledge.erasure import ErasureCascadeIncomplete, ErasureManager
 from probos.types import Episode, EpisodeStoreOutcome, EvictionDisposition
 from tests.test_ad1340_s1_eviction import (
     _archive_rows,
@@ -40,6 +41,7 @@ from tests.test_ad1340_s1_eviction import (
     _memory,
     _query,
     _raw,
+    _record_collection,
     _Rig,
     _sidecar_counts,
     _warnings,
@@ -84,6 +86,20 @@ class _Attachments:
     async def unlink(self, attachment_id: str) -> bool:
         self.unlinked.append(attachment_id)
         return True
+
+
+class _WatchedAttachments(_Attachments):
+    """``_Attachments`` that also notes, at each ``unlink``, which live row (if any) still names the episode."""
+
+    def __init__(self, em: EpisodicMemory, episode_id: str) -> None:
+        super().__init__()
+        self._em = em
+        self._episode_id = episode_id
+        self.live_when_unlinked: list[list[str]] = []
+
+    async def unlink(self, attachment_id: str) -> bool:
+        self.live_when_unlinked.append(_raw(self._em, [self._episode_id])["ids"])
+        return await super().unlink(attachment_id)
 
 
 def _manager(em: EpisodicMemory) -> tuple[ErasureManager, _Attachments]:
@@ -399,8 +415,13 @@ async def test_erase_with_a_failed_archive_deletes_live_then_raises(
         assert _sidecar_counts(rig.root, "ep-000")["fts"] == 0
         assert [(row["episode_id"], row["disposition"]) for row in _audit_rows(rig.root)] == [("ep-000", "erased")]
 
-        with pytest.raises(EpisodeArchiveUnavailable, match="episode_archive_unavailable_for_erase"):
+        with pytest.raises(ErasureCascadeIncomplete) as info:
             await manager.forget_resource("x")  # the cascade cannot read the archive either
+        # M3r: this used to pin the bare EpisodeArchiveUnavailable out of the cascade, which was raised before any
+        # match was erased. The cascade now erases what it found, then raises one error naming the scan failure.
+        assert isinstance(info.value.enumeration_error, EpisodeArchiveUnavailable)
+        assert info.value.failures == {}
+        assert isinstance(info.value.__cause__, EpisodeArchiveUnavailable)
 
 
 # --- R8 ------------------------------------------------------------------------------------------------------
@@ -499,3 +520,155 @@ def test_only_declared_callers_name_erase() -> None:
 
     outside = {name: lines for name, lines in found.items() if name not in _ERASE_CALLERS}
     assert not outside, f"EvictionDisposition.ERASE is named outside the declared callers: {outside}"
+
+
+# --- R11 -----------------------------------------------------------------------------------------------------
+
+
+async def test_failed_erase_still_unlinks_the_attachments(tmp_path: Path) -> None:
+    blocker = tmp_path / "chroma" / ARCHIVE_FILENAME
+    blocker.mkdir(parents=True)
+    assert blocker.is_dir()  # premise: a directory stands where the archive file would be created
+    audit_log = AsyncMock()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        attachments = _WatchedAttachments(em, _T)
+        manager = ErasureManager(episodic_memory=em, attachment_store=attachments, audit_log=audit_log)
+        assert em.archive_available is False  # premise: the archive failed to open, so the erase will raise
+        assert await em.store(_scene()[_T]) is EpisodeStoreOutcome.STORED
+        live = _raw(em, [_T])
+        assert live["ids"] == [_T]
+        assert _ATTACHMENT in live["metadatas"][0]["outcomes_json"]  # premise: the live row is where the id is written
+        assert attachments.unlinked == []
+
+        with pytest.raises(EpisodeArchiveUnavailable, match="episode_archive_unavailable_for_erase"):
+            await manager.forget_episode(_T)
+
+        assert attachments.unlinked == [_ATTACHMENT]  # the erase raised, and the attachment was unlinked all the same
+        assert attachments.live_when_unlinked == [[_T]]  # unlinked BEFORE the erase: the row naming it still stood
+        assert _raw(em, [_T])["ids"] == []  # and the erase did delete the live row, as in R7
+        audit_log.mark_deleted.assert_not_awaited()  # the audit marker is written only after a successful erase
+
+
+# --- R12 -----------------------------------------------------------------------------------------------------
+
+
+async def test_cascade_continues_past_a_failing_episode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scene = _scene()
+    delete_episodes = ParticipantIndex.delete_episodes
+    seen: list[list[str]] = []
+
+    async def _fail_for_b1(self: ParticipantIndex, episode_ids: list[str]) -> None:
+        seen.append(list(episode_ids))
+        if _B1 in episode_ids:
+            raise RuntimeError("injected: the participant index cannot delete B1")
+        await delete_episodes(self, episode_ids)
+
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, _ = _manager(em)
+        await _seed(rig, list(scene.values()), archive=_ARCHIVED)  # premise: B1 live and B2 archived, both agent-b
+        live = await em.list_episodes()
+        assert [episode.id for episode in live if "agent-b" in episode.agent_ids] == [_B1]
+        assert _B2 in [row["episode_id"] for row in _archive_rows(rig.root)]
+        monkeypatch.setattr(ParticipantIndex, "delete_episodes", _fail_for_b1)
+
+        with pytest.raises(ErasureCascadeIncomplete) as info:
+            await manager.forget_agent_memory("agent-b")
+
+        error = info.value
+        assert seen == [[_B1], [_B2]]  # B1 failed first, and the cascade still went on to B2
+        assert set(error.failures) == {_B1}
+        assert isinstance(error.failures[_B1], EpisodeErasureIncomplete)
+        assert error.enumeration_error is None
+        assert error.result.deleted_episode_ids == [_B2]  # what was erased is reported, and it is not B1
+        assert await _traces(em, rig.root, _B2, agent="agent-b") == _GONE
+        assert _raw(em, [_B1])["ids"] == []  # B1's live row went before its sidecar sweep failed ...
+        # ... and the participant rows are what the failed sweep left; every other cleanup was still done
+        assert _sidecar_counts(rig.root, _B1) == {"fts": 0, "activation": 0, "participants": 2}
+        # The agent-a control episodes, live and archived, were not touched.
+        for episode_id, expected in ((_L, _LIVE_TRACES), (_A, _ARCHIVED_TRACES)):
+            assert await _traces(em, rig.root, episode_id) == expected, episode_id
+
+
+# --- R13 -----------------------------------------------------------------------------------------------------
+
+
+async def test_cascade_erases_the_live_matches_when_the_archive_scan_fails(tmp_path: Path) -> None:
+    blocker = tmp_path / "chroma" / ARCHIVE_FILENAME
+    blocker.mkdir(parents=True)
+    assert blocker.is_dir()  # premise: a directory stands where the archive file would be created
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        manager, attachments = _manager(em)
+        assert em.archive_available is False  # premise: the archive failed to open
+        for episode in (_episode(0), _scene()[_T]):
+            assert await em.store(episode) is EpisodeStoreOutcome.STORED
+            await rig.activations.record_access(episode.id)
+        live = await em.list_episodes()
+        assert sorted(episode.id for episode in live if "agent-a" in episode.agent_ids) == [_L, _T]  # premise
+        assert _ATTACHMENT in _raw(em, [_T])["metadatas"][0]["outcomes_json"]
+        for episode_id in (_L, _T):
+            assert _sidecar_counts(rig.root, episode_id) == {"fts": 1, "activation": 1, "participants": 2}
+
+        with pytest.raises(ErasureCascadeIncomplete) as info:
+            await manager.forget_agent_memory("agent-a")
+
+        error = info.value
+        assert isinstance(error.enumeration_error, EpisodeArchiveUnavailable)  # the scan met the failed archive ...
+        assert set(error.failures) == {_L, _T}  # ... and so did each per-episode erase, after it deleted the live row
+        assert all(isinstance(failure, EpisodeArchiveUnavailable) for failure in error.failures.values())
+        assert _raw(em, [_L, _T])["ids"] == []  # both matches were erased all the same
+        for episode_id in (_L, _T):
+            assert _sidecar_counts(rig.root, episode_id) == {"fts": 0, "activation": 0, "participants": 0}
+        assert attachments.unlinked == [_ATTACHMENT]
+
+
+# --- R14 -----------------------------------------------------------------------------------------------------
+
+
+async def test_a_failed_live_delete_still_erases_the_archive_copy(tmp_path: Path) -> None:
+    scene = _scene()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [scene[_L], scene[_A]], archive=[_A])  # premise: L is live, A only archived
+        assert [row["episode_id"] for row in _archive_rows(rig.root)] == [_A]
+        proxy = _record_collection(em)
+        proxy.fail_next_delete = True
+
+        with pytest.raises(RuntimeError, match="^injected: delete failed$"):
+            await em.evict_by_ids([_L, _A], disposition=EvictionDisposition.ERASE)
+
+        assert ("delete", None) in proxy.calls and proxy.fail_next_delete is False  # the live delete ran, and failed
+        assert [row for row in _archive_rows(rig.root) if row["episode_id"] == _A] == []  # A's copy went regardless
+        assert _raw(em, [_L])["ids"] == [_L]  # L's live row survived the failed delete
+
+
+# --- R15 -----------------------------------------------------------------------------------------------------
+
+
+async def test_retry_after_a_partial_erase_sweeps_what_was_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _ids(2)
+
+    async def _fail(self: ParticipantIndex, episode_ids: list[str]) -> None:
+        raise RuntimeError("injected: the participant index cannot delete")
+
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        await _seed(rig, [_episode(0), _episode(1)])  # premise: both live, in every sidecar
+        monkeypatch.setattr(ParticipantIndex, "delete_episodes", _fail)
+        with pytest.raises(EpisodeErasureIncomplete, match="participant_index"):
+            await em.evict_by_ids([ids[0]], reason="activation_decay", disposition=EvictionDisposition.ERASE)
+        # premise: the live row is gone, so a retry finds nothing to erase; the participant rows are what survived
+        assert _raw(em, [ids[0]])["ids"] == []
+        assert _sidecar_counts(rig.root, ids[0])["participants"] == 2
+        monkeypatch.undo()  # the fault is removed
+
+        assert await em.evict_by_ids([ids[0]], reason="activation_decay", disposition=EvictionDisposition.ERASE) == 0
+
+        assert _sidecar_counts(rig.root, ids[0]) == {"fts": 0, "activation": 0, "participants": 0}
+        assert ids[0] not in await _participants_named(rig.root, "agent-a")
+        # Targeted: the sweep is keyed on the requested id, so the other episode stands untouched.
+        assert _sidecar_counts(rig.root, ids[1]) == {"fts": 1, "activation": 1, "participants": 2}

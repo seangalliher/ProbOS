@@ -2488,7 +2488,8 @@ class EpisodicMemory:
 
         Archive mode: archive and commit, then audit, then delete from ChromaDB
         ONLY the ids whose archive row committed, then clean the sidecars.
-        Delete and erase: the same sequence without the archive step.
+        Delete and erase: the same sequence without the archive step. Erase
+        leaves the sidecars to ``_erase_ids``, which sweeps every requested id.
         """
         ids = list(candidate_ids)
         archive_refs: dict[str, str] = {}
@@ -2520,57 +2521,81 @@ class EpisodicMemory:
             except Exception as exc:
                 logger.warning("Eviction audit failed: %s", exc)
         self._collection.delete(ids=list(ids))
-        await self._cleanup_sidecars(ids, strict=(outcome == DISPOSITION_ERASED))
+        if outcome != DISPOSITION_ERASED:  # ERASE: _erase_ids sweeps every requested id, strictly
+            await self._cleanup_sidecars(ids)
         return ids
 
     async def _erase_ids(self, episode_ids: list[str], reason: str) -> int:
         """AD-1340: ERASE removes every copy -- live row, sidecars, archive rows.
 
         Unlike archive/delete eviction this propagates: an erasure that
-        silently leaves a copy behind is the worse failure (BF-868).
+        silently leaves a copy behind is the worse failure (BF-868). Every phase
+        (the live delete, the archive audit and erase, the sidecar sweep of every
+        requested id) is attempted; the first failure is raised after the last,
+        so one failed phase never spares another copy and a retry can finish.
         """
         requested = list(dict.fromkeys(eid for eid in episode_ids if eid))
         if not requested:
             return 0
+        errors: list[Exception] = []
         live_ids: list[str] = []
-        if self._collection:
-            result = self._collection.get(ids=requested, include=["metadatas"])
-            if result and result["ids"]:
-                live_ids = list(result["ids"])
-                await self._remove_from_live(
-                    live_ids,
-                    _metadata_by_id(live_ids, result["metadatas"]),
-                    reason=reason,
-                    process="evict_by_ids",
-                    details=f"batch of {len(live_ids)}, reason={reason}",
-                    outcome=DISPOSITION_ERASED,
-                )
-        live_set = set(live_ids)
-        archive = self._archive_or_none()
-        if archive is None:
-            return len(live_set)
-        archived_keys = await archive.archived_keys(requested)
-        archive_only = [key for key in archived_keys if key[0] not in live_set]
-        only_ids = list(dict.fromkeys(key[0] for key in archive_only))
-        if only_ids:
-            if self._eviction_audit:
-                records = [
-                    {"episode_id": eid, "agent_id": agent_id, "content_hash": content_hash,
-                     "episode_timestamp": episode_ts, "archive_ref": ""}
-                    for eid, content_hash, agent_id, episode_ts in archive_only
-                ]
-                try:
-                    await self._eviction_audit.record_batch_eviction(
-                        records,
+        only_ids: list[str] = []
+        try:
+            if self._collection:
+                result = self._collection.get(ids=requested, include=["metadatas"])
+                if result and result["ids"]:
+                    live_ids = list(result["ids"])
+                    await self._remove_from_live(
+                        live_ids,
+                        _metadata_by_id(live_ids, result["metadatas"]),
                         reason=reason,
                         process="evict_by_ids",
-                        details=f"archive-only batch of {len(only_ids)}, reason={reason}",
-                        disposition=DISPOSITION_ERASED,
+                        details=f"batch of {len(live_ids)}, reason={reason}",
+                        outcome=DISPOSITION_ERASED,
                     )
-                except Exception as exc:
-                    logger.warning("Eviction audit failed: %s", exc)
-            await self._cleanup_sidecars(only_ids, strict=True)
-        await archive.erase(requested)
+        except Exception as exc:
+            errors.append(exc)  # live phase: the archive and the sweep still run
+        live_set = set(live_ids)
+        try:
+            archive = self._archive_or_none()
+            if archive is not None:
+                archived_keys = await archive.archived_keys(requested)
+                archive_only = [key for key in archived_keys if key[0] not in live_set]
+                only_ids = list(dict.fromkeys(key[0] for key in archive_only))
+                if only_ids:
+                    if self._eviction_audit:
+                        records = [
+                            {"episode_id": eid, "agent_id": agent_id, "content_hash": content_hash,
+                             "episode_timestamp": episode_ts, "archive_ref": ""}
+                            for eid, content_hash, agent_id, episode_ts in archive_only
+                        ]
+                        try:
+                            await self._eviction_audit.record_batch_eviction(
+                                records,
+                                reason=reason,
+                                process="evict_by_ids",
+                                details=f"archive-only batch of {len(only_ids)}, reason={reason}",
+                                disposition=DISPOSITION_ERASED,
+                            )
+                        except Exception as exc:
+                            logger.warning("Eviction audit failed: %s", exc)
+                await archive.erase(requested)
+        except Exception as exc:
+            errors.append(exc)  # archive phase: raised after the sweep
+        # Keyed on the REQUEST, not on what was found: a retry after a failure that
+        # already deleted the live row finds no copy, and only this sweep still
+        # clears the FTS text and index rows that failure left.
+        try:
+            await self._cleanup_sidecars(requested, strict=True)
+        except EpisodeErasureIncomplete as exc:
+            errors.append(exc)
+        if errors:
+            for extra in errors[1:]:
+                logger.error(
+                    "AD-1340: erasure also failed: %r; the first failure is raised once every phase was attempted",
+                    extra,
+                )
+            raise errors[0]
         return len(live_set | set(only_ids))
 
     async def get_archived_metadata(self, episode_id: str) -> dict[str, Any] | None:
@@ -2623,8 +2648,9 @@ class EpisodicMemory:
             live = self._collection.get(ids=[record.episode_id], include=[])
             if live and live.get("ids"):
                 raise EpisodeArchiveConflict("episode_archive_restore_live_id")
+            # Audit before action: an access that cannot be recorded stops the restore before anything changed.
+            await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")
             self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
-        await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")
         if self._fts_db is not None:
             try:
                 fts_content = (episode.user_input or "") + " " + (episode.reflection or "")

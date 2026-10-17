@@ -325,3 +325,44 @@ def test_default_is_archive_and_the_flag_reaches_both_constructions(tmp_path: Pa
         assert "eviction_disposition" in keywords, f"EpisodicMemory(...) at line {call.lineno} does not pass the flag"
         chain = _attribute_chain(keywords["eviction_disposition"])
         assert chain[-2:] == ["memory", "eviction_disposition"], f"line {call.lineno}: {chain}"
+
+
+# --- T8 ------------------------------------------------------------------------------------------------------
+
+
+async def test_restore_fails_closed_when_the_access_cannot_be_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _refuse(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("injected: the access cannot be recorded")
+
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
+        await rig.activations.record_access(_SUBJECT)
+        assert await em.evict_by_ids([_SUBJECT], reason="activation_decay") == 1
+        # premise: archived and not live, in no sidecar, and no access of the archive was ever recorded for it
+        assert [row["episode_id"] for row in _archive_rows(rig.root)] == [_SUBJECT]
+        assert _raw(em, [_SUBJECT])["ids"] == []
+        assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
+        assert _archive_accesses(rig.root, _SUBJECT) == []
+        monkeypatch.setattr(em._episode_archive, "record_access", _refuse)
+
+        with pytest.raises(RuntimeError, match="^injected: the access cannot be recorded$"):
+            await em.restore_from_archive(_SUBJECT)
+
+        # Failed closed: the audit comes first, so nothing was restored and nothing has to be undone.
+        assert _raw(em, [_SUBJECT])["ids"] == []
+        assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
+        assert [row["episode_id"] for row in _archive_rows(rig.root)] == [_SUBJECT]
+        assert _archive_accesses(rig.root, _SUBJECT) == []
+        monkeypatch.undo()  # the fault is removed
+
+        restored = await em.restore_from_archive(_SUBJECT)  # the retry is not met by EpisodeArchiveConflict
+
+        assert restored.id == _SUBJECT
+        assert _raw(em, [_SUBJECT])["ids"] == [_SUBJECT]
+        assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 1, "activation": 1, "participants": 2}
+        assert await _found_by(em, rig.root, _SUBJECT) == {"keyword": True, "participants": True}
+        assert _activation_types(rig.root, _SUBJECT) == ["archive_restore"]  # one activation access
+        assert _archive_accesses(rig.root, _SUBJECT) == [("episodic_memory", "restore")]  # and one archive_access row

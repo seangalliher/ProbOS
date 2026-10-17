@@ -6,7 +6,7 @@ import dataclasses
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -65,6 +65,25 @@ class ErasureResult:
     deleted_attachment_ids: list[str]
 
 
+class ErasureCascadeIncomplete(Exception):
+    """AD-1340: a cascade erased what it could, and some matching episodes are not erased.
+
+    ``result`` is what was erased, ``failures`` maps each episode id whose erase raised to the original error, and
+    ``enumeration_error`` is set when the scan for matches itself failed (the matches found before it were erased).
+    The message carries counts only: no id and no content.
+    """
+
+    def __init__(
+        self, result: ErasureResult, failures: dict[str, Exception], enumeration_error: Exception | None,
+    ) -> None:
+        super().__init__(
+            f"erasure_cascade_incomplete:failed={len(failures)},scan_failed={enumeration_error is not None}"
+        )
+        self.result = result
+        self.failures = failures
+        self.enumeration_error = enumeration_error
+
+
 class ErasureManager:
     def __init__(
         self,
@@ -77,8 +96,15 @@ class ErasureManager:
         self._audit_log = audit_log
 
     async def forget_episode(self, episode_id: str, reason: str = "user_request") -> ErasureResult:
-        """Delete one episode and related attachment refs, then mark audit rows."""
+        """Delete one episode and related attachment refs, then mark audit rows.
+
+        The attachments are unlinked BEFORE the episode is erased (AD-1340): delete what a record names before
+        you delete the record. The attachment ids exist only in the episode's own records, and a failed erase has
+        already removed them by the time it raises, so a retry could never find them again. ``mark_deleted`` runs
+        only after a successful erase; an erase failure is raised as the original typed error, unwrapped.
+        """
         attachment_ids = await self._attachment_ids_for_episode(episode_id)
+        unlinked = await self._delete_attachments(attachment_ids)
         deleted_episodes = 0
         if self._episodic_memory is not None and hasattr(self._episodic_memory, "evict_by_ids"):
             # AD-1340: erasure is explicit, never derived from the caller's
@@ -89,70 +115,94 @@ class ErasureManager:
                 )
             )
 
-        deleted_attachments = await self._delete_attachments(attachment_ids)
-
         if self._audit_log is not None:
             await self._audit_log.mark_deleted(episode_id)
 
         return ErasureResult(
-            count=deleted_episodes + deleted_attachments,
+            count=deleted_episodes + len(unlinked),
             timestamps=[self._now_iso()],
             deleted_episode_ids=[episode_id] if deleted_episodes > 0 else [],
-            deleted_attachment_ids=sorted(attachment_ids)[:deleted_attachments],
+            deleted_attachment_ids=unlinked,
         )
 
     async def forget_resource(self, resource_path: str) -> ErasureResult:
-        """Delete all episodes that mention a resource path."""
-        matching_ids: list[str] = []
+        """Delete all episodes that mention a resource path.
+
+        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase.
+        """
         needle = resource_path.lower()
-        async for episode in self._candidate_episodes():
+
+        def mentions_resource(episode: Any) -> bool:
             serialized = json.dumps(self._episode_to_dict(episode), sort_keys=True, default=str).lower()
-            if needle in serialized:
-                matching_ids.append(str(getattr(episode, "id", "")))
+            return needle in serialized
 
-        total_count = 0
-        deleted_episodes: list[str] = []
-        deleted_attachments: set[str] = set()
-        for episode_id in matching_ids:
-            if not episode_id:
-                continue
-            result = await self.forget_episode(episode_id)
-            total_count += result.count
-            deleted_episodes.extend(result.deleted_episode_ids)
-            deleted_attachments.update(result.deleted_attachment_ids)
-
-        return ErasureResult(
-            count=total_count,
-            timestamps=[self._now_iso()],
-            deleted_episode_ids=deleted_episodes,
-            deleted_attachment_ids=sorted(deleted_attachments),
-        )
+        matching_ids, enumeration_error = await self._matching_ids(mentions_resource)
+        return await self._forget_all(matching_ids, enumeration_error)
 
     async def forget_agent_memory(self, agent_id: str) -> ErasureResult:
-        """Delete all episodes involving a specific agent."""
-        matching_ids = [
-            str(getattr(ep, "id", ""))
-            async for ep in self._candidate_episodes()
-            if agent_id in list(getattr(ep, "agent_ids", []) or [])
-        ]
+        """Delete all episodes involving a specific agent.
 
+        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase.
+        """
+
+        def involves_agent(episode: Any) -> bool:
+            return agent_id in list(getattr(episode, "agent_ids", []) or [])
+
+        matching_ids, enumeration_error = await self._matching_ids(involves_agent)
+        return await self._forget_all(matching_ids, enumeration_error)
+
+    async def _matching_ids(self, matches: Callable[[Any], bool]) -> tuple[list[str], Exception | None]:
+        """The ids of the candidate episodes ``matches`` accepts, and the error that cut the scan short, if any.
+
+        A scan that fails (the archive cannot be read) keeps the matches found before it: the caller erases
+        them, then raises. Erasing nothing because one store was unreadable would leave every live match behind.
+        """
+        found: list[str] = []
+        enumeration_error: Exception | None = None
+        try:
+            async for episode in self._candidate_episodes():
+                if matches(episode):
+                    found.append(str(getattr(episode, "id", "")))
+        except Exception as exc:
+            logger.error(
+                "AD-1340: the erasure scan failed after finding %d match(es); "
+                "they are erased, then the failure is raised",
+                len(found), exc_info=True,
+            )
+            enumeration_error = exc  # the archive scan failed: erase the matches found, then raise
+        return list(dict.fromkeys(episode_id for episode_id in found if episode_id)), enumeration_error
+
+    async def _forget_all(self, episode_ids: list[str], enumeration_error: Exception | None) -> ErasureResult:
+        """Erase each episode in turn; raise ``ErasureCascadeIncomplete`` if the scan or any erase failed."""
         total_count = 0
         deleted_episodes: list[str] = []
         deleted_attachments: set[str] = set()
-        for episode_id in matching_ids:
-            if not episode_id:
+        failures: dict[str, Exception] = {}
+        for episode_id in episode_ids:
+            try:
+                result = await self.forget_episode(episode_id)
+            except Exception as exc:
+                failures[episode_id] = exc  # erase the rest, then raise one error naming every failure
+                logger.error(
+                    "AD-1340: erasing episode %s failed: %r; "
+                    "the remaining episodes are still erased, then the failure is raised",
+                    episode_id, exc,
+                )
                 continue
-            result = await self.forget_episode(episode_id)
             total_count += result.count
             deleted_episodes.extend(result.deleted_episode_ids)
             deleted_attachments.update(result.deleted_attachment_ids)
 
-        return ErasureResult(
+        erased = ErasureResult(
             count=total_count,
             timestamps=[self._now_iso()],
             deleted_episode_ids=deleted_episodes,
             deleted_attachment_ids=sorted(deleted_attachments),
         )
+        if failures or enumeration_error is not None:
+            cause = enumeration_error if enumeration_error is not None else next(iter(failures.values()))
+            raise ErasureCascadeIncomplete(erased, failures, enumeration_error) from cause
+        return erased
 
     async def _list_episodes(self) -> list[Any]:
         if self._episodic_memory is None or not hasattr(self._episodic_memory, "list_episodes"):
@@ -221,14 +271,15 @@ class ErasureManager:
 
         return self._extract_attachment_ids(episode_payload)
 
-    async def _delete_attachments(self, attachment_ids: set[str]) -> int:
+    async def _delete_attachments(self, attachment_ids: set[str]) -> list[str]:
+        """Unlink each attachment; return the sorted ids the store reported as removed."""
         if self._attachment_store is None:
-            return 0
-        deleted = 0
-        for attachment_id in attachment_ids:
+            return []
+        unlinked: list[str] = []
+        for attachment_id in sorted(attachment_ids):
             if await self._attachment_store.unlink(attachment_id):
-                deleted += 1
-        return deleted
+                unlinked.append(attachment_id)
+        return unlinked
 
     def _extract_attachment_ids(self, payload: Any) -> set[str]:
         """Read attachment ids from the fields DECLARED to carry them.
