@@ -19,7 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from probos.cognitive.builder_paths import builder_write_refusal, operator_checkout_refusal
+from probos.cognitive.builder_paths import (
+    builder_write_refusal,
+    fix_loop_path,
+    fix_loop_write_refusal,
+    operator_checkout_refusal,
+)
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
 from probos.execution.command_env import build_command_env
@@ -2411,6 +2416,14 @@ def _validate_python(path: Path) -> str | None:
         return f"{path}: line {exc.lineno}: {exc.msg}"
 
 
+def _fix_loop_changed(path: Path, before: bytes | None) -> bool:
+    """BF-898: whether a repair block left *path* holding other bytes than *before* (None: absent)."""
+    try:
+        return path.is_file() and path.read_bytes() != before
+    except OSError:
+        return True  # cannot be read back, so it cannot be shown unchanged
+
+
 # ---------------------------------------------------------------------------
 # Test & fix helpers (AD-314)
 # ---------------------------------------------------------------------------
@@ -2577,7 +2590,11 @@ def _build_fix_prompt(
         "Fix the failing tests. Output ONLY the file changes needed to fix the "
         "failures. Use the same ===MODIFY: path=== or ===FILE: path=== format. "
         "Do NOT rewrite files that don't need changes. Keep fixes minimal — "
-        "fix the bug, don't refactor."
+        "fix the bug, don't refactor.\n\n"
+        "You may change only source files under src/probos/ (BF-898). Do not change "
+        "any test, conftest.py or test configuration, or the builder, its reviewer or "
+        "its write boundary: a response with such a block is refused whole and the "
+        "build is not committed. If a test itself is wrong, say so and output no blocks."
     )
 
 
@@ -2912,6 +2929,7 @@ async def execute_approved_build(
         if run_tests and (written or modified_files):
             all_changes = list(file_changes)  # track for fix prompt
             all_changed_files = written + modified_files
+            fix_loop_files: list[str] = []  # BF-898: the paths the fix loop changed
 
             for attempt in range(1 + max_fix_attempts):
                 # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
@@ -2947,6 +2965,8 @@ async def execute_approved_build(
                         system_prompt=BuilderAgent.instructions,
                         tier="deep",
                     )
+                    # BF-898 review r1: a request counts when it is sent, so an error below keeps it.
+                    result.fix_attempts += 1
                     try:
                         fix_response = await llm_client.complete(fix_request)
                         fix_changes = BuilderAgent._parse_file_blocks(
@@ -2964,53 +2984,74 @@ async def execute_approved_build(
                             "skipping attempt %d",
                             attempt + 1,
                         )
-                        result.fix_attempts += 1
                         continue
+
+                    # BF-898 (#1563): the repair is model-authored and unreviewed, so it may
+                    # change source only (builder_paths.fix_loop_write_refusal, which refuses a
+                    # control or line-break character first, then applies BF-894's boundary). A
+                    # response with any refused block is refused whole and the fix loop stops;
+                    # the refusal blocks the commit (validation_errors) and names the path. Each
+                    # path is put in one spelling first, so the rule judges the string written.
+                    for change in fix_changes:
+                        change["path"] = fix_loop_path(change["path"])
+                    fix_refusals = [
+                        refusal
+                        for refusal in (
+                            fix_loop_write_refusal(change["path"], work_dir)
+                            for change in fix_changes
+                        )
+                        if refusal is not None
+                    ]
+                    if fix_refusals:
+                        for refusal in fix_refusals:
+                            logger.warning("BuilderAgent: repair refused: %s", refusal)
+                        validation_errors.extend(fix_refusals)
+                        break  # BF-898: no further repair attempt
 
                     # Apply fix changes
                     for change in fix_changes:
-                        # BF-894 (#1547): the same boundary as the approved writes; a refusal
-                        # blocks the commit the same way (validation_errors).
-                        repair_error = builder_write_refusal(change["path"], work_dir)
-                        if repair_error:
-                            logger.warning("BuilderAgent: repair %s, skipping", repair_error)
-                            validation_errors.append(repair_error)
-                            continue
                         path = Path(work_dir) / change["path"]
-                        if change["mode"] == "modify":
-                            if not path.exists():
-                                continue
-                            original = path.read_text(encoding="utf-8")
-                            mod = original
-                            for repl in change.get("replacements", []):
-                                if repl["search"] in mod:
-                                    mod = mod.replace(
-                                        repl["search"], repl["replace"], 1,
-                                    )
-                            if mod != original:
+                        before_fix = path.read_bytes() if path.is_file() else None
+                        try:
+                            if change["mode"] == "modify":
+                                if not path.exists():
+                                    continue
+                                original = path.read_text(encoding="utf-8")
+                                mod = original
+                                for repl in change.get("replacements", []):
+                                    if repl["search"] in mod:
+                                        mod = mod.replace(
+                                            repl["search"], repl["replace"], 1,
+                                        )
+                                if mod != original:
+                                    _check_sealed_path(path, runtime)
+                                    path.write_text(mod, encoding="utf-8")
+                                    if change["path"] not in modified_files:
+                                        modified_files.append(change["path"])
+                            else:
+                                path.parent.mkdir(parents=True, exist_ok=True)
                                 _check_sealed_path(path, runtime)
-                                path.write_text(mod, encoding="utf-8")
-                                if change["path"] not in modified_files:
-                                    modified_files.append(change["path"])
-                        else:
-                            path.parent.mkdir(parents=True, exist_ok=True)
-                            _check_sealed_path(path, runtime)
-                            pre_existing = path.exists() and change["path"] not in written
-                            path.write_text(
-                                change["content"], encoding="utf-8",
-                            )
-                            if pre_existing:
-                                # BF-896: never list a pre-existing file in files_written.
-                                if change["path"] not in modified_files:
-                                    modified_files.append(change["path"])
-                            elif change["path"] not in written:
-                                written.append(change["path"])
-                        err = _validate_python(path)
-                        if err:
-                            validation_errors.append(err)
+                                pre_existing = path.exists() and change["path"] not in written
+                                path.write_text(
+                                    change["content"], encoding="utf-8",
+                                )
+                                if pre_existing:
+                                    # BF-896: never list a pre-existing file in files_written.
+                                    if change["path"] not in modified_files:
+                                        modified_files.append(change["path"])
+                                elif change["path"] not in written:
+                                    written.append(change["path"])
+                            err = _validate_python(path)
+                            if err:
+                                validation_errors.append(err)
+                        finally:
+                            # Settled however the block ends: a write or the validation can raise
+                            # after the file has changed, and the change must still be disclosed.
+                            if _fix_loop_changed(path, before_fix) and change["path"] not in fix_loop_files:
+                                fix_loop_files.append(change["path"])
+                                result.metadata["fix_loop_files"] = sorted(fix_loop_files)
 
                     all_changes.extend(fix_changes)
-                    result.fix_attempts += 1
                 else:
                     # BF-897: no repair client, or the attempts are used up. The tree is
                     # unchanged, so another run would only repeat this one, and no repair was
@@ -3074,10 +3115,18 @@ async def execute_approved_build(
                     result.success = False
             else:
                 desc_short = spec.description[:200] if spec.description else ""
+                # BF-898: the files the unreviewed fix loop changed are named in the commit.
+                disclosed_fix_files = result.metadata.get("fix_loop_files", [])
                 commit_msg = (
                     f"{spec.title}"
                     + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
                     + (f"\n\n{desc_short}" if desc_short else "")
+                    + (
+                        "\n\nChanged by the unreviewed test-fix loop (BF-898): "
+                        + ", ".join(disclosed_fix_files)
+                        if disclosed_fix_files
+                        else ""
+                    )
                     + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
                 )
                 ok, sha = await _git_add_and_commit(

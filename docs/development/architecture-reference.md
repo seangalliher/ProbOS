@@ -184,7 +184,7 @@ Captain types /design → Architect perceives (7 layers) → LLM generates propo
 - MODIFY mode (AD-313): `===SEARCH===`/`===REPLACE===`/`===END REPLACE===` pairs within `===MODIFY: path===` blocks. Replacements applied sequentially, first occurrence only
 - `perceive()` reads both reference_files and target_files (so LLM sees current content for accurate SEARCH blocks)
 - `ast.parse()` validation after writes/modifies
-- Test-fix loop (AD-314): runs pytest after writes, feeds failures back to LLM for up to 2 fix attempts. `_run_tests()` helper, `_build_fix_prompt()` for fix context. `max_fix_attempts` parameter on `execute_approved_build()`
+- Test-fix loop (AD-314): runs the targeted tests after writes (BF-897) and feeds a real failure back to the LLM for up to 2 fix attempts. `_build_fix_prompt()` for fix context; `max_fix_attempts` parameter on `execute_approved_build()`. BF-898: the repair blocks are unreviewed, so `builder_paths.fix_loop_write_refusal` admits a block only if its path is under `src/probos/`, holds no control or line-break character, and is not a test, a `conftest.py`, pytest configuration or part of the build's grader (`FIX_LOOP_PROTECTED_PATHS`). The check reads the path as written: it does not follow a hard link, junction or symlink, and it does not limit what repaired source does when the tests import it. A response with a refused block is refused whole, the loop stops and the build is not committed. The files the loop changed are listed in `metadata["fix_loop_files"]` and in the commit message.
 
 **CodebaseIndex** (`cognitive/codebase_index.py`):
 - AST-based, no LLM calls, built at startup

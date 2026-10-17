@@ -4,6 +4,7 @@
 **Revised by:** the orchestrator, 2026-10-17: BF-897 merged alone as `f2b884d3` (the batch was dropped under the batching rule, because BF-898's review was not ready), so Status, Dependencies and the Focused gate note say BF-898 has its own gate and its own PR closing #1563; the Section 4 and Section 5 SEARCH heads (and the BF-897 line each REPLACE restates) are re-anchored on the BF-897 heading and lead that BF-897's review reworded. No design change.
 **Status:** ready to build. Drafted on the BF-897 round-1 candidate (`origin/main` `b91448c1` plus BF-897, staged tree `eca1c170`); BF-897 then merged as `f2b884d3` with a repaired fix-loop tail (the final `else:` of the loop is now a `break`); this contract builds on `f2b884d3`. BF-898 has its own gate and its own PR (closing #1563 only). No new AD or BF number; BF-898 is allocated by the title of #1563. AD ceiling for the record: AD-1341 (`scripts/ad_ceiling.py`, GitHub issue titles).
 **Dependencies:** BF-897 (merged; this contract's SEARCH blocks are anchored on its tree). Nothing here changes BF-897 behaviour (see "Hooks in BF-897 lines").
+**Amended by:** the orchestrator after review rounds 1-3 (2026-10-17), with the Architect's round-three decision (read-only consult): where the installed code differs from this draft, the installed code governs. Rounds 1-3 added to `fix_loop_write_refusal` a refusal of any control or line-break character (Unicode category Cc, Zl or Zp), judged FIRST with its own reason, so every statement below that `builder_write_refusal` runs first, keeps its reason or comes first (the Options table, Decisions, Section 1's docstring and comments, Section 2's comment, Section 4's DECISIONS text) describes the draft and holds for every path without such a character. The same rounds put each repair path in one spelling (`fix_loop_path`) before it is judged and written, count the repair attempt when the request is sent, settle the disclosure of a changed file in a `finally` for each block (`_fix_loop_changed`), and renamed the test of T-S item 4 (below). The shipped text is in `DECISIONS.md` (BF-898, the "Review round 1" and "Review round 2" bullets).
 **Estimated tests:** one new file with about 30 test items (8 functions, 2 of them parametrized over 6 cases), plus 3 existing tests updated in place.
 **Milestones (each about 150 tool calls or fewer):**
 - M1: Section 1 and test group T-S.
@@ -375,8 +376,8 @@ from probos.cognitive.cognitive_agent import CognitiveAgent
                         path = Path(work_dir) / change["path"]
 =======
                     # BF-898 (#1563): the repair is model-authored and unreviewed, so it may
-                    # change source only (builder_paths.fix_loop_write_refusal, which applies
-                    # BF-894's boundary first). A response with any refused block is refused
+                    # change source only (builder_paths.fix_loop_write_refusal, which also applies
+                    # BF-894's boundary). A response with any refused block is refused
                     # whole and the fix loop stops; the refusal blocks the commit
                     # (validation_errors) and names the path.
                     fix_refusals = [
@@ -524,7 +525,7 @@ Shared fixture text:
   - `import pathlib` and `import pytest`;
   - `SOURCE = pathlib.Path(__file__).resolve().parent.parent / 'src' / 'probos' / 'widget.py'`;
   - `def test_present() -> None:` asserting `SOURCE.is_file()`;
-  - `def test_value() -> None:` asserting `'VALUE = 2' in SOURCE.read_text(encoding='utf-8')`.
+  - `def test_value() -> None:` asserting that `'VALUE = 2'` is in the text of `SOURCE`, read as UTF-8 with `encoding='utf-8'`.
 
   The test imports nothing from the work tree, so no installed `probos` package can stand in for it.
 - The approved change is `{"path": _WIDGET, "mode": "create", "content": _WIDGET_V1}`, so the first targeted run is `1 failed, 1 passed`.
@@ -549,7 +550,7 @@ The six repair replies (`_REPAIRS`, a dict keyed by case). Each is the exact `==
 
    This test catches an example deleted together with nothing else.
 3. `test_self_test_reports_a_failing_example` (the self-test is not vacuous): `monkeypatch.setattr(builder_paths, "FIX_LOOP_SELF_TEST", (("src/probos/widget.py", True),))`. The result has one line containing `src/probos/widget.py` and "expected refused". Kills L7.
-4. `test_builder_write_refusal_reason_comes_first`: for `.git/config`, `src/probos/con.py` and `src/probos/a:b.py`, `fix_loop_write_refusal(p) == builder_write_refusal(p)`, and the result is not `None`. Kills L1.
+4. `test_a_path_without_a_control_character_keeps_the_write_boundarys_reason` (this draft's `test_builder_write_refusal_reason_comes_first`, renamed in review round 3 because a control character is refused before the boundary's reason): for `.git/config`, `src/probos/con.py` and `src/probos/a:b.py`, `fix_loop_write_refusal(p) == builder_write_refusal(p)`, and the result is not `None`. Kills L1.
 5. `test_every_bf898_refusal_names_the_rule_and_the_path`, parametrized over `tests/test_x.py`, `src/probos/cognitive/builder.py`, `src/probos/conftest.py` and `src/probos//x.py`: the result contains `"BF-898"` and the path as given.
 
 **T-U: the fix loop with a fake runner and fake git (the BF-897 `fake_git` and `build_tree` fixtures)**
