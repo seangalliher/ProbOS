@@ -6,10 +6,12 @@ import dataclasses
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 
 from probos.security.audit_log import AuditLog
+from probos.types import EvictionDisposition
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +81,12 @@ class ErasureManager:
         attachment_ids = await self._attachment_ids_for_episode(episode_id)
         deleted_episodes = 0
         if self._episodic_memory is not None and hasattr(self._episodic_memory, "evict_by_ids"):
+            # AD-1340: erasure is explicit, never derived from the caller's
+            # free-text reason (routers/security.py:23,73).
             deleted_episodes = int(
-                await self._episodic_memory.evict_by_ids([episode_id], reason=reason)
+                await self._episodic_memory.evict_by_ids(
+                    [episode_id], reason=reason, disposition=EvictionDisposition.ERASE,
+                )
             )
 
         deleted_attachments = await self._delete_attachments(attachment_ids)
@@ -97,10 +103,9 @@ class ErasureManager:
 
     async def forget_resource(self, resource_path: str) -> ErasureResult:
         """Delete all episodes that mention a resource path."""
-        episodes = await self._list_episodes()
         matching_ids: list[str] = []
         needle = resource_path.lower()
-        for episode in episodes:
+        async for episode in self._candidate_episodes():
             serialized = json.dumps(self._episode_to_dict(episode), sort_keys=True, default=str).lower()
             if needle in serialized:
                 matching_ids.append(str(getattr(episode, "id", "")))
@@ -125,10 +130,9 @@ class ErasureManager:
 
     async def forget_agent_memory(self, agent_id: str) -> ErasureResult:
         """Delete all episodes involving a specific agent."""
-        episodes = await self._list_episodes()
         matching_ids = [
             str(getattr(ep, "id", ""))
-            for ep in episodes
+            async for ep in self._candidate_episodes()
             if agent_id in list(getattr(ep, "agent_ids", []) or [])
         ]
 
@@ -155,6 +159,22 @@ class ErasureManager:
             return []
         return list(await self._episodic_memory.list_episodes(limit=None))
 
+    async def _candidate_episodes(self) -> AsyncIterator[Any]:
+        """Live episodes, then archived episodes not also live (AD-1340).
+
+        Under-erasing is the worse failure (BF-868): a cascade that skipped the
+        archive would leave the Captain's forgotten episode recoverable.
+        """
+        seen: set[str] = set()
+        for episode in await self._list_episodes():
+            seen.add(str(getattr(episode, "id", "")))
+            yield episode
+        if self._episodic_memory is None or not hasattr(self._episodic_memory, "iter_archived_episodes"):
+            return
+        async for episode in self._episodic_memory.iter_archived_episodes():
+            if str(getattr(episode, "id", "")) not in seen:
+                yield episode
+
     async def _attachment_ids_for_episode(self, episode_id: str) -> set[str]:
         """Collect every attachment id this episode declares.
 
@@ -176,6 +196,9 @@ class ErasureManager:
 
         If a live metadata-shaped producer ever appears, merge the two payloads
         here instead of treating them as alternatives.
+
+        AD-1340: when the episode is not live, the archived raw metadata is the
+        last fallback.
         """
         if self._episodic_memory is None:
             return set()
@@ -189,6 +212,12 @@ class ErasureManager:
             meta = await self._episodic_memory.get_episode_metadata(episode_id)
             if isinstance(meta, dict):
                 episode_payload = meta
+        # AD-1340: an archived (not live) episode's attachments come from the
+        # archived raw metadata -- the same flat shape _normalize_payload decodes.
+        if not episode_payload and hasattr(self._episodic_memory, "get_archived_metadata"):
+            archived_meta = await self._episodic_memory.get_archived_metadata(episode_id)
+            if isinstance(archived_meta, dict):
+                episode_payload = archived_meta
 
         return self._extract_attachment_ids(episode_payload)
 

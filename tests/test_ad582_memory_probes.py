@@ -90,7 +90,7 @@ class MockEpisodicMemory:
             self._store[ep.id] = ep
         return len(episodes)
 
-    async def evict_by_ids(self, episode_ids: list[str], reason: str = "") -> int:
+    async def evict_by_ids(self, episode_ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         count = 0
         for eid in episode_ids:
             if eid in self._store:

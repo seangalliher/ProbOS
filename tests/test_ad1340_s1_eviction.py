@@ -9,6 +9,7 @@ states its premise first, so a pass cannot be vacuous. ``delete`` is the default
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import dataclasses
 import json
@@ -598,3 +599,34 @@ async def test_audit_columns_migrate_an_old_file(tmp_path: Path) -> None:
         assert len(_audit_rows(tmp_path)) == total
     finally:
         await again.stop()
+
+
+# --- E12 -----------------------------------------------------------------------------------------------------
+
+_DREAMING = Path(__file__).resolve().parent.parent / "src" / "probos" / "cognitive" / "dreaming.py"
+
+
+def test_step12_call_sites_are_unchanged() -> None:
+    """D4 keeps the eviction policy in ``resolve_disposition``; the Step 12 call sites are not edited.
+
+    The reason literals stay in ``dreaming.py``, where ``test_ad593_pruning_acceleration.py`` reads them, so each call
+    passes one positional argument and the keyword ``reason`` with a constant, and never names a disposition. Parsed
+    with ``ast``, so formatting and comments can neither hide a change nor fake one.
+    """
+    tree = ast.parse(_DREAMING.read_text(encoding="utf-8"))
+    calls = sorted(
+        (
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "evict_by_ids"
+        ),
+        key=lambda node: node.lineno,
+    )
+    assert len(calls) == 2  # premise: exactly the two Step 12 call sites, so the loop below cannot pass over nothing
+    reasons = []
+    for call in calls:
+        assert len(call.args) == 1 and not isinstance(call.args[0], ast.Starred)
+        assert [keyword.arg for keyword in call.keywords] == ["reason"]  # no ``disposition``, no ``**kwargs``
+        reason = call.keywords[0].value
+        assert isinstance(reason, ast.Constant)
+        reasons.append(reason.value)
+    assert reasons == ["activation_decay", "activation_decay_aggressive"]

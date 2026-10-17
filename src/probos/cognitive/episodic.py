@@ -2523,8 +2523,82 @@ class EpisodicMemory:
         return ids
 
     async def _erase_ids(self, episode_ids: list[str], reason: str) -> int:
-        # AD-1340 M3 replaces this stub with the erase sequence.
-        raise NotImplementedError("AD-1340 M3")
+        """AD-1340: ERASE removes every copy -- live row, sidecars, archive rows.
+
+        Unlike archive/delete eviction this propagates: an erasure that
+        silently leaves a copy behind is the worse failure (BF-868).
+        """
+        requested = list(dict.fromkeys(eid for eid in episode_ids if eid))
+        if not requested:
+            return 0
+        live_ids: list[str] = []
+        if self._collection:
+            result = self._collection.get(ids=requested, include=["metadatas"])
+            if result and result["ids"]:
+                live_ids = list(result["ids"])
+                await self._remove_from_live(
+                    live_ids,
+                    _metadata_by_id(live_ids, result["metadatas"]),
+                    reason=reason,
+                    process="evict_by_ids",
+                    details=f"batch of {len(live_ids)}, reason={reason}",
+                    outcome=DISPOSITION_ERASED,
+                )
+        live_set = set(live_ids)
+        archive = self._archive_or_none()
+        if archive is None:
+            return len(live_set)
+        archived_keys = await archive.archived_keys(requested)
+        archive_only = [key for key in archived_keys if key[0] not in live_set]
+        only_ids = list(dict.fromkeys(key[0] for key in archive_only))
+        if only_ids:
+            if self._eviction_audit:
+                records = [
+                    {"episode_id": eid, "agent_id": agent_id, "content_hash": content_hash,
+                     "episode_timestamp": episode_ts, "archive_ref": ""}
+                    for eid, content_hash, agent_id, episode_ts in archive_only
+                ]
+                try:
+                    await self._eviction_audit.record_batch_eviction(
+                        records,
+                        reason=reason,
+                        process="evict_by_ids",
+                        details=f"archive-only batch of {len(only_ids)}, reason={reason}",
+                        disposition=DISPOSITION_ERASED,
+                    )
+                except Exception as exc:
+                    logger.warning("Eviction audit failed: %s", exc)
+            await self._cleanup_sidecars(only_ids, strict=True)
+        await archive.erase(requested)
+        return len(live_set | set(only_ids))
+
+    async def get_archived_metadata(self, episode_id: str) -> dict[str, Any] | None:
+        """AD-1340: raw metadata of an archived episode (erasure's attachment lookup).
+
+        A service read, not a recall surface. Raises if the archive failed to open.
+        """
+        archive = self._archive_or_none()
+        if archive is None:
+            return None
+        records = await archive.get_records([episode_id])
+        return dict(records[0].metadata) if records else None
+
+    async def iter_archived_episodes(self, *, page_size: int = 500) -> AsyncIterator[Episode]:
+        """AD-1340: every archived episode, rehydrated (erasure cascades).
+
+        A service read, not a recall surface. Raises if the archive failed to open.
+        """
+        archive = self._archive_or_none()
+        if archive is None:
+            return
+        async for record in archive.iter_records(page_size=page_size):
+            try:
+                yield self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
+            except Exception:
+                logger.warning(
+                    "AD-1340: archived episode %s could not be rehydrated; erasure cascades cannot match it",
+                    record.episode_id, exc_info=True,
+                )
 
     async def _evict(self) -> None:
         assert self._collection

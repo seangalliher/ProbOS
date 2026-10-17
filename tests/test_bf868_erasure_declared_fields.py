@@ -63,7 +63,7 @@ class _FakeEpisodicMemory:
     async def list_episodes(self, limit: int | None = None) -> list[_Episode]:
         return list(self._episodes)
 
-    async def evict_by_ids(self, ids: list[str], reason: str = "") -> int:
+    async def evict_by_ids(self, ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         return len(ids)
 
 
@@ -84,7 +84,7 @@ class _FakeMetadataOnlyMemory:
     async def get_episode_metadata(self, episode_id: str) -> dict:
         return self._metadata
 
-    async def evict_by_ids(self, ids: list[str], reason: str = "") -> int:
+    async def evict_by_ids(self, ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         return len(ids)
 
 

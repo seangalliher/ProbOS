@@ -30,7 +30,7 @@ class _FakeEpisodicMemory:
             return None
         return {"outcomes": episode.outcomes}
 
-    async def evict_by_ids(self, episode_ids: list[str], reason: str = "user_request") -> int:
+    async def evict_by_ids(self, episode_ids: list[str], reason: str = "user_request", *, disposition: object = None) -> int:
         deleted = 0
         for eid in episode_ids:
             if eid in self._episodes:

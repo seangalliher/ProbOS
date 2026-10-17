@@ -47,7 +47,7 @@ class _FakeEpisodicMemory:
     async def list_episodes(self, limit: int | None = None) -> list:
         return list(self._episodes)
 
-    async def evict_by_ids(self, ids: list[str], reason: str = "") -> int:
+    async def evict_by_ids(self, ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         return len(ids)
 
 
