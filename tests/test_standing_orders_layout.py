@@ -91,8 +91,9 @@ _PROFILE_KEYS = frozenset({
     "argument-hint", "target", "agents", "handoffs", "mcp-servers", "hooks",
 })
 
-# Profiles whose `model` is still an array (the CLI refuses an array; follow-up F1).
-KNOWN_ARRAY = frozenset({"diff-reviewer.agent.md"})
+# A profile's `model` is a plain model id (lowercase letters, digits, dots and hyphens), never a
+# display name such as "GPT-6.1 Sol (copilot)" and never a list: it is the id a delegation passes.
+PLAIN_MODEL_ID = re.compile(r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$")
 
 # Procedure text the orchestrator profile owns, and the constitution must not repeat.
 PROCEDURE = (
@@ -115,6 +116,10 @@ PROCEDURE = (
     "kept out of the index and named by `git diff` in the worktree for a staged candidate or by `git diff <head>` for a committed one",
     "**Progress comments (Captain, 2026-10-15).**",
     "Phase: draft | build | review round N | gate | CI",
+    "**Explicit models and the model guard (Captain, 2026-10-17",
+    "on every Builder call",
+    "whose `interactionType` is `conversation-agent`",
+    "`firstDispatchedModel`",
 )
 
 # Shared rules the constitution keeps.
@@ -404,23 +409,41 @@ def test_orchestrator_profile_frontmatter_has_cli_shape() -> None:
     assert set(meta) <= _PROFILE_KEYS, f"unknown front-matter keys: {sorted(set(meta) - _PROFILE_KEYS)}"
 
 
-def test_agent_profile_models_are_strings() -> None:
+def test_plain_model_id_pattern_rejects_display_names() -> None:
+    for good in ("gpt-6.1-sol", "claude-sonnet-5.5"):
+        assert PLAIN_MODEL_ID.match(good), f"premise: {good!r} is a plain id"
+    for bad in ("GPT-6.1 Sol (copilot)", "Claude Sonnet 5.5 (copilot)", "GPT-6.1 Sol", "gpt-6.1-sol (copilot)", ""):
+        assert not PLAIN_MODEL_ID.match(bad), f"{bad!r} is not a plain id"
+
+
+def test_agent_profile_models_are_plain_ids() -> None:
     profiles = sorted(_AGENTS_DIR.glob("*.agent.md"))
     assert len(profiles) >= 2, f"only {len(profiles)} agent profiles were found"
     offenders: list[str] = []
     for profile in profiles:
-        meta = _front_matter(profile) or {}
-        if profile.name not in KNOWN_ARRAY and "model" in meta and not isinstance(meta["model"], str):
-            offenders.append(f"{profile.name}: {meta['model']!r}")
-    assert not offenders, f"the Copilot CLI refuses an array model: {offenders}"
+        model = (_front_matter(profile) or {}).get("model")
+        if not isinstance(model, str) or not PLAIN_MODEL_ID.match(model):
+            offenders.append(f"{profile.name}: {model!r}")
+    assert not offenders, f"a profile's model must be a plain id string: {offenders}"
 
 
-def test_known_array_model_exceptions_are_still_arrays() -> None:
-    for name in KNOWN_ARRAY:
-        meta = _front_matter(_AGENTS_DIR / name) or {}
-        assert isinstance(meta.get("model"), list), (
-            f"{name} no longer has an array model: remove it from KNOWN_ARRAY"
-        )
+def test_model_guard_quotes_the_profile_ids() -> None:
+    orchestrator_model = (_front_matter(ORCHESTRATOR) or {}).get("model")
+    reviewer_model = (_front_matter(_AGENTS_DIR / "diff-reviewer.agent.md") or {}).get("model")
+    assert isinstance(orchestrator_model, str) and isinstance(reviewer_model, str), "premise: both models are strings"
+    orchestrator = _text(ORCHESTRATOR)
+    constitution = _text(CONSTITUTION)
+    guard = orchestrator.find("\n**Explicit models and the model guard (")
+    assert guard != -1, "the orchestrator profile has no model guard paragraph"
+    assert f'`"model":"{orchestrator_model}"`' in orchestrator, "the guard must quote the orchestrator's own model"
+    assert f'`model: "{reviewer_model}"` on every Diff Reviewer call' in orchestrator
+    assert f"`{reviewer_model}`" in constitution, "the constitution must name the reviewer's model"
+    # Paragraph starts, not mentions: the Architect-bridge paragraph also names "Overlap waiting" in a cross-reference.
+    assert (
+        orchestrator.index("\n**Delegate synchronously when the next step needs the result.**")
+        < guard
+        < orchestrator.index("\n**Overlap waiting with read-only preparation")
+    ), "the guard sits between the sync-delegation and overlap paragraphs"
 
 
 def test_orchestrator_profile_carries_the_procedure() -> None:

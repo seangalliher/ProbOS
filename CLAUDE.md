@@ -45,7 +45,7 @@ Use `claude-architect` for this role. The Copilot `Architect` and `Builder` defi
 
 **Overlap with read-only preparation** (Delegation and Waiting, `.github/agents/orchestrator.agent.md`): launch the next item's `claude-architect` consult with `run_in_background: true` before the current item's foreground wait (a sync Diff Reviewer, a CI watch), and read it when that wait returns if it has finished (otherwise after the current item's closure steps). Change nothing for that item until the current one is merged or parked.
 
-**Reviewer model independence.** The Copilot `Diff Reviewer` pins GPT models so the reviewer is a different model family from a Claude author. Claude Code subagents run Claude models only, so `claude-diff-reviewer` runs Haiku against a Sonnet Builder: a fresh read, not a different family. For security, data-integrity or other high-risk changes, also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`). Brief either reviewer with properties to verify, not attack scenarios.
+**Reviewer model independence.** The Copilot `Diff Reviewer` runs on a GPT model (`gpt-6.1-sol`, passed explicitly on each call) so the reviewer is a different model family from a Claude author. Claude Code subagents run Claude models only, so `claude-diff-reviewer` runs Haiku against a Sonnet Builder: a fresh read, not a different family. For security, data-integrity or other high-risk changes, also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`). Brief either reviewer with properties to verify, not attack scenarios.
 
 ## Environment
 
