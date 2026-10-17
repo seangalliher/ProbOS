@@ -2635,6 +2635,9 @@ class EpisodicMemory:
         (the live delete, the archive audit and erase, the sidecar sweep of every
         requested id) is attempted; the first failure is raised after the last,
         so one failed phase never spares another copy and a retry can finish.
+        AD-1340 R2: the live and archive phases run inside the store write lock
+        (the sweep after release), so a concurrent restore of an id is wholly before
+        or wholly after them.
         """
         requested = list(dict.fromkeys(eid for eid in episode_ids if eid))
         if not requested:
@@ -2642,49 +2645,53 @@ class EpisodicMemory:
         errors: list[Exception] = []
         live_ids: list[str] = []
         only_ids: list[str] = []
-        try:
-            if not self._collection:
-                raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # stopped or never started
-            result = self._collection.get(ids=requested, include=["metadatas"])
-            if result and result["ids"]:
-                live_ids = list(result["ids"])
-                await self._remove_from_live(
-                    live_ids,
-                    _metadata_by_id(live_ids, result["metadatas"]),
-                    reason=reason,
-                    process="evict_by_ids",
-                    details=f"batch of {len(live_ids)}, reason={reason}",
-                    outcome=DISPOSITION_ERASED,
-                )
-        except Exception as exc:
-            errors.append(exc)  # live phase: the archive and the sweep still run
-        live_set = set(live_ids)
-        try:
-            archive = self._archive_or_none()
-            if archive is not None:
-                archived_keys = await archive.archived_keys(requested)
-                archive_only = [key for key in archived_keys if key[0] not in live_set]
-                only_ids = list(dict.fromkeys(key[0] for key in archive_only))
-                if only_ids:
-                    if self._eviction_audit:
-                        records = [
-                            {"episode_id": eid, "agent_id": agent_id, "content_hash": content_hash,
-                             "episode_timestamp": episode_ts, "archive_ref": ""}
-                            for eid, content_hash, agent_id, episode_ts in archive_only
-                        ]
-                        try:
-                            await self._eviction_audit.record_batch_eviction(
-                                records,
-                                reason=reason,
-                                process="evict_by_ids",
-                                details=f"archive-only batch of {len(only_ids)}, reason={reason}",
-                                disposition=DISPOSITION_ERASED,
-                            )
-                        except Exception as exc:
-                            logger.warning("Eviction audit failed: %s", exc)
-                await archive.erase(requested)
-        except Exception as exc:
-            errors.append(exc)  # archive phase: raised after the sweep
+        # AD-1340 R2: restore_from_archive holds this lock from its archive read to its last sidecar insert, so a
+        # restore is wholly before these two phases (and erased by them) or wholly after (it finds no archived
+        # record). On success the sweep below needs no lock: no restore can re-create a copy for these ids.
+        async with self._get_store_write_lock():  # AD-1340 R2: restore cannot interleave the live and archive phases
+            try:
+                if not self._collection:
+                    raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # stopped or never started
+                result = self._collection.get(ids=requested, include=["metadatas"])
+                if result and result["ids"]:
+                    live_ids = list(result["ids"])
+                    await self._remove_from_live(
+                        live_ids,
+                        _metadata_by_id(live_ids, result["metadatas"]),
+                        reason=reason,
+                        process="evict_by_ids",
+                        details=f"batch of {len(live_ids)}, reason={reason}",
+                        outcome=DISPOSITION_ERASED,
+                    )
+            except Exception as exc:
+                errors.append(exc)  # live phase: the archive and the sweep still run
+            live_set = set(live_ids)
+            try:
+                archive = self._archive_or_none()
+                if archive is not None:
+                    archived_keys = await archive.archived_keys(requested)
+                    archive_only = [key for key in archived_keys if key[0] not in live_set]
+                    only_ids = list(dict.fromkeys(key[0] for key in archive_only))
+                    if only_ids:
+                        if self._eviction_audit:
+                            records = [
+                                {"episode_id": eid, "agent_id": agent_id, "content_hash": content_hash,
+                                 "episode_timestamp": episode_ts, "archive_ref": ""}
+                                for eid, content_hash, agent_id, episode_ts in archive_only
+                            ]
+                            try:
+                                await self._eviction_audit.record_batch_eviction(
+                                    records,
+                                    reason=reason,
+                                    process="evict_by_ids",
+                                    details=f"archive-only batch of {len(only_ids)}, reason={reason}",
+                                    disposition=DISPOSITION_ERASED,
+                                )
+                            except Exception as exc:
+                                logger.warning("Eviction audit failed: %s", exc)
+                    await archive.erase(requested)
+            except Exception as exc:
+                errors.append(exc)  # archive phase: raised after the sweep
         # Keyed on the REQUEST, not on what was found: a retry after a failure that
         # already deleted the live row finds no copy, and only this sweep still
         # clears the FTS text and index rows that failure left.
@@ -2755,43 +2762,48 @@ class EpisodicMemory:
         restore. Activation restarts
         from this one access, because the old access rows were deleted at eviction.
         Restore does not trigger capacity eviction; the next store() does.
+        AD-1340 R2: the store write lock is held from the archive read to the last
+        sidecar insert, so a concurrent ERASE of the id is wholly before or wholly after.
         """
         archive = self._archive_or_none()
         if archive is None or not self._collection:
             raise EpisodeArchiveUnavailable("episode_archive_unavailable")
-        records = await archive.get_records([episode_id])
-        if not records:
-            raise LookupError("episode_archive_not_found")
-        record = records[0]
-        episode = self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
-        async with self._get_store_write_lock():
+        # AD-1340 R2: ERASE holds this lock across its live and archive phases. The archive read, the live-id check,
+        # the access row, the add and the sidecar inserts are one critical section (unlike store(), BF-669), so an
+        # erase of this id is wholly before the restore (no record) or wholly after it (every copy removed).
+        async with self._get_store_write_lock():  # AD-1340 R2: read, check, add and index in one critical section with ERASE
+            records = await archive.get_records([episode_id])
+            if not records:
+                raise LookupError("episode_archive_not_found")
+            record = records[0]
+            episode = self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
             live = self._collection.get(ids=[record.episode_id], include=[])
             if live and live.get("ids"):
                 raise EpisodeArchiveConflict("episode_archive_restore_live_id")
             # Audit before action: an access that cannot be recorded stops the restore before anything changed.
             await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")
             self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
-        if self._fts_db is not None:
-            try:
-                fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
-                await self._fts_db.execute(
-                    "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
-                    (episode.id, fts_content),
-                )
-                await self._fts_db.commit()
-            except Exception:
-                logger.debug("AD-1340: FTS5 restore insert failed for %s", episode.id[:8], exc_info=True)
-        if self._participant_index is not None:
-            try:
-                participants = episode.anchors.participants if episode.anchors else []
-                await self._participant_index.record_episode(episode.id, episode.agent_ids, participants)
-            except Exception:
-                logger.debug("AD-1340: participant restore insert failed for %s", episode.id[:8], exc_info=True)
-        if self._activation_tracker:
-            try:
-                await self._activation_tracker.record_access(episode.id, access_type="archive_restore")
-            except Exception:
-                logger.debug("AD-1340: activation restore access failed for %s", episode.id[:8], exc_info=True)
+            if self._fts_db is not None:
+                try:
+                    fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
+                    await self._fts_db.execute(
+                        "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
+                        (episode.id, fts_content),
+                    )
+                    await self._fts_db.commit()
+                except Exception:
+                    logger.debug("AD-1340: FTS5 restore insert failed for %s", episode.id[:8], exc_info=True)
+            if self._participant_index is not None:
+                try:
+                    participants = episode.anchors.participants if episode.anchors else []
+                    await self._participant_index.record_episode(episode.id, episode.agent_ids, participants)
+                except Exception:
+                    logger.debug("AD-1340: participant restore insert failed for %s", episode.id[:8], exc_info=True)
+            if self._activation_tracker:
+                try:
+                    await self._activation_tracker.record_access(episode.id, access_type="archive_restore")
+                except Exception:
+                    logger.debug("AD-1340: activation restore access failed for %s", episode.id[:8], exc_info=True)
         return episode
 
     async def _evict(self) -> None:

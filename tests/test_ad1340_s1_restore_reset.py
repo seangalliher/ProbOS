@@ -10,6 +10,7 @@ pass cannot be vacuous. The default is ``archive`` from M4 on, but the memories 
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -27,7 +28,7 @@ from probos.cognitive.episodic import EpisodicMemory
 from probos.config import MemoryConfig
 from probos.infrastructure.backup_inventory import BackupTier, classify, is_excluded
 from probos.storage.registry import load_default_store_registry
-from probos.types import EpisodeStoreOutcome
+from probos.types import EpisodeStoreOutcome, EvictionDisposition
 from tests.test_ad1340_s1_erasure import _GONE, _LIVE_TRACES, _audit_for, _manager, _participants_named, _traces
 from tests.test_ad1340_s1_eviction import (
     _archive_rows,
@@ -400,3 +401,129 @@ async def test_reevicting_a_restored_episode_archives_its_current_metadata(tmp_p
         again = dict(_raw(em, [episode.id])["metadatas"][0])
         assert again["valid_until"] == 1234567890.0
         assert len(_archive_rows(rig.root)) == 1  # the same (id, content_hash) slot, now holding the newest payload
+
+
+# --- T10-T12 (AD-1340 R2: the restore and erase race) ----------------------------------------------------------
+
+
+async def _cancel_all(tasks: list[asyncio.Task[Any]]) -> None:
+    """Bound a failing test: cancel what is still pending so no task outlives the test."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_erase_during_restore_waits_then_erases_every_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD-1340 R2: an ERASE started inside the restore's awaits waits for the lock, then erases the restored copy."""
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
+        await rig.activations.record_access(_SUBJECT)
+        assert await em.evict_by_ids([_SUBJECT], reason="activation_decay") == 1
+        assert await _traces(em, rig.root, _SUBJECT) == {**_GONE, "episode_archive": 1}  # premise: archived only
+        original = em._episode_archive.record_access  # test-only private access
+
+        async def _erase_inside_restore(*args: Any, **kwargs: Any) -> Any:
+            result = await original(*args, **kwargs)
+            erase_task = asyncio.create_task(
+                em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE)
+            )
+            tasks.append(erase_task)
+            held["erase_task"] = erase_task
+            done, _ = await asyncio.wait({erase_task}, timeout=0.5)
+            held["erase_finished_inside_restore"] = bool(done)
+            held["archive_rows_inside_restore"] = len(_archive_rows(rig.root))
+            return result
+
+        monkeypatch.setattr(em._episode_archive, "record_access", _erase_inside_restore)
+        try:
+            restored = await em.restore_from_archive(_SUBJECT)
+
+            assert held["erase_finished_inside_restore"] is False  # the erase waited on the store write lock
+            assert held["archive_rows_inside_restore"] == 1  # the archive row was still there while restore held it
+            assert restored.id == _SUBJECT
+            erased, _ = await asyncio.wait({held["erase_task"]}, timeout=5)
+            assert erased, "the erase never finished after the restore released the lock"
+            assert await held["erase_task"] == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE  # chroma, FTS, activation, participants, archive, access
+        finally:
+            await _cancel_all(tasks)
+
+
+async def test_restore_during_erase_finds_no_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AD-1340 R2: a restore started inside the erase's archive phase waits, then finds no archived record."""
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
+        await rig.activations.record_access(_SUBJECT)
+        assert await em.evict_by_ids([_SUBJECT], reason="activation_decay") == 1
+        assert await _traces(em, rig.root, _SUBJECT) == {**_GONE, "episode_archive": 1}  # premise: archived only
+        original = em._episode_archive.erase  # test-only private access
+
+        async def _restore_inside_erase(*args: Any, **kwargs: Any) -> Any:
+            restore_task = asyncio.create_task(em.restore_from_archive(_SUBJECT))
+            tasks.append(restore_task)
+            held["restore_task"] = restore_task
+            done, _ = await asyncio.wait({restore_task}, timeout=0.5)
+            held["restore_finished_inside_erase"] = bool(done)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(em._episode_archive, "erase", _restore_inside_erase)
+        try:
+            erased = await em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE)
+
+            assert held["restore_finished_inside_erase"] is False  # the restore waited on the store write lock
+            assert erased == 1
+            finished, _ = await asyncio.wait({held["restore_task"]}, timeout=5)
+            assert finished, "the restore never finished after the erase released the lock"
+            with pytest.raises(LookupError, match="^episode_archive_not_found$"):
+                await held["restore_task"]
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE  # no archive_access row either
+        finally:
+            await _cancel_all(tasks)
+
+
+async def test_erase_during_the_restore_sidecar_tail_leaves_no_index_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD-1340 R2: an ERASE started between the restore's sidecar inserts cannot leave an index row behind."""
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
+        await rig.activations.record_access(_SUBJECT)
+        assert await em.evict_by_ids([_SUBJECT], reason="activation_decay") == 1
+        assert await _traces(em, rig.root, _SUBJECT) == {**_GONE, "episode_archive": 1}  # premise: archived only
+        original = rig.participants.record_episode
+
+        async def _erase_in_the_tail(*args: Any, **kwargs: Any) -> Any:
+            result = await original(*args, **kwargs)
+            erase_task = asyncio.create_task(
+                em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE)
+            )
+            tasks.append(erase_task)
+            held["erase_task"] = erase_task
+            done, _ = await asyncio.wait({erase_task}, timeout=0.5)
+            held["erase_finished_inside_restore"] = bool(done)
+            return result
+
+        monkeypatch.setattr(rig.participants, "record_episode", _erase_in_the_tail)
+        try:
+            await em.restore_from_archive(_SUBJECT)
+
+            assert held["erase_finished_inside_restore"] is False  # the erase waited for the activation insert too
+            erased, _ = await asyncio.wait({held["erase_task"]}, timeout=5)
+            assert erased, "the erase never finished after the restore released the lock"
+            assert await held["erase_task"] == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+            assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
+        finally:
+            await _cancel_all(tasks)
