@@ -65,6 +65,21 @@ function makeDeps(over: Partial<McpDeps> = {}): McpDeps {
   };
 }
 
+/** BF-899: thrown by `makeSchedule().runLast` when no poll has been captured. The
+ *  device-flow poll effect is PASSIVE, so the user code can already be on screen
+ *  before the effect has run and called `schedulePoll`; a silent no-op here let a
+ *  test "run" a poll that was never scheduled, then time out far from the cause. */
+class NoScheduledPollError extends Error {
+  constructor() {
+    super(
+      'runLast() was called before any poll was scheduled: the poll effect has not run yet. '
+      + 'Await the first schedule call first, e.g. '
+      + 'await waitFor(() => expect(sch.schedule).toHaveBeenCalledTimes(1)).',
+    );
+    this.name = 'NoScheduledPollError';
+  }
+}
+
 /** A capture scheduler (DD-2/DD-5 test double): records each scheduled poll fn
  *  and hands back a `cancel` spy. No real timers — the test drives the loop via
  *  `runLast`, so a pending->authenticated sequence is fully deterministic. */
@@ -72,7 +87,11 @@ function makeSchedule() {
   const fns: Array<() => void> = [];
   const cancel = vi.fn();
   const schedule: SchedulePoll = vi.fn((fn: () => void) => { fns.push(fn); return cancel; });
-  const runLast = () => { const fn = fns[fns.length - 1]; if (fn) fn(); };
+  const runLast = () => {
+    const fn = fns[fns.length - 1];
+    if (!fn) throw new NoScheduledPollError();
+    fn();
+  };
   return { schedule, cancel, runLast };
 }
 
@@ -379,6 +398,23 @@ describe('AD-1018 McpServersPanel', () => {
     expect(screen.getByTestId('mcp-device-waiting')).toBeTruthy();
   });
 
+  it('runLast throws NoScheduledPollError until a poll is scheduled, then runs the latest (BF-899)', () => {
+    const sch = makeSchedule();
+    let thrown: unknown;
+    try { sch.runLast(); } catch (e) { thrown = e; }
+    // Never a silent no-op: a poll that was not scheduled yet must fail loudly.
+    expect(thrown).toBeInstanceOf(NoScheduledPollError);
+    expect((thrown as Error).name).toBe('NoScheduledPollError');
+    expect((thrown as Error).message).toContain('schedule');
+    const first = vi.fn();
+    const second = vi.fn();
+    sch.schedule(first, 5);
+    sch.schedule(second, 5);
+    sch.runLast();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it('polls until authenticated then closes and marks the server authed (AD-1018a)', async () => {
     const sch = makeSchedule();
     const poll = vi.fn()
@@ -389,6 +425,9 @@ describe('AD-1018 McpServersPanel', () => {
     await openDeviceSection();
     fireEvent.click(screen.getByTestId('mcp-device-connect'));
     await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    // The poll effect is passive: it runs after the user code commits. Wait for the
+    // first schedule call before running it, or runLast has nothing to run (BF-899).
+    await waitFor(() => expect(sch.schedule).toHaveBeenCalledTimes(1));
     // First poll -> pending -> reschedules the next poll on the capture scheduler.
     await act(async () => { sch.runLast(); });
     await waitFor(() => expect(sch.schedule).toHaveBeenCalledTimes(2));
@@ -408,6 +447,8 @@ describe('AD-1018 McpServersPanel', () => {
     await openDeviceSection();
     fireEvent.click(screen.getByTestId('mcp-device-connect'));
     await waitFor(() => screen.getByTestId('mcp-device-user-code'));
+    // Passive poll effect: wait for the first schedule call before running it (BF-899).
+    await waitFor(() => expect(sch.schedule).toHaveBeenCalledTimes(1));
     await act(async () => { sch.runLast(); });
     await waitFor(() => expect(screen.getByTestId('mcp-cred-error').textContent).toContain('access_denied'));
     // Terminal error stops polling; Connect is enabled again (acts as Retry).
