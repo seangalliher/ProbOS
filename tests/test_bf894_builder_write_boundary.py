@@ -203,9 +203,10 @@ async def test_repair_write_is_path_validated(tmp_path: Path, alias: str) -> Non
 
 async def test_repair_write_control_legitimate_fix_is_written(tmp_path: Path) -> None:
     _make_pointer(tmp_path)
-    result, fix_calls = await _repair_build(tmp_path, "tests/test_fixed.py")
+    # BF-898 (#1563): a repair may no longer write a test; the legitimate control is a source file.
+    result, fix_calls = await _repair_build(tmp_path, "src/probos/fixed.py")
     assert fix_calls == 1
-    assert "tests/test_fixed.py" in result.files_written and "Forbidden" not in result.error
+    assert "src/probos/fixed.py" in result.files_written and "Forbidden" not in result.error
 
 
 def test_targeted_pytest_argv_is_anchored_under_work_dir(tmp_path: Path) -> None:
