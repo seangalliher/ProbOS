@@ -176,6 +176,22 @@ class Priority(StrEnum):
         return Priority.NORMAL
 
 
+class EvictionDisposition(StrEnum):
+    """AD-1340: what an episode eviction does with the episode.
+
+    ARCHIVE moves it to the episode archive (or, with
+    ``memory.eviction_disposition: delete``, deletes it as before AD-1340).
+    ERASE removes every copy, the archive included. ERASE is never derived
+    from a reason string: only the AD-754 erasure manager and the
+    qualification-test cleanup pass it. Defined in the foundation tier
+    because ``knowledge/erasure.py`` must name it and the knowledge layer may
+    not import ``probos.cognitive``.
+    """
+
+    ARCHIVE = "archive"
+    ERASE = "erase"
+
+
 @dataclass
 class GossipEntry:
     """State snapshot shared via gossip protocol."""

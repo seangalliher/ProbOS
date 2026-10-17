@@ -18,6 +18,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# AD-1340: the eviction audit owns its ``disposition`` vocabulary.
+DISPOSITION_ARCHIVED = "archived"
+DISPOSITION_ERASED = "erased"
+DISPOSITION_DELETED = "deleted"
+DISPOSITIONS: frozenset[str] = frozenset(
+    {DISPOSITION_ARCHIVED, DISPOSITION_ERASED, DISPOSITION_DELETED}
+)
+
 # Schema -------------------------------------------------------------------
 
 _SCHEMA = """\
