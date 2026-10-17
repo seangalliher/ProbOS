@@ -7,6 +7,7 @@ pass cannot be vacuous.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -718,3 +719,148 @@ async def test_get_versions_returns_every_row_for_the_id(tmp_path: Path) -> None
         assert all(record.episode_id == r1.episode_id for record in versions)  # the other id is not returned
         assert await archive.get_versions([]) == []
         assert await archive.get_versions(["ep-unknown"]) == []
+
+
+# --- A16-A18 (AD-1340 R3: one connection, one transaction at a time) ----------------------------------------------
+
+
+class _GatedCommit:
+    """Forwards everything to the real connection; its first ``commit()`` pauses until ``release`` is set."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self._gated = False
+
+    async def commit(self) -> Any:
+        if not self._gated:
+            self._gated = True
+            self.entered.set()
+            await self.release.wait()
+        return await self.inner.commit()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+_MARKED = ArchiveRecord(episode_id="ep-mark", document="marked", metadata={"content_hash": "h-mark", "timestamp": 1.0})
+
+
+async def _arm_failing_write(archive: EpisodeArchive) -> None:
+    """A real SQLite failure for the marked id, on the archive's own connection (nothing else is affected)."""
+    await archive._db.execute(  # test-only private access
+        "CREATE TEMP TRIGGER fail_marked BEFORE INSERT ON main.episode_archive WHEN NEW.episode_id = 'ep-mark' "
+        "BEGIN SELECT RAISE(ABORT, 'injected write failure'); END"
+    )
+    await archive._db.commit()
+
+
+async def _cancel_pending(tasks: list[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_a_failing_archive_write_never_rolls_back_a_concurrent_erase(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    tasks: list[asyncio.Task[Any]] = []
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        subject = _record(5)
+        assert await archive.archive([subject], reason="capacity") == frozenset({subject.episode_id})
+        await archive.record_access(subject.episode_id, accessor="test", purpose="premise")
+        assert _count(path, "episode_archive", subject.episode_id) == 1  # premise: an archive row ...
+        assert _count(path, "archive_access", subject.episode_id) == 1  # ... and an access row to erase
+        await _arm_failing_write(archive)
+        real = archive._db
+        archive._db = gate = _GatedCommit(real)
+        try:
+            erase_task = asyncio.create_task(archive.erase([subject.episode_id]))
+            tasks.append(erase_task)
+            await asyncio.wait_for(gate.entered.wait(), timeout=5)  # the erase has deleted and not yet committed
+            archive_task = asyncio.create_task(archive.archive([_MARKED], reason="capacity"))
+            tasks.append(archive_task)
+            done, _ = await asyncio.wait({archive_task}, timeout=0.3)
+            assert not done  # the archive waits for the erase's transaction
+            gate.release.set()
+            finished, _ = await asyncio.wait({erase_task, archive_task}, timeout=5)
+            assert finished == {erase_task, archive_task}, "a task never finished after the release"
+
+            assert erase_task.result() == frozenset({subject.episode_id})
+            with pytest.raises(sqlite3.IntegrityError, match="injected write failure"):
+                archive_task.result()
+            assert _count(path, "episode_archive", subject.episode_id) == 0
+            assert _count(path, "archive_access", subject.episode_id) == 0
+        finally:
+            gate.release.set()
+            archive._db = real
+            await _cancel_pending(tasks)
+
+
+async def test_a_failing_archive_write_never_rolls_back_a_concurrent_access_row(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    tasks: list[asyncio.Task[Any]] = []
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        subject = _record(5)
+        assert _count(path, "archive_access", subject.episode_id) == 0  # premise: no access row yet
+        await _arm_failing_write(archive)
+        real = archive._db
+        archive._db = gate = _GatedCommit(real)
+        try:
+            access_task = asyncio.create_task(
+                archive.record_access(subject.episode_id, accessor="test", purpose="concurrent")
+            )
+            tasks.append(access_task)
+            await asyncio.wait_for(gate.entered.wait(), timeout=5)  # the row is inserted and not yet committed
+            archive_task = asyncio.create_task(archive.archive([_MARKED], reason="capacity"))
+            tasks.append(archive_task)
+            done, _ = await asyncio.wait({archive_task}, timeout=0.3)
+            assert not done  # the archive waits for the access row's transaction
+            gate.release.set()
+            finished, _ = await asyncio.wait({access_task, archive_task}, timeout=5)
+            assert finished == {access_task, archive_task}, "a task never finished after the release"
+
+            assert access_task.result() is None
+            with pytest.raises(sqlite3.IntegrityError, match="injected write failure"):
+                archive_task.result()
+            assert _count(path, "archive_access", subject.episode_id) == 1
+        finally:
+            gate.release.set()
+            archive._db = real
+            await _cancel_pending(tasks)
+
+
+async def test_stop_waits_for_an_in_flight_erase(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    tasks: list[asyncio.Task[Any]] = []
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        subject = _record(5)
+        assert await archive.archive([subject], reason="capacity") == frozenset({subject.episode_id})
+        assert _count(path, "episode_archive", subject.episode_id) == 1  # premise: a row to erase
+        real = archive._db
+        archive._db = gate = _GatedCommit(real)
+        try:
+            erase_task = asyncio.create_task(archive.erase([subject.episode_id]))
+            tasks.append(erase_task)
+            await asyncio.wait_for(gate.entered.wait(), timeout=5)
+            stop_task = asyncio.create_task(archive.stop())
+            tasks.append(stop_task)
+            done, _ = await asyncio.wait({stop_task}, timeout=0.3)
+            assert not done  # stop waits for the erase's transaction
+            assert archive.is_open
+            gate.release.set()
+            finished, _ = await asyncio.wait({erase_task, stop_task}, timeout=5)
+            assert finished == {erase_task, stop_task}, "a task never finished after the release"
+
+            assert erase_task.result() == frozenset({subject.episode_id})
+            assert _count(path, "episode_archive", subject.episode_id) == 0
+            assert not archive.is_open
+        finally:
+            gate.release.set()
+            if archive.is_open:
+                archive._db = real
+            await _cancel_pending(tasks)

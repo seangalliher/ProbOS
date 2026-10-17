@@ -14,6 +14,7 @@ row's bytes are overwritten rather than left in free pages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -232,6 +233,7 @@ class EpisodeArchive:
 
     Not a recall surface: nothing on the default recall paths calls it.
     S2 adds the recorded lookups (by agent and time, by cue).
+    AD-1340 R3: mutations are serialised by `_write_lock`; reads are not.
     """
 
     def __init__(self, db_path: str, connection_factory: Any = None) -> None:
@@ -243,6 +245,11 @@ class EpisodeArchive:
         self._db_path = db_path
         self._factory = connection_factory
         self._db: Any = None
+        # AD-1340 R3: one connection, one transaction at a time. Every mutation (archive with its read-back,
+        # record_access, erase) and stop() hold this, so no writer's COMMIT or ROLLBACK can take another's
+        # statements. Reads never take it. Lock order: EpisodicMemory's store write lock, then this; this
+        # class never reaches the store lock.
+        self._write_lock = asyncio.Lock()
 
     @property
     def is_open(self) -> bool:
@@ -273,7 +280,8 @@ class EpisodeArchive:
         self._db = db
 
     async def stop(self) -> None:
-        db, self._db = self._db, None
+        async with self._write_lock:  # AD-1340 R3: never close inside another coroutine's transaction
+            db, self._db = self._db, None
         if db is not None:
             await _close_quietly(db)
 
@@ -294,7 +302,7 @@ class EpisodeArchive:
         be encoded is skipped with a warning and stays live. A failed write is
         rolled back and raises.
         """
-        db = self._require_open()
+        self._require_open()  # fail fast, before encoding
         now = time.time()
         rows: list[tuple[Any, ...]] = []
         for record in records:
@@ -312,21 +320,23 @@ class EpisodeArchive:
             ))
         if not rows:
             return frozenset()
-        try:
-            await db.executemany(
-                "INSERT INTO episode_archive (episode_id, content_hash, agent_id, episode_timestamp, "
-                "reason, archived_at, payload_format, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(episode_id, content_hash) DO UPDATE SET agent_id = excluded.agent_id, "
-                "episode_timestamp = excluded.episode_timestamp, reason = excluded.reason, "
-                "archived_at = excluded.archived_at, payload_format = excluded.payload_format, "
-                "payload = excluded.payload WHERE episode_archive.payload IS NOT excluded.payload",
-                rows,
-            )
-            await db.commit()  # the archive commit: nothing leaves the live store before this returns
-        except Exception:
-            await _rollback_quietly(db)
-            raise
-        return await self._present({(row[0], row[1]): row[7] for row in rows})
+        async with self._write_lock:  # AD-1340 R3: archive() writes, commits and reads back alone
+            db = self._require_open()
+            try:
+                await db.executemany(
+                    "INSERT INTO episode_archive (episode_id, content_hash, agent_id, episode_timestamp, "
+                    "reason, archived_at, payload_format, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(episode_id, content_hash) DO UPDATE SET agent_id = excluded.agent_id, "
+                    "episode_timestamp = excluded.episode_timestamp, reason = excluded.reason, "
+                    "archived_at = excluded.archived_at, payload_format = excluded.payload_format, "
+                    "payload = excluded.payload WHERE episode_archive.payload IS NOT excluded.payload",
+                    rows,
+                )
+                await db.commit()  # the archive commit: nothing leaves the live store before this returns
+            except Exception:
+                await _rollback_quietly(db)
+                raise
+            return await self._present({(row[0], row[1]): row[7] for row in rows})
 
     async def _present(self, wanted: dict[tuple[str, str], bytes]) -> frozenset[str]:
         db = self._require_open()
@@ -438,30 +448,32 @@ class EpisodeArchive:
             raise EpisodeArchiveIntegrityError(f"episode_archive_rows_undecodable:{undecodable}")
 
     async def record_access(self, episode_id: str, *, accessor: str, purpose: str) -> None:
-        db = self._require_open()
-        try:
-            await db.execute(
-                "INSERT INTO archive_access (episode_id, accessed_at, accessor, purpose) "
-                "VALUES (?, ?, ?, ?)",
-                (episode_id, time.time(), accessor, purpose),
-            )
-            await db.commit()
-        except Exception:
-            await _rollback_quietly(db)
-            raise
+        async with self._write_lock:  # AD-1340 R3: the access row commits alone
+            db = self._require_open()
+            try:
+                await db.execute(
+                    "INSERT INTO archive_access (episode_id, accessed_at, accessor, purpose) "
+                    "VALUES (?, ?, ?, ?)",
+                    (episode_id, time.time(), accessor, purpose),
+                )
+                await db.commit()
+            except Exception:
+                await _rollback_quietly(db)
+                raise
 
     async def erase(self, episode_ids: Sequence[str]) -> frozenset[str]:
         """Delete every archive row and access row for these ids; return the ids that had rows."""
-        db = self._require_open()
-        wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
-        present = {key[0] for key in await self.archived_keys(wanted)}
-        try:
-            for chunk in _chunks(wanted, _SQL_CHUNK):
-                marks = ",".join("?" * len(chunk))
-                await db.execute(f"DELETE FROM episode_archive WHERE episode_id IN ({marks})", chunk)
-                await db.execute(f"DELETE FROM archive_access WHERE episode_id IN ({marks})", chunk)
-            await db.commit()
-        except Exception:
-            await _rollback_quietly(db)
-            raise
-        return frozenset(present)
+        async with self._write_lock:  # AD-1340 R3: the erase transaction commits alone
+            db = self._require_open()
+            wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
+            present = {key[0] for key in await self.archived_keys(wanted)}
+            try:
+                for chunk in _chunks(wanted, _SQL_CHUNK):
+                    marks = ",".join("?" * len(chunk))
+                    await db.execute(f"DELETE FROM episode_archive WHERE episode_id IN ({marks})", chunk)
+                    await db.execute(f"DELETE FROM archive_access WHERE episode_id IN ({marks})", chunk)
+                await db.commit()
+            except Exception:
+                await _rollback_quietly(db)
+                raise
+            return frozenset(present)

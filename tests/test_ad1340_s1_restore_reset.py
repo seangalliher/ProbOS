@@ -23,8 +23,10 @@ from probos.cognitive.episode_archive import (
     ARCHIVE_FILENAME,
     EpisodeArchiveConflict,
     EpisodeArchiveUnavailable,
+    EpisodeErasureIncomplete,
 )
 from probos.cognitive.episodic import EpisodicMemory
+from probos.cognitive.eviction_audit import DISPOSITION_ERASED
 from probos.config import MemoryConfig
 from probos.infrastructure.backup_inventory import BackupTier, classify, is_excluded
 from probos.storage.registry import load_default_store_registry
@@ -526,4 +528,209 @@ async def test_erase_during_the_restore_sidecar_tail_leaves_no_index_row(
             assert await _traces(em, rig.root, _SUBJECT) == _GONE
             assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
         finally:
+            await _cancel_all(tasks)
+
+
+# --- T13-T17 (AD-1340 R3: the store tail and the archive eviction inside an erase) -------------------------------
+
+_TAIL_WAIT = "probos.cognitive.episodic._ERASE_STORE_TAIL_WAIT_S"
+
+
+def _start_erase(em: EpisodicMemory, tasks: list[asyncio.Task[Any]]) -> asyncio.Task[Any]:
+    task = asyncio.create_task(em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE))
+    tasks.append(task)
+    return task
+
+
+class _FtsTailProxy:
+    """Forwards to the real FTS connection; the first episode_fts INSERT first calls ``before_insert``."""
+
+    def __init__(self, inner: Any, before_insert: Any) -> None:
+        self.inner = inner
+        self.before_insert = before_insert
+        self.armed = True
+
+    async def execute(self, sql: str, params: Any = ()) -> Any:
+        if self.armed and sql.lstrip().startswith("INSERT INTO episode_fts"):
+            self.armed = False
+            await self.before_insert()
+        return await self.inner.execute(sql, params)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+async def test_erase_during_the_store_participant_tail_waits_then_leaves_no_index_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD-1340 R3: an ERASE that starts inside store()'s participant insert waits for it, then sweeps the new row."""
+    monkeypatch.setattr(_TAIL_WAIT, 2.0)  # a mutant fails in 2 s and never hangs
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        original = rig.participants.record_episode
+
+        async def _erase_before_the_participant_insert(*args: Any, **kwargs: Any) -> Any:
+            held["live_in_tail"] = _raw(em, [_SUBJECT])["ids"]
+            held["participants_in_tail"] = _sidecar_counts(rig.root, _SUBJECT)["participants"]
+            held["erase_task"] = _start_erase(em, tasks)
+            done, _ = await asyncio.wait({held["erase_task"]}, timeout=0.5)
+            held["erase_finished_in_tail"] = bool(done)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(rig.participants, "record_episode", _erase_before_the_participant_insert)
+        try:
+            outcome = await asyncio.wait_for(em.store(_episode(0)), timeout=10)
+
+            assert held["live_in_tail"] == [_SUBJECT]  # premise: the add finished, the episode is live
+            assert held["participants_in_tail"] == 0  # premise: the participant insert had not run
+            assert outcome is EpisodeStoreOutcome.STORED
+            assert held["erase_finished_in_tail"] is False  # the erase waited for the tail
+            finished, _ = await asyncio.wait({held["erase_task"]}, timeout=5)
+            assert finished, "the erase never finished after the store tail did"
+            assert await held["erase_task"] == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+            assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
+        finally:
+            await _cancel_all(tasks)
+
+
+async def test_erase_during_the_store_fts_tail_waits_then_leaves_no_fts_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD-1340 R3: an ERASE that starts inside store()'s FTS insert waits for it, then sweeps the new FTS text."""
+    monkeypatch.setattr(_TAIL_WAIT, 2.0)
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+
+        async def _erase_before_the_fts_insert() -> None:
+            held["live_in_tail"] = _raw(em, [_SUBJECT])["ids"]
+            held["fts_in_tail"] = _sidecar_counts(rig.root, _SUBJECT)["fts"]
+            held["erase_task"] = _start_erase(em, tasks)
+            done, _ = await asyncio.wait({held["erase_task"]}, timeout=0.5)
+            held["erase_finished_in_tail"] = bool(done)
+
+        real = em._fts_db  # test-only private access
+        em._fts_db = _FtsTailProxy(real, _erase_before_the_fts_insert)
+        try:
+            outcome = await asyncio.wait_for(em.store(_episode(0)), timeout=10)
+
+            assert held["live_in_tail"] == [_SUBJECT]  # premise: the add finished, the episode is live
+            assert held["fts_in_tail"] == 0  # premise: the FTS insert had not run
+            assert outcome is EpisodeStoreOutcome.STORED
+            assert held["erase_finished_in_tail"] is False  # the erase waited for the tail
+            finished, _ = await asyncio.wait({held["erase_task"]}, timeout=5)
+            assert finished, "the erase never finished after the store tail did"
+            assert await held["erase_task"] == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+            assert _sidecar_counts(rig.root, _SUBJECT) == {"fts": 0, "activation": 0, "participants": 0}
+        finally:
+            em._fts_db = real
+            await _cancel_all(tasks)
+
+
+async def test_erase_reports_a_store_tail_that_does_not_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD-1340 R3: a tail that outlives the bound makes the ERASE raise; a retry then completes it."""
+    monkeypatch.setattr(_TAIL_WAIT, 0.2)
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        original = rig.participants.record_episode
+
+        async def _erase_then_finish_late(*args: Any, **kwargs: Any) -> Any:
+            erase_task = _start_erase(em, tasks)
+            done, _ = await asyncio.wait({erase_task}, timeout=5)
+            held["erase_finished"] = bool(done)
+            held["erase_error"] = erase_task.exception() if done and not erase_task.cancelled() else None
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(rig.participants, "record_episode", _erase_then_finish_late)
+        try:
+            outcome = await asyncio.wait_for(em.store(_episode(0)), timeout=10)
+
+            assert held["erase_finished"] is True  # premise: the erase gave up on the tail inside it
+            assert outcome is EpisodeStoreOutcome.STORED
+            with pytest.raises(EpisodeErasureIncomplete, match="^erasure_store_tail_pending$"):
+                raise held["erase_error"]
+            assert _raw(em, [_SUBJECT])["ids"] == []  # the live row was erased all the same
+            counts = _sidecar_counts(rig.root, _SUBJECT)
+            assert counts["fts"] == 0
+            assert counts["participants"] == 2  # premise: the late tail wrote after the sweep
+
+            retried = await asyncio.wait_for(
+                em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE), timeout=10,
+            )
+
+            assert retried == 0
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+        finally:
+            await _cancel_all(tasks)
+
+
+async def test_a_cancelled_store_tail_never_blocks_erasure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AD-1340 R3: a store() cancelled inside its tail leaves no registry entry, so ERASE does not wait for it."""
+    tasks: list[asyncio.Task[Any]] = []
+    entered = asyncio.Event()
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+
+        async def _stall_in_the_tail(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await asyncio.Event().wait()  # never fires: only cancellation leaves this
+
+        monkeypatch.setattr(rig.participants, "record_episode", _stall_in_the_tail)
+        store_task = asyncio.create_task(em.store(_episode(0)))
+        tasks.append(store_task)
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            assert list(em._get_store_tails()) == [_SUBJECT]  # premise: the tail is registered while it stalls
+            store_task.cancel()
+            results = await asyncio.gather(store_task, return_exceptions=True)
+
+            assert isinstance(results[0], asyncio.CancelledError)
+            assert em._get_store_tails() == {}
+            monkeypatch.setattr(_TAIL_WAIT, 0.5)
+            erased = await asyncio.wait_for(
+                em.evict_by_ids([_SUBJECT], reason="erasure", disposition=EvictionDisposition.ERASE), timeout=10,
+            )
+
+            assert erased == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+        finally:
+            await _cancel_all(tasks)
+
+
+async def test_an_archive_eviction_inside_an_erase_is_erased_too(tmp_path: Path) -> None:
+    """AD-1340 R3: an archive row written after the erase read the archive keys is still deleted (S2 prerequisite d)."""
+    tasks: list[asyncio.Task[Any]] = []
+    held: dict[str, Any] = {}
+    async with _memory(tmp_path, "archive") as rig:
+        em = rig.em
+        assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
+        original = em._eviction_audit.record_batch_eviction  # test-only private access
+
+        async def _archive_inside_the_erase(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("disposition") == DISPOSITION_ERASED and "evicted" not in held:
+                held["evicted"] = await em.evict_by_ids([_SUBJECT], reason="activation_decay")
+                held["archive_rows_inside_erase"] = len(_archive_rows(rig.root))
+            return await original(*args, **kwargs)
+
+        em._eviction_audit.record_batch_eviction = _archive_inside_the_erase
+        erase_task = _start_erase(em, tasks)
+        try:
+            finished, _ = await asyncio.wait({erase_task}, timeout=10)
+            assert finished, "the erase never finished"
+            assert held["evicted"] == 1  # premise: the archive eviction ran inside the erase
+            assert held["archive_rows_inside_erase"] == 1  # premise: it wrote an archive row
+            assert await erase_task == 1
+            assert await _traces(em, rig.root, _SUBJECT) == _GONE
+            assert _archive_rows(rig.root) == []
+        finally:
+            del em._eviction_audit.record_batch_eviction  # back to the class method
             await _cancel_all(tasks)

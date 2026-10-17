@@ -35,10 +35,12 @@ from probos.cognitive.episode_archive import (
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.memory_probes import _cleanup_test_episodes
 from probos.cognitive.participant_index import ParticipantIndex
+from probos.config import SystemConfig
 from probos.knowledge.erasure import ErasureCascadeIncomplete, ErasureManager
 from probos.startup.cognitive_services import (
     ACTIVATION_TRACKER_DB,
     PARTICIPANT_INDEX_DB,
+    init_cognitive_services,
     wire_erasure_sidecar_paths,
 )
 from probos.types import Episode, EpisodeStoreOutcome, EvictionDisposition
@@ -1007,6 +1009,85 @@ async def test_startup_sidecar_paths_reach_erase(tmp_path: Path) -> None:
         )[0][0] == 2  # premise: every sidecar holds the episode, and nothing is wired to the memory
 
         wire_erasure_sidecar_paths(em, tmp_path)
+        erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
+
+        assert erased == 1
+        assert _query(fts_path, "SELECT count(*) FROM episode_fts WHERE episode_id = ?", (episode.id,))[0][0] == 0
+        assert _query(
+            activation_path, "SELECT count(*) FROM episode_access_log WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 0
+        assert _query(
+            participants_path, "SELECT count(*) FROM episode_participants WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 0
+    finally:
+        await em.stop()
+
+
+# --- R30 (AD-1340 R3: the production call, not the helper) ---------------------------------------------------
+
+
+async def test_init_cognitive_services_declares_the_sidecar_files_to_erase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real init_cognitive_services() declares the sidecar files; deleting that call leaves them undeclared."""
+    episode = _episode(0)
+    activation_path = tmp_path / ACTIVATION_TRACKER_DB
+    participants_path = tmp_path / PARTICIPANT_INDEX_DB
+    fts_path = tmp_path / "episode_fts.db"
+    activations = ActivationTracker(db_path=str(activation_path))
+    participants = ParticipantIndex(db_path=str(participants_path))
+    await activations.start()
+    await participants.start()
+    try:
+        await activations.record_access(episode.id)
+        await participants.record_episode(episode.id, ["agent-a"], ["worf"])
+    finally:
+        await activations.stop()
+        await participants.stop()
+    em = EpisodicMemory(db_path=str(tmp_path / "episodic.db"), relevance_threshold=0.0, eviction_disposition="archive")
+    monkeypatch.setenv("PROBOS_SKIP_EPISODIC_MIGRATIONS", "1")
+    config = SystemConfig()
+    config.self_mod.enabled = False
+    config.knowledge.enabled = False
+    config.records.enabled = False
+    config.orientation.enabled = False
+    config.social_verification.enabled = False
+    config.consultation.enabled = False
+    config.expertise.enabled = False
+    config.dreaming.activation_enabled = False  # neither sidecar is then wired by startup
+    try:
+        await init_cognitive_services(
+            config=config,
+            data_dir=tmp_path,
+            registry=object(),
+            pools={},
+            llm_client=object(),
+            trust_network=object(),
+            hebbian_router=object(),
+            episodic_memory=em,
+            intent_bus=object(),
+            working_memory=object(),
+            event_log=object(),
+            workflow_cache=object(),
+            qa_reports={},
+            submit_intent_with_consensus_fn=lambda *args, **kwargs: None,
+            register_designed_agent_fn=lambda *args, **kwargs: None,
+            unregister_designed_agent_fn=lambda *args, **kwargs: None,
+            create_designed_pool_fn=lambda *args, **kwargs: None,
+            set_probationary_trust_fn=lambda *args, **kwargs: None,
+            add_skill_to_agents_fn=lambda *args, **kwargs: None,
+            create_pool_fn=lambda *args, **kwargs: None,
+        )
+        assert em._activation_tracker is None and em._participant_index is None  # premise: nothing is wired
+        assert await em.store(episode) is EpisodeStoreOutcome.STORED
+        assert _query(fts_path, "SELECT count(*) FROM episode_fts WHERE episode_id = ?", (episode.id,))[0][0] == 1
+        assert _query(
+            activation_path, "SELECT count(*) FROM episode_access_log WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 1
+        assert _query(
+            participants_path, "SELECT count(*) FROM episode_participants WHERE episode_id = ?", (episode.id,),
+        )[0][0] == 2  # premise: the seeded rows are there
+
         erased = await em.evict_by_ids([episode.id], reason="user_request", disposition=EvictionDisposition.ERASE)
 
         assert erased == 1

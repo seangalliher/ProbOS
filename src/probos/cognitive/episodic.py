@@ -57,6 +57,9 @@ logger = logging.getLogger(__name__)
 
 # AD-1340: at most one "episode archive unavailable" warning per interval.
 _ARCHIVE_WARN_INTERVAL_S = 300.0
+# AD-1340 R3: how long ERASE waits for an in-flight store() tail (FTS and participant inserts) before it reports
+# the erase incomplete. A tail is two local SQLite writes; the bound only stops a stuck tail from hanging erasure.
+_ERASE_STORE_TAIL_WAIT_S = 10.0
 
 # AD-1340 R1: the FTS5 sidecar file, beside ``db_path``; ERASE reaches it by this name.
 _FTS_FILENAME = "episode_fts.db"
@@ -1222,6 +1225,21 @@ async def _delete_fts_rows(db: Any, ids: list[str]) -> bool:
     return cleared
 
 
+async def _store_tails_finished(events: list[asyncio.Event]) -> bool:
+    """AD-1340 R3: wait (bounded) for in-flight store() tails; False if one did not finish in time."""
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in events)), timeout=_ERASE_STORE_TAIL_WAIT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "AD-1340: %d store tail(s) of an erased episode did not finish within %.1fs; the erase is incomplete",
+            len(events), _ERASE_STORE_TAIL_WAIT_S,
+        )
+        return False
+    return True
+
+
 async def _erase_store_file(kind: str, path: str | None, ids: list[str]) -> bool:
     """AD-1340 R1: ERASE through the sidecar's own class when no open handle is wired.
 
@@ -1366,6 +1384,7 @@ class EpisodicMemory:
         self._security_gate: Any = None  # AD-607h: store-time prompt-injection gate
         self._security_event_emitter: Any = None  # AD-607: emit hook for security events
         self._store_write_lock = asyncio.Lock()
+        self._store_tails: dict[str, list[asyncio.Event]] = {}  # AD-1340 R3: see _get_store_tails
 
     @property
     def is_available(self) -> bool:
@@ -1799,6 +1818,25 @@ class EpisodicMemory:
             raise TypeError("_store_write_lock must be an asyncio.Lock")
         return lock
 
+    def _get_store_tails(self) -> dict[str, list[asyncio.Event]]:
+        """AD-1340 R3: episode ids whose store() tail (FTS and participant inserts) has not finished."""
+        tails = getattr(self, "_store_tails", None)
+        if tails is None:
+            tails = {}
+            self._store_tails = tails
+        return tails
+
+    def _finish_store_tail(self, episode_id: str, done: asyncio.Event) -> None:
+        """AD-1340 R3: the store tail for ``episode_id`` finished, failed or was cancelled."""
+        tails = self._get_store_tails()
+        pending = tails.get(episode_id)
+        if pending is not None:
+            if done in pending:
+                pending.remove(done)
+            if not pending:
+                del tails[episode_id]
+        done.set()  # wake an ERASE waiting for this tail
+
     async def store(
         self,
         episode: Episode,
@@ -2008,30 +2046,37 @@ class EpisodicMemory:
                 documents=[document],
                 metadatas=[metadata],
             )
+            # AD-1340 R3: register the tail inside the lock (synchronously, no await), so an ERASE that runs after
+            # this add waits for the FTS and participant inserts below before it sweeps. BF-669's release is unchanged.
+            tail_done = asyncio.Event()
+            self._get_store_tails().setdefault(episode.id, []).append(tail_done)
 
-        # BF-669: the primary lock is released before every secondary await and
-        # before reconsolidation, evolution, and eviction work.
-        # AD-567b: FTS5 dual-write
-        if self._fts_db is not None:
-            try:
-                fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
-                await self._fts_db.execute(
-                    "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
-                    (episode.id, fts_content),
-                )
-                await self._fts_db.commit()
-            except Exception:
-                logger.debug("AD-567b: FTS5 insert failed for %s", episode.id[:8], exc_info=True)
+        try:
+            # BF-669: the primary lock is released before every secondary await and
+            # before reconsolidation, evolution, and eviction work.
+            # AD-567b: FTS5 dual-write
+            if self._fts_db is not None:
+                try:
+                    fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
+                    await self._fts_db.execute(
+                        "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
+                        (episode.id, fts_content),
+                    )
+                    await self._fts_db.commit()
+                except Exception:
+                    logger.debug("AD-567b: FTS5 insert failed for %s", episode.id[:8], exc_info=True)
 
-        # AD-570b: Participant index dual-write
-        if self._participant_index is not None:
-            try:
-                participants = episode.anchors.participants if episode.anchors else []
-                await self._participant_index.record_episode(
-                    episode.id, episode.agent_ids, participants,
-                )
-            except Exception:
-                logger.debug("AD-570b: Participant index insert failed for %s", episode.id[:8], exc_info=True)
+            # AD-570b: Participant index dual-write
+            if self._participant_index is not None:
+                try:
+                    participants = episode.anchors.participants if episode.anchors else []
+                    await self._participant_index.record_episode(
+                        episode.id, episode.agent_ids, participants,
+                    )
+                except Exception:
+                    logger.debug("AD-570b: Participant index insert failed for %s", episode.id[:8], exc_info=True)
+        finally:
+            self._finish_store_tail(episode.id, tail_done)  # AD-1340 R3: also on failure and cancellation
 
         reconsolidation_scheduler = getattr(self, "_reconsolidation_scheduler", None)
         if reconsolidation_scheduler is not None and episode.importance >= 7:
@@ -2638,6 +2683,7 @@ class EpisodicMemory:
         AD-1340 R2: the live and archive phases run inside the store write lock
         (the sweep after release), so a concurrent restore of an id is wholly before
         or wholly after them.
+        AD-1340 R3: before the sweep it waits (bounded) for any store() of these ids whose index inserts were still running, and raises `erasure_store_tail_pending` if one does not finish.
         """
         requested = list(dict.fromkeys(eid for eid in episode_ids if eid))
         if not requested:
@@ -2645,6 +2691,7 @@ class EpisodicMemory:
         errors: list[Exception] = []
         live_ids: list[str] = []
         only_ids: list[str] = []
+        tail_events: list[asyncio.Event] = []
         # AD-1340 R2: restore_from_archive holds this lock from its archive read to its last sidecar insert, so a
         # restore is wholly before these two phases (and erased by them) or wholly after (it finds no archived
         # record). On success the sweep below needs no lock: no restore can re-create a copy for these ids.
@@ -2692,6 +2739,12 @@ class EpisodicMemory:
                     await archive.erase(requested)
             except Exception as exc:
                 errors.append(exc)  # archive phase: raised after the sweep
+            # AD-1340 R3: a store() whose add ran before this lock was taken may still be in its FTS and participant
+            # inserts (BF-669 releases the lock before them). Snapshot those tails here, inside the lock, so a store
+            # that starts after this erase is not waited for; wait for them below, outside the lock.
+            tail_events = [event for eid in requested for event in self._get_store_tails().get(eid, ())]
+        if tail_events and not await _store_tails_finished(tail_events):
+            errors.append(EpisodeErasureIncomplete("erasure_store_tail_pending"))  # a late insert may follow the sweep
         # Keyed on the REQUEST, not on what was found: a retry after a failure that
         # already deleted the live row finds no copy, and only this sweep still
         # clears the FTS text and index rows that failure left.
