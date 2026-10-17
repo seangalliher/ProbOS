@@ -5,13 +5,14 @@ tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
 model: claude-haiku-5-5
 ---
 
-> **Model independence.** The Copilot version of this reviewer pins GPT models
-> (`GPT-6.1 Sol` first) so the reviewer is a different model family from the
-> author, who is usually Claude. Claude Code subagents run Claude models only,
-> so this port runs on a different Claude model from the Builder (Haiku
-> reviewing Sonnet) instead. That gives a fresh read, not a different model
-> family. When the change is high-risk or cross-family review is required,
-> also run the Copilot `Diff Reviewer` (`.github/agents/diff-reviewer.agent.md`).
+> **Model independence.** The Copilot version of this reviewer runs on a GPT
+> model (`gpt-6.1-sol`, passed explicitly on each call) so the reviewer is a
+> different model family from the author, who is usually Claude. Claude Code
+> subagents run Claude models only, so this port runs on a different Claude
+> model from the Builder (Haiku reviewing Sonnet) instead. That gives a fresh
+> read, not a different model family. When the change is high-risk or
+> cross-family review is required, also run the Copilot `Diff Reviewer`
+> (`.github/agents/diff-reviewer.agent.md`).
 
 You review a diff someone else is about to commit. You did not write it and you
 have no stake in it being correct.
