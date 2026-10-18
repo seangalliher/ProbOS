@@ -1780,3 +1780,850 @@ d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py
 - **The `--show-origin -z` field layout** used by `_config_change_names`: F2 checks it; the refusal itself does not depend on it (Section 2c note).
 - **`git checkout -q --detach <sha> --`** with the trailing `--`: R1 `detached` checks it. If git rejects that form, drop the `--` for the detached form only and say so in the build report.
 - No live database or vessel data was opened.
+
+## Amendment A1 (2026-10-18): a bounded off-loop hooks listing, a lossless config comparison, escaped names, and fail-closed hooks location and test phase
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18. This is a read-only consult after M1's cross-family review round 1 (GPT-6.1 Sol: one P1 and three P2 findings, all regressions). The orchestrator appends it, so no line above moves. It supersedes the contract lines named in A1.12. Every SEARCH is against the STAGED M1 candidate (tree `3eeed557`). The Builder applies it tests first: A1.9 and A1.10 first, which must fail on the candidate, then A1.1 to A1.8.
+
+**Gaps.**
+- **F1 (P1, ordinary).** `_hooks_listing` (`builder.py:1700-1721`) sorts the hooks directory without a bound and calls `read_bytes()` on every non-directory entry. It follows symlinks, runs on the event loop, can block on a FIFO for good on POSIX, and allocates whole files.
+- **F2 (P2, ordinary).** `_run_git` decodes with `errors="replace"` (`:1612`), so config values that differ only in undecodable bytes compare equal, and the build commits.
+- **F3 (P2, ordinary).** Origins, keys and hook names reach `result.error` (rendered as Markdown) and the log with no escaping and no length bound.
+- **F4 (P2, injected only).** A non-zero `--git-common-dir` becomes `hooks_dir = None` and an empty listing that counts as success.
+- **Found while repairing (D23, D24):**
+  - a cancellation or exception during the test phase or the comparison runs git in `finally`;
+  - an unbounded config listing is parsed on the event loop;
+  - the snapshot's `repr` would include the config text.
+
+**Decisions** (recorded on #1585): **D19** lossless listing (A1.2). **D20** bounded `lstat` listing off the loop (A1.3). **D21** `_display_token` (A1.3). **D22** hooks-location table (A1.3, A1.4). **D23** unsafe from the start of the test phase (A1.4, A1.5). **D24** config listing bound (A1.3).
+
+### A1.1 `src/probos/cognitive/builder.py`: import (against `builder.py:15-17`)
+SEARCH:
+```python
+import os
+import re
+import subprocess
+```
+REPLACE:
+```python
+import os
+import re
+import stat
+import subprocess
+```
+
+### A1.2 `src/probos/cognitive/builder.py`: `_run_git` gains `lossless` (against `builder.py:1592-1617`; K1's line is unchanged)
+SEARCH:
+```python
+async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
+    """Run a git command asynchronously.  Returns (returncode, stdout, stderr).
+
+    Uses subprocess.run in a thread executor for Windows compatibility —
+    asyncio.create_subprocess_exec requires ProactorEventLoop which
+    uvicorn/FastAPI may not provide.
+    """
+
+    def _sync_run() -> tuple[int, str, str]:
+        # BF-892 (#1543): the allowlist. This git runs in the tree the model writes
+        # into, so its config and hooks are not ProbOS's own; these local verbs need
+        # only PATH and the home variables (identity from ~/.gitconfig), HOME included.
+        result = subprocess.run(
+            ["git", *HARDENED_GIT_CONFIG_ARGS, *args],  # BF-904a: no repository hook or fsmonitor runs
+            env=build_command_env(_GIT_HOME_NAMES),
+            cwd=work_dir,
+            capture_output=True,
+        )
+        return (
+            result.returncode,
+            (result.stdout or b"").decode(errors="replace").strip(),
+            (result.stderr or b"").decode(errors="replace").strip(),
+        )
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_run)
+```
+REPLACE:
+```python
+async def _run_git(args: list[str], work_dir: str, *, lossless: bool = False) -> tuple[int, str, str]:
+    """Run a git command asynchronously.  Returns (returncode, stdout, stderr).
+
+    Uses subprocess.run in a thread executor for Windows compatibility —
+    asyncio.create_subprocess_exec requires ProactorEventLoop which
+    uvicorn/FastAPI may not provide.
+
+    BF-904a A1: with *lossless*, stdout is decoded with ``surrogateescape`` and not stripped,
+    so two outputs are equal exactly when their bytes are. That text can hold lone surrogates:
+    it stays in memory, or passes through ``_display_token`` before any message, log or event.
+    """
+
+    def _sync_run() -> tuple[int, str, str]:
+        # BF-892 (#1543): the allowlist. This git runs in the tree the model writes
+        # into, so its config and hooks are not ProbOS's own; these local verbs need
+        # only PATH and the home variables (identity from ~/.gitconfig), HOME included.
+        result = subprocess.run(
+            ["git", *HARDENED_GIT_CONFIG_ARGS, *args],  # BF-904a: no repository hook or fsmonitor runs
+            env=build_command_env(_GIT_HOME_NAMES),
+            cwd=work_dir,
+            capture_output=True,
+        )
+        stdout = result.stdout or b""
+        return (
+            result.returncode,
+            stdout.decode(errors="surrogateescape") if lossless else stdout.decode(errors="replace").strip(),  # BF-904a A1: lossless only on request
+            (result.stderr or b"").decode(errors="replace").strip(),
+        )
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_run)
+```
+
+### A1.3 `src/probos/cognitive/builder.py`: the snapshot block (against `builder.py:1686-1784`, whole)
+SEARCH:
+```python
+#: BF-904a (#1585): the listing of every config source git resolves for a tree (system, global,
+#: the repository's shared config, config.worktree, every include). Its values never leave memory.
+_GIT_CONFIG_LISTING_ARGS: tuple[str, ...] = ("config", "--list", "--show-origin", "-z")
+
+
+@dataclass(frozen=True)
+class _GitSafetySnapshot:
+    """BF-904a (#1585): what git would run on its own in a tree, read before model code runs."""
+
+    config: str  # the `git config --list --show-origin -z` listing
+    hooks_dir: Path | None  # the repository's own hooks directory; None outside a repository
+    hooks: tuple[tuple[str, str], ...]  # (entry name, sha256 of its bytes or "dir"), by name
+
+
+def _hooks_listing(hooks_dir: Path | None) -> tuple[tuple[str, str], ...] | None:
+    """BF-904a: each entry of *hooks_dir* with the sha256 of its bytes ("dir" for a directory).
+
+    Read in Python, so no git runs. A missing directory is an empty listing; any other read
+    failure is None, which the caller counts as a change.
+    """
+    if hooks_dir is None:
+        return ()
+    try:
+        entries = sorted(hooks_dir.iterdir(), key=lambda entry: entry.name)
+    except FileNotFoundError:
+        return ()
+    except OSError:
+        return None
+    listing: list[tuple[str, str]] = []
+    try:
+        for entry in entries:
+            digest = "dir" if entry.is_dir() else hashlib.sha256(entry.read_bytes()).hexdigest()
+            listing.append((entry.name, digest))
+    except OSError:
+        return None
+    return tuple(listing)
+
+
+def _config_change_names(before: str, after: str) -> str:
+    """BF-904a: the sources and keys whose entries differ between two `-z` listings, never a value."""
+
+    def entries(listing: str) -> set[tuple[str, str]]:
+        fields = listing.split("\0")
+        return {(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)}
+
+    differing = entries(before) ^ entries(after)
+    names = sorted({origin + " " + entry.split("\n", 1)[0] for origin, entry in differing})
+    shown = ", ".join(names[:10]) + (", ..." if len(names) > 10 else "")
+    return f"({shown})" if shown else "(the listing changed)"
+
+
+async def _git_safety_snapshot(work_dir: str) -> _GitSafetySnapshot | None:
+    """BF-904a (#1585): the resolved git config and the hooks directory of *work_dir*, or None.
+
+    None means the config listing or the hooks directory could not be read; the comparison
+    after the tests counts that as a change.
+    """
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir)
+        if rc != 0:
+            return None
+        rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir)
+    except (OSError, ValueError):
+        return None
+    # `--git-common-dir`, not `--git-path hooks`: under the core.hooksPath override the latter
+    # names the null device. Outside a repository there is no hooks directory to watch; a
+    # repository appearing during the tests changes the config listing instead.
+    hooks_dir = Path(work_dir, common_dir, "hooks") if rc == 0 else None
+    hooks = _hooks_listing(hooks_dir)
+    if hooks is None:
+        return None
+    return _GitSafetySnapshot(config=config, hooks_dir=hooks_dir, hooks=hooks)
+
+
+async def _git_safety_change(work_dir: str, before: _GitSafetySnapshot | None) -> str | None:
+    """BF-904a (#1585): what changed since *before* in the config git resolves or the hooks directory.
+
+    None when nothing changed. A capture that failed, before the tests or now, is a change: git
+    is not run again when it cannot be shown to be as it was. The text names config sources and
+    keys and hook file names only, never a value or a file's content.
+    """
+    if before is None:
+        return "the git configuration or hooks directory could not be read before the tests"
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir)
+    except (OSError, ValueError):
+        rc, config = 1, ""
+    if rc != 0:
+        return "the git configuration could not be read after the tests"
+    changes: list[str] = []
+    if config != before.config:  # BF-904a: a filter, an include or any other config source changed
+        changes.append("git config " + _config_change_names(before.config, config))
+    hooks = _hooks_listing(before.hooks_dir)
+    if hooks is None:
+        changes.append(f"the hooks directory {before.hooks_dir} could not be read")
+    elif hooks != before.hooks:  # BF-904a: a hook file appeared, changed or went away
+        names = sorted({name for name, _digest in set(hooks) ^ set(before.hooks)})
+        changes.append(f"hook files in {before.hooks_dir}: " + ", ".join(names))
+    return "; ".join(changes) or None
+```
+REPLACE:
+```python
+#: BF-904a (#1585): the listing of every config source git resolves for a tree (system, global,
+#: the repository's shared config, config.worktree, every include). Its values never leave memory.
+_GIT_CONFIG_LISTING_ARGS: tuple[str, ...] = ("config", "--list", "--show-origin", "-z")
+#: BF-904a A1: a resolved config is kilobytes (git documents about a thousand keys). Its comparison
+#: and name parse run on the event loop, so a listing past 4 Mi characters is a failed capture.
+_GIT_CONFIG_LISTING_MAX_CHARS = 4 * 1024 * 1024
+#: BF-904a A1: the bounds of one hooks listing (`_hooks_listing`, run in a worker thread). git knows
+#: about 30 hook names and `git init` writes 14 samples, so 256 entries is several full directories;
+#: a directory of thousands stops at the 257th name. Past a bound the listing is a failed capture
+#: (D6): the build is refused, never committed on a partial listing.
+_HOOKS_MAX_ENTRIES = 256
+#: Hook scripts are kilobytes and a compiled hook a few megabytes; hashing 64 MiB takes well under a
+#: second off the event loop.
+_HOOKS_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+#: One read: the most of a hook file held in memory at once.
+_HOOKS_READ_CHUNK = 64 * 1024
+#: The one open of a regular entry: bytes on Windows; on POSIX never follow a link, nor block on a
+#: pipe, swapped in after the lstat. A flag the platform lacks is 0, a no-op.
+_HOOK_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+#: BF-904a A1: how much of a name a refusal shows (`_display_token`). git's keys and hook names are
+#: under 50 characters, so 100 keeps every real one whole; a path is cut at 200. With at most 10
+#: names of each kind, a refusal's whole text stays under 6,000 characters.
+_DISPLAY_NAME_CHARS = 100
+_DISPLAY_PATH_CHARS = 200
+_GIT_CHANGE_NAMES_SHOWN = 10
+
+
+@dataclass(frozen=True)
+class _GitSafetySnapshot:
+    """BF-904a (#1585): what git would run on its own in a tree, read before model code runs."""
+
+    # BF-904a A1: the lossless `git config --list --show-origin -z` listing. Global config can hold
+    # credentials and the text can hold lone surrogates, so it is kept out of repr and never formatted.
+    config: str = field(repr=False)
+    hooks_dir: Path | None  # the repository's own hooks directory; None when no repository was shown at entry
+    hooks: tuple[tuple[str, str], ...]  # (entry name, its `_hooks_listing` token), by name
+
+
+def _escaped_char(ch: str) -> str:
+    """BF-904a A1: one character as a Python escape."""
+    code = ord(ch)
+    if ch == "\\":
+        return "\\\\"
+    if code < 0x100:
+        return f"\\x{code:02x}"
+    if code < 0x10000:
+        return f"\\u{code:04x}"
+    return f"\\U{code:08x}"
+
+
+def _display_token(text: str, limit: int) -> str:
+    """BF-904a A1: *text* as one inline-code token, safe in a log record, an event and Markdown.
+
+    Every character that is not printable (controls, line and paragraph separators, format
+    characters such as bidi overrides, lone surrogates), and the backslash and the backtick, is a
+    Python escape: the token is one line, encodes as UTF-8, and cannot close its code span, inside
+    which Markdown is literal. At most *limit* characters of the escaped form are kept, never half
+    an escape; the rest are counted, not shown.
+    """
+    shown: list[str] = []
+    width = 0
+    for index, ch in enumerate(text):
+        piece = ch if ch.isprintable() and ch not in "\\`" else _escaped_char(ch)
+        if width + len(piece) > limit:
+            return "`" + "".join(shown) + f"` ...[{len(text) - index} more characters]"
+        shown.append(piece)
+        width += len(piece)
+    return "`" + "".join(shown) + "`"
+
+
+def _listed(names: list[str], total: int) -> str:
+    """BF-904a A1: *names* (the first escaped tokens) joined, then how many of *total* were not shown."""
+    hidden = total - len(names)
+    return ", ".join(names) + (f", ...[{hidden} more]" if hidden > 0 else "")
+
+
+def _hooks_listing(hooks_dir: Path | None) -> tuple[tuple[str, str], ...] | None:
+    """BF-904a: each entry of *hooks_dir* with a token for what git could run from it, or None.
+
+    Read in Python, so no git runs; it blocks, so the build calls it through `_read_hooks`.
+    A1: each entry is classified by `os.lstat`, never followed. A regular file is
+    ``file:<permission bits>:<sha256>`` (the bits, because a chmod makes a present file run), a
+    symlink ``link:<target>``, a directory ``dir``, anything else (a pipe, a device, a socket)
+    ``other:<file type>``; only regular files are opened. A missing directory is an empty
+    listing. An unreadable directory or entry, an entry that is no longer a regular file when
+    opened, more than _HOOKS_MAX_ENTRIES entries, or more than _HOOKS_MAX_TOTAL_BYTES bytes in
+    all is None, which the caller counts as a change (D6).
+    """
+    if hooks_dir is None:
+        return ()
+    names: list[str] = []
+    try:
+        with os.scandir(hooks_dir) as scan:
+            for entry in scan:
+                names.append(entry.name)
+                if len(names) > _HOOKS_MAX_ENTRIES:  # BF-904a A1: a directory past the entry bound is a failed capture
+                    return None
+    except FileNotFoundError:
+        return ()
+    except OSError:
+        return None
+    listing: list[tuple[str, str]] = []
+    total = 0
+    try:
+        for name in sorted(names):
+            path = os.path.join(hooks_dir, name)
+            st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode):  # BF-904a A1: a link is recorded by its target, never followed
+                token = "link:" + os.readlink(path)
+            elif stat.S_ISDIR(st.st_mode):
+                token = "dir"
+            elif not stat.S_ISREG(st.st_mode):  # BF-904a A1: a pipe or device is never opened
+                token = f"other:{stat.S_IFMT(st.st_mode):o}"
+            else:
+                digest = hashlib.sha256()
+                fd = os.open(path, _HOOK_OPEN_FLAGS)
+                try:
+                    if not stat.S_ISREG(os.fstat(fd).st_mode):  # BF-904a A1: no longer a regular file when opened
+                        return None
+                    while chunk := os.read(fd, _HOOKS_READ_CHUNK):
+                        total += len(chunk)
+                        if total > _HOOKS_MAX_TOTAL_BYTES:  # BF-904a A1: past the byte bound is a failed capture
+                            return None
+                        digest.update(chunk)
+                finally:
+                    os.close(fd)
+                token = f"file:{stat.S_IMODE(st.st_mode):o}:{digest.hexdigest()}"
+            listing.append((name, token))
+    except OSError:
+        return None
+    return tuple(listing)
+
+
+async def _read_hooks(hooks_dir: Path | None) -> tuple[tuple[str, str], ...] | None:
+    """BF-904a A1: `_hooks_listing` in a worker thread, so the build's event loop never blocks on it.
+
+    The thread cannot be interrupted; the listing's bounds keep it short. If the awaiting build is
+    cancelled, the thread finishes and its result is dropped; `git_unsafe` is already set, so the
+    `finally` block runs no git (D23).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _hooks_listing, hooks_dir)  # BF-904a A1: off the event loop
+
+
+def _config_change_names(before: str, after: str) -> str:
+    """BF-904a: the sources and keys whose entries differ between two `-z` listings, never a value.
+
+    A1: at most _GIT_CHANGE_NAMES_SHOWN of them, each origin and key a `_display_token`, so no
+    control character, lone surrogate or 20,000-character subsection reaches a message raw.
+    """
+
+    def entries(listing: str) -> set[tuple[str, str]]:
+        fields = listing.split("\0")
+        return {(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)}
+
+    keys = sorted({(origin, entry.split("\n", 1)[0]) for origin, entry in entries(before) ^ entries(after)})
+    names = [_display_token(origin, _DISPLAY_PATH_CHARS) + " " + _display_token(key, _DISPLAY_NAME_CHARS) for origin, key in keys[:_GIT_CHANGE_NAMES_SHOWN]]  # BF-904a A1: escaped and bounded
+    return f"({_listed(names, len(keys))})" if names else "(the listing changed)"
+
+
+async def _git_safety_snapshot(work_dir: str, repository_proven: bool) -> _GitSafetySnapshot | None:
+    """BF-904a (#1585): the resolved git config and the hooks directory of *work_dir*, or None.
+
+    None means the config listing or the hooks directory could not be read; the comparison
+    after the tests counts that as a change. A1: the listing is read lossless, so equal text
+    means equal bytes. *repository_proven* is True when an identity was pinned before any model
+    code ran; then a hooks location git does not name is a failed capture too.
+    """
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir, lossless=True)  # BF-904a A1: lossless baseline
+        if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: a listing past its bound is a failed capture
+            return None
+        rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir)
+    except (OSError, ValueError):
+        return None
+    # `--git-common-dir`, not `--git-path hooks`: under the core.hooksPath override the latter
+    # names the null device.
+    if rc == 0 and common_dir:  # BF-904a A1: git named the common directory
+        hooks_dir: Path | None = Path(work_dir, common_dir, "hooks")
+    elif repository_proven:  # BF-904a A1: a repository whose hooks location is unreadable is a failed capture
+        return None
+    else:
+        # D5: no identity was pinned at entry, so no repository was shown and there is no hooks
+        # directory to watch; a repository appearing during the tests changes the config listing.
+        hooks_dir = None
+    hooks = await _read_hooks(hooks_dir)
+    if hooks is None:
+        return None
+    return _GitSafetySnapshot(config=config, hooks_dir=hooks_dir, hooks=hooks)
+
+
+async def _git_safety_change(work_dir: str, before: _GitSafetySnapshot | None) -> str | None:
+    """BF-904a (#1585): what changed since *before* in the config git resolves or the hooks directory.
+
+    None when nothing changed. A capture that failed, before the tests or now, is a change: git
+    is not run again when it cannot be shown to be as it was. The text names config sources and
+    keys and hook file names only, never a value or a file's content; A1: each name is a
+    `_display_token`, so the text is fixed words plus escaped, bounded tokens.
+    """
+    if before is None:
+        return "the git configuration or hooks directory could not be read before the tests"
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir, lossless=True)  # BF-904a A1: lossless comparison
+    except (OSError, ValueError):
+        rc, config = 1, ""
+    if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: past its bound after the tests is a failed capture
+        return "the git configuration could not be read after the tests"
+    changes: list[str] = []
+    if config != before.config:  # BF-904a: a filter, an include or any other config source changed
+        changes.append("git config " + _config_change_names(before.config, config))
+    hooks = await _read_hooks(before.hooks_dir)
+    shown_dir = _display_token(str(before.hooks_dir), _DISPLAY_PATH_CHARS)
+    if hooks is None:
+        changes.append(
+            f"the hooks directory {shown_dir} could not be read (an unreadable or changing entry, "
+            f"or more than {_HOOKS_MAX_ENTRIES} entries or {_HOOKS_MAX_TOTAL_BYTES // (1024 * 1024)} MiB)"
+        )
+    elif hooks != before.hooks:  # BF-904a: a hook file appeared, changed or went away
+        changed = sorted({name for name, _token in set(hooks) ^ set(before.hooks)})
+        names = [_display_token(name, _DISPLAY_NAME_CHARS) for name in changed[:_GIT_CHANGE_NAMES_SHOWN]]  # BF-904a A1: escaped and bounded
+        changes.append(f"hook files in {shown_dir}: " + _listed(names, len(changed)))
+    return "; ".join(changes) or None
+```
+
+### A1.4 `src/probos/cognitive/builder.py`: the baseline, and unsafe from the start of the test phase (against `builder.py:3045-3049`)
+SEARCH:
+```python
+        if run_tests and (written or modified_files):
+            # BF-904a (#1585): what git would run on its own, read before any model code runs.
+            git_baseline = await _git_safety_snapshot(work_dir)
+            tests_ran = True
+            all_changes = list(file_changes)  # track for fix prompt
+```
+REPLACE:
+```python
+        if run_tests and (written or modified_files):
+            # BF-904a (#1585): what git would run on its own, read before any model code runs.
+            git_baseline = await _git_safety_snapshot(work_dir, pinned_git_dir is not None)
+            tests_ran = True
+            # BF-904a A1 (D23): from here model code may run, so git is unsafe until the comparison at
+            # 5.4b finds it unchanged; an error or a cancellation before then runs no git in `finally`.
+            git_unsafe = True  # BF-904a A1: model code may run from here; only a clean comparison clears it
+            all_changes = list(file_changes)  # track for fix prompt
+```
+
+### A1.5 `src/probos/cognitive/builder.py`: 5.4b clears `git_unsafe` only on a clean comparison (against `builder.py:3198-3208`; the 5.5 message and K11/K12 lines are unchanged)
+SEARCH:
+```python
+        # 5.4b. BF-904a (#1585): a hook or a config entry (a filter driver, an include) the tests
+        # planted would run at the next git command; any change blocks every later git call.
+        if tests_ran and not identity_lost:
+            git_tampered = await _git_safety_change(work_dir, git_baseline)
+            if git_tampered is not None:
+                git_unsafe = True  # BF-904a: a changed config or hooks directory blocks every later git call
+                logger.error(
+                    "BuilderAgent: git configuration or hooks changed while the tests ran (%s); "
+                    "refusing to commit and running no further git command",
+                    git_tampered,
+                )
+```
+REPLACE:
+```python
+        # 5.4b. BF-904a (#1585): a hook or a config entry (a filter driver, an include) the tests
+        # planted would run at the next git command; any change blocks every later git call.
+        # A1: git_unsafe has been set since the test phase began; only a clean comparison clears it.
+        if tests_ran and not identity_lost:
+            git_tampered = await _git_safety_change(work_dir, git_baseline)
+            if git_tampered is None:
+                git_unsafe = False  # BF-904a A1: the comparison found git as it was before the tests
+            else:
+                # BF-904a A1: git_tampered is fixed words plus _display_token tokens, so %s can
+                # neither split the record nor carry a control character (%r would double escapes).
+                logger.error(
+                    "BuilderAgent: git configuration or hooks changed while the tests ran (%s); "
+                    "refusing to commit and running no further git command",
+                    git_tampered,
+                )
+```
+
+### A1.6 `tests/test_bf904a_git_hardening.py`: imports
+SEARCH:
+```python
+import asyncio
+import logging
+import os
+```
+REPLACE:
+```python
+import asyncio
+import hashlib
+import logging
+import os
+```
+SEARCH:
+```python
+import subprocess
+import sys
+from collections.abc import Awaitable, Callable
+```
+REPLACE:
+```python
+import subprocess
+import sys
+import threading
+from collections.abc import Awaitable, Callable
+```
+SEARCH:
+```python
+from typing import Any
+
+import pytest
+```
+REPLACE:
+```python
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+```
+SEARCH:
+```python
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS
+from probos.worktree_manager import WorktreeManager
+```
+REPLACE:
+```python
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS
+from probos.security.pii_redaction import LogRedactionFormatter
+from probos.worktree_manager import WorktreeManager
+```
+
+### A1.7 `tests/test_bf904a_git_hardening.py`: the two wrappers forward `lossless`
+SEARCH:
+```python
+    async def __call__(self, args: list[str], work_dir: str) -> tuple[int, str, str]:
+        self.calls.append((self.swapped, list(args)))
+        return await self._real(args, work_dir)
+```
+REPLACE:
+```python
+    async def __call__(self, args: list[str], work_dir: str, **kwargs: Any) -> tuple[int, str, str]:
+        # BF-904a A1: the safety capture reads the config listing with lossless=True; forward it.
+        self.calls.append((self.swapped, list(args)))
+        return await self._real(args, work_dir, **kwargs)
+```
+SEARCH:
+```python
+    async def __call__(self, args: list[str], work_dir: str) -> tuple[int, str, str]:
+        if args == CONFIG_ARGS:
+            self.config_reads += 1
+            if (self._when == "before" and self.config_reads == 1) or (self._when == "after" and self.tests_ran):
+                self.injected += 1
+                return 1, "", "fatal: bf904a"
+        return await self._real(args, work_dir)
+```
+REPLACE:
+```python
+    async def __call__(self, args: list[str], work_dir: str, **kwargs: Any) -> tuple[int, str, str]:
+        # BF-904a A1: forward lossless=True to the real runner.
+        if args == CONFIG_ARGS:
+            self.config_reads += 1
+            if (self._when == "before" and self.config_reads == 1) or (self._when == "after" and self.tests_ran):
+                self.injected += 1
+                return 1, "", "fatal: bf904a"
+        return await self._real(args, work_dir, **kwargs)
+```
+
+### A1.8 `tests/test_bf904a_git_hardening.py`: `_Unreadable` follows the listing's own calls
+SEARCH:
+```python
+class _Unreadable:
+    """Patches ``Path.iterdir`` or ``Path.read_bytes`` so that, for the hooks directory (``iterdir``) or a direct child of it
+    (``read_bytes``), the first listing (``before``) or every one made after the tests ran (``after``) raises ``PermissionError``."""
+
+    def __init__(self, hooks_dir: Path, target: str, when: str) -> None:
+        self._hooks_dir = hooks_dir.resolve()
+        self._target = target
+        self._when = when
+        self.injected = 0
+        self.tests_ran = False
+
+    def mark_tests_ran(self) -> None:
+        self.tests_ran = True
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        real = getattr(Path, self._target)
+        guard = self
+
+        def wrapper(path: Path, *args: Any, **kwargs: Any) -> Any:
+            watched = path.resolve() if guard._target == "iterdir" else path.resolve().parent
+            if watched == guard._hooks_dir and (
+                (guard._when == "before" and guard.injected == 0 and not guard.tests_ran)
+                or (guard._when == "after" and guard.tests_ran)
+            ):
+                guard.injected += 1
+                raise PermissionError(13, "bf904a: unreadable", str(path))
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, self._target, wrapper)
+```
+REPLACE:
+```python
+class _Unreadable:
+    """Patches ``os.scandir`` or ``os.open`` so that, for the hooks directory (``scandir``) or a direct child of it
+    (``open``), the first listing (``before``) or every one made after the tests ran (``after``) raises ``PermissionError``.
+    BF-904a A1: the listing reads through ``os.scandir``, ``os.lstat`` and ``os.open`` now (it used ``Path.iterdir`` and
+    ``Path.read_bytes``), so the injection point moved with it; what is injected, and when, is unchanged."""
+
+    def __init__(self, hooks_dir: Path, target: str, when: str) -> None:
+        self._hooks_dir = hooks_dir.resolve()
+        self._target = target
+        self._when = when
+        self.injected = 0
+        self.tests_ran = False
+
+    def mark_tests_ran(self) -> None:
+        self.tests_ran = True
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        real = getattr(os, self._target)
+        guard = self
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            path = args[0] if args else None
+            if isinstance(path, (str, os.PathLike)):
+                resolved = Path(path).resolve()
+                watched = resolved if guard._target == "scandir" else resolved.parent
+                if watched == guard._hooks_dir and (
+                    (guard._when == "before" and guard.injected == 0 and not guard.tests_ran)
+                    or (guard._when == "after" and guard.tests_ran)
+                ):
+                    guard.injected += 1
+                    raise PermissionError(13, "bf904a: unreadable", str(path))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(os, self._target, wrapper)
+```
+SEARCH:
+```python
+    unreadable = _Unreadable(hooks_dir, "iterdir" if target == "iterdir" else "read_bytes", when)
+```
+REPLACE:
+```python
+    unreadable = _Unreadable(hooks_dir, "scandir" if target == "iterdir" else "open", when)  # BF-904a A1: the listing's own calls
+```
+
+### A1.9 `tests/test_bf896_executor_identity_and_blocks.py`: `_GitSpy` forwards `lossless` (the run-tests probe at `:768` reaches the baseline)
+SEARCH:
+```python
+    async def __call__(self, args: list[str], work_dir: str) -> tuple[int, str, str]:
+        self.calls.append((self.swapped, list(args)))
+        return await self._real(args, work_dir)
+```
+REPLACE:
+```python
+    async def __call__(self, args: list[str], work_dir: str, **kwargs: Any) -> tuple[int, str, str]:
+        # BF-904a A1: the safety capture reads the config listing with lossless=True; forward it.
+        self.calls.append((self.swapped, list(args)))
+        return await self._real(args, work_dir, **kwargs)
+```
+
+### A1.10 New tests (append to `tests/test_bf904a_git_hardening.py` under `# BF-904a A1`; write and run them first, and each must fail on the candidate)
+
+Conventions:
+- Builder privates are reached through `builder_module.`.
+- Patched module constants use `monkeypatch.setattr(builder_module, "<NAME>", value)`.
+- Each build test asserts its premise first.
+- Plant hooks with `_plant_hook` (from `_common_dir(...) / "hooks"`) or with plain `write_bytes`.
+
+**Shared helpers (full code):**
+```python
+def _stat_as(real: os.stat_result, mode: int) -> os.stat_result:
+    """*real* with st_mode replaced: the seam that stands for a pipe, a link or other mode bits on any OS."""
+    return os.stat_result((mode,) + tuple(real)[1:10])
+
+
+class _ListingSeam:
+    """Answers os.lstat / os.readlink / os.fstat for named hook entries and records each open, read and close.
+    A FIFO, a device and a symlink are not creatable portably (Windows), so a real regular file stands in."""
+
+    def __init__(self, hooks_dir: Path) -> None:
+        self.hooks_dir = hooks_dir.resolve()
+        self.modes: dict[str, int] = {}
+        self.links: dict[str, str] = {}
+        self.fstat_modes: dict[str, int] = {}
+        self.opened: list[str] = []
+        self.closed: list[str] = []
+        self.reads: list[int] = []
+        self._fds: dict[int, str] = {}
+
+    def _name(self, path: Any) -> str | None:
+        if isinstance(path, (str, os.PathLike)) and Path(path).resolve().parent == self.hooks_dir:
+            return Path(path).name
+        return None
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        real = {name: getattr(os, name) for name in ("lstat", "readlink", "open", "fstat", "read", "close")}
+        seam = self
+
+        def lstat(path: Any, *a: Any, **k: Any) -> os.stat_result:
+            st, name = real["lstat"](path, *a, **k), seam._name(path)
+            return _stat_as(st, seam.modes[name]) if name in seam.modes else st
+
+        def readlink(path: Any, *a: Any, **k: Any) -> str:
+            name = seam._name(path)
+            return seam.links[name] if name in seam.links else real["readlink"](path, *a, **k)
+
+        def open_(path: Any, *a: Any, **k: Any) -> int:
+            fd, name = real["open"](path, *a, **k), seam._name(path)
+            if name is not None:
+                seam.opened.append(name)
+                seam._fds[fd] = name
+            return fd
+
+        def fstat(fd: int, *a: Any, **k: Any) -> os.stat_result:
+            st, name = real["fstat"](fd, *a, **k), seam._fds.get(fd)
+            return _stat_as(st, seam.fstat_modes[name]) if name in seam.fstat_modes else st
+
+        def read(fd: int, n: int, *a: Any, **k: Any) -> bytes:
+            if fd in seam._fds:
+                seam.reads.append(n)
+            return real["read"](fd, n, *a, **k)
+
+        def close(fd: int, *a: Any, **k: Any) -> None:
+            name = seam._fds.pop(fd, None)
+            if name is not None:
+                seam.closed.append(name)
+            return real["close"](fd, *a, **k)
+
+        for name, fn in (("lstat", lstat), ("readlink", readlink), ("open", open_), ("fstat", fstat), ("read", read), ("close", close)):
+            monkeypatch.setattr(os, name, fn)
+```
+
+| ID | Test | Asserts |
+|---|---|---|
+| N1 | `test_the_hooks_listing_records_each_entry_kind_and_opens_only_regular_files` (sync, unit) | **Setup:** `hooks = tmp_path/"hooks"` with real files `pre-commit` (`b"a"`), `pre-push` (`b"b"`), `post-merge` (`b""`) and a directory `sub`. Seam: `modes = {"pre-commit": S_IFREG\|0o644, "pre-push": S_IFLNK\|0o777, "post-merge": S_IFIFO\|0o644}`, `links = {"pre-push": "target-a"}`. **First listing:** `_hooks_listing(hooks) == (("post-merge", f"other:{stat.S_IFIFO:o}"), ("pre-commit", "file:644:" + sha256(b"a")), ("pre-push", "link:target-a"), ("sub", "dir"))`; `opened == ["pre-commit"]`; `closed == ["pre-commit"]`. **Re-pointed link:** after `links["pre-push"] = "target-b"`, only the `pre-push` token differs and is `"link:target-b"`. **chmod:** after `modes["pre-commit"] = S_IFREG\|0o755`, only the `pre-commit` token differs and starts with `"file:755:"`. Kills K16, K17, K21. |
+| N2 | `test_an_entry_no_longer_regular_when_opened_fails_the_listing` (sync) | **Control:** `hooks/pre-commit` (`b"a"`) gives a listing that is not None. **Probe:** `fstat_modes = {"pre-commit": S_IFIFO\|0o644}` gives `_hooks_listing(hooks) is None`, with `opened == ["pre-commit"]` and `closed == ["pre-commit"]` (the fd is closed). Kills K18. |
+| N3 | `test_the_hooks_listing_is_bounded` (sync, parametrised `bound` over `entries`, `bytes`) | **First**, before any patch: `(builder_module._HOOKS_MAX_ENTRIES, _HOOKS_MAX_TOTAL_BYTES, _HOOKS_READ_CHUNK, _GIT_CONFIG_LISTING_MAX_CHARS) == (256, 64 * 1024 * 1024, 64 * 1024, 4 * 1024 * 1024)`. **`entries`:** with `_HOOKS_MAX_ENTRIES = 3`, three empty files give a listing of 3; a fourth gives None. **`bytes`:** with `_HOOKS_MAX_TOTAL_BYTES = 100` and `_HOOKS_READ_CHUNK = 16`, files `a` (50 bytes) and `b` (50 bytes) give a listing, and with the seam installed `seam.reads` is non-empty and every entry is `16`; appending one byte to `b` gives None. Kills K15, K19, K20. |
+| N4 | `test_the_hooks_listing_runs_off_the_event_loop` | `loop_thread = threading.get_ident()`. Wrap `builder_module._hooks_listing` with a recorder that appends `threading.get_ident()` and calls the real one. A `[create NEW]` build in `_plain_repo` with `run_tests=True` and `_FakeTests()` commits. The recorder ran exactly twice, and `loop_thread not in threads`. Kills K14. |
+| N5 | `test_a_capture_past_a_bound_refuses_the_build` (parametrised `case`) | **Measure first:** `n_cfg = len((await builder_module._run_git(list(CONFIG_ARGS), str(probe), lossless=True))[1])`, `n_ent = len(os.listdir(hooks))`, `n_bytes = sum` of the regular files' sizes (premise: `n_ent >= 1`). **`config-before`:** `_GIT_CONFIG_LISTING_MAX_CHARS = n_cfg - 1` gives `"could not be read before the tests"`. **`config-after`:** bound `n_cfg`, and the fake runs plain `git config bf904a.grow 1`, giving `"could not be read after the tests"`. **`entries-before`:** `_HOOKS_MAX_ENTRIES = n_ent - 1` gives `"could not be read before the tests"`. **`entries-after`:** bound `n_ent`, and the fake writes `hooks/extra.sample`, giving `"the hooks directory"` and `"could not be read"` in the error with no `"before the tests"`. **`bytes-after`:** `_HOOKS_MAX_TOTAL_BYTES = n_bytes`, and the fake appends one byte to an existing sample (the same assertion). **Every case:** `success is False`, no `commit_hash`, `fake.runs == 1`. Kills K15, K19, K35, K36. |
+| N6 | `test_a_config_value_that_differs_only_in_undecodable_bytes_is_refused` | **Premise (sibling repo):** append `b"[bf904a]\n\tkey = \x80\n"` to `_common_dir(s)/"config"`. Read `_run_git(list(CONFIG_ARGS), s)` as text A, replace `\x80` with `\x81`, and read text B. Assert `A == B` (the lossy default collides on this git) and that the two `lossless=True` reads differ. **Control (fresh repo with the `\x80` config, unchanged):** the build commits, so a non-UTF-8 config is no false positive. **Probe:** the fake rewrites `key = \x80` to `key = \x81`. Then `success is False`; `REFUSAL`, `"bf904a.key"` and `` "`" `` are in the error; `"\ufffd"` is not; `result.error.encode("utf-8")` succeeds. Kills K22, K23, K24. |
+| N7 | `test_display_tokens_are_escaped_bounded_and_markdown_literal` (sync, unit) | `_display_token("a\nb\rc\x1bd\u202ee\udc80f`g\\h*_[x](y)<z>", 100) == "`a\\x0ab\\x0dc\\x1bd\\u202ee\\udc80f\\x60g\\\\h*_[x](y)<z>`"`. `_display_token("k" * 20013, 100) == "`" + "k" * 100 + "` ...[19913 more characters]"`. `_display_token("k" * 99 + "\x1b" + "z", 100) == "`" + "k" * 99 + "` ...[2 more characters]"` (an escape is never split). `_display_token("k" * 100, 100) == "`" + "k" * 100 + "`"`. `_display_token("\U0001f600\U000e0001", 100) == "`\U0001f600\\U000e0001`"`. `_config_change_names("file:c\0a.b\nv\0", after)`, where `after` adds 12 entries `file:c\0z.k{i:02d}\nv\0`, ends with `", ...[2 more])"` and holds exactly 10 `` "`file:c`" `` tokens. `"secret-value" not in repr(builder_module._GitSafetySnapshot(config="file:x\0user.password\nsecret-value\0", hooks_dir=None, hooks=()))`. Kills K29, K30, K33, K34. |
+| N8 | `test_hostile_config_and_hook_names_reach_no_message_raw` (`caplog` at DEBUG) | **Probe:** the fake appends `b'[bf904a "a\rb\x1bc\x80\xe2\x80\xae`' + b"s" * 20000 + b'"]\n\tkey = v\n'` to the probe's config and writes the regular file `hooks/("h" * 120)`. **Premise:** plain `git config --list -z` (`_REAL_RUN`, bytes, `env=_control_env()`, `timeout=60`) returns rc 0 and its stdout contains `b"\x1b"` and `b"\r"`. **Assert:** `success is False`; `REFUSAL` is in the error; `all(ch.isprintable() for ch in result.error)`; `len(result.error) < 6000`; every one of `"\\x0d"`, `"\\x1b"`, `"\\udc80"`, `"\\u202e"`, `"\\x60"` and `"h" * 100` is in the error; neither `"s" * 101` nor `"h" * 101` is in it. Then take `[record]`, the builder records whose message contains `"git configuration or hooks changed"`; `rendered = LogRedactionFormatter("%(message)s").format(record)` contains none of `"\r"`, `"\n"`, `"\x1b"`, and `all(ch.isprintable() for ch in rendered)`. Kills K29 to K32. |
+| N9 | `test_a_hooks_location_git_does_not_name_is_a_failed_capture_in_a_repository` (parametrised `case` over `nonzero`, `empty`, `unproven`) | **Wrapper `_CommonDirAnswers(real, outcome)`:** `(args, work_dir, **kwargs)`; it answers `["rev-parse", "--git-common-dir"]` with the outcome and counts `asked`; every other call goes to the real runner, kwargs forwarded. **Control first:** the same build with no wrapper commits. **`nonzero`** `(128, "", "fatal: bf904a")` and **`empty`** `(0, "", "")`: `success is False` and the error holds `"could not be read before the tests"`. **`unproven`:** the nonzero outcome plus `monkeypatch.setattr(builder_module, "repository_identity", AsyncMock(return_value=None))` (no pin, so D5 applies): the build commits. **Every case:** `asked == 1`. Kills K25 to K28. |
+| N10 | `test_an_error_or_cancellation_after_the_test_phase_began_runs_no_git` (parametrised `raised` over `error`, `cancel`) | **Control first:** a `_GitSpy` and a fake whose model code sets `spy.swapped`, with the real comparison. The build commits; `["checkout", "main"] in spy.args_after_swap()`; plain `git symbolic-ref --short HEAD` gives `"main"`. **Probe:** patch `builder_module._git_safety_change` with an async function that raises `RuntimeError("bf904a-injected")` or `asyncio.CancelledError()`. **`error`:** through `_build`: `success is False`, `"bf904a-injected"` is in the error. **`cancel`:** `task = asyncio.ensure_future(execute_approved_build(...))`, then `await asyncio.wait({task}, timeout=120)` and assert `task.cancelled()`. **Both:** `spy.args_after_swap() == [IDENTITY_ARGS]`; HEAD names `result.branch_name` (error case) or the branch that `["checkout", "-b", X]` in `spy.args_before_swap()` named (cancel case); `NEW` does not exist. Kills K9′, K13. |
+
+M1's file now has 27 test functions. All 17 of M1's existing cases stay green: H2's `[IDENTITY_ARGS, CONFIG_ARGS]` sequence is unchanged, and H2, H4 to H6 and F2 still find their names as substrings inside the tokens.
+
+### A1.11 Partition P1 rows (whole stripped lines, each unique in the A1-built `builder.py`; count each before mutating)
+K9 is **replaced**: its old line is gone. Re-run K1 to K8 and K10 to K12; their anchors are unchanged, but `builder.py` has a new sha256.
+
+| ID | SEARCH | REPLACE | Killed by |
+|---|---|---|---|
+| K9′ | `git_unsafe = True  # BF-904a A1: model code may run from here; only a clean comparison clears it` | `pass` | H2, N10 |
+| K13 | `git_unsafe = False  # BF-904a A1: the comparison found git as it was before the tests` | `pass` | N10 (control) |
+| K14 | `return await loop.run_in_executor(None, _hooks_listing, hooks_dir)  # BF-904a A1: off the event loop` | `return _hooks_listing(hooks_dir)` | N4 |
+| K15 | `if len(names) > _HOOKS_MAX_ENTRIES:  # BF-904a A1: a directory past the entry bound is a failed capture` | `if False:` | N3[entries], N5[entries-*] |
+| K16 | `if stat.S_ISLNK(st.st_mode):  # BF-904a A1: a link is recorded by its target, never followed` | `if False:` | N1 |
+| K17 | `elif not stat.S_ISREG(st.st_mode):  # BF-904a A1: a pipe or device is never opened` | `elif False:` | N1 |
+| K18 | `if not stat.S_ISREG(os.fstat(fd).st_mode):  # BF-904a A1: no longer a regular file when opened` | `if False:` | N2 |
+| K19 | `if total > _HOOKS_MAX_TOTAL_BYTES:  # BF-904a A1: past the byte bound is a failed capture` | `if False:` | N3[bytes], N5[bytes-after] |
+| K20 | `while chunk := os.read(fd, _HOOKS_READ_CHUNK):` | `while chunk := os.read(fd, _HOOKS_MAX_TOTAL_BYTES + 1):` | N3[bytes] |
+| K21 | `token = f"file:{stat.S_IMODE(st.st_mode):o}:{digest.hexdigest()}"` | `token = f"file:{digest.hexdigest()}"` | N1 |
+| K22 | `stdout.decode(errors="surrogateescape") if lossless else stdout.decode(errors="replace").strip(),  # BF-904a A1: lossless only on request` | `stdout.decode(errors="replace").strip(),` | N6 |
+| K23 | (the baseline read, `… lossless=True)  # BF-904a A1: lossless baseline`) | the same without `, lossless=True` | N6 (control) |
+| K24 | (the comparison read, `… lossless=True)  # BF-904a A1: lossless comparison`) | the same without `, lossless=True` | N6 (control) |
+| K25 | `if rc == 0 and common_dir:  # BF-904a A1: git named the common directory` | `if rc == 0:` | N9[empty] |
+| K26 | `elif repository_proven:  # BF-904a A1: a repository whose hooks location is unreadable is a failed capture` | `elif False:` | N9[nonzero], N9[empty] |
+| K27 | (K26's line) | `elif True:` | N9[unproven] |
+| K28 | `git_baseline = await _git_safety_snapshot(work_dir, pinned_git_dir is not None)` | `git_baseline = await _git_safety_snapshot(work_dir, False)` | N9[nonzero], N9[empty] |
+| K29 | ``piece = ch if ch.isprintable() and ch not in "\\`" else _escaped_char(ch)`` | `piece = ch` | N7, N8 |
+| K30 | `if width + len(piece) > limit:` | `if False:` | N7, N8 |
+| K31 | (the `names = [_display_token(origin, …` line in `_config_change_names`) | `names = [origin + " " + key for origin, key in keys[:_GIT_CHANGE_NAMES_SHOWN]]` | N8 |
+| K32 | (the `names = [_display_token(name, …` line in `_git_safety_change`) | `names = [name for name in changed[:_GIT_CHANGE_NAMES_SHOWN]]` | N8 |
+| K33 | (K31's line) | the same with `keys` in place of `keys[:_GIT_CHANGE_NAMES_SHOWN]` | N7 |
+| K34 | `config: str = field(repr=False)` | `config: str` | N7 |
+| K35 | `if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: a listing past its bound is a failed capture` | `if rc != 0:` | N5[config-before] |
+| K36 | `if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: past its bound after the tests is a failed capture` | `if rc != 0:` | N5[config-after] |
+
+Mark the result as the campaign of record against the A1-built `builder.py` sha256 and the test file's sha256.
+
+### A1.12 Supersessions (the original lines stay)
+
+**Decisions:**
+- **D4:** append "A1: with a pin, an empty or failed `--git-common-dir` is a failed capture (D22)."
+- **D5:** "Outside a repository the baseline has no hooks directory" now reads "With no identity pinned at entry, the baseline has no hooks directory."
+- **D6:** append "so is a listing past its bounds (D20, D24), and any error or cancellation between the start of the test phase and a clean comparison (D23)."
+
+**Section 2c note (line 250):** "The decision to refuse uses equality of the lossless listing (equal text means equal bytes) and does not depend on the parse."
+
+**Section 4a preamble (line 471):** "No mock of the git runner" now carries the exception "except A1's injected answers (N9, H3) and the `os` seams of N1 to N3 and `_Unreadable`".
+
+**Section 5g REPLACE:** the comment at lines 771-772 reads "…no git runs at all: identity lost, config or hooks changed, or the test phase ended without a clean comparison (A1)." The message at line 783 is unchanged.
+
+**Sections 7a and 9a:** a new test file that copies `_GitSpy` copies the A1 form, which forwards `**kwargs`.
+
+**Header and tests summary:**
+- **Line 5:** M1 has 27 test functions (N1 to N10 added). Updated helpers: A1.7 to A1.9.
+- **Tests summary (line 1548):** add N1 to N10. Boundaries: limits (N3, N5), lossless (N6), escaping (N7, N8), fail-closed (N9, N10).
+
+**Hard stops (line 1569):** add N6's and N8's premises. **Pre-decided fallback:** if this git refuses or rewrites CR inside a quoted subsection, drop `\r` from N8's plant and its assertion, keep the rest, and report it.
+
+**Diff Reviewer properties:**
+- **Property 1:** append "`_run_git` gains only a keyword-only `lossless` flag; no new launch site."
+- **Property 2:** append "`git_unsafe` is set when the test phase begins and cleared only by a clean comparison; an exception or a cancellation in between runs no git (N10)."
+- **Property 4:** "The hooks listing runs in a worker thread, is classified by `os.lstat` without following, opens only regular files (`O_NOFOLLOW`/`O_NONBLOCK`, re-checked by `fstat`), reads 64 KiB chunks, and fails the capture past 256 entries or 64 MiB; the only git the check runs is the lossless config listing, skipped when the identity is already lost."
+- **Property 5:** append "Every origin, key, hook name and hooks path in a message or log is a `_display_token` (escaped, inline code, at most 100 or 200 characters, at most 10 of each kind); the snapshot's config is excluded from `repr`."
+- **New 5a:** "The config comparison is byte-exact; an unchanged non-UTF-8 config does not refuse (N6)."
+- **New 5b:** "With a pin, a hooks location git does not name refuses; without one it is D5's path (N9)."
+
+**Other sections:**
+- **Mutation table:** K9 replaced and K13 to K36 added (A1.11).
+- **Tracking:** the DECISIONS entry lists D1 to D24.
+- **What this does NOT change:** the HXI is still unchanged.
+
+### A1.13 Considered, deferred
+- **Bounding git's own stdout capture.** `subprocess.run(capture_output=True)` in `_run_git` still reads a huge listing whole, in the worker thread. That memory cost already exists for every `_run_git` call. Fixing it needs streaming in the one launch site, so it goes to BF-904b or AD-1335. D24 bounds the work on the event loop.
+- **A shared display-token helper in `probos/utils/text_sanitize.py`.** Deferred until there is a second caller.
+- **Symlink targets outside the hooks directory.** Their content is not watched, the same residual as D4's `core.hooksPath`. The override stops them running.
+- **`classify_build_failure` substring matching.** A planted key named `SyntaxError` would misfile the category. BF-904b item 4 owns that classifier.
+
+### Absence Verified (A1, 2026-10-18)
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No existing escape helper covers controls, surrogates and Markdown | Grep `def (normalise_error\|_safe_exception_text\|\w*escape\w*\|\w*sanitiz\w*\|\w*display\w*\|\w*truncat\w*\|\w*printable\w*)\(` in `src/probos`; Grep `_safe_exception_text\|isprintable\(\)\|backslashreplace` | `fault_report.py:124`, `command_escalation.py:150` (surrogates only), `provider_setup.py:376` (spaces); no `_safe_exception_text` | yes |
+| No test calls the safety functions directly | Grep `_git_safety_snapshot\|_git_safety_change\|_hooks_listing\|_config_change_names` in `tests/` | none | yes |
+| The `_run_git` replacements with a strict signature are exactly three | Grep `async def __call__\(self, args: list\[str\], work_dir: str\)` in `tests/`, plus every `"_run_git"` patch site | `bf896:179`, `bf904a:212`, `:250`; the other builder patches are AsyncMock (`bf894:142`, `bf897:502`, `bf898:381`); `bf896:880/896/947` call `repository_identity` only | yes |
+| `stat` is not already a name in `builder.py` | Grep `\bstat\b` | none | yes |
+| No Section 5 to 9 SEARCH anchors on A1's lines | Grep the contract for `git_tampered\|_git_safety\|_hooks_listing\|No further git command\|all_changes = list\(file_changes\)\|def __call__\(self, args` | Sections 2 and 4 and the K rows only | yes |
+
+### Verified Against Codebase (A1, staged candidate)
+```
+builder.py:15-17 import os/re/subprocess; :19 from dataclasses import dataclass, field
+builder.py:1592-1617 _run_git (decode errors="replace" at :1612)
+builder.py:1686-1784 snapshot block (read whole)
+builder.py:2839-2841 pinned_git_dir = expected_git_dir / repository_identity
+builder.py:2875-2878 checkout -b failure returns before any test
+builder.py:3045-3049 baseline; :3198-3208 5.4b; :3285-3297 except Exception, finally checkout/branch -D gated on git_unsafe
+identity_key_store.py:226 getattr(os, "O_BINARY", 0) precedent
+pii_redaction.py:76-81 LogRedactionFormatter.format
+test_builder_agent.py:2181 (subprocess.run mock), :3117-3134 (real _run_git, success expected)
+test_bf904a_git_hardening.py:29-45 imports, :204-256 _GitSpy/_ConfigReadFails, :539-586 _Unreadable
+test_bf896_executor_identity_and_blocks.py:171-188 _GitSpy, :758-776 run_tests probe
+```
