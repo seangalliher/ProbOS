@@ -2680,3 +2680,281 @@ A1's hand row HR1 (`--git-common-dir` to `--git-dir`) now anchors on A2.1's REPL
 ### A2.5 Considered, deferred
 - **`repository_identity` (BF-896) strips its `--absolute-git-dir` answer the same way,** so two git directories whose names differ only by a trailing whitespace character compare equal. Pre-existing, injected-only (it needs a rewritten pointer to a sibling directory), and outside this amendment; recorded for the consolidated #1523 follow-up.
 - **A POSIX run of the module** is not available before CI; the guard in A2.2 makes the re-entrancy class detectable on Windows, and the round-3 review is asked to re-run the stock POSIX resolver probe against the repaired seam.
+
+## Amendment A3 (2026-10-18): M2's cleanup text uses D21's escaped tokens
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18, on the M2 hard stop. The Builder's M2 tree had 5 of M1's 40 cases failing.
+
+**Assembled by:** the orchestrator, from the Architect's two answers in one read-only session (`3f2e6602`: the hard-stop triage and its follow-up, which wrote D28 to D30 and A3.6), extracted by script. The only wording changes: A3.6 is a level-three heading, D28 to D30 and the lists are merged into A3's, and row R-w names its anchor explicitly where the answer said "same anchor".
+
+**Verdict:** ⚠️ Conditional. M2 is approved once A3 is applied and R7 to R10 are red on the M2 tree and green after A3.
+
+**Decisions** (recorded on #1585):
+- **D25.** Every variable that M2's cleanup puts into a message or a log goes through `_display_token`. That means a restored or deleted path, the operator's starting ref, and git's answer to a cleanup command. `build_branch` stays raw because it is already `[a-z0-9-]`. As a result, every `cleanup_errors` entry is one printable, bounded line.
+- **D26.** The separator `"\nCleanup incomplete: "` (D10, R2) stays as it is. It is the only line break the cleanup adds. M1's printable-error guards test the error with that separator taken out.
+- **D27.** The text a build already wrote into its own error before cleanup is out of scope here. Example: `"Syntax errors:\n" + paths`, from `builder.py:2719,3454`. It is pre-existing and goes to the follow-up named in A3.5.
+- **D28.** The router learns that a cleanup was incomplete from a structured field, `BuildFailureReport.cleanup_errors`, filled from `result.metadata["cleanup_errors"]`, not by searching the text for the separator. Two reasons:
+  - The text search can fire falsely: a first-pass path may contain `\n` (`builder_write_refusal` has no character rule), and that path lands in "Syntax errors:" ahead of the separator.
+  - Every cached entry has a report. The only producer, `routers/build.py:451-457`, always sets `"report": BuildFailureReport` (`raw_error` and the new field have defaults). Every test seed sets it too (`test_bf897…:860`, `test_bf904a_failed_build_restore.py:456,514`), and `test_builder_api.py:409` fills the cache through that same producer. The handler already reads `cached["file_changes"]` and the other keys directly (`:100-102`). The `{"timestamp"}`-only entries at `test_builder_agent.py:3031` exercise only expiry and never reach `resolve_build`.
+- **D29.** Abort carries a fixed clause when `cleanup_errors` is non-empty. A clean abort keeps today's message and today's response exactly.
+- **D30.** Refuse the other resolutions. `commit_override` and the four retries are refused while `cleanup_errors` is non-empty, and the cached failure is kept, so abort still works. Reach is ordinary under this contract's threat model:
+  - D23 marks git unsafe when the test phase ends with the config changed; the checkout is then left on the build branch with the planted config.
+  - A resolution clicked afterwards re-enters `execute_approved_build` in that checkout. Its entry git (`git status --porcelain`, the config listing) runs under the config the tests left. `HARDENED_GIT_CONFIG_ARGS` neutralises only hooks and fsmonitor (K5, K6), so a planted `filter.*` can run. I am inferring this from git's documented filter behaviour; I did not run it.
+  - With `run_tests=False` (commit_override) that happens in the one call where the Captain expects no model code to run.
+  - In the common case a retry would fail anyway, with a confusing "Failed to create branch: … already exists": `_git_create_branch`'s `branch -D` cannot delete the branch that is checked out (`builder.py:1646-1652`).
+  - The refusal is fail-closed and strengthens a control, so it is inside the envelope. The Captain may overrule it.
+
+### A3.1 `src/probos/cognitive/builder.py`: `_cleanup_git`
+SEARCH:
+```python
+    if rc != 0:
+        return f"git {args[0]} exited {rc}: {(err or out)[:300]}"
+    return None
+```
+REPLACE:
+```python
+    if rc != 0:
+        return f"git {args[0]} exited {rc}: {_display_token(err or out, _DISPLAY_PATH_CHARS)}"  # BF-904a A3: git's answer, escaped and bounded
+    return None
+```
+
+### A3.2 `src/probos/cognitive/builder.py`: `_restore_pre_build_files`
+SEARCH:
+```python
+    Returns one message per path it could not put back (names only); never raises.
+    """
+    errors: list[str] = []
+    root = Path(work_dir)
+    for rel, data in originals.items():
+        try:
+            (root / rel).write_bytes(data)
+        except OSError as exc:
+            errors.append(f"could not restore {rel} ({type(exc).__name__})")
+    for created_path in created:
+        full = root / created_path
+        if not full.exists():
+            continue
+        try:
+            full.unlink()
+        except OSError as exc:
+            errors.append(f"could not delete {created_path} ({type(exc).__name__})")
+            continue
+        logger.info("Cleaned up untracked file from failed build: %s", created_path)
+```
+REPLACE:
+```python
+    Returns one message per path it could not put back (each name a `_display_token`, A3); never raises.
+    """
+    errors: list[str] = []
+    root = Path(work_dir)
+    for rel, data in originals.items():
+        try:
+            (root / rel).write_bytes(data)
+        except OSError as exc:
+            errors.append(f"could not restore {_display_token(rel, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+    for created_path in created:
+        full = root / created_path
+        if not full.exists():
+            continue
+        try:
+            full.unlink()
+        except OSError as exc:
+            errors.append(f"could not delete {_display_token(created_path, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+            continue
+        logger.info("Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3: one log line
+```
+
+### A3.3 `src/probos/cognitive/builder.py`: the `finally` block's failed return
+SEARCH:
+```python
+            if not returned:  # BF-904a: a failed return keeps the build branch and is reported
+                cleanup_errors.append(
+                    f"could not return to {original_branch or original_commit}: {detail}; "
+                    f"branch {build_branch} kept"
+                )
+```
+REPLACE:
+```python
+            if not returned:  # BF-904a: a failed return keeps the build branch and is reported
+                start_ref = _display_token(str(original_branch or original_commit), _DISPLAY_NAME_CHARS)  # BF-904a A3: the operator's ref, escaped and bounded
+                shown_detail = _display_token(detail, _DISPLAY_PATH_CHARS)  # BF-904a A3: git's answer, escaped and bounded
+                cleanup_errors.append(
+                    f"could not return to {start_ref}: {shown_detail}; "
+                    f"branch {build_branch} kept"
+                )
+```
+`_git_return_to` is unchanged, so R-c's anchor stays. Its `[:300]` stays as a harmless first cut. The escaping happens where the message is formatted, so it also covers a replaced `_git_return_to`.
+
+Anchors after A3: R-a `(root / rel).write_bytes(data)`, R-e and R-d are unchanged, and each still matches once. All new lines below are unique.
+
+### A3.4 Tests
+**M1's module** (`tests/test_bf904a_git_hardening.py`), the three edits from Decision 1:
+- `:1284` expects `["checkout", "-q", "main", "--"]`.
+- `:1215` and `:1349` assert `all(ch.isprintable() for ch in result.error.replace("\nCleanup incomplete: ", " "))`, with an inline comment citing D26.
+
+**M2's module** (`tests/test_bf904a_failed_build_restore.py`): append two tests. Write them first; each must fail on the M2 tree.
+
+Set `HOSTILE = "\u202e`"` (an RLO override followed by a backtick). Both characters are legal on NTFS and POSIX, and both pass `builder_write_refusal`.
+
+**R7** `test_cleanup_messages_carry_build_authored_names_escaped`
+- **Setup.**
+  - Seed `src/probos/r{HOSTILE}x.txt` = `"z = 1\n"` (committed).
+  - Build `_failing_changes()` plus three more changes: modify `r{HOSTILE}x.txt` (`z = 1` → `z = 2`), create `src/probos/d{HOSTILE}x.txt`, and create `src/probos/l{HOSTILE}x.txt`.
+- **Seams.** Monkeypatch `pathlib.Path.write_bytes` to raise `PermissionError` when `self.name == "r"+HOSTILE+"x.txt"`. Monkeypatch `pathlib.Path.unlink` to raise when `self.name == "d"+HOSTILE+"x.txt"`. Every other call goes to the real method. Compare names as strings only, with no filesystem call inside the seam (A2.2). Count each raise.
+- **Premises.** Each seam raised exactly once, and `l…x.txt` no longer exists.
+- **Asserts.**
+  - The build failed.
+  - The tail is `result.error.split("\nCleanup incomplete: ", 1)[1]`. In that tail every character is printable, the raw `"\u202e"` is absent, and `"\\u202e"` and `"\\x60"` are present.
+  - `metadata["cleanup_errors"]` has exactly 2 entries. Each is printable and free of the raw RLO, and one starts `"could not restore `"` and the other `"could not delete `"`.
+  - The caplog record containing `"Cleaned up untracked file from failed build"` for `l…x.txt` has a printable `getMessage()` that contains `"\\u202e"`.
+
+**R8** `test_cleanup_messages_carry_git_answers_and_refs_escaped`, parametrised `case`:
+- **`return`.** The repo is on branch `captain\u2067work`.
+  - Premise: plain `git symbolic-ref --short HEAD` returns that name. If this host's git refuses it, use `captain-work`, drop row R-t and say so in the report.
+  - `_fail_the_return` is varied so that its answer is `(False, "\x1b[31m\r\n\u202e" + "d" * 5000)`. Build `_failing_changes()`.
+  - Assert on the tail: printable, `"\\x1b"`, `"\\u202e"` and `"\\u2067"` present (the last only when the branch premise held), `"d" * 201` absent, `len(tail) < 1000`.
+- **`branch-delete`.** Wrap `_run_git`. When `args[:2] == ["branch", "-D"]`, return `(1, "", HOSTILE_DETAIL)`, where HOSTILE_DETAIL is the same text as above; otherwise call the real `_run_git`. Assert the same properties on the single entry, which starts `"git branch exited 1: `"`.
+
+### A3.5 Mutation rows (Partition P2; count each anchor against the A3-built file before mutating)
+| ID | File | SEARCH | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-o | `src/probos/cognitive/builder.py` | `errors.append(f"could not restore {_display_token(rel, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded` | `errors.append(f"could not restore {rel} ({type(exc).__name__})")` | R7 |
+| R-p | `src/probos/cognitive/builder.py` | `errors.append(f"could not delete {_display_token(created_path, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded` | `errors.append(f"could not delete {created_path} ({type(exc).__name__})")` | R7 |
+| R-q | `src/probos/cognitive/builder.py` | `logger.info("Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3: one log line` | `logger.info("Cleaned up untracked file from failed build: %s", created_path)` | R7 |
+| R-r | `src/probos/cognitive/builder.py` | `shown_detail = _display_token(detail, _DISPLAY_PATH_CHARS)  # BF-904a A3: git's answer, escaped and bounded` | `shown_detail = detail` | R8[return] |
+| R-s | `src/probos/cognitive/builder.py` | `return f"git {args[0]} exited {rc}: {_display_token(err or out, _DISPLAY_PATH_CHARS)}"  # BF-904a A3: git's answer, escaped and bounded` | `return f"git {args[0]} exited {rc}: {(err or out)[:300]}"` | R8[branch-delete] |
+| R-t | `src/probos/cognitive/builder.py` | `start_ref = _display_token(str(original_branch or original_commit), _DISPLAY_NAME_CHARS)  # BF-904a A3: the operator's ref, escaped and bounded` | `start_ref = str(original_branch or original_commit)` | R8[return] |
+
+### A3.6 Abort reports an incomplete cleanup, and the resolutions that start a build are refused (D28-D30)
+
+### A3.6a `src/probos/cognitive/builder.py`: the report field
+SEARCH:
+```python
+    raw_error: str = ""         # Full error text (for collapsible view)
+    failed_tests: list[str] = field(default_factory=list)  # Extracted test names
+```
+REPLACE:
+```python
+    raw_error: str = ""         # Full error text (for collapsible view)
+    cleanup_errors: list[str] = field(default_factory=list)  # BF-904a A3 (D28): non-empty: the checkout is not known to be as the build found it
+    failed_tests: list[str] = field(default_factory=list)  # Extracted test names
+```
+`to_dict` is unchanged: the notes already reach the HXI in `raw_error`.
+
+### A3.6b `src/probos/cognitive/builder.py`: `classify_build_failure`
+SEARCH:
+```python
+        raw_error=result.error or result.test_result or "",
+    )
+```
+REPLACE:
+```python
+        raw_error=result.error or result.test_result or "",
+        cleanup_errors=list(result.metadata.get("cleanup_errors", [])),  # BF-904a A3 (D28)
+    )
+```
+
+### A3.6c `src/probos/routers/build.py`: the messages
+SEARCH:
+```python
+#: BF-904a (#1585): the first line of a commit_override build's commit body.
+OVERRIDE_MARKER = "[Test gate overridden by Captain]"
+```
+REPLACE:
+```python
+#: BF-904a (#1585): the first line of a commit_override build's commit body.
+OVERRIDE_MARKER = "[Test gate overridden by Captain]"
+#: BF-904a A3 (D29): abort's message after an incomplete cleanup. Fixed text, no cleanup content.
+ABORT_CLEANUP_INCOMPLETE = (
+    "Build aborted. Its cleanup was incomplete when it failed, so the checkout may not be as the "
+    "build found it: check it against the cleanup notes in the failure report."
+)
+#: BF-904a A3 (D30): why a resolution that runs a build is refused after an incomplete cleanup.
+RESOLVE_CLEANUP_INCOMPLETE = (
+    "Not run: the failed build's cleanup was incomplete, so its checkout is not known to be as the "
+    "build found it and may hold the git configuration its tests left. Check the checkout against "
+    "the cleanup notes in the failure report, then abort and start a new build."
+)
+```
+
+### A3.6d `src/probos/routers/build.py`: the guard and `abort` (against current lines 112-121)
+SEARCH:
+```python
+    if req.resolution == "abort":
+        # BF-904a (#1585): runs no git. The failed build already wrote its files back, deleted
+        # the ones it created and returned to the ref it started from (execute_approved_build).
+        del _pending_failures[req.build_id]
+        runtime.emit_event(EventType.BUILD_RESOLVED, {
+            "build_id": req.build_id,
+            "resolution": "abort",
+            "message": "Build aborted. Its changes were discarded when it failed.",
+        })
+        return {"status": "ok", "resolution": "abort"}
+```
+REPLACE:
+```python
+    # BF-904a A3 (D30): every resolution but abort runs a build in this checkout; after an incomplete
+    # cleanup its state and git configuration are unknown, so only abort (no git) is taken. The
+    # failure stays cached so abort remains available.
+    if req.resolution in ("commit_override", "retry_extended", "retry_targeted", "retry_fix", "retry_full") and cached["report"].cleanup_errors:  # BF-904a A3 (D30)
+        return {"status": "error", "message": RESOLVE_CLEANUP_INCOMPLETE}
+
+    if req.resolution == "abort":
+        # BF-904a (#1585): runs no git. The failed build already wrote its files back, deleted
+        # the ones it created and returned to the ref it started from (execute_approved_build),
+        # unless its report lists cleanup errors; then the message says so (A3, D29).
+        del _pending_failures[req.build_id]
+        cleanup_incomplete = bool(cached["report"].cleanup_errors)  # BF-904a A3: the report's structured cleanup notes
+        message = ABORT_CLEANUP_INCOMPLETE if cleanup_incomplete else "Build aborted. Its changes were discarded when it failed."
+        runtime.emit_event(EventType.BUILD_RESOLVED, {
+            "build_id": req.build_id,
+            "resolution": "abort",
+            "message": message,
+        })
+        if cleanup_incomplete:
+            return {"status": "ok", "resolution": "abort", "message": message}
+        return {"status": "ok", "resolution": "abort"}
+```
+The guard sits after the BF-897 `checkout_refusal` block, which keeps its place and still deletes the entry first.
+
+### A3.6e Tests (`tests/test_bf904a_failed_build_restore.py`)
+- **R2, extended.** After the existing asserts, `classify_build_failure(result, _spec()).cleanup_errors == result.metadata["cleanup_errors"]`. This one assert crosses the builder-to-report seam.
+- **R9** `test_abort_reports_an_incomplete_cleanup`, parametrised over `clean` and `incomplete`.
+  - Setup: R5's setup, with the report `BuildFailureReport()` or `BuildFailureReport(cleanup_errors=["bf904a: simulated"])`.
+  - Premise: R5's premises, plus `bool(report.cleanup_errors)` matching the case.
+  - Asserts:
+    - No git argv is recorded, HEAD is still `captain-work`, and the entry is gone.
+    - `clean`: the response `== {"status": "ok", "resolution": "abort"}`, and the event message `== "Build aborted. Its changes were discarded when it failed."`.
+    - `incomplete`: the response message and the event message both `== build_router.ABORT_CLEANUP_INCOMPLETE`, and `"bf904a: simulated" not in` either message.
+- **R10** `test_a_resolution_that_runs_a_build_is_refused_after_an_incomplete_cleanup`, parametrised over the five resolutions.
+  - Setup: an incomplete report, `track_task` capturing, and `_run_targeted_tests` an `AsyncMock`.
+  - Asserts:
+    - The response `== {"status": "error", "message": build_router.RESOLVE_CLEANUP_INCOMPLETE}`.
+    - Nothing was tracked, no git argv was recorded, `rt.emit_event` was not called, and `RESOLVE_ID in _pending_failures`.
+    - A following abort returns `ABORT_CLEANUP_INCOMPLETE`.
+  - The controls are R6 (a clean report, so `commit_override` runs) and BF-897's resolve test.
+
+### A3.6f Mutation rows (Partition P2)
+| ID | File | SEARCH | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-u | `src/probos/cognitive/builder.py` | `cleanup_errors=list(result.metadata.get("cleanup_errors", [])),  # BF-904a A3 (D28)` | `cleanup_errors=[],` | R2 |
+| R-v | `src/probos/routers/build.py` | `cleanup_incomplete = bool(cached["report"].cleanup_errors)  # BF-904a A3: the report's structured cleanup notes` | `cleanup_incomplete = False` | R9[incomplete] |
+| R-w | `src/probos/routers/build.py` | `cleanup_incomplete = bool(cached["report"].cleanup_errors)  # BF-904a A3: the report's structured cleanup notes` | `cleanup_incomplete = True` | R9[clean] |
+| R-x | `src/probos/routers/build.py` | `if req.resolution in ("commit_override", "retry_extended", "retry_targeted", "retry_fix", "retry_full") and cached["report"].cleanup_errors:  # BF-904a A3 (D30)` | `if False:` | R10 (all) |
+
+Each anchor occurs once: the retry tuple at `:148` has a different prefix.
+
+**Considered, deferred (for #1523):** `classify_build_failure` still offers retry options when `cleanup_errors` is non-empty. Offering only abort would remove the click that D30 refuses. That is a change to how options are generated, outside this item.
+
+**Supersessions** (the original lines stay):
+- Section 7's update list gains `tests/test_bf904a_git_hardening.py` (`:1215`, `:1284`, `:1349`).
+- D10 gains: "A3: a failed build's cleanup notes also reach its failure report as `cleanup_errors` (D28)."
+- Section 6b gains: "A3: abort's message names an incomplete cleanup (D29); every other resolution is refused while it is incomplete (D30)."
+- The tests summary gains R7 (1 case), R8 (2), R9 (2) and R10 (5), 10 cases in all; R2 gains one assert; mutation rows R-o to R-x.
+- Tracking: the DECISIONS entry lists D1 to D30.
+
+**Considered, deferred:**
+- **A cap on the number of cleanup entries.** The count is bounded by the approved change list plus the fix-loop files; deferred to the follow-up.
+- **The follow-up.** Add it to the consolidated #1523 follow-up (no new number allocated):
+  1. Build-authored paths reach `result.error` raw on the validation path (`builder.py:2719,3118-3161,3454`) and in the info logs (`builder.py:3146,3188,3215,3218`).
+  2. `builder_write_refusal` accepts `Cc` and `Cf` characters in first-pass paths. Refusing them at `builder_paths.py:71` closes the class at its source.
