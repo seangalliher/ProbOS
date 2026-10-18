@@ -735,7 +735,7 @@ Each milestone commits locally by explicit path (`git add <path>`; never `git ad
 
 **Consumer that must accept the change:** the Captain's HTTP client calling `POST /api/security/archive/lookup` with `Authorization: Bearer <crew_scope_token>` on a ship whose archive holds S1-era rows (the file S1 created, `user_version` 1, no agent index until the first S2a start). The AD-754 route `POST /api/security/forget` must then erase the episode **and** the lookup's access rows (RT-g).
 
-## Mutation table (campaign of record: none yet; whoever runs it records the base tree and the sha256 of each pinned file and of both new test files)
+## Mutation table (campaign of record: see the AD-1340 S2a entry in `DECISIONS.md`, which holds the base tree, the sha256 of each pinned file and of both new test files, and each result and killer)
 
 Every SEARCH is the stripped post-build line, with exactly one match in the named file (count it first: zero or more than one is INERT, not killed). Run the unmodified baseline first, mutate in place with a `.mutbak` sibling, restore in `finally`, and treat a timeout as INVALID. Run each row against the test file that holds its killer.
 
@@ -766,8 +766,8 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | N23 | `src/probos/routers/security.py` | `if not runtime.config.auth.crew_scope_token:  # AD-1340 S2a: never serve archived episodes through an open gate` | `if False:` | RT-a |
 | N24 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(_refuse_non_finite_numbers)],` | RT-b |
 | N25 | `src/probos/routers/security.py` | `except EpisodeArchiveUnavailable as exc:` | `except LookupError as exc:` | RT-f |
-| N26 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(self._require_open, asyncio.Lock())` | A-10, A-11, A-19 |
-| N27 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(lambda: self._db, self._write_lock)` | A-14 |
+| N26 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)  # AD-1340 S2a: the audited read surface` | `self.lookups = EpisodeArchiveLookups(self._require_open, asyncio.Lock())  # AD-1340 S2a: the audited read surface` | A-10, A-11, A-19 |
+| N27 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)  # AD-1340 S2a: the audited read surface` | `self.lookups = EpisodeArchiveLookups(lambda: self._db, self._write_lock)  # AD-1340 S2a: the audited read surface` | A-14 |
 | N28 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(require_crew_scope)],` | RT-e |
 | N29 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(_refuse_non_finite_numbers), Depends(require_crew_scope)],` | RT-b |
 | N30 | `src/probos/routers/security.py` | `json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)` | `json.loads(await request.body(), parse_float=_finite_float)` | RT-e |
