@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,9 @@ from probos.cognitive.episode_archive import (
     LOOKUP_DEFAULT_LIMIT,
     LOOKUP_MAX_LIMIT,
     ArchivedEpisode,
+    EpisodeArchiveConflict,
     EpisodeArchiveError,
+    EpisodeArchiveNotFound,
     EpisodeArchiveUnavailable,
 )
 from probos.knowledge.erasure import ErasureManager
@@ -105,6 +108,7 @@ async def request_erasure(
 _ARCHIVE_LOOKUP_ACCESSOR = "captain:/api/security/archive/lookup"
 _ARCHIVE_LOOKUP_TOKEN_REQUIRED = "episode_archive_lookup_requires_token"
 _NON_FINITE_NUMBER_IN_BODY = "non_finite_number_in_body"
+_UNPAIRED_SURROGATE_IN_BODY = "unpaired_surrogate_in_body"  # AD-1340 S2b A3
 
 
 class ArchiveLookupRequest(BaseModel):
@@ -160,18 +164,46 @@ def _finite_float(text: str) -> float:
     return value
 
 
+def _holds_unpaired_surrogate(parsed: Any) -> bool:
+    """AD-1340 S2b A3: whether a parsed JSON body holds, in any key or value at any depth, an unpaired surrogate.
+
+    ``json`` joins an escaped surrogate pair into one character and decodes raw bytes with ``surrogatepass``, so an
+    unpaired one, escaped or raw, survives parsing. Strict UTF-8, which the framework's 422 renderer uses, cannot
+    encode it. Iterative, so a body nested as deep as the parser allows cannot exhaust the stack.
+    """
+    pending: list[Any] = [parsed]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return False
+
+
 async def _refuse_non_finite_numbers(request: Request) -> None:
     """AD-1340 S2a: 422 for a body holding a non-finite number, before validation runs.
 
     The framework's 422 handler echoes the offending input, cannot JSON-encode NaN or Infinity, and answers 500
     (follow-up on #1523). Re-reads the body the framework already cached; reads no runtime state, writes nothing.
+    AD-1340 S2b A3: the same for an unpaired surrogate, which that handler cannot encode as UTF-8. A non-finite
+    number is refused first (while parsing). Neither answer echoes the body. The name is kept for S2a's anchors.
     """
     try:
-        json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)
+        parsed = json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)
     except _NonFiniteNumberInBody as exc:
         raise HTTPException(status_code=422, detail=_NON_FINITE_NUMBER_IN_BODY) from exc
     except ValueError:
         return  # AD-1340 S2a: malformed JSON is the framework's to refuse (it parses first)
+    # AD-1340 S2b A3: outside the try, and a bool rather than a raise: UnicodeEncodeError is a ValueError.
+    if _holds_unpaired_surrogate(parsed):
+        raise HTTPException(status_code=422, detail=_UNPAIRED_SURROGATE_IN_BODY)
 
 
 @router.post(
@@ -204,7 +236,8 @@ async def lookup_archived_episodes(
     except EpisodeArchiveUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except EpisodeArchiveError as exc:
-        logger.error("AD-1340 S2a: archive lookup failed: %s", exc, exc_info=True)
+        code = _archive_error_code(exc, "episode_archive_lookup_failed")  # AD-1340 S2b A2: the lookup logs a code too
+        logger.error("AD-1340 S2a: archive lookup failed: %s (%s)", code, type(exc.__cause__ or exc).__name__)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     kind = "episode_id" if request.episode_id else "agent"
     logger.info(
@@ -222,3 +255,70 @@ async def lookup_archived_episodes(
     if request.agent_id:
         body["agent_match"] = "primary_agent_only"
     return body
+
+
+_ARCHIVE_RESTORE_ACCESSOR = "captain:/api/security/archive/restore"
+_ARCHIVE_RESTORE_TOKEN_REQUIRED = "episode_archive_restore_requires_token"
+# AD-1340 S2b A2: the shape of an archive error code ("name" or "name:qualifier"); anything else is free text.
+_ARCHIVE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,95}(?::[a-z0-9_]{1,32})?")
+
+
+def _archive_error_code(exc: BaseException, fallback: str) -> str:
+    """AD-1340 S2b A2: the exception's text when the whole of it is an error code, else ``fallback``.
+
+    A 500 detail and its log line carry a code, never free text: an exception text can quote a stored value
+    (A1.9 F1). Every archive raise site passes a constant code today; this keeps a future one honest.
+    """
+    text = str(exc)
+    return text if _ARCHIVE_ERROR_CODE.fullmatch(text) else fallback
+
+
+class ArchiveRestoreRequest(BaseModel):
+    """AD-1340 S2b: the id of one archived episode to put back in the live store."""
+
+    model_config = {"extra": "forbid"}
+
+    episode_id: str = Field(min_length=1, max_length=256)
+
+
+@router.post(
+    "/archive/restore",
+    dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],  # AD-1340 S2b: D8, then A2
+)
+async def restore_archived_episode(
+    request: ArchiveRestoreRequest,
+    runtime: Any = Depends(get_runtime),
+) -> dict[str, Any]:
+    """AD-1340 S2b: the Captain's restore of one archived episode into the live store.
+
+    Refused (403) while no crew-scope token is configured, before anything is read (S2a D8). All or nothing
+    (``EpisodicMemory.restore_from_archive``): a 200 means the episode is live with every wired index row, in the
+    version the lookup route shows. One ``archive_access`` row names this route. A restored episode decays under
+    the ordinary rules, so an unrecalled one returns to the archive at a later Step 12. A 500
+    ``episode_archive_restore_unconfirmed`` may have made the episode live: a retry then answers 409
+    ``episode_archive_restore_live_id``. AD-1340 S2b A2/A3: an error is logged as the ``repr`` of the id's first 8
+    characters, the error code and an exception type name, never an exception's text or its cause's.
+    """
+    if not runtime.config.auth.crew_scope_token:  # AD-1340 S2b: never restore through an open gate
+        raise HTTPException(status_code=403, detail=_ARCHIVE_RESTORE_TOKEN_REQUIRED)
+    memory = getattr(runtime, "episodic_memory", None)
+    if memory is None:
+        raise HTTPException(status_code=503, detail="episodic_memory_unavailable")
+    try:
+        episode = await memory.restore_from_archive(request.episode_id, accessor=_ARCHIVE_RESTORE_ACCESSOR)
+    except EpisodeArchiveUnavailable as exc:  # AD-1340 S2b: an archive or memory that is absent, failed or stopped
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except EpisodeArchiveNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EpisodeArchiveConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except EpisodeArchiveError as exc:
+        code = _archive_error_code(exc, "episode_archive_restore_failed")  # AD-1340 S2b A2: a code, never the text
+        # AD-1340 S2b A3: %r escapes a line break or ESC in caller text; the 8-character cut is a bound, not a sanitiser.
+        logger.error("AD-1340 S2b: archive restore of %r failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)
+        raise HTTPException(status_code=500, detail=code) from exc
+    except Exception as exc:
+        logger.error("AD-1340 S2b: archive restore of %r failed unexpectedly: episode_archive_restore_failed (%s)", request.episode_id[:8], type(exc).__name__)
+        raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc
+    logger.info("AD-1340 S2b: archive restore of %r completed", episode.id)
+    return {"episode_id": episode.id, "restored": True}
