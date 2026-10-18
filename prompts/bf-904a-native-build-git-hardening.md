@@ -2627,3 +2627,56 @@ test_builder_agent.py:2181 (subprocess.run mock), :3117-3134 (real _run_git, suc
 test_bf904a_git_hardening.py:29-45 imports, :204-256 _GitSpy/_ConfigReadFails, :539-586 _Unreadable
 test_bf896_executor_identity_and_blocks.py:171-188 _GitSpy, :758-776 run_tests probe
 ```
+
+## Amendment A2 (2026-10-18): the common-directory path is read byte-exactly, and the listing seam resolves no path
+
+**Revised by:** the orchestrator (Claude Sonnet 5.5, Delegated AD Execution Mode), 2026-10-18, after M1 review round 2 (`gpt-6.1-sol`, review of the whole candidate, tree `645b9a09`: two P2 findings with ordinary reach, everything else verified, all 44 requested mutants killed). A2 is the mechanical consequence of D19 (byte-exact reads for the safety capture) and D22 (a hooks location git does not name is a failed capture), and of the Testing Standards' rule that a test seam must not re-enter the function it patches. It carries no new design decision; the Architect may overrule it. A1 stays as written; A2 supersedes the lines named in A2.4.
+
+**Gaps.**
+- **F5 (P2, ordinary, found by round 2).** `_git_safety_snapshot` reads `rev-parse --git-common-dir` through `_run_git`'s default decode, which strips Unicode whitespace from both ends of the output. Git accepts a separate git directory whose last component ends in a nonbreaking space (U+00A0) and names it WITH that character. The stripped path names a directory that does not exist, `_hooks_listing` answers a missing directory with an empty successful listing, and a build whose real hooks changed is committed and adopted (the reviewer ran the real queue, worktree, executor and adoption path). The orchestrator re-checked the premises on this host: git ends its answer with exactly one LF and no CR (`b'.git\n'`), the NBSP-ended directory exists and holds hooks, `.strip()` names a path that does not exist and `removesuffix("\n")` names the real one, for the linked worktree too (`files2\probes\probe_bf904a_nbsp_common_dir.py`).
+- **F6 (P2, ordinary CI, found by round 2).** A1.10's `_ListingSeam._name()` calls `Path(path).resolve()` inside the patched `os.lstat`. On POSIX, `Path.resolve()` calls `os.lstat`, so every lstat re-enters the seam: N1, N2 and N3[bytes] raise `RecursionError` on the Ubuntu CI job (the reviewer executed the exact definitions with the stock POSIX resolver over Windows files: 166 lstat calls, then `RecursionError`). A Windows run cannot show it, and no Linux run is available before CI.
+
+### A2.1 `src/probos/cognitive/builder.py`: the common-directory read (against the A1-built `_git_safety_snapshot`)
+SEARCH:
+```python
+        rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir)
+    except (OSError, ValueError):
+        return None
+```
+REPLACE:
+```python
+        rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir, lossless=True)  # BF-904a A2: byte-exact: a directory name may end in whitespace
+        common_dir = common_dir.removesuffix("\n")  # BF-904a A2: git ends its answer with one newline; nothing else is trimmed
+    except (OSError, ValueError):
+        return None
+```
+`lossless=True` leaves the text unstripped, so only git's own record terminator is removed; an empty answer is still a failed capture (`if rc == 0 and common_dir:` is unchanged). The flag now has three callers, all of them the safety capture (the baseline listing, the comparison listing and this read).
+
+### A2.2 `tests/test_bf904a_git_hardening.py`: the listing seam resolves no path (prose; the Builder writes it)
+- **`_ListingSeam`.** Compute every form of the hooks directory the seam compares against BEFORE `install` runs: `os.path.abspath(hooks_dir)` and `os.path.realpath(hooks_dir)` (strings). `_name(path)` becomes a pure string operation: for a `str` or `os.PathLike` argument, `os.path.dirname(os.path.abspath(os.fspath(path)))` is compared with those precomputed strings, and the entry name is `os.path.basename`. No call that touches the filesystem (`Path.resolve`, `os.path.realpath`, `Path.exists`, `os.stat`, `os.lstat`) may run inside any function the seam installs. Apply the same rule to `_Unreadable.install` (A1.8): precompute the two forms, compare lexically.
+- **A guard that makes the class detectable on Windows.** The seam keeps an `inside` counter that its installed functions raise while they run. While the seam is installed, the test monkeypatches `pathlib.Path.resolve` and `os.path.realpath` with wrappers that call the real function, except that they raise `AssertionError("a filesystem-resolving call inside the listing seam")` when `inside` is non-zero. N1, N2 and N3[bytes] (and the `_Unreadable` cases) must still pass, and the guard must fail the pre-A2 seam (verify: put the old `_name()` back in the scratch worktree: the guard fires on Windows).
+- **No other filesystem-resolving call may run inside any patched `os` function in the module**; audit every `monkeypatch.setattr(os, ...)`, `monkeypatch.setattr(Path, ...)` and `monkeypatch.setattr(builtins, ...)` of the module for it, and for any assumption that holds only on Windows (case-insensitive path comparison, 8.3 names, `O_*` flags that are absent here, the `attrib` call), and list what you found in the report.
+
+### A2.3 New test and mutation rows
+| ID | Test | Asserts |
+|---|---|---|
+| N13 | `test_a_hooks_directory_whose_name_ends_in_whitespace_is_watched` (parametrised `layout` over `separate-git-dir`, `linked-worktree-of-it`) | Setup: `admin = tmp_path / "admin\u00a0"`, `work = tmp_path / "work"`, `git init -q -b main --separate-git-dir <admin> <work>` with the module's repo-local identity settings and a seed commit; for `linked-worktree-of-it`, `git worktree add -q -b wt <tmp_path / "wt">` and the build runs in `wt`. **Premises, first (plain git, bytes, `env=_control_env()`):** `rev-parse --git-common-dir` in the build directory returns bytes that end with `admin\xc2\xa0\n` (UTF-8 of the NBSP, then one LF); `os.path.exists` of the stripped text is False and of the exact text is True; `<admin>/hooks` is a directory with at least one entry. **Control, first:** the same layout (a fresh pair) with nothing planted commits. **Probe:** the fake plants `post-checkout` in `<admin>/hooks` during the tests; `success is False`, `REFUSAL` and `"post-checkout"` in `result.error`, no `commit_hash`, the marker absent. **Cleanup:** the NBSP-ended directory cannot be removed by an ordinary Windows path; register a finalizer that removes it through `\\?\` plus the absolute path on Windows and with `shutil.rmtree` elsewhere, so the test leaves nothing behind. If this host refuses the name, use `\u2003` (an em space, which `str.strip()` also removes) and say so. Kills HRA2a, HRA2b. |
+
+| ID | File | SEARCH | REPLACE | Killed by |
+|---|---|---|---|---|
+| HRA2a | `src/probos/cognitive/builder.py` | `rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir, lossless=True)  # BF-904a A2: byte-exact: a directory name may end in whitespace` | `rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir)  # BF-904a A2: byte-exact: a directory name may end in whitespace` | N13 |
+| HRA2b | `src/probos/cognitive/builder.py` | `common_dir = common_dir.removesuffix("\n")  # BF-904a A2: git ends its answer with one newline; nothing else is trimmed` | `common_dir = common_dir.strip()` | N13 |
+| HRA2c | `src/probos/cognitive/builder.py` | `common_dir = common_dir.removesuffix("\n")  # BF-904a A2: git ends its answer with one newline; nothing else is trimmed` | `pass` | H1, H4, N13 |
+
+A1's hand row HR1 (`--git-common-dir` to `--git-dir`) now anchors on A2.1's REPLACE line: SEARCH `rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir, lossless=True)  # BF-904a A2: byte-exact: a directory name may end in whitespace`, REPLACE the same with `"--git-dir"`.
+
+### A2.4 Supersessions (the original lines stay)
+- **A1 D19:** "the safety capture is its only caller" stays true with three call sites; the round-2 and A1 texts that say "exactly two" lossless callers read "three".
+- **A1.12, Diff Reviewer property 4:** "the only git the check runs is the lossless config listing" reads "the lossless config listing and the lossless common-directory read".
+- **A1.10's `_ListingSeam` and A1.8's `_Unreadable`** read as A2.2 describes.
+- **Tests summary and header:** M1's module has 30 test functions (40 cases) after N13 (27 after A1, N11 and N12 from the orchestrator's earlier test-only repair, then N13), and the hard stops add N13's premises.
+- **D22's table** is unchanged: the common-directory read answers the same three cases, now byte-exact.
+
+### A2.5 Considered, deferred
+- **`repository_identity` (BF-896) strips its `--absolute-git-dir` answer the same way,** so two git directories whose names differ only by a trailing whitespace character compare equal. Pre-existing, injected-only (it needs a rewritten pointer to a sibling directory), and outside this amendment; recorded for the consolidated #1523 follow-up.
+- **A POSIX run of the module** is not available before CI; the guard in A2.2 makes the re-entrancy class detectable on Windows, and the round-3 review is asked to re-run the stock POSIX resolver probe against the repaired seam.
