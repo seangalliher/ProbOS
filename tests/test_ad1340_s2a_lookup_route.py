@@ -238,6 +238,84 @@ def _episode_ids(body: dict[str, Any]) -> list[str]:
     return [episode["episode_id"] for episode in body["episodes"]]
 
 
+class _GatedCommit:
+    """Forwards everything to the real connection; its first ``commit()`` pauses until ``release`` is set."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self._gated = False
+
+    async def commit(self) -> Any:
+        if not self._gated:
+            self._gated = True
+            self.entered.set()
+            await self.release.wait()
+        return await self.inner.commit()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+class _GatedRead(_GatedCommit):
+    """First ``execute()`` pauses at ``point``: ``before_execute``, ``before_fetchall`` or ``after_fetchall``."""
+
+    def __init__(self, inner: Any, point: str) -> None:
+        super().__init__(inner)
+        self.point = point
+        self.raised: BaseException | None = None
+        self.rows: list[Any] | None = None
+        self._read_gated = False
+
+    async def commit(self) -> Any:
+        return await self.inner.commit()
+
+    async def pause(self) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+    async def execute(self, sql: str, params: Any = ()) -> Any:
+        if self._read_gated:
+            return await self.inner.execute(sql, params)
+        self._read_gated = True
+        if self.point == "before_execute":
+            await self.pause()
+        try:
+            return _GatedCursor(self, await self.inner.execute(sql, params))
+        except Exception as exc:
+            self.raised = exc
+            raise
+
+
+class _GatedCursor:
+    def __init__(self, gate: _GatedRead, inner: Any) -> None:
+        self._gate, self._inner = gate, inner
+
+    async def fetchall(self) -> list[Any]:
+        if self._gate.point == "before_fetchall":
+            await self._gate.pause()
+        try:
+            rows = await self._inner.fetchall()
+        except Exception as exc:
+            self._gate.raised = exc
+            raise
+        self._gate.rows = rows
+        if self._gate.point == "after_fetchall":
+            await self._gate.pause()
+        return rows
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def _stop_at(archive: Any, gate: _GatedRead, task: asyncio.Task[Any]) -> None:
+    await asyncio.wait_for(gate.entered.wait(), timeout=5)  # premise: the lookup is paused inside its read
+    await asyncio.wait_for(archive.stop(), timeout=5)
+    assert not archive.is_open and not task.done()  # premise: the stop completed while the read was pending
+    gate.release.set()
+
+
 # --- E: the memory pass-throughs ---------------------------------------------------------------------------------
 
 
@@ -526,6 +604,32 @@ async def test_route_maps_an_unavailable_archive_to_503(tmp_path: Path) -> None:
                 for body in bodies:
                     response = await _post(client, _LOOKUP, body, headers=_AUTH)
                     assert (response.status_code, response.json()) == (503, {"detail": detail}), state
+
+
+@pytest.mark.parametrize(("point", "eid"), [("before_fetchall", "ep-000"), ("after_fetchall", "ep-unknown")])
+async def test_route_maps_a_stop_during_a_lookup_to_503(tmp_path: Path, point: str, eid: str) -> None:
+    async with _memory(tmp_path, "archive") as rig:
+        await _store_and_evict(rig.em, [0])
+        assert _count(tmp_path, "episode_archive", "ep-000") == 1  # premise: ep-000 is archived
+        archive = rig.em._episode_archive  # test-only private access
+        assert archive is not None and archive.is_open  # premise: the archive is open
+        archive._db = gate = _GatedRead(archive._db, point)
+        async with _client(_runtime(tmp_path, rig.em, token=_TOKEN)) as client:
+            task = asyncio.create_task(_post(client, _LOOKUP, {"episode_id": eid}, headers=_AUTH))
+            try:
+                await _stop_at(archive, gate, task)
+                response = await _bounded(task)
+                if point == "before_fetchall":
+                    assert isinstance(gate.raised, Exception)  # premise: the driver failed under the read
+                else:
+                    assert gate.rows == []  # premise: the read itself succeeded and found nothing
+            finally:
+                gate.release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        assert (response.status_code, response.json()) == (503, {"detail": "episode_archive_not_open"})
+        assert _query(_archive_path(tmp_path), "SELECT count(*) FROM archive_access")[0][0] == 0
 
 
 async def test_seam_evict_lookup_forget_leaves_nothing(tmp_path: Path) -> None:

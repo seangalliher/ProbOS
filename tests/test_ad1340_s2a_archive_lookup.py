@@ -217,7 +217,65 @@ class _GatedCommit:
         return getattr(self.inner, name)
 
 
-_MARKED = ArchiveRecord(episode_id="ep-mark", document="marked", metadata={"content_hash": "h-mark", "timestamp": 1.0})
+class _GatedRead(_GatedCommit):
+    """First ``execute()`` pauses at ``point``: ``before_execute``, ``before_fetchall`` or ``after_fetchall``."""
+
+    def __init__(self, inner: Any, point: str) -> None:
+        super().__init__(inner)
+        self.point = point
+        self.raised: BaseException | None = None
+        self.rows: list[Any] | None = None
+        self._read_gated = False
+
+    async def commit(self) -> Any:
+        return await self.inner.commit()
+
+    async def pause(self) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+    async def execute(self, sql: str, params: Any = ()) -> Any:
+        if self._read_gated:
+            return await self.inner.execute(sql, params)
+        self._read_gated = True
+        if self.point == "before_execute":
+            await self.pause()
+        try:
+            return _GatedCursor(self, await self.inner.execute(sql, params))
+        except Exception as exc:
+            self.raised = exc
+            raise
+
+
+class _GatedCursor:
+    def __init__(self, gate: _GatedRead, inner: Any) -> None:
+        self._gate, self._inner = gate, inner
+
+    async def fetchall(self) -> list[Any]:
+        if self._gate.point == "before_fetchall":
+            await self._gate.pause()
+        try:
+            rows = await self._inner.fetchall()
+        except Exception as exc:
+            self._gate.raised = exc
+            raise
+        self._gate.rows = rows
+        if self._gate.point == "after_fetchall":
+            await self._gate.pause()
+        return rows
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def _stop_at(archive: EpisodeArchive, gate: _GatedRead, task: asyncio.Task[Any]) -> None:
+    await asyncio.wait_for(gate.entered.wait(), timeout=5)  # premise: the lookup is paused inside its read
+    await asyncio.wait_for(archive.stop(), timeout=5)
+    assert not archive.is_open and not task.done()  # premise: the stop completed while the read was pending
+    gate.release.set()
+
+
+_MARKED =  ArchiveRecord(episode_id="ep-mark", document="marked", metadata={"content_hash": "h-mark", "timestamp": 1.0})
 
 
 async def _arm_failing_write(archive: EpisodeArchive) -> None:
@@ -722,6 +780,22 @@ async def test_lookup_validates_its_arguments(tmp_path: Path) -> None:
                 lambda: archive.lookups.lookup_by_agent("agent-a", since=6.0, until=5.0, accessor="test"),
                 "episode_archive_lookup_range_invalid",
             ),
+            (  # AD-1340 S2a A3.2: an explicit infinite bound is refused like NaN (D5)
+                lambda: archive.lookups.lookup_by_agent("agent-a", since=-float("inf"), accessor="test"),
+                "episode_archive_lookup_range_invalid",
+            ),
+            (
+                lambda: archive.lookups.lookup_by_agent("agent-a", since=float("inf"), accessor="test"),
+                "episode_archive_lookup_range_invalid",
+            ),
+            (
+                lambda: archive.lookups.lookup_by_agent("agent-a", until=float("inf"), accessor="test"),
+                "episode_archive_lookup_range_invalid",
+            ),
+            (
+                lambda: archive.lookups.lookup_by_agent("agent-a", until=-float("inf"), accessor="test"),
+                "episode_archive_lookup_range_invalid",
+            ),
         ]
         for call, code in cases:
             with pytest.raises(ValueError, match=rf"^{code}$"):
@@ -871,3 +945,57 @@ async def test_a_failing_archive_write_never_rolls_back_a_lookups_access_row(tmp
             gate.release.set()
             archive._db = real
             await _cancel_pending(tasks)
+
+
+# --- A-20, A-21, A-22: a stop() at any await of a lookup is unavailability (Amendment A3) ---------------------------
+
+
+@pytest.mark.parametrize("point", ["before_execute", "before_fetchall"])
+async def test_a_stop_during_the_read_raises_unavailable(tmp_path: Path, point: str) -> None:
+    path = tmp_path / "episode_archive.db"
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        await archive.archive([_record(0)], reason="capacity")
+        assert _count(path, "episode_archive", "ep-000") == 1  # premise: there is a row to read
+        archive._db = gate = _GatedRead(archive._db, point)  # test-only private access
+        task = asyncio.create_task(archive.lookups.lookup_by_id("ep-000", accessor="test"))
+        try:
+            await _stop_at(archive, gate, task)
+            with pytest.raises(EpisodeArchiveUnavailable, match=NOT_OPEN) as caught:
+                await asyncio.wait_for(task, timeout=5)
+        finally:
+            await _cancel_pending([task])
+    assert isinstance(gate.raised, Exception) and not isinstance(gate.raised, EpisodeArchiveError)  # premise
+    assert caught.value.__cause__ is gate.raised
+    assert _count(path, "archive_access") == 0
+
+
+@pytest.mark.parametrize(("episode_id", "n_rows"), [("ep-unknown", 0), ("ep-000", 1)])
+async def test_a_stop_after_the_read_never_answers(tmp_path: Path, episode_id: str, n_rows: int) -> None:
+    path = tmp_path / "episode_archive.db"
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        await archive.archive([_record(0)], reason="capacity")
+        assert _count(path, "episode_archive", "ep-000") == 1  # premise: there is a row to read
+        archive._db = gate = _GatedRead(archive._db, "after_fetchall")  # test-only private access
+        task = asyncio.create_task(archive.lookups.lookup_by_id(episode_id, accessor="test"))
+        try:
+            await _stop_at(archive, gate, task)
+            assert gate.raised is None and gate.rows is not None and len(gate.rows) == n_rows  # premise: the read succeeded
+            with pytest.raises(EpisodeArchiveUnavailable, match=NOT_OPEN):
+                await asyncio.wait_for(task, timeout=5)
+        finally:
+            await _cancel_pending([task])
+    assert _count(path, "archive_access") == 0
+
+
+async def test_a_read_failure_on_an_open_archive_keeps_its_type(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        await archive.archive([_record(0)], reason="capacity")
+        _write(path, "DROP TABLE episode_archive")
+        assert archive.is_open  # premise: the archive is open while its table is gone
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            await archive.lookups.lookup_by_id("ep-000", accessor="test")
+        assert archive.is_open

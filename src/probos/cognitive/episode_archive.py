@@ -340,7 +340,8 @@ class EpisodeArchiveLookups:
             raise ValueError("episode_archive_lookup_limit_invalid")
         lower = -math.inf if since is None else float(since)
         upper = math.inf if until is None else float(until)
-        if math.isnan(lower) or math.isnan(upper) or lower >= upper:
+        finite = (since is None or math.isfinite(lower)) and (until is None or math.isfinite(upper))
+        if not finite or lower >= upper:
             raise ValueError("episode_archive_lookup_range_invalid")
         _require_accessor(accessor)
         return await self._lookup(
@@ -351,8 +352,15 @@ class EpisodeArchiveLookups:
         self, sql: str, params: tuple[Any, ...], *, limit: int, accessor: str,
     ) -> ArchiveLookupResult:
         db = self._require_open()
-        cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
-        rows = await cursor.fetchall()
+        try:
+            cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
+            rows = await cursor.fetchall()
+        except Exception as exc:  # AD-1340 S2a A3: did a stop() close the connection under the read?
+            try:
+                self._require_open()  # AD-1340 S2a A3: a stop() during the read is unavailability (D7)
+            except EpisodeArchiveUnavailable as closed:
+                raise closed from exc
+            raise  # AD-1340 S2a A3: any other read failure keeps its own type
         truncated = len(rows) > limit
         decoded: list[tuple[ArchivedEpisode, bytes]] = []
         undecodable = 0
@@ -369,6 +377,8 @@ class EpisodeArchiveLookups:
                 continue  # AD-1340 S2a: one bad row never hides the others in a lookup
             item = ArchivedEpisode(record, str(agent_id), float(episode_timestamp), float(archived_at), str(reason))
             decoded.append((item, bytes(payload)))
+        if not decoded:
+            self._require_open()  # AD-1340 S2a A3: an empty answer is given only while open; no await follows
         recorded = await self._record_lookup_access(decoded, accessor=accessor) if decoded else frozenset()
         episodes = tuple(item for item, _ in decoded if (item.record.episode_id, item.record.content_hash) in recorded)
         return ArchiveLookupResult(

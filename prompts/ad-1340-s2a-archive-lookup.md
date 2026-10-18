@@ -62,7 +62,7 @@ A batched private method is warranted rather than a loop over `record_access`. U
 A lookup takes effect when its access transaction commits. If an ERASE committed first, the row is gone, the conditional INSERT writes nothing, and the id is not returned. If the ERASE commits later, it deletes that id's access rows as well (`:474`, unchanged). The access rows of a cancelled lookup are still pending on the shared connection, so they fall inside the ERASE's own transaction and are deleted too. Both orders end with no access row for an erased id. "An erased id is never returned" means exactly this: never after its ERASE committed.
 
 ### D7. Pass-throughs: typed unavailability, no lock, no live store
-`_archive_for_lookup()` returns the open archive. Otherwise it raises `EpisodeArchiveUnavailable` with `episode_archive_failed_to_open` (state `"failed"`) or `episode_archive_not_open` (never started, delete mode with no file, or stopped). It never returns an empty result. Inside the archive, `_require_open()` covers a `stop()` during a lookup (`episode_archive_not_open`). The pass-throughs touch no `_collection`, no sidecar and no `_get_store_write_lock()`.
+`_archive_for_lookup()` returns the open archive. Otherwise it raises `EpisodeArchiveUnavailable` with `episode_archive_failed_to_open` (state `"failed"`) or `episode_archive_not_open` (never started, delete mode with no file, or stopped). It never returns an empty result. Inside the archive, `_require_open()` is checked at entry, again when the unlocked read fails (a failure while closed becomes `episode_archive_not_open`; any other failure keeps its type), before an empty answer, and under `_write_lock` before the access rows. A `stop()` at any await of a lookup therefore gives `EpisodeArchiveUnavailable`, never a driver error and never an empty result (Amendment A3). The pass-throughs touch no `_collection`, no sidecar and no `_get_store_write_lock()`.
 
 ### D8. The route and its protection
 `POST /api/security/archive/lookup`, next to `/forget`. It is a POST because the call writes audit rows, so it is neither safe nor idempotent in HTTP terms, and ids stay out of URLs and access logs. Its protection is `dependencies=[Depends(require_crew_scope)]` **and** a 403 `episode_archive_lookup_requires_token` while `auth.crew_scope_token` is empty. That check is the handler's first statement, before episodic memory or the archive is touched. This follows the repository's rule for sensitive surfaces: identity keys refuse 403 `identity_keys_require_token` (`routers/identity.py:163-164`), and federation attachments "must never serve bytes through an open gate" (`routers/federation_attachments.py:10-12`, `:110`).
@@ -773,6 +773,12 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | N30 | `src/probos/routers/security.py` | `json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)` | `json.loads(await request.body(), parse_float=_finite_float)` | RT-e |
 | N31 | `src/probos/routers/security.py` | `if not math.isfinite(value):` | `if False:` | RT-e |
 | N32 | `src/probos/routers/security.py` | `if bound is not None and not math.isfinite(bound):` | `if False:` | RT-e |
+| N33 | `src/probos/cognitive/episode_archive.py` | `except Exception as exc:  # AD-1340 S2a A3: did a stop() close the connection under the read?` | `except EpisodeArchiveError as exc:  # AD-1340 S2a A3` | A-20, RT-h |
+| N34 | `src/probos/cognitive/episode_archive.py` | `raise closed from exc` | `raise closed` | A-20 |
+| N35 | `src/probos/cognitive/episode_archive.py` | `raise  # AD-1340 S2a A3: any other read failure keeps its own type` | `raise EpisodeArchiveUnavailable("episode_archive_not_open") from exc` | A-22 |
+| N36 | `src/probos/cognitive/episode_archive.py` | `self._require_open()  # AD-1340 S2a A3: a stop() during the read is unavailability (D7)` | `pass` | A-20, RT-h |
+| N37 | `src/probos/cognitive/episode_archive.py` | `self._require_open()  # AD-1340 S2a A3: an empty answer is given only while open; no await follows` | `pass` | A-21, RT-h |
+| N38 | `src/probos/cognitive/episode_archive.py` | `finite = (since is None or math.isfinite(lower)) and (until is None or math.isfinite(upper))` | `finite = not (math.isnan(lower) or math.isnan(upper))` | A-15 |
 
 **Checked by hand, like S1's WH rows.** **WH6** moves the `_record_lookup_access(...)` call and the `episodes = ...` filter **below** a `return` of all decoded records, so the lookup returns before auditing; A-3 and A-12 must fail. **WH7** dedents the `for item, payload in decoded:` loop and the commit out of `async with self._write_lock:`; **A-19** must fail (A-10 cannot: Amendment A1.1). **WH7b** dedents only `await db.commit()` out of the lock; A-19 must fail as well.
 
@@ -1090,7 +1096,7 @@ class EpisodeArchiveLookups:
 
 ### A1.5 Orchestrator additions (decided inside the Architect's amendment, not new design)
 - **N26 and N27** are new table rows for the constructor wiring that D introduces: N26 gives the companion its own lock (A-10, A-11 and A-19 must fail), N27 gives it a `require_open` that never raises (A-14 must fail, because a closed archive would then surface as an `AttributeError` instead of `EpisodeArchiveUnavailable`). Both SEARCH texts occur once in `EpisodeArchive.__init__`.
-- **M1b (the repair milestone):** apply A1.2 to the built `episode_archive.py`, rename the test call sites, add A-19 with its three copied helpers, run the M1 gate and both checks. Expected: 19 passed in the new file, the architecture check at exit 0. Verify the moved method bodies are byte-identical to Section 1h's text (a script compares them).
+- **M1b (the repair milestone):** apply A1.2 to the built `episode_archive.py`, rename the test call sites, add A-19 with its three copied helpers, run the M1 gate and both checks. Expected: 19 passed in the new file, the architecture check at exit 0. `lookup_by_id` and `_record_lookup_access` are byte-identical to Section 1h; `_lookup` and `lookup_by_agent` equal Section 1h's text with Amendment A3.1 and A3.2 applied (a script compares them).
 - **The orchestrator runs the campaign of record** on the frozen candidate: N1 to N27 (the table), WH6, WH7 and WH7b by hand, and the 21 S1 rows.
 
 ---
@@ -1216,4 +1222,187 @@ Pre-existing and app-wide: every route that takes a JSON body answers 500, not 4
 
 ### A2.9 Orchestrator note (milestone M2b)
 Apply A2.1 to A2.3 to the built `security.py` and `tests/test_ad1340_s2a_lookup_route.py`, run the M2 gate and both checks (expect 11 new route tests green, 175 passed in the focused list), and hand-check N24 and N28 to N32. The Architect ran no code for the subclass version of the guard (its probe used an earlier version of the same function); RT-e on the built code is the check for this exact text.
+
+---
+
+## Amendment A3 (Architect, after review round 1; recorded by the orchestrator, 2026-10-18)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-17, consult session `20d88592`.
+
+**Why.** Diff Reviewer round 1 (GPT-6.1 Sol; 107 calls) answered REQUEST CHANGES with two findings. **F1 (P2, ordinary reach, not a regression):** a `stop()` that closes the archive connection while a lookup's unlocked read is awaiting surfaces as a raw driver error (`ProgrammingError` or `ValueError: Connection closed`), so the route answers an uncontrolled 500 instead of the typed 503 that D7 and D10 promise; and an interleaving can return 200 with `episodes: []` after the archive stopped, because the empty-decoded path skips the only re-check that runs under the lock. Reach: `/api/system/shutdown` stops episodic memory while the app still serves. The orchestrator reproduced it (30 of 30 lookups racing `stop()` end in `ProgrammingError: Cannot operate on a closed database`; a control without a stop succeeds). **F2 (P3, injected-only, not a regression):** `lookup_by_agent` rejects NaN and inverted ranges but accepts an explicit infinite bound, contrary to D5. The reviewer verified every other property and detected 12 of 12 mutants it tried. **Where this amendment and Sections 1 to 5 or A1 and A2 differ, this amendment wins.**
+
+### A3.1 F1: a stop() at any await of a lookup is typed
+**Reason:** `stop()` sets `self._db = None` under `_write_lock` before it closes the connection. So a driver failure caused by that close always coincides with `_require_open()` raising, and an unrelated failure on an open archive does not. The same `EpisodeArchive` object is never restarted (`EpisodicMemory` builds a new one on every start), so a re-check cannot see a different connection. Reads stay unlocked (R3). D7's fourth sentence was replaced in place above.
+
+The two blocks below apply to the built `EpisodeArchiveLookups._lookup`.
+
+SEARCH:
+```python
+        db = self._require_open()
+        cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
+        rows = await cursor.fetchall()
+        truncated = len(rows) > limit
+```
+REPLACE:
+```python
+        db = self._require_open()
+        try:
+            cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
+            rows = await cursor.fetchall()
+        except Exception as exc:  # AD-1340 S2a A3: did a stop() close the connection under the read?
+            try:
+                self._require_open()  # AD-1340 S2a A3: a stop() during the read is unavailability (D7)
+            except EpisodeArchiveUnavailable as closed:
+                raise closed from exc
+            raise  # AD-1340 S2a A3: any other read failure keeps its own type
+        truncated = len(rows) > limit
+```
+SEARCH:
+```python
+            decoded.append((item, bytes(payload)))
+        recorded = await self._record_lookup_access(decoded, accessor=accessor) if decoded else frozenset()
+```
+REPLACE:
+```python
+            decoded.append((item, bytes(payload)))
+        if not decoded:
+            self._require_open()  # AD-1340 S2a A3: an empty answer is given only while open; no await follows
+        recorded = await self._record_lookup_access(decoded, accessor=accessor) if decoded else frozenset()
+```
+On the non-empty path `_record_lookup_access` already re-checks under the lock. A stop after its commit is linearised after the lookup (D6).
+
+**Section 1h stays as written; A3 applies on top, as A1 does.** The byte-identity rule (A1.5, edited in place above): `lookup_by_id` and `_record_lookup_access` are byte-identical to Section 1h; `_lookup` and `lookup_by_agent` equal Section 1h's text with A3.1 and A3.2 applied. A script takes Section 1h's text, applies each A3 SEARCH/REPLACE (asserting each SEARCH occurs exactly once) and compares the result byte for byte with the built file. A1.4 items 1, 8, 10 and 15 are unchanged, and no row N1 to N32 anchors on a changed line.
+
+### A3.2 F2: fixed in the same edit
+**Reason:** D5 is the contract and the code contradicts it; the fix is two lines in the method this round re-reads anyway.
+
+SEARCH:
+```python
+        if math.isnan(lower) or math.isnan(upper) or lower >= upper:
+```
+REPLACE:
+```python
+        finite = (since is None or math.isfinite(lower)) and (until is None or math.isfinite(upper))
+        if not finite or lower >= upper:
+```
+NaN is not finite, so A-15's NaN case still holds. **A-15 gains four cases**, each raising `^episode_archive_lookup_range_invalid$`: `since=-math.inf`, `since=math.inf`, `until=math.inf` and `until=-math.inf`.
+
+### A3.3 Tests (four new test functions, seven cases)
+Add these test-local helpers after `_GatedCommit` in `tests/test_ad1340_s2a_archive_lookup.py`. `_GatedRead` subclasses `_GatedCommit` to reuse its events (a stdlib event class constructor in the prompt would trip the phantom precheck), and its pass-through `commit` disables the commit gate.
+```python
+class _GatedRead(_GatedCommit):
+    """First ``execute()`` pauses at ``point``: ``before_execute``, ``before_fetchall`` or ``after_fetchall``."""
+
+    def __init__(self, inner: Any, point: str) -> None:
+        super().__init__(inner)
+        self.point = point
+        self.raised: BaseException | None = None
+        self.rows: list[Any] | None = None
+        self._read_gated = False
+
+    async def commit(self) -> Any:
+        return await self.inner.commit()
+
+    async def pause(self) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+    async def execute(self, sql: str, params: Any = ()) -> Any:
+        if self._read_gated:
+            return await self.inner.execute(sql, params)
+        self._read_gated = True
+        if self.point == "before_execute":
+            await self.pause()
+        try:
+            return _GatedCursor(self, await self.inner.execute(sql, params))
+        except Exception as exc:
+            self.raised = exc
+            raise
+
+
+class _GatedCursor:
+    def __init__(self, gate: _GatedRead, inner: Any) -> None:
+        self._gate, self._inner = gate, inner
+
+    async def fetchall(self) -> list[Any]:
+        if self._gate.point == "before_fetchall":
+            await self._gate.pause()
+        try:
+            rows = await self._inner.fetchall()
+        except Exception as exc:
+            self._gate.raised = exc
+            raise
+        self._gate.rows = rows
+        if self._gate.point == "after_fetchall":
+            await self._gate.pause()
+        return rows
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def _stop_at(archive: EpisodeArchive, gate: _GatedRead, task: asyncio.Task[Any]) -> None:
+    await asyncio.wait_for(gate.entered.wait(), timeout=5)  # premise: the lookup is paused inside its read
+    await asyncio.wait_for(archive.stop(), timeout=5)
+    assert not archive.is_open and not task.done()  # premise: the stop completed while the read was pending
+    gate.release.set()
+```
+**A-20** `test_a_stop_during_the_read_raises_unavailable`:
+```python
+@pytest.mark.parametrize("point", ["before_execute", "before_fetchall"])
+async def test_a_stop_during_the_read_raises_unavailable(tmp_path: Path, point: str) -> None:
+    path = tmp_path / "episode_archive.db"
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        await archive.archive([_record(0)], reason="capacity")
+        assert _count(path, "episode_archive", "ep-000") == 1  # premise: there is a row to read
+        archive._db = gate = _GatedRead(archive._db, point)  # test-only private access
+        task = asyncio.create_task(archive.lookups.lookup_by_id("ep-000", accessor="test"))
+        try:
+            await _stop_at(archive, gate, task)
+            with pytest.raises(EpisodeArchiveUnavailable, match=NOT_OPEN) as caught:
+                await asyncio.wait_for(task, timeout=5)
+        finally:
+            await _cancel_pending([task])
+    assert isinstance(gate.raised, Exception) and not isinstance(gate.raised, EpisodeArchiveError)  # premise
+    assert caught.value.__cause__ is gate.raised
+    assert _count(path, "archive_access") == 0
+```
+**A-21** `test_a_stop_after_the_read_never_answers`:
+- Parametrize `("ep-unknown", 0)` and `("ep-000", 1)` as `(episode_id, n_rows)`.
+- Same body as A-20, with `point="after_fetchall"`.
+- After `_stop_at`, assert the premise `gate.raised is None and gate.rows is not None and len(gate.rows) == n_rows` (the read itself succeeded).
+- Then expect `pytest.raises(EpisodeArchiveUnavailable, match=NOT_OPEN)`, and an `archive_access` count of 0.
+- The `ep-unknown` case is the empty-path killer. The `ep-000` case pins the existing re-check in `_record_lookup_access`.
+
+**A-22** `test_a_read_failure_on_an_open_archive_keeps_its_type`:
+- Inside `_started`, run `_write(path, "DROP TABLE episode_archive")`.
+- Assert `archive.is_open` (premise).
+- Assert `pytest.raises(sqlite3.OperationalError, match="no such table")` around `lookup_by_id("ep-000", accessor="test")`.
+- Assert `archive.is_open` afterwards.
+
+**RT-h** `test_route_maps_a_stop_during_a_lookup_to_503` (in `tests/test_ad1340_s2a_lookup_route.py`; a separate function, so RT-f's text and its N25 row stay unchanged):
+- Copy `_GatedCommit`, `_GatedRead`, `_GatedCursor` and `_stop_at` test-local.
+- Parametrize `("before_fetchall", "ep-000")` and `("after_fetchall", "ep-unknown")`.
+- Set up a `_memory(tmp_path, "archive")` rig with ep-000 evicted, and `archive = rig.em._episode_archive` (test-only).
+- Gate it, start `_post(client, _LOOKUP, {"episode_id": eid}, headers=_AUTH)` as a task, then call `_stop_at`.
+- Premise: the driver failed (the `before_fetchall` case) or `gate.rows == []` (the `after_fetchall` case).
+- Assert `(response.status_code, response.json()) == (503, {"detail": "episode_archive_not_open"})` and `_count(tmp_path, "archive_access") == 0`.
+
+### A3.4 Mutation rows and campaign
+The table above carries the new rows N33 to N38 (count each anchor before mutating): N33 narrows the read's `except` (A-20, RT-h); N34 drops the exception chaining (A-20); N35 relabels every read failure as unavailability (A-22); N36 drops the re-check on a failed read (A-20, RT-h); N37 drops the empty-path re-check (A-21, RT-h); N38 reverts F2's finite check (A-15). **The campaign of record covers N1 to N38**, plus WH6, WH7 and WH7b and S1's 21 rows; N1 to N32 are not re-run for A3 only if the killer test text they depend on is unchanged (the orchestrator re-runs any row whose killer file changed).
+
+**Diff Reviewer property 17 (new):** a `stop()` at any await of a lookup yields `EpisodeArchiveUnavailable` / 503 `episode_archive_not_open`, or a result whose access rows committed before the stop. It never yields a driver error, a 500, or an empty 200. A read failure on an open archive is not relabelled.
+
+**DECISIONS bullet (added with the trackers):** "AD-1340 S2a A3: archive lookups re-check openness when the unlocked read fails and before an empty answer. A failure while closed is unavailability, and any other failure keeps its type. Reads stay unlocked (R3). An explicit infinite bound is refused like NaN."
+
+### A3.5 Recorded, not fixed (the orchestrator posts these on #1523 as F-140 to F-142)
+- **The same gap in S1's service reads (agreed; P3, ordinary reach at shutdown, not an S2a regression):** `get_records`, `archived_keys`, `get_versions` and `iter_records` await unlocked reads with no openness re-check; a `stop()` during one surfaces a driver error instead of `EpisodeArchiveUnavailable`. The callers are restore and the erasure paths. Apply A3.1's guard, factored into one helper once it has a second user. Not done in S2a: S1 surface, outside this diff. The caller-side effect at shutdown was not measured.
+- **OpenAPI (Low, pre-existing):** `create_app(...).openapi()` raises `PydanticUserError`, because `hxi_fallback() -> HTMLResponse` is annotated under `from __future__ import annotations` while `HTMLResponse` is imported only locally in the "frontend not built" branch of `api.py`. So `/openapi.json` and `/docs` fail whenever the UI is not built. Fix: import it at module level next to `JSONResponse`. Not in S2a: A2.5 pins `api.py` unchanged. The Architect suggested a new BF; under the burn-down filing policy and its discovery budget (no pre-existing issue closed yet in this wave) the orchestrator records it as a consolidated register item instead, and the Captain can ask for an issue.
+
+### A3.6 Effect on A1 and A2
+A1: only the M1b byte-identity sentence and the campaign range change; the companion design, N26 and N27 and the architecture check are unaffected (no method is added; the class keeps 13 direct methods). A2: unaffected (`routers/security.py` is untouched, and the existing `except EpisodeArchiveUnavailable` to 503 mapping is what RT-h exercises).
+
+### A3.7 Orchestrator note (milestone M1c)
+Apply A3.1 to A3.3 to the built `episode_archive.py` and the two test files, run the M1 and M2 gates and both checks. Expected counts: 24 tests in the archive-lookup file (19 plus A-20 with two cases, A-21 with two and A-22), 13 in the route file (11 plus RT-h with two cases), so 37 new tests; the focused M2 list passes 175 + 7 = 182. Hand-check N33 to N38. The Architect ran none of A3.3 (read-only consult): the first run is the Builder's, and a stop-and-report applies if a gated stand-in does not pause where the premise says.
 
