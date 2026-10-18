@@ -2958,3 +2958,383 @@ Each anchor occurs once: the retry tuple at `:148` has a different prefix.
 - **The follow-up.** Add it to the consolidated #1523 follow-up (no new number allocated):
   1. Build-authored paths reach `result.error` raw on the validation path (`builder.py:2719,3118-3161,3454`) and in the info logs (`builder.py:3146,3188,3215,3218`).
   2. `builder_write_refusal` accepts `Cc` and `Cf` characters in first-pass paths. Refusing them at `builder_paths.py:71` closes the class at its source.
+
+## Amendment A4 (2026-10-18): a branch the build did not create is never deleted, one snapshot per file, a lossless ref read, cleanup that never raises, and a truthful Abort description
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18, on M2 review round 1 (gpt-6.1-sol, REQUEST CHANGES, F1 to F5).
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only answer (session `bd6de1ca`). The only wording changes: D31 to D35 are merged into the Decisions, the rows heading says Partition P2 (the answer said P3: R11 to R15 are in the M2 module), and the rows table is rebuilt with full paths and the full anchor lines (the answer wrote `builder.py`, an ellipsis, and "R-ae's anchor"); every anchor is checked against the chain.
+
+**Verdict:** ⚠️ Conditional. M2 is approved once A4 is applied, R11 to R15 are red on `5a1903f1` and green after A4, and the controls are green on both.
+
+**Decisions** (recorded on #1585; ranked by correctness, safety, compatibility, reversibility and validation cost; the Captain may overrule):
+- **D31 (F1): refuse the collision and never delete.** If a branch with the build's name already exists, `_git_create_branch` refuses the build before any write and keeps the branch.
+  - Option ranking: (1) refuse; (2) `branch -d`, which keeps git's merged-only check but still deletes a ref, so the "every local branch identical" claim stays false; (3) a fresh unique name, which changes the naming contract and lets branches pile up; (4) narrow the invariant, which still loses commits.
+  - Consumers checked, none stranded. `result.branch_name` is read by `build_dispatcher.py:223,246,269` (adopt, then replaced) and `routers/build.py:453,461` (display). `WorktreeManager` names its own branches `builder-{short_id}` (`worktree_manager.py:85`) and deletes only those, plus the executor branch after a verified adoption (`:214`).
+  - Crash-recovery rationale: a crash that leaves files behind is already refused by the dirty-tree check. What remains is a branch with no build commit, which the Captain now deletes when the refusal names it.
+  - The old net also had a race: a dispatched build could delete a same-title executor branch whose commit was not yet adopted. D31 closes that too.
+  - Its only test (`test_builder_guardrails.py:104`) was vacuous: it creates `builder/test-stale`, but the name that is checked is the sanitised `builder-test-stale`.
+- **D32 (F2): one key per target, first snapshot wins, and the restore runs newest first.**
+  - The key is `os.path.normcase(os.path.realpath(join(work_dir, rel)))`, the same normalisation `repository_identity` already uses (`builder.py:1760`). It is computed after the BF-894/BF-898 acceptance and before the write, at all three snapshot sites.
+  - BF-894 cannot supply the key: `builder_write_refusal` is lexical plus a `.git` stat walk and resolves nothing (`builder_paths.py:71-134`).
+  - `.` components, separators and in-repo symlinks are resolved on every host; case folds on Windows.
+  - Two spellings can still get two keys: a hard link, or case on a case-folding POSIX filesystem. Writing the restore newest first makes the first snapshot win there as well.
+  - A path the build saved, which the tests then deleted and the fix loop recreated, is listed as modified, never as created, so the restore does not delete it.
+  - Symlinks, under recorded decision (a):
+    - A link inside the repo to a saved file shares that file's key. The restore writes the first spelling, following the link exactly as `write_bytes` does.
+    - A link the tests plant that points outside the repo is keyed by its target. The restore writes back, through the link, the bytes that the test code itself left there. Nothing is granted beyond what that code already had.
+- **D33 (F3): read the ref losslessly.** `_git_current_branch` reads with `lossless=True` and removes only git's final LF. This is the same class as D19 and A2's byte-exact read. The test observer `_head_ref` reads raw bytes, and `_state` splits branch lines on `"\n"` only (`splitlines` would also split at `\x85` and `\u2028`, which are legal in ref names).
+- **D34 (F4): every cleanup helper catches `Exception`.** That covers `_git_return_to`, `_cleanup_git` and each path in `_restore_pre_build_files`, and the existence check moves inside the per-path try. Each failure is reported and the remaining steps run. `BaseException`, including cancellation, still propagates.
+- **D35 (F5): one Abort description for all five categories:** `"Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"`. No test anywhere pins the old text (grep for `Abandon changes` outside node_modules found only `builder.py:266-287` and an archived prompt; `ui/` has no vitest for it).
+
+
+Apply after Sections 5 to 7 and A3, and before Section 8. No block touches a line in a Section 8 SEARCH: 8b ends at `if modified != original:`, 8e covers only the fix loop's modify branch, and 8d ends at `# Apply fix changes`.
+
+### A4.1 `src/probos/cognitive/builder.py`: module docstring
+SEARCH:
+```python
+orchestrates: git branch → write files → pytest → commit → return to main.
+```
+REPLACE:
+```python
+orchestrates: git branch → write files → pytest → commit → return to the ref it started from (BF-904a).
+```
+
+### A4.2 `src/probos/cognitive/builder.py`: the Abort description (prose; the five lines are identical, so there is no SEARCH block, as in 7f)
+Replace all five occurrences (`:266,273,278,283,287`) of `"description": "Abandon changes and return to main branch"` with `"description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"`. Count five before the edit and zero after.
+
+### A4.3 `src/probos/cognitive/builder.py`: `_git_current_branch`
+SEARCH:
+```python
+    rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir)
+    return out if rc == 0 and out else None  # BF-904a: never a guessed "main"
+```
+REPLACE:
+```python
+    # BF-904a A4 (D33): a valid ref may end in Unicode whitespace (U+00A0) that the default decode's
+    # strip() would cut, and the return would then check out a different, existing branch.
+    rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir, lossless=True)  # BF-904a A4 (D33): the ref exactly as git names it
+    out = out.removesuffix("\n")  # BF-904a A4 (D33): only the LF git ends the line with
+    return out if rc == 0 and out else None  # BF-904a: never a guessed "main"
+```
+
+### A4.4 `src/probos/cognitive/builder.py`: `_git_create_branch`
+SEARCH:
+```python
+    safe = _sanitize_branch_name(branch_name)
+    # Safety net: delete stale branch from prior failed build (crash/power loss)
+    _, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)
+    if list_out.strip():
+        logger.info("Deleting stale branch '%s' from prior build", safe)
+        await _run_git(["branch", "-D", safe], work_dir)
+    rc, out, err = await _run_git(["checkout", "-b", safe], work_dir)
+```
+REPLACE:
+```python
+    safe = _sanitize_branch_name(branch_name)
+    # BF-904a A4 (D31): an existing branch of this name is never deleted. The name comes from the
+    # spec title, so it may hold a successful build's commit; the build is refused before any write.
+    # A branch a crash left, or one a failed return kept, is the Captain's to delete.
+    _, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)
+    if list_out.strip():
+        return False, f"branch {safe} already exists; it is kept: merge or delete it, or give the build another title"  # BF-904a A4 (D31): never delete a branch this build did not create
+    rc, out, err = await _run_git(["checkout", "-b", safe], work_dir)
+```
+
+### A4.5 `src/probos/cognitive/builder.py`: `_git_return_to`
+SEARCH:
+```python
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except (OSError, ValueError) as exc:
+        return False, f"git checkout could not start ({type(exc).__name__})"
+```
+REPLACE:
+```python
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except Exception as exc:  # BF-904a A4 (D34): any ordinary failure is a failed return; BaseException propagates
+        return False, f"git checkout could not start ({type(exc).__name__})"
+```
+
+### A4.6 `src/probos/cognitive/builder.py`: `_cleanup_git`
+SEARCH:
+```python
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except (OSError, ValueError) as exc:
+        return f"git {args[0]} could not start ({type(exc).__name__})"
+```
+REPLACE:
+```python
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except Exception as exc:  # BF-904a A4 (D34): reported, and the cleanup goes on; BaseException propagates
+        return f"git {args[0]} could not start ({type(exc).__name__})"
+```
+
+### A4.7 `src/probos/cognitive/builder.py`: `_restore_pre_build_files`
+SEARCH:
+```python
+    root = Path(work_dir)
+    for rel, data in originals.items():
+        try:
+            (root / rel).write_bytes(data)
+        except OSError as exc:
+            errors.append(f"could not restore {_display_token(rel, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+    for created_path in created:
+        full = root / created_path
+        if not full.exists():
+            continue
+        try:
+            full.unlink()
+        except OSError as exc:
+```
+REPLACE:
+```python
+    root = Path(work_dir)
+    # BF-904a A4 (D32): newest snapshot first. Where two spellings of one file were both saved (a hard
+    # link; case on a case-folding POSIX filesystem), the first snapshot is written last and wins.
+    for rel, data in reversed(originals.items()):  # BF-904a A4 (D32): the first snapshot of a file wins
+        try:
+            (root / rel).write_bytes(data)
+        except Exception as exc:  # BF-904a A4 (D34): a failed restore is reported; the other paths go on
+            errors.append(f"could not restore {_display_token(rel, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+    for created_path in created:
+        full = root / created_path
+        try:
+            if not full.exists():  # BF-904a A4 (D34): inside the try, so a failed check is a failed delete
+                continue
+            full.unlink()
+        except Exception as exc:  # BF-904a A4 (D34): a failed check or delete is reported; the other paths go on
+```
+The anchors R-a, R-o, R-p and R-q are unchanged.
+
+### A4.8 `src/probos/cognitive/builder.py`: the target key (after `_restore_pre_build_files`)
+SEARCH:
+```python
+            pass  # Directory not empty or permission issue
+    return errors
+```
+REPLACE:
+```python
+            pass  # Directory not empty or permission issue
+    return errors
+
+
+def _write_target_key(work_dir: str, rel: str) -> str:
+    """BF-904a A4 (D32): one key per file a build writes, whatever accepted spelling names it.
+
+    ``repository_identity``'s normalisation: ``realpath`` drops ``.`` components, unifies separators
+    and resolves symbolic links; ``normcase`` folds case where the host does (Windows). A hard link,
+    or case on a case-folding POSIX filesystem, still gets a second key; the restore's newest-first
+    order makes the first snapshot win there too.
+    """
+    return os.path.normcase(os.path.realpath(os.path.join(work_dir, rel)))
+
+
+def _first_found(work_dir: str, rel: str, found: set[str]) -> bool:
+    """BF-904a A4 (D32): True, recording the file in *found*, the first time a build saves it."""
+    key = _write_target_key(work_dir, rel)
+    if key in found:  # BF-904a A4 (D32): already saved under another spelling
+        return False
+    found.add(key)
+    return True
+```
+
+### A4.9 `src/probos/cognitive/builder.py`: the key set
+SEARCH:
+```python
+    originals: dict[str, bytes] = {}
+    add_attempted = False
+```
+REPLACE:
+```python
+    originals: dict[str, bytes] = {}
+    found_keys: set[str] = set()  # BF-904a A4 (D32): the _write_target_key of every saved file
+    add_attempted = False
+```
+
+### A4.10 `src/probos/cognitive/builder.py`: the three snapshot sites
+SEARCH:
+```python
+                    if change["path"] not in written:
+                        originals.setdefault(change["path"], path.read_bytes())  # BF-904a: saved before the first write
+```
+REPLACE:
+```python
+                    if change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file
+                        originals.setdefault(change["path"], path.read_bytes())  # BF-904a: saved before the first write
+```
+SEARCH:
+```python
+            if pre_existing:
+                originals.setdefault(change["path"], path.read_bytes())  # BF-904a: a create over an existing file saves it first
+```
+REPLACE:
+```python
+            if pre_existing and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file, a create over it too
+                originals.setdefault(change["path"], path.read_bytes())  # BF-904a: a create over an existing file saves it first
+```
+SEARCH:
+```python
+                        if before_fix is not None and change["path"] not in written:
+```
+REPLACE:
+```python
+                        if before_fix is not None and change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): not again under a second spelling
+```
+
+### A4.11 `src/probos/cognitive/builder.py`: a saved file that the fix loop recreates is not "created"
+SEARCH:
+```python
+                                if pre_existing:
+                                    # BF-896: never list a pre-existing file in files_written.
+```
+REPLACE:
+```python
+                                if pre_existing or _write_target_key(work_dir, change["path"]) in found_keys:  # BF-904a A4 (D32): a saved file the tests deleted is restored, never deleted as created
+                                    # BF-896: never list a pre-existing file in files_written.
+```
+
+### A4.12 `tests/test_bf904a_failed_build_restore.py`: the observer reads literal refs
+SEARCH:
+```python
+    named = _git(tree, "symbolic-ref", "-q", "--short", "HEAD")
+    if named.returncode == 0:
+        return named.stdout.strip()
+```
+REPLACE:
+```python
+    named = _REAL_RUN(
+        ["git", "symbolic-ref", "-q", "--short", "HEAD"], cwd=tree, capture_output=True, check=False,
+        env=_control_env(), stdin=subprocess.DEVNULL, timeout=60,
+    )  # BF-904a A4 (D33): bytes, so a ref ending in Unicode whitespace is read exactly as git names it
+    if named.returncode == 0:
+        return named.stdout.decode("utf-8", "surrogateescape").removesuffix("\n")
+```
+SEARCH:
+```python
+    return status.stdout, _head_ref(tree), sorted(tips.stdout.splitlines()), _tree(tree)
+```
+REPLACE:
+```python
+    return status.stdout, _head_ref(tree), sorted(tips.stdout.split("\n")), _tree(tree)  # BF-904a A4: split at LF only; a ref may hold U+0085 or U+2028
+```
+
+### A4.13 `tests/test_builder_guardrails.py`: `test_stale_branch_cleanup` (prose)
+- Rename it to `test_an_existing_build_branch_is_kept_and_the_build_refused`.
+- Create the leftover branch as `builder-test-stale`. The old `builder/test-stale` never collided, because the name that is checked is the sanitised one.
+- Assert `ok is False`, `"already exists" in name`, and that `git branch --list builder-test-stale` is still non-empty.
+- Add an inline comment: "BF-904a A4 (D31): the safety net deleted any branch of this name, including one that held a successful build's commit."
+
+### A4.14 Tests (append to `tests/test_bf904a_failed_build_restore.py` under `# BF-904a A4`; write them first, and each must fail on `5a1903f1`)
+
+**R11** `test_a_build_never_deletes_a_branch_it_did_not_create`, parametrised `title` ∈ {`same`, `different`}.
+- Setup: `_on_captain_work`. The first build is titled "bf904a repeat" with `[_create("src/probos/first.py", "f = 1\n")]`.
+- Premises:
+  - The first build succeeded with a `commit_hash`, its `branch_name == "builder-bf904a-repeat"`, and that branch's tip `== commit_hash`.
+  - `_head_ref == "captain-work"`.
+  - `before = _state(repo)`.
+- The second build uses `_failing_changes()`, titled "bf904a repeat" or "bf904a other".
+- `same` asserts:
+  - The error starts with `"Failed to create branch: branch builder-bf904a-repeat already exists"`.
+  - `branch_name == ""`, nothing was written or modified, and `"cleanup_errors" not in metadata`.
+  - All four parts of `_state` are unchanged.
+- `different` is the control (green on both trees): the error starts with "Syntax errors", the files were written, and `_state` is unchanged.
+
+**R12** `test_one_file_under_two_spellings_is_restored_to_its_first_bytes`, parametrised over five cases.
+- Seam for every case: wrap `pathlib.Path.write_bytes` to count calls by `self.name.lower()` (a string compare only, then the real method).
+- Common asserts:
+  - All four parts of `_state` are unchanged.
+  - `"cleanup_errors" not in metadata`.
+  - The count of restore writes per file, given below for each case.
+- Cases:
+  - **`dot-main-main`**:
+    - Changes: modify TARGET `x = 1`→`x = 2`; modify `src/probos/./a.py` `x = 2`→`x = 3`; create BAD.
+    - Premises: both strings pass `builder_write_refusal(..., str(tree))`; `os.path.samefile` holds; `files_modified == [TARGET, alias]`.
+    - `a.py` is written exactly once.
+  - **`dot-main-fix`**:
+    - Main changes: modify `src/probos/./a.py` 1→2, and create NEW.
+    - `_run_targeted_tests` is an `AsyncMock` returning a failure. The repair is `===MODIFY: src/probos/a.py===` 2→3, with `max_fix_attempts=1`.
+    - Premises: `fix_loop_files == [TARGET]`; the error starts with `"Tests failed after 1 fix attempt(s)"`.
+    - `a.py` is written exactly once.
+  - **`case-alias`**: as `dot-main-main`, with the alias `src/probos/A.py`.
+    - Premise: `(tree / "src/probos/A.py").exists()` and `samefile`; otherwise `pytest.skip("this filesystem distinguishes case; the ./ cases cover aliasing here")`.
+    - It runs on Windows and is skipped on Ubuntu.
+  - **`hardlink`**:
+    - Seed SEED plus `src/probos/b.py = "x = 1\n"`. After the seed commit, remove `b.py` and run `os.link(a, b)`. If `os.link` raises `OSError`, skip with that reason.
+    - Premises: porcelain is clean and `samefile` holds.
+    - Changes: modify TARGET 1→2; modify `b.py` 2→3; create BAD.
+    - `a.py` and `b.py` are written once each.
+  - **`found-deleted-recreated`**:
+    - Main changes: modify TARGET 1→2, and create NEW.
+    - On its first call only, the `_run_targeted_tests` mock deletes `tree/TARGET`; it returns a failure on every call.
+    - The repair is `===FILE: src/probos/a.py===\nx = 3\n===END FILE===`.
+    - Premises: `fix_loop_files == [TARGET]`; `TARGET in files_written + files_modified`.
+    - Asserts: `TARGET not in result.files_written`, and TARGET's bytes are `ORIGINAL`.
+
+**R13** `test_an_exception_inside_the_cleanup_is_reported_and_the_rest_runs`, parametrised over four cases. Every case except `halt` asserts:
+- No exception escaped.
+- The build's own error comes first, followed by `SEPARATOR`.
+- `classify_build_failure(result, _spec()).cleanup_errors == metadata["cleanup_errors"]`.
+
+The cases:
+- **`restore-raises`**:
+  - Seams: `Path.write_bytes` raises `RuntimeError` when `self.name == "other.py"`. `Path.exists` raises `RuntimeError` when `self.name == "fresh.py"`, armed only while a wrapper around `builder_module._restore_pre_build_files` runs. Each raises exactly once (premise).
+  - Asserts: exactly two entries, one starting `"could not restore "` and one `"could not delete "`, both ending `"(RuntimeError)"`. TARGET is `ORIGINAL`, BAD is gone, `_head_ref` equals before, and the build branch is gone.
+- **`reset-raises`**:
+  - Setup: R1's `commit-failed-after-add` setup, and a `_run_git` wrapper that raises `RuntimeError` when `args[:1] == ["reset"]`.
+  - Asserts: the error starts with `"Commit failed: bf904a: commit refused"`; the first entry `== "git reset could not start (RuntimeError)"`; TARGET is `ORIGINAL`; NEW is gone; `_head_ref` equals before.
+- **`checkout-raises`**:
+  - Setup: `_failing_changes()`, and a wrapper that raises `RuntimeError` when `args[:2] == ["checkout", "-q"]`. It raises exactly once (premise).
+  - Asserts: one entry, starting `"could not return to "` and ending `"branch builder-bf904a-probe kept"`; files restored; created files gone.
+- **`halt`**:
+  - Setup: as `reset-raises`, but raising `class _Halt(BaseException)`.
+  - Assert: `pytest.raises(_Halt)`. This is a control and is green on both trees.
+
+**R14** `test_the_return_checks_out_the_exact_ref_git_named`, parametrised `name` ∈ {`"captain-work"`, `"captain-work\u00a0"`}.
+- Setup: `_plain_repo`, then `git branch captain-work`. For the NBSP case run `checkout -q -b <name>`; otherwise `checkout -q captain-work`.
+- Premise: the raw `_REAL_RUN` bytes of `symbolic-ref --short HEAD` `== (name + "\n").encode()`. This is a hard assert: git's check-ref-format allows U+00A0, and the reviewer ran it on Windows.
+- Build `_failing_changes()`.
+- Asserts: the raw bytes are unchanged; `"cleanup_errors" not in metadata`; `_state` is unchanged. The plain name is the control.
+
+**R15** `test_the_abort_option_promises_no_checkout`, parametrised over the errors `"timed out after 60s"`, `"1 failed"`, `"SyntaxError"`, `"Request timeout"` and `"Commit failed: x"`.
+- Premise: the category is timeout, test_failure, syntax_error, llm_error or commit_error respectively.
+- Asserts: the abort option's description equals the D35 literal, and `"main" not in` it.
+
+### A4.15 Mutation rows (Partition P2, the M2 module; count each anchor in the A4-built file before mutating)
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-y | `src/probos/cognitive/builder.py` | `return False, f"branch {safe} already exists; it is kept: merge or delete it, or give the build another title"  # BF-904a A4 (D31): never delete a branch this build did not create` | `await _run_git(["branch", "-D", safe], work_dir)` | R11[same] |
+| R-z | `src/probos/cognitive/builder.py` | `if key in found:  # BF-904a A4 (D32): already saved under another spelling` | `if False:` | R12[dot-main-main], R12[dot-main-fix] (the write count) |
+| R-aa | `src/probos/cognitive/builder.py` | `for rel, data in reversed(originals.items()):  # BF-904a A4 (D32): the first snapshot of a file wins` | `for rel, data in originals.items():` | R12[hardlink] |
+| R-ab | `src/probos/cognitive/builder.py` | `if pre_existing or _write_target_key(work_dir, change["path"]) in found_keys:  # BF-904a A4 (D32): a saved file the tests deleted is restored, never deleted as created` | `if pre_existing:` | R12[found-deleted-recreated] |
+| R-ac | `src/probos/cognitive/builder.py` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir, lossless=True)  # BF-904a A4 (D33): the ref exactly as git names it` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir)  # BF-904a A4 (D33): the ref exactly as git names it` | R14[nbsp] |
+| R-ad | `src/probos/cognitive/builder.py` | `out = out.removesuffix("\n")  # BF-904a A4 (D33): only the LF git ends the line with` | `out = out.strip()` | R14[nbsp] |
+| R-ae | `src/probos/cognitive/builder.py` | `except Exception as exc:  # BF-904a A4 (D34): reported, and the cleanup goes on; BaseException propagates` | `except (OSError, ValueError) as exc:` | R13[reset-raises] |
+| R-af | `src/probos/cognitive/builder.py` | `except Exception as exc:  # BF-904a A4 (D34): any ordinary failure is a failed return; BaseException propagates` | `except (OSError, ValueError) as exc:` | R13[checkout-raises] |
+| R-ag | `src/probos/cognitive/builder.py` | `except Exception as exc:  # BF-904a A4 (D34): a failed restore is reported; the other paths go on` | `except OSError as exc:` | R13[restore-raises] |
+| R-ah | `src/probos/cognitive/builder.py` | `except Exception as exc:  # BF-904a A4 (D34): a failed check or delete is reported; the other paths go on` | `except OSError as exc:` | R13[restore-raises] |
+| R-ai | `src/probos/cognitive/builder.py` | `except Exception as exc:  # BF-904a A4 (D34): reported, and the cleanup goes on; BaseException propagates` | `except BaseException as exc:` | R13[halt] |
+
+- R-ai mutates the same line as R-ae (`_cleanup_git`'s handler) to `except BaseException`; R-ae and R-ai are each run against the unmodified baseline.
+- Existing anchors R-a to R-x are unchanged and still unique. R-g, R-h and R-i are the `setdefault` lines; A4 edits only the guard lines above them.
+- R15 has no row, because its five lines are identical; the test is the pin.
+- R-aa cannot be killed on a host without hard links. Report it as not run there, not as inert.
+
+### A4.16 Supersessions (the original lines stay)
+- **D8:** "and only the first time a file is saved under any spelling; restored newest first (A4, D32)."
+- **D9:** `_git_current_branch` reads losslessly (A4, D33).
+- **A1 D19 / A2.4:** there are now four lossless callers: the safety capture's three and `_git_current_branch`.
+- **A3:** "never raises" now holds for every ordinary exception (D34).
+- **Diff Reviewer property 1** gains: "a branch the build did not create is never deleted (D31)".
+- **Section 7** gains `tests/test_builder_guardrails.py`, and the focused gate list gains that file.
+- **Tests summary** gains 18 cases: R11 (2), R12 (5), R13 (4), R14 (2), R15 (5). Add the guardrails rename and rows R-y to R-ai.
+- **Tracking:** the DECISIONS entry lists D1 to D35.
+
+### A4.17 Considered, deferred (add to the consolidated #1523 follow-up)
+1. **Backslash paths on POSIX (pre-existing BF-894).** BF-894 judges `src\probos\a.py` as `src/probos/a.py` (`builder_paths.py:78`), but on POSIX the build writes one file at the repository root whose name contains the backslashes.
+2. **Leftover branches are no longer cleared automatically.** An optional "prune disposable builder branches" action could delete those whose tip is reachable from HEAD and that are checked out nowhere, and only when the Captain asks.
+3. **Empty-directory pruning** in `_restore_pre_build_files` still catches only `OSError`. It is swallow tier and cosmetic: no file state depends on it.
+4. **Duplicate spellings in `files_written`/`files_modified`** stay in the report; git deduplicates pathspecs.
