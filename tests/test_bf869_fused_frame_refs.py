@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -44,8 +45,10 @@ class _FakeEpisodicMemory:
     async def get_by_ids(self, ids: list[str]) -> list:
         return [e for e in self._episodes if e.id in ids]
 
-    async def list_episodes(self, limit: int | None = None) -> list:
-        return list(self._episodes)
+    async def iter_live_episodes(self) -> AsyncIterator:
+        """BF-905: the erasure cascades' live read."""
+        for episode in list(self._episodes):
+            yield episode
 
     async def evict_by_ids(self, ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         return len(ids)

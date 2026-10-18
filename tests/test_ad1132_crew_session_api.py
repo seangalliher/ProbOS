@@ -1225,7 +1225,25 @@ async def test_owned_legacy_replan_current_children(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     case = owned_projection_case
-    parent_id = await case.managed_parent(canonical=False)
+    # Premise by construction: `create_work_item` stamps created_at from
+    # time.time() at call time, and on CPython 3.12 / Windows two back-to-back
+    # calls can read the same 15.6 ms tick. Give the replan fixture's two
+    # children a strictly increasing clock, for managed_parent only.
+    from probos import workforce as workforce_module
+
+    real_time = workforce_module.time.time
+    last = 0.0
+
+    def strictly_increasing_time() -> float:
+        nonlocal last
+        last = max(real_time(), last + 0.001)
+        return last
+
+    with monkeypatch.context() as clock_patch:
+        clock_patch.setattr(
+            workforce_module, "time", SimpleNamespace(time=strictly_increasing_time),
+        )
+        parent_id = await case.managed_parent(canonical=False)
     original = await case.state.store.get_owned_crew_children(parent_id)
     assert len(original.active) == 2 and original.retired == ()
     assert original.active[0].priority == original.active[1].priority

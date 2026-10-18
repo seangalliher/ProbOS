@@ -858,18 +858,23 @@ class MessageStore:
             "       t.title, t.body, t.created_at "
             "FROM threads t "
             "JOIN channels c ON c.id = t.channel_id "
-            "LEFT JOIN ("
-            "    SELECT thread_id, author_id AS last_author,"
-            "           MAX(created_at) AS last_post_time"
-            "    FROM posts WHERE deleted = 0"
-            "    GROUP BY thread_id"
-            ") lp ON lp.thread_id = t.id "
+            # The thread's last post: greatest created_at, and among equal
+            # created_at the later insert (greatest rowid). Two posts can share
+            # a timestamp (coarse clocks, e.g. CPython 3.12 on Windows ticks
+            # every 15.6 ms), so a bare-column MAX() would take the author
+            # from an arbitrary row of the tie. A correlated subquery needs no
+            # window function and runs once per DM thread, not once per post.
+            "LEFT JOIN posts lp ON lp.rowid = ("
+            "    SELECT p3.rowid FROM posts p3"
+            "    WHERE p3.thread_id = t.id AND p3.deleted = 0"
+            "    ORDER BY p3.created_at DESC, p3.rowid DESC LIMIT 1"
+            ") "
             "WHERE c.channel_type = 'dm' "
             "  AND c.name LIKE ? "
             "  AND (t.archived = 0 OR t.archived IS NULL) "
-            "  AND COALESCE(lp.last_author, t.author_id) != ? "
+            "  AND COALESCE(lp.author_id, t.author_id) != ? "
             + exchange_filter +
-            "ORDER BY COALESCE(lp.last_post_time, t.created_at) DESC "
+            "ORDER BY COALESCE(lp.created_at, t.created_at) DESC "
             "LIMIT ?",
             tuple(params),
         ) as cursor:

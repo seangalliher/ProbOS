@@ -385,3 +385,192 @@ class TestUnreadDmsQuery:
             body="One more thing.", author_callsign="Captain",
         )
         assert len(await wr._messages.get_unread_dms(agent_id)) == 1
+
+    # BF-905 gate blocker: CPython 3.12 on Windows reads time.time() from a
+    # clock that advances once per ~15.6 ms tick, so two back-to-back posts can
+    # carry the SAME created_at. The tests below force that tie (or its absence)
+    # deterministically by replacing the clock the ward room sees.
+
+    @staticmethod
+    def _install_clock(monkeypatch, *, tied: bool) -> None:
+        """Make ward-room messages see a constant clock (tied) or a rising one."""
+        from types import SimpleNamespace
+        from probos.ward_room import messages as wr_messages
+
+        ticks = iter(range(1, 10_000))
+
+        def _tied_clock() -> float:
+            return 1_000_000.0
+
+        def _rising_clock() -> float:
+            return 1_000_000.0 + next(ticks)
+
+        monkeypatch.setattr(
+            wr_messages, "time",
+            SimpleNamespace(time=_tied_clock if tied else _rising_clock),
+        )
+
+    @staticmethod
+    async def _post_times(wr, thread_id: str) -> list[float]:
+        """created_at of a thread's posts in insertion order (rowid)."""
+        async with wr._messages._db.execute(
+            "SELECT created_at FROM posts WHERE thread_id = ? ORDER BY rowid",
+            (thread_id,),
+        ) as cursor:
+            return [row[0] async for row in cursor]
+
+    async def _agent_thread_with_two_replies(
+        self, wr, monkeypatch, *, first: str, second: str, tied: bool,
+    ) -> tuple[str, str]:
+        """Agent-initiated DM thread, then replies by `first` and `second`."""
+        agent_id = "abc12345-full-uuid"
+        self._install_clock(monkeypatch, tied=tied)
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain")
+        thread = await wr.create_thread(
+            channel_id=ch.id, author_id=agent_id,
+            title="Tie", body="Opening note.", author_callsign="Bones",
+        )
+        for author in (first, second):
+            await wr.create_post(
+                thread_id=thread.id,
+                author_id=agent_id if author == "agent" else "captain",
+                body=f"{author} reply",
+                author_callsign="Bones" if author == "agent" else "Captain",
+            )
+        return agent_id, thread.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("first", "second", "expected_unread"),
+        [
+            # Agent replies, then the Captain in the SAME tick: the later
+            # insert (the Captain) decides, so the thread is unread.
+            ("agent", "captain", 1),
+            # The Captain posts, then the agent in the SAME tick: the agent
+            # (later insert) decides, so the thread is read.
+            ("captain", "agent", 0),
+        ],
+    )
+    async def test_get_unread_dms_same_tick_later_insert_decides(
+        self, wr, monkeypatch, first, second, expected_unread,
+    ):
+        agent_id, thread_id = await self._agent_thread_with_two_replies(
+            wr, monkeypatch, first=first, second=second, tied=True,
+        )
+        times = await self._post_times(wr, thread_id)
+        assert len(times) == 2 and times[0] == times[1]  # premise: a real tie
+
+        unread = await wr._messages.get_unread_dms(agent_id)
+
+        assert len(unread) == expected_unread
+        if expected_unread:
+            assert unread[0]["thread_id"] == thread_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("first", "second", "expected_unread"),
+        [("agent", "captain", 1), ("captain", "agent", 0)],
+    )
+    async def test_get_unread_dms_distinct_ticks_latest_post_decides(
+        self, wr, monkeypatch, first, second, expected_unread,
+    ):
+        """No-tie control: the same two scenarios give the same answers."""
+        agent_id, thread_id = await self._agent_thread_with_two_replies(
+            wr, monkeypatch, first=first, second=second, tied=False,
+        )
+        times = await self._post_times(wr, thread_id)
+        assert len(times) == 2 and times[0] < times[1]  # premise: no tie
+
+        assert len(await wr._messages.get_unread_dms(agent_id)) == expected_unread
+
+    @pytest.mark.asyncio
+    async def test_get_unread_dms_deleted_last_post_previous_post_decides(
+        self, wr, monkeypatch,
+    ):
+        """A deleted last post is ignored: the post before it decides."""
+        agent_id, thread_id = await self._agent_thread_with_two_replies(
+            wr, monkeypatch, first="agent", second="captain", tied=False,
+        )
+        # Premise: the Captain's reply is last, so the thread is unread
+        assert len(await wr._messages.get_unread_dms(agent_id)) == 1
+        await wr._messages._db.execute(
+            "UPDATE posts SET deleted = 1 WHERE thread_id = ? AND author_id = ?",
+            (thread_id, "captain"),
+        )
+        await wr._messages._db.commit()
+
+        # The agent's reply is now the last live post -> read
+        assert len(await wr._messages.get_unread_dms(agent_id)) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("first", "second", "expected_unread"),
+        [("agent", "captain", 1), ("captain", "agent", 0)],
+    )
+    async def test_get_unread_dms_same_tick_tie_break_independent_of_index_order(
+        self, wr, monkeypatch, first, second, expected_unread,
+    ):
+        """The explicit rowid tie-break decides, not the index's scan order.
+
+        With idx_posts_thread_created present, SQLite scans it backwards and
+        returns tied rows in descending rowid order even without the explicit
+        `rowid DESC`; dropping the index exposes the tie-break itself.
+        """
+        agent_id, thread_id = await self._agent_thread_with_two_replies(
+            wr, monkeypatch, first=first, second=second, tied=True,
+        )
+        times = await self._post_times(wr, thread_id)
+        assert len(times) == 2 and times[0] == times[1]  # premise: a real tie
+        await wr._messages._db.execute("DROP INDEX idx_posts_thread_created")
+        await wr._messages._db.commit()
+        async with wr._messages._db.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'idx_posts_thread_created'"
+        ) as cursor:
+            assert await cursor.fetchall() == []  # premise: the index is gone
+
+        unread = await wr._messages.get_unread_dms(agent_id)
+
+        assert len(unread) == expected_unread
+        if expected_unread:
+            assert unread[0]["thread_id"] == thread_id
+
+    @pytest.mark.asyncio
+    async def test_get_unread_dms_most_recent_unread_thread_first(
+        self, wr, monkeypatch,
+    ):
+        """Unread threads come back ordered by their last post, newest first."""
+        agent_id = "abc12345-full-uuid"
+        self._install_clock(monkeypatch, tied=False)
+        ch = await wr.get_or_create_dm_channel(agent_id, "captain")
+        created_first = await wr.create_thread(
+            channel_id=ch.id, author_id=agent_id,
+            title="Created first", body="First note.", author_callsign="Bones",
+        )
+        created_second = await wr.create_thread(
+            channel_id=ch.id, author_id=agent_id,
+            title="Created second", body="Second note.", author_callsign="Bones",
+        )
+        # The Captain answers the thread created second FIRST, so the order of
+        # the last posts is the reverse of the order of thread creation: the
+        # thread created first holds the newest post and must be listed first.
+        for thread in (created_second, created_first):
+            await wr.create_post(
+                thread_id=thread.id, author_id="captain",
+                body="Noted.", author_callsign="Captain",
+            )
+        newest = (await self._post_times(wr, created_first.id))[-1]
+        oldest = (await self._post_times(wr, created_second.id))[-1]
+        assert newest > oldest  # premise: the last posts differ in time
+        both = await wr._messages.get_unread_dms(agent_id, limit=10)
+        assert {u["thread_id"] for u in both} == {
+            created_first.id, created_second.id,
+        }  # premise: both threads are unread
+
+        unread = await wr._messages.get_unread_dms(agent_id)
+
+        assert [u["thread_id"] for u in unread] == [
+            created_first.id, created_second.id,
+        ]
+        limited = await wr._messages.get_unread_dms(agent_id, limit=1)
+        assert [u["thread_id"] for u in limited] == [created_first.id]

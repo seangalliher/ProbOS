@@ -2246,6 +2246,46 @@ class EpisodicMemory:
                 continue
         return out
 
+    async def iter_live_episodes(self, *, page_size: int = 500) -> AsyncIterator[Episode]:
+        """BF-905: every live episode, rehydrated (erasure cascades). Fails closed, unlike ``list_episodes``.
+
+        A service read, not a recall surface, and unfiltered: a marked episode must stay erasable (AD-1293).
+        ``list_episodes`` stays AD-689's best-effort read for the edge backfill; erasure no longer uses it.
+
+        - No collection (stopped or never started) raises ``erasure_live_store_unavailable``, as ERASE by id does.
+        - A ChromaDB read failure propagates, unwrapped.
+        - The ids are read once, then the rows are fetched by id in pages of ``page_size``. Offset paging
+          (``_iter_collection_pages``) is not used: a row deleted mid-scan would shift the offsets and skip a live
+          row unseen. A row that left the store between the two reads is no longer live; if it was archived, the
+          archive scan, which the cascade runs after this one, sees it.
+        - A row that cannot be rehydrated is logged at WARNING with its id and exception type only (never content,
+          and no traceback, which can echo a metadata value) and skipped; after the scan,
+          ``erasure_live_rows_unrehydratable:<count>`` is raised, so a cascade never silently leaves a live row out.
+        - Not sorted: a cascade needs every row, not an order.
+        """
+        if page_size < 1:
+            raise ValueError("erasure_live_page_size_invalid")
+        collection = self._collection  # BF-905: bound once, so a stop() mid-scan is the client's error, never None
+        if collection is None:
+            raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # BF-905: a stopped store is never an empty scan
+        ids = list(collection.get(include=[])["ids"] or [])
+        unreadable_rows = 0
+        for start in range(0, len(ids), page_size):
+            page = collection.get(ids=ids[start:start + page_size], include=["metadatas", "documents"])
+            page_ids = list(page["ids"] or [])
+            metas = page.get("metadatas") or [{} for _ in page_ids]
+            docs = page.get("documents") or ["" for _ in page_ids]
+            for episode_id, meta, doc in zip(page_ids, metas, docs, strict=True):
+                try:
+                    episode = self._metadata_to_episode(episode_id, doc or "", meta or {})
+                except Exception as exc:
+                    unreadable_rows += 1
+                    logger.warning("BF-905: live episode %s could not be rehydrated (%s); erasure cascades cannot match it", episode_id, type(exc).__name__)
+                    continue
+                yield episode
+        if unreadable_rows:
+            raise EpisodeErasureIncomplete(f"erasure_live_rows_unrehydratable:{unreadable_rows}")
+
     async def get_by_ids(
         self,
         episode_ids: list[str],

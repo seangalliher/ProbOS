@@ -69,8 +69,8 @@ class ErasureCascadeIncomplete(Exception):
     """AD-1340: a cascade erased what it could, and some matching episodes are not erased.
 
     ``result`` is what was erased, ``failures`` maps each episode id whose erase raised to the original error, and
-    ``enumeration_error`` is set when the scan for matches itself failed (the matches found before it were erased).
-    The message carries counts only: no id and no content.
+    ``enumeration_error`` is the first scan failure, the live scan's before the archive's (BF-905); the matches both
+    scans found were erased all the same. The message carries counts only: no id and no content.
     """
 
     def __init__(
@@ -82,6 +82,18 @@ class ErasureCascadeIncomplete(Exception):
         self.result = result
         self.failures = failures
         self.enumeration_error = enumeration_error
+
+
+async def _live_episodes(memory: Any) -> AsyncIterator[Any]:
+    """BF-905: every live episode, through the memory's fail-closed erasure read ``iter_live_episodes``.
+
+    No fallback to ``list_episodes``: that is AD-689's best-effort backfill read, which returns nothing for a stopped
+    store or a failed read and skips rows it cannot rebuild. A memory without ``iter_live_episodes`` cannot be scanned,
+    so its ``AttributeError`` becomes the live scan's error and the cascade raises after erasing what the archive scan
+    found. A module function, not a method: ``ErasureManager`` stays within the SRP review trigger of 15 direct methods.
+    """
+    async for episode in memory.iter_live_episodes():
+        yield episode
 
 
 class ErasureManager:
@@ -152,25 +164,41 @@ class ErasureManager:
         return await self._forget_all(matching_ids, enumeration_error)
 
     async def _matching_ids(self, matches: Callable[[Any], bool]) -> tuple[list[str], Exception | None]:
-        """The ids of the candidate episodes ``matches`` accepts, and the error that cut the scan short, if any.
+        """The ids of the candidate episodes ``matches`` accepts, and the first error that cut a scan short, if any.
 
-        A scan that fails (the archive cannot be read) keeps the matches found before it: the caller erases
-        them, then raises. Erasing nothing because one store was unreadable would leave every live match behind.
+        BF-905: the live store and the archive are scanned separately, live first, so a failure of one never skips
+        the other. A failed scan keeps the matches it found before failing; the caller erases every match from both
+        scans, then raises ``ErasureCascadeIncomplete`` carrying the FIRST scan error (``_scan`` logs each at ERROR).
+        Under-erasing is the worse failure (BF-868). An archived version is NOT dropped because its id is also live
+        (AD-1340 R1): deterministic ids can have a live rewrite that differs from the archived version, and the
+        predicate must see both; duplicate ids are removed here.
         """
+        memory = self._episodic_memory
+        if memory is None:
+            return [], None  # F-130 (#1523) owns the unwired case: no episodic memory, nothing to scan
+        live, live_error = await self._scan("live", _live_episodes(memory), matches)
+        archived, archive_error = await self._scan("archive", self._archived_episodes(), matches)
+        enumeration_error = live_error if live_error is not None else archive_error
+        found = live + archived
+        return list(dict.fromkeys(episode_id for episode_id in found if episode_id)), enumeration_error
+
+    async def _scan(
+        self, store: str, episodes: AsyncIterator[Any], matches: Callable[[Any], bool],
+    ) -> tuple[list[str], Exception | None]:
+        """BF-905: the ids ``matches`` accepts in one store's scan, and the error that cut it short, if any."""
         found: list[str] = []
-        enumeration_error: Exception | None = None
         try:
-            async for episode in self._candidate_episodes():
+            async for episode in episodes:
                 if matches(episode):
                     found.append(str(getattr(episode, "id", "")))
         except Exception as exc:
             logger.error(
-                "AD-1340: the erasure scan failed after finding %d match(es); "
+                "BF-905: the %s erasure scan failed after finding %d match(es); "
                 "they are erased, then the failure is raised",
-                len(found), exc_info=True,
+                store, len(found), exc_info=True,
             )
-            enumeration_error = exc  # the archive scan failed: erase the matches found, then raise
-        return list(dict.fromkeys(episode_id for episode_id in found if episode_id)), enumeration_error
+            return found, exc  # BF-905: the matches found before the failure are still erased
+        return found, None
 
     async def _forget_all(self, episode_ids: list[str], enumeration_error: Exception | None) -> ErasureResult:
         """Erase each episode in turn; raise ``ErasureCascadeIncomplete`` if the scan or any erase failed."""
@@ -204,22 +232,12 @@ class ErasureManager:
             raise ErasureCascadeIncomplete(erased, failures, enumeration_error) from cause
         return erased
 
-    async def _list_episodes(self) -> list[Any]:
-        if self._episodic_memory is None or not hasattr(self._episodic_memory, "list_episodes"):
-            return []
-        return list(await self._episodic_memory.list_episodes(limit=None))
+    async def _archived_episodes(self) -> AsyncIterator[Any]:
+        """Every archived version (AD-1340 R1); ``iter_archived_episodes`` already fails closed.
 
-    async def _candidate_episodes(self) -> AsyncIterator[Any]:
-        """Every live episode, then every archived version (AD-1340 R1).
-
-        Under-erasing is the worse failure (BF-868): a cascade that skipped the
-        archive would leave the Captain's forgotten episode recoverable. An
-        archived version is NOT dropped because its id is also live: deterministic
-        ids can have a live rewrite that differs from the archived version, and
-        the predicate must see both. ``_matching_ids`` removes duplicate ids.
+        Under-erasing is the worse failure (BF-868): a cascade that skipped the archive would leave the Captain's
+        forgotten episode recoverable.
         """
-        for episode in await self._list_episodes():
-            yield episode
         if self._episodic_memory is None or not hasattr(self._episodic_memory, "iter_archived_episodes"):
             return
         async for episode in self._episodic_memory.iter_archived_episodes():

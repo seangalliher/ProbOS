@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -60,8 +61,10 @@ class _FakeEpisodicMemory:
     async def get_by_ids(self, ids: list[str]) -> list[_Episode]:
         return [e for e in self._episodes if e.id in ids]
 
-    async def list_episodes(self, limit: int | None = None) -> list[_Episode]:
-        return list(self._episodes)
+    async def iter_live_episodes(self) -> AsyncIterator[_Episode]:
+        """BF-905: the erasure cascades' live read."""
+        for episode in list(self._episodes):
+            yield episode
 
     async def evict_by_ids(self, ids: list[str], reason: str = "", *, disposition: object = None) -> int:
         return len(ids)
