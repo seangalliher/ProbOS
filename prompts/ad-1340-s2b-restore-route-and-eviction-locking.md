@@ -1598,3 +1598,162 @@ RS8 in the Part 1 table (partition P3) is superseded by RS8a: its anchor line no
 - **D2's cost description is inaccurate** (measured by the reviewer on five ids in one default chunk, HEAD against the candidate: Chroma `get` calls 2 to 3 (selection, snapshot and re-read), deletes 1 to 1, comparison payload encodes 0 to 10, store-lock acquisitions 0 to 1; the sidecars issue one FTS DELETE per id plus one activation and one participant DELETE with three commits, not "three sidecar deletes"). The reviewer inferred no latency regression.
 - **R-8 is a mixed-operation smoke test, not capacity-contention evidence** (recorded as #1523 F-149, test-only): its concurrent phase runs at live count 3 against a budget of 4, so `_evict` returns before it takes the lock and the test passes with mutant E1 applied; L-1 is the killer of E1.
 
+
+## Amendment A2 (2026-10-18): the route logs codes and type names, never exception text
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18. A read-only consult after Part 1's review round 1 (A1.9 F1), appended by the orchestrator so that no line number above it moves. It supersedes the contract lines named in A2.7. Sections 7a and 7b stay as the base the A2 blocks are written against. Decision recorded on #1568.
+
+**Gap.** Section 7b's two `logger.error(..., exc_info=True)` calls (contract lines 1126 and 1129) copy the exception text and its whole `__cause__` chain into the log. `Formatter.format` appends the traceback whenever `record.exc_info` is set. `episode_archive_restore_incomplete:live_add` is raised `from` the Chroma error (`episodic.py:3164`), and Chroma's text can quote a stored metadata value (A1.9 F1, R-3d). `LogRedactionFormatter` (`security/pii_redaction.py:76-81`) masks PII and tokens, not arbitrary stored values. The archive exists so that ERASE can remove every copy, so stored content must not reach a log. The S2a lookup route's ERROR line (`security.py:207`) has the same `exc_info=True`. Its reachable causes today (SQLite errors from the access insert, decode errors) carry no stored values, but it is the same defect class in the same file, so A2 fixes it too and leaves the lookup's response unchanged.
+
+### A2.1 `src/probos/routers/security.py`: import `re` (against the current file; Section 7a does not touch these lines)
+SEARCH:
+```python
+import json
+import logging
+import math
+from pathlib import Path
+```
+REPLACE:
+```python
+import json
+import logging
+import math
+import re
+from pathlib import Path
+```
+
+### A2.2 The error-code guard (against Section 7b's own REPLACE text)
+SEARCH:
+```python
+_ARCHIVE_RESTORE_ACCESSOR = "captain:/api/security/archive/restore"
+_ARCHIVE_RESTORE_TOKEN_REQUIRED = "episode_archive_restore_requires_token"
+```
+REPLACE:
+```python
+_ARCHIVE_RESTORE_ACCESSOR = "captain:/api/security/archive/restore"
+_ARCHIVE_RESTORE_TOKEN_REQUIRED = "episode_archive_restore_requires_token"
+# AD-1340 S2b A2: the shape of an archive error code ("name" or "name:qualifier"); anything else is free text.
+_ARCHIVE_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,95}(?::[a-z0-9_]{1,32})?")
+
+
+def _archive_error_code(exc: BaseException, fallback: str) -> str:
+    """AD-1340 S2b A2: the exception's text when the whole of it is an error code, else ``fallback``.
+
+    A 500 detail and its log line carry a code, never free text: an exception text can quote a stored value
+    (A1.9 F1). Every archive raise site passes a constant code today; this keeps a future one honest.
+    """
+    text = str(exc)
+    return text if _ARCHIVE_ERROR_CODE.fullmatch(text) else fallback
+```
+
+### A2.3 The route's docstring and its two 500 branches (against Section 7b's own REPLACE text)
+SEARCH:
+```python
+    the ordinary rules, so an unrecalled one returns to the archive at a later Step 12. Logs ids, never content.
+    """
+```
+REPLACE:
+```python
+    the ordinary rules, so an unrecalled one returns to the archive at a later Step 12. A 500
+    ``episode_archive_restore_unconfirmed`` may have made the episode live: a retry then answers 409
+    ``episode_archive_restore_live_id``. AD-1340 S2b A2: an error is logged as the id's first 8 characters, the
+    error code and an exception type name, never an exception's text or its cause's.
+    """
+```
+SEARCH:
+```python
+    except EpisodeArchiveError as exc:
+        logger.error("AD-1340 S2b: archive restore of %r failed: %s", request.episode_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("AD-1340 S2b: archive restore of %r failed unexpectedly", request.episode_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc
+```
+REPLACE:
+```python
+    except EpisodeArchiveError as exc:
+        code = _archive_error_code(exc, "episode_archive_restore_failed")  # AD-1340 S2b A2: a code, never the text
+        logger.error("AD-1340 S2b: archive restore of %s failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)
+        raise HTTPException(status_code=500, detail=code) from exc
+    except Exception as exc:
+        logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], type(exc).__name__)
+        raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc
+```
+(`from exc` stays: FastAPI's `HTTPException` handler builds the response and logs nothing. RT8's anchor line is unchanged and still unique. The success INFO line keeps the full `episode.id`: it is a verified archived id, never caller text.)
+
+### A2.4 The S2a lookup route's ERROR line (against the current file, `security.py:206-209`)
+SEARCH:
+```python
+    except EpisodeArchiveError as exc:
+        logger.error("AD-1340 S2a: archive lookup failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    kind = "episode_id" if request.episode_id else "agent"
+```
+REPLACE:
+```python
+    except EpisodeArchiveError as exc:
+        code = _archive_error_code(exc, "episode_archive_lookup_failed")  # AD-1340 S2b A2: the lookup logs a code too
+        logger.error("AD-1340 S2a: archive lookup failed: %s (%s)", code, type(exc.__cause__ or exc).__name__)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    kind = "episode_id" if request.episode_id else "agent"
+```
+(The lookup's response is unchanged: its detail stays `str(exc)`. `_archive_error_code` is a module function defined further down; it resolves at call time.)
+
+### A2.5 Section 8 corrections and additions (`tests/test_ad1340_s2b_restore_route.py`)
+**Imports, in addition to Section 8's list:** from `tests.test_ad1340_s2b_restore` import `_pause_in`, `_fail_insert`, `_archive_one`, `_two_crafted_versions`, `_STORED_VALUE_MARKER`, `_NO_SIDECARS`, `_LIVE_SIDECARS` and `_CAPTAIN`. From `tests.test_ad1340_s1_eviction` import `_archive_rows`. From `tests.test_ad1340_s2a_archive_lookup` import `_write`. Also import `decode_payload`, `ArchiveRecord`, `EpisodeArchiveError` and `LogRedactionFormatter`. These helpers take the lookup-route rig unchanged: both `_Rig` classes carry `em`, `root`, `activations` and `participants` over the same file layout. `_GatedRead` is no longer imported directly. Drop the `raise_app_exceptions=False` sentence: the route catches `Exception`, so `_client` as built is right everywhere.
+
+**Test-local helpers.**
+- `_arm_marked_access_failure(archive, episode_id)`: S2a's `_arm_failing_access` (`test_ad1340_s2a_archive_lookup.py:191-197`) with the RAISE message `'injected access failure on <_STORED_VALUE_MARKER>'`. It is a real SQLite failure on the archive's own connection, so both `record_access` and the lookups' access insert hit it.
+- `_marked_driver_error_premise(archive, episode_id) -> str`: `with pytest.raises(sqlite3.Error, match=_STORED_VALUE_MARKER) as raised: await archive.record_access(episode_id, accessor="premise", purpose="restore")`. Assert no `archive_access` row was written. Return `type(raised.value).__name__`, the driver's type name, which the log must show.
+- `_probos_texts(caplog)`: every captured record whose `name` starts with `"probos"` and `levelno >= logging.INFO`, rendered with `LogRedactionFormatter("%(message)s")`. Call `caplog.set_level(logging.INFO)` before the request.
+- `_route_errors(caplog)`: the records with `name == "probos.routers.security"` and `levelno == logging.ERROR`.
+
+**Corrections to the existing items.**
+- **RR-d, already live:** a live id that was never archived answers 404 (`episodic.py:3092-3093`). Archive the id, restore it once (200), then send the second request: 409 `episode_archive_restore_live_id`, with **no further** access row (exactly one, from the first restore) and the live record unchanged. **At capacity:** R-1's setup exactly (`max_episodes=2`: store `ep-000` and `ep-001`, archive `ep-000` with Step 12's call, store `ep-002`). Never store past the budget during setup: `store()` would evict by itself (A1.8 R-8).
+- **RR-e:** iterate `[state for state, _ in _UNAVAILABLE]`. Every state answers 503 `episode_archive_unavailable`, restore's own state check (`episodic.py:3084-3085`). The second element of each tuple is the LOOKUP's code and is not used.
+- **RR-f:** pause with `_pause_in(rig, monkeypatch, "archive_read")` and `_pause_in(rig, monkeypatch, "participant_insert")`. Send the request as `asyncio.create_task(_post(client, _RESTORE, {"episode_id": id}, headers=_AUTH))`. Premise: the pause was reached, and `await em.stop()` completed while the task was still pending. Before the reopen, drop every reference the test holds to the request task, the response and the events, then call `gc.collect()`, as R-4 does (A1.8). If the reopen still raises `database is locked`, stop and report; do not add a sleep or a retry.
+- **RR-g:** `_fail_insert(rig, monkeypatch, "participant_index")`.
+- **RR-i (reworked)** `test_restore_route_maps_an_unexpected_failure_to_a_typed_500_and_logs_no_text`: archive the subject; `_arm_marked_access_failure`; `name = _marked_driver_error_premise(...)`. Then: 500 `{"detail": "episode_archive_restore_failed"}`. Exactly one `_route_errors` record, whose `getMessage()` contains `subject[:8]`, `"failed unexpectedly"` and `name`, and whose `exc_info is None`. `_STORED_VALUE_MARKER` is in none of `_probos_texts`. Not live, `_NO_SIDECARS`, `_access_rows == []`.
+- **RR-j:** use `_two_crafted_versions(rig, id, {"0" * 64: 7000.0, "f" * 64: 7000.0})`.
+- **RR-k:** `await _traces(em, root, id)` (it is `async def`, `test_ad1340_s1_erasure.py:146`).
+
+**New tests.**
+- **RR-m** `test_restore_route_reports_a_real_chroma_rejection_without_copying_stored_metadata_into_the_log` (the reviewer's case, no injection): archive the subject; take its one archived row; decode it. Archive the crafted version `{**metadata, "content_hash": "f" * 64, _STORED_VALUE_MARKER: {_STORED_VALUE_MARKER: "x"}}`. A different `content_hash` matters, because the same key would upsert onto the original row. Delete the original row with `_write`; premise: only the crafted version remains. Premise probe: `with pytest.raises(Exception) as rejected: em._collection.add(ids=["rr-m-probe"], documents=[document], metadatas=[crafted])` (test-only). The marker is in `str(rejected.value)`, and `_raw(em, ["rr-m-probe"])["ids"] == []`. Record `name = type(rejected.value).__name__`, then `del rejected`. Request: 500 `{"detail": "episode_archive_restore_incomplete:live_add"}`. Exactly one `_route_errors` record: its message contains `subject[:8]`, `episode_archive_restore_incomplete:live_add` and `name`, and its `exc_info is None`. The marker is in none of `_probos_texts`, which covers the episodic WARNING too. Not live, `_NO_SIDECARS`, `_access_rows == [(_CAPTAIN, "restore")]`.
+- **RR-n** `test_restore_route_never_answers_or_logs_free_text_as_a_code`: test-only `monkeypatch.setattr(rig.em, "restore_from_archive", raiser)`, whose `raiser` raises `EpisodeArchiveError(f"restore failed on {_STORED_VALUE_MARKER}: {{'k': 'v'}}")`. This is the route's own guard; every real raise site is a code (A2 Absence Verified). Expect 500 `{"detail": "episode_archive_restore_failed"}` and the marker absent from `response.text`. One `_route_errors` record, whose message contains `episode_archive_restore_failed` and `EpisodeArchiveError`. The marker is in none of `_probos_texts`.
+- **RR-o** `test_lookup_route_logs_no_exception_text`: archive the subject; `_arm_marked_access_failure`; `name = _marked_driver_error_premise(...)`. Lookup by id: 500 `{"detail": "episode_archive_access_not_recorded"}`. One `_route_errors` record: its message contains `episode_archive_access_not_recorded` and `name`, and its `exc_info is None`. The marker is in none of `_probos_texts`.
+
+Part 2 now has 15 test functions (RR-a to RR-o). RR-m, RR-n and RR-o join the error and privacy boundaries. M5's first commit set is unchanged (Section 7 plus A2.1 to A2.4, with RR-a to RR-e green). RR-f to RR-o are M5b.
+
+### A2.6 Partition P5 additions (whole stripped lines, each unique in the built `security.py`; count first)
+| ID | File | SEARCH | REPLACE | Killed by |
+|---|---|---|---|---|
+| RT9 | `src/probos/routers/security.py` | `logger.error("AD-1340 S2b: archive restore of %s failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)` | `logger.error("AD-1340 S2b: archive restore of %s failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__, exc_info=True)` | RR-m |
+| RT10 | `src/probos/routers/security.py` | `logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], type(exc).__name__)` | `logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], type(exc).__name__, exc_info=True)` | RR-i |
+| RT11 | `src/probos/routers/security.py` | `logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], type(exc).__name__)` | `logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], exc)` | RR-i |
+| RT12 | `src/probos/routers/security.py` | `return text if _ARCHIVE_ERROR_CODE.fullmatch(text) else fallback` | `return text  # AD-1340 S2b mutant RT12` | RR-n |
+| RT13 | `src/probos/routers/security.py` | `raise HTTPException(status_code=500, detail=code) from exc` | `raise HTTPException(status_code=500, detail=str(exc)) from exc` | RR-n |
+| RT14 | `src/probos/routers/security.py` | `logger.error("AD-1340 S2a: archive lookup failed: %s (%s)", code, type(exc.__cause__ or exc).__name__)` | `logger.error("AD-1340 S2a: archive lookup failed: %s (%s)", code, type(exc.__cause__ or exc).__name__, exc_info=True)` | RR-o |
+
+RT8 (`raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc` replaced by `raise`) is still killed by RR-i: the raw driver error reaches the test's client. On the Part 2 tree, S2a's N23 to N25 and N28 to N32 re-run unchanged. None of them anchors the lookup lines A2.4 changes. N25's `except EpisodeArchiveUnavailable as exc:` stays unique as a whole line because the route's copy carries a comment.
+
+### A2.7 Supersessions (the original lines stay where they are)
+- **Line 5:** Part 2 has 15 new test functions.
+- **D10, Audit (line 95):** "The route logs at ERROR the id's first 8 characters, the error code and an exception type name, and at INFO the restored id. It never logs content, an exception's text or a cause's text (A2)."
+- **D11 (lines 109-111, and A1.4's D11 bullet):** every 500 detail is `_archive_error_code(exc, "episode_archive_restore_failed")`. Rows: 500 `episode_archive_restore_incomplete:<store>`, where `<store>` is one of `episode_fts`, `participant_index`, `activation` or `live_add`: undone, nothing live. 500 `episode_archive_restore_unconfirmed`: the add raised and the store reports the id or cannot be asked; rows kept; a retry answers 409 `episode_archive_restore_live_id` if it landed, or 200 if it did not. 500 integrity codes. 500 `episode_archive_restore_failed`: any other exception, or an `EpisodeArchiveError` whose text is not a code. Every 500 is logged at ERROR as in D10.
+- **Line 1110, lines 1126-1127, line 1129:** replaced by A2.3.
+- **Line 1137:** imports per A2.5; the `raise_app_exceptions` sentence is withdrawn.
+- **Lines 1142-1144, 1147, 1149:** per A2.5. **Line 1156:** Part 2 is RR-a to RR-o (15 functions).
+- **Property 15:** "...the logs carry an id prefix, codes and exception type names, never document or metadata values, exception text or `exc_info` (RR-i, RR-m, RR-n, RR-o)."
+- **Property 16:** "`/forget` is byte-identical. `/archive/lookup` is byte-identical except its ERROR log (A2.4); its responses are unchanged."
+
+### A2.8 What Part 1 taught that Part 2 absorbs
+1. **Windows clock ties:** no Part 2 assertion may order by `archived_at` or `accessed_at` unless the times are forced. RR-j forces them (`_two_crafted_versions`). RR-k orders access rows by `id`.
+2. **A failed read pins its cursor** (A1.8 R-4): RR-f clears references and calls `gc.collect()` before the reopen. `caplog` records with `exc_info` would hold the same references; A2 removes them.
+3. **A budget-exceeding setup auto-evicts** (A1.8 R-8): RR-d uses `max_episodes=2` exactly.
+4. **The phantom-API precheck** flags `restore_from_archive(accessor=...)` in this contract's own fences. Commit the contract with A2 before staging any build files, so the preflight scans committed text only.
+5. **The coarse-clock plugin path** (`C:/Users/seang/.copilot/session-state/9ccf7828-.../files`) lives in a Copilot session directory and was not verified here. Confirm it exists before M5's coarse-clock pair; if it does not, stop and report.
+
+**Absence Verified (A2, 2026-10-18).**
+- CLAIM: every `EpisodeArchiveError`-family raise that restore or lookup can reach passes a code-shaped text. RUN: `rg -n "raise (EpisodeArchive\w*|EpisodeErasureIncomplete)\(" src/probos/cognitive/episode_archive.py`, plus Read of `episodic.py:3080-3164`. FOUND: `episode_archive.py:270, 274, 281, 286, 430, 472, 477, 494` (constants), `:659` (`rows_undecodable:{n}`, in `iter_records`, not on either route); `episodic.py:3085, 3093, 3098, 3100, 3158, 3164` (`:{stage}`, one of four literals) and `_require_same_collection` (`episode_restore_interrupted_by_stop`). HOLDS: yes.
+- CLAIM: `re`, `_ARCHIVE_ERROR_CODE` and `_archive_error_code` are absent from `security.py`. RUN: Grep of `security.py` for `^import|^from` and for the names. FOUND: imports `json`, `logging`, `math`, `pathlib`, `typing` (`:5-9`); no match for the names. HOLDS: yes.
+- CLAIM: nothing in `src/probos` disables log propagation or installs a 5xx exception logger that would bypass A2. RUN: `rg -n "propagate\s*=|dictConfig|basicConfig" src/probos`; `rg -n "exception_handler|exc_info" src/probos/api.py src/probos/routers/{deps,auth}.py`. FOUND: no match. HOLDS: yes.
