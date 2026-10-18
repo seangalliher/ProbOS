@@ -261,10 +261,9 @@ async def test_restore_then_re_evict_is_idempotent(tmp_path: Path) -> None:
 def test_tier2_reset_removes_the_archive(tmp_path: Path) -> None:
     """A Tier 2 reset deletes ``episode_archive.db``; a Tier 1 reset keeps it (D7: episodes are nurture, and reset).
 
-    The last assertions pin what the reset does NOT list: ``episode_fts.db`` and the other sidecars survive every tier
-    today, and BF-902 (#1579) owns changing that (D8). **BF-902 inverts the ``episode_fts.db`` assertion
-    deliberately**, in the change that adds the sidecar to the table; it is that reviewed decision, not an edit to
-    get past a failure here.
+    The last assertions pin where the FTS5 sidecar sits. Until BF-902 it survived every tier (D8); **BF-902 (#1579)
+    inverted that assertion deliberately**: ``episode_fts.db`` now goes with ``chroma.sqlite3`` in Tier 2 and no other
+    tier. That is the reviewed decision recorded on #1579, not an edit to get past a failure here.
     """
     from probos.__main__ import RESET_TIERS, _file_purpose
 
@@ -290,8 +289,8 @@ def test_tier2_reset_removes_the_archive(tmp_path: Path) -> None:
 
     assert "episode_archive.db" in RESET_TIERS[2]["files"]
     assert "episode_archive.db" not in RESET_TIERS[1]["files"]
-    # D8: BF-902 owns the FTS5 sidecar and the others. The loop sees the real table: it lists the archive above.
-    assert [tier for tier, tier_def in RESET_TIERS.items() if "episode_fts.db" in tier_def.get("files", [])] == []
+    # D8, inverted by BF-902 (#1579): the FTS5 sidecar goes with the episodes it indexes, in Tier 2 only.
+    assert [tier for tier, tier_def in RESET_TIERS.items() if "episode_fts.db" in tier_def.get("files", [])] == [2]
     assert _file_purpose("episode_archive.db") == "Episode archive"
 
 

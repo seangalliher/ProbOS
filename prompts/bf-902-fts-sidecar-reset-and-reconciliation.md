@@ -401,12 +401,39 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | M6 | `src/probos/cognitive/episodic.py` | `await db.commit()  # BF-902: one commit per page` | `pass  # BF-902 mutant M6` | T4 |
 | M7 | `src/probos/cognitive/episodic.py` | `uncleaned += 1  # keep sweeping the remaining ids` | `pass  # BF-902 mutant M7` | T12 |
 | M8 | `src/probos/cognitive/episodic.py` | `uncleaned = len(ids)  # nothing this sweep deleted is durable` | `pass  # BF-902 mutant M8` | T13 |
-| M9 | `src/probos/cognitive/episodic.py` | `if uncleaned:` | `if False:` | T12, T13 |
+| M9 | `src/probos/cognitive/episodic.py` | `if uncleaned or not committed:` | `if False:` | T12, T13, T16 |
 | M10 | `src/probos/cognitive/episodic.py` | `await self._reconcile_fts_index()  # BF-902: before any seed or store(); warm boot seeds after start returns` | `pass  # BF-902 mutant M10` | T4, T12 |
 | M11 | `src/probos/cognitive/episodic.py` | `if collection is None:` | `if False:` | T7 |
 | M12 | `src/probos/__main__.py` | `"episode_fts.db", "participant_index.db", "activation_tracker.db",` | `# BF-902 mutant M12` | T1, T3 |
 
 Considered and left out as equivalent: `last_rowid = rows[0][0]` (slower, same result) and removing `isinstance(found, list)` (`set(None)` raises into the same WARNING).
+
+## Amendment R1 (2026-10-18): review round 1 (F1, F2)
+
+**Revised by:** the orchestrator, 2026-10-18, after review round 1 (GPT-6.1 Sol: REQUEST CHANGES, two P3 findings, both injected-only regressions that the reviewer reproduced against HEAD). Where Sections 4 and 5 or the mutation table differ, **this amendment is what the code does**. No design choice is involved: the contract text was applied verbatim, and each fix restores a behaviour HEAD had.
+
+**F1.** `_delete_fts_rows` set `uncleaned = len(ids)` when the commit failed, which is 0 for an empty id list, so a failed commit reported success (HEAD returned False) and wrote no WARNING. Production callers pass non-empty lists, so the reach is injected-only. **Fix (Section 4):** keep a separate `committed` flag. The code after the delete loop becomes:
+```python
+    committed = True
+    try:
+        await db.commit()
+    except Exception:
+        logger.debug("AD-567b: FTS5 cleanup commit failed", exc_info=True)
+        committed = False  # a failed commit is a failure even when there were no ids
+        uncleaned = len(ids)  # nothing this sweep deleted is durable
+    if uncleaned or not committed:
+        logger.warning(...)  # the same message and arguments as Section 4
+    return committed and uncleaned == 0
+```
+The warning text is unchanged, so an empty list with a failed commit reads "could not clear 0 of 0".
+
+**F2.** `_reconcile_fts_index` fetched the store write lock before its `try`, so a malformed `_store_write_lock` (the getter raises `TypeError`) made `start()` raise, which HEAD never did. The reach is injected-only (malformed private state). **Fix (Section 5):** the line `lock = self._get_store_write_lock()` moves inside the `try`, as its first statement, after `removed`, `checked` and `last_rowid` are set. The docstring's "Never raises (except cancellation)" is then true.
+
+**Tests (2 added; 17 in the file).** T16 `test_a_failed_commit_with_no_ids_is_not_reported_as_cleared`: `_delete_fts_rows(_FtsProxy(real, fail_commit=True), [])` returns `False` and exactly one WARNING contains `"could not clear 0 of 0"` (premise: the proxy's commit raised once). T17 `test_a_malformed_store_lock_degrades_the_reconciliation_instead_of_raising`: with `em._store_write_lock = object()` (restore the real lock before the rig exits) `await em._reconcile_fts_index()` returns 0, `_rows` are unchanged and exactly one WARNING contains `"stopped after removing 0"`.
+
+**Mutation rows added.** M13 `return committed and uncleaned == 0` -> `return uncleaned == 0` (T16). M14 `if uncleaned or not committed:` -> `if uncleaned:` (T16). M9's anchor is now `if uncleaned or not committed:` (the table row is updated above). **WH4 by hand:** the `lock = ...` line moved above the `try:` of `_reconcile_fts_index` (T17 must fail).
+
+---
 
 ## What this does not change
 
