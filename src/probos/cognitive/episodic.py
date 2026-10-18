@@ -27,10 +27,13 @@ from probos.cognitive.temporal_context import serialize_tcm_vector, deserialize_
 from probos.cognitive.episode_archive import (
     ARCHIVE_FILENAME,
     EVICTION_MODES,
+    LOOKUP_DEFAULT_LIMIT,
+    ArchiveLookupResult,
     ArchiveRecord,
     EpisodeArchive,
     EpisodeArchiveConflict,
     EpisodeArchiveIntegrityError,
+    EpisodeArchiveLookups,
     EpisodeArchiveUnavailable,
     EpisodeErasureIncomplete,
     primary_agent_id,
@@ -2889,6 +2892,39 @@ class EpisodicMemory:
             yield episode
         if unrehydrated:
             raise EpisodeArchiveIntegrityError(f"episode_archive_rows_unrehydratable:{unrehydrated}")
+
+    def _archive_for_lookup(self) -> EpisodeArchiveLookups:
+        """AD-1340 S2a: the open archive for a deliberate lookup, else a typed error (never an empty result)."""
+        archive = self._episode_archive
+        if self._archive_state == "open" and archive is not None:
+            return archive.lookups
+        if self._archive_state == "failed":
+            raise EpisodeArchiveUnavailable("episode_archive_failed_to_open")
+        raise EpisodeArchiveUnavailable("episode_archive_not_open")  # AD-1340 S2a: no archive is never an empty result
+
+    async def lookup_archived_by_id(self, episode_id: str, *, accessor: str) -> ArchiveLookupResult:
+        """AD-1340 S2a: the Captain's audited read of one archived episode (``EpisodeArchiveLookups.lookup_by_id``).
+
+        Not a recall surface. Takes no lock and never reads the live store or any sidecar.
+        """
+        return await self._archive_for_lookup().lookup_by_id(episode_id, accessor=accessor)
+
+    async def lookup_archived_by_agent(
+        self,
+        agent_id: str,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        limit: int = LOOKUP_DEFAULT_LIMIT,
+        accessor: str,
+    ) -> ArchiveLookupResult:
+        """AD-1340 S2a: the Captain's audited read by primary agent and time (``EpisodeArchiveLookups.lookup_by_agent``).
+
+        Not a recall surface. Takes no lock and never reads the live store or any sidecar.
+        """
+        return await self._archive_for_lookup().lookup_by_agent(
+            agent_id, since=since, until=until, limit=limit, accessor=accessor,
+        )
 
     async def restore_from_archive(self, episode_id: str) -> Episode:
         """AD-1340: put one archived episode back in the live store, byte-equal.
