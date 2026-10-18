@@ -3338,3 +3338,74 @@ The cases:
 2. **Leftover branches are no longer cleared automatically.** An optional "prune disposable builder branches" action could delete those whose tip is reachable from HEAD and that are checked out nowhere, and only when the Captain asks.
 3. **Empty-directory pruning** in `_restore_pre_build_files` still catches only `OSError`. It is swallow tier and cosmetic: no file state depends on it.
 4. **Duplicate spellings in `files_written`/`files_modified`** stay in the report; git deduplicates pathspecs.
+
+## Amendment A5 (2026-10-18): the branch collision check compares the exact ref name
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18, on the A4 repair hard stop (20 failures in `tests/test_builder_agent.py`; each mocks `subprocess.run` to answer `b"main\n"` to every git call).
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only follow-up answer (session `bd6de1ca`, the A4 repair's hard stop). The only wording changes: D36 and D37 are merged into the Decisions, the rows heading says Partition P2 (the answer said P3: R16 is in the M2 module), and the rows table is rebuilt in the five-column format with the full path (row R-ak's replacement is written out); each anchor is checked against the chain.
+
+**Verdict:** ✅ once A5 is applied, R16 passes, and the 21-file focused set is green with `test_builder_agent.py` unchanged.
+
+**Decisions** (recorded on #1585; the Captain may overrule):
+- **D36. The collision check reads `git branch --list --format=%(refname) <safe>` and collides only on a line exactly equal to `refs/heads/<safe>`.**
+  - Ranking: (1) `--format` plus an exact compare; (2) your marker parse, `line[2:].strip() == safe`; (3) rewriting the 20 mocks.
+  - With `--format` there is no `*` or `+` marker to strip. The operator's `color.branch=always` or `column.branch` config cannot put escape codes or columns in the way, and a detached-HEAD entry cannot equal `refs/heads/...`.
+  - The mocked `"main\n"` answer does not match, so those tests stay green without being adjusted, which keeps my earlier rule.
+  - Option 2 would miss the collision under `color.branch=always`, because the escape codes end up in `line[2:]`.
+  - Option 3 is churn, and the problem it fixes is the "any output" check, not the tests.
+- **D37. A missed collision still fails closed.** If the check ever misses, `checkout -b` refuses an existing name, so nothing is deleted. D36 only makes the refusal message reliable.
+
+On git's output: with a glob-free pattern, `branch --list` matches only the exact ref, so real git never prints a prefix or superstring branch. The superstring cases below protect against a fake runner or a future pattern change. I have not run git here; R16's real-git cases are where this gets checked.
+
+
+### A5.1 `src/probos/cognitive/builder.py`: `_git_create_branch` (against the A4.4 text)
+SEARCH:
+```python
+    _, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)
+    if list_out.strip():
+```
+REPLACE:
+```python
+    # BF-904a A5 (D36): ask for the full ref name and compare it exactly: no marker or colour to strip,
+    # and an answer naming any other ref (or a fake runner's "main") is not a collision.
+    _, list_out, _ = await _run_git(["branch", "--list", "--format=%(refname)", safe], work_dir)  # BF-904a A5 (D36): exact ref names only
+    if f"refs/heads/{safe}" in list_out.splitlines():  # BF-904a A5 (D36): this exact branch exists
+```
+The R-y line (`return False, f"branch {safe} already exists; …"  # BF-904a A4 (D31): …`) is not changed and still occurs once. `_git_create_branch` has one caller (`builder.py:3087`). No test asserts the builder's `branch --list` argv: the only matches in `tests/` are the bridge allowlist at `test_claude_architect_bridge.py:281,325`, and `test_builder_guardrails.py:207` and `test_bf894…:283` are the tests' own git calls.
+
+### A5.2 Test R16 (append to `tests/test_bf904a_failed_build_restore.py`; the fake-answer cases are red on the A4 tree)
+
+`test_the_collision_check_matches_the_exact_branch_name`, parametrised `case`. It calls `builder_module._git_create_branch("builder/bf904a-repeat", str(tree))`, so `safe` is `builder-bf904a-repeat`.
+
+**Fake-answer cases.** Patch `_run_git` with `async def fake(args, work_dir, **kwargs)`. It answers `args[:2] == ["branch", "--list"]` with `(0, ANSWER, "")` and records `args`, answers `["checkout", "-b", …]` with `(0, "", "")`, and fails the test on any other call. The `tree` here is a bare `tmp_path`, since no git runs.
+
+| case | ANSWER | expected |
+|---|---|---|
+| `exact` | `"refs/heads/builder-bf904a-repeat"` | `(False, …"already exists"…)`, and no `checkout -b` recorded |
+| `superstring` | `"refs/heads/builder-bf904a-repeat-2"` | `(True, "builder-bf904a-repeat")` |
+| `prefix-of` | `"refs/heads/builder-bf904a"` | `(True, …)` |
+| `other-namespace` | `"refs/remotes/origin/builder-bf904a-repeat"` | `(True, …)` |
+| `legacy-mock` | `"main"` | `(True, …)` (the `test_builder_agent.py` shape) |
+| `crlf-two-lines` | `"refs/heads/main\r\nrefs/heads/builder-bf904a-repeat"` | `(False, …)` |
+
+Premise: in every fake case the recorded `branch --list` argv `== ["branch", "--list", "--format=%(refname)", "builder-bf904a-repeat"]`.
+
+**Real-git cases.** Start from `_plain_repo`; control env as in the module.
+- `real-superstring`: `git branch builder-bf904a-repeat-2`. Expect `(True, …)`, and both branches exist afterwards.
+- `real-checked-out-here` (the `*` case): `git checkout -q -b builder-bf904a-repeat`. Expect `(False, …)`, and HEAD is still that branch.
+- `real-other-worktree` (the `+` case): `git worktree add -q -b builder-bf904a-repeat <tmp>/wt main`. Expect `(False, …)`, and the branch still exists.
+- `real-detached`: `git branch builder-bf904a-repeat`, then `git checkout -q --detach HEAD`. Expect `(False, …)`, and HEAD is still detached.
+
+### A5.3 Mutation rows (Partition P2, the M2 module; count each anchor in the A5-built file before mutating)
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-aj | `src/probos/cognitive/builder.py` | `if f"refs/heads/{safe}" in list_out.splitlines():  # BF-904a A5 (D36): this exact branch exists` | `if list_out.strip():` | R16[superstring], R16[legacy-mock]; the 20 `test_builder_agent.py` tests |
+| R-ak | `src/probos/cognitive/builder.py` | `_, list_out, _ = await _run_git(["branch", "--list", "--format=%(refname)", safe], work_dir)  # BF-904a A5 (D36): exact ref names only` | `_, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)  # BF-904a A5 (D36): exact ref names only` | the R16 fake-case argv premise; R11[same] (git's `checkout -b` message replaces the D31 text) |
+
+### A5.4 Supersessions
+- D31 gains: "the collision is an exact `refs/heads/<safe>` line from `--format=%(refname)` (A5, D36)".
+- The tests summary gains R16 (10 cases) and rows R-aj and R-ak.
+- The DECISIONS entry lists D1 to D37.
+
+**Other breakage:** none expected. `test_builder_agent.py` is unchanged. Everything that patches `_git_create_branch` itself is unaffected. A fake `_run_git` that returns rc 0 with empty output proceeds as before.
