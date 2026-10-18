@@ -1757,3 +1757,233 @@ RT8 (`raise HTTPException(status_code=500, detail="episode_archive_restore_faile
 - CLAIM: every `EpisodeArchiveError`-family raise that restore or lookup can reach passes a code-shaped text. RUN: `rg -n "raise (EpisodeArchive\w*|EpisodeErasureIncomplete)\(" src/probos/cognitive/episode_archive.py`, plus Read of `episodic.py:3080-3164`. FOUND: `episode_archive.py:270, 274, 281, 286, 430, 472, 477, 494` (constants), `:659` (`rows_undecodable:{n}`, in `iter_records`, not on either route); `episodic.py:3085, 3093, 3098, 3100, 3158, 3164` (`:{stage}`, one of four literals) and `_require_same_collection` (`episode_restore_interrupted_by_stop`). HOLDS: yes.
 - CLAIM: `re`, `_ARCHIVE_ERROR_CODE` and `_archive_error_code` are absent from `security.py`. RUN: Grep of `security.py` for `^import|^from` and for the names. FOUND: imports `json`, `logging`, `math`, `pathlib`, `typing` (`:5-9`); no match for the names. HOLDS: yes.
 - CLAIM: nothing in `src/probos` disables log propagation or installs a 5xx exception logger that would bypass A2. RUN: `rg -n "propagate\s*=|dictConfig|basicConfig" src/probos`; `rg -n "exception_handler|exc_info" src/probos/api.py src/probos/routers/{deps,auth}.py`. FOUND: no match. HOLDS: yes.
+
+## Amendment A3 (2026-10-18): unpaired surrogates, escaped log prefixes, and a code in every 500 log line
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18. A read-only consult after Part 2's review round 1 (GPT-6.1 Sol: F1 P2, F2 P2, F3 P3) and the orchestrator's mutation pass (XR8 and XR9 survived). The orchestrator appends it, so no line number above moves. It supersedes the contract lines named in A3.7. Every SEARCH is against the BUILT `src/probos/routers/security.py` (sha256 `7F179FF0…4C1D4F1E`, tree `ba87d6a8`). Decision recorded on #1568.
+
+**Gaps.**
+- **F1 (ordinary reach).** An unpaired surrogate gets through `json.loads`, either as a `\ud800` escape or as raw CESU-8 bytes (`json.loads` decodes bytes with `surrogatepass`). Pydantic refuses it (`string_unicode`, or it echoes it in an `extra_forbidden`/`model_attributes_type` error). The framework's 422 renderer then cannot encode that error as UTF-8, and the reply is a 500 `text/plain` with no route log and no access row. Measured by the orchestrator on both archive routes (`/archive/restore`, `/archive/lookup`) for a value, a longer value, an object key and a nested list. The S2a body guard (`security.py:166-177`) covers only non-finite numbers. This is the same class as #1523 F-139.
+- **F2 (injected only, a regression introduced by A2).** Both 500 log lines (`security.py:288`, `:291`) interpolate `request.episode_id[:8]` with `%s`, so a line break in caller text splits the log record. Cutting the id to 8 characters limits its length but does not sanitise it.
+- **F3 (injected only).** The unexpected-failure line (`:291`) carries no error code, which contradicts A2's D10.
+- **XR8 / XR9.** No test pins the 8-character prefix, because every test id is `ep-000`.
+
+### A3.1 `src/probos/routers/security.py`: the refusal code (against `security.py:108-110`)
+SEARCH:
+```python
+_ARCHIVE_LOOKUP_ACCESSOR = "captain:/api/security/archive/lookup"
+_ARCHIVE_LOOKUP_TOKEN_REQUIRED = "episode_archive_lookup_requires_token"
+_NON_FINITE_NUMBER_IN_BODY = "non_finite_number_in_body"
+```
+REPLACE:
+```python
+_ARCHIVE_LOOKUP_ACCESSOR = "captain:/api/security/archive/lookup"
+_ARCHIVE_LOOKUP_TOKEN_REQUIRED = "episode_archive_lookup_requires_token"
+_NON_FINITE_NUMBER_IN_BODY = "non_finite_number_in_body"
+_UNPAIRED_SURROGATE_IN_BODY = "unpaired_surrogate_in_body"  # AD-1340 S2b A3
+```
+
+### A3.2 The shared body guard (against `security.py:159-177`; the name stays, so S2a's `dependencies=` anchors hold)
+SEARCH:
+```python
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise _NonFiniteNumberInBody(text)
+    return value
+
+
+async def _refuse_non_finite_numbers(request: Request) -> None:
+    """AD-1340 S2a: 422 for a body holding a non-finite number, before validation runs.
+
+    The framework's 422 handler echoes the offending input, cannot JSON-encode NaN or Infinity, and answers 500
+    (follow-up on #1523). Re-reads the body the framework already cached; reads no runtime state, writes nothing.
+    """
+    try:
+        json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)
+    except _NonFiniteNumberInBody as exc:
+        raise HTTPException(status_code=422, detail=_NON_FINITE_NUMBER_IN_BODY) from exc
+    except ValueError:
+        return  # AD-1340 S2a: malformed JSON is the framework's to refuse (it parses first)
+```
+REPLACE:
+```python
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise _NonFiniteNumberInBody(text)
+    return value
+
+
+def _holds_unpaired_surrogate(parsed: Any) -> bool:
+    """AD-1340 S2b A3: whether a parsed JSON body holds, in any key or value at any depth, an unpaired surrogate.
+
+    ``json`` joins an escaped surrogate pair into one character and decodes raw bytes with ``surrogatepass``, so an
+    unpaired one, escaped or raw, survives parsing. Strict UTF-8, which the framework's 422 renderer uses, cannot
+    encode it. Iterative, so a body nested as deep as the parser allows cannot exhaust the stack.
+    """
+    pending: list[Any] = [parsed]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return False
+
+
+async def _refuse_non_finite_numbers(request: Request) -> None:
+    """AD-1340 S2a: 422 for a body holding a non-finite number, before validation runs.
+
+    The framework's 422 handler echoes the offending input, cannot JSON-encode NaN or Infinity, and answers 500
+    (follow-up on #1523). Re-reads the body the framework already cached; reads no runtime state, writes nothing.
+    AD-1340 S2b A3: the same for an unpaired surrogate, which that handler cannot encode as UTF-8. A non-finite
+    number is refused first (while parsing). Neither answer echoes the body. The name is kept for S2a's anchors.
+    """
+    try:
+        parsed = json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)
+    except _NonFiniteNumberInBody as exc:
+        raise HTTPException(status_code=422, detail=_NON_FINITE_NUMBER_IN_BODY) from exc
+    except ValueError:
+        return  # AD-1340 S2a: malformed JSON is the framework's to refuse (it parses first)
+    # AD-1340 S2b A3: outside the try, and a bool rather than a raise: UnicodeEncodeError is a ValueError.
+    if _holds_unpaired_surrogate(parsed):
+        raise HTTPException(status_code=422, detail=_UNPAIRED_SURROGATE_IN_BODY)
+```
+
+### A3.3 The restore route's docstring and its two 500 log lines (against `security.py:270-271` and `:286-292`)
+SEARCH:
+```python
+    ``episode_archive_restore_live_id``. AD-1340 S2b A2: an error is logged as the id's first 8 characters, the
+    error code and an exception type name, never an exception's text or its cause's.
+    """
+```
+REPLACE:
+```python
+    ``episode_archive_restore_live_id``. AD-1340 S2b A2/A3: an error is logged as the ``repr`` of the id's first 8
+    characters, the error code and an exception type name, never an exception's text or its cause's.
+    """
+```
+SEARCH:
+```python
+    except EpisodeArchiveError as exc:
+        code = _archive_error_code(exc, "episode_archive_restore_failed")  # AD-1340 S2b A2: a code, never the text
+        logger.error("AD-1340 S2b: archive restore of %s failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)
+        raise HTTPException(status_code=500, detail=code) from exc
+    except Exception as exc:
+        logger.error("AD-1340 S2b: archive restore of %s failed unexpectedly (%s)", request.episode_id[:8], type(exc).__name__)
+        raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc
+```
+REPLACE:
+```python
+    except EpisodeArchiveError as exc:
+        code = _archive_error_code(exc, "episode_archive_restore_failed")  # AD-1340 S2b A2: a code, never the text
+        # AD-1340 S2b A3: %r escapes a line break or ESC in caller text; the 8-character cut is a bound, not a sanitiser.
+        logger.error("AD-1340 S2b: archive restore of %r failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)
+        raise HTTPException(status_code=500, detail=code) from exc
+    except Exception as exc:
+        logger.error("AD-1340 S2b: archive restore of %r failed unexpectedly: episode_archive_restore_failed (%s)", request.episode_id[:8], type(exc).__name__)
+        raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc
+```
+These lines stay unchanged: RT8's anchor (`raise HTTPException(status_code=500, detail="episode_archive_restore_failed") from exc`), RT12, RT13, RT14 (the lookup's ERROR line) and the success INFO line.
+
+### A3.4 Test corrections (`tests/test_ad1340_s2b_restore_route.py`)
+- **RR-i:** the message assertion becomes `repr(eid[:8]) in message and "failed unexpectedly" in message and "episode_archive_restore_failed" in message and name in message` (F3).
+- **RR-m:** `repr(subject[:8]) in message` replaces `subject[:8] in message`.
+- **RR-n:** add `repr(eid[:8]) in message`.
+- **RR-o:** unchanged (RT14 is unchanged).
+- **Imports:** add `from probos.routers.security import _holds_unpaired_surrogate` (test-only private import, for RR-r).
+
+### A3.5 New tests
+- **RR-p** `test_restore_route_logs_only_an_escaped_prefix_of_the_requested_id`. Parametrized `(raised, code, type_name)` over branch 1 `(EpisodeArchiveError("episode_archive_restore_incomplete:live_add"), "episode_archive_restore_incomplete:live_add", "EpisodeArchiveError")` and branch 2 `(RuntimeError("boom"), "episode_archive_restore_failed", "RuntimeError")`.
+  - Setup: `caplog.set_level(logging.INFO)`, then `requested = "ab\ncd\x1bf\r" + "ijklmnop" * 4` (40 characters; the first 8 hold LF, ESC and CR).
+  - Inside `_memory(tmp_path, "archive")`: `monkeypatch.setattr(rig.em, "restore_from_archive", raiser)` (test-only), where `raiser(episode_id, **kwargs)` appends to `asked` and raises `raised`.
+  - Premise: `_route_errors(caplog) == []`.
+  - Request: `_post(client, _RESTORE, {"episode_id": requested}, headers=_AUTH)`.
+  - Assert:
+    - `asked == [requested]` (validation passed the whole id through);
+    - `(status, json) == (500, {"detail": code})`;
+    - `[record] = _route_errors(caplog)`;
+    - `message = record.getMessage()` contains `repr(requested[:8])`, `code` and `type_name`, and does not contain `"ijklmnop"`;
+    - `record.exc_info is None`;
+    - `rendered = LogRedactionFormatter("%(message)s").format(record)` contains none of `"\n"`, `"\r"`, `"\x1b"`, and does contain `repr(requested[:8])`;
+    - no entry of `_probos_texts(caplog)` contains `"ijklmnop"`.
+  - Kills XR8 and XR9 (as RT15 and RT16), RT17, RT18 and RT19.
+- **RR-q** `test_archive_routes_refuse_an_unpaired_surrogate_without_echoing_it`. HTTP level, real app, through `_client` (an unfixed tree raises the framework's `UnicodeEncodeError` into the test, which counts as a failure). Parametrized over `path in (_RESTORE, _LOOKUP)` × the cases below. Every body is raw bytes, sent with `_post(client, path, content=..., headers=_JSON_HEADERS)`.
+
+  | id | content | restore expects | lookup expects |
+  |---|---|---|---|
+  | `value` | `b'{"episode_id": "\\ud800"}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `inside_a_longer_value` | `b'{"episode_id": "ep-\\ud800-000"}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `low_surrogate_alone` | `b'{"episode_id": "\\udc00"}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `reversed_pair` | `b'{"episode_id": "\\ude00\\ud83d"}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `object_key` | `b'{"episode_id": "ep-000", "\\ud800": 1}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `nested_list` | `b'{"episode_id": "ep-000", "extra": [["\\ud800"]]}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `top_level_string` | `b'"\\ud800"'` | 422 `unpaired_surrogate_in_body` | same |
+  | `raw_cesu_bytes` | `b'{"episode_id": "\xed\xa0\x80"}'` | 422 `unpaired_surrogate_in_body` | same |
+  | `nan_first` | `b'{"episode_id": "\\ud800", "extra": NaN}'` | 422 `non_finite_number_in_body` | same |
+  | `paired_surrogates` (premise) | `b'{"episode_id": "\\ud83d\\ude00"}'` | 404 `episode_archive_not_found` | 200, `episodes == []` |
+  | `control_characters` (premise) | `b'{"episode_id": "ep\\n000\\u001b"}'` | 404 `episode_archive_not_found` | 200, `episodes == []` |
+
+  - Setup: `eid = await _archive_one(rig, 0)`, with `eid == "ep-000"` as a premise.
+  - Every 422 row asserts `(status, response.json()) == (422, {"detail": <code>})` and that `response.headers["content-type"]` starts with `application/json`.
+  - Every row asserts: `_raw(rig.em, [eid])["ids"] == []`, `_access_rows(tmp_path, eid) == []`, `_count(tmp_path, "episode_archive", eid) == 1`, and `_route_errors(caplog) == []`.
+  - The two premise rows prove that valid Unicode, including escaped control characters, still reaches the handler.
+  - The `raw_cesu_bytes` row rests on `json.loads` decoding bytes with `surrogatepass` (CPython `json/__init__.py`), which the framework's body parse also uses. If it answers anything else on the fixed tree, stop and report; do not drop it.
+- **RR-r** `test_unpaired_surrogate_walk_is_exact_and_iterative`. A direct call (no I/O). Note that a Python literal `"\ud83d\ude00"` is two unpaired code points; a joined pair is written `"\U0001f600"`.
+  - True for: `"\ud800"`, `"\udc00"`, `"\ud83d\ude00"`, `{"k\ud800": 1}`, `{"k": ["a", {"b": "\udfff"}]}`.
+  - False for: `"\U0001f600"`, `"ep\n000\x1b"`, `[1, 2.5, None, True, "ok", {"a": "é"}]`, `{}`, `[]`.
+  - Depth: build `deep = "\ud800"`, then `for _ in range(10_000): deep = [deep]`; assert True. The same built around `"ok"` gives False. The same built through dict keys, `deep = {deep_key: 0}` with the surrogate in the innermost key, gives True. A recursive walk raises `RecursionError` here.
+
+Part 2 now has 18 test functions (RR-a to RR-r). RR-p to RR-r join M5b.
+
+### A3.6 Partition P5 rows (whole stripped lines, each unique in the A3-built `security.py`; count each before mutating). RT9 to RT11 replace A2.6's rows.
+| ID | SEARCH | REPLACE | Killed by |
+|---|---|---|---|
+| RT9 | `logger.error("AD-1340 S2b: archive restore of %r failed: %s (%s)", request.episode_id[:8], code, type(exc.__cause__ or exc).__name__)` | same + `, exc_info=True` before `)` | RR-m |
+| RT10 | `logger.error("AD-1340 S2b: archive restore of %r failed unexpectedly: episode_archive_restore_failed (%s)", request.episode_id[:8], type(exc).__name__)` | same + `, exc_info=True` before `)` | RR-i |
+| RT11 | (RT10's line) | `logger.error("AD-1340 S2b: archive restore of %r failed unexpectedly: episode_archive_restore_failed (%s)", request.episode_id[:8], exc)` | RR-i |
+| RT15 (XR8) | (RT9's line) | `request.episode_id[:8]` → `request.episode_id` | RR-p[branch 1] |
+| RT16 (XR9) | (RT10's line) | `request.episode_id[:8]` → `request.episode_id` | RR-p[branch 2] |
+| RT17 | (RT9's line) | `%r` → `%s` | RR-p[branch 1] |
+| RT18 | (RT10's line) | `%r` → `%s` | RR-p[branch 2] |
+| RT19 | (RT10's line) | `failed unexpectedly: episode_archive_restore_failed (%s)` → `failed unexpectedly (%s)` | RR-i, RR-p[branch 2] |
+| RT20 | `if _holds_unpaired_surrogate(parsed):` | `if False:` | RR-q |
+| RT21 | `value.encode("utf-8")` | `value.encode("utf-8", "surrogatepass")` | RR-q, RR-r |
+| RT22 | `pending.extend(value.keys())` | `pass  # AD-1340 S2b mutant RT22` | RR-q[object_key], RR-r |
+| RT23 | `pending.extend(value.values())` | `pass  # AD-1340 S2b mutant RT23` | RR-q[value], RR-r |
+| RT24 | `pending.extend(value)` | `pass  # AD-1340 S2b mutant RT24` | RR-q[nested_list], RR-r |
+| RT25 | `raise HTTPException(status_code=422, detail=_UNPAIRED_SURROGATE_IN_BODY)` | `return` | RR-q |
+| N30a (replaces S2a N30 on this tree) | `parsed = json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)` | `parsed = json.loads(await request.body(), parse_float=_finite_float)` | S2a RT-e, RR-h[unknown_field_with_nan], RR-q[nan_first] |
+
+Also re-run, with unchanged anchors:
+- RT8, RT12, RT13, RT14 and the rest of P5 (`security.py` has a new sha256);
+- S2a's N23, N24, N25, N28, N29, N31, N32 (the shared guard changed). N24, N28 and N29 stay whole-line unique: the restore route's `dependencies=` copy carries a comment.
+
+Mark the result the campaign of record against the A3-built `security.py` sha256 and the test file's sha256.
+
+### A3.7 Supersessions (the original lines stay)
+- **Line 5 / A2.7:** Part 2 has 18 test functions (RR-a to RR-r).
+- **D10 / A2.7's D10:** "The route logs at ERROR the `repr` of the id's first 8 characters, the error code (the unexpected branch logs `episode_archive_restore_failed`) and an exception type name, and at INFO the restored id. It never logs content, an exception's text or a cause's text (A2, A3)."
+- **Validation:** a body holding an unpaired surrogate, in any key or value at any depth, answers 422 `{"detail": "unpaired_surrogate_in_body"}` on both archive routes, before validation and without echoing the body. A body that also holds a non-finite number answers `non_finite_number_in_body`.
+- **Property 15:** add RR-p ("the id prefix is escaped and cut to 8 characters").
+- **Property 16:** "`/forget` is byte-identical. `/archive/lookup` is byte-identical except its ERROR log (A2.4) and its shared body guard (A3.2): a body with an unpaired surrogate now answers a typed 422 where it answered 500. Its other responses are unchanged."
+- **A2.6 RT9 to RT11:** replaced by A3.6. **S2a N30:** re-anchored as N30a on this tree (the S2a contract text stays as merged).
+
+### A3.8 Considered, deferred
+- **An app-wide `RequestValidationError` handler** (`api.py`; today only `IntentAuthorizationDenied` has one, at `api.py:165`). It would fix this class for every route, but it changes every route's 422 wire shape. It goes to the consolidated #1523 follow-up F-151, together with `/forget`.
+- **Reusing BF-875's `_encodes_as_utf8`** (`federation/mcp_server.py:107-113`, re-serialise and encode). Same principle, but it is a private function in another layer and needs a `RecursionError` branch. Adapted, not imported.
+- **`config_models/operations.py:65` `_has_surrogate`.** A private function in another layer, and a range test is less exact than the encoder the renderer uses.
+
+**Absence Verified (A3, 2026-10-18).**
+- CLAIM: `_UNPAIRED_SURROGATE_IN_BODY` and `_holds_unpaired_surrogate` are absent from `src/`. RUN: Grep `_refuse_non_finite_numbers|_holds_unpaired_surrogate|unpaired_surrogate|\.encode\(|pending` over `src/**/routers/*.py`. FOUND: `security.py:166, 182, 257` (the guard and its two uses) and no `.encode(` or `pending` in `security.py`. HOLDS: yes, so RT21 to RT24's anchors will be unique.
+- CLAIM: no test pins the log lines or the guard's `json.loads` line as source text. RUN: Grep `archive restore of|parse_constant=_refuse_constant|episode_id\[:8\]` and `_refuse_non_finite_numbers` over `tests/`. FOUND: only `test_ad1340_s2b_restore_route.py:673` (a substring that A3 keeps). HOLDS: yes.
+- CLAIM: nothing outside `security.py` uses the guard. RUN: the same Grep over `src/`. FOUND: only `security.py`. HOLDS: yes.
+- CLAIM: no app-level validation or exception handler would intercept first. RUN: Grep `exception_handler|RequestValidationError` over `src/probos`. FOUND: only `api.py:165` (`IntentAuthorizationDenied`). HOLDS: yes.
+- CLAIM: no test id is longer than 8 characters before RR-p. Evidence: the orchestrator's mutation pass (XR8 and XR9 survived all 26 cases). HOLDS: yes.
