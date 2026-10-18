@@ -781,12 +781,14 @@ async def test_get_by_ids_for_evidence_respects_the_config_switch(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_list_episodes_is_unfiltered_so_erasure_can_still_reach_it(mem) -> None:
-    """``list_episodes`` backs ``knowledge/erasure.py`` and
-    ``knowledge/backfill.py``. Filtering it would make a marked episode
-    un-erasable -- a data-integrity defect, not a safety control."""
+    """``list_episodes`` backs ``knowledge/backfill.py``, and BF-905's
+    ``iter_live_episodes`` backs ``knowledge/erasure.py``. Filtering either
+    would make a marked episode un-erasable -- a data-integrity defect, not a
+    safety control."""
     await _store_both(mem)
 
     assert "marked-1" in {e.id for e in await mem.list_episodes()}
+    assert "marked-1" in {e.id async for e in mem.iter_live_episodes()}
 
 
 @pytest.mark.asyncio

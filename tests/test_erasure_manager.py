@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
@@ -38,9 +39,10 @@ class _FakeEpisodicMemory:
                 deleted += 1
         return deleted
 
-    async def list_episodes(self, limit: int | None = None) -> list[_Episode]:
-        episodes = list(self._episodes.values())
-        return episodes if limit is None else episodes[:limit]
+    async def iter_live_episodes(self) -> AsyncIterator[_Episode]:
+        """BF-905: the erasure cascades' live read (``list_episodes`` is no longer an erasure read)."""
+        for episode in list(self._episodes.values()):
+            yield episode
 
 
 class _FakeAttachmentStore:
@@ -129,8 +131,7 @@ async def test_forget_resource_cascades_without_errors() -> None:
     result = await manager.forget_resource("~/private/secrets.txt")
 
     assert "ep-1" in result.deleted_episode_ids
-    remaining = await episodic.list_episodes()
-    assert {episode.id for episode in remaining} == {"ep-2"}
+    assert {episode.id async for episode in episodic.iter_live_episodes()} == {"ep-2"}
 
 
 @pytest.mark.asyncio
