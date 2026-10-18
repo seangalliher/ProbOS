@@ -16,7 +16,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +63,8 @@ _ERASE_STORE_TAIL_WAIT_S = 10.0
 
 # AD-1340 R1: the FTS5 sidecar file, beside ``db_path``; ERASE reaches it by this name.
 _FTS_FILENAME = "episode_fts.db"
+# BF-902: rows the start-up FTS reconciliation reads, checks against the live collection and deletes per page.
+_FTS_RECONCILE_PAGE = 500
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1209,20 +1211,32 @@ def _metadata_by_id(ids: list[str], metadatas: Any) -> dict[str, dict]:
 
 
 async def _delete_fts_rows(db: Any, ids: list[str]) -> bool:
-    """AD-1340 R1: delete each id's FTS row independently; True only if every one and the commit succeeded."""
-    cleared = True
+    """AD-1340 R1: delete each id's FTS row independently; True only if every one and the commit succeeded.
+
+    BF-902: a failure is reported once at WARNING with the count of ids left uncleaned; the start-up
+    FTS reconciliation removes rows that name no live episode.
+    """
+    uncleaned = 0
     for eid in ids:
         try:
             await db.execute("DELETE FROM episode_fts WHERE episode_id = ?", (eid,))
         except Exception:
             logger.debug("AD-567b: FTS5 cleanup failed for %s", eid[:8], exc_info=True)
-            cleared = False  # keep sweeping the remaining ids
+            uncleaned += 1  # keep sweeping the remaining ids
+    committed = True
     try:
         await db.commit()
     except Exception:
         logger.debug("AD-567b: FTS5 cleanup commit failed", exc_info=True)
-        return False
-    return cleared
+        committed = False  # a failed commit is a failure even when there were no ids
+        uncleaned = len(ids)  # nothing this sweep deleted is durable
+    if uncleaned or not committed:
+        logger.warning(
+            "BF-902: FTS5 cleanup could not clear %d of %d episode id(s); "
+            "the start-up FTS reconciliation removes rows that name no live episode",
+            uncleaned, len(ids),
+        )
+    return committed and uncleaned == 0
 
 
 async def _store_tails_finished(events: list[asyncio.Event]) -> bool:
@@ -1640,6 +1654,8 @@ class EpisodicMemory:
         # AD-1340: episode archive (cold, never read by recall)
         await self._start_episode_archive(db_dir)
 
+        await self._reconcile_fts_index()  # BF-902: before any seed or store(); warm boot seeds after start returns
+
     async def stop(self) -> None:
         self._collection = None
         # AD-567b: Close FTS5 sidecar
@@ -1671,6 +1687,75 @@ class EpisodicMemory:
                 pass  # Teardown cleanup — errors expected and harmless
         self._collection = None
         self._client = None
+
+    async def _reconcile_fts_index(self) -> int:
+        """BF-902: delete FTS rows whose episode id is not in the live collection; returns the rows deleted.
+
+        Runs once from start(), before warm boot seeds and before any store(). The
+        collection is the source of truth. An id that is only in the AD-1340 archive
+        is stale here too (eviction removed its FTS row; S2's archive text index is
+        another file), so the archive is never read.
+
+        Bounded: keyset pages of ``_FTS_RECONCILE_PAGE`` rows by rowid, one collection
+        read of at most that many ids and one commit per page. Each page runs inside
+        the store write lock, so no store() add or restore can make an id live between
+        the live check and the delete. A row is deleted only by its (rowid, episode_id)
+        pair, so a row written after the page was read is never matched. A missing
+        collection, a failing read, or an answer without an id list deletes nothing
+        from that page on (WARNING). Pages already committed stay deleted, and the next
+        start resumes (idempotent). Never rolls back: the FTS connection is shared with
+        store() tails (F-133). Never raises (log-and-degrade: the index is derived).
+        """
+        db = self._fts_db
+        if db is None:
+            return 0  # BF-902: no FTS sidecar is open, so there is nothing to reconcile
+        removed = 0
+        checked = 0
+        last_rowid = -(2**63)
+        try:
+            lock = self._get_store_write_lock()
+            while True:
+                async with lock:  # BF-902: no store() or restore add lands between the live check and the delete
+                    collection = self._collection
+                    if collection is None:
+                        logger.warning(
+                            "BF-902: FTS reconciliation skipped: the episode collection is unavailable; "
+                            "nothing was deleted"
+                        )
+                        return removed
+                    cursor = await db.execute(
+                        "SELECT rowid, episode_id FROM episode_fts WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                        (last_rowid, _FTS_RECONCILE_PAGE),
+                    )
+                    rows = list(await cursor.fetchall())
+                    if not rows:
+                        break
+                    last_rowid = rows[-1][0]
+                    checked += len(rows)
+                    candidates = dict.fromkeys(eid for _rowid, eid in rows if isinstance(eid, str) and eid)
+                    result = collection.get(ids=list(candidates), include=[]) if candidates else {"ids": []}
+                    found = result.get("ids") if isinstance(result, Mapping) else None
+                    if not isinstance(found, list):
+                        raise TypeError("BF-902: the episode collection answered without an id list")
+                    live = set(found)
+                    stale = [(rowid, eid) for rowid, eid in rows if eid in candidates and eid not in live]
+                    if stale:
+                        await db.executemany("DELETE FROM episode_fts WHERE rowid = ? AND episode_id = ?", stale)
+                        await db.commit()  # BF-902: one commit per page
+                        removed += len(stale)
+                    if len(rows) < _FTS_RECONCILE_PAGE:
+                        break
+        except Exception:
+            logger.warning(
+                "BF-902: FTS reconciliation stopped after removing %d row(s); "
+                "the remaining rows are kept and the next start resumes",
+                removed, exc_info=True,
+            )
+            return removed
+        logger.info(
+            "BF-902: FTS reconciliation removed %d of %d row(s) that named no live episode", removed, checked,
+        )
+        return removed
 
     # ---- seeding (warm boot) -----------------------------------------
 

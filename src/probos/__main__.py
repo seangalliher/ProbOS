@@ -2618,6 +2618,8 @@ RESET_TIERS = {
             "session_last.json", "chroma.sqlite3", "cognitive_journal.db",
             # AD-1340: archived episodes are nurture; a new crew must not inherit them
             "episode_archive.db",
+            # BF-902: the per-episode indexes go with the episodes they index (chroma.sqlite3 above)
+            "episode_fts.db", "participant_index.db", "activation_tracker.db",
             "hebbian_weights.db", "trust.db", "service_profiles.db",
             # Identity
             "identity.db", "acm.db", "skills.db", "directives.db",
@@ -2717,6 +2719,9 @@ def _file_purpose(name: str) -> str:
         "checkpoints": "DAG checkpoints",
         "chroma.sqlite3": "Episodic memory",
         "episode_archive.db": "Episode archive",
+        "episode_fts.db": "Episode keyword index",
+        "participant_index.db": "Episode participant index",
+        "activation_tracker.db": "Episode activation log",
         "cognitive_journal.db": "Cognitive journal",
         "hebbian_weights.db": "Hebbian weights",
         "trust.db": "Trust network",
