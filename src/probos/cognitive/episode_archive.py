@@ -17,9 +17,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 import zlib
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -34,11 +35,17 @@ __all__ = [
     "ARCHIVE_FILENAME",
     "ARCHIVE_REASONS",
     "EVICTION_MODES",
+    "LOOKUP_DEFAULT_LIMIT",
+    "LOOKUP_MAX_LIMIT",
+    "LOOKUP_PURPOSE",
+    "ArchiveLookupResult",
     "ArchiveRecord",
+    "ArchivedEpisode",
     "EpisodeArchive",
     "EpisodeArchiveConflict",
     "EpisodeArchiveError",
     "EpisodeArchiveIntegrityError",
+    "EpisodeArchiveLookups",
     "EpisodeArchiveUnavailable",
     "EpisodeErasureIncomplete",
     "EvictionDisposition",
@@ -60,6 +67,10 @@ ARCHIVE_REASONS: frozenset[str] = frozenset(
 #: ``memory.eviction_disposition`` values.
 EVICTION_MODES: frozenset[str] = frozenset({"archive", "delete"})
 _SQL_CHUNK = 500
+#: AD-1340 S2a: lookup bounds, and the access purpose every lookup records.
+LOOKUP_DEFAULT_LIMIT = 50
+LOOKUP_MAX_LIMIT = 200
+LOOKUP_PURPOSE = "lookup"
 
 AuditDisposition = Literal["archived", "erased", "deleted"]
 
@@ -86,7 +97,33 @@ CREATE TABLE IF NOT EXISTS archive_access (
 
 CREATE INDEX IF NOT EXISTS idx_archive_access_episode
     ON archive_access(episode_id);
+
+CREATE INDEX IF NOT EXISTS idx_episode_archive_agent_time
+    ON episode_archive(agent_id, episode_timestamp);
 """
+
+_LOOKUP_COLUMNS = (
+    "a.episode_id, a.content_hash, a.agent_id, a.episode_timestamp, a.archived_at, a.reason, "
+    "a.payload_format, a.payload"
+)
+#: AD-1340 S2a D4: one row per episode id, its latest archived version (the version get_records restores);
+#: an exact tie on archived_at keeps the smallest content_hash.
+_LATEST_VERSION = (
+    "NOT EXISTS (SELECT 1 FROM episode_archive b WHERE b.episode_id = a.episode_id AND "
+    "(b.archived_at > a.archived_at OR (b.archived_at = a.archived_at AND b.content_hash < a.content_hash)))"
+)
+_LOOKUP_BY_ID_SQL = f"SELECT {_LOOKUP_COLUMNS} FROM episode_archive a WHERE a.episode_id = ? AND {_LATEST_VERSION}"
+_LOOKUP_BY_AGENT_SQL = (
+    f"SELECT {_LOOKUP_COLUMNS} FROM episode_archive a "
+    "WHERE a.agent_id = ? AND a.episode_timestamp >= ? AND a.episode_timestamp < ? "
+    f"AND {_LATEST_VERSION} "
+    "ORDER BY a.episode_timestamp DESC, a.episode_id DESC LIMIT ?"
+)
+#: AD-1340 S2a D5: an access row is written only while the exact row the lookup read (key and bytes) is stored.
+_RECORD_LOOKUP_ACCESS_SQL = (
+    "INSERT INTO archive_access (episode_id, accessed_at, accessor, purpose) SELECT ?, ?, ?, ? "
+    "WHERE EXISTS (SELECT 1 FROM episode_archive WHERE episode_id = ? AND content_hash = ? AND payload = ?)"
+)
 
 
 class EpisodeArchiveError(Exception):
@@ -156,6 +193,11 @@ def _chunks(items: Sequence[str], size: int) -> Iterator[list[str]]:
         yield list(items[start:start + size])
 
 
+def _require_accessor(accessor: str) -> None:
+    if not isinstance(accessor, str) or not accessor.strip():
+        raise ValueError("episode_archive_lookup_accessor_invalid")
+
+
 @dataclass(frozen=True)
 class ArchiveRecord:
     """One raw ChromaDB record, exactly as the live store held it."""
@@ -172,6 +214,32 @@ class ArchiveRecord:
     @property
     def archive_ref(self) -> str:
         return f"episode_archive:{self.episode_id}:{self.content_hash}"
+
+
+@dataclass(frozen=True)
+class ArchivedEpisode:
+    """AD-1340 S2a: one archived record a lookup returned, with the key columns it was found by."""
+
+    record: ArchiveRecord
+    agent_id: str
+    episode_timestamp: float
+    archived_at: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class ArchiveLookupResult:
+    """AD-1340 S2a: what a lookup returned. Every episode here has exactly one committed access row.
+
+    ``undecodable``: matching rows whose payload could not be decoded (not returned, no access row).
+    ``withdrawn``: decoded rows erased or replaced before their access row was written (not returned).
+    ``truncated``: more rows matched than the limit allowed.
+    """
+
+    episodes: tuple[ArchivedEpisode, ...] = ()
+    undecodable: int = 0
+    withdrawn: int = 0
+    truncated: bool = False
 
 
 def encode_payload(record: ArchiveRecord) -> bytes:
@@ -228,11 +296,119 @@ async def _close_quietly(db: Any) -> None:
         logger.debug("AD-1340: archive close failed", exc_info=True)
 
 
+class EpisodeArchiveLookups:
+    """AD-1340 S2a: the audited lookup surface of one ``EpisodeArchive`` (``archive.lookups``); S2c adds cue.
+
+    Holds no connection and no lock of its own: it uses the archive's ``_require_open`` and the SAME
+    ``_write_lock`` object, so every lookup's access transaction is serialised with the archive's writers.
+    Constructed only by ``EpisodeArchive.__init__``.
+    """
+
+    def __init__(self, require_open: Callable[[], Any], write_lock: asyncio.Lock) -> None:
+        self._require_open = require_open
+        self._write_lock = write_lock
+
+    async def lookup_by_id(self, episode_id: str, *, accessor: str) -> ArchiveLookupResult:
+        """AD-1340 S2a: the latest archived version of one episode, recorded as one access row.
+
+        A deliberate, audited read, never a recall surface. The read takes no lock; the access row is
+        written under ``_write_lock`` and committed before anything is returned.
+        """
+        if not isinstance(episode_id, str) or not episode_id:
+            raise ValueError("episode_archive_lookup_id_invalid")
+        _require_accessor(accessor)
+        return await self._lookup(_LOOKUP_BY_ID_SQL, (episode_id,), limit=1, accessor=accessor)
+
+    async def lookup_by_agent(
+        self,
+        agent_id: str,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        limit: int = LOOKUP_DEFAULT_LIMIT,
+        accessor: str,
+    ) -> ArchiveLookupResult:
+        """AD-1340 S2a: archived episodes whose PRIMARY agent is ``agent_id``, ``since <= timestamp < until``.
+
+        Newest first, at most ``limit`` (1..LOOKUP_MAX_LIMIT). The primary agent is the first entry of
+        ``agent_ids_json``, else ``"unknown"`` (the AD-541f rule ``archive()`` stores in ``agent_id``): an
+        episode whose first participant is another agent is not found by this agent's id. ``None`` is open.
+        """
+        if not isinstance(agent_id, str) or not agent_id:
+            raise ValueError("episode_archive_lookup_agent_invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LOOKUP_MAX_LIMIT:
+            raise ValueError("episode_archive_lookup_limit_invalid")
+        lower = -math.inf if since is None else float(since)
+        upper = math.inf if until is None else float(until)
+        if math.isnan(lower) or math.isnan(upper) or lower >= upper:
+            raise ValueError("episode_archive_lookup_range_invalid")
+        _require_accessor(accessor)
+        return await self._lookup(
+            _LOOKUP_BY_AGENT_SQL, (agent_id, lower, upper, limit + 1), limit=limit, accessor=accessor,
+        )
+
+    async def _lookup(
+        self, sql: str, params: tuple[Any, ...], *, limit: int, accessor: str,
+    ) -> ArchiveLookupResult:
+        db = self._require_open()
+        cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
+        rows = await cursor.fetchall()
+        truncated = len(rows) > limit
+        decoded: list[tuple[ArchivedEpisode, bytes]] = []
+        undecodable = 0
+        for row in rows[:limit]:
+            episode_id, content_hash, agent_id, episode_timestamp, archived_at, reason, payload_format, payload = row
+            try:
+                record = decode_payload(episode_id, content_hash, payload_format, payload)
+            except EpisodeArchiveIntegrityError:
+                undecodable += 1
+                logger.warning(
+                    "AD-1340 S2a: archived row %s could not be decoded; the lookup returns the others",
+                    episode_id, exc_info=True,
+                )
+                continue  # AD-1340 S2a: one bad row never hides the others in a lookup
+            item = ArchivedEpisode(record, str(agent_id), float(episode_timestamp), float(archived_at), str(reason))
+            decoded.append((item, bytes(payload)))
+        recorded = await self._record_lookup_access(decoded, accessor=accessor) if decoded else frozenset()
+        episodes = tuple(item for item, _ in decoded if (item.record.episode_id, item.record.content_hash) in recorded)
+        return ArchiveLookupResult(
+            episodes=episodes,
+            undecodable=undecodable,
+            withdrawn=len(decoded) - len(episodes),
+            truncated=truncated,
+        )
+
+    async def _record_lookup_access(
+        self, decoded: Sequence[tuple[ArchivedEpisode, bytes]], *, accessor: str,
+    ) -> frozenset[tuple[str, str]]:
+        """One access row per decoded record whose exact row (key and bytes) is still stored, in ONE transaction.
+
+        The INSERT evaluates its own condition inside the lock, so a row erased or replaced since the unlocked
+        read gets no access row and is not returned. Any failure rolls the whole batch back and raises: a
+        lookup never returns a record whose access row was not committed. Returns the committed keys.
+        """
+        async with self._write_lock:  # AD-1340 S2a: a lookup's access rows commit alone, after their rows are re-checked
+            db = self._require_open()
+            now = time.time()
+            recorded: set[tuple[str, str]] = set()
+            try:
+                for item, payload in decoded:
+                    eid, chash = item.record.episode_id, item.record.content_hash
+                    cursor = await db.execute(_RECORD_LOOKUP_ACCESS_SQL, (eid, now, accessor, LOOKUP_PURPOSE, eid, chash, payload))
+                    if cursor.rowcount == 1:
+                        recorded.add((eid, chash))
+                await db.commit()  # AD-1340 S2a: no lookup returns a record before its access row is committed
+            except Exception as exc:
+                await _rollback_quietly(db)  # AD-1340 S2a: no access row of a failed lookup survives
+                raise EpisodeArchiveError("episode_archive_access_not_recorded") from exc
+            return frozenset(recorded)
+
+
 class EpisodeArchive:
     """Cold store for evicted episodes. Owned and started by ``EpisodicMemory``.
 
     Not a recall surface: nothing on the default recall paths calls it.
-    S2 adds the recorded lookups (by agent and time, by cue).
+    S2a's recorded lookups live on ``lookups`` (``EpisodeArchiveLookups``); S2c adds cue.
     AD-1340 R3: mutations are serialised by `_write_lock`; reads are not.
     """
 
@@ -250,6 +426,7 @@ class EpisodeArchive:
         # statements. Reads never take it. Lock order: EpisodicMemory's store write lock, then this; this
         # class never reaches the store lock.
         self._write_lock = asyncio.Lock()
+        self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)  # AD-1340 S2a: the audited read surface
 
     @property
     def is_open(self) -> bool:

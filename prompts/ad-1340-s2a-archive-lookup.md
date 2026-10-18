@@ -750,9 +750,9 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | N8 | `src/probos/cognitive/episode_archive.py` | `if cursor.rowcount == 1:` | `if True:` | A-10, A-11 |
 | N9 | `src/probos/cognitive/episode_archive.py` | `await db.commit()  # AD-1340 S2a: no lookup returns a record before its access row is committed` | `pass` | A-3 |
 | N10 | `src/probos/cognitive/episode_archive.py` | `await _rollback_quietly(db)  # AD-1340 S2a: no access row of a failed lookup survives` | `pass` | A-12 |
-| N11 | `src/probos/cognitive/episode_archive.py` | `async with self._write_lock:  # AD-1340 S2a: a lookup's access rows commit alone, after their rows are re-checked` | `async with asyncio.Lock():  # AD-1340 S2a mutant N11` | A-10, A-11 |
+| N11 | `src/probos/cognitive/episode_archive.py` | `async with self._write_lock:  # AD-1340 S2a: a lookup's access rows commit alone, after their rows are re-checked` | `async with asyncio.Lock():  # AD-1340 S2a mutant N11` | A-10, A-11, A-19 |
 | N12 | `src/probos/cognitive/episode_archive.py` | `continue  # AD-1340 S2a: one bad row never hides the others in a lookup` | `raise` | A-9 |
-| N13 | `src/probos/cognitive/episode_archive.py` | `undecodable += 1` | `pass` | A-9 |
+| N13 | `src/probos/cognitive/episode_archive.py` | `undecodable=undecodable,` | `undecodable=0,` | A-9 |
 | N14 | `src/probos/cognitive/episode_archive.py` | `truncated = len(rows) > limit` | `truncated = False` | A-7 |
 | N15 | `src/probos/cognitive/episode_archive.py` | `for row in rows[:limit]:` | `for row in rows:` | A-7 |
 | N16 | `src/probos/cognitive/episode_archive.py` | `if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LOOKUP_MAX_LIMIT:` | `if False:` | A-7 |
@@ -765,8 +765,10 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | N23 | `src/probos/routers/security.py` | `if not runtime.config.auth.crew_scope_token:  # AD-1340 S2a: never serve archived episodes through an open gate` | `if False:` | RT-a |
 | N24 | `src/probos/routers/security.py` | `@router.post("/archive/lookup", dependencies=[Depends(require_crew_scope)])` | `@router.post("/archive/lookup")` | RT-b |
 | N25 | `src/probos/routers/security.py` | `except EpisodeArchiveUnavailable as exc:` | `except LookupError as exc:` | RT-f |
+| N26 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(self._require_open, asyncio.Lock())` | A-10, A-11, A-19 |
+| N27 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(lambda: self._db, self._write_lock)` | A-14 |
 
-**Checked by hand, like S1's WH rows.** **WH6** moves the `_record_lookup_access(...)` call and the `episodes = ...` filter **below** a `return` of all decoded records, so the lookup returns before auditing; A-3 and A-12 must fail. **WH7** dedents the `for item, payload in decoded:` loop and the commit out of `async with self._write_lock:`; A-10 must fail.
+**Checked by hand, like S1's WH rows.** **WH6** moves the `_record_lookup_access(...)` call and the `episodes = ...` filter **below** a `return` of all decoded records, so the lookup returns before auditing; A-3 and A-12 must fail. **WH7** dedents the `for item, payload in decoded:` loop and the commit out of `async with self._write_lock:`; **A-19** must fail (A-10 cannot: Amendment A1.1). **WH7b** dedents only `await db.commit()` out of the lock; A-19 must fail as well.
 
 **S1 rows to re-run on the S2a tree.** S2a edits `episode_archive.py`, so all 17 S1 rows pinned to it are re-run against `tests/test_ad1340_s1_archive_store.py`: P1, P2, P3, C1, H1, S1, S2 (two anchors, by hand), X1, I2, I3, Q1, Q2, Q3 and AL1 to AL4. From `episodic.py`, RC and O1 are re-run against `test_ad1340_s1_eviction.py`, E1m against `test_ad1340_s1_erasure.py` and E9m against `test_ad1340_s1_restore_reset.py`; these are the default-recall, erase and (d) rows. The other S1 `episodic.py` rows are carried forward with their recorded kills. S2a only adds lines there (one import block and three methods), so an appended method cannot revive a killed mutant. The runner's count step must still find exactly one match for each of their anchors. A new line that duplicated an S1 anchor would make it INERT, so the S2a code above was written with distinct comments. S1 rows pinned to `erasure.py`, `memory_probes.py`, `__main__.py` and `startup/cognitive_services.py` are unaffected, because those files are unchanged.
 
@@ -968,3 +970,120 @@ Build Sections 3 to 5 exactly. Route tests use the real app through `httpx.ASGIT
 
 ### Brief M3 (trackers; effort medium)
 Edit `DECISIONS.md` and `PROGRESS.md` as Tracking says, staging only those hunks. Regenerate the ledger and run `--check` and `tests/test_ad1184_ad_ledger.py`. The mutation campaign of record is run on the frozen candidate by the orchestrator or reviewer, and its result goes into the DECISIONS entry before the gate.
+
+---
+
+## Amendment A1 (Architect, after M1; recorded by the orchestrator, 2026-10-18)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-17, consult session `37bf6694`.
+
+**Why.** The M1 Builder stopped on a hard stop: mutant WH7 survived all 18 tests. It also found that `scripts/check_architecture_principles.py --check` exits 1 (17 direct methods on `EpisodeArchive`, limit 15) and that N13's anchor matched twice. The orchestrator replicated the WH7 survival independently on a scratch tree (18 passed). The Architect decided all three. The mutation-table rows N11 and N13 and the WH7 sentence above were edited in place to match, and N26 and N27 are new (A1.5). **Where this amendment and Sections 1 to 5 differ, this amendment wins.**
+
+### A1.1 WH7 is a real gap. Add A-19.
+**Reason:** under WH7 (the 11 lines of `_record_lookup_access` dedented out of the lock), A-10 cannot see the change. Its lookup still waits at the `async with` line, so the timeline matches the pristine code. The property that breaks is "another writer's rollback never takes the lookup's pending access rows" (Diff Reviewer property 3). Only a writer that runs while the access INSERT is still uncommitted can show that.
+
+Copy S1's helpers into `tests/test_ad1340_s2a_archive_lookup.py` verbatim (local copies, no cross-module import): `_GatedCommit` (`tests/test_ad1340_s1_archive_store.py:727-744`), `_MARKED` (`:747`) and `_arm_failing_write` (`:750-756`). `_cancel_pending` is already local. Then append:
+
+```python
+# --- A-19: a failing archive() never rolls back a lookup's access row ---------------------------------------------
+
+
+async def test_a_failing_archive_write_never_rolls_back_a_lookups_access_row(tmp_path: Path) -> None:
+    path = tmp_path / "episode_archive.db"
+    subject = _record(1)
+    tasks: list[asyncio.Task[Any]] = []
+    archive = EpisodeArchive(str(path))
+    async with _started(archive):
+        assert await archive.archive([subject], reason="capacity") == frozenset({subject.episode_id})
+        assert _count(path, "archive_access", subject.episode_id) == 0  # premise: no access row yet
+        await _arm_failing_write(archive)
+        real = archive._db  # test-only private access
+        archive._db = gate = _GatedCommit(real)
+        try:
+            lookup_task = asyncio.create_task(archive.lookups.lookup_by_id(subject.episode_id, accessor="test"))
+            tasks.append(lookup_task)
+            await asyncio.wait_for(gate.entered.wait(), timeout=5)  # the access row is inserted, not committed
+            archive_task = asyncio.create_task(archive.archive([_MARKED], reason="capacity"))
+            tasks.append(archive_task)
+            done, _ = await asyncio.wait({archive_task}, timeout=0.3)
+            assert not done  # the archive waits for the lookup's transaction
+            gate.release.set()
+            finished, _ = await asyncio.wait({lookup_task, archive_task}, timeout=5)
+            assert finished == {lookup_task, archive_task}, "a task never finished after the release"
+
+            result = lookup_task.result()
+            assert _ids(result) == [subject.episode_id]
+            assert (result.undecodable, result.withdrawn, result.truncated) == (0, 0, False)
+            with pytest.raises(sqlite3.IntegrityError, match="injected write failure"):
+                archive_task.result()
+            assert _rows(
+                path, "SELECT purpose FROM archive_access WHERE episode_id = ?", (subject.episode_id,),
+            ) == [("lookup",)]  # exactly one committed row: the returned record was audited
+            assert _count(path, "episode_archive", _MARKED.episode_id) == 0
+        finally:
+            gate.release.set()
+            archive._db = real
+            await _cancel_pending(tasks)
+```
+
+- **The by-agent form needs no separate test.** Both forms reach the lock through the one shared call in `_lookup`, and the lock is taken only in `_record_lookup_access`. A mutant cannot drop the lock for one form only.
+- **Hand-check rows.** WH7's killer changes from A-10 to **A-19**. Add **WH7b**: dedent only `await db.commit()` out of the lock. A-19 must also fail; A-10 cannot catch WH7b either.
+- **Killers.** N11's killers become A-10, A-11 and A-19.
+- **Tests summary.** 30 tests: A-1 to A-19 in the archive file, plus E-1 to E-4 and RT-a to RT-g in the route file. Add A-19 to the concurrency list.
+
+### A1.2 SRP: a same-module companion class `EpisodeArchiveLookups` (option D)
+| Option | Correct | Safe | Compatible | Architectural fit | Reversible | Validation cost | Survives S2c and S2d |
+|---|---|---|---|---|---|---|---|
+| **D (chosen)** | yes | yes | yes | a real split: storage and mutations vs the audited query surface | yes | low: method bodies byte-identical, no N-row anchor changes | yes: the class is back to 13 methods; S2c's cue lookup joins the companion |
+| A (a baseline row) | yes | yes | yes | poor: a new class enters debt, and the baseline freezes triggers, not magnitude, so S2c could grow it ungated | yes | lowest | no: the check is blind to this class from then on |
+| B (module functions) | yes | yes | yes | poor: methods in disguise, the same family as the checker's stated bound 7 | yes | low | no: every S2c lookup repeats the dodge |
+| C (a new module) | yes | yes | yes | needs a public lock-and-connection API on `EpisodeArchive` (methods back on the class) or private access across modules | yes | medium | partly |
+
+**Reason:** every one of the 92 baseline rows was frozen debt from `AD-1270h` when the checker shipped, and DECISIONS records the design as "new violations fail immediately". A new class should fix the cause, not join the baseline. D injects the archive's own bound `_require_open` and its `_write_lock` object, under the same attribute names, so the moved bodies do not change by one byte, and A-10's `archive._write_lock` (and the `_GatedCommit` swap of `archive._db`) still reach the lookup.
+
+**Code (Section 1, applied to the built file):**
+1. Imports: `from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence`.
+2. Add `"EpisodeArchiveLookups",` to `__all__`, after `"EpisodeArchiveIntegrityError",`. S1's `__all__` membership check stays true.
+3. Insert this class after `_close_quietly`, before `class EpisodeArchive`:
+```python
+class EpisodeArchiveLookups:
+    """AD-1340 S2a: the audited lookup surface of one ``EpisodeArchive`` (``archive.lookups``); S2c adds cue.
+
+    Holds no connection and no lock of its own: it uses the archive's ``_require_open`` and the SAME
+    ``_write_lock`` object, so every lookup's access transaction is serialised with the archive's writers.
+    Constructed only by ``EpisodeArchive.__init__``.
+    """
+
+    def __init__(self, require_open: Callable[[], Any], write_lock: asyncio.Lock) -> None:
+        self._require_open = require_open
+        self._write_lock = write_lock
+```
+   Then **cut** the four methods `lookup_by_id`, `lookup_by_agent`, `_lookup` and `_record_lookup_access` out of `EpisodeArchive` and paste them **verbatim** into this class body. Both are at class level, so the indentation does not change.
+4. In `EpisodeArchive.__init__`, add a line after `self._write_lock = asyncio.Lock()`: `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)  # AD-1340 S2a: the audited read surface`.
+5. Change the `EpisodeArchive` class docstring line that says "S2a adds the recorded lookups by id and by primary agent and time (S2c adds cue)." to: "S2a's recorded lookups live on ``lookups`` (``EpisodeArchiveLookups``); S2c adds cue."
+
+**Section 3:**
+- 3a: add `EpisodeArchiveLookups,` to the import, in sorted position.
+- 3b: `_archive_for_lookup` becomes `-> EpisodeArchiveLookups`, and its `return archive` becomes `return archive.lookups`. The two pass-through lines `return await self._archive_for_lookup().lookup_by_...` are **unchanged**, so N20, N21 and N22 stay valid.
+- 3b docstrings: `EpisodeArchive.lookup_by_id` and `.lookup_by_agent` become `EpisodeArchiveLookups.lookup_by_id` and `.lookup_by_agent`.
+
+**Tests:** replace every `archive.lookup_by_` with `archive.lookups.lookup_by_` in the S2a archive test file (all call sites are on a variable named `archive`). Change A-2, A-3, A-6, A-7 and A-8 in the Section 2 table to say `lookups.lookup_by_*`.
+
+**Mutation table:** no SEARCH text changes for N1 to N19 other than N13 (A1.3), because every body is byte-identical, and N11's `async with self._write_lock:  # AD-1340 S2a: ...` is still unique. WH6 and WH7 now refer to the methods on `EpisodeArchiveLookups`.
+
+**Gate:** `scripts/check_architecture_principles.py --check` (exit 0, `docs/development/architecture-baseline.yaml` unchanged) is part of the **M1** checks as well as M2.
+
+### A1.3 N13: change the mutant's target; no source edit
+**Reason:** changing the target leaves Section 1 byte-identical. A-9's `undecodable == 1` kills it just as it killed the original mutant. **Table:** N13's SEARCH is `undecodable=undecodable,` and its REPLACE is `undecodable=0,`, killed by A-9 (that text has one match: the result construction in `_lookup`; S1's `iter_records` never builds a result). Other anchors, all unique after the build: `ON episode_archive(agent_id, episode_timestamp);`, `truncated = len(rows) > limit`, `for row in rows[:limit]:`, `if cursor.rowcount == 1:`. S1's AL1 to AL4 each carry their own R3 comment, and S1's I3 `if undecodable:` stays single. Anyone running the campaign must still count every anchor before mutating, as the table header says.
+
+### A1.4 Diff Reviewer properties
+- **1 and 10:** read `EpisodeArchiveLookups.lookup_by_id`, `.lookup_by_agent`, `._lookup`, `._record_lookup_access`.
+- **8 (add):** `EpisodeArchiveLookups` holds the archive's own `_write_lock` object and its bound `_require_open`, and nothing else. It opens no connection, creates no lock, and is constructed only in `EpisodeArchive.__init__`. A-10 (the lookup blocks on `archive._write_lock`) and A-19 prove the lock is shared.
+- **3 (add):** no other writer's rollback can remove a lookup's uncommitted access rows (A-19).
+- **15 (new):** `EpisodeArchive` keeps S1's 13 direct methods. `check_architecture_principles.py --check` exits 0, and `architecture-baseline.yaml` is unchanged.
+
+### A1.5 Orchestrator additions (decided inside the Architect's amendment, not new design)
+- **N26 and N27** are new table rows for the constructor wiring that D introduces: N26 gives the companion its own lock (A-10, A-11 and A-19 must fail), N27 gives it a `require_open` that never raises (A-14 must fail, because a closed archive would then surface as an `AttributeError` instead of `EpisodeArchiveUnavailable`). Both SEARCH texts occur once in `EpisodeArchive.__init__`.
+- **M1b (the repair milestone):** apply A1.2 to the built `episode_archive.py`, rename the test call sites, add A-19 with its three copied helpers, run the M1 gate and both checks. Expected: 19 passed in the new file, the architecture check at exit 0. Verify the moved method bodies are byte-identical to Section 1h's text (a script compares them).
+- **The orchestrator runs the campaign of record** on the frozen candidate: N1 to N27 (the table), WH6, WH7 and WH7b by hand, and the 21 S1 rows.
+
