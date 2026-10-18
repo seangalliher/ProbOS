@@ -176,9 +176,10 @@ class _GitSpy:
         self.calls: list[tuple[bool, list[str]]] = []
         self.swapped = False
 
-    async def __call__(self, args: list[str], work_dir: str) -> tuple[int, str, str]:
+    async def __call__(self, args: list[str], work_dir: str, **kwargs: Any) -> tuple[int, str, str]:
+        # BF-904a A1: the safety capture reads the config listing with lossless=True; forward it.
         self.calls.append((self.swapped, list(args)))
-        return await self._real(args, work_dir)
+        return await self._real(args, work_dir, **kwargs)
 
     def args_before_swap(self) -> list[list[str]]:
         return [args for swapped, args in self.calls if not swapped]
@@ -798,7 +799,10 @@ async def test_pin_on_a_non_repository_refuses_where_no_pin_keeps_the_old_failur
 
 
 @needs_git
-async def test_no_pin_keeps_todays_behaviour(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_pin_is_pinned_at_entry_when_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # BF-904a (#1585): this test used to pin the gap ("without a pin repository_identity is never consulted").
+    # A caller that gives no pin (the /api/build routes, BuildPipeline) now gets the identity read at entry and
+    # compared again before the commit, so the unpinned path is guarded too.
     repo = _plain_repo(tmp_path / "repo")
     spy = _GitSpy(builder_module._run_git)
     identity_calls: list[str] = []
@@ -816,9 +820,8 @@ async def test_no_pin_keeps_todays_behaviour(tmp_path: Path, monkeypatch: pytest
     assert spy.calls, "premise: the spy sees the executor's git"
     assert result.success and result.commit_hash, result.error
     assert result.files_modified == [TARGET] and _blob(repo, result.branch_name, TARGET) == "x = 2\n"
-    assert identity_calls == [], "without a pin repository_identity is never consulted"
-    assert IDENTITY_ARGS not in [args for _swapped, args in spy.calls], "and no --absolute-git-dir command runs"
-    assert spy.calls[0][1] == ["rev-parse", "--abbrev-ref", "HEAD"], "the executor still starts with the branch read, as before"
+    assert identity_calls == [str(repo), str(repo)], "pinned at entry, compared again before the commit"
+    assert spy.calls[0][1] == IDENTITY_ARGS, "the entry pin is the executor's first git command"
     assert result.branch_name and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 

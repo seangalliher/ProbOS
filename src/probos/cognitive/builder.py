@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import hashlib
 import logging
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -27,7 +29,7 @@ from probos.cognitive.builder_paths import (
 )
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.events import EventType
-from probos.execution.command_env import build_command_env
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS, build_command_env
 from probos.execution.isolation import remove_workdir_off_loop
 
 if TYPE_CHECKING:
@@ -1588,12 +1590,16 @@ def _sanitize_branch_name(name: str) -> str:
 _GIT_HOME_NAMES: tuple[str, ...] = ("HOME", "XDG_CONFIG_HOME")
 
 
-async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
+async def _run_git(args: list[str], work_dir: str, *, lossless: bool = False) -> tuple[int, str, str]:
     """Run a git command asynchronously.  Returns (returncode, stdout, stderr).
 
     Uses subprocess.run in a thread executor for Windows compatibility —
     asyncio.create_subprocess_exec requires ProactorEventLoop which
     uvicorn/FastAPI may not provide.
+
+    BF-904a A1: with *lossless*, stdout is decoded with ``surrogateescape`` and not stripped,
+    so two outputs are equal exactly when their bytes are. That text can hold lone surrogates:
+    it stays in memory, or passes through ``_display_token`` before any message, log or event.
     """
 
     def _sync_run() -> tuple[int, str, str]:
@@ -1601,14 +1607,15 @@ async def _run_git(args: list[str], work_dir: str) -> tuple[int, str, str]:
         # into, so its config and hooks are not ProbOS's own; these local verbs need
         # only PATH and the home variables (identity from ~/.gitconfig), HOME included.
         result = subprocess.run(
-            ["git", *args],
+            ["git", *HARDENED_GIT_CONFIG_ARGS, *args],  # BF-904a: no repository hook or fsmonitor runs
             env=build_command_env(_GIT_HOME_NAMES),
             cwd=work_dir,
             capture_output=True,
         )
+        stdout = result.stdout or b""
         return (
             result.returncode,
-            (result.stdout or b"").decode(errors="replace").strip(),
+            stdout.decode(errors="surrogateescape") if lossless else stdout.decode(errors="replace").strip(),  # BF-904a A1: lossless only on request
             (result.stderr or b"").decode(errors="replace").strip(),
         )
 
@@ -1680,6 +1687,231 @@ async def repository_identity(work_dir: str) -> str | None:
         return os.path.normcase(os.path.realpath(out))
     except (OSError, ValueError):
         return None
+
+
+#: BF-904a (#1585): the listing of every config source git resolves for a tree (system, global,
+#: the repository's shared config, config.worktree, every include). Its values never leave memory.
+_GIT_CONFIG_LISTING_ARGS: tuple[str, ...] = ("config", "--list", "--show-origin", "-z")
+#: BF-904a A1: a resolved config is kilobytes (git documents about a thousand keys). Its comparison
+#: and name parse run on the event loop, so a listing past 4 Mi characters is a failed capture.
+_GIT_CONFIG_LISTING_MAX_CHARS = 4 * 1024 * 1024
+#: BF-904a A1: the bounds of one hooks listing (`_hooks_listing`, run in a worker thread). git knows
+#: about 30 hook names and `git init` writes 14 samples, so 256 entries is several full directories;
+#: a directory of thousands stops at the 257th name. Past a bound the listing is a failed capture
+#: (D6): the build is refused, never committed on a partial listing.
+_HOOKS_MAX_ENTRIES = 256
+#: Hook scripts are kilobytes and a compiled hook a few megabytes; hashing 64 MiB takes well under a
+#: second off the event loop.
+_HOOKS_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+#: One read: the most of a hook file held in memory at once.
+_HOOKS_READ_CHUNK = 64 * 1024
+#: The one open of a regular entry: bytes on Windows; on POSIX never follow a link, nor block on a
+#: pipe, swapped in after the lstat. A flag the platform lacks is 0, a no-op.
+_HOOK_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+#: BF-904a A1: how much of a name a refusal shows (`_display_token`). git's keys and hook names are
+#: under 50 characters, so 100 keeps every real one whole; a path is cut at 200. With at most 10
+#: names of each kind, a refusal's whole text stays under 6,000 characters.
+_DISPLAY_NAME_CHARS = 100
+_DISPLAY_PATH_CHARS = 200
+_GIT_CHANGE_NAMES_SHOWN = 10
+
+
+@dataclass(frozen=True)
+class _GitSafetySnapshot:
+    """BF-904a (#1585): what git would run on its own in a tree, read before model code runs."""
+
+    # BF-904a A1: the lossless `git config --list --show-origin -z` listing. Global config can hold
+    # credentials and the text can hold lone surrogates, so it is kept out of repr and never formatted.
+    config: str = field(repr=False)
+    hooks_dir: Path | None  # the repository's own hooks directory; None when no repository was shown at entry
+    hooks: tuple[tuple[str, str], ...]  # (entry name, its `_hooks_listing` token), by name
+
+
+def _escaped_char(ch: str) -> str:
+    """BF-904a A1: one character as a Python escape."""
+    code = ord(ch)
+    if ch == "\\":
+        return "\\\\"
+    if code < 0x100:
+        return f"\\x{code:02x}"
+    if code < 0x10000:
+        return f"\\u{code:04x}"
+    return f"\\U{code:08x}"
+
+
+def _display_token(text: str, limit: int) -> str:
+    """BF-904a A1: *text* as one inline-code token, safe in a log record, an event and Markdown.
+
+    Every character that is not printable (controls, line and paragraph separators, format
+    characters such as bidi overrides, lone surrogates), and the backslash and the backtick, is a
+    Python escape: the token is one line, encodes as UTF-8, and cannot close its code span, inside
+    which Markdown is literal. At most *limit* characters of the escaped form are kept, never half
+    an escape; the rest are counted, not shown.
+    """
+    shown: list[str] = []
+    width = 0
+    for index, ch in enumerate(text):
+        piece = ch if ch.isprintable() and ch not in "\\`" else _escaped_char(ch)
+        if width + len(piece) > limit:
+            return "`" + "".join(shown) + f"` ...[{len(text) - index} more characters]"
+        shown.append(piece)
+        width += len(piece)
+    return "`" + "".join(shown) + "`"
+
+
+def _listed(names: list[str], total: int) -> str:
+    """BF-904a A1: *names* (the first escaped tokens) joined, then how many of *total* were not shown."""
+    hidden = total - len(names)
+    return ", ".join(names) + (f", ...[{hidden} more]" if hidden > 0 else "")
+
+
+def _hooks_listing(hooks_dir: Path | None) -> tuple[tuple[str, str], ...] | None:
+    """BF-904a: each entry of *hooks_dir* with a token for what git could run from it, or None.
+
+    Read in Python, so no git runs; it blocks, so the build calls it through `_read_hooks`.
+    A1: each entry is classified by `os.lstat`, never followed. A regular file is
+    ``file:<permission bits>:<sha256>`` (the bits, because a chmod makes a present file run), a
+    symlink ``link:<target>``, a directory ``dir``, anything else (a pipe, a device, a socket)
+    ``other:<file type>``; only regular files are opened. A missing directory is an empty
+    listing. An unreadable directory or entry, an entry that is no longer a regular file when
+    opened, more than _HOOKS_MAX_ENTRIES entries, or more than _HOOKS_MAX_TOTAL_BYTES bytes in
+    all is None, which the caller counts as a change (D6).
+    """
+    if hooks_dir is None:
+        return ()
+    names: list[str] = []
+    try:
+        with os.scandir(hooks_dir) as scan:
+            for entry in scan:
+                names.append(entry.name)
+                if len(names) > _HOOKS_MAX_ENTRIES:  # BF-904a A1: a directory past the entry bound is a failed capture
+                    return None
+    except FileNotFoundError:
+        return ()
+    except OSError:
+        return None
+    listing: list[tuple[str, str]] = []
+    total = 0
+    try:
+        for name in sorted(names):
+            path = os.path.join(hooks_dir, name)
+            st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode):  # BF-904a A1: a link is recorded by its target, never followed
+                token = "link:" + os.readlink(path)
+            elif stat.S_ISDIR(st.st_mode):
+                token = "dir"
+            elif not stat.S_ISREG(st.st_mode):  # BF-904a A1: a pipe or device is never opened
+                token = f"other:{stat.S_IFMT(st.st_mode):o}"
+            else:
+                digest = hashlib.sha256()
+                fd = os.open(path, _HOOK_OPEN_FLAGS)
+                try:
+                    if not stat.S_ISREG(os.fstat(fd).st_mode):  # BF-904a A1: no longer a regular file when opened
+                        return None
+                    while chunk := os.read(fd, _HOOKS_READ_CHUNK):
+                        total += len(chunk)
+                        if total > _HOOKS_MAX_TOTAL_BYTES:  # BF-904a A1: past the byte bound is a failed capture
+                            return None
+                        digest.update(chunk)
+                finally:
+                    os.close(fd)
+                token = f"file:{stat.S_IMODE(st.st_mode):o}:{digest.hexdigest()}"
+            listing.append((name, token))
+    except OSError:
+        return None
+    return tuple(listing)
+
+
+async def _read_hooks(hooks_dir: Path | None) -> tuple[tuple[str, str], ...] | None:
+    """BF-904a A1: `_hooks_listing` in a worker thread, so the build's event loop never blocks on it.
+
+    The thread cannot be interrupted; the listing's bounds keep it short. If the awaiting build is
+    cancelled, the thread finishes and its result is dropped; `git_unsafe` is already set, so the
+    `finally` block runs no git (D23).
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _hooks_listing, hooks_dir)  # BF-904a A1: off the event loop
+
+
+def _config_change_names(before: str, after: str) -> str:
+    """BF-904a: the sources and keys whose entries differ between two `-z` listings, never a value.
+
+    A1: at most _GIT_CHANGE_NAMES_SHOWN of them, each origin and key a `_display_token`, so no
+    control character, lone surrogate or 20,000-character subsection reaches a message raw.
+    """
+
+    def entries(listing: str) -> set[tuple[str, str]]:
+        fields = listing.split("\0")
+        return {(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)}
+
+    keys = sorted({(origin, entry.split("\n", 1)[0]) for origin, entry in entries(before) ^ entries(after)})
+    names = [_display_token(origin, _DISPLAY_PATH_CHARS) + " " + _display_token(key, _DISPLAY_NAME_CHARS) for origin, key in keys[:_GIT_CHANGE_NAMES_SHOWN]]  # BF-904a A1: escaped and bounded
+    return f"({_listed(names, len(keys))})" if names else "(the listing changed)"
+
+
+async def _git_safety_snapshot(work_dir: str, repository_proven: bool) -> _GitSafetySnapshot | None:
+    """BF-904a (#1585): the resolved git config and the hooks directory of *work_dir*, or None.
+
+    None means the config listing or the hooks directory could not be read; the comparison
+    after the tests counts that as a change. A1: the listing is read lossless, so equal text
+    means equal bytes. *repository_proven* is True when an identity was pinned before any model
+    code ran; then a hooks location git does not name is a failed capture too.
+    """
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir, lossless=True)  # BF-904a A1: lossless baseline
+        if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: a listing past its bound is a failed capture
+            return None
+        rc, common_dir, _err = await _run_git(["rev-parse", "--git-common-dir"], work_dir, lossless=True)  # BF-904a A2: byte-exact: a directory name may end in whitespace
+        common_dir = common_dir.removesuffix("\n")  # BF-904a A2: git ends its answer with one newline; nothing else is trimmed
+    except (OSError, ValueError):
+        return None
+    # `--git-common-dir`, not `--git-path hooks`: under the core.hooksPath override the latter
+    # names the null device.
+    if rc == 0 and common_dir:  # BF-904a A1: git named the common directory
+        hooks_dir: Path | None = Path(work_dir, common_dir, "hooks")
+    elif repository_proven:  # BF-904a A1: a repository whose hooks location is unreadable is a failed capture
+        return None
+    else:
+        # D5: no identity was pinned at entry, so no repository was shown and there is no hooks
+        # directory to watch; a repository appearing during the tests changes the config listing.
+        hooks_dir = None
+    hooks = await _read_hooks(hooks_dir)
+    if hooks is None:
+        return None
+    return _GitSafetySnapshot(config=config, hooks_dir=hooks_dir, hooks=hooks)
+
+
+async def _git_safety_change(work_dir: str, before: _GitSafetySnapshot | None) -> str | None:
+    """BF-904a (#1585): what changed since *before* in the config git resolves or the hooks directory.
+
+    None when nothing changed. A capture that failed, before the tests or now, is a change: git
+    is not run again when it cannot be shown to be as it was. The text names config sources and
+    keys and hook file names only, never a value or a file's content; A1: each name is a
+    `_display_token`, so the text is fixed words plus escaped, bounded tokens.
+    """
+    if before is None:
+        return "the git configuration or hooks directory could not be read before the tests"
+    try:
+        rc, config, _err = await _run_git(list(_GIT_CONFIG_LISTING_ARGS), work_dir, lossless=True)  # BF-904a A1: lossless comparison
+    except (OSError, ValueError):
+        rc, config = 1, ""
+    if rc != 0 or len(config) > _GIT_CONFIG_LISTING_MAX_CHARS:  # BF-904a A1: past its bound after the tests is a failed capture
+        return "the git configuration could not be read after the tests"
+    changes: list[str] = []
+    if config != before.config:  # BF-904a: a filter, an include or any other config source changed
+        changes.append("git config " + _config_change_names(before.config, config))
+    hooks = await _read_hooks(before.hooks_dir)
+    shown_dir = _display_token(str(before.hooks_dir), _DISPLAY_PATH_CHARS)
+    if hooks is None:
+        changes.append(
+            f"the hooks directory {shown_dir} could not be read (an unreadable or changing entry, "
+            f"or more than {_HOOKS_MAX_ENTRIES} entries or {_HOOKS_MAX_TOTAL_BYTES // (1024 * 1024)} MiB)"
+        )
+    elif hooks != before.hooks:  # BF-904a: a hook file appeared, changed or went away
+        changed = sorted({name for name, _token in set(hooks) ^ set(before.hooks)})
+        names = [_display_token(name, _DISPLAY_NAME_CHARS) for name in changed[:_GIT_CHANGE_NAMES_SHOWN]]  # BF-904a A1: escaped and bounded
+        changes.append(f"hook files in {shown_dir}: " + _listed(names, len(changed)))
+    return "; ".join(changes) or None
 
 
 # ---------------------------------------------------------------------------
@@ -2612,9 +2844,10 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
     """
     try:
         git_env = build_command_env(_GIT_HOME_NAMES)
-        # First verify we're inside a git repo
+        # First verify we're inside a git repo. BF-904a (#1585): both launches carry the
+        # hardening options; `git status` refreshes the index, which runs a configured fsmonitor.
         proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "--git-dir",
+            "git", *HARDENED_GIT_CONFIG_ARGS, "rev-parse", "--git-dir",
             env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
@@ -2626,7 +2859,7 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
 
         # Check for uncommitted changes
         proc = await asyncio.create_subprocess_exec(
-            "git", "status", "--porcelain",
+            "git", *HARDENED_GIT_CONFIG_ARGS, "status", "--porcelain",
             env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
@@ -2704,6 +2937,12 @@ async def execute_approved_build(
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
+    # BF-904a (#1585): set when the identity changed, or git's config or hooks changed while the
+    # tests ran; no further git command runs in this call, the commit included.
+    git_unsafe = False
+    git_tampered: str | None = None
+    git_baseline: _GitSafetySnapshot | None = None
+    tests_ran = False
 
     # 0a. BF-897 (#1559): refuse the checkout the runtime started from (a location
     # check, see operator_checkout_refusal). Before any git command or write; no
@@ -2723,6 +2962,13 @@ async def execute_approved_build(
                 "refused before any write"
             )
             return result
+
+    # 0b. BF-904a (#1585): with no pin from the caller (the /api/build routes, BuildPipeline), pin
+    # what the tree names now when it is readable, so the check before the commit covers every
+    # caller. An unreadable identity keeps today's path: a real non-repository fails later.
+    pinned_git_dir = expected_git_dir
+    if pinned_git_dir is None:
+        pinned_git_dir = await repository_identity(work_dir)  # BF-904a: pin what the tree names now, when readable
 
     # 1. Save current branch
     original_branch = await _git_current_branch(work_dir)
@@ -2927,6 +3173,12 @@ async def execute_approved_build(
 
         # 5. Run tests with fix loop (AD-314, AD-344)
         if run_tests and (written or modified_files):
+            # BF-904a (#1585): what git would run on its own, read before any model code runs.
+            git_baseline = await _git_safety_snapshot(work_dir, pinned_git_dir is not None)
+            tests_ran = True
+            # BF-904a A1 (D23): from here model code may run, so git is unsafe until the comparison at
+            # 5.4b finds it unchanged; an error or a cancellation before then runs no git in `finally`.
+            git_unsafe = True  # BF-904a A1: model code may run from here; only a clean comparison clears it
             all_changes = list(file_changes)  # track for fix prompt
             all_changed_files = written + modified_files
             fix_loop_files: list[str] = []  # BF-898: the paths the fix loop changed
@@ -3064,21 +3316,46 @@ async def execute_approved_build(
             result.metadata["full_suite"] = FULL_SUITE_NOT_RUN
 
         # 5.4. BF-896: the tests may have run arbitrary code; the tree must still
-        # name the pinned repository before anything is committed.
-        if expected_git_dir is not None:
+        # name the pinned repository before anything is committed (BF-904a: the
+        # entry pin when the caller gave none).
+        if pinned_git_dir is not None:
             current_git_dir = await repository_identity(work_dir)
-            if current_git_dir != expected_git_dir:
+            if current_git_dir != pinned_git_dir:
                 identity_lost = True
+                git_unsafe = True
                 logger.error(
                     "BuilderAgent: repository identity changed during the build "
                     "(expected %r, found %r); refusing to commit",
-                    expected_git_dir, current_git_dir,
+                    pinned_git_dir, current_git_dir,
+                )
+        # 5.4b. BF-904a (#1585): a hook or a config entry (a filter driver, an include) the tests
+        # planted would run at the next git command; any change blocks every later git call.
+        # A1: git_unsafe has been set since the test phase began; only a clean comparison clears it.
+        if tests_ran and not identity_lost:
+            git_tampered = await _git_safety_change(work_dir, git_baseline)
+            if git_tampered is None:
+                git_unsafe = False  # BF-904a A1: the comparison found git as it was before the tests
+            else:
+                # BF-904a A1: git_tampered is fixed words plus _display_token tokens, so %s can
+                # neither split the record nor carry a control character (%r would double escapes).
+                logger.error(
+                    "BuilderAgent: git configuration or hooks changed while the tests ran (%s); "
+                    "refusing to commit and running no further git command",
+                    git_tampered,
                 )
 
         # 5.5. Block commit if validation errors (syntax errors) exist
         if identity_lost:
             result.error = (
                 "Repository identity changed during the build; refused before commit"
+            )
+            result.success = False
+        elif git_tampered is not None:
+            result.error = (
+                f"Git configuration or hooks changed while the tests ran ({git_tampered}); "
+                "refused before commit. No further git command was run, so the checkout is "
+                f"left on branch {result.branch_name}; inspect the repository's config and "
+                "hooks before running git there."
             )
             result.success = False
         elif validation_errors:
@@ -3146,12 +3423,13 @@ async def execute_approved_build(
         result.error = str(exc)
     finally:
         # 7. Return to original branch. BF-896: not when the tree now names a
-        # repository other than the pinned one (its hooks would run).
-        if not identity_lost:
+        # repository other than the pinned one (its hooks would run). BF-904a: nor
+        # when its config or hooks changed during the tests (git_unsafe).
+        if not git_unsafe:
             await _git_checkout_main(work_dir)
         # Clean up build branch if no commit was made (failed build)
         if not result.commit_hash and result.branch_name:
-            if not identity_lost:
+            if not git_unsafe:
                 logger.info("Cleaning up failed build branch '%s'", result.branch_name)
                 await _run_git(["branch", "-D", result.branch_name], work_dir)
             # Delete files created during the failed build (untracked on main)

@@ -63,6 +63,15 @@ ENV_NAME_SHAPE_PATTERN: str = r"[A-Za-z_][A-Za-z0-9_]*"
 # config_models/operations.py holds literal twins of the four values above (it
 # may not import probos); tests/test_bf890_command_env.py asserts they agree.
 
+#: BF-904a (#1585): the options every git process of the build pipeline starts with. Code under
+#: test runs as the operator's user in the tree it builds, so it can plant a hook or set
+#: core.fsmonitor in the repository; neither may run at a later git command of the pipeline.
+#: Nothing can be planted under the null device (the value execution/authority.py uses too).
+HARDENED_GIT_CONFIG_ARGS: tuple[str, ...] = (
+    "-c", f"core.hooksPath={os.devnull}",  # BF-904a: no repository hook runs
+    "-c", "core.fsmonitor=false",  # BF-904a: no fsmonitor hook runs
+)
+
 _ENV_NAME_SHAPE_RE = re.compile(ENV_NAME_SHAPE_PATTERN)
 
 
