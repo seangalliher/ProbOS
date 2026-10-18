@@ -92,6 +92,7 @@ Response 200:
 | 401 | `missing_or_malformed_authorization` / `invalid_token` | A token is configured and the request's token is missing or wrong (`require_crew_scope`, unchanged) |
 | 403 | `episode_archive_lookup_requires_token` | No token is configured. Nothing is read. |
 | 422 | Pydantic | Invalid request (D9) |
+| 422 | `non_finite_number_in_body` | The body holds NaN, positive or negative Infinity, or a number that overflows a float, in any field (Amendment A2: a route-local guard, because the framework's own 422 would answer 500) |
 | 503 | `episodic_memory_unavailable` | `runtime.episodic_memory` is `None` |
 | 503 | `episode_archive_not_open` / `episode_archive_failed_to_open` | `EpisodeArchiveUnavailable` |
 | 500 | `episode_archive_access_not_recorded` | The access transaction failed and was rolled back. Logged at ERROR. Nothing is returned. |
@@ -763,10 +764,15 @@ Every SEARCH is the stripped post-build line, with exactly one match in the name
 | N21 | `src/probos/cognitive/episodic.py` | `raise EpisodeArchiveUnavailable("episode_archive_not_open")  # AD-1340 S2a: no archive is never an empty result` | `return None` | E-4 |
 | N22 | `src/probos/cognitive/episodic.py` | `return await self._archive_for_lookup().lookup_by_id(episode_id, accessor=accessor)` | `return self._collection.get(ids=[episode_id]) and await self._archive_for_lookup().lookup_by_id(episode_id, accessor=accessor)` | E-2 |
 | N23 | `src/probos/routers/security.py` | `if not runtime.config.auth.crew_scope_token:  # AD-1340 S2a: never serve archived episodes through an open gate` | `if False:` | RT-a |
-| N24 | `src/probos/routers/security.py` | `@router.post("/archive/lookup", dependencies=[Depends(require_crew_scope)])` | `@router.post("/archive/lookup")` | RT-b |
+| N24 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(_refuse_non_finite_numbers)],` | RT-b |
 | N25 | `src/probos/routers/security.py` | `except EpisodeArchiveUnavailable as exc:` | `except LookupError as exc:` | RT-f |
 | N26 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(self._require_open, asyncio.Lock())` | A-10, A-11, A-19 |
 | N27 | `src/probos/cognitive/episode_archive.py` | `self.lookups = EpisodeArchiveLookups(self._require_open, self._write_lock)` | `self.lookups = EpisodeArchiveLookups(lambda: self._db, self._write_lock)` | A-14 |
+| N28 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(require_crew_scope)],` | RT-e |
+| N29 | `src/probos/routers/security.py` | `dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],` | `dependencies=[Depends(_refuse_non_finite_numbers), Depends(require_crew_scope)],` | RT-b |
+| N30 | `src/probos/routers/security.py` | `json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)` | `json.loads(await request.body(), parse_float=_finite_float)` | RT-e |
+| N31 | `src/probos/routers/security.py` | `if not math.isfinite(value):` | `if False:` | RT-e |
+| N32 | `src/probos/routers/security.py` | `if bound is not None and not math.isfinite(bound):` | `if False:` | RT-e |
 
 **Checked by hand, like S1's WH rows.** **WH6** moves the `_record_lookup_access(...)` call and the `episodes = ...` filter **below** a `return` of all decoded records, so the lookup returns before auditing; A-3 and A-12 must fail. **WH7** dedents the `for item, payload in decoded:` loop and the commit out of `async with self._write_lock:`; **A-19** must fail (A-10 cannot: Amendment A1.1). **WH7b** dedents only `await db.commit()` out of the lock; A-19 must fail as well.
 
@@ -1086,4 +1092,128 @@ class EpisodeArchiveLookups:
 - **N26 and N27** are new table rows for the constructor wiring that D introduces: N26 gives the companion its own lock (A-10, A-11 and A-19 must fail), N27 gives it a `require_open` that never raises (A-14 must fail, because a closed archive would then surface as an `AttributeError` instead of `EpisodeArchiveUnavailable`). Both SEARCH texts occur once in `EpisodeArchive.__init__`.
 - **M1b (the repair milestone):** apply A1.2 to the built `episode_archive.py`, rename the test call sites, add A-19 with its three copied helpers, run the M1 gate and both checks. Expected: 19 passed in the new file, the architecture check at exit 0. Verify the moved method bodies are byte-identical to Section 1h's text (a script compares them).
 - **The orchestrator runs the campaign of record** on the frozen candidate: N1 to N27 (the table), WH6, WH7 and WH7b by hand, and the 21 S1 rows.
+
+---
+
+## Amendment A2 (Architect, after the M2 build; recorded by the orchestrator, 2026-10-18): non-finite numbers in the request body
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-17, consult session `f4c32a99`.
+
+**Why.** The M2 Builder stopped on a hard stop: 10 of the 11 new route tests passed, and RT-e failed on its raw bodies `{"agent_id":"agent-a","since":NaN}` and `{"agent_id":"agent-a","until":Infinity}`. The route answers **500**, not the 422 that D9 and RT-e specify: pydantic echoes the offending input into the error list, and the framework's response encoder refuses to encode NaN or Infinity (`ValueError: Out of range float values are not JSON compliant`). The same happens for `-Infinity`, `1e999` and a non-finite number in ANY field, so it is a framework behaviour (fastapi 0.136.1, pydantic 2.12.5, starlette 1.0.0) that is pre-existing for every route in the app whose body has a float field. The orchestrator reproduced it in a minimal app and tested the remedy below (probe `probe_ad1340_s2a_nan_body.py`: all seven bodies answer 500 unguarded and 422 guarded, and four controls are unchanged). The 500 happens before the handler runs, so nothing is read and no access row can be written. **Where this amendment and Sections 1 to 5 differ, this amendment wins.**
+
+**Decision: option A.** A dependency on the new route alone refuses non-finite numbers before validation can echo them into the error body. This gives the 422 that D9 requires, changes no shared contract, leaves `/forget` and `api.py` untouched, and can be removed in one line once the follow-up below fixes the whole app. Ranking: A first (correct, local, probed, keeps 401 ahead of 422); D (keep the 500, drop the raw-body cases) second (safe, but leaves D9 unmet and logs a 500); C (a custom route class) third (a per-router class would change `/forget`, a sub-router adds structure for one route); B (an app-wide handler in `api.py`) last for S2a (the right fix for the whole app, but it changes every route's 422 body, so it is the follow-up's work).
+
+**Why it works** (checked in the venv). The framework reads and decodes the body before it resolves dependencies, and a malformed body is refused there. It then resolves the route's `dependencies`, in list order, before it validates the body. So `require_crew_scope` answers 401 first, the guard answers 422 second, and the model never sees a non-finite value. Under an empty token a non-finite body gets 422 rather than the handler's 403; every invalid body already behaves this way, and nothing is read in either case.
+
+### A2.1 Section 4a: imports (edit the 4a REPLACE text)
+SEARCH:
+```python
+import logging
+import math
+```
+REPLACE:
+```python
+import json
+import logging
+import math
+```
+SEARCH:
+```python
+from fastapi import APIRouter, Depends, HTTPException
+```
+REPLACE:
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request
+```
+
+### A2.2 Section 4b: the guard and the decorator (edit the 4b REPLACE text)
+SEARCH:
+```python
+_ARCHIVE_LOOKUP_TOKEN_REQUIRED = "episode_archive_lookup_requires_token"
+```
+REPLACE:
+```python
+_ARCHIVE_LOOKUP_TOKEN_REQUIRED = "episode_archive_lookup_requires_token"
+_NON_FINITE_NUMBER_IN_BODY = "non_finite_number_in_body"
+```
+SEARCH:
+```python
+@router.post("/archive/lookup", dependencies=[Depends(require_crew_scope)])
+async def lookup_archived_episodes(
+```
+REPLACE:
+```python
+class _NonFiniteNumberInBody(ValueError):
+    """AD-1340 S2a: a request body holds NaN, Infinity or a number that overflows a float."""
+
+
+def _refuse_constant(name: str) -> float:
+    raise _NonFiniteNumberInBody(name)
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise _NonFiniteNumberInBody(text)
+    return value
+
+
+async def _refuse_non_finite_numbers(request: Request) -> None:
+    """AD-1340 S2a: 422 for a body holding a non-finite number, before validation runs.
+
+    The framework's 422 handler echoes the offending input, cannot JSON-encode NaN or Infinity, and answers 500
+    (follow-up on #1523). Re-reads the body the framework already cached; reads no runtime state, writes nothing.
+    """
+    try:
+        json.loads(await request.body(), parse_constant=_refuse_constant, parse_float=_finite_float)
+    except _NonFiniteNumberInBody as exc:
+        raise HTTPException(status_code=422, detail=_NON_FINITE_NUMBER_IN_BODY) from exc
+    except ValueError:
+        return  # AD-1340 S2a: malformed JSON is the framework's to refuse (it parses first)
+
+
+@router.post(
+    "/archive/lookup",
+    dependencies=[Depends(require_crew_scope), Depends(_refuse_non_finite_numbers)],
+)
+async def lookup_archived_episodes(
+```
+Keep the model's own finiteness check as defence in depth. D10 gets a row (added above).
+
+### A2.3 Tests
+- **RT-e, new raw bodies.** Send each as `content=` with a JSON content type and the valid authorization header. Each must give exactly `(422, {"detail": "non_finite_number_in_body"})`:
+  - `{"agent_id":"agent-a","since":NaN}`
+  - `{"agent_id":"agent-a","until":Infinity}`
+  - `{"agent_id":"agent-a","until":-Infinity}`
+  - `{"agent_id":"agent-a","since":1e999}`
+  - `{"episode_id":"ep-000","since":NaN}`
+  - `{"agent_id":"agent-a","limit":NaN}`
+  - `{"agent_id":"agent-a","zzz":NaN}`
+
+  The access count stays 0. The two existing `raw_invalid` entries (since NaN, until Infinity) change to expect exactly this body instead of the model's message.
+- **RT-e, direct model case.** `ArchiveLookupRequest.model_validate({"agent_id": "agent-a", "since": math.nan})` raises pydantic's `ValidationError`, and the message contains `since/until must be finite`.
+- **RT-b, new case.** With a token configured, no header and the NaN `since` body gives `(401, {"detail": "missing_or_malformed_authorization"})`. This proves authentication is checked before the guard runs.
+- **Tests summary:** still 30 tests.
+
+### A2.4 Mutation table
+The table above carries N24 (revised) and the new rows N28 to N32: N24 drops `require_crew_scope` (RT-b); N28 drops the guard (RT-e); N29 puts the guard before `require_crew_scope` (RT-b); N30 drops `parse_constant` (RT-e); N31 neutralises the overflow check (RT-e, the `1e999` body); N32 neutralises the model's own check (RT-e, the direct model case). The `except ValueError: return` branch cannot be reached through the route, because the framework refuses malformed JSON first, so a mutant of it behaves identically and it gets no row. **The campaign of record covers N1 to N32.**
+
+### A2.5 Diff Reviewer property 16 (new)
+- `_refuse_non_finite_numbers` sits on `/archive/lookup` only, after `require_crew_scope` in the list.
+- It reads only `request.body()`. It touches no runtime state and writes nothing.
+- `api.py`, `/forget` and the app's other 422 bodies are unchanged.
+- The model's finiteness check is still there.
+
+### A2.6 DECISIONS bullet (added in M3 to the S2a entry)
+"The lookup route refuses non-finite JSON numbers with 422 `non_finite_number_in_body` through a route-local dependency. The framework's 422 handler otherwise answers 500, because it echoes NaN into a response it cannot encode. This is a pre-existing behaviour of the whole app, left to a follow-up on #1523. Remove the dependency once that is fixed."
+
+### A2.7 Follow-up for #1523 (F-139; the orchestrator posts it)
+Pre-existing and app-wide: every route that takes a JSON body answers 500, not 422, when the body holds NaN, positive or negative Infinity or an overflowing number in any field. pydantic echoes the value into the validation error's `input`, and the response encoder refuses to encode it. The candidate fix is an app-wide `RequestValidationError` handler in `api.py` that drops `input` and `ctx`; it changes every 422 body, so it needs a compatibility review of HXI and test consumers. After it lands, remove `_refuse_non_finite_numbers` from `routers/security.py`.
+
+### A2.8 The Builder's additions: both accepted
+- `runtime._data_dir = root` in the route tests' runtime stand-in is test hygiene: `create_app` takes `_data_dir` first, and a bare mock made a stray directory in the repo root. Keep it, with its comment.
+- RT-e's reason-text checks, its length and limit boundaries and its 200 acceptance cases tighten the contract and assert nothing incidental. Keep them.
+
+### A2.9 Orchestrator note (milestone M2b)
+Apply A2.1 to A2.3 to the built `security.py` and `tests/test_ad1340_s2a_lookup_route.py`, run the M2 gate and both checks (expect 11 new route tests green, 175 passed in the focused list), and hand-check N24 and N28 to N32. The Architect ran no code for the subclass version of the guard (its probe used an earlier version of the same function); RT-e on the built code is the check for this exact text.
 
