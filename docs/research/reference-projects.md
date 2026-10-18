@@ -79,6 +79,8 @@ Projects appear here only as technical design references. Positioning against th
 |---|---|---|---|
 | MASS multi-agent self-supervision (UC Berkeley, Sakana AI) | 2026-10-11 | absorption | `mass-self-supervision-absorption.md` |
 | HyperAgents (arXiv 2603.19461) | 2026-10-15 | absorption | `hyperagents-absorption.md`; drove AD-1338 (#1565), AD-1339 (#1566) and the AD-1299 (#1352) meta-level amendment. Read in part (first 100K of about 179K characters) |
+| Diversity scaling in multi-agent systems (Yang et al. arXiv 2602.03794; X-MAS; CAPA, ICML 2025) | 2026-10-17 | absorption | `diversity-scaling-absorption.md`; feeds #1139, AD-1342 (#1582), and later revisions of AD-1327 and AD-1324 |
+| Harness-variance studies (Claw-SWE-Bench arXiv 2606.12344; "Don't Blame the LLM" arXiv 2607.03691) | 2026-10-17 | absorption | `diversity-scaling-absorption.md`; AD-1342 (#1582) adapter protocol and version pinning, and AD-1186 (#1123) harness-as-parameter trials |
 | ImpossibleBench (reward hacking in coding agents, arXiv 2510.20270) | 2026-10-16 | checked | BF-898 (#1563) Prior art, `prompts/bf-898-fix-loop-grader-protection.md` (coding agents passing tests that contradict the specification) |
 
 A *passing* row is a weak signal: the project was named, not examined. When an AD's problem is the one a passing project addresses, treat the row as *never*.
