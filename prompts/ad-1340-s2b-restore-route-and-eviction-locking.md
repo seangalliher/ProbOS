@@ -1409,3 +1409,186 @@ Read scripts/phantom-api-precheck.ps1:58-71, 113-185, 227-234   only python fenc
 - `scripts/phantom-api-precheck.ps1` was read, not run. Every python fence here uses only CamelCase names that exist in `src/` or are defined in the fence itself.
 - ChromaDB's behaviour for `delete(ids=[])` and for `add` after `client.close()`: D9 never calls the first, and RS9 is killed either way the second behaves.
 - The architecture check's verdict on one more `EpisodicMemory` method is inferred from the baseline row (no frozen count); M3 runs it.
+
+---
+
+## Amendment A1 (2026-10-18): the live add is inside the undo
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18. Raised by the orchestrator's pre-build read of Section 5d, decided by the Architect in a read-only consult, and appended here by the orchestrator so that no line number above it moved. It supersedes the contract lines named in A1.4 and A1.6; Section 5d's own text stays as the base the A1 blocks are written against. Decision recorded on #1568.
+
+**Gap.** Section 5d left `collection.add` one statement after `_write_restore_sidecars`, outside its `except`. When the add raised (an embedding failure, or a Chroma error), the FTS, participant and activation rows stayed behind for an id that was not live. `keyword_search` returns FTS ids with no live join, and `participant_index.count_for_agent` counts rows directly (consumers: `acm.py:338`, `boot_camp.py:207`, `holodeck/gates.py:79`, `qualification_tests.py:383`). BF-902's start-up pass removes only the FTS orphans.
+
+**Fix.** `_write_restore_sidecars` takes the `ArchiveRecord` and makes the live add its last statement, as stage `live_add`, inside the same `try`. A failed add is undone like a failed insert, unless the live store may already hold the id. Chroma can raise after its log write committed (the repository pins `chromadb>=1.0`). When the id is found, or the check itself fails, the rows are kept: a live id is never left without them (D8 Rejected) and the error is `episode_archive_restore_unconfirmed`. No new method on `EpisodicMemory`; one module function.
+
+### 5f. `src/probos/cognitive/episodic.py`: the add-landed check (module function, placed after `_require_same_collection`)
+SEARCH:
+```python
+    if current is not bound:
+        raise EpisodeArchiveUnavailable("episode_restore_interrupted_by_stop")
+```
+REPLACE:
+```python
+    if current is not bound:
+        raise EpisodeArchiveUnavailable("episode_restore_interrupted_by_stop")
+
+
+def _restore_add_may_have_landed(collection: Any, episode_id: str) -> bool:
+    """AD-1340 S2b A1: after a live add raised, whether the id may be live; a store that cannot answer counts as may."""
+    try:
+        found = collection.get(ids=[episode_id], include=[])
+    except Exception:
+        return True
+    return bool(found and found.get("ids"))
+```
+
+### 5g. `src/probos/cognitive/episodic.py`: the call site and the restore docstring (against Section 5d's own REPLACE text)
+SEARCH:
+```python
+            await archive.record_access(record.episode_id, accessor=accessor, purpose="restore")
+            await self._write_restore_sidecars(collection, episode)  # AD-1340 S2b: ends with the stop() check
+            collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
+        return episode
+```
+REPLACE:
+```python
+            await archive.record_access(record.episode_id, accessor=accessor, purpose="restore")
+            await self._write_restore_sidecars(collection, episode, record)  # AD-1340 S2b A1: ends with the live add
+        return episode
+```
+SEARCH:
+```python
+        ``episode_archive_restore_incomplete:<store>``; a stop() at any await raises ``EpisodeArchiveUnavailable``.
+        Either way the sidecar rows are undone and nothing is live.
+```
+REPLACE:
+```python
+        ``episode_archive_restore_incomplete:<store>`` (``live_add`` for the add itself); a stop() at any await raises
+        ``EpisodeArchiveUnavailable``. Either way the sidecar rows are undone and nothing is live, except after an add
+        that raised while the live store may hold the id: its rows are kept (``episode_archive_restore_unconfirmed``).
+```
+
+### 5h. `src/probos/cognitive/episodic.py`: the helper (against Section 5d's own REPLACE text)
+SEARCH:
+```python
+    async def _write_restore_sidecars(self, collection: Any, episode: Episode) -> None:
+        """AD-1340 S2b: the restored id's FTS, participant and activation rows, all written before it is live.
+
+        ``restore_from_archive`` calls this inside the store write lock and adds the id to the live store on its next
+        statement. Stale rows for the id (it is not live, so any row is stale) are cleared first; a store with no
+        open handle is skipped, as store() skips it. The LAST statement re-checks that no stop() replaced
+        ``collection``, so nothing is awaited between that check and the live add. On a failed insert, a stop() or a
+        cancellation the rows written are cleared, reaching a store stop() closed through its file, and the error
+        propagates: a stop() as ``EpisodeArchiveUnavailable``, a failed insert as
+        ``episode_archive_restore_incomplete:<store>``, a cancellation as itself.
+        """
+```
+REPLACE:
+```python
+    async def _write_restore_sidecars(self, collection: Any, episode: Episode, record: ArchiveRecord) -> None:
+        """AD-1340 S2b: the restored id's FTS, participant and activation rows, then the live add as the commit point.
+
+        ``restore_from_archive`` calls this inside the store write lock. Stale rows for the id (it is not live, so
+        any row is stale) are cleared first; a store with no open handle is skipped, as store() skips it. A re-check
+        that no stop() replaced ``collection`` is followed by the live add with no await between. On a failed insert,
+        a failed add, a stop() or a cancellation the rows written are cleared, reaching a store stop() closed through
+        its file, and the error propagates: a stop() as ``EpisodeArchiveUnavailable``, a failed insert or add as
+        ``episode_archive_restore_incomplete:<store>``, a cancellation as itself. AD-1340 S2b A1: an add that raised
+        while the live store may hold the id keeps the rows and raises ``episode_archive_restore_unconfirmed``.
+        """
+```
+SEARCH:
+```python
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: the last check; the live add follows with no await
+        except BaseException as exc:
+            try:
+                await self._cleanup_sidecars(ids, strict=True)  # AD-1340 S2b: undo, reaching a store stop() closed through its file
+            except EpisodeErasureIncomplete:
+                logger.warning(
+                    "AD-1340 S2b: a failed restore of %s left index rows it could not clear; an ERASE of the id "
+                    "clears them", episode.id[:8],
+                )
+            if not isinstance(exc, Exception):  # AD-1340 S2b: a cancellation is undone, then keeps its type
+                raise
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: a stop() caused the failure
+```
+REPLACE:
+```python
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: the last check; the live add follows with no await
+            stage = "live_add"
+            collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
+        except BaseException as exc:
+            kept = stage == "live_add" and _restore_add_may_have_landed(collection, episode.id)
+            if kept:  # AD-1340 S2b A1: never clear the rows of an id the live store may hold
+                logger.warning(
+                    "AD-1340 S2b: the live add of %s raised but the id may be live; its index rows are kept",
+                    episode.id[:8], exc_info=True,
+                )
+            else:
+                try:
+                    await self._cleanup_sidecars(ids, strict=True)  # AD-1340 S2b: undo, reaching a store stop() closed through its file
+                except EpisodeErasureIncomplete:
+                    logger.warning(
+                        "AD-1340 S2b: a failed restore of %s left index rows it could not clear; an ERASE of the id "
+                        "clears them", episode.id[:8],
+                    )
+            if not isinstance(exc, Exception):  # AD-1340 S2b: a cancellation is undone, then keeps its type
+                raise
+            if kept:
+                raise EpisodeArchiveError("episode_archive_restore_unconfirmed") from exc
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: a stop() caused the failure
+```
+(The `logger.warning(... could not write its %s row ...)` and the `raise EpisodeArchiveError(f"episode_archive_restore_incomplete:{stage}") from exc` lines after it are unchanged. The add line keeps its exact text, so RS1's anchor holds and is still unique in the file; the add in `store()` is `self._collection.add(`.)
+
+**Counts:** `EpisodicMemory` still gains one method (`_write_restore_sidecars`). Module functions added in M2 and M3 rise from two to three. `check_architecture_principles.py --check` must still exit 0 (stop and report if it does not; do not edit the baseline).
+
+### A1.4 Supersessions (D8, D10, D11 and the Diff Reviewer properties; the original lines stay where they are)
+- **D8, "Order inside the lock":** read "→ `collection.add` on the very next statement" as "→ inside the helper, after that re-check and with no await between, `collection.add` (stage `live_add`)".
+- **D8, the failure bullet:** it covers "a failed insert, a failed live add, a `stop()` or a cancellation"; `<store>` is one of `episode_fts`, `participant_index`, `activation`, `live_add`; "Nothing is live in any of these cases", with one exception: a live add that raised while the live store reports the id, or cannot be asked. Its rows are kept, never cleared under a possibly live id, and it raises `EpisodeArchiveError("episode_archive_restore_unconfirmed")`. A retry then answers 409 `episode_archive_restore_live_id`, and an ERASE clears everything.
+- **D10, Response:** "Nothing about sidecars is reported because no restore leaves an id live without its rows, or leaves rows for an id it confirmed is not live."
+- **D11:** the 500 `episode_archive_restore_incomplete:<store>` row's When is "a sidecar insert or the live add failed; undone, nothing live (ERROR log)". New row after it: `| 500 | episode_archive_restore_unconfirmed | the live add raised but the store reports the id, or cannot be asked; its index rows kept (ERROR log) |`. No route code change: `except EpisodeArchiveError` already returns `str(exc)`, and the route logs it at ERROR.
+- **Diff Reviewer property 1** reads: "**No live episode without its index rows.** In `_write_restore_sidecars` the live `collection.add` is the last statement in the `try`. It follows the stop check with no await between, and every FTS, participant and activation write comes before it. If the add raises, the rows are cleared only when the bound collection confirms the id is absent."
+- **Diff Reviewer property 2** reads: "**No index rows for an id a failed restore did not make live.** Every exit of `_write_restore_sidecars` other than a normal return runs the strict undo before propagating, including a failed live add and a cancellation. The only exception is a failed add whose id the live store reports, or cannot be asked about; that one keeps the rows and raises `episode_archive_restore_unconfirmed`."
+
+### A1.5 Section 6 addition: R-3b (`tests/test_ad1340_s2b_restore.py`)
+Import `_CollectionProxy` from `tests.test_ad1340_s1_eviction`. Test-local `_FailingAddProxy(_CollectionProxy)` with `armed = True` and `land: bool`. Its `add(**kwargs)`, while armed: disarm; if `land`, call `self.inner.add(**kwargs)`; then raise `RuntimeError("injected: live add failed")`. Once disarmed, it forwards.
+
+- **R-3b** `test_a_failed_live_add_undoes_the_restore_unless_the_id_landed`, parametrized `landed` in `(False, True)`. Install the proxy as `em._collection` before the restore; the restore binds it at entry. Premise: archived, not live, sidecars zero; after the call, `proxy.armed is False`.
+  - `landed=False`: raises `EpisodeArchiveError` matching `^episode_archive_restore_incomplete:live_add$`, with `__cause__` the `RuntimeError`. `_raw(em, [id])["ids"] == []`. `_sidecar_counts == {"fts": 0, "activation": 0, "participants": 0}`. One archive row. `_archive_accesses == [("episodic_memory", "restore")]`. The retry (proxy disarmed) succeeds: live, sidecars `{"fts": 1, "activation": 1, "participants": 2}`, two access rows.
+  - `landed=True`: raises `EpisodeArchiveError` matching `^episode_archive_restore_unconfirmed$`. `_raw(em, [id])["ids"] == [id]`. Sidecars `{1, 1, 2}`. The retry raises `EpisodeArchiveConflict` matching `^episode_archive_restore_live_id$`, and the sidecars are unchanged.
+- Test count: R-1 to R-8 with R-3b and R-4b becomes 10 functions and 17 cases. R-3b joins the error boundaries and the M3 commit set (with R-1 to R-3 and R-5).
+
+### A1.6 Mutation rows and hand rows
+| ID | File | SEARCH (built file) | REPLACE | Killed by |
+|---|---|---|---|---|
+| RS8a | `src/probos/cognitive/episodic.py` | `await self._write_restore_sidecars(collection, episode, record)  # AD-1340 S2b A1: ends with the live add` | `pass` | R-2 |
+| RS19 | `src/probos/cognitive/episodic.py` | `kept = stage == "live_add" and _restore_add_may_have_landed(collection, episode.id)` | `kept = stage == "live_add"  # AD-1340 S2b mutant RS19` | R-3b[False] |
+| RS20 | `src/probos/cognitive/episodic.py` | `kept = stage == "live_add" and _restore_add_may_have_landed(collection, episode.id)` | `kept = False  # AD-1340 S2b mutant RS20` | R-3b[True] |
+
+RS8 in the Part 1 table (partition P3) is superseded by RS8a: its anchor line no longer exists once A1 is applied, so run RS8a in its place. RS19 is the gap itself: the undo is skipped after a failed add. RS9 to RS14 keep their anchor texts (the undo line is only indented one level deeper). **WH-r** now reads: in `_write_restore_sidecars`, move the `stage = "live_add"` line and the `collection.add(...)` line above `fts_db = self._fts_db`; R-2 must fail (its hooks see the id live at the first insert).
+
+### A1.7 Every exit of restore after A1 (the Architect's enumeration, kept for the Diff Reviewer)
+| Exit | Rows left for an id that is not live? | Live without its rows? |
+|---|---|---|
+| `restore_from_archive`: accessor `ValueError`; state check; lock-acquire cancel; `get_records` raise or cancel; stop re-check; not found; `_metadata_to_episode` raise; `collection.get` raise; live id; `count()` raise or over capacity | No (nothing written yet) | No |
+| `record_access` raise or cancel | Only the `archive_access` row, by design (D8) | No |
+| Helper: stale clear (non-strict, outside the `try`) cancelled or stopped | No new rows; at worst stale rows only partly cleared (they were already orphans) | No |
+| Helper: FTS, participant or activation insert fails; final stop check; cancellation | Undone (strict) | No |
+| Helper: live add raises, id absent | Undone | No |
+| Helper: live add raises, id may be live | Rows kept, by design | No (rows kept) |
+| Strict undo fails (`EpisodeErasureIncomplete`) | **Yes.** Accepted residual: WARNING logged, ERASE or a retry clears it (D8) | No |
+| A second cancellation during the undo's awaits | **Yes, with no WARNING.** Accepted: it needs two `cancel()` calls on one task; a retry or ERASE clears it. `asyncio.shield` was considered and deferred | No |
+| A store with no open handle (feature off, failed start) | n/a | That store's rows are absent by design (D8, same as `store()`) |
+| Normal return | n/a | No (`asyncio.Lock` release does not await) |
+
+**One path left unamended (the Architect's decision):** the stale clear at the start of the helper is non-strict (`_cleanup_sidecars` swallows tracker and index failures, and `_delete_fts_rows` returns a bool). A stale row whose delete fails, followed by a successful insert on the same handle, leaves a live id with a duplicate row (`count_for_agent` inflated by one). Making that clear strict would push it to a failed-start store through its file, and a corrupt sidecar file would then block every restore. It needs an earlier undo failure plus a later delete failure; the next eviction's cleanup and an ERASE delete every row for the id. Recorded on #1523 by the orchestrator.
+
+**Absence Verified (A1):** CLAIM: the three new names are free. RUN: `rg -n "_restore_add_may_have_landed|episode_archive_restore_unconfirmed|_FailingAddProxy|restore_incomplete:live_add" src tests scripts docs`. FOUND: no match. HOLDS: yes (re-run by the orchestrator, 2026-10-18).
+
+### A1.8 Build corrections to this contract (found while building; each verified by the orchestrator; the contract text above stays as drafted)
+- **L-1 and L-2: one audit row per episode.** `EvictionAudit.record_batch_eviction` writes one row per episode with `executemany`, each carrying its chunk's `details`. Five episodes in chunks of 2, 2 and 1 therefore give `["batch of 2, budget=1"] * 4 + ["batch of 1, budget=1"]` (L-2: `reason=activation_decay` in place of `budget=1`), not three strings. The 2, 2, 1 chunking is still pinned by the three lock acquisitions and the three archive and three cleanup calls made under the lock.
+- **L-7 has one extra assertion:** the typed-stop WARNING ("the live store stopped during eviction") appears exactly once. Without it L-7 alone survives mutant K2, because `_unchanged_since_archived`'s own `try` absorbs a cleared collection; with it L-7 and L-8 kill K2.
+- **Two tests the contract left out, added in M2b** for decision D4's guarantee that a failed re-read keeps every id live and for the `(TypeError, ValueError)` fallback of the re-read: **L-4c** `test_a_failed_re_read_keeps_every_archived_id_live` (the next `collection.get` after `archive()` raises once; nothing is deleted, both ids stay live with their index rows, both were archived, a WARNING is logged, and the next eviction completes the job) and **L-4d** `test_an_id_whose_live_record_cannot_be_encoded_stays_live` (`TypeError` and `ValueError`; patching `probos.cognitive.episodic.encode_payload`, used only by the re-read in that module). Mutation row **C5** (`same = False  # AD-1340 S2b (c): a record that no longer encodes is not the one archived` replaced by `same = True`) is killed by L-4d; hand row **WH-f** (the `return []` that follows the "re-read ... failed" warning in `_unchanged_since_archived` replaced by `return list(ids)`) is killed by L-4c.
+- **R-4 `archive_read` releases the failed read's references before it reopens the archive.** The read is paused between `execute()` and `fetchall()`, so its SQLite cursor is unfinished and holds the file's read lock until it is collected; the failed read's exception chain (the Task that raised it, and the list holding the Task) keeps that cursor alive until the test function ends, so the reopen failed with `database is locked`. A probe showed the archive reopens at every gate point as soon as those references are dropped. This is a reference the TEST holds, not a product defect (in production the references are dropped when the error is handled, and a restart releases the lock anyway). The contract's R-4 text (reopen, not live, a retry restore succeeds) is unchanged.
+- **R-5** also tries `""` and `None` as the accessor, besides `" "`. **R-8:** with `max_episodes=4` the fifth and sixth stores already archive `ep-000` and `ep-001` by capacity, so the setup evicts only `ep-002` by hand; the test asserts the end state (archived `ep-000` to `ep-002`, live `ep-003` to `ep-005`) and the interleaving's outcomes as written.
+- **The docstring line** that Section 3g specifies in prose for `evict_by_ids` ("AD-1340 S2b: the non-ERASE path holds the store write lock per chunk ...") was added; a rebuild of the file from the SEARCH/REPLACE blocks equals the working tree once that one line is ignored.
+
