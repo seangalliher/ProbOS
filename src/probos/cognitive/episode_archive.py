@@ -46,6 +46,7 @@ __all__ = [
     "EpisodeArchiveError",
     "EpisodeArchiveIntegrityError",
     "EpisodeArchiveLookups",
+    "EpisodeArchiveNotFound",
     "EpisodeArchiveUnavailable",
     "EpisodeErasureIncomplete",
     "EvictionDisposition",
@@ -144,6 +145,10 @@ class EpisodeArchiveConflict(EpisodeArchiveError):
 
 class EpisodeErasureIncomplete(EpisodeArchiveError):
     """Erasure could not clear every copy of an episode."""
+
+
+class EpisodeArchiveNotFound(EpisodeArchiveError, LookupError):
+    """AD-1340 S2b: a restore named an id the archive does not hold (still a ``LookupError``, as S1 raised)."""
 
 
 def resolve_disposition(
@@ -296,6 +301,29 @@ async def _close_quietly(db: Any) -> None:
         logger.debug("AD-1340: archive close failed", exc_info=True)
 
 
+async def _guarded_read(require_open: Callable[[], Any], sql: str, params: Sequence[Any]) -> list[Any]:
+    """AD-1340 S2b (F-140): one unlocked archive read, typed if a stop() closed the archive under it.
+
+    ``stop()`` clears the handle under ``_write_lock`` before it closes the connection, so a read that fails
+    while the handle is gone failed because of that stop: it becomes ``EpisodeArchiveUnavailable``, chained to
+    the driver error. A failure on an open archive keeps its own type. Rows read across a stop are never
+    answered: the re-check after the read is the last statement, so no await follows it. Every unlocked
+    archive read goes through here: the four service reads and the S2a lookups.
+    """
+    db = require_open()
+    try:
+        cursor = await db.execute(sql, params)  # AD-1340 S2b: an archive read takes no lock (R3)
+        rows = list(await cursor.fetchall())
+    except Exception as exc:  # AD-1340 S2b: did a stop() close the connection under the read?
+        try:
+            require_open()  # AD-1340 S2b: a stop() during the read is unavailability (F-140)
+        except EpisodeArchiveUnavailable as closed:
+            raise closed from exc
+        raise  # AD-1340 S2b: any other read failure keeps its own type
+    require_open()  # AD-1340 S2b: rows read across a stop() are never answered; no await follows
+    return rows
+
+
 class EpisodeArchiveLookups:
     """AD-1340 S2a: the audited lookup surface of one ``EpisodeArchive`` (``archive.lookups``); S2c adds cue.
 
@@ -351,16 +379,7 @@ class EpisodeArchiveLookups:
     async def _lookup(
         self, sql: str, params: tuple[Any, ...], *, limit: int, accessor: str,
     ) -> ArchiveLookupResult:
-        db = self._require_open()
-        try:
-            cursor = await db.execute(sql, params)  # a read: no lock (R3); the locked INSERT below decides
-            rows = await cursor.fetchall()
-        except Exception as exc:  # AD-1340 S2a A3: did a stop() close the connection under the read?
-            try:
-                self._require_open()  # AD-1340 S2a A3: a stop() during the read is unavailability (D7)
-            except EpisodeArchiveUnavailable as closed:
-                raise closed from exc
-            raise  # AD-1340 S2a A3: any other read failure keeps its own type
+        rows = await _guarded_read(self._require_open, sql, params)  # a read: no lock (R3); the locked INSERT below decides
         truncated = len(rows) > limit
         decoded: list[tuple[ArchivedEpisode, bytes]] = []
         undecodable = 0
@@ -377,8 +396,6 @@ class EpisodeArchiveLookups:
                 continue  # AD-1340 S2a: one bad row never hides the others in a lookup
             item = ArchivedEpisode(record, str(agent_id), float(episode_timestamp), float(archived_at), str(reason))
             decoded.append((item, bytes(payload)))
-        if not decoded:
-            self._require_open()  # AD-1340 S2a A3: an empty answer is given only while open; no await follows
         recorded = await self._record_lookup_access(decoded, accessor=accessor) if decoded else frozenset()
         episodes = tuple(item for item, _ in decoded if (item.record.episode_id, item.record.content_hash) in recorded)
         return ArchiveLookupResult(
@@ -541,60 +558,68 @@ class EpisodeArchive:
         return frozenset(found)
 
     async def get_records(self, episode_ids: Sequence[str]) -> list[ArchiveRecord]:
-        """Service read (restore, erasure): the latest archived record per id, in input order."""
-        db = self._require_open()
+        """Service read (restore): the latest archived record per id, in input order.
+
+        AD-1340 S2b: "latest" is the S2a lookup's own rule (``_LATEST_VERSION``: the greatest ``archived_at``; an
+        exact tie keeps the smallest ``content_hash``), applied in SQL, so a restore puts back exactly the version
+        a lookup showed. Only that row is decoded; an undecodable latest row raises ``EpisodeArchiveIntegrityError``.
+        A stop() during the read raises ``EpisodeArchiveUnavailable``.
+        """
+        self._require_open()  # AD-1340 S2b: closed is unavailable, even for an empty request
         wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
-        best: dict[str, tuple[float, ArchiveRecord]] = {}
+        latest: dict[str, ArchiveRecord] = {}
         for chunk in _chunks(wanted, _SQL_CHUNK):
             marks = ",".join("?" * len(chunk))
-            cursor = await db.execute(
-                "SELECT episode_id, content_hash, archived_at, payload_format, payload "
-                f"FROM episode_archive WHERE episode_id IN ({marks})",
+            rows = await _guarded_read(
+                self._require_open,  # AD-1340 S2b: get_records reads through the stop guard
+                "SELECT a.episode_id, a.content_hash, a.payload_format, a.payload FROM episode_archive a "
+                f"WHERE a.episode_id IN ({marks}) AND {_LATEST_VERSION}",
                 chunk,
             )
-            for episode_id, content_hash, archived_at, payload_format, payload in await cursor.fetchall():
-                record = decode_payload(episode_id, content_hash, payload_format, payload)
-                current = best.get(episode_id)
-                if current is None or archived_at > current[0]:
-                    best[episode_id] = (archived_at, record)
-        return [best[eid][1] for eid in wanted if eid in best]
+            for episode_id, content_hash, payload_format, payload in rows:
+                latest[episode_id] = decode_payload(episode_id, content_hash, payload_format, payload)
+        return [latest[eid] for eid in wanted if eid in latest]
 
     async def archived_keys(self, episode_ids: Sequence[str]) -> list[tuple[str, str, Any, float]]:
         """``(episode_id, content_hash, agent_id, episode_timestamp)`` per row, no decode.
 
         Erasure audits from these columns, so a corrupt payload never blocks an erase.
+        AD-1340 S2b: a stop() during the read raises ``EpisodeArchiveUnavailable``.
         """
-        db = self._require_open()
+        self._require_open()  # AD-1340 S2b: closed is unavailable, even for an empty request
         wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
         keys: list[tuple[str, str, Any, float]] = []
         for chunk in _chunks(wanted, _SQL_CHUNK):
             marks = ",".join("?" * len(chunk))
-            cursor = await db.execute(
+            rows = await _guarded_read(
+                self._require_open,  # AD-1340 S2b: archived_keys reads through the stop guard
                 "SELECT episode_id, content_hash, agent_id, episode_timestamp "
                 f"FROM episode_archive WHERE episode_id IN ({marks})",
                 chunk,
             )
-            keys.extend(tuple(row) for row in await cursor.fetchall())
+            keys.extend(tuple(row) for row in rows)
         return keys
 
     async def get_versions(self, episode_ids: Sequence[str]) -> list[ArchiveRecord]:
         """Service read (erasure's attachment lookup): EVERY archived row for the ids.
 
         Ordered by ``episode_id, archived_at, content_hash``. A row that cannot be
-        decoded raises ``EpisodeArchiveIntegrityError``.
+        decoded raises ``EpisodeArchiveIntegrityError``. AD-1340 S2b: a stop() during
+        the read raises ``EpisodeArchiveUnavailable``.
         """
-        db = self._require_open()
+        self._require_open()  # AD-1340 S2b: closed is unavailable, even for an empty request
         wanted = list(dict.fromkeys(eid for eid in episode_ids if eid))
         versions: list[ArchiveRecord] = []
         for chunk in _chunks(wanted, _SQL_CHUNK):
             marks = ",".join("?" * len(chunk))
-            cursor = await db.execute(
+            rows = await _guarded_read(
+                self._require_open,  # AD-1340 S2b: get_versions reads through the stop guard
                 "SELECT episode_id, content_hash, payload_format, payload "
                 f"FROM episode_archive WHERE episode_id IN ({marks}) "
                 "ORDER BY episode_id, archived_at, content_hash",
                 chunk,
             )
-            for episode_id, content_hash, payload_format, payload in await cursor.fetchall():
+            for episode_id, content_hash, payload_format, payload in rows:
                 versions.append(decode_payload(episode_id, content_hash, payload_format, payload))
         return versions
 
@@ -610,13 +635,12 @@ class EpisodeArchive:
         last = ("", "")
         undecodable = 0
         while True:
-            db = self._require_open()
-            cursor = await db.execute(
+            rows = await _guarded_read(
+                self._require_open,  # AD-1340 S2b: iter_records reads through the stop guard
                 "SELECT episode_id, content_hash, payload_format, payload FROM episode_archive "
                 "WHERE (episode_id, content_hash) > (?, ?) ORDER BY episode_id, content_hash LIMIT ?",
                 (last[0], last[1], page_size),
             )
-            rows = await cursor.fetchall()
             if not rows:
                 break
             for episode_id, content_hash, payload_format, payload in rows:
