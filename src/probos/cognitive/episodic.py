@@ -32,10 +32,13 @@ from probos.cognitive.episode_archive import (
     ArchiveRecord,
     EpisodeArchive,
     EpisodeArchiveConflict,
+    EpisodeArchiveError,
     EpisodeArchiveIntegrityError,
     EpisodeArchiveLookups,
+    EpisodeArchiveNotFound,
     EpisodeArchiveUnavailable,
     EpisodeErasureIncomplete,
+    encode_payload,
     primary_agent_id,
     resolve_disposition,
 )
@@ -68,6 +71,11 @@ _ERASE_STORE_TAIL_WAIT_S = 10.0
 _FTS_FILENAME = "episode_fts.db"
 # BF-902: rows the start-up FTS reconciliation reads, checks against the live collection and deletes per page.
 _FTS_RECONCILE_PAGE = 500
+# AD-1340 S2b (a): the most ids one capacity or dream eviction removes inside one hold of the store write lock, so a
+# large eviction never holds the lock across the whole batch and a store() waits for one chunk at most.
+_EVICTION_LOCK_CHUNK = 100
+# AD-1340 S2b: the accessor a restore records when its caller names none (internal and test callers).
+_RESTORE_DEFAULT_ACCESSOR = "episodic_memory"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1255,6 +1263,61 @@ async def _store_tails_finished(events: list[asyncio.Event]) -> bool:
         )
         return False
     return True
+
+
+def _unchanged_since_archived(
+    collection: Any, ids: list[str], archived: Mapping[str, ArchiveRecord],
+) -> list[str]:
+    """AD-1340 S2b (c): the ids whose live record still encodes to exactly the payload just archived.
+
+    Synchronous on purpose: the caller deletes on its next statement, with no await in between, so no metadata
+    update can land between this re-read and the delete. An id whose document or metadata changed after the
+    archive snapshot stays live, and its next eviction archives the current payload (the R1 upsert). An id no
+    longer live is not deleted again. A failed re-read keeps every id live: growth, never loss.
+    """
+    try:
+        current = collection.get(ids=list(ids), include=["documents", "metadatas"])
+    except Exception as exc:
+        logger.warning(
+            "AD-1340 S2b: the re-read before an eviction delete failed (%s); %d archived episode(s) stay live",
+            type(exc).__name__, len(ids),
+        )
+        return []
+    got_ids = list((current or {}).get("ids") or [])
+    docs = list((current or {}).get("documents") or [])
+    metas = _metadata_by_id(got_ids, (current or {}).get("metadatas"))
+    unchanged: set[str] = set()
+    for i, eid in enumerate(got_ids):
+        snapshot = archived.get(eid)
+        live = ArchiveRecord(episode_id=eid, document=(docs[i] if i < len(docs) else "") or "", metadata=metas[eid])
+        try:
+            same = snapshot is not None and encode_payload(live) == encode_payload(snapshot)
+        except (TypeError, ValueError):
+            same = False  # AD-1340 S2b (c): a record that no longer encodes is not the one archived
+        if same:
+            unchanged.add(eid)
+    changed = len(set(got_ids) - unchanged)
+    if changed:
+        logger.warning(
+            "AD-1340 S2b: %d episode(s) changed after their archive snapshot and stay live; "
+            "their next eviction archives the change", changed,
+        )
+    return [eid for eid in ids if eid in unchanged]
+
+
+def _require_same_collection(current: Any, bound: Any) -> None:
+    """AD-1340 S2b: a restore bound to one live collection stops, typed, once stop() (or a restart) replaced it."""
+    if current is not bound:
+        raise EpisodeArchiveUnavailable("episode_restore_interrupted_by_stop")
+
+
+def _restore_add_may_have_landed(collection: Any, episode_id: str) -> bool:
+    """AD-1340 S2b A1: after a live add raised, whether the id may be live; a store that cannot answer counts as may."""
+    try:
+        found = collection.get(ids=[episode_id], include=[])
+    except Exception:
+        return True
+    return bool(found and found.get("ids"))
 
 
 async def _erase_store_file(kind: str, path: str | None, ids: list[str]) -> bool:
@@ -2652,8 +2715,13 @@ class EpisodicMemory:
             count,
         )
 
-    async def _archive_records(self, ids: list[str], reason: str) -> dict[str, str]:
-        """Archive these live ids; return ``{id: archive_ref}`` for the committed ones."""
+    async def _archive_records(self, ids: list[str], reason: str) -> dict[str, ArchiveRecord]:
+        """Archive these live ids; return ``{id: the record archived}`` for the committed ones.
+
+        AD-1340 S2b: every caller holds the store write lock, so no ERASE, restore or store() add runs between this
+        live snapshot and ``archive()`` (S1 R3 condition (d) by construction), and ``_remove_from_live`` compares the
+        live record with the returned snapshot just before it deletes (prerequisite (c)).
+        """
         archive = self._episode_archive
         if self._archive_state != "open" or archive is None:
             self._warn_archive_unavailable(len(ids))
@@ -2677,7 +2745,7 @@ class EpisodicMemory:
                 "AD-1340: archive write failed; %d episode(s) stay live", len(ids), exc_info=True,
             )
             return {}
-        return {record.episode_id: record.archive_ref for record in records if record.episode_id in committed}
+        return {record.episode_id: record for record in records if record.episode_id in committed}
 
     async def _erase_fts_file(self, ids: list[str]) -> bool:
         """AD-1340 R1: clear the FTS file through the ConnectionFactory when no FTS handle is open.
@@ -2765,15 +2833,27 @@ class EpisodicMemory:
         ONLY the ids whose archive row committed, then clean the sidecars.
         Delete and erase: the same sequence without the archive step. Erase
         leaves the sidecars to ``_erase_ids``, which sweeps every requested id.
+        AD-1340 S2b: every caller holds the store write lock. Archive and delete
+        skip an id whose store() tail is still writing its index rows (it stays
+        live this round). Archive mode re-reads the records just before the
+        delete and deletes only those still equal to the payload archived
+        (prerequisite (c)). A stop() inside the sequence keeps the ids live;
+        under ERASE it raises.
         """
         ids = list(candidate_ids)
         archive_refs: dict[str, str] = {}
+        committed: dict[str, ArchiveRecord] = {}
+        if outcome != DISPOSITION_ERASED:  # AD-1340 S2b (a): ERASE waits for store tails itself (R3)
+            pending_tails = self._get_store_tails()
+            ids = [eid for eid in ids if eid not in pending_tails]  # AD-1340 S2b (a): a store() still indexing an id keeps it live
+            if not ids:
+                return []
         if outcome == DISPOSITION_ARCHIVED:
             committed = await self._archive_records(ids, reason)
             ids = [eid for eid in ids if eid in committed]
             if not ids:
                 return []
-            archive_refs = committed
+            archive_refs = {eid: record.archive_ref for eid, record in committed.items()}
         if self._eviction_audit:
             records = []
             for eid in ids:
@@ -2795,7 +2875,19 @@ class EpisodicMemory:
                 )
             except Exception as exc:
                 logger.warning("Eviction audit failed: %s", exc)
-        self._collection.delete(ids=list(ids))
+        collection = self._collection  # AD-1340 S2b: re-read after the awaits above; a stop() clears it
+        if collection is None:  # AD-1340 S2b: a stop() inside an eviction or an erase
+            if outcome == DISPOSITION_ERASED:
+                raise EpisodeErasureIncomplete("erasure_live_store_unavailable")  # AD-1340 S2b: a stop() inside the erase
+            logger.warning(
+                "AD-1340 S2b: the live store stopped during eviction; %d episode(s) stay live", len(ids),
+            )
+            return []
+        if outcome == DISPOSITION_ARCHIVED:
+            ids = _unchanged_since_archived(collection, ids, committed)  # AD-1340 S2b (c): no await between this re-read and the delete
+            if not ids:
+                return []  # AD-1340 S2b (c): never a delete with no ids
+        collection.delete(ids=list(ids))
         if outcome != DISPOSITION_ERASED:  # ERASE: _erase_ids sweeps every requested id, strictly
             await self._cleanup_sidecars(ids)
         return ids
@@ -2966,67 +3058,128 @@ class EpisodicMemory:
             agent_id, since=since, until=until, limit=limit, accessor=accessor,
         )
 
-    async def restore_from_archive(self, episode_id: str) -> Episode:
+    async def restore_from_archive(
+        self, episode_id: str, *, accessor: str = _RESTORE_DEFAULT_ACCESSOR,
+    ) -> Episode:
         """AD-1340: put one archived episode back in the live store, byte-equal.
 
-        Internal service API (no agent-facing caller in S1). Never goes through
-        store(): the rate limits, dedup and write-once guard would refuse or
-        alter it. Refuses an id that is already live. The archive row is kept;
-        re-eviction stores the current payload when metadata changed after the
-        restore. Activation restarts
-        from this one access, because the old access rows were deleted at eviction.
-        Restore does not trigger capacity eviction; the next store() does.
-        AD-1340 R2: the store write lock is held from the archive read to the last
-        sidecar insert, so a concurrent ERASE of the id is wholly before or wholly after.
+        Never goes through store(): the rate limits, dedup and write-once guard would refuse or alter it.
+        Restores the latest archived version, the one an S2a lookup shows (``get_records``). Refuses an id that
+        is already live and, AD-1340 S2b (b), a live store already at ``max_episodes``. The archive row is kept;
+        re-eviction stores the current payload when metadata changed after the restore. Activation restarts from
+        this one access, so the next Step 12 may prune the episode again (re-archived, never lost).
+        ``accessor`` names the caller in the ``archive_access`` row.
+        AD-1340 R2: the store write lock is held from the archive read to the live add, so a concurrent ERASE of
+        the id is wholly before or wholly after.
+        AD-1340 S2b: all or nothing. The access row, then every sidecar row, then the live add LAST, with no await
+        between the final stop() check and the add. A failed sidecar insert raises
+        ``episode_archive_restore_incomplete:<store>`` (``live_add`` for the add itself); a stop() at any await raises
+        ``EpisodeArchiveUnavailable``. Either way the sidecar rows are undone and nothing is live, except after an add
+        that raised while the live store may hold the id: its rows are kept (``episode_archive_restore_unconfirmed``).
         """
-        archive = self._archive_or_none()
-        if archive is None or not self._collection:
+        if not isinstance(accessor, str) or not accessor.strip():
+            raise ValueError("episode_archive_restore_accessor_invalid")
+        archive = self._episode_archive
+        collection = self._collection  # AD-1340 S2b: bound once; a stop() replaces self._collection, never this
+        if self._archive_state != "open" or archive is None or collection is None:
             raise EpisodeArchiveUnavailable("episode_archive_unavailable")
         # AD-1340 R2: ERASE holds this lock across its live and archive phases. The archive read, the live-id check,
         # the access row, the add and the sidecar inserts are one critical section (unlike store(), BF-669), so an
         # erase of this id is wholly before the restore (no record) or wholly after it (every copy removed).
         async with self._get_store_write_lock():  # AD-1340 R2: read, check, add and index in one critical section with ERASE
             records = await archive.get_records([episode_id])
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: a stop() during the archive read
             if not records:
-                raise LookupError("episode_archive_not_found")
+                raise EpisodeArchiveNotFound("episode_archive_not_found")
             record = records[0]
             episode = self._metadata_to_episode(record.episode_id, record.document, dict(record.metadata))
-            live = self._collection.get(ids=[record.episode_id], include=[])
+            live = collection.get(ids=[record.episode_id], include=[])
             if live and live.get("ids"):
                 raise EpisodeArchiveConflict("episode_archive_restore_live_id")
+            if collection.count() >= self.max_episodes:  # AD-1340 S2b (b): a restore never takes the store over budget
+                raise EpisodeArchiveConflict("episode_archive_restore_over_capacity")
             # Audit before action: an access that cannot be recorded stops the restore before anything changed.
-            await archive.record_access(record.episode_id, accessor="episodic_memory", purpose="restore")
-            self._collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
-            if self._fts_db is not None:
-                try:
-                    fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
-                    await self._fts_db.execute(
-                        "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)",
-                        (episode.id, fts_content),
-                    )
-                    await self._fts_db.commit()
-                except Exception:
-                    logger.debug("AD-1340: FTS5 restore insert failed for %s", episode.id[:8], exc_info=True)
-            if self._participant_index is not None:
-                try:
-                    participants = episode.anchors.participants if episode.anchors else []
-                    await self._participant_index.record_episode(episode.id, episode.agent_ids, participants)
-                except Exception:
-                    logger.debug("AD-1340: participant restore insert failed for %s", episode.id[:8], exc_info=True)
-            if self._activation_tracker:
-                try:
-                    await self._activation_tracker.record_access(episode.id, access_type="archive_restore")
-                except Exception:
-                    logger.debug("AD-1340: activation restore access failed for %s", episode.id[:8], exc_info=True)
+            await archive.record_access(record.episode_id, accessor=accessor, purpose="restore")
+            await self._write_restore_sidecars(collection, episode, record)  # AD-1340 S2b A1: ends with the live add
         return episode
 
+    async def _write_restore_sidecars(self, collection: Any, episode: Episode, record: ArchiveRecord) -> None:
+        """AD-1340 S2b: the restored id's FTS, participant and activation rows, then the live add as the commit point.
+
+        ``restore_from_archive`` calls this inside the store write lock. Stale rows for the id (it is not live, so
+        any row is stale) are cleared first; a store with no open handle is skipped, as store() skips it. A re-check
+        that no stop() replaced ``collection`` is followed by the live add with no await between. On a failed insert,
+        a failed add, a stop() or a cancellation the rows written are cleared, reaching a store stop() closed through
+        its file, and the error propagates: a stop() as ``EpisodeArchiveUnavailable``, a failed insert or add as
+        ``episode_archive_restore_incomplete:<store>``, a cancellation as itself. AD-1340 S2b A1: an add that raised
+        while the live store may hold the id keeps the rows and raises ``episode_archive_restore_unconfirmed``.
+        """
+        ids = [episode.id]
+        await self._cleanup_sidecars(ids)  # AD-1340 S2b: no stale row is carried into the restored episode
+        stage = "episode_fts"
+        try:
+            fts_db = self._fts_db
+            if fts_db is not None:
+                fts_content = (episode.user_input or "") + " " + (episode.reflection or "")
+                await fts_db.execute(
+                    "INSERT INTO episode_fts(episode_id, content) VALUES (?, ?)", (episode.id, fts_content),
+                )
+                await fts_db.commit()
+            stage = "participant_index"
+            index = self._participant_index
+            if index is not None:
+                participants = episode.anchors.participants if episode.anchors else []
+                await index.record_episode(episode.id, episode.agent_ids, participants)
+            stage = "activation"
+            tracker = self._activation_tracker
+            if tracker is not None:
+                await tracker.record_access(episode.id, access_type="archive_restore")
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: the last check; the live add follows with no await
+            stage = "live_add"
+            collection.add(ids=[record.episode_id], documents=[record.document], metadatas=[dict(record.metadata)])
+        except BaseException as exc:
+            kept = stage == "live_add" and _restore_add_may_have_landed(collection, episode.id)
+            if kept:  # AD-1340 S2b A1: never clear the rows of an id the live store may hold
+                logger.warning(
+                    "AD-1340 S2b: the live add of %s raised but the id may be live (%s); its index rows are kept",
+                    episode.id[:8], type(exc).__name__,
+                )
+            else:
+                try:
+                    await self._cleanup_sidecars(ids, strict=True)  # AD-1340 S2b: undo, reaching a store stop() closed through its file
+                except EpisodeErasureIncomplete:
+                    logger.warning(
+                        "AD-1340 S2b: a failed restore of %s left index rows it could not clear; an ERASE of the id "
+                        "clears them", episode.id[:8],
+                    )
+            if not isinstance(exc, Exception):  # AD-1340 S2b: a cancellation is undone, then keeps its type
+                raise
+            if kept:
+                raise EpisodeArchiveError("episode_archive_restore_unconfirmed") from exc
+            _require_same_collection(self._collection, collection)  # AD-1340 S2b: a stop() caused the failure
+            logger.warning(
+                "AD-1340 S2b: restore of %s could not write its %s row (%s); nothing was made live",
+                episode.id[:8], stage, type(exc).__name__,
+            )
+            raise EpisodeArchiveError(f"episode_archive_restore_incomplete:{stage}") from exc
+
     async def _evict(self) -> None:
-        assert self._collection
-        count = self._collection.count()
+        """Capacity eviction: archive (or delete) the oldest live episodes beyond ``max_episodes``.
+
+        AD-1340 S2b (a): the victims are chosen outside the store write lock, then removed in chunks of at most
+        ``_EVICTION_LOCK_CHUNK`` ids, each inside the lock from its archive snapshot to its sidecar cleanup, so no
+        restore, ERASE or store() add interleaves a chunk and a store() waits for one chunk at most. store() calls
+        this after its own locked section, so the non-reentrant lock is free here. A victim that left the live
+        store before its chunk ran is not found again.
+        """
+        collection = self._collection
+        if collection is None:  # AD-1340 S2b: a stopped memory evicts nothing
+            return
+        count = collection.count()
         if count > self.max_episodes:
             excess = count - self.max_episodes
             # Get oldest episodes by timestamp
-            result = self._collection.get(
+            result = collection.get(
                 include=["metadatas"],
             )
             if result and result["ids"] and result["metadatas"]:
@@ -3035,16 +3188,21 @@ class EpisodicMemory:
                 paired.sort(key=lambda x: x[1].get("timestamp", 0))
                 to_evict = paired[:excess]
                 ids_to_delete = [p[0] for p in to_evict]
-                if ids_to_delete:
-                    # AD-1340: archive (or delete) through the one removal sequence.
-                    await self._remove_from_live(
-                        ids_to_delete,
-                        {eid: dict(meta or {}) for eid, meta in to_evict},
-                        reason="capacity",
-                        process="_evict",
-                        details=f"batch of {len(ids_to_delete)}, budget={self.max_episodes}",
-                        outcome=resolve_disposition("capacity", None, self._eviction_disposition_mode),
-                    )
+                metadata_by_id = {eid: dict(meta or {}) for eid, meta in to_evict}
+                outcome = resolve_disposition("capacity", None, self._eviction_disposition_mode)
+                lock = self._get_store_write_lock()
+                for start in range(0, len(ids_to_delete), _EVICTION_LOCK_CHUNK):
+                    chunk = ids_to_delete[start:start + _EVICTION_LOCK_CHUNK]
+                    async with lock:  # AD-1340 S2b (a): capacity eviction holds the store lock for one chunk
+                        # AD-1340: archive (or delete) through the one removal sequence.
+                        await self._remove_from_live(
+                            chunk,
+                            {eid: metadata_by_id[eid] for eid in chunk},
+                            reason="capacity",
+                            process="_evict",
+                            details=f"batch of {len(chunk)}, budget={self.max_episodes}",
+                            outcome=outcome,
+                        )
 
     async def evict_by_ids(
         self,
@@ -3064,6 +3222,7 @@ class EpisodicMemory:
 
         Returns the count of episodes removed from the live store; for ERASE,
         removed from the live store or the archive. ERASE propagates failures.
+        AD-1340 S2b: the non-ERASE path holds the store write lock per chunk of `_EVICTION_LOCK_CHUNK` ids; never call it while holding that lock.
         """
         outcome = resolve_disposition(reason, disposition, self._eviction_disposition_mode)
         if not episode_ids:
@@ -3074,20 +3233,25 @@ class EpisodicMemory:
             return 0
 
         evicted = 0
+        ids = list(episode_ids)
+        lock = self._get_store_write_lock()
         try:
-            result = self._collection.get(ids=episode_ids, include=["metadatas"])
-            if not result or not result["ids"]:
-                return 0
-            valid_ids = result["ids"]
-            removed = await self._remove_from_live(
-                valid_ids,
-                _metadata_by_id(valid_ids, result["metadatas"]),
-                reason=reason,
-                process="evict_by_ids",
-                details=f"batch of {len(valid_ids)}, reason={reason}",
-                outcome=outcome,
-            )
-            evicted = len(removed)
+            for start in range(0, len(ids), _EVICTION_LOCK_CHUNK):
+                chunk = ids[start:start + _EVICTION_LOCK_CHUNK]
+                async with lock:  # AD-1340 S2b (a): a dream eviction holds the store lock for one chunk
+                    result = self._collection.get(ids=chunk, include=["metadatas"])
+                    if not result or not result["ids"]:
+                        continue
+                    valid_ids = result["ids"]
+                    removed = await self._remove_from_live(
+                        valid_ids,
+                        _metadata_by_id(valid_ids, result["metadatas"]),
+                        reason=reason,
+                        process="evict_by_ids",
+                        details=f"batch of {len(valid_ids)}, reason={reason}",
+                        outcome=outcome,
+                    )
+                    evicted += len(removed)
         except Exception as e:
             logger.debug("evict_by_ids failed: %s", e)
 

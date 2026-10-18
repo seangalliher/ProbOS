@@ -112,6 +112,9 @@ async def _prove_round_trip(root: Path, route: str) -> None:
         assert await _found_by(em, root, _SUBJECT) == {"keyword": False, "participants": False}, route
         assert _archive_accesses(root, _SUBJECT) == [], route
 
+        if capacity:
+            assert em._collection.count() == em.max_episodes  # premise: the store is at its budget (test-only)
+            em.max_episodes = 3  # AD-1340 S2b (b): a restore refuses at capacity, so the round trip makes room first
         proxy = _record_collection(em)
         restored = await em.restore_from_archive(_SUBJECT)
 
@@ -705,29 +708,57 @@ async def test_a_cancelled_store_tail_never_blocks_erasure(tmp_path: Path, monke
             await _cancel_all(tasks)
 
 
-async def test_an_archive_eviction_inside_an_erase_is_erased_too(tmp_path: Path) -> None:
-    """AD-1340 R3: an archive row written after the erase read the archive keys is still deleted (S2 prerequisite d)."""
+class _ObservedLock(asyncio.Lock):
+    """AD-1340 S2b: the store write lock, observed. Counts acquisitions; ``contended`` resolves when an acquire finds it held."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.acquisitions = 0
+        self.contended = asyncio.get_running_loop().create_future()
+
+    async def acquire(self) -> bool:
+        if self.locked() and not self.contended.done():
+            self.contended.set_result(None)
+        acquired = await super().acquire()
+        self.acquisitions += 1
+        return acquired
+
+
+async def test_an_eviction_started_inside_an_erase_waits_then_finds_nothing(tmp_path: Path) -> None:
+    """AD-1340 S2b (a): an eviction started inside an erase waits for the store lock, then finds the id gone.
+
+    Replaces S1 R3's archive-eviction-inside-an-erase test. Eviction now holds the store write lock, so it can no
+    longer run inside an erase's locked phases (awaiting it there would deadlock): S1's condition (d) holds by
+    construction instead of by the archive lock's FIFO order.
+    """
     tasks: list[asyncio.Task[Any]] = []
     held: dict[str, Any] = {}
     async with _memory(tmp_path, "archive") as rig:
         em = rig.em
+        observed = _ObservedLock()
+        em._store_write_lock = observed  # test-only private access: the store write lock, observed
         assert await em.store(_episode(0)) is EpisodeStoreOutcome.STORED
         original = em._eviction_audit.record_batch_eviction  # test-only private access
 
-        async def _archive_inside_the_erase(*args: Any, **kwargs: Any) -> Any:
-            if kwargs.get("disposition") == DISPOSITION_ERASED and "evicted" not in held:
-                held["evicted"] = await em.evict_by_ids([_SUBJECT], reason="activation_decay")
+        async def _evict_inside_the_erase(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("disposition") == DISPOSITION_ERASED and "evict_task" not in held:
+                evict_task = asyncio.create_task(em.evict_by_ids([_SUBJECT], reason="activation_decay"))
+                tasks.append(evict_task)
+                held["evict_task"] = evict_task
+                await asyncio.wait_for(asyncio.shield(observed.contended), timeout=5)  # it reached the store lock
+                held["blocked_inside_erase"] = not evict_task.done()
                 held["archive_rows_inside_erase"] = len(_archive_rows(rig.root))
             return await original(*args, **kwargs)
 
-        em._eviction_audit.record_batch_eviction = _archive_inside_the_erase
+        em._eviction_audit.record_batch_eviction = _evict_inside_the_erase
         erase_task = _start_erase(em, tasks)
         try:
             finished, _ = await asyncio.wait({erase_task}, timeout=10)
             assert finished, "the erase never finished"
-            assert held["evicted"] == 1  # premise: the archive eviction ran inside the erase
-            assert held["archive_rows_inside_erase"] == 1  # premise: it wrote an archive row
+            assert held["blocked_inside_erase"] is True  # premise: the eviction waited on the store lock inside the erase
+            assert held["archive_rows_inside_erase"] == 0  # and archived nothing there
             assert await erase_task == 1
+            assert await asyncio.wait_for(held["evict_task"], timeout=5) == 0  # then it found nothing live to evict
             assert await _traces(em, rig.root, _SUBJECT) == _GONE
             assert _archive_rows(rig.root) == []
         finally:
