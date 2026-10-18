@@ -2528,7 +2528,7 @@ class _ListingSeam:
 | N9 | `test_a_hooks_location_git_does_not_name_is_a_failed_capture_in_a_repository` (parametrised `case` over `nonzero`, `empty`, `unproven`) | **Wrapper `_CommonDirAnswers(real, outcome)`:** `(args, work_dir, **kwargs)`; it answers `["rev-parse", "--git-common-dir"]` with the outcome and counts `asked`; every other call goes to the real runner, kwargs forwarded. **Control first:** the same build with no wrapper commits. **`nonzero`** `(128, "", "fatal: bf904a")` and **`empty`** `(0, "", "")`: `success is False` and the error holds `"could not be read before the tests"`. **`unproven`:** the nonzero outcome plus `monkeypatch.setattr(builder_module, "repository_identity", AsyncMock(return_value=None))` (no pin, so D5 applies): the build commits. **Every case:** `asked == 1`. Kills K25 to K28. |
 | N10 | `test_an_error_or_cancellation_after_the_test_phase_began_runs_no_git` (parametrised `raised` over `error`, `cancel`) | **Control first:** a `_GitSpy` and a fake whose model code sets `spy.swapped`, with the real comparison. The build commits; `["checkout", "main"] in spy.args_after_swap()`; plain `git symbolic-ref --short HEAD` gives `"main"`. **Probe:** patch `builder_module._git_safety_change` with an async function that raises `RuntimeError("bf904a-injected")` or `asyncio.CancelledError()`. **`error`:** through `_build`: `success is False`, `"bf904a-injected"` is in the error. **`cancel`:** `task = asyncio.ensure_future(execute_approved_build(...))`, then `await asyncio.wait({task}, timeout=120)` and assert `task.cancelled()`. **Both:** `spy.args_after_swap() == [IDENTITY_ARGS]`; HEAD names `result.branch_name` (error case) or the branch that `["checkout", "-b", X]` in `spy.args_before_swap()` named (cancel case); `NEW` does not exist. Kills K9′, K13. |
 
-M1's file now has 27 test functions. All 17 of M1's existing cases stay green: H2's `[IDENTITY_ARGS, CONFIG_ARGS]` sequence is unchanged, and H2, H4 to H6 and F2 still find their names as substrings inside the tokens.
+M1's file now has 22 test functions (the 12 existing functions, which hold 17 cases, plus N1 to N10). All 17 of M1's existing cases stay green: H2's `[IDENTITY_ARGS, CONFIG_ARGS]` sequence is unchanged, and H2, H4 to H6 and F2 still find their names as substrings inside the tokens.
 
 ### A1.11 Partition P1 rows (whole stripped lines, each unique in the A1-built `builder.py`; count each before mutating)
 K9 is **replaced**: its old line is gone. Re-run K1 to K8 and K10 to K12; their anchors are unchanged, but `builder.py` has a new sha256.
@@ -2579,7 +2579,7 @@ Mark the result as the campaign of record against the A1-built `builder.py` sha2
 **Sections 7a and 9a:** a new test file that copies `_GitSpy` copies the A1 form, which forwards `**kwargs`.
 
 **Header and tests summary:**
-- **Line 5:** M1 has 27 test functions (N1 to N10 added). Updated helpers: A1.7 to A1.9.
+- **Line 5:** M1 has 22 test functions (N1 to N10 added). Updated helpers: A1.7 to A1.9.
 - **Tests summary (line 1548):** add N1 to N10. Boundaries: limits (N3, N5), lossless (N6), escaping (N7, N8), fail-closed (N9, N10).
 
 **Hard stops (line 1569):** add N6's and N8's premises. **Pre-decided fallback:** if this git refuses or rewrites CR inside a quoted subsection, drop `\r` from N8's plant and its assertion, keep the rest, and report it.
@@ -2674,7 +2674,7 @@ A1's hand row HR1 (`--git-common-dir` to `--git-dir`) now anchors on A2.1's REPL
 - **A1 D19:** "the safety capture is its only caller" stays true with three call sites; the round-2 and A1 texts that say "exactly two" lossless callers read "three".
 - **A1.12, Diff Reviewer property 4:** "the only git the check runs is the lossless config listing" reads "the lossless config listing and the lossless common-directory read".
 - **A1.10's `_ListingSeam` and A1.8's `_Unreadable`** read as A2.2 describes.
-- **Tests summary and header:** M1's module has 30 test functions (40 cases) after N13 (27 after A1, N11 and N12 from the orchestrator's earlier test-only repair, then N13), and the hard stops add N13's premises.
+- **Tests summary and header:** M1's module has 25 test functions (40 cases) after N13 (22 after A1, N11 and N12 from the orchestrator's earlier test-only repair, then N13; round 3 corrected the earlier counts of 27 and 30, which took A1's 17 existing cases for 17 functions), and the hard stops add N13's premises.
 - **D22's table** is unchanged: the common-directory read answers the same three cases, now byte-exact.
 
 ### A2.5 Considered, deferred
