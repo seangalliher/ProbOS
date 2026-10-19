@@ -3409,3 +3409,36 @@ Premise: in every fake case the recorded `branch --list` argv `== ["branch", "--
 - The DECISIONS entry lists D1 to D37.
 
 **Other breakage:** none expected. `test_builder_agent.py` is unchanged. Everything that patches `_git_create_branch` itself is unaffected. A fake `_run_git` that returns rc 0 with empty output proceeds as before.
+
+## Amendment A6 (2026-10-19): R12's hard-link case compares content, not git's stat-based status
+
+**Provenance:** orchestrator-authored under Delegated AD Execution Mode: a test-only robustness change with the probe evidence below, no production line changes and no new design decision. The Architect may overrule.
+
+**Finding.** The A5 repair Builder reported that R12 `hardlink` is flaky on this Windows host, on the A4 tree and the A5 tree alike: 5 failures in 12 isolated runs of mine, and 7 of 24 and 4 of 24 in two runs of the probe `files2\probes\probe_bf904a_hardlink_flake.py`. The assertion that fails is `porcelain status: '' -> ' M src/probos/b.py\n'`. In every failing run the restore is correct: both names end with the saved bytes `x = 1\n`, they are still one inode with two links, `git hash-object b.py` equals `HEAD:b.py`, `git diff --stat b.py` is empty, and a second `git status` is clean. The restore writes `b.py` (the second snapshot, `x = 2\r\n`, 7 bytes: the Windows text-mode write of the first edit translated its newline) and then `a.py` (`x = 1\n`, 6 bytes), in the order D32 requires. NTFS keeps a file's size and times in each hard link's directory entry and refreshes the other links' entries lazily; git for Windows reads them through its file-system cache (`core.fscache` is on), so for a moment `b.py` reports the 7-byte size of the intermediate edit and git calls it modified without hashing it. The fault is in the observer, not in the restore. Linux (the CI job) keeps one inode record per file, so it is unaffected.
+
+**Decision (D38, orchestrator).** The `hardlink` case does not use git's stat-based status as its observer. It asserts the content directly: both names are still one file (`os.path.samefile`), and the hash of each name equals that name's blob in `HEAD`. The other three state parts (the HEAD ref, the branches and their tips, the file bytes) are compared as before, and the write-count assertion stays. Nothing is weakened: the exact bytes are compared twice and the shared inode is asserted; only the stat-dependent observation is dropped, for the one case that makes it unreliable.
+
+### A6.1 `tests/test_bf904a_failed_build_restore.py`: the tail of R12
+SEARCH:
+```python
+    after = _state(repo)
+    for label, was, now in zip(_STATE_PARTS, before, after):
+        assert now == was, f"{case}: the failed build changed the {label}: {was!r} -> {now!r}"
+```
+REPLACE:
+```python
+    after = _state(repo)
+    compared = list(zip(_STATE_PARTS, before, after))
+    if case == "hardlink":
+        # BF-904a A6 (D38): NTFS refreshes the other hard link's directory entry lazily, so git's stat-based status can call
+        # b.py modified for a moment although its bytes are the saved ones. Compare the content, not the status.
+        assert os.path.samefile(repo / TARGET, repo / linked), "the two names are still one file"
+        for name in (TARGET, linked):
+            hashed = _git(repo, "hash-object", "--", name).stdout.strip()
+            assert hashed == _out(repo, "rev-parse", f"HEAD:{name}"), f"{name}: the saved bytes are written back"
+        compared = compared[1:]  # all but the porcelain status
+    for label, was, now in compared:
+        assert now == was, f"{case}: the failed build changed the {label}: {was!r} -> {now!r}"
+```
+
+Row R-aa stays killed by this case: the unreversed restore writes `a.py` first and the intermediate `b.py` snapshot last, so both names end with `x = 2\r\n` and the file-bytes part and the hash assertion fail. No new row; the tests summary count is unchanged. The DECISIONS entry lists D1 to D38.
