@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from probos.execution.command_env import trusted_command_env
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS, trusted_command_env
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,17 @@ class WorktreeManager:
     async def _run_git(
         self, *args: str, cwd: str | None = None
     ) -> tuple[int, str, str]:
-        """Run a git command and return (returncode, stdout, stderr)."""
+        """Run a git command and return (returncode, stdout, stderr).
+
+        BF-904a (#1585): every call starts with the hardening options. ``adopt_commit`` runs
+        ``checkout``, ``merge --ff-only`` and ``branch -D`` in the tested worktree right after
+        its tests, and ``remove`` and ``create`` run in the repository root, whose hooks
+        directory that worktree shares; no repository hook or fsmonitor runs at any of them.
+        """
         work_dir = cwd or str(self._repo_root)
         proc = await asyncio.create_subprocess_exec(
             "git",
+            *HARDENED_GIT_CONFIG_ARGS,  # BF-904a: every worktree git call, adopt_commit's included
             *args,
             env=trusted_command_env(),
             cwd=work_dir,

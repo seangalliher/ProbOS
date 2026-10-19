@@ -137,8 +137,9 @@ def test_identity_check_fails_closed_when_a_prefix_cannot_be_examined(tmp_path: 
 
 
 def _no_real_git(stack: ExitStack) -> AsyncMock:
+    # BF-904a (#1585): _git_checkout_main became _git_return_to (it returns to the ref the build started from).
     for name, value in (("_git_current_branch", "main"), ("_is_dirty_working_tree", False),
-                        ("_git_create_branch", (True, "builder-bf894")), ("_git_checkout_main", (True, "ok")),
+                        ("_git_create_branch", (True, "builder-bf894")), ("_git_return_to", (True, "ok")),
                         ("_run_git", (0, "", ""))):
         stack.enter_context(patch.object(builder_module, name, AsyncMock(return_value=value)))
     commit = AsyncMock(return_value=(True, "abc123"))

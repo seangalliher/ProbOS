@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -30,6 +31,19 @@ APPROVE_REFUSED = (
     "/api/build/approve no longer runs a build (BF-897). "
     "Queue the build instead (/api/build/enqueue): it runs in its own worktree, "
     "and its branch is kept for delivery."
+)
+#: BF-904a (#1585): the first line of a commit_override build's commit body.
+OVERRIDE_MARKER = "[Test gate overridden by Captain]"
+#: BF-904a A3 (D29): abort's message after an incomplete cleanup. Fixed text, no cleanup content.
+ABORT_CLEANUP_INCOMPLETE = (
+    "Build aborted. Its cleanup was incomplete when it failed, so the checkout may not be as the "
+    "build found it: check it against the cleanup notes in the failure report."
+)
+#: BF-904a A3 (D30): why a resolution that runs a build is refused after an incomplete cleanup.
+RESOLVE_CLEANUP_INCOMPLETE = (
+    "Not run: the failed build's cleanup was incomplete, so its checkout is not known to be as the "
+    "build found it and may hold the git configuration its tests left. Check the checkout against "
+    "the cleanup notes in the failure report, then abort and start a new build."
 )
 
 
@@ -98,49 +112,60 @@ async def resolve_build(
     spec = cached["spec"]
     work_dir = cached["work_dir"]
 
-    # BF-897: abort and commit_override run git in work_dir, and a retry executes
-    # there; the guard refuses the checkout ProbOS runs from (it compares locations,
+    # BF-897: commit_override and a retry execute in work_dir (BF-904a: abort runs no
+    # git); the guard refuses the checkout ProbOS runs from (it compares locations,
     # see operator_checkout_refusal).
     checkout_refusal = operator_checkout_refusal(work_dir, _REPO_ROOT)
     if checkout_refusal is not None:
         del _pending_failures[req.build_id]
         return {"status": "error", "message": checkout_refusal}
 
+    # BF-904a A3 (D30): every resolution but abort runs a build in this checkout; after an incomplete
+    # cleanup its state and git configuration are unknown, so only abort (no git) is taken. The
+    # failure stays cached so abort remains available.
+    if req.resolution in ("commit_override", "retry_extended", "retry_targeted", "retry_fix", "retry_full") and cached["report"].cleanup_errors:  # BF-904a A3 (D30)
+        return {"status": "error", "message": RESOLVE_CLEANUP_INCOMPLETE}
+
     if req.resolution == "abort":
-        from probos.cognitive.builder import _git_checkout_main
-        await _git_checkout_main(work_dir)
+        # BF-904a (#1585): runs no git. The failed build already wrote its files back, deleted
+        # the ones it created and returned to the ref it started from (execute_approved_build),
+        # unless its report lists cleanup errors; then the message says so (A3, D29).
         del _pending_failures[req.build_id]
+        cleanup_incomplete = bool(cached["report"].cleanup_errors)  # BF-904a A3: the report's structured cleanup notes
+        message = ABORT_CLEANUP_INCOMPLETE if cleanup_incomplete else "Build aborted. Its changes were discarded when it failed."
         runtime.emit_event(EventType.BUILD_RESOLVED, {
             "build_id": req.build_id,
             "resolution": "abort",
-            "message": "Build aborted. Returned to main branch.",
+            "message": message,
         })
+        if cleanup_incomplete:
+            return {"status": "ok", "resolution": "abort", "message": message}
         return {"status": "ok", "resolution": "abort"}
 
     elif req.resolution == "commit_override":
-        from probos.cognitive.builder import _git_add_and_commit
-        report = cached["report"]
-        all_files = report.files_written + report.files_modified
-        if not all_files:
+        # BF-904a (#1585): the failed build restored the checkout, so nothing is left to commit
+        # in place (the old body committed leftover edits onto whatever branch was checked out,
+        # and failed for created files, which had been deleted). The cached changes run again
+        # through execute_approved_build with the test gate off, every other guard on, and the
+        # override named in the commit body. The outcome arrives as build_success or
+        # build_failure, as for the retry paths.
+        if not file_changes:
             return {"status": "error", "message": "No files to commit."}
-        commit_msg = (
-            f"{spec.title}"
-            + (f" (AD-{spec.ad_number})" if spec.ad_number else "")
-            + "\n\n[Test gate overridden by Captain]"
-            + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
+        override_spec = dataclasses.replace(
+            spec,
+            description=OVERRIDE_MARKER + (f"\n\n{spec.description}" if spec.description else ""),
         )
-        ok, sha = await _git_add_and_commit(all_files, commit_msg, work_dir)
         del _pending_failures[req.build_id]
-        if ok:
-            runtime.emit_event(EventType.BUILD_RESOLVED, {
-                "build_id": req.build_id,
-                "resolution": "commit_override",
-                "message": f"Committed with test gate override. Commit: {sha}",
-                "commit": sha,
-            })
-            return {"status": "ok", "resolution": "commit_override", "commit": sha}
-        else:
-            return {"status": "error", "message": f"Commit failed: {sha}"}
+        runtime.emit_event(EventType.BUILD_RESOLVED, {
+            "build_id": req.build_id,
+            "resolution": "commit_override",
+            "message": "Re-running the build with the test gate overridden by the Captain.",
+        })
+        track_task(
+            _execute_build(req.build_id, file_changes, override_spec, work_dir, runtime, run_tests=False),  # BF-904a: the test gate is the only guard the override lifts
+            name=f"build-resolve-{req.build_id}",
+        )
+        return {"status": "ok", "resolution": "commit_override", "build_id": req.build_id}
 
     elif req.resolution in ("retry_extended", "retry_targeted", "retry_fix", "retry_full"):
         del _pending_failures[req.build_id]
@@ -395,8 +420,12 @@ async def _execute_build(
     spec: Any,
     work_dir: str,
     rt: Any,
+    run_tests: bool = True,
 ) -> None:
-    """Background execution of approved build."""
+    """Background execution of approved build.
+
+    BF-904a (#1585): *run_tests* is False only for the Captain's ``commit_override``.
+    """
     from probos.cognitive.builder import execute_approved_build
 
     try:
@@ -413,7 +442,7 @@ async def _execute_build(
             file_changes=file_changes,
             spec=spec,
             work_dir=work_dir,
-            run_tests=True,
+            run_tests=run_tests,  # BF-904a: False only for the Captain's commit_override
             llm_client=getattr(rt, "llm_client", None),
             escalation_hook=None,
         )

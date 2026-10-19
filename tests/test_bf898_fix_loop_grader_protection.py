@@ -365,7 +365,8 @@ class _FakeBuildGit:
 
     def __init__(self) -> None:
         self.create_branch = AsyncMock(return_value=(True, "builder/bf898"))
-        self.checkout_main = AsyncMock(return_value=(True, "switched to main"))
+        # BF-904a (#1585): _git_checkout_main became _git_return_to (the ref the build started from).
+        self.return_to = AsyncMock(return_value=(True, "main"))
         self.current_branch = AsyncMock(return_value="main")
         self.add_and_commit = AsyncMock(return_value=(True, "abc1234"))
         self.is_dirty = AsyncMock(return_value=False)
@@ -374,7 +375,7 @@ class _FakeBuildGit:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for name, fake in (
             ("_git_create_branch", self.create_branch),
-            ("_git_checkout_main", self.checkout_main),
+            ("_git_return_to", self.return_to),
             ("_git_current_branch", self.current_branch),
             ("_git_add_and_commit", self.add_and_commit),
             ("_is_dirty_working_tree", self.is_dirty),
@@ -524,12 +525,14 @@ async def test_fix_loop_files_are_disclosed_in_metadata_and_commit_message(
     reply = (
         _FOO_TO_2
         + f"===FILE: {_HELPER}===\ny = 1\n===END FILE===\n"
-        + f"===MODIFY: {_OTHER}===\n===SEARCH===\nnope\n===REPLACE===\nz = 2\n===END REPLACE===\n===END MODIFY===\n"
+        # BF-904a (#1585): the third block matches and leaves the file as it was. It used to be an unmatched
+        # block, silently skipped; an unmatched repair block now refuses the whole response.
+        + f"===MODIFY: {_OTHER}===\n===SEARCH===\nz = 1\n===REPLACE===\nz = 1\n===END REPLACE===\n===END MODIFY===\n"
     )
     llm = _FakeLLM(reply)
     parsed = sorted((block["mode"], block["path"]) for block in BuilderAgent._parse_file_blocks(reply))
     assert parsed == [("create", _HELPER), ("modify", _FOO), ("modify", _OTHER)], "premise: three source blocks"
-    assert "nope" not in other.read_text(encoding="utf-8"), "premise: the third block's SEARCH text is not in the file"
+    assert "z = 1" in other.read_text(encoding="utf-8"), "premise: the third block's SEARCH text is in the file"
 
     result = await _gated_build(build_tree, llm, max_fix_attempts=2)
 
@@ -612,7 +615,8 @@ async def test_an_error_in_a_later_block_keeps_the_attempt_and_the_disclosure(
 
     assert result.success is False
     assert result.error, "the directory block must raise and be reported"
-    assert foo.read_text(encoding="utf-8") == "x = 2\n", "premise: the earlier block was applied before the error"
+    # BF-904a (#1585): the disclosure below is the evidence the earlier block wrote foo.py; the failed build restores it.
+    assert foo.read_text(encoding="utf-8") == _FOO_TEXT, "the failed build writes foo.py's original bytes back"
     assert result.fix_attempts == 1
     assert result.metadata["fix_loop_files"] == [_FOO]
     assert fake_git.add_and_commit.await_count == 0
@@ -647,7 +651,8 @@ async def test_an_error_raised_by_the_validation_after_a_write_keeps_the_disclos
     assert "recursion" in result.error.lower()
     assert result.fix_attempts == 1
     assert result.metadata["fix_loop_files"] == [_FOO]
-    assert foo.read_text(encoding="utf-8") == "x = 2\n", "the write happened before the error"
+    # BF-904a (#1585): the disclosure below shows the repair wrote foo.py; the failed build writes the original back.
+    assert foo.read_text(encoding="utf-8") == _FOO_TEXT, "the failed build restores foo.py"
     assert fake_git.add_and_commit.await_count == 0
     assert len(llm.fix_prompts()) == 1
 
@@ -677,7 +682,8 @@ async def test_a_write_that_fails_after_truncating_the_file_is_still_disclosed(
     result = await _gated_build(build_tree, llm, max_fix_attempts=2)
 
     assert len(foo_writes) == 2, "premise: the second write to foo.py is the repair's"
-    assert foo.read_text(encoding="utf-8") == "", "the file was truncated by the failed write"
+    # BF-904a (#1585): foo_writes shows the truncating write happened; the failed build writes the original back.
+    assert foo.read_text(encoding="utf-8") == _FOO_TEXT, "the truncated file is restored"
     assert result.metadata["fix_loop_files"] == [_FOO]
     assert result.fix_attempts == 1
     assert result.success is False
@@ -725,7 +731,12 @@ async def test_a_block_that_changes_nothing_is_not_disclosed_when_a_later_block_
     result = await _gated_build(build_tree, llm, max_fix_attempts=2)
 
     assert result.success is False
-    assert result.error, "the directory block must raise and be reported"
+    if case in ("no_op_modify", "missing_modify"):
+        # BF-904a (#1585): the leading block cannot apply, so the repair is refused whole before the
+        # directory block is reached; the outcome below is the same, for that reason.
+        assert "; refused" in result.error, result.error
+    else:
+        assert result.error, "the directory block must raise and be reported"
     assert result.fix_attempts == 1
     assert "fix_loop_files" not in result.metadata
     assert foo.read_text(encoding="utf-8") == _FOO_TEXT

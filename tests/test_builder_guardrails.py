@@ -101,8 +101,8 @@ class TestBranchLifecycle:
 
     @pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
     @pytest.mark.asyncio
-    async def test_stale_branch_cleanup(self, tmp_path):
-        """Pre-existing branch with same name is auto-deleted."""
+    async def test_an_existing_build_branch_is_kept_and_the_build_refused(self, tmp_path):
+        """Pre-existing branch with the same (sanitised) name is kept and the build refused."""
         work_dir = str(tmp_path)
         # Initialize a git repo
         proc = await asyncio.create_subprocess_exec(
@@ -135,7 +135,7 @@ class TestBranchLifecycle:
 
         # Create a stale branch
         proc = await asyncio.create_subprocess_exec(
-            "git", "checkout", "-b", "builder/test-stale", cwd=work_dir,
+            "git", "checkout", "-b", "builder-test-stale", cwd=work_dir,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
@@ -146,10 +146,16 @@ class TestBranchLifecycle:
         )
         await proc.communicate()
 
-        # Now _git_create_branch should succeed despite the stale branch
+        # BF-904a A4 (D31): the safety net deleted any branch of this name, including one that held a successful build's commit.
         ok, name = await _git_create_branch("builder/test-stale", work_dir)
-        assert ok is True
-        assert name == "builder-test-stale"
+        assert ok is False
+        assert "already exists" in name
+        proc = await asyncio.create_subprocess_exec(
+            "git", "branch", "--list", "builder-test-stale", cwd=work_dir,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        listed, _ = await proc.communicate()
+        assert listed.decode().strip() != ""
 
     @pytest.mark.skipif(shutil.which("git") is None, reason="git not found on PATH")
     @pytest.mark.asyncio

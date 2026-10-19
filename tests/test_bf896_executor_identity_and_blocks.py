@@ -176,9 +176,10 @@ class _GitSpy:
         self.calls: list[tuple[bool, list[str]]] = []
         self.swapped = False
 
-    async def __call__(self, args: list[str], work_dir: str) -> tuple[int, str, str]:
+    async def __call__(self, args: list[str], work_dir: str, **kwargs: Any) -> tuple[int, str, str]:
+        # BF-904a A1: the safety capture reads the config listing with lossless=True; forward it.
         self.calls.append((self.swapped, list(args)))
-        return await self._real(args, work_dir)
+        return await self._real(args, work_dir, **kwargs)
 
     def args_before_swap(self) -> list[list[str]]:
         return [args for swapped, args in self.calls if not swapped]
@@ -311,12 +312,13 @@ async def test_replacement_modify_is_unchanged(tmp_path: Path, extra: dict[str, 
     ],
     ids=["empty-replacements-key-present", "no-replacements-no-content", "content-is-none", "content-is-not-a-str"],
 )
-async def test_modify_blocks_outside_the_whole_file_shape_keep_the_old_no_op(
+async def test_modify_blocks_outside_the_whole_file_shape_change_nothing_and_fail(
     tmp_path: Path, block_extra: dict[str, Any]
 ) -> None:
     """A block is a whole-file change only with NO ``replacements`` key AND a ``str`` ``content``.
 
-    Anything else keeps today's executor behaviour: no refusal, no write, success with nothing to commit.
+    Anything else writes nothing. BF-904a (#1585): a change list that changed nothing is a failure
+    with a reason ("No change applied"), no longer a success with nothing to commit.
     """
     await _assert_whole_file_control_lands(tmp_path)
     repo = _plain_repo(tmp_path / "probe")
@@ -324,23 +326,27 @@ async def test_modify_blocks_outside_the_whole_file_shape_keep_the_old_no_op(
 
     result = await _build(repo, [{"path": TARGET, "mode": "modify", **block_extra}])
 
-    assert result.success is True and not result.error, result.error
+    assert result.success is False and result.error == f"No change applied: {TARGET}", result.error
     assert not result.commit_hash and result.files_modified == [] and result.files_written == []
     assert _tree(repo) == tree_before
     assert _refs(repo) == ["main"]
 
 
 @needs_git
-async def test_replacement_modify_of_an_absent_target_without_base_keeps_the_legacy_skip(tmp_path: Path) -> None:
-    """A block with NO ``base`` key (native LLM flow, repair loop) keeps the absent-target skip."""
+async def test_replacement_modify_of_an_absent_target_without_base_is_refused(tmp_path: Path) -> None:
+    """BF-904a (#1585): this used to pin the silent absent-target skip, which let the other block commit alone.
+
+    A missing MODIFY target is now a refusal that blocks the commit, and the other block is never written.
+    """
     repo = _plain_repo(tmp_path / "repo")
     block = {"path": "src/probos/gone.py", "mode": "modify", "replacements": [{"search": "a", "replace": "b"}]}
 
     result = await _build(repo, [block, _whole(TARGET, "x = 2\n", base=ORIGINAL)])
 
-    assert result.success, result.error
-    assert result.files_modified == [TARGET], "the absent-target replacement is skipped, the other block lands"
-    assert _blob(repo, result.branch_name, TARGET) == "x = 2\n"
+    assert result.success is False and not result.commit_hash
+    assert "MODIFY target src/probos/gone.py does not exist; refused" in result.error, result.error
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "the other block is never written"
+    assert _refs(repo) == ["main"]
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +589,8 @@ async def test_create_over_an_existing_file_is_a_modification_and_survives_a_fai
     result = await _build(repo, [_create(TARGET, BROKEN)])
 
     assert result.success is False and result.error.startswith("Syntax errors"), result.error
-    assert (repo / TARGET).exists(), "a tracked file the build overwrote must survive the failed-build cleanup"
+    # BF-904a (#1585): stronger than "survives": the failed build writes the file's bytes back.
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "a tracked file the build overwrote is restored"
     assert result.files_modified == [TARGET]
     assert result.files_written == [], "the cleanup unlinks files_written; a pre-existing file must never be listed there"
     assert _git(repo, "ls-files", "--error-unmatch", TARGET).returncode == 0
@@ -652,7 +659,8 @@ async def test_repair_create_over_an_existing_file_is_a_modification(
     assert result.success is False and "Tests failed" in result.error, result.error
     assert result.files_modified == [TARGET], "the repair's create over a pre-existing file is a modification"
     assert TARGET not in result.files_written and result.files_written == [NEW]
-    assert (repo / TARGET).read_text(encoding="utf-8").strip() == "x = 3", "the repair was written"
+    # BF-904a (#1585): the repair wrote TARGET (files_modified above); the failed build writes the original back.
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "the repaired file is restored"
     assert not (repo / NEW).exists(), "the build's own new file is still cleaned up"
     assert _git(repo, "ls-files", "--error-unmatch", TARGET).returncode == 0
     assert _refs(repo) == ["main"]
@@ -789,7 +797,8 @@ async def test_pin_on_a_non_repository_refuses_where_no_pin_keeps_the_old_failur
     assert _git(plain, "rev-parse", "--git-dir").returncode != 0, "premise: the directory is not inside a repository"
 
     unpinned = await _build(plain, [_create(NEW, "ok = 1\n")])
-    assert unpinned.success is False and unpinned.error.startswith("Failed to create branch"), unpinned.error
+    # BF-904a (#1585): a tree with neither a branch nor a commit is now refused at entry, before the branch.
+    assert unpinned.success is False and unpinned.error.startswith("Cannot read the checkout's current branch or commit"), unpinned.error
 
     pinned = await _build(plain, [_create(NEW, "ok = 1\n")], expected_git_dir="C:/some/pinned/.git")
     assert pinned.success is False and "identity" in pinned.error.lower(), pinned.error
@@ -798,7 +807,10 @@ async def test_pin_on_a_non_repository_refuses_where_no_pin_keeps_the_old_failur
 
 
 @needs_git
-async def test_no_pin_keeps_todays_behaviour(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_no_pin_is_pinned_at_entry_when_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # BF-904a (#1585): this test used to pin the gap ("without a pin repository_identity is never consulted").
+    # A caller that gives no pin (the /api/build routes, BuildPipeline) now gets the identity read at entry and
+    # compared again before the commit, so the unpinned path is guarded too.
     repo = _plain_repo(tmp_path / "repo")
     spy = _GitSpy(builder_module._run_git)
     identity_calls: list[str] = []
@@ -816,9 +828,8 @@ async def test_no_pin_keeps_todays_behaviour(tmp_path: Path, monkeypatch: pytest
     assert spy.calls, "premise: the spy sees the executor's git"
     assert result.success and result.commit_hash, result.error
     assert result.files_modified == [TARGET] and _blob(repo, result.branch_name, TARGET) == "x = 2\n"
-    assert identity_calls == [], "without a pin repository_identity is never consulted"
-    assert IDENTITY_ARGS not in [args for _swapped, args in spy.calls], "and no --absolute-git-dir command runs"
-    assert spy.calls[0][1] == ["rev-parse", "--abbrev-ref", "HEAD"], "the executor still starts with the branch read, as before"
+    assert identity_calls == [str(repo), str(repo)], "pinned at entry, compared again before the commit"
+    assert spy.calls[0][1] == IDENTITY_ARGS, "the entry pin is the executor's first git command"
     assert result.branch_name and _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
 
 
