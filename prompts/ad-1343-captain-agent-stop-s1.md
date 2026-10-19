@@ -552,7 +552,7 @@ def tool_refusal(gate: object, agent_id: object, tool_id: str) -> ToolResult | N
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
 >>>>>>> REPLACE
 
-3.5 `runtime.py`, the tool sink's gate (after Phase 7)
+3.5 `runtime.py`, the tool sink's gate (after Phase 7). **Apply in M2, together with Section 6.3 (amendment A1: it calls `set_stop_gate`, which does not exist until 6.3).**
 <<<<<<< SEARCH
         self.continue_extension_permit_store = comm.continue_extension_permit_store  # AD-1323
         self.tool_registry = comm.tool_registry
@@ -1550,8 +1550,8 @@ def test_agent_fetch_and_browser_tools_cannot_reach_the_stop_routes() -> None:
 
 | # | Scope | Green at the cut | Cut point |
 |---|---|---|---|
-| M1 | §1–§4, §9 | T1–T13, T19–T26; AD-1195; 1419; store registry; `check_architecture_principles.py --check` | `git diff --stat` shows only the §1–§4/§9 files and `tests/test_ad1343_agent_stop.py` |
-| M2 | §5–§8 | T14–T18; the source-scan pins listed above; **whole-contract dry run (D18)** | dry-run failures exactly as D18 predicts |
+| M1 | §1–§4 except block 3.5, §9 | T1–T13, T19–T26; AD-1195; 1419; store registry; `check_architecture_principles.py --check` | `git diff --stat` shows only the §1–§4/§9 files and `tests/test_ad1343_agent_stop.py` |
+| M2 | §5–§8 and block 3.5 (amendment A1) | T14–T18; the source-scan pins listed above; **whole-contract dry run (D18)** | dry-run failures exactly as D18 predicts |
 | M3 | §10, the crossing tests, Tracking (including the ledger regeneration) | I1–I9, X1–X3, all preflights | then the Diff Reviewer, the mutation campaign, a local commit, the gate |
 
 ## Mutation table (run once on the final tree; every anchor is a whole, unique line in its file)
