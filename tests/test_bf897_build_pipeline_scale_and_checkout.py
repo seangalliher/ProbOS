@@ -486,7 +486,8 @@ class _FakeBuildGit:
 
     def __init__(self) -> None:
         self.create_branch = AsyncMock(return_value=(True, "builder/bf897"))
-        self.checkout_main = AsyncMock(return_value=(True, "switched to main"))
+        # BF-904a (#1585): _git_checkout_main became _git_return_to (the ref the build started from).
+        self.return_to = AsyncMock(return_value=(True, "main"))
         self.current_branch = AsyncMock(return_value="main")
         self.add_and_commit = AsyncMock(return_value=(True, "abc1234"))
         self.is_dirty = AsyncMock(return_value=False)
@@ -495,7 +496,7 @@ class _FakeBuildGit:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for name, fake in (
             ("_git_create_branch", self.create_branch),
-            ("_git_checkout_main", self.checkout_main),
+            ("_git_return_to", self.return_to),
             ("_git_current_branch", self.current_branch),
             ("_git_add_and_commit", self.add_and_commit),
             ("_is_dirty_working_tree", self.is_dirty),
@@ -884,7 +885,8 @@ def test_resolve_refuses_a_cached_operator_checkout(
     response = client.post("/api/build/resolve", json={"build_id": _RESOLVE_ID, "resolution": "abort"})
 
     assert response.json() == {"status": "ok", "resolution": "abort"}
-    assert _out(linked, "rev-parse", "--abbrev-ref", "HEAD") == "main", "the abort did not run in the worktree"
+    # BF-904a (#1585): abort runs no git (the failed build already returned to its ref), so the worktree stays put.
+    assert _out(linked, "rev-parse", "--abbrev-ref", "HEAD") == "wt-resolve", "the abort ran git in the worktree"
     assert checkout_state(op) == before_control, "resolving a worktree's failure changed the operator's checkout"
 
 

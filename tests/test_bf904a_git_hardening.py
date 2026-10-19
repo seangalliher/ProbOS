@@ -1212,7 +1212,7 @@ async def test_hostile_config_and_hook_names_reach_no_message_raw(
     assert fake.runs == 1, "premise: the plant ran inside the build"
     assert result.success is False, result.error
     assert REFUSAL in result.error, result.error
-    assert all(ch.isprintable() for ch in result.error), "no control character reaches the error"
+    assert all(ch.isprintable() for ch in result.error.replace("\nCleanup incomplete: ", " ")), "no control character reaches the error"  # D26: the cleanup separator is the one line break M2 adds
     assert len(result.error) < 6000, len(result.error)
     for needle in ("\\x0d", "\\x1b", "\\udc80", "\\u202e", "\\x60", "h" * 100):
         assert needle in result.error, f"{needle!r} must be in the error: {result.error[:600]}"
@@ -1281,7 +1281,7 @@ async def test_an_error_or_cancellation_after_the_test_phase_began_runs_no_git(
     monkeypatch.setattr(builder_module, "_run_git", control_spy)
     control = await _build(control_repo, blocks, run_tests=True)
     assert control.success and control.commit_hash, f"control: the build commits: {control.error}"
-    assert ["checkout", "main"] in control_spy.args_after_swap(), "control: the checkout back runs when git is safe"
+    assert ["checkout", "-q", "main", "--"] in control_spy.args_after_swap(), "control: the checkout back runs when git is safe"  # BF-904a M2: _git_return_to's argv (A3.4)
     assert _out(control_repo, "symbolic-ref", "--short", "HEAD") == "main"
 
     probe = _plain_repo(tmp_path / "probe")
@@ -1346,7 +1346,7 @@ async def test_a_hostile_hooks_path_reaches_the_refusal_only_as_an_escaped_token
     assert REFUSAL in result.error, result.error
     assert "\\u202e" in result.error, f"the override is escaped: {result.error}"
     assert bidi not in result.error, "the raw override never reaches the error"
-    assert all(ch.isprintable() for ch in result.error), "no unprintable character reaches the error"
+    assert all(ch.isprintable() for ch in result.error.replace("\nCleanup incomplete: ", " ")), "no unprintable character reaches the error"  # D26: the cleanup separator is the one line break M2 adds
     if case == "hook-files":
         assert "post-checkout" in result.error, result.error
         assert "hook files in `" in result.error, "the hooks path is one code-span token"

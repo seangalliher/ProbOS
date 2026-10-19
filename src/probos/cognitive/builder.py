@@ -3,7 +3,7 @@
 A CognitiveAgent in the Engineering team that accepts structured build specs,
 generates code via the deep LLM tier, parses file changes from the LLM output,
 and returns them for Captain approval.  After approval, `execute_approved_build()`
-orchestrates: git branch → write files → pytest → commit → return to main.
+orchestrates: git branch → write files → pytest → commit → return to the ref it started from (BF-904a).
 """
 
 from __future__ import annotations
@@ -161,6 +161,7 @@ class BuildFailureReport:
     failure_category: str = ""  # "timeout", "test_failure", "syntax_error", "import_error", "llm_error", "commit_error"
     failure_summary: str = ""   # One-sentence human-readable summary
     raw_error: str = ""         # Full error text (for collapsible view)
+    cleanup_errors: list[str] = field(default_factory=list)  # BF-904a A3 (D28): non-empty: the checkout is not known to be as the build found it
     failed_tests: list[str] = field(default_factory=list)  # Extracted test names
     error_locations: list[str] = field(default_factory=list)  # file:line references
 
@@ -216,6 +217,7 @@ def classify_build_failure(result: BuildResult, spec: BuildSpec) -> BuildFailure
         review_result=result.review_result,
         review_issues=list(result.review_issues),
         raw_error=result.error or result.test_result or "",
+        cleanup_errors=list(result.metadata.get("cleanup_errors", [])),  # BF-904a A3 (D28)
     )
 
     test_output = result.test_result or ""
@@ -261,28 +263,28 @@ def classify_build_failure(result: BuildResult, spec: BuildSpec) -> BuildFailure
             {"id": "retry_extended", "label": "Retry with extended timeout", "description": "Re-run tests with 300s timeout"},
             {"id": "retry_targeted", "label": "Retry targeted tests only", "description": "Run only tests related to changed files"},
             {"id": "commit_override", "label": "Commit anyway", "description": "Override test gate and commit to branch"},
-            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+            {"id": "abort", "label": "Abort", "description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"},
         ]
     elif report.failure_category == "test_failure":
         report.resolution_options = [
             {"id": "retry_targeted", "label": "Retry targeted tests only", "description": "Run only tests related to changed files"},
             {"id": "retry_fix", "label": "Retry with more fix attempts", "description": "Give the LLM 4 more attempts to fix failing tests"},
             {"id": "commit_override", "label": "Commit anyway", "description": "Override test gate and commit to branch"},
-            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+            {"id": "abort", "label": "Abort", "description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"},
         ]
     elif report.failure_category in ("syntax_error", "import_error"):
         report.resolution_options = [
             {"id": "retry_fix", "label": "Retry with more fix attempts", "description": "Give the LLM 4 more attempts to fix the errors"},
-            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+            {"id": "abort", "label": "Abort", "description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"},
         ]
     elif report.failure_category == "llm_error":
         report.resolution_options = [
             {"id": "retry_full", "label": "Retry entire build", "description": "Re-run the full build pipeline from scratch"},
-            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+            {"id": "abort", "label": "Abort", "description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"},
         ]
     else:
         report.resolution_options = [
-            {"id": "abort", "label": "Abort", "description": "Abandon changes and return to main branch"},
+            {"id": "abort", "label": "Abort", "description": "Dismiss the failed build. Runs no git: its cleanup already ran; check the report for any cleanup notes"},
         ]
 
     return report
@@ -1623,20 +1625,54 @@ async def _run_git(args: list[str], work_dir: str, *, lossless: bool = False) ->
     return await loop.run_in_executor(None, _sync_run)
 
 
-async def _git_current_branch(work_dir: str) -> str:
-    """Return the name of the current branch."""
-    rc, out, _err = await _run_git(["rev-parse", "--abbrev-ref", "HEAD"], work_dir)
-    return out if rc == 0 else "main"
+async def _git_current_branch(work_dir: str) -> str | None:
+    """BF-904a (#1585): the branch HEAD names, or None when HEAD is detached or unreadable.
+
+    ``rev-parse --abbrev-ref HEAD`` printed ``HEAD`` for a detached checkout, and a failure
+    fell back to ``main``; neither is the ref a failed build must return to.
+    """
+    # BF-904a A4 (D33): a valid ref may end in Unicode whitespace (U+00A0) that the default decode's
+    # strip() would cut, and the return would then check out a different, existing branch.
+    # BF-904a A7 (D40): the full ref. --short prints "heads/<name>" when a tag shares the name, and
+    # checking that out detaches HEAD. Only a local branch is a branch; any other target is None.
+    rc, out, _err = await _run_git(["symbolic-ref", "-q", "HEAD"], work_dir, lossless=True)  # BF-904a A7 (D40): the full ref, never git's disambiguated short name
+    out = out.removesuffix("\n")  # BF-904a A4 (D33): only the LF git ends the line with
+    out = out.removeprefix("refs/heads/") if out.startswith("refs/heads/") else ""  # BF-904a A7 (D40): a local branch's name, or none
+    return out if rc == 0 and out else None  # BF-904a: never a guessed "main"
+
+
+#: BF-904a A7 (D39): the bytes a process argument reaches git as. On POSIX, subprocess passes
+#: os.fsencode's bytes. On Windows the argument travels as UTF-16 and git turns a lone surrogate
+#: into U+FFFD; os.fsencode there (surrogatepass) differs from the printed bytes for exactly those
+#: names. A module seam, so a test models either host without patching os.
+_argv_bytes = os.fsencode
+
+
+def _ref_survives_argv(name: str) -> bool:
+    """BF-904a A7 (D39): whether git receives *name* as the bytes it printed it as (UTF-8, surrogateescape)."""
+    try:
+        return _argv_bytes(name) == name.encode("utf-8", "surrogateescape")  # BF-904a A7 (D39): the bytes git printed
+    except UnicodeError:  # a name this host cannot encode cannot be passed
+        return False
+
+
+async def _git_head_commit(work_dir: str) -> str | None:
+    """BF-904a: the commit a detached HEAD is at, or None when there is none."""
+    rc, out, _err = await _run_git(["rev-parse", "--verify", "-q", "HEAD^{commit}"], work_dir)
+    return out if rc == 0 and out else None
 
 
 async def _git_create_branch(branch_name: str, work_dir: str) -> tuple[bool, str]:
     """Create and checkout a new git branch.  Returns (success, message)."""
     safe = _sanitize_branch_name(branch_name)
-    # Safety net: delete stale branch from prior failed build (crash/power loss)
-    _, list_out, _ = await _run_git(["branch", "--list", safe], work_dir)
-    if list_out.strip():
-        logger.info("Deleting stale branch '%s' from prior build", safe)
-        await _run_git(["branch", "-D", safe], work_dir)
+    # BF-904a A4 (D31): an existing branch of this name is never deleted. The name comes from the
+    # spec title, so it may hold a successful build's commit; the build is refused before any write.
+    # A branch a crash left, or one a failed return kept, is the Captain's to delete.
+    # BF-904a A5 (D36): ask for the full ref name and compare it exactly: no marker or colour to strip,
+    # and an answer naming any other ref (or a fake runner's "main") is not a collision.
+    _, list_out, _ = await _run_git(["branch", "--list", "--format=%(refname)", safe], work_dir)  # BF-904a A5 (D36): exact ref names only
+    if f"refs/heads/{safe}" in list_out.splitlines():  # BF-904a A5 (D36): this exact branch exists
+        return False, f"branch {safe} already exists; it is kept: merge or delete it, or give the build another title"  # BF-904a A4 (D31): never delete a branch this build did not create
     rc, out, err = await _run_git(["checkout", "-b", safe], work_dir)
     if rc != 0:
         return False, err or out
@@ -1661,12 +1697,108 @@ async def _git_add_and_commit(
     return True, sha if rc2 == 0 else "unknown"
 
 
-async def _git_checkout_main(work_dir: str) -> tuple[bool, str]:
-    """Switch back to main branch.  Returns (success, message)."""
-    rc, out, err = await _run_git(["checkout", "main"], work_dir)
+async def _git_return_to(branch: str | None, commit: str | None, work_dir: str) -> tuple[bool, str]:
+    """BF-904a (#1585): check out the ref a build started from. Returns (success, detail).
+
+    *branch* when the build started on one, otherwise *commit*, detached. Replaces
+    ``_git_checkout_main``, which always switched to ``main``: from another branch that moved
+    the operator, and in a linked worktree whose ``main`` is checked out elsewhere it failed.
+    Never raises.
+    """
+    if branch is not None:
+        args = ["checkout", "-q", branch, "--"]
+    elif commit is not None:
+        args = ["checkout", "-q", "--detach", commit, "--"]
+    else:
+        return False, "no branch or commit to return to"
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except Exception as exc:  # BF-904a A4 (D34): any ordinary failure is a failed return; BaseException propagates
+        return False, f"git checkout could not start ({type(exc).__name__})"
     if rc != 0:
-        return False, err or out
-    return True, "switched to main"
+        return False, (err or out or f"git checkout exited {rc}")[:300]
+    return True, branch if branch is not None else str(commit)
+
+
+async def _cleanup_git(args: list[str], work_dir: str) -> str | None:
+    """BF-904a: one cleanup git command; its failure as text, or None on success. Never raises."""
+    try:
+        rc, out, err = await _run_git(args, work_dir)
+    except Exception as exc:  # BF-904a A4 (D34): reported, and the cleanup goes on; BaseException propagates
+        return f"git {args[0]} could not start ({type(exc).__name__})"
+    if rc != 0:
+        return f"git {args[0]} exited {rc}: {_display_token(err or out, _DISPLAY_PATH_CHARS)}"  # BF-904a A3: git's answer, escaped and bounded
+    return None
+
+
+def _cleanup_log(level: int, msg: str, *args: object) -> None:
+    """BF-904a A8 (D43): one cleanup log line that cannot stop the cleanup.
+
+    ``Handler.handle`` calls ``emit`` unguarded, so a handler whose ``emit`` raises would skip the
+    remaining deletions and the return. The failure is dropped: the same logger would raise again,
+    and the cleanup's outcome is carried by ``cleanup_errors``.
+    """
+    try:
+        logger.log(level, msg, *args, stacklevel=2)  # BF-904a A8 (D43): the record names the cleanup step that logged it
+    except Exception:  # BF-904a A8 (D43): a raising handler loses one log line, never a cleanup step; BaseException propagates
+        pass
+
+
+def _restore_pre_build_files(work_dir: str, originals: dict[str, bytes], created: list[str]) -> list[str]:
+    """BF-904a (#1585): put the tree back as the build found it, with no git.
+
+    Writes each saved file back byte for byte, then deletes each file the build created and its
+    emptied parent directories. Runs no git, so no filter or attribute planted in the tree runs.
+    Returns one message per path it could not put back (each name a `_display_token`, A3); never raises.
+    """
+    errors: list[str] = []
+    root = Path(work_dir)
+    # BF-904a A4 (D32): newest snapshot first. Where two spellings of one file were both saved (a hard
+    # link; case on a case-folding POSIX filesystem), the first snapshot is written last and wins.
+    for rel, data in reversed(originals.items()):  # BF-904a A4 (D32): the first snapshot of a file wins
+        try:
+            (root / rel).write_bytes(data)
+        except Exception as exc:  # BF-904a A4 (D34): a failed restore is reported; the other paths go on
+            errors.append(f"could not restore {_display_token(rel, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+    for created_path in created:
+        full = root / created_path
+        try:
+            if not full.exists():  # BF-904a A4 (D34): inside the try, so a failed check is a failed delete
+                continue
+            full.unlink()
+        except Exception as exc:  # BF-904a A4 (D34): a failed check or delete is reported; the other paths go on
+            errors.append(f"could not delete {_display_token(created_path, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+            continue
+        _cleanup_log(logging.INFO, "Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3, A8 (D43): one log line that cannot stop the cleanup
+        # Remove empty parent dirs up to work_dir
+        parent = full.parent
+        try:
+            while parent != root and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+        except Exception:  # BF-904a A7 (D42): an empty directory left is invisible to git; the deletions and the return go on. BaseException propagates
+            pass  # Directory not empty or permission issue
+    return errors
+
+
+def _write_target_key(work_dir: str, rel: str) -> str:
+    """BF-904a A4 (D32): one key per file a build writes, whatever accepted spelling names it.
+
+    ``repository_identity``'s normalisation: ``realpath`` drops ``.`` components, unifies separators
+    and resolves symbolic links; ``normcase`` folds case where the host does (Windows). A hard link,
+    or case on a case-folding POSIX filesystem, still gets a second key; the restore's newest-first
+    order makes the first snapshot win there too.
+    """
+    return os.path.normcase(os.path.realpath(os.path.join(work_dir, rel)))
+
+
+def _first_found(work_dir: str, rel: str, found: set[str]) -> bool:
+    """BF-904a A4 (D32): True, recording the file in *found*, the first time a build saves it."""
+    key = _write_target_key(work_dir, rel)
+    if key in found:  # BF-904a A4 (D32): already saved under another spelling
+        return False
+    found.add(key)
+    return True
 
 
 async def repository_identity(work_dir: str) -> str | None:
@@ -2857,9 +2989,11 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         if proc.returncode != 0:
             return False  # Not a git repo — skip check
 
-        # Check for uncommitted changes
+        # Check for uncommitted changes. BF-904a A7 (D41): uncached. Git for Windows' file-system cache
+        # reads NTFS directory entries, which a hard link's other name refreshes lazily, so a restored
+        # file can read as modified. Other hosts ignore the setting.
         proc = await asyncio.create_subprocess_exec(
-            "git", *HARDENED_GIT_CONFIG_ARGS, "status", "--porcelain",
+            "git", *HARDENED_GIT_CONFIG_ARGS, "-c", "core.fscache=false", "status", "--porcelain",  # BF-904a A7 (D41): the dirty check reads the file, not the cache
             env=git_env,
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
@@ -2970,8 +3104,23 @@ async def execute_approved_build(
     if pinned_git_dir is None:
         pinned_git_dir = await repository_identity(work_dir)  # BF-904a: pin what the tree names now, when readable
 
-    # 1. Save current branch
+    # 1. BF-904a (#1585): the ref a build returns to, read before anything changes: the
+    # branch, or the commit of a detached HEAD. A tree with neither is refused here, before
+    # the build branch exists; it is never sent to a guessed "main".
     original_branch = await _git_current_branch(work_dir)
+    original_commit = None if original_branch is not None else await _git_head_commit(work_dir)
+    if original_branch is None and original_commit is None:
+        result.error = (
+            "Cannot read the checkout's current branch or commit, so a failed build could "
+            "not return to it; refused before any write"
+        )
+        return result
+    if original_branch is not None and not _ref_survives_argv(original_branch):  # BF-904a A7 (D39): git would receive another name
+        result.error = (
+            f"The checkout's branch {_display_token(original_branch, _DISPLAY_NAME_CHARS)} cannot be passed to git "
+            "unchanged on this host, so a failed build could not return to it; refused before any write"
+        )
+        return result
 
     # 1a. Verify clean working tree (prevent contaminating build branch)
     if await _is_dirty_working_tree(work_dir):
@@ -3007,10 +3156,17 @@ async def execute_approved_build(
         result.error = f"Failed to create branch: {msg}"
         return result
     result.branch_name = _sanitize_branch_name(branch)
+    # BF-904a: a local, because the escalation hook's result can replace ``result``.
+    build_branch = result.branch_name
 
     written: list[str] = []
     modified_files: list[str] = []
     validation_errors: list[str] = []
+    # BF-904a (#1585): the bytes of every file that existed before this build, saved before its
+    # first write (setdefault keeps that first copy); a build that does not commit writes them back.
+    originals: dict[str, bytes] = {}
+    found_keys: set[str] = set()  # BF-904a A4 (D32): the _write_target_key of every saved file
+    add_attempted = False
     try:
         # 4. Write/modify files
         for change in file_changes:
@@ -3094,6 +3250,8 @@ async def execute_approved_build(
 
                 if modified != original:
                     _check_sealed_path(path, runtime)
+                    if change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file
+                        originals.setdefault(change["path"], path.read_bytes())  # BF-904a: saved before the first write
                     path.write_text(modified, encoding="utf-8")
                     modified_files.append(change["path"])
                     logger.info(
@@ -3115,6 +3273,8 @@ async def execute_approved_build(
             path.parent.mkdir(parents=True, exist_ok=True)
             _check_sealed_path(path, runtime)
             pre_existing = path.exists() and change["path"] not in written
+            if pre_existing and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file, a create over it too
+                originals.setdefault(change["path"], path.read_bytes())  # BF-904a: a create over an existing file saves it first
             path.write_text(change["content"], encoding="utf-8")
             if pre_existing:
                 # BF-896: a CREATE over a file that existed before this build is a
@@ -3264,6 +3424,8 @@ async def execute_approved_build(
                     for change in fix_changes:
                         path = Path(work_dir) / change["path"]
                         before_fix = path.read_bytes() if path.is_file() else None
+                        if before_fix is not None and change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): not again under a second spelling
+                            originals.setdefault(change["path"], before_fix)  # BF-904a: a repair saves a file the build did not create
                         try:
                             if change["mode"] == "modify":
                                 if not path.exists():
@@ -3287,7 +3449,7 @@ async def execute_approved_build(
                                 path.write_text(
                                     change["content"], encoding="utf-8",
                                 )
-                                if pre_existing:
+                                if pre_existing or _write_target_key(work_dir, change["path"]) in found_keys:  # BF-904a A4 (D32): a saved file the tests deleted is restored, never deleted as created
                                     # BF-896: never list a pre-existing file in files_written.
                                     if change["path"] not in modified_files:
                                         modified_files.append(change["path"])
@@ -3406,6 +3568,7 @@ async def execute_approved_build(
                     )
                     + "\n\nCo-Authored-By: ProbOS Builder <probos@probos.dev>"
                 )
+                add_attempted = True  # BF-904a: a failed commit may leave these paths staged
                 ok, sha = await _git_add_and_commit(
                     written + modified_files, commit_msg, work_dir,
                 )
@@ -3422,30 +3585,46 @@ async def execute_approved_build(
     except Exception as exc:
         result.error = str(exc)
     finally:
-        # 7. Return to original branch. BF-896: not when the tree now names a
-        # repository other than the pinned one (its hooks would run). BF-904a: nor
-        # when its config or hooks changed during the tests (git_unsafe).
-        if not git_unsafe:
-            await _git_checkout_main(work_dir)
-        # Clean up build branch if no commit was made (failed build)
-        if not result.commit_hash and result.branch_name:
-            if not git_unsafe:
-                logger.info("Cleaning up failed build branch '%s'", result.branch_name)
-                await _run_git(["branch", "-D", result.branch_name], work_dir)
-            # Delete files created during the failed build (untracked on main)
-            for created_path in written:
-                full = Path(work_dir) / created_path
-                if full.exists():
-                    full.unlink()
-                    logger.info("Cleaned up untracked file from failed build: %s", created_path)
-                    # Remove empty parent dirs up to work_dir
-                    parent = full.parent
-                    try:
-                        while parent != Path(work_dir) and not any(parent.iterdir()):
-                            parent.rmdir()
-                            parent = parent.parent
-                    except OSError:
-                        pass  # Directory not empty or permission issue
+        # 7. BF-904a (#1585): put the operator's checkout back as the build found it. A build
+        # with no commit: unstage (only if `git add` ran), write the saved bytes back, delete
+        # the files it created, return to the ORIGINAL ref, and only then delete the build
+        # branch. A committed build only returns. BF-896/BF-904a: when git is unsafe, no git
+        # runs at all: identity lost, config or hooks changed, or the test phase ended without
+        # a clean comparison (A1).
+        cleanup_errors: list[str] = []
+        restore_tree = not result.commit_hash
+        if restore_tree:
+            if add_attempted and not git_unsafe:
+                unstaged = await _cleanup_git(["reset", "-q", "--", *written, *modified_files], work_dir)  # BF-904a: unstage before the restore
+                if unstaged is not None:
+                    cleanup_errors.append(unstaged)
+            cleanup_errors.extend(_restore_pre_build_files(work_dir, originals, written))
+        if git_unsafe:
+            cleanup_errors.append(
+                f"no git command was run after the tests, so the checkout is left on branch {build_branch}"
+            )
+        else:
+            returned, detail = await _git_return_to(original_branch, original_commit, work_dir)
+            if not returned:  # BF-904a: a failed return keeps the build branch and is reported
+                start_ref = _display_token(str(original_branch or original_commit), _DISPLAY_NAME_CHARS)  # BF-904a A3: the operator's ref, escaped and bounded
+                shown_detail = _display_token(detail, _DISPLAY_PATH_CHARS)  # BF-904a A3: git's answer, escaped and bounded
+                cleanup_errors.append(
+                    f"could not return to {start_ref}: {shown_detail}; "
+                    f"branch {build_branch} kept"
+                )
+            elif restore_tree:
+                _cleanup_log(logging.INFO, "Cleaning up failed build branch '%s'", build_branch)  # BF-904a A8 (D43)
+                deleted = await _cleanup_git(["branch", "-D", build_branch], work_dir)
+                if deleted is not None:
+                    cleanup_errors.append(deleted)
+        if cleanup_errors:
+            result.metadata["cleanup_errors"] = cleanup_errors
+            if result.success:
+                # A successful result stays one: a commit is on the build branch, and
+                # adopt_commit checks out its own branch (worktree_manager.py).
+                _cleanup_log(logging.ERROR, "BuilderAgent: build cleanup incomplete: %s", "; ".join(cleanup_errors))  # BF-904a A8 (D43)
+            else:
+                result.error = (result.error or "Build failed") + "\nCleanup incomplete: " + "; ".join(cleanup_errors)
 
     # Tag builder source and record Hebbian outcome (AD-353)
     result.builder_source = builder_source

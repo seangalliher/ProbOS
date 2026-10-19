@@ -3059,7 +3059,8 @@ class TestEscalationHook:
 
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED tests/test_x.py::test_y", [])):
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
-                with patch("probos.cognitive.builder._git_checkout_main"):
+                # BF-904a (#1585): _git_checkout_main became _git_return_to; its (ok, detail) result is now read.
+                with patch("probos.cognitive.builder._git_return_to", return_value=(True, "main")):
                     with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
                         result = await execute_approved_build(
                             changes, spec, str(tmp_path),
@@ -3089,7 +3090,7 @@ class TestEscalationHook:
 
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED", [])):
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
-                with patch("probos.cognitive.builder._git_checkout_main"):
+                with patch("probos.cognitive.builder._git_return_to", return_value=(True, "main")):
                     with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
                         with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
                             result = await execute_approved_build(
@@ -3120,7 +3121,7 @@ class TestEscalationHook:
                 "probos.cognitive.builder._run_tests", new_callable=AsyncMock, return_value=(True, "2254 passed"),
             ) as full_suite:
                 with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
-                    with patch("probos.cognitive.builder._git_checkout_main"):
+                    with patch("probos.cognitive.builder._git_return_to", return_value=(True, "main")):
                         with patch("probos.cognitive.builder._git_add_and_commit", return_value=(True, "abc123")):
                             with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
                                 result = await execute_approved_build(
@@ -3142,7 +3143,7 @@ class TestEscalationHook:
 
         with patch("probos.cognitive.builder._run_targeted_tests", return_value=(False, "FAILED", [])):
             with patch("probos.cognitive.builder._git_create_branch", return_value=(True, "test-branch")):
-                with patch("probos.cognitive.builder._git_checkout_main"):
+                with patch("probos.cognitive.builder._git_return_to", return_value=(True, "main")):
                     with patch("probos.cognitive.builder._git_current_branch", return_value="main"):
                         result = await execute_approved_build(
                             changes, spec, str(tmp_path),

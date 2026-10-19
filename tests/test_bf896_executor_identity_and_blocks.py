@@ -584,7 +584,8 @@ async def test_create_over_an_existing_file_is_a_modification_and_survives_a_fai
     result = await _build(repo, [_create(TARGET, BROKEN)])
 
     assert result.success is False and result.error.startswith("Syntax errors"), result.error
-    assert (repo / TARGET).exists(), "a tracked file the build overwrote must survive the failed-build cleanup"
+    # BF-904a (#1585): stronger than "survives": the failed build writes the file's bytes back.
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "a tracked file the build overwrote is restored"
     assert result.files_modified == [TARGET]
     assert result.files_written == [], "the cleanup unlinks files_written; a pre-existing file must never be listed there"
     assert _git(repo, "ls-files", "--error-unmatch", TARGET).returncode == 0
@@ -653,7 +654,8 @@ async def test_repair_create_over_an_existing_file_is_a_modification(
     assert result.success is False and "Tests failed" in result.error, result.error
     assert result.files_modified == [TARGET], "the repair's create over a pre-existing file is a modification"
     assert TARGET not in result.files_written and result.files_written == [NEW]
-    assert (repo / TARGET).read_text(encoding="utf-8").strip() == "x = 3", "the repair was written"
+    # BF-904a (#1585): the repair wrote TARGET (files_modified above); the failed build writes the original back.
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "the repaired file is restored"
     assert not (repo / NEW).exists(), "the build's own new file is still cleaned up"
     assert _git(repo, "ls-files", "--error-unmatch", TARGET).returncode == 0
     assert _refs(repo) == ["main"]
@@ -790,7 +792,8 @@ async def test_pin_on_a_non_repository_refuses_where_no_pin_keeps_the_old_failur
     assert _git(plain, "rev-parse", "--git-dir").returncode != 0, "premise: the directory is not inside a repository"
 
     unpinned = await _build(plain, [_create(NEW, "ok = 1\n")])
-    assert unpinned.success is False and unpinned.error.startswith("Failed to create branch"), unpinned.error
+    # BF-904a (#1585): a tree with neither a branch nor a commit is now refused at entry, before the branch.
+    assert unpinned.success is False and unpinned.error.startswith("Cannot read the checkout's current branch or commit"), unpinned.error
 
     pinned = await _build(plain, [_create(NEW, "ok = 1\n")], expected_git_dir="C:/some/pinned/.git")
     assert pinned.success is False and "identity" in pinned.error.lower(), pinned.error
