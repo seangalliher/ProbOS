@@ -4372,3 +4372,127 @@ RUN:   Grep "does not exist; refused|not found in .*; refused|SEARCH block \d" t
 FOUND: 12 hits (bf896:347; builder_agent:1771,1986,2013,2065; M3 module)
 HOLDS: yes, dry-run against A10.1/A10.2; only S2's files_written premise changes (edited above)
 ```
+
+## Amendment A11 (2026-10-19): the full-path form of a new target's key (M3 round 2, R2-F1)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only answer to M3 review round 2 (session `506328d4`). The only wording changes: the rows table is rebuilt with the full file, SEARCH and REPLACE text of A11-R2 and A11-R3 (the answer wrote "same"); the answer's "Verified Against Codebase" and "Absence Verified" records are appended. The decisions table that preceded the amendment in the answer is recorded on #1585.
+
+**Verdict:** ✅ This fixes R2-F1 across its whole class: every spelling that the host's file calls unify gets one key. R2-F2 is recorded for #1523 F-153. M2's D32 restore key is not touched.
+
+- **D53 (A11, R2-F1).** A target that does not exist is keyed by `_write_target_key` of its `os.path.abspath` form, so a spelling that the host's file calls unify is one file. On Windows, `GetFullPathNameW` trims the last name's trailing dots and spaces and an inner name's single trailing dot. On POSIX the form is lexical: `fresh.py.` stays a separate file and its MODIFY is refused as missing. D32's restore key is unchanged.
+- **D44, as amended.** The pre-check's state is keyed by `_same_file_key`: `(st_dev, st_ino)` for an existing target that reports an inode number, otherwise the D53 path key. One key per file holds for those targets and spellings. The two-key cases in A11.8 fail closed.
+
+### A11.1 `src/probos/cognitive/builder.py`: `_same_file_key` keys a new target in the host's full-path form
+SEARCH:
+```python
+    """BF-904a A10 (D44): one key per file on disk, whatever accepted name reaches it.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by ``_write_target_key``. The pre-check writes
+    nothing, so a file a change creates is absent, and keyed by path, for the whole check.
+    """
+    key = _write_target_key(work_dir, rel)
+```
+REPLACE:
+```python
+    """BF-904a A10 (D44), A11 (D53): one key per file on disk, for every name this host's file calls unify.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by ``_write_target_key`` of its
+    ``os.path.abspath`` form: on Windows that is ``GetFullPathNameW``, the trimming the writer's own
+    calls get (the last name's trailing dots and spaces, an inner name's single trailing dot); on POSIX
+    it is lexical, so ``fresh.py.`` stays another name. The pre-check writes nothing, so a file a change
+    creates is absent, and keyed by path, for the whole check.
+    """
+    key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))  # BF-904a A11 (D53): the host's full-path form
+```
+
+### A11.2 Tests: `tests/test_bf904a_unapplied_blocks.py`, S14 after S13 and before E2
+- **Import:** line 53, `from probos.cognitive.builder_paths import fix_loop_write_refusal`, becomes `from probos.cognitive.builder_paths import builder_write_refusal, fix_loop_write_refusal`.
+- **Constant:** add `FRESH = "src/probos/fresh.py"` after `CASE_ALIAS`.
+- **Section header:** `# S14 (A11): a new file's other spellings are the file the host writes`.
+- **Module docstring:** the A10 bullet ends "… (`_round_trip`); a new file's key is the host's full-path form, so a spelling the host unifies is that file".
+- **Helper:** `_host_unifies(tmp_path, canonical, alias) -> bool`. It writes `tmp_path / "oracle" / canonical` (after `parent.mkdir(parents=True, exist_ok=True)`) and returns `(tmp_path / "oracle" / alias).is_file()`. The answer is computed on the host, never taken from a platform name.
+
+| ID | Test | Premises, then assertions |
+|---|---|---|
+| S14 | `test_a_new_file_named_again_under_another_spelling_is_the_file_the_host_writes`, parametrised `spelling` (7 cases): `double-slash` (FRESH, `src//probos/fresh.py`), `dot-segment` (FRESH, `src/./probos/fresh.py`), `trailing-dot` (FRESH, `src/probos/fresh.py.`), `space-dot` (FRESH, `src/probos/fresh.py .`), `new-dir-dot` (NEW, `src/probos/newpkg./fresh.py`), `new-case` (FRESH, `src/probos/Fresh.py`), `visiting` (FRESH, `src/probos/fresh.py.`, with `base=""` on the CREATE) | **Setup:** `repo = _plain_repo(tmp_path / "repo")`. `changes = BuilderAgent._parse_file_blocks(f"===FILE: {canonical}===\nf = 1\n===END FILE===\n" + _modify_block(alias, "f = 1", "f = 1"))` (a matched no-op, so only the CREATE reaches `git add`). For `visiting`, set `block["base"] = ""` on every block without `"replacements"`, as `copilot_adapter.py:795-803` does. `unified = _host_unifies(tmp_path, canonical, alias)`. **Premises:** `[(c["mode"], c["path"]) for c in changes] == [("create", canonical), ("modify", alias)]`; `builder_write_refusal(canonical, str(repo)) is None` and the same for `alias`; `not (repo / canonical).exists()`; for `visiting`, `changes[0]["base"] == ""` and `"base" not in changes[1]`; for `double-slash` and `dot-segment`, `unified is True` ("every host joins these"); for `new-case`, if `unified and os.path.normcase("A") == "A"`, skip with "a case-folding POSIX filesystem: the A10.10 false refusal". `before = _state(repo)`, and `before[0] == ""`. **When `unified`:** `success is True, result.error`; `result.commit_hash`; `files_written == [canonical]`; `files_modified == []`; `_blob(repo, result.branch_name, canonical) == "f = 1\n"`. **Otherwise:** `success is False`; no commit; `f"MODIFY target {alias} does not exist; refused" in result.error`; `files_written == []` (D46); `_state(repo) == before`. |
+
+**Dry run (staged tree):** the parser puts creates first (`builder.py:2708-2718`), and the CREATE's `_round_trip` text is `"f = 1\n"`, which matches the SEARCH. A missing-target refusal names no block index. With `base`, the CREATE sets `texts[key] = None`, and an alias with the same key is left to the writer (`builder.py:3049-3051, 3068-3070`).
+
+**Expected red results.** The Builder shows each one first.
+- **Windows, staged tree:** `trailing-dot`, `space-dot`, `new-dir-dot` and `visiting` fail with "MODIFY target … does not exist; refused" and `files_written == []`. `double-slash`, `dot-segment` and `new-case` pass; they are controls (`realpath` and `normcase` already unify them).
+- **Ubuntu:** all seven pass on both trees. The two controls take the success branch. The other five take the refusal branch, as the main loop does, and none is skipped.
+
+### A11.3 Rows (Partition P3; the SEARCH is A11.1's key line, a whole stripped line that is unique after A11)
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| A11-R1 | `src/probos/cognitive/builder.py` | `key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))  # BF-904a A11 (D53): the host's full-path form` | `key = _write_target_key(work_dir, rel)` | S14 `trailing-dot`, `space-dot`, `new-dir-dot` and `visiting`, **on Windows only**. The mutant is equivalent on POSIX (lexical `normpath` against `realpath`, with `..` refused), so it survives on Ubuntu CI by construction. |
+| A11-R2 | `src/probos/cognitive/builder.py` | `key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))  # BF-904a A11 (D53): the host's full-path form` | `key = os.path.join(work_dir, rel)` | S14 `double-slash` and `dot-segment`, on every host (the raw joined path is the reviewer's surviving mutant) |
+| A11-R3 | `src/probos/cognitive/builder.py` | `key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))  # BF-904a A11 (D53): the host's full-path form` | `key = os.path.abspath(os.path.join(work_dir, rel))` | S14 `new-case`, **on Windows only** (`normcase` is the identity on POSIX) |
+
+A10-R1's SEARCH, `return ("file", info.st_dev, info.st_ino) if info.st_ino else ("path", key)`, is unchanged.
+
+### A11.4 Trackers
+- **`DECISIONS.md:183` (D44):** this becomes "*D44 (A10, F1; A11).* The pre-check's state is keyed by `_same_file_key`: `(st_dev, st_ino)` for an existing target that reports an inode number, otherwise the D53 path key. One key per file holds for those targets and spellings; the two-key cases in A11.8 fail closed. D32's restore key is unchanged."
+- **After `DECISIONS.md:191` (D52):** add "*D53 (A11, R2-F1).*" with the wording above, as one line.
+- **`DECISIONS.md:194` (Deferred):** append "A11.8: " and the items in A11.8.
+- **`DECISIONS.md:138`:** "A1 to A10" becomes "A1 to A11", and "(M3, 14 functions, 22 cases)" becomes "(M3, 15 functions, 29 cases)".
+- **`DECISIONS.md:197`:** "A1 to A10" becomes "A1 to A11".
+- **`PROGRESS.md:3`:** "62 new test functions (129 cases)" becomes "63 new test functions (136 cases)" (functions 25 + 23 + 15; cases 40 + 67 + 29).
+
+### A11.5 What A11 supersedes (the original lines stay)
+- **A10's D44:** replaced by the text in A11.4.
+- **Property 13:** "across every accepted name of one file (`_same_file_key`; S9, S10)" becomes "across the names of one file that this host's file calls unify (`_same_file_key`; S9, S10, S14)".
+- **The valid-list claim:** "the pre-pass refuses nothing in a list every block of which applies" holds on this host except in the two-key cases of A11.8, where it refuses (fails closed).
+- **9a:** the module has 15 functions and 29 cases.
+
+### A11.6 What the round-3 reviewer will likely flag
+1. **A11-R1 and A11-R3 survive on Ubuntu.** They are equivalent there by construction, as A11.3 states.
+2. **Only no-op alias MODIFYs are tested.** A MODIFY that changes the file through `fresh.py.` puts the alias into `git add`, where Git for Windows' `core.protectNTFS` decides the outcome. A11 no longer pre-refuses it, which restores round one's behaviour. Its commit is git's verdict and is not asserted here.
+3. **`new-case` skips on a case-folding POSIX filesystem.** That is the A10.10 deferral, decided by the host's `normcase`, not by a platform name.
+4. **An NTFS directory flagged case-sensitive** is a `normcase` over-merge. It already affects D32, and the write-time check catches it (S13).
+5. **An existing symbolic link to a directory with a new file under it** stays untested, because `realpath` is unchanged and Windows symlinks need a privilege the test environment lacks (error 1314).
+6. **R2-F2 is deferred** (A11.8).
+
+### A11.7 Hot path
+Each change gets one more `GetFullPathNameW` call (or a lexical `normpath` on POSIX). No I/O is added on POSIX.
+
+### A11.8 Considered, deferred (to #1523 F-153)
+- **R2-F2:** removing the `if info.st_ino else` fallback survives the module (P3, injected-only). Only filesystems that report no inode numbers (FAT, exFAT, some SMB shares) reach it. There, existing targets are keyed by path, so hard links get two keys: the pre-check misses a vanished block and the write-time checks refuse it. A test needs a process-wide `os.stat` seam, which `DECISIONS.md:195` steers away from.
+- **New files on a case-folding POSIX filesystem** (macOS, `chattr +F`, vfat or CIFS mounts), **Unicode normalisation (NFC against NFD) and HFS+ ignorable code points:** two keys, a false refusal that fails closed.
+- **An NTFS directory flagged case-sensitive, and non-ASCII case where `normcase` and NTFS's upcase table disagree:** either a false refusal, or an over-merge refused at write time, in which case the earlier file reaches the tests (BF-904b).
+
+### Verified Against Codebase (2026-10-19, staged tree)
+```
+builder.py:1784-1792  _write_target_key = normcase(realpath(join(work_dir, rel)))   (D32, unchanged)
+builder.py:1797 / 3026  "key = _write_target_key(work_dir, rel)" twice -> A11.1's SEARCH carries the docstring
+builder.py:3018-3031  _same_file_key; 3048 its only call
+builder.py:3049-3060  base -> texts[key]=None; "MODIFY target {rel} does not exist; refused"
+builder.py:3258       for change in [] if blocked else admitted
+builder.py:3330-3343  a no-op MODIFY writes nothing, warns only
+builder.py:3365-3366  written.append(change["path"]) for a new CREATE
+builder.py:1687       git add -- *files
+builder.py:2714,2760  parser path .strip()
+builder_paths.py:81   ".." in normalized -> refused
+copilot_adapter.py:795-803  base = file_contents.get(path, "") on parsed whole-file blocks
+DECISIONS.md:195      seams must not resolve a path inside a patched os function
+test module:53 import; 58-65 constants; 752-754 E2 header
+```
+
+### Absence Verified (2026-10-19)
+```
+CLAIM: builder.py does not use os.path.abspath yet
+RUN:   Grep "os\.path\.abspath" src/probos/cognitive/builder.py      FOUND: none   HOLDS: yes
+CLAIM: no M3/M1/M2 test names a trailing-dot or a new-dir-dot alias, or forces st_ino
+RUN:   Grep "fresh\.py\.|newpkg\./|abspath|st_ino" tests/test_bf904a_*.py
+FOUND: only test_bf904a_git_hardening.py:549,559,631 (abspath in a git guard, unrelated)   HOLDS: yes
+CLAIM: builder_write_refusal is not imported by the M3 module
+RUN:   Grep "builder_write_refusal" tests/test_bf904a_unapplied_blocks.py   FOUND: none   HOLDS: yes
+CLAIM: _same_file_key has one caller
+RUN:   Grep "_same_file_key\(" builder.py   FOUND: 3018 (def), 3048   HOLDS: yes
+```
