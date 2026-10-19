@@ -10280,8 +10280,7 @@ class CognitiveAgent(BaseAgent):
             _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
             if _telemetry_svc and self._is_introspective_query(captain_text):
                 try:
-                    _agent_id = getattr(self, 'sovereign_id', None) or self.id
-                    _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                    _snapshot = await _telemetry_svc.get_full_snapshot(self.id)  # BF-907: slot id (DM)
                     _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
                     if _telemetry_text:
                         _emit("telemetry", [_telemetry_text, ""])
@@ -10613,8 +10612,7 @@ class CognitiveAgent(BaseAgent):
             _telemetry_svc = getattr(self._runtime, '_introspective_telemetry', None) if self._runtime else None
             if _telemetry_svc and self._is_introspective_query(_wr_text):
                 try:
-                    _agent_id = getattr(self, 'sovereign_id', None) or self.id
-                    _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                    _snapshot = await _telemetry_svc.get_full_snapshot(self.id)  # BF-907: slot id (WR)
                     _telemetry_text = _telemetry_svc.render_telemetry_context(_snapshot)
                     if _telemetry_text:
                         _emit("telemetry", ["", _telemetry_text])

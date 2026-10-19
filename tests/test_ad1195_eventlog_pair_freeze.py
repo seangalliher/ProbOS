@@ -108,6 +108,9 @@ _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     ('tool', 'tool_invoked'),
     ('tool', 'tool_record_budget_exhausted'),
     ('tool', 'tool_started'),
+    # BF-907 (#1597): a trust record merged from a sovereign-identity key into its slot,
+    # through MERGE_EVENT. Best effort: trust.db trust_key_merges is authoritative.
+    ('trust', 'trust_identity_merge'),
 })
 
 # DRIFT-3: sites whose category or event is not statically a string.

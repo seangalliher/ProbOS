@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — feedback records trust outcomes
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.event_log import EventLog
+    from probos.substrate.registry import AgentRegistry
     from probos.types import TaskDAG, TaskNode
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class FeedbackEngine:
         feedback_hebbian_reward: float = 0.10,
         feedback_trust_weight: float = 1.5,
         identity_registry: Any = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._trust = trust_network
         self._hebbian = hebbian_router
@@ -56,6 +58,7 @@ class FeedbackEngine:
         self._feedback_hebbian_reward = feedback_hebbian_reward
         self._feedback_trust_weight = feedback_trust_weight
         self._identity_registry = identity_registry
+        self._agent_registry = agent_registry  # BF-907: agent_type -> slot for correction trust
 
     async def _safe_log_event(self, event_log, *args, **kwargs) -> None:
         """Best-effort event logging — never blocks feedback processing."""
@@ -199,19 +202,33 @@ class FeedbackEngine:
                 self._hebbian.reward = saved_reward
             agents_updated.append(agent_type)
 
-        # 2. Trust — small positive if retry succeeded
+        # 2. Trust — small positive if retry succeeded. BF-907: trust is keyed by
+        # slot id, so the observation lands on the one active agent of this type;
+        # with none or several it is not recorded (Hebbian and episodic go on).
         if retry_success and agent_type:
-            try:
-                self._trust.record_outcome(agent_type, success=True)
-            except RuntimeError as exc:
-                if str(exc) != "trust_write_in_progress":
-                    raise
+            target_ids = (
+                [agent.id for agent in self._agent_registry.all() if agent.agent_type == agent_type]
+                if self._agent_registry is not None else []
+            )
+            if len(target_ids) != 1:
                 logger.warning(
-                    "AD-1130: Correction trust observation skipped for agent=%s "
-                    "because a durable trust write is in progress; Hebbian and "
+                    "BF-907: correction trust observation for agent_type=%s not recorded: "
+                    "%d active agents of that type, needs exactly one; Hebbian and "
                     "episodic correction processing continue",
-                    agent_type,
+                    agent_type, len(target_ids),
                 )
+            else:
+                try:
+                    self._trust.record_outcome(target_ids[0], success=True)
+                except RuntimeError as exc:
+                    if str(exc) != "trust_write_in_progress":
+                        raise
+                    logger.warning(
+                        "AD-1130: Correction trust observation skipped for agent=%s "
+                        "because a durable trust write is in progress; Hebbian and "
+                        "episodic correction processing continue",
+                        target_ids[0],
+                    )
 
         # 3. Episodic memory — correction-tagged episode
         episode_stored = False

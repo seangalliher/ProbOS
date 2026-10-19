@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from probos.cognitive.emergent_detector import EmergentDetector
     from probos.config import SystemConfig
     from probos.consensus.trust import TrustNetwork
+    from probos.identity import AgentIdentityRegistry
+    from probos.substrate.event_log import EventLog
     from probos.mesh.intent import IntentBus
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.pool import ResourcePool
@@ -34,6 +36,8 @@ async def init_structural_services(
     pools: dict[str, "ResourcePool"],
     spawner: "AgentSpawner",
     trust_network: "TrustNetwork",
+    identity_registry: "AgentIdentityRegistry",
+    event_log: "EventLog",
     intent_bus: "IntentBus",
     hebbian_router: "HebbianRouter",
     episodic_memory: Any,
@@ -69,11 +73,20 @@ async def init_structural_services(
     # Persist agent manifest (Phase 14c)
     await persist_manifest_fn()
 
-    # Reconcile trust store — remove stale entries from previous sessions (AD-280)
+    # Reconcile trust store — remove stale entries from previous sessions (AD-280).
+    # BF-907: first bind trust to the identity registry and merge every record still
+    # keyed by a sovereign identity into its slot; unmerged identity keys are kept.
+    from probos.startup.trust_identity import reconcile_trust_identities
+
     active_ids = {a.id for a in registry.all()}
-    removed = trust_network.reconcile(active_ids)
-    if removed:
-        logger.info("trust-reconcile removed=%d stale entries", removed)
+    trust_reconciliation = await reconcile_trust_identities(
+        trust_network=trust_network,
+        identity_registry=identity_registry,
+        active_ids=active_ids,
+        event_log=event_log,
+    )
+    if trust_reconciliation.removed:
+        logger.info("trust-reconcile removed=%d stale entries", trust_reconciliation.removed)
 
     # Start Structural Integrity Field (AD-370)
     from probos.sif import StructuralIntegrityField

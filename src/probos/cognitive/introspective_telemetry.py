@@ -50,6 +50,7 @@ class IntrospectiveTelemetryService:
 
     def __init__(self, *, runtime: Any) -> None:
         self._runtime = runtime
+        self._trust_misses: set[str] = set()  # BF-907: subjects whose missing trust record was logged
 
     def _resolve_agent(self, agent_id: str) -> Any:
         """Resolve agent object from registry by ID."""
@@ -118,9 +119,18 @@ class IntrospectiveTelemetryService:
         if hasattr(rt, 'trust_network') and rt.trust_network:
             trust_net = rt.trust_network
             try:
-                result["score"] = format_trust(trust_net.get_score(agent_id))
                 record = trust_net.get_record(agent_id)
-                if record:
+                if record is None:
+                    # BF-907: a miss is reported as a miss, never as the prior's plausible 0.5.
+                    result["record"] = "missing"
+                    if agent_id not in self._trust_misses:
+                        self._trust_misses.add(agent_id)
+                        logger.warning(
+                            "BF-907: no trust record for %s; telemetry reports the miss, not the prior",
+                            agent_id,
+                        )
+                else:
+                    result["score"] = format_trust(trust_net.get_score(agent_id))
                     result["observations"] = int(record.observations)
                     result["uncertainty"] = format_trust(record.uncertainty)
                 # Recent trend
@@ -343,7 +353,7 @@ class IntrospectiveTelemetryService:
                 lines.append(f"Trust: {' ('.join(trust_parts[:1])}" +
                              (f" ({', '.join(trust_parts[1:])})" if len(trust_parts) > 1 else ""))
             else:
-                lines.append("Trust: no record yet")
+                lines.append("Trust: no record for this id")
 
         # Cognitive zone
         if "cognitive" in snapshot:

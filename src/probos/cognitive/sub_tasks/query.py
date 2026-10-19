@@ -403,8 +403,8 @@ async def _query_introspective_telemetry(
 
     try:
         agent_id = context.get("_agent_id", "") or _ctx(context, "agent_id")
-        sovereign_id = context.get("sovereign_id", "") or agent_id
-        snapshot = await telemetry_svc.get_full_snapshot(sovereign_id)
+        # BF-907: the slot id; the memory domain resolves the sovereign id itself.
+        snapshot = await telemetry_svc.get_full_snapshot(agent_id)
         rendered = telemetry_svc.render_telemetry_context(snapshot)
         return {"introspective_telemetry": rendered or ""}
     except Exception:

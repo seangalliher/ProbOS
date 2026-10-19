@@ -48,6 +48,33 @@ CREATE TABLE IF NOT EXISTS trust_outcome_receipts (
     result_beta      REAL NOT NULL,
     created_at       TEXT NOT NULL
 );
+
+-- BF-907: every record as it stood before an identity merge, so the merge can be reversed.
+CREATE TABLE IF NOT EXISTS trust_snapshots (
+    snapshot_id TEXT NOT NULL,
+    agent_id    TEXT NOT NULL,
+    alpha       REAL NOT NULL,
+    beta        REAL NOT NULL,
+    taken_at    TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, agent_id)
+);
+
+-- BF-907: one row per record merged from a sovereign-identity key into its slot record.
+CREATE TABLE IF NOT EXISTS trust_key_merges (
+    snapshot_id         TEXT NOT NULL,
+    source_key          TEXT NOT NULL,
+    target_key          TEXT NOT NULL,
+    source_alpha        REAL NOT NULL,
+    source_beta         REAL NOT NULL,
+    target_alpha_before REAL NOT NULL,
+    target_beta_before  REAL NOT NULL,
+    alpha_after         REAL NOT NULL,
+    beta_after          REAL NOT NULL,
+    prior_alpha         REAL NOT NULL,
+    prior_beta          REAL NOT NULL,
+    merged_at           TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, source_key)
+);
 """
 
 
@@ -121,6 +148,29 @@ class TrustOutcomeWriteResult:
             or self.beta <= 0.0
         ):
             raise ValueError("trust_outcome_result_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class TrustKeyMerge:
+    """BF-907: one record merged from a sovereign-identity key into its slot record.
+
+    The evidence above the network prior moves and the prior is counted once:
+    ``alpha_after = target_alpha_before + (source_alpha - prior_alpha)``,
+    and the same for beta. The slot keeps its own prior.
+    """
+
+    snapshot_id: str
+    source_key: str
+    target_key: str
+    source_alpha: float
+    source_beta: float
+    target_alpha_before: float
+    target_beta_before: float
+    alpha_after: float
+    beta_after: float
+    prior_alpha: float
+    prior_beta: float
+    merged_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +278,7 @@ class TrustNetwork:
         self._emit_event: Callable[[str, Any], None] | None = None
         self._floor_hit_count: int = 0
         self._tier_registry: Any = None
+        self._resolve_identity: Callable[[str], str | None] | None = None  # BF-907
 
         # AD-558: Dampening config — use defaults if not provided
         if dampening_config is not None:
@@ -247,6 +298,23 @@ class TrustNetwork:
     def set_tier_registry(self, registry: Any) -> None:
         """Inject agent tier registry for tier-aware filtering (AD-571)."""
         self._tier_registry = registry
+
+    def set_identity_resolver(self, fn: Callable[[str], str | None]) -> None:
+        """BF-907: inject sovereign-identity -> slot-id resolution for trust keys.
+
+        Called once at startup with ``AgentIdentityRegistry.resolve_slot_id``.
+        Records are keyed by slot id; a caller holding a certificate UUID, an
+        agent DID or an asset-tag UUID reads and writes the slot record.
+        """
+        self._resolve_identity = fn
+
+    def _canonical_key(self, agent_id: AgentID) -> AgentID:
+        """BF-907: the slot id for a sovereign identity; any other key unchanged."""
+        resolver = self._resolve_identity
+        if resolver is None:
+            return agent_id
+        slot_id = resolver(agent_id)
+        return slot_id if type(slot_id) is str and slot_id else agent_id
 
     async def start(self) -> None:
         """Initialize — load trust scores from SQLite if configured."""
@@ -319,7 +387,7 @@ class TrustNetwork:
         """
         self._require_sync_mutation_available()
         outcome = _TrustOutcomeInput(
-            agent_id=agent_id,
+            agent_id=self._canonical_key(agent_id),  # BF-907: the slot record, whatever form the caller holds
             success=success,
             weight=weight,
             intent_type=intent_type,
@@ -947,15 +1015,15 @@ class TrustNetwork:
         )
 
     def get_score(self, agent_id: AgentID) -> float:
-        """Get an agent's current trust score."""
-        record = self._records.get(agent_id)
+        """Get an agent's current trust score (BF-907: a sovereign identity reads its slot)."""
+        record = self._records.get(self._canonical_key(agent_id))
         if record is None:
             return self.prior_alpha / (self.prior_alpha + self.prior_beta)
         return record.score
 
     def get_record(self, agent_id: AgentID) -> TrustRecord | None:
-        """Get the full trust record for an agent."""
-        return self._records.get(agent_id)
+        """Get the full trust record for an agent (BF-907: a sovereign identity reads its slot)."""
+        return self._records.get(self._canonical_key(agent_id))
 
     def get_recent_events(self, n: int = 50) -> list[TrustEvent]:
         """Return last N trust events."""
@@ -963,8 +1031,9 @@ class TrustNetwork:
         return events[-n:]
 
     def get_events_for_agent(self, agent_id: str, n: int = 20) -> list[TrustEvent]:
-        """Return last N trust events for a specific agent."""
-        filtered = [e for e in self._event_log if e.agent_id == agent_id]
+        """Return last N trust events for a specific agent (BF-907: by slot id)."""
+        key = self._canonical_key(agent_id)
+        filtered = [e for e in self._event_log if e.agent_id == key]
         return filtered[-n:]
 
     def get_events_since(self, timestamp: float) -> list[TrustEvent]:
@@ -1147,6 +1216,110 @@ class TrustNetwork:
     async def save(self) -> None:
         """Manually trigger a save to disk."""
         await self._save_to_db()
+
+    async def merge_identity_records(
+        self, pairs: dict[str, str],
+    ) -> tuple[tuple[TrustKeyMerge, ...], dict[str, str]]:
+        """BF-907: merge records keyed by a sovereign identity into their slot records.
+
+        ``pairs`` maps each source key to its slot id. A source was created by
+        ``record_outcome`` from the network prior (``_plan_outcome``), so its
+        evidence above that prior moves to the slot and the prior is counted
+        once; the slot keeps its own (possibly tiered) prior. One trust.db
+        transaction snapshots every in-memory record, writes each target row,
+        deletes each source row and records each merge; memory changes only
+        after the commit. Returns the merges and the refused sources with a
+        reason (left untouched). Raises when the store is not started or the
+        write fails; the transaction is rolled back and nothing changes.
+        """
+        self._require_sync_mutation_available()
+        if self._db is None:
+            raise RuntimeError("trust_store_not_started")
+        refused: dict[str, str] = {}
+        merged_at = datetime.now(timezone.utc).isoformat()
+        snapshot_id = f"bf907-{merged_at}"
+        tolerance = 1e-9
+        planned: dict[str, tuple[float, float]] = {}
+        merges: list[TrustKeyMerge] = []
+        for source_key, target_key in sorted(pairs.items()):
+            source = self._records.get(source_key)
+            if source is None:
+                refused[source_key] = "source_missing"
+                continue
+            if target_key == source_key:
+                refused[source_key] = "target_is_source"
+                continue
+            evidence_alpha = source.alpha - self.prior_alpha
+            evidence_beta = source.beta - self.prior_beta
+            if evidence_alpha < -tolerance or evidence_beta < -tolerance:
+                refused[source_key] = "below_prior"
+                continue
+            if target_key in planned:
+                before = planned[target_key]
+            else:
+                target = self._records.get(target_key)
+                before = (
+                    (target.alpha, target.beta) if target is not None
+                    else (self.prior_alpha, self.prior_beta)
+                )
+            alpha_after = before[0] + max(evidence_alpha, 0.0)
+            beta_after = before[1] + max(evidence_beta, 0.0)
+            planned[target_key] = (alpha_after, beta_after)
+            merges.append(TrustKeyMerge(
+                snapshot_id=snapshot_id, source_key=source_key, target_key=target_key,
+                source_alpha=source.alpha, source_beta=source.beta,
+                target_alpha_before=before[0], target_beta_before=before[1],
+                alpha_after=alpha_after, beta_after=beta_after,
+                prior_alpha=self.prior_alpha, prior_beta=self.prior_beta,
+                merged_at=merged_at,
+            ))
+        if not merges:
+            return (), refused
+        async with self._lock:
+            self._outcome_transaction_inflight = True
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    await self._db.executemany(
+                        "INSERT INTO trust_snapshots (snapshot_id, agent_id, alpha, beta, taken_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        [(snapshot_id, r.agent_id, r.alpha, r.beta, merged_at) for r in self._records.values()],
+                    )
+                    for target_key, (alpha, beta) in planned.items():
+                        await self._db.execute(
+                            "INSERT OR REPLACE INTO trust_scores (agent_id, alpha, beta, updated) "
+                            "VALUES (?, ?, ?, ?)",
+                            (target_key, alpha, beta, merged_at),
+                        )
+                    for merge in merges:
+                        await self._db.execute("DELETE FROM trust_scores WHERE agent_id = ?", (merge.source_key,))
+                        await self._db.execute(
+                            "INSERT INTO trust_key_merges (snapshot_id, source_key, target_key, "
+                            "source_alpha, source_beta, target_alpha_before, target_beta_before, "
+                            "alpha_after, beta_after, prior_alpha, prior_beta, merged_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (merge.snapshot_id, merge.source_key, merge.target_key,
+                             merge.source_alpha, merge.source_beta,
+                             merge.target_alpha_before, merge.target_beta_before,
+                             merge.alpha_after, merge.beta_after,
+                             merge.prior_alpha, merge.prior_beta, merge.merged_at),
+                        )
+                    await self._db.commit()
+                except Exception:
+                    await self._db.execute("ROLLBACK")
+                    raise
+                for merge in merges:
+                    self._records.pop(merge.source_key, None)
+                for target_key, (alpha, beta) in planned.items():
+                    record = self._records.get(target_key)
+                    if record is None:
+                        self._records[target_key] = TrustRecord(agent_id=target_key, alpha=alpha, beta=beta)
+                    else:
+                        record.alpha = alpha
+                        record.beta = beta
+            finally:
+                self._outcome_transaction_inflight = False
+        return tuple(merges), refused
 
     # ── AD-702: Diplomatic Relations (discounted trust transitivity) ──
 

@@ -76,8 +76,10 @@ undeclared_stores:
   - working_memory
 - module: probos.consensus.trust
   tables:
+  - trust_key_merges
   - trust_outcome_receipts
   - trust_scores
+  - trust_snapshots
 - module: probos.crew_profile
   tables:
   - crew_profiles

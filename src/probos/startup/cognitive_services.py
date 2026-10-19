@@ -519,6 +519,7 @@ async def init_cognitive_services(
         episodic_memory=episodic_memory,
         event_log=event_log,
         identity_registry=identity_registry,
+        agent_registry=registry,
     )
 
     # Create CorrectionDetector + AgentPatcher (AD-229, AD-230)

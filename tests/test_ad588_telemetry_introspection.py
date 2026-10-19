@@ -351,7 +351,10 @@ class TestIntrospectiveTelemetryService:
         svc = IntrospectiveTelemetryService(runtime=rt)
 
         result = await svc.get_trust_state("agent-1")
-        assert result["score"] == 0.5
+        # BF-907: this pinned result["score"] == 0.5, the prior's plausible 0.5 shown as the agent's trust
+        # for an id that holds no record (the defect). A miss is now reported as a miss.
+        assert "score" not in result
+        assert result["record"] == "missing"
         assert "observations" not in result
 
     @pytest.mark.asyncio
@@ -490,7 +493,9 @@ class TestIntrospectiveTelemetryService:
         # Memory should still have static fields despite count failure
         assert snap["memory"]["episode_count"] == "unknown"
         # Trust should be fine
-        assert snap["trust"]["score"] == 0.5
+        # BF-907: this pinned snap["trust"]["score"] == 0.5, the prior shown for an id that holds no record
+        # (the defect). The trust domain still answers, and now reports the miss.
+        assert snap["trust"]["record"] == "missing"
 
 
 # ── Test Class 2: Self-Query Detection ──────────────────────────
@@ -765,7 +770,8 @@ class TestRenderTelemetryContext:
         }
         result = IntrospectiveTelemetryService.render_telemetry_context(snap)
         assert "5 episodes" in result
-        assert "no record yet" in result
+        # BF-907: the trust line for a snapshot with no trust record now says "no record for this id" (was "no record yet").
+        assert "no record for this id" in result
 
     def test_renders_empty_snapshot(self):
         result = IntrospectiveTelemetryService.render_telemetry_context({})
