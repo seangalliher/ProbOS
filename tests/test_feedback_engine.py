@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -12,6 +13,7 @@ from probos.cognitive.episodic import EpisodicMemory
 from probos.consensus.trust import TrustNetwork
 from probos.mesh.routing import HebbianRouter
 from probos.substrate.event_log import EventLog
+from probos.substrate.registry import AgentRegistry
 from probos.types import IntentResult, TaskDAG, TaskNode
 
 
@@ -80,12 +82,20 @@ def _make_node(
     return node
 
 
+def _one_agent_registry() -> MagicMock:
+    """BF-907: trust is keyed by slot id, so correction feedback needs a registry that names the one agent of the type."""
+    registry = MagicMock(spec=AgentRegistry)
+    registry.all.return_value = [SimpleNamespace(id="agent-1-slot", agent_type="agent-1")]
+    return registry
+
+
 def _engine(
     trust: MagicMock | None = None,
     hebbian: MagicMock | None = None,
     episodic: AsyncMock | None = None,
     event_log: AsyncMock | None = None,
     feedback_hebbian_reward: float = 0.10,
+    agent_registry: MagicMock | None = None,
 ) -> FeedbackEngine:
     return FeedbackEngine(
         trust_network=trust or _make_trust(),
@@ -93,6 +103,7 @@ def _engine(
         episodic_memory=episodic,
         event_log=event_log,
         feedback_hebbian_reward=feedback_hebbian_reward,
+        agent_registry=agent_registry,
     )
 
 
@@ -370,6 +381,7 @@ class TestApplyExecutionEdgeCases:
             hebbian=hebbian,
             episodic=episodic,
             event_log=event_log,
+            agent_registry=_one_agent_registry(),
         ).apply_correction_feedback(
             "read the file",
             correction,
@@ -377,6 +389,9 @@ class TestApplyExecutionEdgeCases:
             retry_success=True,
         )
 
+        # BF-907: the busy observation was attempted on the slot id of the one active agent of the type (it was
+        # keyed by the type); without this assertion the test passes without testing anything.
+        trust.record_outcome.assert_called_once_with("agent-1-slot", success=True)
         assert result.agents_updated == ["agent-1"]
         assert result.episode_stored is True
         hebbian.record_interaction.assert_called_once()
@@ -397,7 +412,9 @@ class TestApplyExecutionEdgeCases:
         )
 
         with pytest.raises(RuntimeError, match="^trust store defect$"):
-            await _engine(trust=trust).apply_correction_feedback(
+            await _engine(
+                trust=trust, agent_registry=_one_agent_registry(),  # BF-907: the slot-keyed write is the one that raises
+            ).apply_correction_feedback(
                 "read the file",
                 correction,
                 MagicMock(changes_description="fixed path"),

@@ -26,6 +26,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -146,6 +147,20 @@ def parse_did(did: str) -> dict[str, str] | None:
             "type": "agent",
         }
     return None
+
+
+# BF-907: the shapes a sovereign identity takes as a key: a certificate or asset-tag
+# UUID v4 (generate_agent_uuid) or a did:probos agent DID. A slot id never matches.
+_SOVEREIGN_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def is_sovereign_identity_key(key: str) -> bool:
+    """BF-907: whether ``key`` has the shape of a sovereign identity rather than a slot id."""
+    if type(key) is not str or not key:
+        return False
+    if key.startswith(f"did:{DID_METHOD}:"):
+        return True
+    return _SOVEREIGN_UUID.fullmatch(key) is not None
 
 
 @dataclass
@@ -525,6 +540,7 @@ class AgentIdentityRegistry:
         self._slot_cache: dict[str, AgentBirthCertificate] = {}  # slot_id -> cert
         self._ship_certificate: ShipBirthCertificate | None = None
         self._asset_cache: dict[str, AssetTag] = {}  # slot_id -> AssetTag
+        self._asset_slot_by_uuid: dict[str, str] = {}  # BF-907: asset_uuid -> slot_id (asset_tags.slot_id is UNIQUE)
         # AD-443: Foreign certificates and chain snapshots imported from peer ships.
         self._foreign_uuid_cache: dict[str, AgentBirthCertificate] = {}  # foreign agent_uuid -> cert
         self._foreign_chain_cache: dict[str, list[dict[str, Any]]] = {}  # origin_ship_did -> chain blocks
@@ -590,6 +606,7 @@ class AgentIdentityRegistry:
                         installed_at=row[3], pool_name=row[4], tier=row[5],
                     )
                     self._asset_cache[tag.slot_id] = tag
+                    self._asset_slot_by_uuid[tag.asset_uuid] = tag.slot_id
 
             # AD-443b: Load foreign birth certificates imported from peer ships.
             async with self._db.execute(
@@ -784,6 +801,31 @@ class AgentIdentityRegistry:
         """Return all certificates for a given agent_type."""
         return [c for c in self._uuid_cache.values() if c.agent_type == agent_type]
 
+    def resolve_slot_id(self, identity: str) -> str | None:
+        """BF-907: the deployment slot a sovereign identity is bound to, or None.
+
+        Accepts a birth-certificate UUID (native or foreign), a did:probos agent
+        DID, or an asset-tag UUID. Returns None for any other key (a slot id, a
+        peer or device key, an unknown id) and when a certificate is bound to
+        more than one slot, so the caller keeps the key it was given. Reads the
+        in-memory caches only; never raises.
+        """
+        if not is_sovereign_identity_key(identity):
+            return None
+        agent_uuid = identity
+        if identity.startswith("did:"):
+            parsed = parse_did(identity)
+            if parsed is None or parsed.get("type") != "agent":
+                return None
+            agent_uuid = parsed["agent_uuid"]
+        slots = [slot for slot, cert in self._slot_cache.items() if cert.agent_uuid == agent_uuid]
+        if len(slots) == 1:
+            return slots[0]
+        if slots:
+            logger.debug("BF-907: identity %s is bound to %d slots; not resolved", agent_uuid, len(slots))
+            return None
+        return self._asset_slot_by_uuid.get(agent_uuid)
+
     # ── Asset Tags ─────────────────────────────────────────────────
 
     async def issue_asset_tag(
@@ -811,6 +853,7 @@ class AgentIdentityRegistry:
 
         def committed() -> None:  # BF-885 the asset tag is held once it has committed
             self._asset_cache[tag.slot_id] = tag
+            self._asset_slot_by_uuid[tag.asset_uuid] = tag.slot_id
 
         async with self._writer.unit(committed) as db:  # BF-885 an asset tag is one unit: nothing else commits or rolls back with it
             await db.execute(

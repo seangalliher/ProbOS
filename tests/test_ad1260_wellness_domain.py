@@ -51,8 +51,9 @@ class _FakeTrust:
         self.subjects.append(agent_id)
         return self.scores[agent_id]
 
-    def get_record(self, agent_id: str) -> None:
-        return None
+    def get_record(self, agent_id: str) -> Any:
+        # BF-907: telemetry scores only a subject with a record; a known subject has one.
+        return SimpleNamespace(observations=7, uncertainty=0.123456) if agent_id in self.scores else None
 
     def get_events_for_agent(self, agent_id: str, n: int = 5) -> list[Any]:
         return []
@@ -469,7 +470,8 @@ async def _passive_output(runtime: _FakeRuntime, site: str) -> Any:
     from probos.cognitive.sub_tasks.query import QueryHandler
     context = {
         "params": {"title": "How is your trust score?", "text": ""},
-        "_agent_id": "transient-slot", "sovereign_id": _SUBJECT,
+        # BF-907: the slot id is telemetry's subject; the sovereign id differs.
+        "_agent_id": _SUBJECT, "sovereign_id": "sovereign-of-subject",
         "context": "Thread content", "_agent_type": "counselor",
         "_agent_rank": None, "_skill_profile": None, "_formatted_memories": "",
     }

@@ -2485,8 +2485,8 @@ class ProactiveCognitiveLoop:
         try:
             _telemetry_svc = getattr(rt, '_introspective_telemetry', None)
             if _telemetry_svc:
-                _agent_id = getattr(agent, 'sovereign_id', None) or agent.id
-                _snapshot = await _telemetry_svc.get_full_snapshot(_agent_id)
+                # BF-907: the slot id; the memory domain resolves the sovereign id itself.
+                _snapshot = await _telemetry_svc.get_full_snapshot(agent.id)
                 _rendered = _telemetry_svc.render_telemetry_context(_snapshot)
                 if _rendered:
                     context["introspective_telemetry"] = _rendered

@@ -421,9 +421,12 @@ class TestCorrectionFeedback:
         """Retry success → trust score increased."""
         trust = TrustNetwork()
         hebbian = HebbianRouter()
-        engine = FeedbackEngine(trust_network=trust, hebbian_router=hebbian)
+        # BF-907: trust is keyed by slot id; the one active agent of the type receives it.
+        registry = MagicMock(spec=AgentRegistry)
+        registry.all.return_value = [MagicMock(id="fetch_news-slot", agent_type="fetch_news")]
+        engine = FeedbackEngine(trust_network=trust, hebbian_router=hebbian, agent_registry=registry)
 
-        baseline = trust.get_score("fetch_news")
+        baseline = trust.get_score("fetch_news-slot")
 
         await engine.apply_correction_feedback(
             original_text="get CNN news",
@@ -432,7 +435,8 @@ class TestCorrectionFeedback:
             retry_success=True,
         )
 
-        assert trust.get_score("fetch_news") > baseline
+        assert trust.get_score("fetch_news-slot") > baseline
+        assert trust.get_record("fetch_news") is None  # BF-907: no record keyed by the type
 
     @pytest.mark.asyncio
     async def test_trust_not_updated_on_failure(self):

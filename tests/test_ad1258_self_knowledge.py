@@ -71,6 +71,14 @@ class _FakeTrustEvent:
     new_score: float
 
 
+@dataclass(frozen=True)
+class _FakeTrustRecord:
+    """BF-907: the fields telemetry reads (as test_ad1259_one_source_of_truth.py:63-66)."""
+
+    observations: int = 7
+    uncertainty: float = 0.123456
+
+
 @dataclass
 class _FakeTrustNetwork:
     scores: dict[str, float]
@@ -84,9 +92,10 @@ class _FakeTrustNetwork:
         self.score_subjects.append(agent_id)
         return self.scores[agent_id]
 
-    def get_record(self, agent_id: str) -> None:
+    def get_record(self, agent_id: str) -> _FakeTrustRecord | None:
+        # BF-907: telemetry scores only a subject with a record; a known subject has one.
         self.record_subjects.append(agent_id)
-        return None
+        return _FakeTrustRecord() if agent_id in self.scores else None
 
     def get_events_for_agent(
         self, agent_id: str, n: int = 5,
@@ -223,7 +232,8 @@ def test_render_social_missing_affinity_fields_uses_placeholders(
             {"memory": {}},
             ["Memory: unknown episodes (cosine similarity retrieval, no offline processing)"],
         ),
-        ({"trust": {}}, ["Trust: no record yet"]),
+        # BF-907: the no-record trust line now reads "no record for this id" (it read "no record yet").
+        ({"trust": {}}, ["Trust: no record for this id"]),
         ({"cognitive": {}}, ["Cognitive zone: UNKNOWN"]),
         ({"temporal": {}}, []),
         ({"social": {}}, []),
@@ -335,7 +345,7 @@ async def test_collection_to_render_preserves_social() -> None:
 
     assert snapshot == original
     assert calls == {"hebbian": 1, "trust_events": 2}
-    assert "Trust: 0.5124\n" in rendered
+    assert "Trust: 0.5124 (7 observations, uncertainty \u00b10.1235)\n" in rendered
     assert other_marker not in rendered
     assert "zero_weight_probe" not in rendered
     assert "negative_weight_probe" not in rendered
@@ -1672,7 +1682,7 @@ async def test_collected_social_reaches_conversational_prompt(intent: str) -> No
     assert trust.score_subjects == [subject]
     assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
-    assert "Trust: 0.5124\n" in prompt
+    assert "Trust: 0.5124 (7 observations, uncertainty \u00b10.1235)\n" in prompt
     assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt
@@ -1690,8 +1700,9 @@ async def test_query_collected_social_reaches_prompt(consumer: str) -> None:
     runtime, calls, trust = _consumer_telemetry_runtime(subject)
     context = {
         "params": {"title": "How is your trust score?", "text": ""},
-        "_agent_id": "transient-agent",
-        "sovereign_id": subject,
+        # BF-907: telemetry's subject is the slot id; the sovereign id differs (it was the subject: the defect).
+        "_agent_id": subject,
+        "sovereign_id": "query-consumer-sovereign",
         "context": "Thread content",
         "_agent_type": "agent",
         "_agent_rank": None,
@@ -1718,7 +1729,7 @@ async def test_query_collected_social_reaches_prompt(consumer: str) -> None:
     assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
     assert "consumer_social_marker (0.8765)" in result.result["introspective_telemetry"]
-    assert "Trust: 0.5124\n" in prompt
+    assert "Trust: 0.5124 (7 observations, uncertainty \u00b10.1235)\n" in prompt
     assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt
@@ -1748,7 +1759,7 @@ async def test_proactive_collected_social_reaches_think_prompt() -> None:
     assert trust.record_subjects == [subject]
     assert trust.event_queries == [(subject, 5), (subject, 20)]
     assert "consumer_social_marker (0.8765)" in context_parts["introspective_telemetry"]
-    assert "Trust: 0.5124\n" in prompt
+    assert "Trust: 0.5124 (7 observations, uncertainty \u00b10.1235)\n" in prompt
     assert "consumer_social_marker (0.8765)" in prompt
     assert "interaction breadth: 1" in prompt
     assert "another_subject_marker" not in prompt

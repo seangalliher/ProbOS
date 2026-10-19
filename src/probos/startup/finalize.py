@@ -6620,6 +6620,19 @@ async def finalize_startup(
             exc_info=True,
         )
 
+    # BF-907: every crew member's telemetry trust equals its header trust.
+    try:
+        from probos.startup.trust_identity import verify_crew_trust_identity
+
+        await verify_crew_trust_identity(
+            trust_network=runtime.trust_network,
+            identity_registry=runtime.identity_registry,
+            registry=runtime.registry,
+            telemetry=runtime.introspective_telemetry,
+        )
+    except Exception:
+        logger.warning("BF-907: the crew trust identity check failed to run; startup continues", exc_info=True)
+
     logger.info("Startup [finalize]: complete")
     return FinalizationResult(
         conn_manager=conn_manager,

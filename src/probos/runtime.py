@@ -3117,6 +3117,8 @@ class ProbOSRuntime:
             pools=self.pools,
             spawner=self.spawner,
             trust_network=self.trust_network,
+            identity_registry=self.identity_registry,
+            event_log=self.event_log,
             intent_bus=self.intent_bus,
             hebbian_router=self.hebbian_router,
             episodic_memory=self.episodic_memory,
