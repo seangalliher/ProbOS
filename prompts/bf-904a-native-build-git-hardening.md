@@ -4012,3 +4012,363 @@ The module then has 9 test functions and 11 cases (S1, S2, S3, S4 twice, S5, S6 
 A9.1's `S6[vanished]` assertions about the block index were wrong, and the Builder stopped on them instead of adapting. `BuilderAgent._parse_file_blocks` turns each `===MODIFY:===` block into its own change, and `_unapplied_repair_blocks` numbers a refusal's `i` within that change's `replacements` list. The two blocks of the `vanished` reply are therefore two changes with one replacement each, and the refused second block is "block 0" of its change. The behaviour A9.1 wanted to pin is unchanged: the text vanishes because an EARLIER change of the same file replaced it, and the whole repair is refused.
 
 **Supersedes in A9.1, `vanished` only:** the two assertions `"SEARCH block 1 not found in src/probos/a.py; refused" in result.error` and `"SEARCH block 0" not in result.error` are replaced by `"SEARCH block 0 not found in src/probos/a.py; refused" in result.error` and `result.error.count("SEARCH block") == 1` (exactly one refusal: the first change applies as written, the second is the refused one; the count also distinguishes a refusal of the second change from none and from both). Every other assertion and premise of A9.1 stands. `dependent`, S7 and S8 are unchanged.
+
+## Amendment A10 (2026-10-19): one file per physical target, the disk's round trip, a whole-list pre-pass, a fail-closed repair application
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only answer to M3 review round 1 (session `d9e3ac0f`). The only wording changes: A10.1's SEARCH, which the answer described ("the whole function, from ... through its `return refusals`"), is the staged function's literal text (checked to occur once in the staged file); the rows table is rebuilt with a File column and the full REPLACE text of A10-R14 and A10-R15 (the answer wrote "the same line with `{0}`" and "the same line without `, 1`"); the answer's "Verified Against Codebase" and "Absence Verified" records are appended. The decisions table that preceded the amendment in the answer is recorded on #1585.
+
+**Verdict:** ✅ This fixes M3 round 1's F1 to F4. M2 is not touched. One helper serves the main loop and the repair.
+
+- **D44 (F1).** The pre-check's state is keyed by `_same_file_key`: `(st_dev, st_ino)` for an existing target, `_write_target_key` otherwise. D32's restore key is unchanged.
+- **D45 (F2).** Between changes, the simulated text is `_round_trip(text)`, which is what `Path.read_text` returns after `Path.write_text`.
+- **D46 (F3).** The main loop judges every path first. Then `_unapplied_blocks` checks the admitted list, and a list with any refused block writes nothing. The loop's own refusals stay as the write-time check.
+- **D47.** A change carrying `base` belongs to the main loop (BF-896). The helper skips it and leaves that file's later blocks to the writer.
+- **D48.** The repair application matches each block again against the disk. A mismatch is recorded as a refusal (`when applied; refused`), that change is not written and the loop stops. It is never a silent no-op, and the raise for a non-regular target stays.
+- **D49.** `_unapplied_repair_blocks` is renamed `_unapplied_blocks`, because both lists now use it.
+- **D50.** The two P3 survivors become rows A10-R14 and A10-R15, killed by S1 and S12.
+- **D51 (F4).** Both tracker headings read "a non-empty change list that applies nothing".
+- **D52 (disclosed).** A main-loop MODIFY target that cannot be decoded is now a refusal; it used to be a raw exception. Path refusals are listed before block refusals.
+
+### A10.1 `src/probos/cognitive/builder.py`: the helpers (replaces `_unapplied_repair_blocks`)
+SEARCH:
+```python
+def _unapplied_repair_blocks(fix_changes: list[dict[str, Any]], work_dir: str) -> list[str]:
+    """BF-904a (#1585): a refusal for each repair MODIFY block that cannot apply as written.
+
+    The blocks are checked in order against the text the earlier blocks of the same response
+    leave (the parser puts creates first), so the check agrees with the application. A target
+    that exists but is not a regular file is left to the application, which raises as before
+    (BF-898 keeps its disclosure). Names the block and the file, never their text.
+    """
+    refusals: list[str] = []
+    texts: dict[str, str] = {}
+    for change in fix_changes:
+        rel = change["path"]
+        if change["mode"] != "modify":
+            if isinstance(change.get("content"), str):
+                texts[rel] = change["content"]
+            continue
+        if rel not in texts:
+            path = Path(work_dir) / rel
+            if not path.exists():
+                refusals.append(f"MODIFY target {rel} does not exist; refused")  # BF-904a: a repair's missing target
+                continue
+            if not path.is_file():
+                continue
+            try:
+                texts[rel] = path.read_text(encoding="utf-8")
+            except (OSError, ValueError):
+                refusals.append(f"MODIFY target {rel} could not be read; refused")
+                continue
+        text = texts[rel]
+        for i, repl in enumerate(change.get("replacements", [])):
+            if repl["search"] not in text:
+                refusals.append(f"SEARCH block {i} not found in {rel}; refused")  # BF-904a: a repair's unmatched block
+                continue
+            text = text.replace(repl["search"], repl["replace"], 1)
+        texts[rel] = text
+    return refusals
+```
+REPLACE:
+```python
+def _round_trip(text: str) -> str:
+    r"""BF-904a A10 (D45): the text ``Path.read_text`` returns after ``Path.write_text(text)`` on this host.
+
+    The write turns each ``\n`` into ``os.linesep`` (``\r\n`` on Windows, unchanged on POSIX); the read
+    maps ``\r\n``, then a lone ``\r``, to ``\n`` (universal newlines). A ``\r\n`` in a replacement so
+    reads back as ``\n\n`` on Windows and ``\n`` on POSIX, and never with a ``\r``.
+    """
+    return text.replace("\n", os.linesep).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _same_file_key(work_dir: str, rel: str) -> tuple[Any, ...]:
+    """BF-904a A10 (D44): one key per file on disk, whatever accepted name reaches it.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by ``_write_target_key``. The pre-check writes
+    nothing, so a file a change creates is absent, and keyed by path, for the whole check.
+    """
+    key = _write_target_key(work_dir, rel)
+    try:
+        info = os.stat(key)
+    except (OSError, ValueError):
+        return ("path", key)
+    return ("file", info.st_dev, info.st_ino) if info.st_ino else ("path", key)
+
+
+def _unapplied_blocks(changes: list[dict[str, Any]], work_dir: str) -> list[str]:
+    """BF-904a (#1585): a refusal for each MODIFY block in *changes* that cannot apply as written.
+
+    A10: the main loop's list (after BF-894's path check) and a repair response are each checked whole
+    before any write. Blocks are matched in order against the text the earlier changes of the same file
+    leave, as the disk returns it (``_round_trip``), one file per ``_same_file_key``; creates parse
+    first. A change carrying ``base`` is BF-896's, judged by the main loop, and its file's later blocks
+    are left to the writer (D47). A target that exists but is not a regular file is left to the writer,
+    which raises as before (BF-898 keeps its disclosure). Names the block and the file, never their text.
+    """
+    refusals: list[str] = []
+    texts: dict[tuple[Any, ...], str | None] = {}  # None: the writer judges this file's later blocks
+    for change in changes:
+        rel = change["path"]
+        key = _same_file_key(work_dir, rel)
+        if "base" in change:  # BF-904a A10 (D47): BF-896's compare-and-swap is the main loop's
+            texts[key] = None
+            continue
+        if change["mode"] != "modify":
+            if isinstance(change.get("content"), str):
+                texts[key] = _round_trip(change["content"])
+            continue
+        if key not in texts:
+            path = Path(work_dir) / rel
+            if not path.exists():
+                refusals.append(f"MODIFY target {rel} does not exist; refused")  # BF-904a: a repair's missing target
+                continue
+            if not path.is_file():
+                continue
+            try:
+                texts[key] = path.read_text(encoding="utf-8")
+            except (OSError, ValueError):
+                refusals.append(f"MODIFY target {rel} could not be read; refused")
+                continue
+        text = texts[key]
+        if text is None:
+            continue
+        for i, repl in enumerate(change.get("replacements", [])):
+            if repl["search"] not in text:
+                refusals.append(f"SEARCH block {i} not found in {rel}; refused")  # BF-904a: a repair's unmatched block
+                continue
+            text = text.replace(repl["search"], repl["replace"], 1)
+        texts[key] = _round_trip(text)  # BF-904a A10 (D45): what the next change reads back
+    return refusals
+```
+
+### A10.2 `src/probos/cognitive/builder.py`: the main loop's pre-pass (`:3209-3219`)
+SEARCH:
+```python
+        # 4. Write/modify files
+        for change in file_changes:
+            # Validate file path before any disk operations (BF-894: lexical and identity)
+            path_error = builder_write_refusal(change["path"], work_dir)
+            if path_error:
+                logger.warning("BuilderAgent: %s — skipping", path_error)
+                validation_errors.append(path_error)
+                continue
+
+            path = Path(work_dir) / change["path"]
+            if "base" in change:
+```
+REPLACE:
+```python
+        # 4. Write/modify files
+        admitted: list[dict[str, Any]] = []
+        for change in file_changes:
+            # Validate file path before any disk operations (BF-894: lexical and identity)
+            path_error = builder_write_refusal(change["path"], work_dir)
+            if path_error:
+                logger.warning("BuilderAgent: %s — skipping", path_error)
+                validation_errors.append(path_error)
+                continue
+            admitted.append(change)
+        # BF-904a A10 (D46): every SEARCH/REPLACE block of the list is checked before any write, as a
+        # repair's is; a list with one that cannot apply writes nothing, so no partial file reaches the
+        # review or the tests. The checks below stay and refuse whatever this pre-pass did not model.
+        blocked = _unapplied_blocks(admitted, work_dir)  # BF-904a A10: the main loop's pre-pass
+        validation_errors.extend(blocked)
+        for change in [] if blocked else admitted:  # BF-904a A10 (D46): a blocked list writes nothing
+            path = Path(work_dir) / change["path"]
+            if "base" in change:
+```
+
+### A10.3 `src/probos/cognitive/builder.py`: the repair call and the application's flag (`:3462-3471`)
+SEARCH:
+```python
+                    unapplied = _unapplied_repair_blocks(fix_changes, work_dir)  # BF-904a: checked before any block is applied
+                    if unapplied:
+                        for refusal in unapplied:
+                            logger.warning("BuilderAgent: repair refused: %s", refusal)
+                        validation_errors.extend(unapplied)
+                        break  # BF-904a: no further repair attempt
+
+                    # Apply fix changes
+                    for change in fix_changes:
+```
+REPLACE:
+```python
+                    unapplied = _unapplied_blocks(fix_changes, work_dir)  # BF-904a: checked before any block is applied
+                    if unapplied:
+                        for refusal in unapplied:
+                            logger.warning("BuilderAgent: repair refused: %s", refusal)
+                        validation_errors.extend(unapplied)
+                        break  # BF-904a: no further repair attempt
+
+                    # Apply fix changes
+                    late_refused = False  # BF-904a A10 (D48): a block the disk does not match at write time
+                    for change in fix_changes:
+```
+
+### A10.4 `src/probos/cognitive/builder.py`: the application matches again (`:3476-3483`)
+SEARCH:
+```python
+                            if change["mode"] == "modify":
+                                # BF-904a: _unapplied_repair_blocks has checked that the target exists
+                                # and that every block matches, in order.
+                                original = path.read_text(encoding="utf-8")
+                                mod = original
+                                for repl in change.get("replacements", []):
+                                    mod = mod.replace(repl["search"], repl["replace"], 1)
+                                if mod != original:
+```
+REPLACE:
+```python
+                            if change["mode"] == "modify":
+                                # BF-904a: _unapplied_blocks has checked that the target exists and that
+                                # every block matches, in order; A10 (D48) matches again against the disk.
+                                original = path.read_text(encoding="utf-8")
+                                mod = original
+                                late: list[str] = []
+                                for i, repl in enumerate(change.get("replacements", [])):
+                                    if repl["search"] not in mod:
+                                        late.append(f"SEARCH block {i} not found in {change['path']} when applied; refused")
+                                        continue
+                                    mod = mod.replace(repl["search"], repl["replace"], 1)
+                                if late:
+                                    # BF-904a A10 (D48): never a silent no-op. This change is not written,
+                                    # the repair stops and the build is refused; earlier writes are disclosed.
+                                    for refusal in late:
+                                        logger.warning("BuilderAgent: repair refused: %s", refusal)
+                                    validation_errors.extend(late)
+                                    late_refused = True
+                                    break
+                                if mod != original:
+```
+
+### A10.5 `src/probos/cognitive/builder.py`: stop after a late refusal (`:3509-3511`)
+SEARCH:
+```python
+                                result.metadata["fix_loop_files"] = sorted(fix_loop_files)
+
+                    all_changes.extend(fix_changes)
+```
+REPLACE:
+```python
+                                result.metadata["fix_loop_files"] = sorted(fix_loop_files)
+
+                    if late_refused:
+                        break  # BF-904a A10 (D48): no further repair attempt
+                    all_changes.extend(fix_changes)
+```
+
+### A10.6 Tests: `tests/test_bf904a_unapplied_blocks.py`, after S8 and before E2
+
+New constants: `LINKED = "src/probos/linked.py"` and `CASE_ALIAS = "src/probos/A.py"`. The rules are those of 9a and A9.1. Two edits to existing text:
+- **S2:** line 271 becomes `assert result.files_written == [], "a list with a missing target writes nothing (A10 D46)"`, and line 275's message becomes "the other change is never written".
+- **Module docstring:** `_unapplied_repair_blocks` becomes `_unapplied_blocks`. Add the bullet "a main-loop list with one such block writes nothing, so no partial file reaches the review or the tests; one file is one `_same_file_key`, and its text is what the disk returns (`_round_trip`)".
+
+The table's "build" is `[modify TARGET "x = 1" to "x = 2"]` with `run_tests=True` and `max_fix_attempts=2`, using `_FakeModel`, `_FakeTargetedTests` and `monkeypatch` as S6 does, unless a row says otherwise.
+
+| ID | Test | Premises, then assertions |
+|---|---|---|
+| S9 | `test_two_names_of_one_file_in_a_repair_are_matched_as_one_file`, parametrised kind {`hardlink`, `case`} × case {`vanished`, `dependent`} (4 cases) | **Setup.** `hardlink`: `os.link(repo/TARGET, repo/LINKED)`, then `git add -A` and commit; alias = LINKED; if `os.link` raises `OSError`, skip with "the filesystem has no hard links". `case`: alias = CASE_ALIAS; if `not (repo/CASE_ALIAS).exists()`, skip with "the filesystem does not fold case, so A.py is another file; the hardlink cases cover identity here". **Premises:** `os.path.samefile(repo/TARGET, repo/alias)`; `fix_loop_write_refusal(alias, str(repo)) is None`; the parser returns `[("modify", TARGET), ("modify", alias)]`; for `hardlink`, also `builder_module._write_target_key(str(repo), TARGET) != …(LINKED)`. The runner watches TARGET with outcomes `[False, True]`. **`vanished`** (repair TARGET "x = 2" to "x = 5", then alias "x = 2" to "x = 6"): `success is False`; `runner.await_count == 1` and `events == ["run", "repair"]`; `fix_attempts == 1`; `"fix_loop_files" not in metadata`; `f"SEARCH block 0 not found in {alias}; refused" in error`; `error.count("SEARCH block") == 1`. State: for `case`, `_state == before`. For `hardlink` (the A6/A7.6 observer), `_state(repo)[1:] == before[1:]`, samefile still holds, and `git -c core.fscache=false status --porcelain` is empty. **`dependent`** (TARGET "x = 2" to "x = 3", then alias "x = 3" to "x = 4"): `success is True`; a commit; `events == ["run", "repair", "run"]`; `runner.seen == ["x = 2\n", "x = 4\n"]`; `_blob(branch, TARGET) == "x = 4\n"`. |
+| S10 | `test_a_repair_is_matched_against_the_text_the_disk_returns`, parametrised `vanished`, `dependent`, `created` | **Oracle**, computed on this host: `probe.write_text(s, encoding="utf-8")`, then `disk = probe.read_text(encoding="utf-8")`. Premise: `"\r" not in disk`. **`vanished`**: repair TARGET "x = 2" to "x = 3\r\nz = 1", then TARGET "x = 3\r\nz = 1" to "x = 4". Premises: the parsed first replacement keeps the `\r`; the second SEARCH is in `"x = 3\r\nz = 1\n"` and not in `disk` (where s = that text). Outcomes `[False, True]`. Asserts as S9 `vanished` with TARGET, plus `_state == before`. **`dependent`**: the second SEARCH is `disk.rstrip("\n")`. Premise: it is in `disk` and not in the in-memory text. Asserts as S9 `dependent`. **`created`**: repair `===FILE: HELPER===\nh = 1\r\nk = 1\n===END FILE===` plus MODIFY HELPER with SEARCH `disk_h.rstrip("\n")` (the oracle on `"h = 1\r\nk = 1\n"`) to "h = 2". Premise: the parsed content is `"h = 1\r\nk = 1\n"`. The runner watches HELPER with `[False, True]`. Asserts `success is True`, `runner.seen == [None, "h = 2\n"]`, `_blob(branch, HELPER) == "h = 2\n"`. Holds on Windows and Linux; no skip. |
+| S11 | `test_no_change_of_a_list_with_an_unmatched_block_reaches_the_review_or_the_tests` | `changes = _parse_file_blocks(_modify_block(OTHER, "y = 1", "y = 2") + _modify_block(TARGET, "x = 1", "x = 2") + _modify_block(TARGET, "no such text", "z"))`. Premise: the parser returns `[OTHER, TARGET, TARGET]`, all MODIFY. The runner watches TARGET. `run_tests=True`, no model. Asserts: `success is False`; no commit; `runner.await_count == 0`; `files_modified == []` and `files_written == []`; `"SEARCH block 0 not found in src/probos/a.py; refused" in error`; `error.count("SEARCH block") == 1`; `_state == before`. |
+| S12 | `test_only_the_first_occurrence_is_replaced_before_the_next_block_is_matched` (control) | `_plain_repo(files={TARGET: "a = 1\na = 1\n", OTHER: "y = 1\n"})`. One change with pairs "a = 1" to "a = 2" and "a = 1" to "a = 3"; `run_tests=False`. Premise: the text holds "a = 1" twice. Asserts `success is True`, a commit, `files_modified == [TARGET]`, `_blob(branch, TARGET) == "a = 2\na = 3\n"`. |
+| S13 | `test_the_write_time_checks_refuse_what_the_pre_check_missed`, parametrised `main` and `repair` | `monkeypatch.setattr(builder_module, "_unapplied_blocks", lambda changes, work_dir: [])`. **`main`**: S1's change plus `[modify GONE "a" to "b"]`, `run_tests=False`. Asserts: both "SEARCH block 1 not found in src/probos/a.py; refused" and "MODIFY target src/probos/gone.py does not exist; refused" are in the error; `files_modified == []`; `_state == before`. **`repair`**: the S6 `vanished` reply, outcomes `[False, True]`. Asserts: `success is False`; no commit; `runner.await_count == 1`; `fix_attempts == 1`; `metadata["fix_loop_files"] == [TARGET]`; `f"SEARCH block 0 not found in {TARGET} when applied; refused" in error`; `_state == before` (the refusal keeps the normal cleanup). |
+
+`tests/test_bf896_executor_identity_and_blocks.py:339,348`: the wording "the other block's write is undone" becomes "the other block is never written". The assertion itself is unchanged.
+
+**Expected red results.** The Builder shows each one first.
+- **Staged tree:** S9 `vanished` gives `success=True` (a partial commit). S9 `dependent`, S10 `dependent` and S10 `created` are false refusals. S10 `vanished` commits partially. S11 awaits the runner once. S9 `case` runs on Windows and is skipped on Ubuntu. S12 passes: it is a control. S13 fails at setup (`AttributeError: _unapplied_blocks`); the substance of its red is the S9/S10 `vanished` results.
+- **M2 `0994ebcd`:** the `dependent` and `created` cases pass and the `vanished` cases fail.
+
+### A10.7 Rows (Partition P3; each SEARCH is a whole stripped line, unique in the A10 file)
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| A10-R1 | `src/probos/cognitive/builder.py` | `return ("file", info.st_dev, info.st_ino) if info.st_ino else ("path", key)` | `return ("path", key)` | S9 `hardlink-*` |
+| A10-R2 | `src/probos/cognitive/builder.py` | `return text.replace("\n", os.linesep).replace("\r\n", "\n").replace("\r", "\n")` | `return text` | S10 (all) |
+| A10-R3 | `src/probos/cognitive/builder.py` | `texts[key] = _round_trip(change["content"])` | `texts[key] = change["content"]` | S10 `created` |
+| A10-R4 | `src/probos/cognitive/builder.py` | `texts[key] = _round_trip(text)  # BF-904a A10 (D45): what the next change reads back` | `texts[key] = text` | S10 `vanished`, `dependent` |
+| A10-R5 | `src/probos/cognitive/builder.py` | `if "base" in change:  # BF-904a A10 (D47): BF-896's compare-and-swap is the main loop's` | `if False:` | `test_whole_file_modify_with_base_over_a_removed_target_is_refused_and_blocks_the_whole_commit` (BF-896; "different content" is lost) |
+| A10-R6 | `src/probos/cognitive/builder.py` | `blocked = _unapplied_blocks(admitted, work_dir)  # BF-904a A10: the main loop's pre-pass` | `blocked = []` | S11 |
+| A10-R7 | `src/probos/cognitive/builder.py` | `validation_errors.extend(blocked)` | `pass` | S1 |
+| A10-R8 | `src/probos/cognitive/builder.py` | `for change in [] if blocked else admitted:  # BF-904a A10 (D46): a blocked list writes nothing` | `for change in admitted:` | S11, S2 |
+| A10-R9 | `src/probos/cognitive/builder.py` | `admitted.append(change)` | `pass` | S12 |
+| A10-R10 | `src/probos/cognitive/builder.py` | `if repl["search"] not in mod:` | `if False:` | S13 `repair` |
+| A10-R11 | `src/probos/cognitive/builder.py` | `validation_errors.extend(late)` | `pass` | S13 `repair` |
+| A10-R12 | `src/probos/cognitive/builder.py` | `late_refused = True` | `pass` | S13 `repair` (the runner runs twice) |
+| A10-R13 | `src/probos/cognitive/builder.py` | `break  # BF-904a A10 (D48): no further repair attempt` | `pass` | S13 `repair` |
+| A10-R14 | `src/probos/cognitive/builder.py` | `refusals.append(f"SEARCH block {i} not found in {rel}; refused")  # BF-904a: a repair's unmatched block` | `refusals.append(f"SEARCH block {0} not found in {rel}; refused")  # BF-904a: a repair's unmatched block` | S1 |
+| A10-R15 | `src/probos/cognitive/builder.py` | `text = text.replace(repl["search"], repl["replace"], 1)` | `text = text.replace(repl["search"], repl["replace"])` | S12 |
+
+**Existing rows that change:**
+- S-a, S-b and S-c are now killed by S13 `main`. S1 and S2 no longer reach the loop's own lines.
+- S-e's SEARCH becomes `unapplied = _unapplied_blocks(fix_changes, work_dir)  # BF-904a: checked before any block is applied`.
+- HRS3's SEARCH becomes A10-R4's line, with REPLACE `pass`; S6 still kills it.
+- HRS4's SEARCH becomes `if key not in texts:`.
+- S-f, S-g, HRS1, HRS2, HRS5 and HRS6 are unchanged.
+- No row: `if text is None:` is reachable only by a list that mixes `base` and parser changes, which no producer makes.
+
+### A10.8 Trackers
+- **`DECISIONS.md:136` and the `PROGRESS.md:3` heading (F4):** "an unmatched block or an empty change list is a refusal" becomes "an unmatched block or a non-empty change list that applies nothing is a refusal".
+- **`DECISIONS.md:138`:**
+  - "(the file is not written)" becomes "(no change of that list is written, and no partial file reaches the tests)".
+  - "Amendments A1 to A8" becomes "A1 to A10".
+  - "(M3, 9 functions, 11 cases)" becomes "(M3, 14 functions, 22 cases)".
+- **`DECISIONS.md:152` (D14):** the wording becomes A10.9's D14 text, with `_unapplied_blocks` in place of the old name.
+- **After `DECISIONS.md:182`:** add D44 to D52 as one line each, in the wording above.
+- **`DECISIONS.md:185` (Deferred):** add the A10.10 items.
+- **`DECISIONS.md:188`:** "A1 to A8" becomes "A1 to A10".
+- **`PROGRESS.md:3`:** "the file is not written" becomes "no change of that list is written". "57 new test functions (118 cases)" becomes "62 new test functions (129 cases)" (25 + 23 + 14 functions; 40 + 67 + 22 cases).
+
+### A10.9 What A10 supersedes (the original lines stay)
+- **D14:** "A main-loop file with an unmatched block is not written at all" becomes "A main-loop list with an unmatched block or a missing MODIFY target writes nothing (D46)". "the repair pre-check `_unapplied_repair_blocks`" becomes "`_unapplied_blocks`, shared by the main loop and the repair".
+- **Property 11:** "… names only the block index and the path. Both lists are checked whole before any write: a main-loop list with one such block writes nothing (no review, no tests), and a repair with one applies none of its blocks and stops the loop. The loop's own checks, and the application's re-match (`when applied; refused`), refuse whatever the pre-check missed; they never skip it."
+- **Property 12:** "A non-empty `file_changes` that applies nothing …"
+- **Property 13:** "The pre-check agrees with the writers: blocks are matched in order against the text the earlier changes of the same file leave, after the write/read newline round trip, across every accepted name of one file (`_same_file_key`; S9, S10). A `base` change is the main loop's. A non-regular target keeps today's raise."
+- **9a:** the module has 14 functions and 22 cases.
+
+### A10.10 Considered, deferred (to the #1523 follow-up)
+- On a case-insensitive POSIX filesystem (macOS), a CREATE and then a MODIFY of a new file under two case spellings get two path keys. The result is a false refusal, which fails closed.
+- Content with a lone surrogate raises at `write_text` (pre-existing; the exception path).
+- A refusal of a main-loop path or `base` change still lets the other files reach the tests (pre-existing; BF-904b).
+
+### Verified Against Codebase (2026-10-19, staged tree)
+```
+builder.py:1784   def _write_target_key(work_dir: str, rel: str) -> str:
+builder.py:2744-2745  search_text = sr.group(1).strip("\n") / replace_text = sr.group(2).strip("\n")
+builder.py:2715   "content": m.group(2).strip() + "\n",       (parser: one change per MODIFY block, 2759)
+builder.py:3008-3043  _unapplied_repair_blocks (texts[rel], no round trip)
+builder.py:3209-3216  loop head with builder_write_refusal
+builder.py:3254 / 3280 / 3287  main-loop refusals and the `continue` for an unmatched block
+builder.py:3348 / 3373  review and tests gated on `written or modified_files`
+builder.py:3462-3488  pre-check call; application without a match check
+builder.py:3511   all_changes.extend(fix_changes)   (unique)
+builder.py:3566-3568  validation_errors -> "Syntax errors:" refusal
+builder_paths.py:177-179  fix_loop_path folds separators only (not case)
+test_bf896…:472,536  "different content" in result.error (base tests; kept by D47)
+```
+
+### Absence Verified (2026-10-19)
+```
+CLAIM: _unapplied_repair_blocks has no other users
+RUN:   Grep "_unapplied_repair_blocks" (repo, excluding prompts/)
+FOUND: builder.py:3008,3462,3477; DECISIONS.md:152; test_bf904a_unapplied_blocks.py:14
+HOLDS: yes, all four are renamed by A10
+
+CLAIM: no test pins the main loop's exception on an undecodable target
+RUN:   Grep "UnicodeDecodeError|could not be read|\\xff" tests/test_{builder*,bf89*,bf904a*}.py
+FOUND: S7 (repair) and M1/M2 messages that are not about blocks
+HOLDS: yes
+
+CLAIM: nothing patches builder_write_refusal (called once per change, before any write)
+RUN:   Grep "setattr\(.*builder_write_refusal|patch\(.*builder_write_refusal" tests/
+FOUND: none; builder_paths.py has no logger or cache (Grep "logger\.|cache")
+HOLDS: yes
+
+CLAIM: every main-loop refusal assertion still holds with the pre-pass
+RUN:   Grep "does not exist; refused|not found in .*; refused|SEARCH block \d" tests/
+FOUND: 12 hits (bf896:347; builder_agent:1771,1986,2013,2065; M3 module)
+HOLDS: yes, dry-run against A10.1/A10.2; only S2's files_written premise changes (edited above)
+```
