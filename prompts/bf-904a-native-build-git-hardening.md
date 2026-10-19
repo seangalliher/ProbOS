@@ -3738,3 +3738,233 @@ Partition P2 holds the M2 module. K3 is re-derived in P1. Count each anchor in t
 - About 20 tests in `test_builder_agent.py` answer every git call with `b"main\n"`. They now take the detached-return path: `_git_head_commit` gets "main", and `checkout -q --detach main --` gets rc 0. None of them asserts the git argv or a git call count; I checked with a grep for `call_count`, `assert_called_once` and `call_args_list`.
 - The tests that patch `_git_current_branch` to return "main" (`test_bf894:141`, `test_bf897:500`, `test_bf898:379`, `test_builder_agent:3064-3147`, `test_builder_guardrails:242`) pass D39's check.
 - `test_bf904a_git_hardening.py:1284` (`["checkout", "-q", "main", "--"]`) is unchanged: real git prints `refs/heads/main`.
+
+## Amendment A8 (2026-10-19): a raising log handler cannot stop the cleanup
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19, on M2 review round 3 (gpt-6.1-sol: R3-1).
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only round-three-brake answer (session `240ae85d`; decision: continue, one round 4 limited to this delta). The only wording changes: the four production headings (A8.1 to A8.4) carry the full path `src/probos/cognitive/builder.py` (the answer wrote `builder.py`), the rows table is rebuilt with a File column and the full anchor lines (the answer wrote "(the R-ar line)" and "(the R-au line)"), and the answer's "Absence Verified" record is appended at the end.
+
+**Verdict:** ⚠️ Conditional. It passes when:
+- A8.1 to A8.4 apply against staged tree `29cf2788`;
+- R22[failed-build] and R22[committed] are red on that tree and green after, and R22[halt] is green on both;
+- rows R-ar to R-aw and R-q2 are killed;
+- the M2 module is green.
+
+**Decisions** (recorded on #1585; the Captain may overrule):
+- **D43 (R3-1). Route the three cleanup log calls through `_cleanup_log`, which catches `Exception` and drops it. `BaseException` still propagates.**
+  - **Premise corrected:** stdlib handlers catch failures inside their own `emit` and call `handleError`. `Handler.handle` calls `emit` unguarded, so a custom handler's exception reaches the caller.
+  - **Swallowed, not reported:**
+    - Reporting through the same logger would raise again.
+    - Adding the failure to `cleanup_errors` would make `resolve` refuse every retry (`routers/build.py:126`, D30) over a lost log line. The tree's state is still fully reported by `cleanup_errors`.
+  - **Attribution kept:** `stacklevel=2`, so each record still names the cleanup step that logged it. R22 pins this through `funcName`.
+  - **Rejected:**
+    - Inline `try/except` at three sites: the same code repeated three times.
+    - Moving the logging after the return: the deletion loop still stops.
+- **Cleanup path, enumerated in full** (`finally` at `builder.py:3574-3614` and its callees):
+
+| Call | Site | Can an ordinary exception escape? |
+|---|---|---|
+| `_cleanup_git` (reset, `branch -D`) | 1723-1731 | No. `_run_git` is under `except Exception`. `_display_token` (1861) is pure on `str`. |
+| `_restore_pre_build_files`: `write_bytes` / `exists` / `unlink` / pruning | 1746-1767 | No. Caught (D34, D42). |
+| `_restore_pre_build_files`: `root / created_path`, `full.parent` | 1751, 1761 | No. `str` path joins. |
+| `_restore_pre_build_files`: `logger.info` | 1759 | **Yes. A8.2.** |
+| `_git_return_to` | 1700-1720 | No. `except Exception`. |
+| `_display_token` ×2, f-strings, `join` | 3591-3600, 3614 | No. Pure on `str`. |
+| `logger.info` (branch) | 3603 | **Yes. A8.3.** |
+| `logger.error` (committed) | 3612 | **Yes. A8.4.** |
+| `result.metadata[...] =` | 3608 | No. A dict field. |
+| Locals the `finally` reads | 3097-3156 | No. All are bound before the `try` at 3157. |
+
+`_run_git` itself logs nothing. Its only logging callee is `build_command_env` (`command_env.py:124`), which runs in the executor thread, so anything it raises comes back through the caught `await`.
+
+All blocks apply after A7 and before Section 8. No Section 8 or 9 anchor touches these lines.
+
+### A8.1 `src/probos/cognitive/builder.py`: the helper (after `_cleanup_git`)
+SEARCH:
+```python
+    if rc != 0:
+        return f"git {args[0]} exited {rc}: {_display_token(err or out, _DISPLAY_PATH_CHARS)}"  # BF-904a A3: git's answer, escaped and bounded
+    return None
+
+
+def _restore_pre_build_files(work_dir: str, originals: dict[str, bytes], created: list[str]) -> list[str]:
+```
+REPLACE:
+```python
+    if rc != 0:
+        return f"git {args[0]} exited {rc}: {_display_token(err or out, _DISPLAY_PATH_CHARS)}"  # BF-904a A3: git's answer, escaped and bounded
+    return None
+
+
+def _cleanup_log(level: int, msg: str, *args: object) -> None:
+    """BF-904a A8 (D43): one cleanup log line that cannot stop the cleanup.
+
+    ``Handler.handle`` calls ``emit`` unguarded, so a handler whose ``emit`` raises would skip the
+    remaining deletions and the return. The failure is dropped: the same logger would raise again,
+    and the cleanup's outcome is carried by ``cleanup_errors``.
+    """
+    try:
+        logger.log(level, msg, *args, stacklevel=2)  # BF-904a A8 (D43): the record names the cleanup step that logged it
+    except Exception:  # BF-904a A8 (D43): a raising handler loses one log line, never a cleanup step; BaseException propagates
+        pass
+
+
+def _restore_pre_build_files(work_dir: str, originals: dict[str, bytes], created: list[str]) -> list[str]:
+```
+
+### A8.2 `src/probos/cognitive/builder.py`: the deletion's log line
+SEARCH:
+```python
+            errors.append(f"could not delete {_display_token(created_path, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+            continue
+        logger.info("Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3: one log line
+```
+REPLACE:
+```python
+            errors.append(f"could not delete {_display_token(created_path, _DISPLAY_PATH_CHARS)} ({type(exc).__name__})")  # BF-904a A3: escaped and bounded
+            continue
+        _cleanup_log(logging.INFO, "Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3, A8 (D43): one log line that cannot stop the cleanup
+```
+
+### A8.3 `src/probos/cognitive/builder.py`: the branch deletion's log line
+SEARCH:
+```python
+            elif restore_tree:
+                logger.info("Cleaning up failed build branch '%s'", build_branch)
+                deleted = await _cleanup_git(["branch", "-D", build_branch], work_dir)
+```
+REPLACE:
+```python
+            elif restore_tree:
+                _cleanup_log(logging.INFO, "Cleaning up failed build branch '%s'", build_branch)  # BF-904a A8 (D43)
+                deleted = await _cleanup_git(["branch", "-D", build_branch], work_dir)
+```
+
+### A8.4 `src/probos/cognitive/builder.py`: the committed build's error line
+SEARCH:
+```python
+                # adopt_commit checks out its own branch (worktree_manager.py).
+                logger.error("BuilderAgent: build cleanup incomplete: %s", "; ".join(cleanup_errors))
+            else:
+```
+REPLACE:
+```python
+                # adopt_commit checks out its own branch (worktree_manager.py).
+                _cleanup_log(logging.ERROR, "BuilderAgent: build cleanup incomplete: %s", "; ".join(cleanup_errors))  # BF-904a A8 (D43)
+            else:
+```
+
+### A8.5 Test R22 (append to `tests/test_bf904a_failed_build_restore.py`; write it first)
+```python
+# R22 (D43): a raising log handler does not stop the cleanup
+
+_CLEANUP_FORMATS = (
+    "Cleaned up untracked file from failed build: %s",
+    "Cleaning up failed build branch '%s'",
+    "BuilderAgent: build cleanup incomplete: %s",
+)
+R22_ID = "bf904a-m2-r22"
+
+
+class _RaisingHandler(logging.Handler):
+    """Raises from ``emit`` for the cleanup's three log lines only (a string comparison); passes every other record."""
+
+    def __init__(self, exc: type[BaseException]) -> None:
+        super().__init__(logging.DEBUG)
+        self.exc = exc
+        self.raised: list[tuple[str, str]] = []  # (format string, funcName)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.msg in _CLEANUP_FORMATS:
+            self.raised.append((record.msg, record.funcName))
+            raise self.exc("bf904a: simulated handler failure")
+
+
+@pytest.mark.parametrize("case", ["failed-build", "committed", "halt"])
+async def test_a_raising_log_handler_does_not_stop_the_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    repo = _plain_repo(tmp_path / "repo")
+    handler = _RaisingHandler(_Halt if case == "halt" else RuntimeError)
+    builder_logger = builder_module.logger
+    old_level = builder_logger.level
+    builder_logger.setLevel(logging.DEBUG)  # setLevel clears the logger's enabled-for cache
+    builder_logger.addHandler(handler)
+    cached: dict[str, Any] | None = None
+    try:
+        if case == "halt":
+            with pytest.raises(_Halt):
+                await _build(repo, _failing_changes())
+            assert [m for m, _f in handler.raised] == [_CLEANUP_FORMATS[0]], f"premise: the first deletion's line raised once: {handler.raised}"
+            return
+        if case == "committed":
+            _fail_the_return(monkeypatch)
+            result = await _build(repo, [_create(NEW, "ok = 1\n")])
+            assert result.success is True and result.commit_hash, f"a commit stays a success: {result.error}"
+            assert result.metadata.get("cleanup_errors"), "the failed return is recorded"
+            assert handler.raised == [(_CLEANUP_FORMATS[2], "execute_approved_build")], handler.raised
+            return
+        api_module, build_router = _route_modules()
+        assert build_router._pending_failures is api_module._pending_failures, "premise: the router reads the cache"
+        assert R22_ID not in api_module._pending_failures, "premise: no entry is left over"
+        before = _state(repo)
+        rt = SimpleNamespace(emit_event=MagicMock(), llm_client=None)
+        try:
+            await _bounded(build_router._execute_build(R22_ID, _failing_changes(), _spec(), str(repo), rt, run_tests=False))
+            cached = api_module._pending_failures.get(R22_ID)
+        finally:
+            api_module._pending_failures.pop(R22_ID, None)
+    finally:
+        builder_logger.removeHandler(handler)
+        builder_logger.setLevel(old_level)
+
+    deletions = [f for m, f in handler.raised if m == _CLEANUP_FORMATS[0]]
+    assert len(deletions) >= 2 and set(deletions) == {"_restore_pre_build_files"}, f"every deletion's line raised and the rest ran: {handler.raised}"
+    assert handler.raised[-1] == (_CLEANUP_FORMATS[1], "execute_approved_build"), handler.raised
+    assert cached is not None, "the failure is cached"
+    assert cached["report"].cleanup_errors == [], "a lost log line is not a cleanup error (D30 would refuse retries)"
+    failures = [c.args[1] for c in rt.emit_event.call_args_list if c.args[0] == EventType.BUILD_FAILURE]
+    assert len(failures) == 1 and "report" in failures[0] and "error" not in failures[0], failures
+    assert "builder-bf904a-probe" not in _refs(repo), "the build branch was deleted"
+    assert _state(repo) == before, "the tree, HEAD and branches are as the build found them"
+```
+How the test runs:
+- On `29cf2788`, `failed-build` ends with `cached is None` (the router's `except` branch) and `committed` raises `RuntimeError`.
+- `halt` is the `BaseException` control.
+- It has no sleeps, and the patched `emit` does only string comparisons. It runs the same way on Windows and Ubuntu.
+
+### A8.6 Mutation rows (Partition P2; count each anchor in the A8-built file before mutating)
+
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-ar | `src/probos/cognitive/builder.py` | `except Exception:  # BF-904a A8 (D43): a raising handler loses one log line, never a cleanup step; BaseException propagates` | `except ZeroDivisionError:` | R22[failed-build], R22[committed] |
+| R-as | `src/probos/cognitive/builder.py` | `except Exception:  # BF-904a A8 (D43): a raising handler loses one log line, never a cleanup step; BaseException propagates` | `except BaseException:` | R22[halt] |
+| R-at | `src/probos/cognitive/builder.py` | `logger.log(level, msg, *args, stacklevel=2)  # BF-904a A8 (D43): the record names the cleanup step that logged it` | `logger.log(level, msg, *args)` | R22[failed-build], R22[committed] (`funcName`) |
+| R-au | `src/probos/cognitive/builder.py` | `_cleanup_log(logging.INFO, "Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3, A8 (D43): one log line that cannot stop the cleanup` | `logger.info("Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))` | R22[failed-build] |
+| R-av | `src/probos/cognitive/builder.py` | `_cleanup_log(logging.INFO, "Cleaning up failed build branch '%s'", build_branch)  # BF-904a A8 (D43)` | `logger.info("Cleaning up failed build branch '%s'", build_branch)` | R22[failed-build] |
+| R-aw | `src/probos/cognitive/builder.py` | `_cleanup_log(logging.ERROR, "BuilderAgent: build cleanup incomplete: %s", "; ".join(cleanup_errors))  # BF-904a A8 (D43)` | `logger.error("BuilderAgent: build cleanup incomplete: %s", "; ".join(cleanup_errors))` | R22[committed] |
+| R-q2 | `src/probos/cognitive/builder.py` | `_cleanup_log(logging.INFO, "Cleaned up untracked file from failed build: %s", _display_token(created_path, _DISPLAY_PATH_CHARS))  # BF-904a A3, A8 (D43): one log line that cannot stop the cleanup` | `_cleanup_log(logging.INFO, "Cleaned up untracked file from failed build: %s", created_path)` | R7 |
+
+- R-q2 replaces R-q (A3.5), which is now inert because its line changed.
+- R-ar/R-as and R-au/R-q2 each mutate one line; run each against the unmodified baseline.
+- **Campaign:** only R-q's line changed among existing anchors. Every other recorded result stands.
+
+### A8.7 Supersessions (the original lines stay)
+- **D42's sentence** "The `finally` block's `logger` calls do not raise, because logging handles failures in `Handler.handleError`" is **withdrawn**. In its place: "stdlib handlers catch in their own `emit`; `Handler.handle` does not, so a custom handler's exception propagates. D43 routes the three cleanup log calls through `_cleanup_log`."
+- **A7.9** "The cleanup now catches every ordinary exception at every step" becomes true only with D43 (see the A8 enumeration).
+- **Diff Reviewer Property 4** gains: "a log handler that raises cannot skip a deletion, the return or the cached report (D43)".
+- **Tests summary** gains 3 cases: R22 (3). Rows R-ar to R-aw and R-q2 are added.
+- **Tracking:** the DECISIONS entry lists D1 to D43.
+
+### A8.8 Considered, deferred (add to the consolidated #1523 follow-up)
+1. **The router's own log calls** (`routers/build.py:409`, `:487`). A raising handler on `probos.routers.build` would make `_execute_build` end in an unhandled exception instead of a failure event. This was already true before M2 and isn't part of the cleanup ordering.
+2. **Log calls inside the build's `try`** (e.g. `builder.py:3163`). The `except` at 3572 catches them as the build's error, and the cleanup still runs. The failure is visible, and this was true before M2.
+3. **`hebbian_router.record_interaction` after the `finally`** (3618-3624). This runs after the cleanup has finished, and it was true before M2.
+
+**Other breakage expected: none.** The only test consumers of these records are `test_bf904a_failed_build_restore.py:409` (R2b, `levelno` + `getMessage`) and `:625` (R7, `getMessage`). The level and message are unchanged.
+
+### Absence Verified (2026-10-19)
+- **Claim:** no other call on the cleanup path can raise an ordinary exception that escapes. **Run:** Read `builder.py:1700-1768`, `3574-3614`, `1595-1625` and `1861-1878`, plus `command_env.py:107-131`. **Found:** the table above. **Holds:** yes.
+- **Claim:** none of the new ids or names exist yet. **Run:** Grep `R-a[r-z]|R22|D43|_cleanup_log` in the contract and `src/`. **Found:** no hits. **Holds:** yes.
+- **Claim:** only R-q anchors a changed line. **Run:** Grep the three log lines in the contract. **Found:** the row at `:2823` (R-q); the other hits are code blocks. **Holds:** yes.
