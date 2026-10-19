@@ -3005,6 +3005,83 @@ async def _is_dirty_working_tree(work_dir: str) -> bool:
         return False  # git not available
 
 
+def _round_trip(text: str) -> str:
+    r"""BF-904a A10 (D45): the text ``Path.read_text`` returns after ``Path.write_text(text)`` on this host.
+
+    The write turns each ``\n`` into ``os.linesep`` (``\r\n`` on Windows, unchanged on POSIX); the read
+    maps ``\r\n``, then a lone ``\r``, to ``\n`` (universal newlines). A ``\r\n`` in a replacement so
+    reads back as ``\n\n`` on Windows and ``\n`` on POSIX, and never with a ``\r``.
+    """
+    return text.replace("\n", os.linesep).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _same_file_key(work_dir: str, rel: str) -> tuple[Any, ...]:
+    """BF-904a A10 (D44), A11 (D53), A12 (D54): one key per file on disk, for every name this host's file calls unify.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by the ``os.path.abspath`` form of its
+    ``_write_target_key``: the physical path first (``realpath`` resolves symbolic links, so a ``..`` in
+    the work directory is taken as the kernel takes it), then the host's full-path form. On Windows that
+    is ``GetFullPathNameW``, the trimming the writer's own calls get (the last name's trailing dots and
+    spaces, an inner name's single trailing dot); on POSIX it is the identity on a resolved path, so the
+    key is D32's and ``fresh.py.`` stays another name. The pre-check writes nothing, so a file a change
+    creates is absent, and keyed by path, for the whole check.
+    """
+    key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form
+    try:
+        info = os.stat(key)
+    except (OSError, ValueError):
+        return ("path", key)
+    return ("file", info.st_dev, info.st_ino) if info.st_ino else ("path", key)
+
+
+def _unapplied_blocks(changes: list[dict[str, Any]], work_dir: str) -> list[str]:
+    """BF-904a (#1585): a refusal for each MODIFY block in *changes* that cannot apply as written.
+
+    A10: the main loop's list (after BF-894's path check) and a repair response are each checked whole
+    before any write. Blocks are matched in order against the text the earlier changes of the same file
+    leave, as the disk returns it (``_round_trip``), one file per ``_same_file_key``; creates parse
+    first. A change carrying ``base`` is BF-896's, judged by the main loop, and its file's later blocks
+    are left to the writer (D47). A target that exists but is not a regular file is left to the writer,
+    which raises as before (BF-898 keeps its disclosure). Names the block and the file, never their text.
+    """
+    refusals: list[str] = []
+    texts: dict[tuple[Any, ...], str | None] = {}  # None: the writer judges this file's later blocks
+    for change in changes:
+        rel = change["path"]
+        key = _same_file_key(work_dir, rel)
+        if "base" in change:  # BF-904a A10 (D47): BF-896's compare-and-swap is the main loop's
+            texts[key] = None
+            continue
+        if change["mode"] != "modify":
+            if isinstance(change.get("content"), str):
+                texts[key] = _round_trip(change["content"])
+            continue
+        if key not in texts:
+            path = Path(work_dir) / rel
+            if not path.exists():
+                refusals.append(f"MODIFY target {rel} does not exist; refused")  # BF-904a: a repair's missing target
+                continue
+            if not path.is_file():
+                continue
+            try:
+                texts[key] = path.read_text(encoding="utf-8")
+            except (OSError, ValueError):
+                refusals.append(f"MODIFY target {rel} could not be read; refused")
+                continue
+        text = texts[key]
+        if text is None:
+            continue
+        for i, repl in enumerate(change.get("replacements", [])):
+            if repl["search"] not in text:
+                refusals.append(f"SEARCH block {i} not found in {rel}; refused")  # BF-904a: a repair's unmatched block
+                continue
+            text = text.replace(repl["search"], repl["replace"], 1)
+        texts[key] = _round_trip(text)  # BF-904a A10 (D45): what the next change reads back
+    return refusals
+
+
 def _check_sealed_path(target_path: "Path", runtime: "ProbOSRuntime | None") -> None:
     """AD-481f: warn-only sealed-core pre-write check.
 
@@ -3169,6 +3246,7 @@ async def execute_approved_build(
     add_attempted = False
     try:
         # 4. Write/modify files
+        admitted: list[dict[str, Any]] = []
         for change in file_changes:
             # Validate file path before any disk operations (BF-894: lexical and identity)
             path_error = builder_write_refusal(change["path"], work_dir)
@@ -3176,7 +3254,13 @@ async def execute_approved_build(
                 logger.warning("BuilderAgent: %s — skipping", path_error)
                 validation_errors.append(path_error)
                 continue
-
+            admitted.append(change)
+        # BF-904a A10 (D46): every SEARCH/REPLACE block of the list is checked before any write, as a
+        # repair's is; a list with one that cannot apply writes nothing, so no partial file reaches the
+        # review or the tests. The checks below stay and refuse whatever this pre-pass did not model.
+        blocked = _unapplied_blocks(admitted, work_dir)  # BF-904a A10: the main loop's pre-pass
+        validation_errors.extend(blocked)
+        for change in [] if blocked else admitted:  # BF-904a A10 (D46): a blocked list writes nothing
             path = Path(work_dir) / change["path"]
             if "base" in change:
                 # BF-896: a block carrying "base" (the visiting adapter's disk scan,
@@ -3212,10 +3296,8 @@ async def execute_approved_build(
                     continue
             if change["mode"] == "modify":
                 if not path.exists():
-                    logger.warning(
-                        "BuilderAgent: MODIFY target %s does not exist, skipping",
-                        change["path"],
-                    )
+                    # BF-904a (#1585): a refusal that blocks the commit, never a silent skip.
+                    validation_errors.append(f"MODIFY target {change['path']} does not exist; refused")
                     continue
 
                 original = path.read_text(encoding="utf-8")
@@ -3233,20 +3315,22 @@ async def execute_approved_build(
                         continue
                     modified = change["content"]
 
+                unmatched = False
                 for i, repl in enumerate(change.get("replacements", [])):
                     search_text = repl["search"]
                     replace_text = repl["replace"]
 
                     if search_text not in modified:
-                        logger.warning(
-                            "BuilderAgent: SEARCH block %d not found in %s, "
-                            "skipping this replacement",
-                            i, change["path"],
-                        )
+                        # BF-904a (#1585): recorded (names the block and the file, never its text); the
+                        # file is not written, the commit is blocked and the tree is restored.
+                        validation_errors.append(f"SEARCH block {i} not found in {change['path']}; refused")
+                        unmatched = True
                         continue
 
                     # Replace first occurrence only
                     modified = modified.replace(search_text, replace_text, 1)
+                if unmatched:
+                    continue  # BF-904a: a file with an unmatched block is not written at all
 
                 if modified != original:
                     _check_sealed_path(path, runtime)
@@ -3419,8 +3503,17 @@ async def execute_approved_build(
                             logger.warning("BuilderAgent: repair refused: %s", refusal)
                         validation_errors.extend(fix_refusals)
                         break  # BF-898: no further repair attempt
+                    # BF-904a (#1585): every MODIFY block of the repair must apply as written; one that
+                    # cannot refuses the whole response and stops the loop, as BF-898 does for paths.
+                    unapplied = _unapplied_blocks(fix_changes, work_dir)  # BF-904a: checked before any block is applied
+                    if unapplied:
+                        for refusal in unapplied:
+                            logger.warning("BuilderAgent: repair refused: %s", refusal)
+                        validation_errors.extend(unapplied)
+                        break  # BF-904a: no further repair attempt
 
                     # Apply fix changes
+                    late_refused = False  # BF-904a A10 (D48): a block the disk does not match at write time
                     for change in fix_changes:
                         path = Path(work_dir) / change["path"]
                         before_fix = path.read_bytes() if path.is_file() else None
@@ -3428,15 +3521,24 @@ async def execute_approved_build(
                             originals.setdefault(change["path"], before_fix)  # BF-904a: a repair saves a file the build did not create
                         try:
                             if change["mode"] == "modify":
-                                if not path.exists():
-                                    continue
+                                # BF-904a: _unapplied_blocks has checked that the target exists and that
+                                # every block matches, in order; A10 (D48) matches again against the disk.
                                 original = path.read_text(encoding="utf-8")
                                 mod = original
-                                for repl in change.get("replacements", []):
-                                    if repl["search"] in mod:
-                                        mod = mod.replace(
-                                            repl["search"], repl["replace"], 1,
-                                        )
+                                late: list[str] = []
+                                for i, repl in enumerate(change.get("replacements", [])):
+                                    if repl["search"] not in mod:
+                                        late.append(f"SEARCH block {i} not found in {change['path']} when applied; refused")
+                                        continue
+                                    mod = mod.replace(repl["search"], repl["replace"], 1)
+                                if late:
+                                    # BF-904a A10 (D48): never a silent no-op. This change is not written,
+                                    # the repair stops and the build is refused; earlier writes are disclosed.
+                                    for refusal in late:
+                                        logger.warning("BuilderAgent: repair refused: %s", refusal)
+                                    validation_errors.extend(late)
+                                    late_refused = True
+                                    break
                                 if mod != original:
                                     _check_sealed_path(path, runtime)
                                     path.write_text(mod, encoding="utf-8")
@@ -3465,6 +3567,8 @@ async def execute_approved_build(
                                 fix_loop_files.append(change["path"])
                                 result.metadata["fix_loop_files"] = sorted(fix_loop_files)
 
+                    if late_refused:
+                        break  # BF-904a A10 (D48): no further repair attempt
                     all_changes.extend(fix_changes)
                 else:
                     # BF-897: no repair client, or the attempts are used up. The tree is
@@ -3579,6 +3683,13 @@ async def execute_approved_build(
 
                 if not result.error:
                     result.success = True
+        elif file_changes:
+            # BF-904a (#1585): changes were asked for and none applied (every block left its file
+            # as it was): a failure with a reason, never a success with nothing to commit.
+            result.error = "No change applied: " + ", ".join(
+                sorted({str(change["path"]) for change in file_changes})
+            )
+            result.success = False  # BF-904a: a change list that changed nothing is not a success
         else:
             result.success = True
 

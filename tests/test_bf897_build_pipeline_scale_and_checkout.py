@@ -474,11 +474,9 @@ async def test_merge_to_main_unknown_build(tmp_path: Path, monkeypatch: pytest.M
 _FOO = "src/probos/foo.py"
 _FOO_TEXT = "x = 1\n"
 _UNMAPPED = "src/probos/zz_unmapped.py"
-_FIX_BLOCK = (
-    f"===MODIFY: {_FOO}===\n"
-    "===SEARCH===\nx = 1\n===REPLACE===\nx = 2\n===END REPLACE===\n"
-    "===END MODIFY==="
-)
+# BF-904a (#1585): a whole-file block, which applies on every attempt. The MODIFY block it replaces stopped
+# matching after the first repair (x = 1 had become x = 2), and an unmatched repair block is now refused whole.
+_FIX_BLOCK = f"===FILE: {_FOO}===\nx = 2\n===END FILE===\n"
 
 
 class _FakeBuildGit:
@@ -689,7 +687,7 @@ async def test_targeted_timeout_requests_no_fix_and_is_not_committed(
     llm = _FakeLLM()
     assert _classify_test_run(timed_out[0], timed_out[1]) == "timed_out", "premise: this output is a timeout"
     blocks = BuilderAgent._parse_file_blocks(_FIX_BLOCK)
-    assert [(block["mode"], block["path"]) for block in blocks] == [("modify", _FOO)], "premise: a valid fix block"
+    assert [(block["mode"], block["path"]) for block in blocks] == [("create", _FOO)], "premise: a valid fix block"
 
     result = await _gated_build(build_tree, max_fix_attempts=2, llm_client=llm)
 

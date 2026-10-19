@@ -1747,7 +1747,7 @@ class TestExecuteApprovedBuild:
 
     @pytest.mark.asyncio
     async def test_modify_skips_nonexistent_file(self, tmp_path: Path):
-        """execute_approved_build skips MODIFY when target file doesn't exist."""
+        """BF-904a (#1585): execute_approved_build refuses a MODIFY whose target file doesn't exist (it used to skip it)."""
         spec = BuildSpec(title="Mod Test", description="Test modify skip")
         file_changes = [
             {
@@ -1764,8 +1764,11 @@ class TestExecuteApprovedBuild:
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
 
-        # Should succeed but no files written or modified (target doesn't exist)
-        assert result.success is True
+        # BF-904a (#1585): this used to pin the silent skip ("should succeed but no files written or
+        # modified"), which let a build whose MODIFY could not apply report success. A MODIFY whose
+        # target does not exist is now a refusal that fails the build.
+        assert result.success is False
+        assert "MODIFY target src/mod.py does not exist; refused" in result.error
         assert result.files_written == []
         assert result.files_modified == []
 
@@ -1964,7 +1967,7 @@ class TestExecuteModify:
 
     @pytest.mark.asyncio
     async def test_modify_file_not_exists(self, tmp_path: Path):
-        """MODIFY on nonexistent file is skipped without crashing."""
+        """BF-904a (#1585): a MODIFY of a nonexistent file is refused (it used to be skipped)."""
         spec = BuildSpec(title="No File", description="Missing target")
         file_changes = [{
             "path": "nonexistent.py",
@@ -1979,12 +1982,13 @@ class TestExecuteModify:
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
 
-        assert result.success is True
+        assert result.success is False
+        assert "MODIFY target nonexistent.py does not exist; refused" in result.error
         assert result.files_modified == []
 
     @pytest.mark.asyncio
     async def test_search_text_not_found(self, tmp_path: Path):
-        """Replacement skipped when SEARCH text not found; other replacements still apply."""
+        """BF-904a (#1585): one unmatched SEARCH block refuses the build, and the file's other blocks are not applied."""
         target = tmp_path / "partial.py"
         target.write_text("a = 1\nb = 2\n", encoding="utf-8")
 
@@ -2005,11 +2009,10 @@ class TestExecuteModify:
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
 
-        assert result.success is True
-        assert "partial.py" in result.files_modified
-        content = target.read_text(encoding="utf-8")
-        assert "b = 20" in content
-        assert "a = 1" in content
+        assert result.success is False
+        assert "SEARCH block 0 not found in partial.py; refused" in result.error
+        assert result.files_modified == []
+        assert target.read_text(encoding="utf-8") == "a = 1\nb = 2\n"
 
     @pytest.mark.asyncio
     async def test_mixed_create_and_modify(self, tmp_path: Path):
@@ -2040,7 +2043,7 @@ class TestExecuteModify:
 
     @pytest.mark.asyncio
     async def test_no_net_change(self, tmp_path: Path):
-        """When all SEARCH texts not found, files_modified stays empty."""
+        """BF-904a (#1585): when no SEARCH text is found, the build is refused (it used to succeed with nothing)."""
         target = tmp_path / "noop.py"
         target.write_text("keep = 1\n", encoding="utf-8")
 
@@ -2058,7 +2061,8 @@ class TestExecuteModify:
                 file_changes, spec, str(tmp_path), run_tests=False,
             )
 
-        assert result.success is True
+        assert result.success is False
+        assert "SEARCH block 0 not found in noop.py; refused" in result.error
         assert result.files_modified == []
 
 

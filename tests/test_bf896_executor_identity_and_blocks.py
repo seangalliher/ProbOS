@@ -312,12 +312,13 @@ async def test_replacement_modify_is_unchanged(tmp_path: Path, extra: dict[str, 
     ],
     ids=["empty-replacements-key-present", "no-replacements-no-content", "content-is-none", "content-is-not-a-str"],
 )
-async def test_modify_blocks_outside_the_whole_file_shape_keep_the_old_no_op(
+async def test_modify_blocks_outside_the_whole_file_shape_change_nothing_and_fail(
     tmp_path: Path, block_extra: dict[str, Any]
 ) -> None:
     """A block is a whole-file change only with NO ``replacements`` key AND a ``str`` ``content``.
 
-    Anything else keeps today's executor behaviour: no refusal, no write, success with nothing to commit.
+    Anything else writes nothing. BF-904a (#1585): a change list that changed nothing is a failure
+    with a reason ("No change applied"), no longer a success with nothing to commit.
     """
     await _assert_whole_file_control_lands(tmp_path)
     repo = _plain_repo(tmp_path / "probe")
@@ -325,23 +326,27 @@ async def test_modify_blocks_outside_the_whole_file_shape_keep_the_old_no_op(
 
     result = await _build(repo, [{"path": TARGET, "mode": "modify", **block_extra}])
 
-    assert result.success is True and not result.error, result.error
+    assert result.success is False and result.error == f"No change applied: {TARGET}", result.error
     assert not result.commit_hash and result.files_modified == [] and result.files_written == []
     assert _tree(repo) == tree_before
     assert _refs(repo) == ["main"]
 
 
 @needs_git
-async def test_replacement_modify_of_an_absent_target_without_base_keeps_the_legacy_skip(tmp_path: Path) -> None:
-    """A block with NO ``base`` key (native LLM flow, repair loop) keeps the absent-target skip."""
+async def test_replacement_modify_of_an_absent_target_without_base_is_refused(tmp_path: Path) -> None:
+    """BF-904a (#1585): this used to pin the silent absent-target skip, which let the other block commit alone.
+
+    A missing MODIFY target is now a refusal that blocks the commit, and the other block is never written.
+    """
     repo = _plain_repo(tmp_path / "repo")
     block = {"path": "src/probos/gone.py", "mode": "modify", "replacements": [{"search": "a", "replace": "b"}]}
 
     result = await _build(repo, [block, _whole(TARGET, "x = 2\n", base=ORIGINAL)])
 
-    assert result.success, result.error
-    assert result.files_modified == [TARGET], "the absent-target replacement is skipped, the other block lands"
-    assert _blob(repo, result.branch_name, TARGET) == "x = 2\n"
+    assert result.success is False and not result.commit_hash
+    assert "MODIFY target src/probos/gone.py does not exist; refused" in result.error, result.error
+    assert (repo / TARGET).read_bytes() == ORIGINAL.encode("utf-8"), "the other block is never written"
+    assert _refs(repo) == ["main"]
 
 
 # ---------------------------------------------------------------------------

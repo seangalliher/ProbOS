@@ -525,12 +525,14 @@ async def test_fix_loop_files_are_disclosed_in_metadata_and_commit_message(
     reply = (
         _FOO_TO_2
         + f"===FILE: {_HELPER}===\ny = 1\n===END FILE===\n"
-        + f"===MODIFY: {_OTHER}===\n===SEARCH===\nnope\n===REPLACE===\nz = 2\n===END REPLACE===\n===END MODIFY===\n"
+        # BF-904a (#1585): the third block matches and leaves the file as it was. It used to be an unmatched
+        # block, silently skipped; an unmatched repair block now refuses the whole response.
+        + f"===MODIFY: {_OTHER}===\n===SEARCH===\nz = 1\n===REPLACE===\nz = 1\n===END REPLACE===\n===END MODIFY===\n"
     )
     llm = _FakeLLM(reply)
     parsed = sorted((block["mode"], block["path"]) for block in BuilderAgent._parse_file_blocks(reply))
     assert parsed == [("create", _HELPER), ("modify", _FOO), ("modify", _OTHER)], "premise: three source blocks"
-    assert "nope" not in other.read_text(encoding="utf-8"), "premise: the third block's SEARCH text is not in the file"
+    assert "z = 1" in other.read_text(encoding="utf-8"), "premise: the third block's SEARCH text is in the file"
 
     result = await _gated_build(build_tree, llm, max_fix_attempts=2)
 
@@ -729,7 +731,12 @@ async def test_a_block_that_changes_nothing_is_not_disclosed_when_a_later_block_
     result = await _gated_build(build_tree, llm, max_fix_attempts=2)
 
     assert result.success is False
-    assert result.error, "the directory block must raise and be reported"
+    if case in ("no_op_modify", "missing_modify"):
+        # BF-904a (#1585): the leading block cannot apply, so the repair is refused whole before the
+        # directory block is reached; the outcome below is the same, for that reason.
+        assert "; refused" in result.error, result.error
+    else:
+        assert result.error, "the directory block must raise and be reported"
     assert result.fix_attempts == 1
     assert "fix_loop_files" not in result.metadata
     assert foo.read_text(encoding="utf-8") == _FOO_TEXT
