@@ -1391,3 +1391,621 @@ RUN:   Grep 'sqlite|mode=ro' src/probos/doctor -> none; precedent maintenance/re
 CLAIM: no test fixes commission_agent's signature
 RUN:   Grep 'def commission_agent|commission_agent\s*=' tests -> none
 ```
+
+## Amendment A1 (2026-10-19): three deterministic preflight failures
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+The contract as drafted fails three gate preflight phases (`architecture fitness`: srp-size on
+`probos.acm::AgentCapitalService`, db-connect on `crew_enrollment_check::_rows`; `store registry`:
+baseline-table-drift on `probos.acm`). A1 fixes all three in code. **No row is added to
+`docs/development/architecture-baseline.yaml`**: `tests/test_ad1324_srp_layout.py:19,54-57` pins its sha256,
+and the program's intent is that debt is not copied into new code.
+
+**Target trees.** A1.1–A1.3 and A1.7 apply to the tree AFTER Sections 1–2 (the built M1). A1.5–A1.6
+apply to `origin/main` files the contract does not touch. A1.4 and A1.8 are whole new files; A1.8
+**replaces** Section 9's `crew_enrollment_check.py` code block (Section 9's `__init__.py` registration is
+unchanged). Build order: A1.1–A1.7 in M1 (repair round), A1.8–A1.9 in M3.
+
+### A1.1 `src/probos/acm.py` — import the chain
+<<<<<<< SEARCH
+from probos.config import format_trust
+
+from probos.protocols import ConnectionFactory, DatabaseConnection
+=======
+from probos.commissioning import commission_chain
+from probos.config import format_trust
+
+from probos.protocols import ConnectionFactory, DatabaseConnection
+>>>>>>> REPLACE
+
+### A1.2 `src/probos/acm.py` — `commission` becomes the front door that delegates
+<<<<<<< SEARCH
+    async def commission(
+        self, agent_id: str, agent_type: str, runtime: Any,
+        *, preserve_existing: bool = False, grant_issued_by: str = "captain",
+    ) -> dict[str, Any]:
+        """AD-889: Walk the capability spine Role → Skills → Tools at commissioning.
+
+        Composes three subsystems into a single front door: (1) the AD-428 skill
+        service assigns PCCs + legacy role skills, (2) the ontology RoleTemplate's
+        required skills are acquired at their declared proficiency (preferred over
+        the legacy dict), and (3) each acquired skill's preferred tools — resolved
+        via the AD-888 resolver — are granted to the agent. Each step
+        honest-degrades (Tier-2 log-and-degrade) so a missing subsystem never
+        aborts commissioning. Re-commission is idempotent: ``acquire_skill``
+        upserts and an existing active grant is skipped.
+        """
+        summary: dict[str, Any] = {
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "skills_acquired": [],
+            "tools_granted": [],
+        }
+
+        skill_service = getattr(runtime, "skill_service", None)
+        if skill_service is None:
+            logger.debug(
+                "AD-889: skill_service absent — commission skipped for %s", agent_id,
+            )
+            return summary
+
+        # BF-906: through the crew enroller, keep every skill record the agent held
+        # before this commissioning (proficiency, exercise count, history). The
+        # snapshot comes first, so this commissioning's own PCC -> template upgrade
+        # still applies.
+        preserved: frozenset[str] = frozenset()
+        if preserve_existing:
+            try:
+                before = await skill_service.get_profile(agent_id)
+            except Exception:
+                logger.warning(
+                    "BF-906: pre-commission profile read failed for %s; commission "
+                    "skipped so no existing skill record is overwritten",
+                    agent_id, exc_info=True,
+                )
+                return summary
+            preserved = frozenset(r.skill_id for r in before.all_skills)
+
+        # 1. PCCs + legacy role skills (AD-428 commission_agent).
+        try:
+            await skill_service.commission_agent(
+                agent_id, agent_type, skip_skill_ids=preserved,
+            )
+        except Exception:
+            logger.debug(
+                "AD-889: base commission_agent failed for %s", agent_id, exc_info=True,
+            )
+
+        # 2. Role → Skills via the ontology RoleTemplate, preferred over the legacy
+        #    dict. SkillRequirement.min_proficiency is a raw int (1-7) → ProficiencyLevel.
+        ontology = getattr(runtime, "ontology", None)
+        template = ontology.get_role_template_for_agent(agent_type) if ontology else None
+        if template is not None:
+            from probos.skill_framework import ProficiencyLevel
+            for req in template.required_skills:
+                if req.skill_id in preserved:
+                    continue
+                try:
+                    level = ProficiencyLevel(req.min_proficiency)
+                except ValueError:
+                    level = ProficiencyLevel.FOLLOW
+                try:
+                    await skill_service.acquire_skill(
+                        agent_id, req.skill_id, source="commission", proficiency=level,
+                    )
+                except ValueError:
+                    # Prerequisite not met at commissioning — expected for chained skills.
+                    logger.debug(
+                        "AD-889: skill %s prereq unmet for %s — skipped",
+                        req.skill_id, agent_id,
+                    )
+
+        # Fetch the post-acquisition profile once (skill_service is present here).
+        profile = None
+        try:
+            profile = await skill_service.get_profile(agent_id)
+            summary["skills_acquired"] = [r.skill_id for r in profile.all_skills]
+        except Exception:
+            logger.debug(
+                "AD-889: profile fetch failed for %s", agent_id, exc_info=True,
+            )
+
+        # 3. Skills → Tools via the AD-888 resolver + permission grants. Requires the
+        #    tool registry (resolution), the permission store (grants), and the skill
+        #    registry (skill definitions); any absent → honest-degrade, no grants.
+        tool_permission_store = getattr(runtime, "tool_permission_store", None)
+        tool_registry = getattr(runtime, "tool_registry", None)
+        skill_registry = getattr(runtime, "skill_registry", None)
+        if (
+            profile is not None
+            and tool_permission_store is not None
+            and tool_registry is not None
+            and skill_registry is not None
+        ):
+            from probos.tools.protocol import ToolPermission
+            from probos.tools.skill_tool_resolver import resolve_tools_for_skill
+            try:
+                for record in profile.all_skills:
+                    skill_def = skill_registry.get_skill(record.skill_id)
+                    if skill_def is None:
+                        continue
+                    regs = resolve_tools_for_skill(
+                        skill_def, agent_id=agent_id, tool_registry=tool_registry,
+                    )
+                    for reg in regs:
+                        # Idempotent + AD-1009 override-preserving: skip if ANY
+                        # active per-agent decision exists for this tool — a grant
+                        # OR a manual Captain restriction. Re-applying a role
+                        # template (apply-role) must never clobber a per-agent
+                        # override (agent-precedence). At birth there are no
+                        # decisions, so this is byte-identical to the first
+                        # commission; only re-apply benefits.
+                        existing = tool_permission_store.get_active_grants_sync(
+                            agent_id, reg.tool_id,
+                        )
+                        if existing:
+                            continue
+                        await tool_permission_store.issue_grant(
+                            agent_id, reg.tool_id, ToolPermission.READ,
+                            is_restriction=False, reason="commission",
+                            issued_by=grant_issued_by,
+                        )
+                        summary["tools_granted"].append(reg.tool_id)
+            except Exception:
+                logger.debug(
+                    "AD-889: tool grant step failed for %s", agent_id, exc_info=True,
+                )
+
+        return summary
+=======
+    async def commission(
+        self, agent_id: str, agent_type: str, runtime: Any,
+        *, preserve_existing: bool = False, grant_issued_by: str = "captain",
+    ) -> dict[str, Any]:
+        """AD-889: Walk the capability spine Role → Skills → Tools at commissioning.
+
+        The single front door for the Captain's routes and the BF-906 crew enroller.
+        The chain itself is :func:`probos.commissioning.commission_chain`: it composes
+        runtime services and holds no ACM state, so BF-906 moved it out of this class
+        unchanged.
+        """
+        return await commission_chain(
+            agent_id, agent_type, runtime,
+            preserve_existing=preserve_existing, grant_issued_by=grant_issued_by,
+        )
+>>>>>>> REPLACE
+
+After A1.1–A1.2: `AgentCapitalService` span **408** lines (limit 500), **15** direct methods (limit 15,
+`>` fires). Count with `ast` before committing; it is a hard gate.
+
+### A1.3 `tests/test_bf906_acm_commissioning.py` — the warning's logger moved
+<<<<<<< SEARCH
+        with caplog.at_level(logging.WARNING, logger="probos.acm"):
+=======
+        with caplog.at_level(logging.WARNING, logger="probos.commissioning"):
+>>>>>>> REPLACE
+
+### A1.4 `src/probos/commissioning.py` (new, whole file)
+```python
+"""AD-889 commissioning chain: Role -> Skills -> Tools, for one agent.
+
+BF-906 (#1594) moved this out of ``probos.acm.AgentCapitalService.commission``
+with no behaviour change. The chain composes runtime services (the skill service,
+ontology, tool registry, permission store and skill registry) and holds no ACM
+state. ``AgentCapitalService.commission`` stays the one front door and delegates
+here, so its callers (the Captain's routes and the BF-906 crew enroller) are
+unchanged.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+async def commission_chain(
+    agent_id: str, agent_type: str, runtime: Any,
+    *, preserve_existing: bool = False, grant_issued_by: str = "captain",
+) -> dict[str, Any]:
+    """AD-889: Walk the capability spine Role → Skills → Tools at commissioning.
+
+    Composes three subsystems into a single front door: (1) the AD-428 skill
+    service assigns PCCs + legacy role skills, (2) the ontology RoleTemplate's
+    required skills are acquired at their declared proficiency (preferred over
+    the legacy dict), and (3) each acquired skill's preferred tools — resolved
+    via the AD-888 resolver — are granted to the agent. Each step
+    honest-degrades (Tier-2 log-and-degrade) so a missing subsystem never
+    aborts commissioning. Re-commission is idempotent: ``acquire_skill``
+    upserts and an existing active grant is skipped.
+    """
+    summary: dict[str, Any] = {
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "skills_acquired": [],
+        "tools_granted": [],
+    }
+
+    skill_service = getattr(runtime, "skill_service", None)
+    if skill_service is None:
+        logger.debug(
+            "AD-889: skill_service absent — commission skipped for %s", agent_id,
+        )
+        return summary
+
+    # BF-906: through the crew enroller, keep every skill record the agent held
+    # before this commissioning (proficiency, exercise count, history). The
+    # snapshot comes first, so this commissioning's own PCC -> template upgrade
+    # still applies.
+    preserved: frozenset[str] = frozenset()
+    if preserve_existing:
+        try:
+            before = await skill_service.get_profile(agent_id)
+        except Exception:
+            logger.warning(
+                "BF-906: pre-commission profile read failed for %s; commission "
+                "skipped so no existing skill record is overwritten",
+                agent_id, exc_info=True,
+            )
+            return summary
+        preserved = frozenset(r.skill_id for r in before.all_skills)
+
+    # 1. PCCs + legacy role skills (AD-428 commission_agent).
+    try:
+        await skill_service.commission_agent(
+            agent_id, agent_type, skip_skill_ids=preserved,
+        )
+    except Exception:
+        logger.debug(
+            "AD-889: base commission_agent failed for %s", agent_id, exc_info=True,
+        )
+
+    # 2. Role → Skills via the ontology RoleTemplate, preferred over the legacy
+    #    dict. SkillRequirement.min_proficiency is a raw int (1-7) → ProficiencyLevel.
+    ontology = getattr(runtime, "ontology", None)
+    template = ontology.get_role_template_for_agent(agent_type) if ontology else None
+    if template is not None:
+        from probos.skill_framework import ProficiencyLevel
+        for req in template.required_skills:
+            if req.skill_id in preserved:
+                continue
+            try:
+                level = ProficiencyLevel(req.min_proficiency)
+            except ValueError:
+                level = ProficiencyLevel.FOLLOW
+            try:
+                await skill_service.acquire_skill(
+                    agent_id, req.skill_id, source="commission", proficiency=level,
+                )
+            except ValueError:
+                # Prerequisite not met at commissioning — expected for chained skills.
+                logger.debug(
+                    "AD-889: skill %s prereq unmet for %s — skipped",
+                    req.skill_id, agent_id,
+                )
+
+    # Fetch the post-acquisition profile once (skill_service is present here).
+    profile = None
+    try:
+        profile = await skill_service.get_profile(agent_id)
+        summary["skills_acquired"] = [r.skill_id for r in profile.all_skills]
+    except Exception:
+        logger.debug(
+            "AD-889: profile fetch failed for %s", agent_id, exc_info=True,
+        )
+
+    # 3. Skills → Tools via the AD-888 resolver + permission grants. Requires the
+    #    tool registry (resolution), the permission store (grants), and the skill
+    #    registry (skill definitions); any absent → honest-degrade, no grants.
+    tool_permission_store = getattr(runtime, "tool_permission_store", None)
+    tool_registry = getattr(runtime, "tool_registry", None)
+    skill_registry = getattr(runtime, "skill_registry", None)
+    if (
+        profile is not None
+        and tool_permission_store is not None
+        and tool_registry is not None
+        and skill_registry is not None
+    ):
+        from probos.tools.protocol import ToolPermission
+        from probos.tools.skill_tool_resolver import resolve_tools_for_skill
+        try:
+            for record in profile.all_skills:
+                skill_def = skill_registry.get_skill(record.skill_id)
+                if skill_def is None:
+                    continue
+                regs = resolve_tools_for_skill(
+                    skill_def, agent_id=agent_id, tool_registry=tool_registry,
+                )
+                for reg in regs:
+                    # Idempotent + AD-1009 override-preserving: skip if ANY
+                    # active per-agent decision exists for this tool — a grant
+                    # OR a manual Captain restriction. Re-applying a role
+                    # template (apply-role) must never clobber a per-agent
+                    # override (agent-precedence). At birth there are no
+                    # decisions, so this is byte-identical to the first
+                    # commission; only re-apply benefits.
+                    existing = tool_permission_store.get_active_grants_sync(
+                        agent_id, reg.tool_id,
+                    )
+                    if existing:
+                        continue
+                    await tool_permission_store.issue_grant(
+                        agent_id, reg.tool_id, ToolPermission.READ,
+                        is_restriction=False, reason="commission",
+                        issued_by=grant_issued_by,
+                    )
+                    summary["tools_granted"].append(reg.tool_id)
+        except Exception:
+            logger.debug(
+                "AD-889: tool grant step failed for %s", agent_id, exc_info=True,
+            )
+
+    return summary
+```
+The body is Section 1h's result, dedented 4 spaces; only the `def` line and the module docstring are new.
+
+### A1.5 `src/probos/storage_declarations.py` — declare acm.db
+<<<<<<< SEARCH
+            "and a sender that lost its own copy restarts at epoch 1 until it rotates its key."
+        ),
+    ),
+)
+=======
+            "and a sender that lost its own copy restarts at epoch 1 until it rotates its key."
+        ),
+    ),
+    StoreDeclaration(
+        id="acm.agent-capital",
+        title="Agent Capital Management: lifecycle, transition history, identity mapping and commissioning records (AD-427, AD-441, BF-906)",
+        owner_module="probos.acm",
+        owner_symbol="AgentCapitalService",
+        canonical_path="acm.db",
+        criticality=StoreCriticality.REQUIRED,
+        lifecycle_owner="probos.startup.communication.init_communication",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM in probos.acm. lifecycle, identity_mapping and commissioning_records hold at most "
+            "one row per agent or slot (PRIMARY KEY). lifecycle_transitions is an append-only HR history: one row "
+            "per state change and one per BF-906 commissioning, kept as the agent's record. Growth is bounded by "
+            "crew size and HR actions. `probos reset` (tier 2, Recommissioning) deletes the whole file."
+        ),
+        backup="included",
+        restore="unknown",
+        notes=(
+            "Started without a guard in init_communication (Phase 7), so an unopenable acm.db aborts startup; "
+            "stopped in startup/shutdown.py. Opened through the ConnectionFactory. Tables: lifecycle, "
+            "lifecycle_transitions, identity_mapping and commissioning_records (BF-906, additive; older code "
+            "ignores it). The probos doctor crew_enrollment check reads it with the adapter's read_only open."
+        ),
+    ),
+)
+>>>>>>> REPLACE
+
+### A1.6 `docs/development/store-baseline.yaml` — a declared store leaves the baseline
+<<<<<<< SEARCH
+undeclared_stores:
+- module: probos.acm
+  tables:
+  - identity_mapping
+  - lifecycle
+  - lifecycle_transitions
+- module: probos.artifacts
+=======
+undeclared_stores:
+- module: probos.artifacts
+>>>>>>> REPLACE
+
+Then `python scripts/check_store_registry.py --check` must be clean and `--update-baseline` must produce no
+diff (`tests/test_ad1256_store_registry.py:877-885` requires the rendered file to equal the committed one byte for byte).
+
+### A1.7 `src/probos/storage/sqlite_factory.py` — read-only open in the approved adapter
+<<<<<<< SEARCH
+from __future__ import annotations
+
+import aiosqlite
+=======
+from __future__ import annotations
+
+from pathlib import Path
+
+import aiosqlite
+>>>>>>> REPLACE
+<<<<<<< SEARCH
+    async def connect(self, db_path: str) -> DatabaseConnection:
+        """Open an aiosqlite connection.
+
+        The returned connection satisfies DatabaseConnection protocol.
+        aiosqlite.Connection already implements execute/executemany/
+        executescript/commit/close — no wrapper needed.
+        """
+        conn = await aiosqlite.connect(db_path)
+        return conn  # type: ignore[return-value]  # aiosqlite.Connection satisfies protocol
+=======
+    async def connect(self, db_path: str, *, read_only: bool = False) -> DatabaseConnection:
+        """Open an aiosqlite connection.
+
+        The returned connection satisfies DatabaseConnection protocol.
+        aiosqlite.Connection already implements execute/executemany/
+        executescript/commit/close — no wrapper needed.
+
+        BF-906: ``read_only=True`` opens an existing file through SQLite's
+        ``mode=ro`` URI. It never creates the file (a missing one raises
+        ``sqlite3.OperationalError``) and every write raises. It is SQLite-specific
+        and deliberately not part of the ``ConnectionFactory`` protocol. The
+        default path is unchanged: ``uri=False`` is sqlite3's own default.
+        """
+        target = f"{Path(db_path).resolve().as_uri()}?mode=ro" if read_only else db_path
+        conn = await aiosqlite.connect(target, uri=read_only)
+        return conn  # type: ignore[return-value]  # aiosqlite.Connection satisfies protocol
+>>>>>>> REPLACE
+
+Exactly one `aiosqlite.connect` call stays in this method: the approved baseline row
+(`probos.storage.sqlite_factory::SQLiteConnectionFactory.connect`, callee `aiosqlite.connect`, count 1) is unchanged.
+
+### A1.8 `src/probos/doctor/checks/crew_enrollment_check.py` (new, whole file; replaces Section 9's code block)
+```python
+"""BF-906 (#1594): every crew member has an ACM lifecycle record and a commissioning.
+
+Reads identity.db, acm.db and skills.db through the approved ConnectionFactory
+adapter's ``read_only`` open (SQLite ``mode=ro``): safe while the vessel runs,
+it never creates a file and never writes to a store. The crew are the slots
+holding a birth certificate, issued here or transferred in. A crew member needs
+a lifecycle row, and a commissioning record or at least one skill, unless ACM
+records it as decommissioned. Mirrors ``probos.crew_enrollment.check_crew_invariant``.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
+
+from probos.doctor.protocol import CheckOutcome, CheckResult, DoctorContext
+from probos.doctor.registry import register_check
+from probos.storage.sqlite_factory import default_factory
+
+_BUSY_TIMEOUT_S = 2.0
+_CREW_SQL = (
+    "SELECT s.slot_id FROM slot_mappings s JOIN birth_certificates b ON b.agent_uuid = s.agent_uuid"
+)
+_FOREIGN_CREW_SQL = (
+    "SELECT s.slot_id FROM slot_mappings s "
+    "JOIN foreign_birth_certificates f ON f.agent_uuid = s.agent_uuid"
+)
+_LIFECYCLE_SQL = "SELECT agent_id, state FROM lifecycle"
+_COMMISSIONED_SQL = "SELECT agent_id FROM commissioning_records"
+_SKILLED_SQL = "SELECT DISTINCT agent_id FROM agent_skills"
+
+
+class _StoreUnreadable(Exception):
+    """A store could not be read (locked by the running vessel, or unreadable)."""
+
+
+async def _rows(path: Path, sql: str) -> list[tuple] | None:
+    """Rows of ``sql`` from the store at ``path``; None when the store or table is absent."""
+    if not path.exists():
+        return None
+    try:
+        conn = await default_factory.connect(str(path), read_only=True)
+    except sqlite3.Error as exc:
+        raise _StoreUnreadable(f"{path.name}: {exc}") from exc
+    try:
+        await conn.execute(f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_S * 1000)}")
+        async with conn.execute(sql) as cursor:
+            return [tuple(row) for row in await cursor.fetchall()]
+    except sqlite3.Error as exc:
+        if isinstance(exc, sqlite3.OperationalError) and "no such table" in str(exc):
+            return None
+        raise _StoreUnreadable(f"{path.name}: {exc}") from exc
+    finally:
+        await conn.close()
+
+
+@dataclass(frozen=True)
+class _CrewEnrollmentCheck:
+    name: str = "crew_enrollment"
+
+    async def run(self, ctx: DoctorContext) -> CheckResult:
+        data_dir = ctx.data_dir
+        try:
+            crew_rows = await _rows(data_dir / "identity.db", _CREW_SQL)
+            if crew_rows is None:
+                return CheckResult(CheckOutcome.OK, "Crew enrollment: no crew yet (identity store not initialized)")
+            foreign_rows = await _rows(data_dir / "identity.db", _FOREIGN_CREW_SQL) or []
+            crew = sorted({r[0] for r in crew_rows} | {r[0] for r in foreign_rows})
+            lifecycle = {r[0]: r[1] for r in (await _rows(data_dir / "acm.db", _LIFECYCLE_SQL) or [])}
+            commissioned = {r[0] for r in (await _rows(data_dir / "acm.db", _COMMISSIONED_SQL) or [])}
+            skilled = {r[0] for r in (await _rows(data_dir / "skills.db", _SKILLED_SQL) or [])}
+        except _StoreUnreadable as exc:
+            return CheckResult(
+                CheckOutcome.WARN, f"Crew enrollment: could not read {exc}",
+                "The running vessel may be writing to it; rerun `probos doctor`.",
+            )
+        if not crew:
+            return CheckResult(CheckOutcome.OK, "Crew enrollment: no crew have birth certificates yet")
+        missing = [a for a in crew if a not in lifecycle]
+        never = [
+            a for a in crew
+            if lifecycle.get(a) != "decommissioned"
+            and a not in commissioned and a not in skilled
+        ]
+        if not missing and not never:
+            return CheckResult(
+                CheckOutcome.OK,
+                f"Crew enrollment: all {len(crew)} crew have an ACM lifecycle record and a commissioning",
+            )
+        failing = sorted(set(missing) | set(never))
+        return CheckResult(
+            CheckOutcome.FAIL,
+            f"Crew enrollment: {len(failing)} of {len(crew)} crew fail the BF-906 invariant",
+            "No ACM lifecycle record: " + (", ".join(missing) or "none") + "\n"
+            "Never commissioned: " + (", ".join(never) or "none") + "\n"
+            "Restart ProbOS: the startup enrollment pass records them. If this persists, "
+            "search the startup log for 'BF-906'.",
+        )
+
+
+register_check(_CrewEnrollmentCheck())
+```
+Doctor semantics table: unchanged, with one row added — "a store that is not a database (corrupt) → WARN"
+(any `sqlite3.Error` other than "no such table" is now unreadable, never an uncaught crash).
+
+### A1.9 Contract text superseded
+- **Acceptance Criteria 4**, second sentence → "The doctor reads through the approved adapter's
+  `read_only` open (A1.7); no new direct connection and no architecture-baseline row."
+- **Acceptance Criteria 2** → "kills all 30 rows".
+- **Decisions D7** → superseded by D15. **Section 9 docstring precedent** (`rebuild_episodic`) → replaced by A1.8.
+- **Diff Reviewer property 7** → "…opens every store through `default_factory.connect(..., read_only=True)`…".
+
+### A1 tests
+| ID | Change | Test |
+|---|---|---|
+| U14 (new) | add, M1 | `test_agent_capital_service_is_within_the_srp_limits`: AST of `src/probos/acm.py`; `AgentCapitalService` span ≤ `SRP_MAX_BODY_LINES` and direct methods ≤ `SRP_MAX_DIRECT_METHODS`, both read from `scripts/check_architecture_principles.py` via `importlib.util.spec_from_file_location` (no hard-coded copy) |
+| U15 (new) | add, M1 | `test_acm_store_is_declared_and_leaves_the_baseline`: the `acm.agent-capital` declaration exists once, `importlib` resolves `owner_module.owner_symbol` to `AgentCapitalService`, `canonical_path == "acm.db"`, its notes name all four tables; `store-baseline.yaml` has no `probos.acm` row |
+| D4 | amend | also assert the WARN arrives in < 2.0 s with `_BUSY_TIMEOUT_S = 0.1` (kills row 30) |
+| D8 (new) | add, M3 | `test_read_only_open_reads_and_refuses_writes`: seed a db with sqlite3; `default_factory.connect(p, read_only=True)` returns the seeded row; `INSERT` raises `sqlite3.OperationalError`; the file's sha256 and the directory listing are unchanged |
+| D9 (new) | add, M3 | `test_read_only_open_never_creates_a_missing_file`: raises `sqlite3.OperationalError`; the path still does not exist and the directory is empty |
+| D10 (new) | add, M3 | `test_default_open_is_unchanged`: `connect(p)` with no keyword still creates and writes a new file (boundary) |
+| D11 (new) | add, M3 | `test_doctor_opens_every_store_read_only`: monkeypatch `crew_enrollment_check.default_factory` with a recorder that delegates to the real factory; on a seeded data dir every call had `read_only=True` and identity/acm/skills.db were each opened |
+
+U1–U13, T-B1–T-B9 and D1–D3/D5–D7 are unchanged. U4 and U6 now pass through the wrapper into `commission_chain`.
+
+**Focused tests added to M1:** `tests/test_ad1256_store_registry.py`, `tests/test_ad1270b_architecture_fitness.py`,
+`tests/test_ad1324_srp_layout.py`, `tests/test_ad1265_backup_coverage.py`, plus
+`python scripts/check_architecture_principles.py --check` and `python scripts/check_store_registry.py --check`.
+**Added to M3:** `tests/test_database_abstraction.py`, `tests/test_ad1015_mcp_server_store.py` (factory consumers).
+
+### A1 mutation rows
+| # | File | Anchor → mutant | Killed by |
+|---|---|---|---|
+| 3 (moved) | commissioning.py | `            if req.skill_id in preserved:` → `            if False:` | T-B4, U4 |
+| 6 (moved) | commissioning.py | `    if preserve_existing:` → `    if True:` | U5 |
+| 21 (moved) | commissioning.py | `                    issued_by=grant_issued_by,` → `…="captain",` | U6 |
+| 26 | acm.py | `            preserve_existing=preserve_existing, grant_issued_by=grant_issued_by,` → `            preserve_existing=False, grant_issued_by="captain",` | U4, U6 |
+| 27 | storage/sqlite_factory.py | `        target = f"{Path(db_path).resolve().as_uri()}?mode=ro" if read_only else db_path` → `        target = db_path` | D8, D9 |
+| 28 | storage/sqlite_factory.py | `        conn = await aiosqlite.connect(target, uri=read_only)` → `        conn = await aiosqlite.connect(target)` | D8 |
+| 29 | crew_enrollment_check.py | `        conn = await default_factory.connect(str(path), read_only=True)` → `        conn = await default_factory.connect(str(path))` | D11 |
+| 30 | crew_enrollment_check.py | `        await conn.execute(f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_S * 1000)}")` → `        pass` | D4 (elapsed bound) |
+
+Rows 3, 6 and 21 replace their originals (the code moved; anchors are dedented 4 spaces). Confirm every anchor is unique with `grep -c`.
+
+### A1 Diff Reviewer properties (added)
+11. `commission_chain` matches Section 1h's `commission` body exactly after a 4-space dedent; only the `def` line and module docstring differ.
+12. `SQLiteConnectionFactory.connect` holds exactly one `aiosqlite.connect` call, and the default path behaves exactly as before.
+13. `docs/development/architecture-baseline.yaml` is byte-identical (sha pin at `tests/test_ad1324_srp_layout.py:19`); `store-baseline.yaml` loses only the `probos.acm` row.
+
+### A1 decisions
+| # | Decision | Envelope |
+|---|---|---|
+| D14 | srp-size: move the AD-889 chain (no ACM state) into `probos.commissioning.commission_chain`; `AgentCapitalService.commission` stays the front door with an unchanged signature (408 lines, 15 methods) | Architect (no API change) |
+| D15 | db-connect: the doctor reads through the approved adapter's new `read_only` open; the `ConnectionFactory` protocol is unchanged; supersedes D7 | Architect (no control weakened; the gate is unchanged) |
+| D16 | Store registry: declare `acm.db` and delete its baseline row, per the baseline's own rule | Architect |
+| D17 | No architecture-baseline row is added; the AD-1324 sha pin stays | Architect |
+
+**Known edge for AD-1343:** `AgentCapitalService` is now at the 15-method cap. Any new ACM method trips the
+`methods` trigger, so AD-1343 must not add one without an extraction.
+**Considered, deferred (AD-1256):** move `maintenance/rebuild_episodic::_open_wardroom_readonly` onto the
+adapter's `read_only` open and delete its debt row.
+**Blind spot:** opening a WAL-mode store read-only fails when its `-shm` file is missing; the result is WARN, never a false OK.
