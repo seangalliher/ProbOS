@@ -3442,3 +3442,299 @@ REPLACE:
 ```
 
 Row R-aa stays killed by this case: the unreversed restore writes `a.py` first and the intermediate `b.py` snapshot last, so both names end with `x = 2\r\n` and the file-bytes part and the hash assertion fail. No new row; the tests summary count is unchanged. The DECISIONS entry lists D1 to D38.
+
+## Amendment A7 (2026-10-19): the start ref reaches git unchanged or the build is refused; the full ref; an uncached dirty check; directory pruning never stops the cleanup
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19, on M2 review round 2 (gpt-6.1-sol: R2-1 to R2-4).
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only answer (session `2270ac72`). The only wording changes: D39 to D42 are merged into the Decisions, the rows table is rebuilt with full paths and the full anchor lines (the answer wrote "same" and "the R-ap anchor"), and the two re-derived rows carry ids the campaign runner accepts: **R-ac2 replaces R-ac** (A4.15, now inert: its line changed) and **K3b replaces K3** (partition P1, now inert); every anchor is checked against the chain.
+
+**Verdict:** ⚠️ Conditional. It passes when A7.1 to A7.6 apply against the staged tree `d01326be`, R17 to R21 are red on that tree and green after, rows R-al to R-aq plus the re-derived R-ac and K3 are killed, and the focused set of 21 files is green.
+
+**Decisions** (recorded on #1585; the Captain may overrule):
+- **D39 (R2-1). Refuse at entry, before any write, on every platform, using a single check of how the argument reaches git.** The check is `_argv_bytes(name) == name.encode("utf-8", "surrogateescape")`, with the module seam `_argv_bytes = os.fsencode`.
+  - **POSIX:** Python's `subprocess` passes `os.fsencode`'s bytes. Under a UTF-8 filesystem encoding (CI, and Python's default) the check holds for every name git can print. So a POSIX run does not need the guard: it never refuses there, and its R17 cases are controls.
+  - **Windows:** `os.fsencode` uses `surrogatepass`, so the two sides differ for exactly the names that hold a lone surrogate. Those are the names git receives as U+FFFD.
+  - **Ranking:**
+    1. Entry refusal (chosen): no write, no build branch, the same shape as R4, the cheapest test.
+    2. Refusal in `_git_return_to`: files are written, a build branch is left behind, and a cleanup note is needed.
+    3. A `sys.platform` check: it misses a POSIX host with a non-UTF-8 filesystem encoding, and it needs the same seam anyway.
+- **D40 (R2-2). The reviewer's fix is confirmed.**
+  - **Change:** read `symbolic-ref -q HEAD`, remove only the trailing LF, and require and remove the literal `refs/heads/` prefix.
+  - **Rejected alternative:** `rev-parse --symbolic-full-name HEAD` prints `HEAD` when detached, which is one more special case and no gain.
+  - **Detached HEAD:** git exits 1, so the result is None and the build returns to the commit, as today.
+  - **Unborn branch:** the name is returned. The return then fails visibly and the build branch is kept, as today (deferred).
+  - **HEAD pointing at a non-branch ref** (`refs/tags/…`, `refs/remotes/…`; only plumbing can set this): None, so the build returns detached at the same commit. Nothing is lost.
+- **D41 (R2-3). Add `-c core.fscache=false` to the dirty-check status launch only, after the hardening options.**
+  - **Why not `HARDENED_GIT_CONFIG_ARGS`:** that tuple is a security constant. M1 pins it (`test_bf904a_git_hardening.py:876`) and `worktree_manager.py:62` shares it. `fscache` controls performance (bulk lstat on Windows), not hooks.
+  - **No other pipeline consumer decides on the operator checkout's stat state:**
+    - `worktree_manager.py` runs `diff main...<branch>`, which compares commits, and its `checkout` runs in its own worktree.
+    - The M1 snapshot reads no status.
+    - `authority.py:818` is outside the build pipeline (deferred item 5).
+  - **A6's checks stay, and its observer changes:** the hardlink case compares status read the way the consumer reads it, uncached.
+  - **Regression evidence, two parts:**
+    - A deterministic argv pin, which is the killer of record.
+    - A real loop in which each next build owns the first status read. Its red side is probabilistic: the reviewer saw 16 refusals in 40 runs and my probe saw 8 stale reads in 30, so 15 reads miss with a probability below 1%. Its green side was 0 in 70 measured runs.
+- **D42 (R2-4). Catch `Exception` in the pruning block and carry on; `BaseException` still propagates.** Swallowing is justified here because an empty directory left behind is invisible to git, to `_tree` and to the next build.
+  - **Other cleanup handlers, enumerated:** `_restore_pre_build_files` has only the one at `builder.py:1748`. `_git_return_to` (1698) and `_cleanup_git` (1709) already catch `Exception`. The `finally` block's `logger` calls do not raise, because logging handles failures in `Handler.handleError`. The other `except OSError` lines (1892, 1921, 2756) are not on the cleanup path.
+  - **A4.17 item 3 is withdrawn.**
+
+
+All SEARCH blocks apply after A6 and before Section 8. None overlaps a Section 8 or Section 9 anchor: those touch other functions, and no test file other than `test_bf904a_failed_build_restore.py`.
+
+### A7.1 `src/probos/cognitive/builder.py`: `_git_current_branch`, and the argument check
+SEARCH:
+```python
+    # BF-904a A4 (D33): a valid ref may end in Unicode whitespace (U+00A0) that the default decode's
+    # strip() would cut, and the return would then check out a different, existing branch.
+    rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir, lossless=True)  # BF-904a A4 (D33): the ref exactly as git names it
+    out = out.removesuffix("\n")  # BF-904a A4 (D33): only the LF git ends the line with
+    return out if rc == 0 and out else None  # BF-904a: never a guessed "main"
+
+
+async def _git_head_commit(work_dir: str) -> str | None:
+```
+REPLACE:
+```python
+    # BF-904a A4 (D33): a valid ref may end in Unicode whitespace (U+00A0) that the default decode's
+    # strip() would cut, and the return would then check out a different, existing branch.
+    # BF-904a A7 (D40): the full ref. --short prints "heads/<name>" when a tag shares the name, and
+    # checking that out detaches HEAD. Only a local branch is a branch; any other target is None.
+    rc, out, _err = await _run_git(["symbolic-ref", "-q", "HEAD"], work_dir, lossless=True)  # BF-904a A7 (D40): the full ref, never git's disambiguated short name
+    out = out.removesuffix("\n")  # BF-904a A4 (D33): only the LF git ends the line with
+    out = out.removeprefix("refs/heads/") if out.startswith("refs/heads/") else ""  # BF-904a A7 (D40): a local branch's name, or none
+    return out if rc == 0 and out else None  # BF-904a: never a guessed "main"
+
+
+#: BF-904a A7 (D39): the bytes a process argument reaches git as. On POSIX, subprocess passes
+#: os.fsencode's bytes. On Windows the argument travels as UTF-16 and git turns a lone surrogate
+#: into U+FFFD; os.fsencode there (surrogatepass) differs from the printed bytes for exactly those
+#: names. A module seam, so a test models either host without patching os.
+_argv_bytes = os.fsencode
+
+
+def _ref_survives_argv(name: str) -> bool:
+    """BF-904a A7 (D39): whether git receives *name* as the bytes it printed it as (UTF-8, surrogateescape)."""
+    try:
+        return _argv_bytes(name) == name.encode("utf-8", "surrogateescape")  # BF-904a A7 (D39): the bytes git printed
+    except UnicodeError:  # a name this host cannot encode cannot be passed
+        return False
+
+
+async def _git_head_commit(work_dir: str) -> str | None:
+```
+Rows R-b and R-ad keep their lines unchanged and still unique. R-ac's line changes and is re-derived in A7.8. `os` is already imported (`builder.py:1811`).
+
+### A7.2 `src/probos/cognitive/builder.py`: refuse a start ref git would not receive unchanged
+SEARCH:
+```python
+            "Cannot read the checkout's current branch or commit, so a failed build could "
+            "not return to it; refused before any write"
+        )
+        return result
+
+    # 1a. Verify clean working tree (prevent contaminating build branch)
+```
+REPLACE:
+```python
+            "Cannot read the checkout's current branch or commit, so a failed build could "
+            "not return to it; refused before any write"
+        )
+        return result
+    if original_branch is not None and not _ref_survives_argv(original_branch):  # BF-904a A7 (D39): git would receive another name
+        result.error = (
+            f"The checkout's branch {_display_token(original_branch, _DISPLAY_NAME_CHARS)} cannot be passed to git "
+            "unchanged on this host, so a failed build could not return to it; refused before any write"
+        )
+        return result
+
+    # 1a. Verify clean working tree (prevent contaminating build branch)
+```
+R-j's line (`if original_branch is None and original_commit is None:`) is unchanged.
+
+### A7.3 `src/probos/cognitive/builder.py`: `_is_dirty_working_tree` reads uncached
+SEARCH:
+```python
+        # Check for uncommitted changes
+        proc = await asyncio.create_subprocess_exec(
+            "git", *HARDENED_GIT_CONFIG_ARGS, "status", "--porcelain",
+```
+REPLACE:
+```python
+        # Check for uncommitted changes. BF-904a A7 (D41): uncached. Git for Windows' file-system cache
+        # reads NTFS directory entries, which a hard link's other name refreshes lazily, so a restored
+        # file can read as modified. Other hosts ignore the setting.
+        proc = await asyncio.create_subprocess_exec(
+            "git", *HARDENED_GIT_CONFIG_ARGS, "-c", "core.fscache=false", "status", "--porcelain",  # BF-904a A7 (D41): the dirty check reads the file, not the cache
+```
+M1's argv pin (`test_bf904a_git_hardening.py:877`, `argv[1:5]`) and `_verb` (`:310`, which skips `-c` pairs) still hold.
+
+### A7.4 `src/probos/cognitive/builder.py`: pruning never stops the cleanup
+SEARCH:
+```python
+                parent.rmdir()
+                parent = parent.parent
+        except OSError:
+            pass  # Directory not empty or permission issue
+```
+REPLACE:
+```python
+                parent.rmdir()
+                parent = parent.parent
+        except Exception:  # BF-904a A7 (D42): an empty directory left is invisible to git; the deletions and the return go on. BaseException propagates
+            pass  # Directory not empty or permission issue
+```
+
+### A7.5 `tests/test_bf904a_failed_build_restore.py`: imports
+SEARCH:
+```python
+import subprocess
+import time
+```
+REPLACE:
+```python
+import subprocess
+import sys
+import time
+```
+SEARCH:
+```python
+from probos.cognitive.builder_paths import builder_write_refusal
+from probos.events import EventType
+```
+REPLACE:
+```python
+from probos.cognitive.builder_paths import builder_write_refusal
+from probos.events import EventType
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS
+```
+
+### A7.6 `tests/test_bf904a_failed_build_restore.py`: R12 `hardlink` checks status as the consumer reads it (supersedes D38 in part)
+SEARCH:
+```python
+        compared = compared[1:]  # all but the porcelain status
+```
+REPLACE:
+```python
+        # BF-904a A7 (D41): the status part is read as the next build's dirty check reads it: uncached.
+        uncached = _git(repo, "-c", "core.fscache=false", "status", "--porcelain").stdout
+        assert uncached == before[0], f"hardlink: the next build's dirty check would see {uncached!r}"
+        compared = compared[1:]  # the cached porcelain status: replaced by the uncached read above
+```
+
+### A7.7 Tests
+
+Append these to `tests/test_bf904a_failed_build_restore.py` under `# BF-904a A7`. Write them first: each non-control case must be red on `d01326be`. No sleeps. Every patched function does only a string comparison, then calls the real one.
+
+**R17** `test_a_branch_git_would_not_receive_unchanged_is_refused_before_any_write`, parametrised `case`:
+
+- **Fake cases** (`windows-surrogate`, `windows-nbsp`, `posix-surrogate`):
+  - **Setup:** `_on_captain_work`.
+  - **Name:** `"captain-\udcff"`, except `"captain-work\u00a0"` for `windows-nbsp`.
+  - **Host model:** `monkeypatch.setattr(builder_module, "_argv_bytes", MODEL, raising=False)`. MODEL is `lambda s: s.encode("utf-8", "surrogatepass")` for the windows cases and `lambda s: s.encode("utf-8", "surrogateescape")` for `posix-surrogate`.
+  - **Runner:** a `_run_git` wrapper answers any `args[:1] == ["symbolic-ref"]` with `(0, f"refs/heads/{name}\n", "")`, records the call, and forwards everything else to the real `_run_git`.
+  - **Stop point:** `_is_dirty_working_tree` is replaced by `AsyncMock(return_value=True)`, so every case stops before any write.
+  - **Premises:** `getattr(builder_module, "_argv_bytes", os.fsencode) is os.fsencode` before patching; `before = _state(repo)`; exactly one symbolic-ref call answered.
+  - **`windows-surrogate` asserts:**
+    - The error starts with ``"The checkout's branch `captain-\\udcff` cannot be passed to git unchanged"``.
+    - `"\udcff" not in result.error`.
+    - The dirty mock was never awaited.
+    - `branch_name == ""`.
+    - `_state(repo) == before`.
+  - **Controls** (`windows-nbsp`, `posix-surrogate`; green on both trees): the error starts with `"Working tree has uncommitted changes"`, and the dirty mock was awaited once.
+- **`real-host`:**
+  - Premise: `sys.getfilesystemencoding() == "utf-8"`, otherwise skip with that reason.
+  - Asserts: `_ref_survives_argv("captain-work\u00a0") is True`, and `_ref_survives_argv("captain-\udcff") is (sys.platform != "win32")`.
+- **`real-packed-ref`** (no seam, both platforms):
+  - Setup: `_plain_repo`, with `sha = _out(repo, "rev-parse", "HEAD")`. Append `f"{sha} ".encode() + b"refs/heads/captain-\xff\n"` to `.git/packed-refs`, creating it with the header `b"# pack-refs with: peeled fully-peeled sorted \n"`. Write `.git/HEAD` as `b"ref: refs/heads/captain-\xff\n"`.
+  - Premise: the raw `_REAL_RUN` bytes of `symbolic-ref -q HEAD` equal `b"refs/heads/captain-\xff\n"`. Then `before = _state(repo)`. Build `_failing_changes()`.
+  - win32 asserts: the D39 refusal; `_state` unchanged.
+  - Other hosts assert: the error starts with "Syntax errors"; the raw HEAD bytes are unchanged; `"cleanup_errors" not in metadata`; `_state` unchanged. This is the first Linux run of the transport.
+
+**R18** `test_the_return_names_the_branch_when_a_tag_shares_its_name`, parametrised `name` ∈ {`"main"`, `"captain-work\u00a0"`}:
+- **Setup:** `_plain_repo`; for the NBSP case also `checkout -q -b <name>`. Then `git tag <name>`.
+- **Premises** (`_REAL_RUN` bytes): `symbolic-ref --short HEAD` gives `f"heads/{name}\n".encode()` (git disambiguates), and `symbolic-ref -q HEAD` gives `f"refs/heads/{name}\n".encode()`. Then `before = _state(repo)`.
+- **Build:** `_failing_changes()`. Premise: the error starts with "Syntax errors".
+- **Asserts:** the full-ref bytes are unchanged, so HEAD is not detached; `"cleanup_errors" not in metadata`; `_state` unchanged.
+
+**R19** `test_the_branch_read_takes_only_a_local_branch` (fake `_run_git`, no git), parametrised over the answer:
+
+| case | answer | expected |
+|---|---|---|
+| `heads` | `(0, "refs/heads/x\u00a0\n", "")` | `"x\u00a0"` |
+| `tag` | `(0, "refs/tags/v1\n", "")` | None |
+| `remote` | `(0, "refs/remotes/origin/main\n", "")` | None |
+| `detached` | `(1, "", "")` | None |
+
+Each case also asserts the recorded argv `== ["symbolic-ref", "-q", "HEAD"]` and `lossless=True`.
+
+**R20** `test_the_dirty_check_reads_hard_links_uncached`, parametrised `case`:
+- **`argv`:**
+  - Setup: a `_plain_repo`, and a recorder on `builder_module.asyncio.create_subprocess_exec` (the M1 pattern at `test_bf904a_git_hardening.py:853-859`).
+  - Asserts: `await builder_module._is_dirty_working_tree(str(repo)) is False`, and the recorded status argv `== ["git", *HARDENED_GIT_CONFIG_ARGS, "-c", "core.fscache=false", "status", "--porcelain"]`. This is deterministic.
+- **`next-build`:**
+  - Setup: R12 `hardlink`'s seed and `os.link`, skipping if `os.link` raises.
+  - Loop: 16 consecutive builds in one repository, titled `f"bf904a next {i}"`, each with R12's hardlink changes. Nothing runs between builds: no `_state`, no hashing, no `_git` call.
+  - Every result's error must start with "Syntax errors", never "Working tree has uncommitted changes"; the failure message names the iteration.
+  - After the loop: A6's samefile and hash checks, and the uncached status is `""`.
+  - It is red on Windows on the staged tree (15 consumer reads, miss probability below 1%) and a control on Ubuntu.
+
+**R21** `test_a_failed_directory_prune_does_not_stop_the_cleanup`, parametrised `exc` ∈ {`RuntimeError`, `_Halt`}:
+- **Setup:** `_plain_repo`, plus a seam on `pathlib.Path.rmdir` that raises `exc` once when `self.name == "newpkg"` and otherwise calls the real method.
+- **Build:** `_failing_changes()`. Premise: `files_written.index(NEW) < files_written.index(BAD)`, so a created file comes after the failing prune.
+- **`RuntimeError` asserts:**
+  - No exception escaped, and the seam raised once.
+  - The error starts with "Syntax errors" and `SEPARATOR not in` it.
+  - `"cleanup_errors" not in metadata`.
+  - NEW and BAD are gone; TARGET is `ORIGINAL`.
+  - `_head_ref` is the same as before, and `builder-bf904a-probe not in _refs(repo)`.
+  - `_state` unchanged (the empty `newpkg` directory is invisible to it).
+- **`_Halt`** is a control: `pytest.raises(_Halt)`.
+
+### A7.8 Mutation rows
+
+Partition P2 holds the M2 module. K3 is re-derived in P1. Count each anchor in the A7-built file before mutating.
+
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| R-ac2 | `src/probos/cognitive/builder.py` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "HEAD"], work_dir, lossless=True)  # BF-904a A7 (D40): the full ref, never git's disambiguated short name` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "HEAD"], work_dir)` | R14[nbsp], R19[heads] |
+| R-al | `src/probos/cognitive/builder.py` | `out = out.removeprefix("refs/heads/") if out.startswith("refs/heads/") else ""  # BF-904a A7 (D40): a local branch's name, or none` | `out = out.removeprefix("refs/heads/")` | R19[tag], R19[remote] |
+| R-am | `src/probos/cognitive/builder.py` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "HEAD"], work_dir, lossless=True)  # BF-904a A7 (D40): the full ref, never git's disambiguated short name` | `rc, out, _err = await _run_git(["symbolic-ref", "-q", "--short", "HEAD"], work_dir, lossless=True)` | R14[captain-work], R18[main], the R19 argv premise |
+| R-an | `src/probos/cognitive/builder.py` | `if original_branch is not None and not _ref_survives_argv(original_branch):  # BF-904a A7 (D39): git would receive another name` | `if False:` | R17[windows-surrogate]; R17[real-packed-ref] on win32 |
+| R-ao | `src/probos/cognitive/builder.py` | `return _argv_bytes(name) == name.encode("utf-8", "surrogateescape")  # BF-904a A7 (D39): the bytes git printed` | `return _argv_bytes(name) == name.encode("utf-8", "surrogatepass")` | R17[windows-surrogate], R17[posix-surrogate], R17[real-host] |
+| R-ap | `src/probos/cognitive/builder.py` | `"git", *HARDENED_GIT_CONFIG_ARGS, "-c", "core.fscache=false", "status", "--porcelain",  # BF-904a A7 (D41): the dirty check reads the file, not the cache` | `"git", *HARDENED_GIT_CONFIG_ARGS, "status", "--porcelain",` | R20[argv] (of record); R20[next-build] on Windows |
+| R-aq | `src/probos/cognitive/builder.py` | `except Exception:  # BF-904a A7 (D42): an empty directory left is invisible to git; the deletions and the return go on. BaseException propagates` | `except OSError:` | R21[RuntimeError] |
+| K3b | `src/probos/cognitive/builder.py` | `"git", *HARDENED_GIT_CONFIG_ARGS, "-c", "core.fscache=false", "status", "--porcelain",  # BF-904a A7 (D41): the dirty check reads the file, not the cache` | `"git", "-c", "core.fscache=false", "status", "--porcelain",` | E1, F1, and the M1 argv test (`test_bf904a_git_hardening.py:877`) |
+
+- R-am and R-ac mutate one line; run each against the unmodified baseline.
+- `_ref_survives_argv`'s `except UnicodeError` branch fails closed and has no row.
+- R-ap's next-build kill is probabilistic. Report R20[argv] as the killer of record.
+- **Campaign:** rerun R-ac, R-b, R-ad, R-j and K3 on the A7 tree, because the lines around them changed. Every other recorded result stands, since its line and its killers are unchanged.
+
+### A7.9 Supersessions (the original lines stay)
+- **D9 / D33:** the start ref is read from `symbolic-ref -q HEAD` as the full ref, and a branch is only `refs/heads/<name>` (D40). D33's lossless read applies to the full ref. There are still four lossless callers (A1 D19 / A2.4 / A4.16).
+- **R4's entry refusal** gains a sibling: a start branch git would not receive unchanged is refused before any write (D39).
+- **D38 (A6):** the hardlink case's status part is compared uncached (D41). A6's samefile and hash checks stay.
+- **A4.17 item 3 is withdrawn (D42).** The cleanup now catches every ordinary exception at every step.
+- **Diff Reviewer properties:**
+  - Property 3 gains: "git receives the start ref as the bytes it printed, or the build is refused before any write (D39); a tag of the same name does not detach the return (D40)".
+  - Property 2 gains: "the next build's dirty check accepts a restored hard link (D41)".
+  - Property 4 gains: "directory pruning cannot skip the deletions or the return (D42)".
+- **Tests summary** gains 15 cases: R17 (5), R18 (2), R19 (4), R20 (2), R21 (2). Add rows R-al to R-aq and the re-derived R-ac and K3.
+- **Tracking:** the DECISIONS entry lists D1 to D42.
+
+### A7.10 Considered, deferred (add to the consolidated #1523 follow-up)
+1. **Model-authored paths with lone surrogates.**
+   - Mechanism: a JSON `\udcxx` escape that `builder_write_refusal` does not check (no surrogate check in `builder_paths.py`) reaches `git add --` and `git reset --` as U+FFFD on Windows. This is the same transport class as D39.
+   - Reach: it selects the wrong file only if a tracked file has the replacement-character name; otherwise the add fails visibly.
+   - Owner: BF-894's refusal.
+2. **Unborn start branch:** the return fails visibly and the build branch is kept. Pre-existing.
+3. **HEAD pointing at a non-branch ref** (plumbing only): the build returns detached at the same commit (D40).
+4. **`_is_dirty_working_tree` decodes strictly** (`stdout.decode()`). Under `core.quotePath=false`, a non-UTF-8 name raises `UnicodeDecodeError` past `except (OSError, FileNotFoundError)`. This happens at entry, before any write, so it fails closed. Pre-existing.
+5. **`execution/authority.py:818`** hashes `status --porcelain` into a repository binding. The same stale stat could produce a spurious mismatch, which fails closed. It is outside the build pipeline.
+6. **Legacy Windows filesystem encoding** (`PYTHONLEGACYWINDOWSFSENCODING`, mbcs): D39 refuses valid non-ASCII branch names. The refusal is visible and conservative.
+
+**Other breakage expected: none.**
+- About 20 tests in `test_builder_agent.py` answer every git call with `b"main\n"`. They now take the detached-return path: `_git_head_commit` gets "main", and `checkout -q --detach main --` gets rc 0. None of them asserts the git argv or a git call count; I checked with a grep for `call_count`, `assert_called_once` and `call_args_list`.
+- The tests that patch `_git_current_branch` to return "main" (`test_bf894:141`, `test_bf897:500`, `test_bf898:379`, `test_builder_agent:3064-3147`, `test_builder_guardrails:242`) pass D39's check.
+- `test_bf904a_git_hardening.py:1284` (`["checkout", "-q", "main", "--"]`) is unchanged: real git prints `refs/heads/main`.
