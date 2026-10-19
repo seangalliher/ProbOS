@@ -2252,3 +2252,397 @@ confirm every anchor with `grep -c` as before.
 | D19 | C1: the invariant-failure write moves into `probos/crew_enrollment.py`, so both events are frozen resolved pairs | Architect |
 | D20 | No `event_persistence.py` entry: neither event is an `EventType` member or routed value; both rows are best effort | Architect |
 | D21 | The read-only guarantee is "never creates or changes the database file", and WAL sidecars are acknowledged; `immutable=1` is rejected (unsafe while the vessel writes) | Architect |
+
+## Amendment A3 (2026-10-19): ACM write sections are atomic; a failed base commissioning step is not recorded
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+Review round 1 (gpt-6.1-sol, M1+M2) reported two P2s, both pre-existing in kind and not regressions.
+
+- **F1.** ACM's writers share one aiosqlite connection and therefore one SQLite transaction. `record_commissioning` inserts the record, awaits a read, inserts the history row and then commits. Another writer's commit in between makes the record durable without its history row. A failure in between leaves the record pending, and the next writer's commit lands it. The architect reproduced it deterministically with a gate: after each real commit, a separate connection saw `[(2, 1, 1), (2, 2, 0)]`.
+- **F2.** `commission_chain` logs a failed base step (`commission_agent`) at DEBUG and carries on. If the template step still leaves skills, the enroller records a commissioning that never happened.
+
+A3 fixes both. Target tree: the staged candidate `02044999`, which is the contract plus A1 and A2. Build in one step after M2's code. Every SEARCH block below was dry-run against `git show :<path>`.
+
+### Decisions in prose
+- **D23, F1 mechanism: one write lock, respected by every writer.** `AgentCapitalService._write_lock` (`asyncio.Lock`) is held across:
+  - `transition`, from its state read to its commit. The read is part of the section, so two callers cannot both pass the legality check against the same old state.
+  - `onboard`'s registration (lifecycle row plus identity mapping).
+  - `record_commissioning`, whole.
+  - `stop`, so a close never cuts a section in two and `self._db` never becomes `None` inside one.
+
+  Each section ends in its commit or, on any `BaseException`, in `rollback()` and a re-raise. While every writer holds the lock for its whole section, no other writer has a statement pending, so the rollback discards only the section's own statements. Cancellation is covered by aiosqlite's design: its worker runs queued calls FIFO and still runs a call whose awaiting caller was cancelled (`aiosqlite/core.py:48-75,150-160`). A rollback queued after a cancelled INSERT therefore runs after that INSERT and before any later writer's statement. BF-885 records the same property (`identity_writer.py:10-11`).
+
+  Re-entrancy: `onboard` releases the lock before it calls `transition`, and no locked section calls a method that takes the lock. Readers take no lock.
+
+  Rejected:
+  - (b) a trigger: it hides schema logic and needs JSON1.
+  - (c) history first: partial, because a failure leaves an orphan history row.
+  - (d) aiosqlite's private `_execute`.
+  - (e) a dedicated connection: SQLITE_BUSY against the shared connection's open transaction.
+  - BF-885's `IdentityWriter`: its settle and latch machinery and identity.db messages exceed ACM's need. Precedent for the lighter form: `working_memory_store.py:63-74`.
+
+  Method count stays 15 (the lock is an attribute). The class span grows by about 30 lines and stays under 500.
+- **D24, `DatabaseConnection` protocol: unchanged.** ACM now calls `rollback()`, which aiosqlite provides and which `protocols.py:325-358` does not declare. Nothing calls `isinstance` against the protocol and no type checker runs in the gate. `working_memory_store.py:43,73` and `identity_writer.py:41-49` already rely on `rollback` with their own typing. Considered, deferred: declare `rollback` in the protocol in its own change. Doing it here would turn this repair round into a shared-contract change.
+- **D25, F2: fixed now, in the enroller only.** After the chain, `_commission` requires every `BUILTIN_PCCS` skill to be held. These are the skills `commission_agent` gives every crew member: no prerequisites, `skill_framework.py:742-835,1321-1331`. If any is missing: one ERROR naming them, no record, no event, `commissioned=False`, and the next boot retries with `preserve_existing=True`. `commission_chain` is untouched, so property 11 holds and the Captain's routes keep best-effort.
+- **D26, known limit (not changed):** `check_crew_invariant` and the doctor still count "a record or any skills" as commissioned (U11, D3: the pre-BF-906 rule). An agent left with partial PCCs is therefore named by the enroll ERROR on every boot until a retry succeeds, not by the invariant. Tightening both readers is a separate change.
+
+### A3.1 `src/probos/acm.py` — import
+<<<<<<< SEARCH
+from __future__ import annotations
+
+import json
+import logging
+import time
+=======
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+>>>>>>> REPLACE
+
+### A3.2 `src/probos/acm.py` — the lock
+<<<<<<< SEARCH
+        self._identity_registry: Any = None  # AD-441
+        self._connection_factory = connection_factory
+=======
+        self._identity_registry: Any = None  # AD-441
+        # BF-906 A3: every write section of acm.db holds this lock from its first
+        # statement to its commit or rollback. ACM's writers share one connection,
+        # so one SQLite transaction: without it, another writer's commit could make
+        # half a section durable, or land a failed section's pending statements.
+        self._write_lock = asyncio.Lock()
+        self._connection_factory = connection_factory
+>>>>>>> REPLACE
+
+### A3.3 `src/probos/acm.py` — `stop`
+<<<<<<< SEARCH
+    async def stop(self) -> None:
+        """Close ACM database."""
+        if self._db:
+            await self._db.close()
+            self._db = None
+=======
+    async def stop(self) -> None:
+        """Close ACM database, after any write section in progress has ended."""
+        async with self._write_lock:  # BF-906 A3: close never cuts a write section in two
+            if self._db:
+                await self._db.close()
+                self._db = None
+>>>>>>> REPLACE
+
+### A3.4 `src/probos/acm.py` — `transition`
+<<<<<<< SEARCH
+        transition record.  Raises ValueError for illegal transitions.
+        """
+        if not self._db:
+            raise RuntimeError("ACM not started")
+
+        current = await self.get_lifecycle_state(agent_id)
+        pair = (current.value, to_state.value)
+
+        if pair not in _LEGAL_TRANSITIONS:
+            raise ValueError(
+                f"Illegal lifecycle transition: {current.value} → {to_state.value} "
+                f"for agent {agent_id}"
+            )
+
+        now = time.time()
+
+        # Update lifecycle table
+        update_fields = "state = ?, state_since = ?"
+        update_vals: list[Any] = [to_state.value, now]
+
+        if to_state == LifecycleState.PROBATIONARY:
+            update_fields += ", onboarded_at = ?"
+            update_vals.append(now)
+        elif to_state == LifecycleState.DECOMMISSIONED:
+            update_fields += ", decommissioned_at = ?"
+            update_vals.append(now)
+
+        update_vals.append(agent_id)
+        await self._db.execute(
+            f"UPDATE lifecycle SET {update_fields} WHERE agent_id = ?",
+            tuple(update_vals),
+        )
+
+        # Insert audit trail
+        await self._db.execute(
+            "INSERT INTO lifecycle_transitions "
+            "(agent_id, from_state, to_state, reason, initiated_by, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (agent_id, current.value, to_state.value, reason, initiated_by, now),
+        )
+        await self._db.commit()
+
+        return LifecycleTransition(
+=======
+        transition record.  Raises ValueError for illegal transitions.
+        """
+        # BF-906 A3: the state read, its legality check and both writes are one
+        # section, so no other writer commits half of it and two callers cannot
+        # both pass the check against the same old state.
+        async with self._write_lock:  # BF-906 A3: the state change and its audit row commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
+
+            current = await self.get_lifecycle_state(agent_id)
+            pair = (current.value, to_state.value)
+
+            if pair not in _LEGAL_TRANSITIONS:
+                raise ValueError(
+                    f"Illegal lifecycle transition: {current.value} → {to_state.value} "
+                    f"for agent {agent_id}"
+                )
+
+            now = time.time()
+
+            # Update lifecycle table
+            update_fields = "state = ?, state_since = ?"
+            update_vals: list[Any] = [to_state.value, now]
+
+            if to_state == LifecycleState.PROBATIONARY:
+                update_fields += ", onboarded_at = ?"
+                update_vals.append(now)
+            elif to_state == LifecycleState.DECOMMISSIONED:
+                update_fields += ", decommissioned_at = ?"
+                update_vals.append(now)
+
+            update_vals.append(agent_id)
+            try:
+                await self._db.execute(
+                    f"UPDATE lifecycle SET {update_fields} WHERE agent_id = ?",
+                    tuple(update_vals),
+                )
+
+                # Insert audit trail
+                await self._db.execute(
+                    "INSERT INTO lifecycle_transitions "
+                    "(agent_id, from_state, to_state, reason, initiated_by, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (agent_id, current.value, to_state.value, reason, initiated_by, now),
+                )
+                await self._db.commit()
+            except BaseException:
+                await self._db.rollback()  # BF-906 A3: a failed transition leaves nothing pending
+                raise
+
+        return LifecycleTransition(
+>>>>>>> REPLACE
+
+### A3.5 `src/probos/acm.py` — `onboard` (the lock is released before `transition`, which takes it)
+<<<<<<< SEARCH
+        """Onboard an agent — register and set to probationary."""
+        if not self._db:
+            raise RuntimeError("ACM not started")
+
+        now = time.time()
+        await self._db.execute(
+            "INSERT OR IGNORE INTO lifecycle (agent_id, state, state_since) VALUES (?, ?, ?)",
+            (agent_id, LifecycleState.REGISTERED.value, now),
+        )
+
+        # AD-441: Record sovereign identity mapping
+        if sovereign_id:
+            await self._db.execute(
+                "INSERT OR IGNORE INTO identity_mapping (slot_id, sovereign_id) VALUES (?, ?)",
+                (agent_id, sovereign_id),
+            )
+
+        await self._db.commit()
+
+        return await self.transition(
+=======
+        """Onboard an agent — register and set to probationary."""
+        # BF-906 A3: released before ``transition``, which takes the lock itself.
+        async with self._write_lock:  # BF-906 A3: the lifecycle row and its identity mapping commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
+
+            now = time.time()
+            try:
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO lifecycle (agent_id, state, state_since) VALUES (?, ?, ?)",
+                    (agent_id, LifecycleState.REGISTERED.value, now),
+                )
+
+                # AD-441: Record sovereign identity mapping
+                if sovereign_id:
+                    await self._db.execute(
+                        "INSERT OR IGNORE INTO identity_mapping (slot_id, sovereign_id) VALUES (?, ?)",
+                        (agent_id, sovereign_id),
+                    )
+
+                await self._db.commit()
+            except BaseException:
+                await self._db.rollback()  # BF-906 A3: a failed registration leaves nothing pending
+                raise
+
+        return await self.transition(
+>>>>>>> REPLACE
+
+### A3.6 `src/probos/acm.py` — `record_commissioning`
+<<<<<<< SEARCH
+        (``_LEGAL_TRANSITIONS`` is unchanged).
+        """
+        if not self._db:
+            raise RuntimeError("ACM not started")
+        now = time.time()
+        cursor = await self._db.execute(
+            "INSERT OR IGNORE INTO commissioning_records (agent_id, agent_type, source, "
+            "role_template, skills_json, tools_json, initiated_by, reason, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (agent_id, agent_type, source, role_template, json.dumps(list(skills)),
+             json.dumps(list(tools)), initiated_by, reason, now),
+        )
+        if cursor.rowcount == 0:
+            await self._db.commit()
+            return False
+        state = (await self.get_lifecycle_state(agent_id)).value
+        history_reason = (
+            f"{reason}: commissioned, role_template={role_template or 'none'}; "
+            f"skills={','.join(skills) or 'none'}; tools={','.join(tools) or 'none'}"
+        )
+        history_row = (agent_id, state, state, history_reason, initiated_by, now)
+        await self._db.execute(_COMMISSIONING_HISTORY_SQL, history_row)
+        await self._db.commit()
+        return True
+=======
+        (``_LEGAL_TRANSITIONS`` is unchanged).
+
+        BF-906 A3: the record and its history row are one section under the write
+        lock. No other writer's commit can make the record durable without its row,
+        and any failure, cancellation included, rolls both back, so the next call
+        records again.
+        """
+        async with self._write_lock:  # BF-906 A3: the record and its history row commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
+            now = time.time()
+            try:
+                cursor = await self._db.execute(
+                    "INSERT OR IGNORE INTO commissioning_records (agent_id, agent_type, source, "
+                    "role_template, skills_json, tools_json, initiated_by, reason, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (agent_id, agent_type, source, role_template, json.dumps(list(skills)),
+                     json.dumps(list(tools)), initiated_by, reason, now),
+                )
+                if cursor.rowcount == 0:
+                    await self._db.commit()
+                    return False
+                state = (await self.get_lifecycle_state(agent_id)).value
+                history_reason = (
+                    f"{reason}: commissioned, role_template={role_template or 'none'}; "
+                    f"skills={','.join(skills) or 'none'}; tools={','.join(tools) or 'none'}"
+                )
+                history_row = (agent_id, state, state, history_reason, initiated_by, now)
+                await self._db.execute(_COMMISSIONING_HISTORY_SQL, history_row)
+                await self._db.commit()
+            except BaseException:  # BF-906 A3: a cancelled caller's record must not stay pending either
+                await self._db.rollback()  # BF-906 A3: a failed record leaves nothing pending
+                raise
+        return True
+>>>>>>> REPLACE
+
+### A3.7 `src/probos/crew_enrollment.py` — import the PCC set
+<<<<<<< SEARCH
+from probos.acm import AgentCapitalService, LifecycleState
+from probos.crew_utils import is_crew_agent
+=======
+from probos.acm import AgentCapitalService, LifecycleState
+from probos.crew_utils import is_crew_agent
+from probos.skill_framework import BUILTIN_PCCS
+>>>>>>> REPLACE
+
+`runtime.py:88` already imports `probos.skill_framework` at module level. `skill_framework` imports only `protocols`, `substrate.skill_agent`, `tools.protocol` and `types` (`skill_framework.py:21-24`), so there is no cycle. Top-level modules have no layer rank (`architecture-baseline.yaml:12-17`).
+
+### A3.8 `src/probos/crew_enrollment.py` — a failed base step is not recorded
+<<<<<<< SEARCH
+        after = await self._skill_ids(agent_id)
+        if not after:
+            logger.error(
+                "BF-906: commissioning left %s (%s) with no skills; not recorded, so the "
+                "next boot retries and the crew invariant check reports it", agent_id, agent_type,
+            )
+            return not_commissioned
+=======
+        after = await self._skill_ids(agent_id)
+        if not after:
+            logger.error(
+                "BF-906: commissioning left %s (%s) with no skills; not recorded, so the "
+                "next boot retries and the crew invariant check reports it", agent_id, agent_type,
+            )
+            return not_commissioned
+        missing_pccs = [pcc.skill_id for pcc in BUILTIN_PCCS if pcc.skill_id not in after]
+        if missing_pccs:
+            # BF-906 A3: the chain logs a failed base step (AD-428 commission_agent) at
+            # DEBUG and carries on, so the enroller checks the result: every crew member
+            # holds every PCC. Not recorded, so the next boot retries.
+            logger.error(
+                "BF-906: commissioning left %s (%s) without the PCCs %s; not recorded, so "
+                "the next boot retries", agent_id, agent_type, ", ".join(missing_pccs),
+            )
+            return not_commissioned
+>>>>>>> REPLACE
+
+### A3.9 Contract text superseded
+- **Mutation row 11 anchor** → `                await self._db.execute(_COMMISSIONING_HISTORY_SQL, history_row)` → `                pass` (16 spaces).
+- **Mutation row 12 anchor** → `                if cursor.rowcount == 0:` → `                if False:` (16 spaces).
+- **Diff Reviewer property 6** → "A failure anywhere in enrollment never aborts `start()` and is never logged below ERROR. The invariant check names the agent when it holds no record and no skill. An agent left with some skills but not every PCC is named by the enroll ERROR, and every boot retries it (A3, D26)."
+- **Acceptance Criteria 2** → "kills all 43 rows".
+- **Campaign of record:** A3 changes the sha256 of `acm.py` and `crew_enrollment.py`. Rerun every row on those two files (1, 2, 10–16, 20, 22, 23, 25, 26, 31, 33, 34) plus 35–43. Rows on files A3 does not touch keep their earlier result if each file's sha256 matches.
+
+### A3 tests (all in `tests/test_bf906_acm_commissioning.py`, M2)
+**Test helper `_GatedConnection`.** A test-only proxy installed with `acm._db = _GatedConnection(real)`. Each U19, U20 and U22 case builds and starts its own `AgentCapitalService(data_dir=tmp_path)` and calls `await acm.stop()` in a `finally` (a no-op once stopped).
+- `__getattr__` forwards to `real`: `commit`, `rollback`, `close`, `in_transaction`.
+- `execute(sql, parameters=None)` is a **sync** method. For any statement that does not match `self.key(sql, parameters)` it returns `real.execute(sql, parameters)` unchanged; ACM's readers use `async with self._db.execute(...)`.
+- For the keyed statement it returns a coroutine:
+  - in `mode="hold"`: set `arrived`, await `release`, then `return await real.execute(sql, parameters)`;
+  - in `mode="fail"`: raise `sqlite3.OperationalError("BF-906 A3: injected write failure")`.
+- `armed=False` turns the key off.
+- Committed state is read through a separate stdlib connection: `sqlite3.connect(f"{(tmp_path / 'acm.db').resolve().as_uri()}?mode=ro", uri=True)`, opened and closed for each query.
+
+| ID | Test | Exact assertions |
+|---|---|---|
+| U19 | `test_a_write_section_is_never_committed_in_part_by_another_writer`, parametrized `writer ∈ {record, transition, onboard}` | **Keys** (`params[0] == "b"` in every case):<br>• record: `sql.startswith("INSERT INTO lifecycle_transitions")`<br>• transition: same, plus `params[2] == "active"`; setup `onboard("a")` and `onboard("b")` before arming<br>• onboard: `sql.startswith("INSERT OR IGNORE INTO identity_mapping")`, with `sovereign_id="sov-a"` / `"sov-b"`<br>**Steps:**<br>• start task B; `await asyncio.wait_for(gate.arrived.wait(), 5)`<br>• start task A (the same writer for `"a"`)<br>• record case only: also start `stop_task = create_task(acm.stop())`. The onboard case cannot, because its `transition` takes the lock again after a queued stop<br>• `done, _ = await asyncio.wait({A[, stop_task]}, timeout=0.5)`; **assert `done == set()`**<br>• **orphan query == 0** on the separate connection:<br>– record: `SELECT COUNT(*) FROM commissioning_records r WHERE NOT EXISTS (SELECT 1 FROM lifecycle_transitions t WHERE t.agent_id = r.agent_id AND t.from_state = t.to_state)`<br>– transition: `SELECT COUNT(*) FROM lifecycle l WHERE l.state = 'active' AND NOT EXISTS (SELECT 1 FROM lifecycle_transitions t WHERE t.agent_id = l.agent_id AND t.to_state = 'active')`<br>– onboard: `SELECT COUNT(*) FROM lifecycle l WHERE NOT EXISTS (SELECT 1 FROM identity_mapping m WHERE m.slot_id = l.agent_id)`<br>• `gate.release.set()`; `await asyncio.gather(...)` (all succeed)<br>**Final, on the separate connection:**<br>• record: 2 records, 2 same-state rows, orphan 0, both calls True<br>• transition: 2 `active`, 2 audit rows to `active`, orphan 0<br>• onboard: 2 rows `probationary`, 2 mappings, orphan 0 |
+| U20 | `test_a_failed_write_section_leaves_nothing_pending_and_the_next_call_succeeds`, parametrized the same, `mode="fail"`, keyed on `"x"` | **Setup:** transition case: `onboard("x")` before arming; key also needs `params[2] == "active"`.<br>**Steps:**<br>• the writer raises `sqlite3.OperationalError` matching `"injected"`<br>• **`real.in_transaction is False`**<br>• the shared connection sees nothing:<br>– record: `get_commissioning_record("x") is None`<br>– transition: `get_lifecycle_state("x") is LifecycleState.PROBATIONARY`<br>– onboard: `has_lifecycle_record("x") is False`<br>• `await acm.onboard("bystander", "scout", "pool", "science")` (a foreign commit)<br>• separate connection, nothing of x's section:<br>– record: 0 records and 0 history rows for x<br>– transition: x's state `probationary` and 0 audit rows to `active`<br>– onboard: no lifecycle row and no mapping for x<br>**Retry:** `gate.armed = False`; the same call succeeds:<br>• record returns True, then 1 record and 1 same-state row<br>• transition: `active` and exactly 1 audit row to `active`<br>• onboard: `probationary`, mapping `sov-x`, 1 `registered→probationary` row |
+| U21 | `test_enroll_a_failed_base_commissioning_step_is_not_recorded_and_is_retried` | **Setup:** `_world(tmp_path, templates=_science_templates())`; `_CrewOntology(templates, crew_types={"science_officer"}, departments={"science_officer": "science"})`; `_FakeEventLog`; `monkeypatch.setattr(w.service, "commission_agent", <async raising sqlite3.OperationalError("refused PCC write")>)`.<br>**Under `caplog` ERROR on `probos.crew_enrollment`,** `enroll(agent, source="join")`:<br>• result `(onboarded, commissioned) == (True, False)`<br>• `get_commissioning_record` is None; `_same_state(history) == []`; `event_log.rows == []`<br>• premise: `"communication"` held (template), `"duty_execution"` not held<br>• exactly one ERROR containing `"BF-906"`, the agent id and `"duty_execution"`<br>• snapshot `held = await _held(...)`<br>**Then `monkeypatch.undo()` and enroll again:**<br>• `(onboarded, commissioned) == (False, True)`<br>• record `source == "join"`<br>• `{p.skill_id for p in BUILTIN_PCCS} <= set(await _held(...))`<br>• `held["communication"]` equals its snapshot (`preserve_existing`)<br>• exactly one event row |
+| U22 | `test_a_cancelled_record_section_leaves_nothing_pending` | **Steps:**<br>• `mode="hold"`, keyed on the history INSERT for `"b"`<br>• `b = create_task(record_commissioning("b"))`; await `arrived`<br>• `b.cancel()`; `pytest.raises(asyncio.CancelledError)` on `await b`<br>• `real.in_transaction is False`; `get_commissioning_record("b") is None`<br>**Retry:** `armed = False`; the call returns True; the separate connection shows 1 record and 1 same-state row |
+
+**Focused tests:** `tests/test_bf906_acm_commissioning.py`, `tests/test_acm.py`, `tests/test_ad889_commission_chain.py`, `tests/test_bf906_crew_enrollment_boot.py` (T-B1–T-B5, T-B9 cross the locked sections on real boots), `tests/test_bf906_doctor_check.py`. U19 costs about 3 × 0.5 s; under correct code that wait always expires, by design.
+
+### A3 mutation rows
+| # | File | Anchor → mutant | Killed by |
+|---|---|---|---|
+| 35 | acm.py | `        async with self._write_lock:  # BF-906 A3: the record and its history row commit together` → `        if True:` | U19[record] |
+| 36 | acm.py | `                await self._db.rollback()  # BF-906 A3: a failed record leaves nothing pending` → `                pass` | U20[record], U22 |
+| 37 | acm.py | `        async with self._write_lock:  # BF-906 A3: the state change and its audit row commit together` → `        if True:` | U19[transition] |
+| 38 | acm.py | `                await self._db.rollback()  # BF-906 A3: a failed transition leaves nothing pending` → `                pass` | U20[transition] |
+| 39 | acm.py | `        async with self._write_lock:  # BF-906 A3: the lifecycle row and its identity mapping commit together` → `        if True:` | U19[onboard] |
+| 40 | acm.py | `                await self._db.rollback()  # BF-906 A3: a failed registration leaves nothing pending` → `                pass` | U20[onboard] |
+| 41 | acm.py | `        async with self._write_lock:  # BF-906 A3: close never cuts a write section in two` → `        if True:` | U19[record] (`stop_task` done) |
+| 42 | crew_enrollment.py | `        if missing_pccs:` → `        if False:` | U21 |
+| 43 | acm.py | `            except BaseException:  # BF-906 A3: a cancelled caller's record must not stay pending either` → `            except Exception:  # BF-906 A3: a cancelled caller's record must not stay pending either` | U22 |
+
+Each anchor carries a distinct trailing comment, so `grep -c` must return 1. The two plain `            except BaseException:` lines (transition, onboard) are intentionally not anchored. They are the same construct as row 43; the record site is the one where a split becomes a false proof.
+
+### A3 Diff Reviewer properties (added)
+17. Every multi-statement write to `acm.db` runs wholly under `AgentCapitalService._write_lock`: `transition` from its state read to its end, `onboard`'s registration, and `record_commissioning`. `stop` closes only under it. No section calls a method that takes the lock (`onboard` releases before `transition`), and no reader takes it.
+18. Each section ends in its commit, or on any `BaseException` (cancellation included) in `rollback()` then a re-raise. After any failure `in_transaction` is False, and no statement of the section is visible to another connection, before or after any other writer's commit.
+19. `_LEGAL_TRANSITIONS`, every SQL text, the schemas and the 15-method count are unchanged. The class span stays ≤ 500 (`test_agent_capital_service_is_within_the_srp_limits`).
+20. A commissioning is recorded only when the agent holds every `BUILTIN_PCCS` skill after the chain. Otherwise there is one ERROR naming the missing PCCs, no record and no event, and the next `enroll` retries with `preserve_existing=True`. `commission_chain` is byte-identical (property 11).
+
+### A3 decisions
+| # | Decision | Envelope |
+|---|---|---|
+| D23 | F1: one ACM write lock respected by every `acm.db` writer and by `stop`; rollback on any `BaseException`; rejected: trigger, history-first, private `_execute`, dedicated connection, reuse of BF-885's writer | Architect (no control weakened; an atomicity fix) |
+| D24 | `DatabaseConnection` keeps its surface; `rollback` stays an undeclared aiosqlite method (pre-existing pattern); declaring it is deferred to its own change | Architect |
+| D25 | F2 fixed now in the enroller (a PCC level check); the chain and the Captain's routes are unchanged | Architect |
+| D26 | The invariant's "record or any skills" rule is unchanged; partial-PCC agents are named by the enroll ERROR each boot | Architect |
+
+### A3 tracking
+DECISIONS.md, under the BF-906 entry, add two lines:
+- "ACM write sections (A3): every multi-statement write to acm.db holds one asyncio lock from its first statement to its commit, or to a rollback on any exception including cancellation, because ACM's writers share one connection and so one SQLite transaction. Rejected: a trigger, history-first ordering, aiosqlite's private API, a second connection."
+- "A commissioning is recorded only when every PCC is held after the chain (A3); the chain still logs its own base-step failure at DEBUG."
