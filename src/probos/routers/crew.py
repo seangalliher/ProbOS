@@ -51,6 +51,8 @@ async def crew_roster(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
     ``department=None``, ``assigned=False`` and ``billet_state="unbilleted"``
     so the manning gap is visible. Each entry is augmented with
     ``lifecycle_state`` plus cheap ``skill_count`` / ``tool_count``.
+    ``lifecycle_state`` is the ACM HR status (AD-427): ``suspended`` there is a
+    personnel record, not a sign that the agent has stopped working (AD-1343).
     """
     registry = getattr(runtime, "registry", None)
     if registry is None:
@@ -107,7 +109,8 @@ async def crew_roster(runtime: Any = Depends(get_runtime)) -> dict[str, Any]:
             entry["assigned"] = False
             entry["billet_state"] = "unbilleted"
 
-        # lifecycle_state — ACM authoritative (async, per-agent).
+        # lifecycle_state — the ACM HR status, authoritative (async, per-agent);
+        # not an operational state (BF-906, AD-1343).
         if acm is not None and agent_id:
             try:
                 state = await acm.get_lifecycle_state(agent_id)

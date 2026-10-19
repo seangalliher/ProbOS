@@ -203,4 +203,28 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "and a sender that lost its own copy restarts at epoch 1 until it rotates its key."
         ),
     ),
+    StoreDeclaration(
+        id="acm.agent-capital",
+        title="Agent Capital Management: lifecycle, transition history, identity mapping and commissioning records (AD-427, AD-441, BF-906)",
+        owner_module="probos.acm",
+        owner_symbol="AgentCapitalService",
+        canonical_path="acm.db",
+        criticality=StoreCriticality.REQUIRED,
+        lifecycle_owner="probos.startup.communication.init_communication",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM in probos.acm. lifecycle, identity_mapping and commissioning_records hold at most "
+            "one row per agent or slot (PRIMARY KEY). lifecycle_transitions is an append-only HR history: one row "
+            "per state change and one per BF-906 commissioning, kept as the agent's record. Growth is bounded by "
+            "crew size and HR actions. `probos reset` (tier 2, Recommissioning) deletes the whole file."
+        ),
+        backup="included",
+        restore="unknown",
+        notes=(
+            "Started without a guard in init_communication (Phase 7), so an unopenable acm.db aborts startup; "
+            "stopped in startup/shutdown.py. Opened through the ConnectionFactory. Tables: lifecycle, "
+            "lifecycle_transitions, identity_mapping and commissioning_records (BF-906, additive; older code "
+            "ignores it). The probos doctor crew_enrollment check reads it with the adapter's read_only open."
+        ),
+    ),
 )

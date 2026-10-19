@@ -11,6 +11,8 @@ people who do the work."
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -18,6 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from probos.commissioning import commission_chain
 from probos.config import format_trust
 
 from probos.protocols import ConnectionFactory, DatabaseConnection
@@ -58,6 +61,20 @@ class LifecycleTransition:
     timestamp: float
 
 
+@dataclass(frozen=True)
+class CommissioningRecord:
+    """BF-906: one agent's recorded AD-889 commissioning (one per agent)."""
+    agent_id: str
+    agent_type: str
+    source: str
+    role_template: str | None
+    skills: tuple[str, ...]
+    tools: tuple[str, ...]
+    initiated_by: str
+    reason: str
+    timestamp: float
+
+
 # ── SQLite schema ───────────────────────────────────────────────────
 
 _SCHEMA = """
@@ -83,7 +100,25 @@ CREATE TABLE IF NOT EXISTS identity_mapping (
     slot_id TEXT PRIMARY KEY,
     sovereign_id TEXT NOT NULL
 );
+
+-- BF-906: one row per commissioned agent. Additive; older code ignores it.
+CREATE TABLE IF NOT EXISTS commissioning_records (
+    agent_id TEXT PRIMARY KEY,
+    agent_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    role_template TEXT,
+    skills_json TEXT NOT NULL DEFAULT '[]',
+    tools_json TEXT NOT NULL DEFAULT '[]',
+    initiated_by TEXT NOT NULL DEFAULT 'system',
+    reason TEXT NOT NULL DEFAULT '',
+    timestamp REAL NOT NULL
+);
 """
+
+_COMMISSIONING_HISTORY_SQL = (
+    "INSERT INTO lifecycle_transitions (agent_id, from_state, to_state, reason, initiated_by, timestamp) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 # ── Service ─────────────────────────────────────────────────────────
 
@@ -98,6 +133,11 @@ class AgentCapitalService:
         self._data_dir = Path(data_dir)
         self._db: DatabaseConnection | None = None
         self._identity_registry: Any = None  # AD-441
+        # BF-906 A3: every write section of acm.db holds this lock from its first
+        # statement to its commit or rollback. ACM's writers share one connection,
+        # so one SQLite transaction: without it, another writer's commit could make
+        # half a section durable, or land a failed section's pending statements.
+        self._write_lock = asyncio.Lock()
         self._connection_factory = connection_factory
         if self._connection_factory is None:
             from probos.storage.sqlite_factory import default_factory
@@ -116,10 +156,11 @@ class AgentCapitalService:
         await self._db.commit()
 
     async def stop(self) -> None:
-        """Close ACM database."""
-        if self._db:
-            await self._db.close()
-            self._db = None
+        """Close ACM database, after any write section in progress has ended."""
+        async with self._write_lock:  # BF-906 A3: close never cuts a write section in two
+            if self._db:
+                await self._db.close()
+                self._db = None
 
     # ── Lifecycle queries ───────────────────────────────────────────
 
@@ -153,6 +194,33 @@ class AgentCapitalService:
             for r in rows
         ]
 
+    async def has_lifecycle_record(self, agent_id: str) -> bool:
+        """BF-906: True when ACM holds a lifecycle row (a missing row reads as REGISTERED)."""
+        if not self._db:
+            return False
+        async with self._db.execute(
+            "SELECT 1 FROM lifecycle WHERE agent_id = ?", (agent_id,)
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def get_commissioning_record(self, agent_id: str) -> CommissioningRecord | None:
+        """BF-906: the agent's recorded commissioning, or None if it was never commissioned."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT agent_id, agent_type, source, role_template, skills_json, tools_json, "
+            "initiated_by, reason, timestamp FROM commissioning_records WHERE agent_id = ?",
+            (agent_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return CommissioningRecord(
+            agent_id=row[0], agent_type=row[1], source=row[2], role_template=row[3],
+            skills=tuple(json.loads(row[4] or "[]")), tools=tuple(json.loads(row[5] or "[]")),
+            initiated_by=row[6], reason=row[7], timestamp=row[8],
+        )
+
     # ── Lifecycle mutations ─────────────────────────────────────────
 
     async def transition(
@@ -164,45 +232,53 @@ class AgentCapitalService:
         Validates transition is legal, records the change, returns the
         transition record.  Raises ValueError for illegal transitions.
         """
-        if not self._db:
-            raise RuntimeError("ACM not started")
+        # BF-906 A3: the state read, its legality check and both writes are one
+        # section, so no other writer commits half of it and two callers cannot
+        # both pass the check against the same old state.
+        async with self._write_lock:  # BF-906 A3: the state change and its audit row commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
 
-        current = await self.get_lifecycle_state(agent_id)
-        pair = (current.value, to_state.value)
+            current = await self.get_lifecycle_state(agent_id)
+            pair = (current.value, to_state.value)
 
-        if pair not in _LEGAL_TRANSITIONS:
-            raise ValueError(
-                f"Illegal lifecycle transition: {current.value} → {to_state.value} "
-                f"for agent {agent_id}"
-            )
+            if pair not in _LEGAL_TRANSITIONS:
+                raise ValueError(
+                    f"Illegal lifecycle transition: {current.value} → {to_state.value} "
+                    f"for agent {agent_id}"
+                )
 
-        now = time.time()
+            now = time.time()
 
-        # Update lifecycle table
-        update_fields = "state = ?, state_since = ?"
-        update_vals: list[Any] = [to_state.value, now]
+            # Update lifecycle table
+            update_fields = "state = ?, state_since = ?"
+            update_vals: list[Any] = [to_state.value, now]
 
-        if to_state == LifecycleState.PROBATIONARY:
-            update_fields += ", onboarded_at = ?"
-            update_vals.append(now)
-        elif to_state == LifecycleState.DECOMMISSIONED:
-            update_fields += ", decommissioned_at = ?"
-            update_vals.append(now)
+            if to_state == LifecycleState.PROBATIONARY:
+                update_fields += ", onboarded_at = ?"
+                update_vals.append(now)
+            elif to_state == LifecycleState.DECOMMISSIONED:
+                update_fields += ", decommissioned_at = ?"
+                update_vals.append(now)
 
-        update_vals.append(agent_id)
-        await self._db.execute(
-            f"UPDATE lifecycle SET {update_fields} WHERE agent_id = ?",
-            tuple(update_vals),
-        )
+            update_vals.append(agent_id)
+            try:
+                await self._db.execute(
+                    f"UPDATE lifecycle SET {update_fields} WHERE agent_id = ?",
+                    tuple(update_vals),
+                )
 
-        # Insert audit trail
-        await self._db.execute(
-            "INSERT INTO lifecycle_transitions "
-            "(agent_id, from_state, to_state, reason, initiated_by, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (agent_id, current.value, to_state.value, reason, initiated_by, now),
-        )
-        await self._db.commit()
+                # Insert audit trail
+                await self._db.execute(
+                    "INSERT INTO lifecycle_transitions "
+                    "(agent_id, from_state, to_state, reason, initiated_by, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (agent_id, current.value, to_state.value, reason, initiated_by, now),
+                )
+                await self._db.commit()
+            except BaseException:
+                await self._db.rollback()  # BF-906 A3: a failed transition leaves nothing pending
+                raise
 
         return LifecycleTransition(
             agent_id=agent_id,
@@ -219,31 +295,89 @@ class AgentCapitalService:
         self, agent_id: str, agent_type: str, pool: str, department: str,
         initiated_by: str = "system",
         sovereign_id: str = "",  # AD-441: persistent UUID
+        reason: str = "",  # BF-906: the enrollment path names itself
     ) -> LifecycleTransition:
         """Onboard an agent — register and set to probationary."""
-        if not self._db:
-            raise RuntimeError("ACM not started")
+        # BF-906 A3: released before ``transition``, which takes the lock itself.
+        async with self._write_lock:  # BF-906 A3: the lifecycle row and its identity mapping commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
 
-        now = time.time()
-        await self._db.execute(
-            "INSERT OR IGNORE INTO lifecycle (agent_id, state, state_since) VALUES (?, ?, ?)",
-            (agent_id, LifecycleState.REGISTERED.value, now),
-        )
+            now = time.time()
+            try:
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO lifecycle (agent_id, state, state_since) VALUES (?, ?, ?)",
+                    (agent_id, LifecycleState.REGISTERED.value, now),
+                )
 
-        # AD-441: Record sovereign identity mapping
-        if sovereign_id:
-            await self._db.execute(
-                "INSERT OR IGNORE INTO identity_mapping (slot_id, sovereign_id) VALUES (?, ?)",
-                (agent_id, sovereign_id),
-            )
+                # AD-441: Record sovereign identity mapping
+                if sovereign_id:
+                    await self._db.execute(
+                        "INSERT OR IGNORE INTO identity_mapping (slot_id, sovereign_id) VALUES (?, ?)",
+                        (agent_id, sovereign_id),
+                    )
 
-        await self._db.commit()
+                await self._db.commit()
+            except BaseException:
+                await self._db.rollback()  # BF-906 A3: a failed registration leaves nothing pending
+                raise
 
         return await self.transition(
             agent_id, LifecycleState.PROBATIONARY,
-            reason=f"Onboarded as {agent_type} in {department}",
+            reason=reason or f"Onboarded as {agent_type} in {department}",
             initiated_by=initiated_by,
         )
+
+    async def record_commissioning(
+        self,
+        *,
+        agent_id: str,
+        agent_type: str,
+        source: str,
+        role_template: str | None,
+        skills: tuple[str, ...],
+        tools: tuple[str, ...],
+        initiated_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """BF-906: record an agent's commissioning once; False when one already exists.
+
+        In the same commit it appends a lifecycle-history row whose from_state equals
+        its to_state: a record of the commissioning, not a state change
+        (``_LEGAL_TRANSITIONS`` is unchanged).
+
+        BF-906 A3: the record and its history row are one section under the write
+        lock. No other writer's commit can make the record durable without its row,
+        and any failure, cancellation included, rolls both back, so the next call
+        records again.
+        """
+        async with self._write_lock:  # BF-906 A3: the record and its history row commit together
+            if not self._db:
+                raise RuntimeError("ACM not started")
+            now = time.time()
+            try:
+                cursor = await self._db.execute(
+                    "INSERT OR IGNORE INTO commissioning_records (agent_id, agent_type, source, "
+                    "role_template, skills_json, tools_json, initiated_by, reason, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (agent_id, agent_type, source, role_template, json.dumps(list(skills)),
+                     json.dumps(list(tools)), initiated_by, reason, now),
+                )
+                if cursor.rowcount == 0:
+                    await self._db.commit()
+                    return False
+                state = (await self.get_lifecycle_state(agent_id)).value
+                history_reason = (
+                    f"{reason}: commissioned, role_template={role_template or 'none'}; "
+                    f"skills={','.join(skills) or 'none'}; tools={','.join(tools) or 'none'}"
+                )
+                history_row = (agent_id, state, state, history_reason, initiated_by, now)
+                await self._db.execute(_COMMISSIONING_HISTORY_SQL, history_row)
+                await self._db.commit()
+            except BaseException:  # BF-906 A3: a cancelled caller's record must not stay pending either
+                await self._db.rollback()  # BF-906 A3: a failed record leaves nothing pending
+                raise
+        return True
 
     async def decommission(
         self, agent_id: str, reason: str = "Decommissioned by Captain",
@@ -280,7 +414,8 @@ class AgentCapitalService:
         """Consolidated profile — single view of an agent across all subsystems."""
         profile: dict[str, Any] = {"agent_id": agent_id}
 
-        # 1. Lifecycle state (this service)
+        # 1. Lifecycle state (this service): an HR status (AD-427). It records the
+        #    agent's standing; it does not gate or stop its work (AD-1343).
         state = await self.get_lifecycle_state(agent_id)
         profile["lifecycle_state"] = state.value
 
@@ -412,116 +547,16 @@ class AgentCapitalService:
 
     async def commission(
         self, agent_id: str, agent_type: str, runtime: Any,
+        *, preserve_existing: bool = False, grant_issued_by: str = "captain",
     ) -> dict[str, Any]:
         """AD-889: Walk the capability spine Role → Skills → Tools at commissioning.
 
-        Composes three subsystems into a single front door: (1) the AD-428 skill
-        service assigns PCCs + legacy role skills, (2) the ontology RoleTemplate's
-        required skills are acquired at their declared proficiency (preferred over
-        the legacy dict), and (3) each acquired skill's preferred tools — resolved
-        via the AD-888 resolver — are granted to the agent. Each step
-        honest-degrades (Tier-2 log-and-degrade) so a missing subsystem never
-        aborts commissioning. Re-commission is idempotent: ``acquire_skill``
-        upserts and an existing active grant is skipped.
+        The single front door for the Captain's routes and the BF-906 crew enroller.
+        The chain itself is :func:`probos.commissioning.commission_chain`: it composes
+        runtime services and holds no ACM state, so BF-906 moved it out of this class
+        unchanged.
         """
-        summary: dict[str, Any] = {
-            "agent_id": agent_id,
-            "agent_type": agent_type,
-            "skills_acquired": [],
-            "tools_granted": [],
-        }
-
-        skill_service = getattr(runtime, "skill_service", None)
-        if skill_service is None:
-            logger.debug(
-                "AD-889: skill_service absent — commission skipped for %s", agent_id,
-            )
-            return summary
-
-        # 1. PCCs + legacy role skills (AD-428 commission_agent, unchanged).
-        try:
-            await skill_service.commission_agent(agent_id, agent_type)
-        except Exception:
-            logger.debug(
-                "AD-889: base commission_agent failed for %s", agent_id, exc_info=True,
-            )
-
-        # 2. Role → Skills via the ontology RoleTemplate, preferred over the legacy
-        #    dict. SkillRequirement.min_proficiency is a raw int (1-7) → ProficiencyLevel.
-        ontology = getattr(runtime, "ontology", None)
-        template = ontology.get_role_template_for_agent(agent_type) if ontology else None
-        if template is not None:
-            from probos.skill_framework import ProficiencyLevel
-            for req in template.required_skills:
-                try:
-                    level = ProficiencyLevel(req.min_proficiency)
-                except ValueError:
-                    level = ProficiencyLevel.FOLLOW
-                try:
-                    await skill_service.acquire_skill(
-                        agent_id, req.skill_id, source="commission", proficiency=level,
-                    )
-                except ValueError:
-                    # Prerequisite not met at commissioning — expected for chained skills.
-                    logger.debug(
-                        "AD-889: skill %s prereq unmet for %s — skipped",
-                        req.skill_id, agent_id,
-                    )
-
-        # Fetch the post-acquisition profile once (skill_service is present here).
-        profile = None
-        try:
-            profile = await skill_service.get_profile(agent_id)
-            summary["skills_acquired"] = [r.skill_id for r in profile.all_skills]
-        except Exception:
-            logger.debug(
-                "AD-889: profile fetch failed for %s", agent_id, exc_info=True,
-            )
-
-        # 3. Skills → Tools via the AD-888 resolver + permission grants. Requires the
-        #    tool registry (resolution), the permission store (grants), and the skill
-        #    registry (skill definitions); any absent → honest-degrade, no grants.
-        tool_permission_store = getattr(runtime, "tool_permission_store", None)
-        tool_registry = getattr(runtime, "tool_registry", None)
-        skill_registry = getattr(runtime, "skill_registry", None)
-        if (
-            profile is not None
-            and tool_permission_store is not None
-            and tool_registry is not None
-            and skill_registry is not None
-        ):
-            from probos.tools.protocol import ToolPermission
-            from probos.tools.skill_tool_resolver import resolve_tools_for_skill
-            try:
-                for record in profile.all_skills:
-                    skill_def = skill_registry.get_skill(record.skill_id)
-                    if skill_def is None:
-                        continue
-                    regs = resolve_tools_for_skill(
-                        skill_def, agent_id=agent_id, tool_registry=tool_registry,
-                    )
-                    for reg in regs:
-                        # Idempotent + AD-1009 override-preserving: skip if ANY
-                        # active per-agent decision exists for this tool — a grant
-                        # OR a manual Captain restriction. Re-applying a role
-                        # template (apply-role) must never clobber a per-agent
-                        # override (agent-precedence). At birth there are no
-                        # decisions, so this is byte-identical to the first
-                        # commission; only re-apply benefits.
-                        existing = tool_permission_store.get_active_grants_sync(
-                            agent_id, reg.tool_id,
-                        )
-                        if existing:
-                            continue
-                        await tool_permission_store.issue_grant(
-                            agent_id, reg.tool_id, ToolPermission.READ,
-                            is_restriction=False, reason="commission",
-                            issued_by="captain",
-                        )
-                        summary["tools_granted"].append(reg.tool_id)
-            except Exception:
-                logger.debug(
-                    "AD-889: tool grant step failed for %s", agent_id, exc_info=True,
-                )
-
-        return summary
+        return await commission_chain(
+            agent_id, agent_type, runtime,
+            preserve_existing=preserve_existing, grant_issued_by=grant_issued_by,
+        )

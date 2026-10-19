@@ -14,11 +14,6 @@ review:
   rationale: Every row is a module that creates a table and predates the store registry. AD-1256 (#1302) ships the declaration layer and seeds nine declarations; declaring the remaining stores requires reading each one's retention, lifecycle owner and backup disposition, which is per-store review work rather than a mechanical edit. Freezing them here buys the property the platform-maturity program asks for -- a NEW store fails on day one -- without demanding fifty reviewed declarations in one slice. The rows carry no per-row rationale because every row means the same thing; a field that is always the same sentence stops being read.
   review_by: This file is empty, or every remaining row has a declaration.
 undeclared_stores:
-- module: probos.acm
-  tables:
-  - identity_mapping
-  - lifecycle
-  - lifecycle_transitions
 - module: probos.artifacts
   tables:
   - artifacts
