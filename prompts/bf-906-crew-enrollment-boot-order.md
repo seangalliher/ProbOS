@@ -2009,3 +2009,246 @@ Rows 3, 6 and 21 replace their originals (the code moved; anchors are dedented 4
 **Considered, deferred (AD-1256):** move `maintenance/rebuild_episodic::_open_wardroom_readonly` onto the
 adapter's `read_only` open and delete its debt row.
 **Blind spot:** opening a WAL-mode store read-only fails when its `-shm` file is missing; the result is WARN, never a false OK.
+
+## Amendment A2 (2026-10-19): five suite pins A1 did not cover
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+The full suite on the contract plus A1 leaves five failures: three `__new__` fixtures in
+`tests/test_cognitive_skill_596b.py` that lack `_crew_enroller` (Section 5), and two AD-1195 freeze pins
+(`tests/test_ad1195_eventlog_pair_freeze.py`): `('lifecycle', 'crew_commissioned')` is an unfrozen resolved
+pair, and Section 4's `INVARIANT_FAILED_EVENT` write is an unresolvable dynamic site because the constant is
+imported. A2 also corrects A1.7's read-only claim and A1's WAL blind spot against a measured probe
+(SQLite 3.50.4, aiosqlite 0.22.1, Windows) and SQLite's documentation (https://www.sqlite.org/wal.html §5).
+
+**Target trees.** A2.1–A2.3 and A2.6 apply to `origin/main` test files the contract does not touch. A2.4 applies
+to Section 3's file as the contract writes it; A2.5 to Section 4's. A2.7 applies to `sqlite_factory.py` AFTER
+A1.7. Build order: A2.1–A2.6 in M2 (with Sections 3–7); A2.7 with A1.7 (if A1.7 has already landed, as a
+docstring-only edit in M3).
+
+### A2.1 `tests/test_cognitive_skill_596b.py` — fixture `test_wire_agent_sets_catalog_on_agent`
+<<<<<<< SEARCH
+        catalog = _make_catalog_mock(entries=[])
+        svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
+=======
+        catalog = _make_catalog_mock(entries=[])
+        svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
+>>>>>>> REPLACE
+
+### A2.2 `tests/test_cognitive_skill_596b.py` — fixture `test_wire_agent_registers_skill_intents_on_bus`
+<<<<<<< SEARCH
+        catalog = _make_catalog_mock(entries=[entry])
+
+        svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
+=======
+        catalog = _make_catalog_mock(entries=[entry])
+
+        svc = AgentOnboardingService.__new__(AgentOnboardingService)
+        # AD-1273: __new__ bypasses __init__, so the rehydrator registry
+        # wire_agent now runs has to be set explicitly, as above at L164.
+        svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
+>>>>>>> REPLACE
+
+### A2.3 `tests/test_cognitive_skill_596b.py` — fixture `test_wire_agent_no_catalog_unchanged`
+<<<<<<< SEARCH
+        svc._rehydrators = {}
+        svc._cognitive_skill_catalog = None
+=======
+        svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
+        svc._cognitive_skill_catalog = None
+>>>>>>> REPLACE
+
+### A2.4 `src/probos/crew_enrollment.py` (Section 3) — the invariant-failure write lives with its constant
+<<<<<<< SEARCH
+    return CrewInvariantReport(
+        checked=len(crew),
+        missing_lifecycle=tuple(sorted(missing)),
+        never_commissioned=tuple(sorted(never)),
+    )
+
+
+class CrewEnrollmentService:
+=======
+    return CrewInvariantReport(
+        checked=len(crew),
+        missing_lifecycle=tuple(sorted(missing)),
+        never_commissioned=tuple(sorted(never)),
+    )
+
+
+async def log_crew_invariant_failure(event_log: Any, report: CrewInvariantReport) -> bool:
+    """Write the ``crew_invariant_failed`` event-log row for a failed ``report``.
+
+    Best effort, like the commissioning row: the startup ERROR log and
+    ``probos doctor`` are authoritative, so a missing row is never evidence that
+    the invariant held. The write lives in this module so that AD-1195's census
+    resolves its event from ``INVARIANT_FAILED_EVENT``. Returns True when the row
+    was written; False, with a WARNING, when there is no event log or the write
+    failed. Never raises.
+    """
+    if event_log is None:
+        logger.warning("BF-906: no event log; the crew invariant failure is in the startup log only")
+        return False
+    try:
+        await event_log.log(
+            category="lifecycle", event=INVARIANT_FAILED_EVENT, data=report.to_dict(),
+        )
+    except Exception:
+        logger.warning("BF-906: the invariant failure could not be written to the event log", exc_info=True)
+        return False
+    return True
+
+
+class CrewEnrollmentService:
+>>>>>>> REPLACE
+
+### A2.5 `src/probos/startup/crew_enrollment.py` (Section 4) — call it
+<<<<<<< SEARCH
+from probos.crew_enrollment import (
+    INVARIANT_FAILED_EVENT,
+    CrewEnrollmentService,
+    CrewInvariantReport,
+    check_crew_invariant,
+)
+=======
+from probos.crew_enrollment import (
+    CrewEnrollmentService,
+    CrewInvariantReport,
+    check_crew_invariant,
+    log_crew_invariant_failure,
+)
+>>>>>>> REPLACE
+<<<<<<< SEARCH
+        ", ".join(report.never_commissioned) or "none",
+    )
+    try:
+        await runtime.event_log.log(
+            category="lifecycle", event=INVARIANT_FAILED_EVENT, data=report.to_dict(),
+        )
+    except Exception:
+        logger.warning("BF-906: the invariant failure could not be written to the event log", exc_info=True)
+    return report
+=======
+        ", ".join(report.never_commissioned) or "none",
+    )
+    await log_crew_invariant_failure(runtime.event_log, report)
+    return report
+>>>>>>> REPLACE
+
+After A2.5, `startup/crew_enrollment.py` has no `.log(` call that writes to the EventLog; its `logger.*` calls are
+skipped by the census (`_NOT_EVENT_LOG_RECEIVERS`).
+
+### A2.6 `tests/test_ad1195_eventlog_pair_freeze.py` — freeze the two BF-906 pairs
+<<<<<<< SEARCH
+    ('consensus', 'write_failed'),
+    ('tool', 'tool_invoked'),
+=======
+    ('consensus', 'write_failed'),
+    # BF-906 (#1594): crew commissioning, through COMMISSIONED_EVENT. Best effort:
+    # ACM's commissioning_records is authoritative, so a missing row is never evidence.
+    ('lifecycle', 'crew_commissioned'),
+    # BF-906: the startup crew invariant failure, through INVARIANT_FAILED_EVENT. Best
+    # effort: the startup ERROR log and `probos doctor` are authoritative.
+    ('lifecycle', 'crew_invariant_failed'),
+    ('tool', 'tool_invoked'),
+>>>>>>> REPLACE
+
+`_LITERAL_PAIRS` (37) and `_DYNAMIC_SITES` are unchanged. No `probos/event_persistence.py` entry: its tables are
+keyed by `EventType` member NAME, and neither event is an `EventType` value or a routed value, so DRIFT-5 is
+unaffected.
+
+### A2.7 `src/probos/storage/sqlite_factory.py` — make the read-only claim exact (tree after A1.7)
+<<<<<<< SEARCH
+        BF-906: ``read_only=True`` opens an existing file through SQLite's
+        ``mode=ro`` URI. It never creates the file (a missing one raises
+        ``sqlite3.OperationalError``) and every write raises. It is SQLite-specific
+        and deliberately not part of the ``ConnectionFactory`` protocol. The
+        default path is unchanged: ``uri=False`` is sqlite3's own default.
+=======
+        BF-906: ``read_only=True`` opens an existing database through SQLite's
+        ``mode=ro`` URI. It never creates the database file (a missing one raises
+        ``sqlite3.OperationalError``), never changes its contents, and every write
+        raises. One side effect remains: opening a WAL-mode database may create
+        its ``-wal`` and ``-shm`` files, as any reader of a WAL database does when
+        the directory is writable (SQLite wal.html section 5; measured on 3.50.4
+        after a clean close). ``immutable=1`` would avoid them but is unsafe while
+        the vessel writes. It is SQLite-specific and deliberately not part of the
+        ``ConnectionFactory`` protocol. The default path is unchanged: ``uri=False``
+        is sqlite3's own default.
+>>>>>>> REPLACE
+
+### A2.8 Contract text superseded
+- **A1 blind spot** (last line of A1) → "Opening a WAL-mode store read-only creates its `-wal`/`-shm` files when
+  the directory is writable; it fails only when they are absent AND cannot be created, and that failure is WARN,
+  never a false OK. The doctor's three stores (`acm.py`, `identity.py`, `skill_framework.py`) set no
+  `journal_mode`, so the doctor leaves nothing behind today."
+- **A1.8 module docstring**, "it never creates a file and never writes to a store" → "it never creates a
+  database file and never writes to a store (a WAL-mode store may gain its `-wal`/`-shm` files; these three are
+  not WAL)". Docstring only; no code change.
+- **Diff Reviewer property 7** (as A1.9 left it) → "…opens every store through
+  `default_factory.connect(..., read_only=True)`, never creates or changes a database file, and never reports
+  OK when a store could not be read."
+- **T-B6** gains a note: if the (name, size, mtime) fingerprint fails because `-wal`/`-shm` appeared for
+  identity/acm/skills.db, a doctor store has moved to WAL. Exclude exactly those sidecars from the fingerprint
+  and keep the main files' sha256 equality. Do not weaken the assertion otherwise.
+- **Acceptance Criteria 2** → "kills all 34 rows".
+
+### A2 tests
+| ID | Change | Milestone | Test |
+|---|---|---|---|
+| — | amend (A2.1–A2.3) | M2 | the three `TestOnboardingWiring` fixtures in `tests/test_cognitive_skill_596b.py` |
+| — | amend (A2.6) | M2 | `tests/test_ad1195_eventlog_pair_freeze.py::_RESOLVED_PAIRS` +2 |
+| U16 (new) | add | M2 | `test_invariant_failure_row_is_written_with_the_report`: `AsyncMock` event log, a failing report → returns True; `log` awaited once with `category="lifecycle"`, `event="crew_invariant_failed"`, `data == report.to_dict()` |
+| U17 (new) | add | M2 | `test_invariant_failure_without_an_event_log_warns_and_returns_false`: `event_log=None` → False, no raise; exactly one WARNING from `probos.crew_enrollment` whose message contains "no event log" |
+| U18 (new) | add | M2 | `test_invariant_failure_write_error_warns_and_returns_false`: `log` raises `RuntimeError` → False, no raise; one WARNING containing "could not be written", with `exc_info` set |
+| D12 (new) | add | M3 | `test_read_only_open_of_a_wal_store_never_changes_the_database_file`: seed with sqlite3 under `PRAGMA journal_mode=WAL`, insert, close; record the main file's sha256; `default_factory.connect(p, read_only=True)` returns the row and `INSERT` raises `sqlite3.OperationalError`; after close the main file's sha256 is unchanged and the directory holds nothing beyond `{name, name-wal, name-shm}`. Do not assert that the sidecars exist (that depends on the host) |
+
+U16–U18 go in `tests/test_bf906_acm_commissioning.py`; D12 goes in `tests/test_bf906_doctor_check.py` beside D8–D11.
+T-B6 (one `crew_invariant_failed` row) is unchanged and now crosses the A2.5 seam.
+**Focused tests added to M2:** `tests/test_cognitive_skill_596b.py`, `tests/test_ad1195_eventlog_pair_freeze.py`.
+
+### A2 mutation rows
+| # | File | Anchor → mutant | Killed by |
+|---|---|---|---|
+| 31 | crew_enrollment.py | `    if event_log is None:` → `    if False:` | U17 (message differs) |
+| 32 | startup/crew_enrollment.py | `    await log_crew_invariant_failure(runtime.event_log, report)` → `    pass` | T-B6 |
+| 33 | crew_enrollment.py | `            category="lifecycle", event=INVARIANT_FAILED_EVENT, data=report.to_dict(),` → `            category="lifecycle", event=COMMISSIONED_EVENT, data=report.to_dict(),` | U16, T-B6 |
+| 34 | crew_enrollment.py | `    return True` → `    return False` | U16 |
+
+Row 34's anchor is the only 4-space `    return True` in the module (`_onboard_if_unrecorded`'s is 8 spaces);
+confirm every anchor with `grep -c` as before.
+
+### A2 Diff Reviewer properties (added)
+14. Every EventLog write BF-906 adds is in `probos/crew_enrollment.py` and names its event through a module
+    constant. `_RESOLVED_PAIRS` grows by exactly the two `lifecycle` pairs; `_LITERAL_PAIRS`, `_DYNAMIC_SITES`,
+    `EventType` and `probos/event_persistence.py` are unchanged.
+15. No production default exists for a test that bypasses `__init__`: `_crew_enroller` is assigned only in
+    `AgentOnboardingService.__init__` and `set_crew_enroller`.
+16. `log_crew_invariant_failure` never raises an `Exception` subclass, and `report_crew_invariant`'s ERROR line
+    is unchanged.
+
+### A2 decisions
+| # | Decision | Envelope |
+|---|---|---|
+| D18 | `__new__` fixtures set `svc._crew_enroller = None` (the AD-1273 precedent); no class-level default | Architect |
+| D19 | C1: the invariant-failure write moves into `probos/crew_enrollment.py`, so both events are frozen resolved pairs | Architect |
+| D20 | No `event_persistence.py` entry: neither event is an `EventType` member or routed value; both rows are best effort | Architect |
+| D21 | The read-only guarantee is "never creates or changes the database file", and WAL sidecars are acknowledged; `immutable=1` is rejected (unsafe while the vessel writes) | Architect |
