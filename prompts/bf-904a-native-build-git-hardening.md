@@ -3968,3 +3968,41 @@ How the test runs:
 - **Claim:** no other call on the cleanup path can raise an ordinary exception that escapes. **Run:** Read `builder.py:1700-1768`, `3574-3614`, `1595-1625` and `1861-1878`, plus `command_env.py:107-131`. **Found:** the table above. **Holds:** yes.
 - **Claim:** none of the new ids or names exist yet. **Run:** Grep `R-a[r-z]|R22|D43|_cleanup_log` in the contract and `src/`. **Found:** no hits. **Holds:** yes.
 - **Claim:** only R-q anchors a changed line. **Run:** Grep the three log lines in the contract. **Found:** the row at `:2823` (R-q); the other hits are code blocks. **Holds:** yes.
+
+## Amendment A9 (2026-10-19): four more M3 tests, from the orchestrator's hand rows (test-only)
+
+**Authored by:** the orchestrator, not the Architect: a test-only consequence of a mutation probe, with the evidence below (the precedent is A2 and A6). The Architect may overrule it. No production line changes.
+
+**Verdict:** ✅ Mechanical and test-only. It adds tests to the M3 module and changes two counts in the trackers; the production code of Section 8 stays as the Architect wrote it.
+
+**Why.** Before M3's review I ran eight hand rows (HRS1 to HRS8, listed below) over the repair pre-check's own branches and over the empty-outcome message, on the M3 candidate (staged tree `29002e28dc99910054399a8d3dbb18e394451e31`; the M3 module and the four existing modules that exercise the repair loop, 405 passed unmutated). Four were killed: HRS1 by BF-898's disclosure test, HRS4 and HRS5 by S5, HRS7 by S3. **Four survived**, so four behaviours of M3 had no test:
+- **HRS2 and HRS3** (`text = text.replace(...)` removed from `_unapplied_repair_blocks`, and `texts[rel] = text` removed): nothing shows that one file's blocks are matched against the text the earlier blocks leave. That is the core of property 13. A response whose second block depends on the first would be refused wrongly, and one whose second block's text the first destroyed would pass the pre-check and then be a silent no-op in the application, whose presence check 8e removed: the defect M3 closes.
+- **HRS6** (the "could not be read; refused" refusal removed): a repair target that exists but cannot be decoded. Without the refusal the application raises as it did before M3.
+- **HRS8** (the `sorted(...)` of the paths reversed): the order of the paths in `No change applied: <paths>`, which S3 pins with one path only.
+
+**A9.1 New tests** (`tests/test_bf904a_unapplied_blocks.py`, after S5 and before E2; the same helpers and rules as 9a: premises first, real git, `_state`, no sleeps, every await bounded; `_modify_block`, `_FakeModel` and `_FakeTargetedTests` are the ones S4 and S5 use; a third seeded file `THIRD = "src/probos/third.py"` holding `z = 1\n` is added to the module's constants for S8 only, passed to `_plain_repo` as the `files` argument).
+
+| ID | Test | Asserts |
+|---|---|---|
+| S6 | `test_the_blocks_of_one_file_in_a_repair_are_matched_against_the_text_the_earlier_blocks_leave` parametrised `dependent` and `vanished` | Build `[modify TARGET "x = 1" to "x = 2"]`, `run_tests=True`, `max_fix_attempts=2`, the fake model answers the repair below. Premises: the parser returns two MODIFY blocks for TARGET in order; BF-898's rule admits TARGET; the file holds `x = 2\n` after the build's own block (the first runner call sees it). **`dependent`**: repair `(x = 2 to x = 3)` then `(x = 3 to x = 4)`; runner outcomes `[False, True]`. Premise: `x = 3` is not in the file at the time of the repair. Asserts `success is True`, a commit, `events == ["run", "repair", "run"]`, `runner.seen == ["x = 2\n", "x = 4\n"]`, `_blob(branch, TARGET) == "x = 4\n"`. **`vanished`**: repair `(x = 2 to x = 5)` then `(x = 2 to x = 6)`; every run fails. Premise: `x = 2` IS in the file at the time of the repair, so only the earlier block makes block 1's text vanish. Asserts `success is False`, `runner.await_count == 1 and events == ["run", "repair"]`, one repair prompt and `fix_attempts == 1`, `"fix_loop_files" not in result.metadata`, `"SEARCH block 1 not found in src/probos/a.py; refused" in result.error` and `"SEARCH block 0" not in result.error`, `_state` unchanged. |
+| S7 | `test_a_repair_target_that_cannot_be_read_is_refused_whole` | After `_plain_repo`, overwrite OTHER with `b"\xff\xfe = 1\n"`, `git add` and commit it (so the tree starts clean). Premises: the bytes do not decode as UTF-8 (`pytest.raises(UnicodeDecodeError)`); BF-898's rule admits OTHER. Build `[modify TARGET "x = 1" to "x = 2"]`, `run_tests=True`, `max_fix_attempts=2`, every run fails; the repair is one MODIFY block on OTHER (`a` to `b`). Asserts `success is False`, `runner.await_count == 1 and events == ["run", "repair"]`, `"fix_loop_files" not in result.metadata`, `f"MODIFY target {OTHER} could not be read; refused" in result.error`, `_state` unchanged (OTHER's undecodable bytes included). |
+| S8 | `test_the_empty_outcome_names_each_path_once_in_sorted_order` | `_plain_repo(files={TARGET: "x = 1\n", OTHER: "y = 1\n", THIRD: "z = 1\n"})`. Changes in this order: a no-op modify of THIRD (`z = 1` to `z = 1`), of OTHER (`y = 1` to `y = 1`), of TARGET (`x = 1` to `x = 1`), and of TARGET again. Premise: every block's text is in its file (so none is a refusal). Asserts `success is False`, `result.error == "No change applied: src/probos/a.py, src/probos/other.py, src/probos/third.py"`, no commit, `_state` unchanged. |
+
+The module then has 9 test functions and 11 cases (S1, S2, S3, S4 twice, S5, S6 twice, S7, S8, E2).
+
+**A9.2 Expected evidence** (the Builder reports each; the orchestrator re-checks). On the staged production source all four new functions pass. On M2's production source (the commit before M3): `S6[vanished]`, S7 and S8 fail, `S6[dependent]` passes (a control: M2's application applied the blocks in order). By hand, each row once, with the file restored byte for byte: HRS2 and HRS3 are killed by `S6[dependent]` and `S6[vanished]`, HRS6 by S7, HRS8 by S8.
+
+**A9.3 Rows (Partition P3; each SEARCH is a whole stripped line of the M3-built `builder.py`, unique there).**
+
+| ID | File | SEARCH | REPLACE | Killed by |
+|---|---|---|---|---|
+| HRS1 | `src/probos/cognitive/builder.py` | `if not path.is_file():` | `if False:` | `test_an_error_in_a_later_block_keeps_the_attempt_and_the_disclosure` (BF-898, 9e) |
+| HRS2 | `src/probos/cognitive/builder.py` | `text = text.replace(repl["search"], repl["replace"], 1)` | `pass` | S6 `dependent` and `vanished` |
+| HRS3 | `src/probos/cognitive/builder.py` | `texts[rel] = text` | `pass` | S6 `dependent` and `vanished` |
+| HRS4 | `src/probos/cognitive/builder.py` | `if rel not in texts:` | `if True:` | S5 |
+| HRS5 | `src/probos/cognitive/builder.py` | `if isinstance(change.get("content"), str):` | `if False:` | S5 |
+| HRS6 | `src/probos/cognitive/builder.py` | `refusals.append(f"MODIFY target {rel} could not be read; refused")` | `pass` | S7 |
+| HRS7 | `src/probos/cognitive/builder.py` | `elif file_changes:` | `elif True:` | S3 (the empty-list control) |
+| HRS8 | `src/probos/cognitive/builder.py` | `sorted({str(change["path"]) for change in file_changes})` | `sorted({str(change["path"]) for change in file_changes}, reverse=True)` | S8 |
+
+**A9.4 Supersessions (the original lines stay).** 9a's "S1 to S5 and E2" (6 functions, 7 cases) becomes S1 to S8 and E2 (9 functions, 11 cases). The Tests summary gains four cases. **Tracking:** the `DECISIONS.md` entry says "M3, 9 functions, 11 cases" and the `PROGRESS.md` paragraph "57 new test functions (118 cases)" (25 + 23 + 9 functions; 40 + 67 + 11 cases). **Diff Reviewer properties 12 and 13** gain: "the pre-check matches one file's blocks, across changes, against the text the earlier blocks leave (S6), refuses a target it cannot read (S7), and the empty outcome names each path once, sorted (S8)".
