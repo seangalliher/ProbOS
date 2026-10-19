@@ -4496,3 +4496,172 @@ RUN:   Grep "builder_write_refusal" tests/test_bf904a_unapplied_blocks.py   FOUN
 CLAIM: _same_file_key has one caller
 RUN:   Grep "_same_file_key\(" builder.py   FOUND: 3018 (def), 3048   HOLDS: yes
 ```
+
+## Amendment A12 (2026-10-19): the physical path first, then the host's full-path form (M3 round 3, R3-F1)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19
+
+**Assembled by:** the orchestrator, by script, from the Architect's read-only answer to the M3 round-three brake (session `7a423bc2`; decision: continue, one round 4 limited to this delta). The only wording changes: A12.1's SEARCH label "SEARCH (lines 3019-3029 of the staged text, unique):" is "SEARCH:" (the chain readers look for that label); the rows table is rebuilt with a File column, the key line as SEARCH and the backticked mutant alone as REPLACE (the answer's remarks moved to the killer cell); the answer's "Verified Against Codebase" and "Absence Verified" records are appended. The decision paragraph that preceded the amendment in the answer is recorded on #1585.
+
+**Verdict:** ✅ This fixes R3-F1. On POSIX the key is D32's again, and on Windows the host's full-path trimming is kept. R3-F2's mutant is killed (S16 on every host, S15 on POSIX). R3-F3 is deferred. D32, the router and D44 to D52 are untouched.
+
+- **D53, as amended (A11, R2-F1; A12).** A target that does not exist is keyed by the `os.path.abspath` form of its `_write_target_key` (D54), so a spelling that the host's file calls unify is one file. On Windows, `GetFullPathNameW` trims the last name's trailing dots and spaces and an inner name's single trailing dot. On POSIX the form is the identity on a resolved path: `fresh.py.` stays a separate file and its MODIFY is refused as missing. D32's restore key is unchanged.
+- **D54 (A12, R3-F1).** The physical path comes first. `realpath` resolves symbolic links before any lexical step, so a `..` in the work directory is taken as the kernel takes it. The host's full-path form is then applied to the resolved path. On POSIX this is D32's key byte for byte, because `posixpath.realpath` returns `abspath(path)`. On Windows it agrees with the host on the 25 spellings A11 was measured on. S16 pins the order on every host; S15 pins its effect on POSIX.
+
+### A12.1 `src/probos/cognitive/builder.py`: `_same_file_key` resolves first
+SEARCH:
+```python
+    """BF-904a A10 (D44), A11 (D53): one key per file on disk, for every name this host's file calls unify.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by ``_write_target_key`` of its
+    ``os.path.abspath`` form: on Windows that is ``GetFullPathNameW``, the trimming the writer's own
+    calls get (the last name's trailing dots and spaces, an inner name's single trailing dot); on POSIX
+    it is lexical, so ``fresh.py.`` stays another name. The pre-check writes nothing, so a file a change
+    creates is absent, and keyed by path, for the whole check.
+    """
+    key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))  # BF-904a A11 (D53): the host's full-path form
+```
+REPLACE:
+```python
+    """BF-904a A10 (D44), A11 (D53), A12 (D54): one key per file on disk, for every name this host's file calls unify.
+
+    An existing target is keyed by ``(st_dev, st_ino)`` (``os.stat`` follows symbolic links), so a hard
+    link and a case variant on a case-folding filesystem are one file. A target that does not exist, or
+    a filesystem that reports no inode number, is keyed by the ``os.path.abspath`` form of its
+    ``_write_target_key``: the physical path first (``realpath`` resolves symbolic links, so a ``..`` in
+    the work directory is taken as the kernel takes it), then the host's full-path form. On Windows that
+    is ``GetFullPathNameW``, the trimming the writer's own calls get (the last name's trailing dots and
+    spaces, an inner name's single trailing dot); on POSIX it is the identity on a resolved path, so the
+    key is D32's and ``fresh.py.`` stays another name. The pre-check writes nothing, so a file a change
+    creates is absent, and keyed by path, for the whole check.
+    """
+    key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form
+```
+
+### A12.2 Tests: `tests/test_bf904a_unapplied_blocks.py`
+- **Module docstring (line 17, prose edit):** `a new file's key is the host's full-path form, so a spelling the host unifies is that file;` becomes `a new file's key is the host's full-path form of its physical path, so a spelling the host unifies is that file;`.
+- **Insert after S14's test (ending `assert _state(repo) == before`, line 820) and before E2's header block.** No new imports or constants: `os`, `Path`, `TARGET`, `FRESH`, `_alias_repo` and `_modify_block` already exist.
+
+```python
+# ---------------------------------------------------------------------------
+# S15 and S16 (A12): the physical path first, then the host's full-path form
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("case", ["dependent", "vanished"])
+def test_a_work_directory_named_through_a_symbolic_link_and_dotdot_is_keyed_where_its_files_are(
+    tmp_path: Path, case: str
+) -> None:
+    repo, alias = _alias_repo(tmp_path / "actual", "hardlink")
+    (tmp_path / "actual" / "subdir").mkdir()
+    (tmp_path / "v").mkdir()
+    try:
+        os.symlink(tmp_path / "actual" / "subdir", tmp_path / "v" / "link", target_is_directory=True)
+    except OSError:
+        pytest.skip("this host cannot create a directory symbolic link without a privilege (Windows error 1314)")
+    work = os.path.join(str(tmp_path), "v", "link", "..", "repo")
+    if not (Path(work) / TARGET).is_file():
+        pytest.skip("this host takes '..' lexically (Win32 full-path rules), so the spelling names another directory")
+    assert os.path.samefile(work, repo), "premise: the kernel takes '..' after the link, so the spelling is the repository"
+    assert not os.path.exists(os.path.abspath(work)), "premise: the lexical form of the spelling names no directory"
+    assert os.path.samefile(Path(work) / TARGET, Path(work) / alias), "premise: the two names are one file"
+    second = "x = 2" if case == "dependent" else "x = 1"
+    changes = BuilderAgent._parse_file_blocks(_modify_block(TARGET, "x = 1", "x = 2") + _modify_block(alias, second, "x = 3"))
+    assert [(c["mode"], c["path"]) for c in changes] == [("modify", TARGET), ("modify", alias)], "premise: two MODIFY blocks"
+
+    refusals = builder_module._unapplied_blocks(changes, work)
+
+    if case == "dependent":
+        assert refusals == [], "the alias block is matched against the text the first block leaves"
+    else:
+        assert refusals == [f"SEARCH block 0 not found in {alias}; refused"], refusals
+
+
+def test_a_target_key_is_the_full_path_form_of_the_physical_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with monkeypatch.context() as m:  # markers that resolve nothing: no path resolution inside a patched os function
+        m.setattr(os.path, "realpath", lambda p, *args, **kwargs: os.fspath(p) + "|r")
+        m.setattr(os.path, "abspath", lambda p: os.fspath(p) + "|a")
+        got = builder_module._same_file_key(str(tmp_path), FRESH)
+    assert got[0] == "path", got  # os.stat of a marked name fails on every host
+    assert got[1].endswith("fresh.py|r|a"), "realpath first, then abspath: " + got[1]
+    assert got[1].count("|") == 2, "each applied once: " + got[1]
+```
+
+**Dry run (A12 tree).**
+- **S15 `dependent`:** both names `stat` to the same `(st_dev, st_ino)`. TARGET reads `"x = 1\n"` through `Path(work) / rel` (`builder.py:3060`; the kernel resolves the link, then `..`). After the first block the shared text is `"x = 2\n"`, the alias's SEARCH matches and the result is `[]`.
+- **S15 `vanished`:** the alias searches `"x = 1"` in `"x = 2\n"` and gets one refusal, with no index offset (`builder.py:3076`).
+- **S15 on A11's order:** the key lands under `<tmp>/v/repo`, `stat` fails, and the two names get two path keys. The alias then reads the disk's `"x = 1\n"`, so `dependent` is refused and `vanished` returns `[]`. Both cases fail.
+- **S16:** `normcase` lowercases and turns `/` into `\` on Windows, which leaves the lowercase markers alone. `os.stat` fails on the marked name (Windows rejects `|` as an invalid name; on POSIX the file is missing), giving `("path", "…fresh.py|r|a")`.
+- **Expected red, shown first by the Builder on the A11 tree:** S16 fails on every host (`…|a|r`). S15 fails on Ubuntu and skips on Windows. S14 is unchanged on both hosts (7 cases).
+
+### A12.3 Rows (Partition P3). A11-R1 to A11-R3 are retired: their anchor is gone.
+The anchor is the new key line, a whole stripped line, unique: `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form`.
+
+| ID | File | SEARCH (whole stripped line) | REPLACE | Killed by |
+|---|---|---|---|---|
+| A12-R1 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = _write_target_key(work_dir, os.path.abspath(os.path.join(work_dir, rel)))` | S16 on every host; S15 both cases on POSIX (A11's order) |
+| A12-R2 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = _write_target_key(work_dir, rel)` | S16 on every host; S14 `trailing-dot`, `space-dot`, `new-dir-dot` and `visiting` on Windows. Equivalent on POSIX by construction (`posixpath.py:425`). |
+| A12-R3 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = os.path.join(work_dir, rel)` | S14 `double-slash` and `dot-segment`, and S16, on every host |
+| A12-R4 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = os.path.abspath(os.path.join(work_dir, rel))` | S16 on every host; S14 `new-case` on Windows; S15 on POSIX |
+| A12-R5 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = os.path.abspath(os.path.normcase(os.path.join(work_dir, rel)))` | S16 on every host; S15 on POSIX (R3-F2) |
+| A12-R6 | `src/probos/cognitive/builder.py` | `key = os.path.abspath(_write_target_key(work_dir, rel))  # BF-904a A12 (D54): the physical path first, then the host's full-path form` | `key = os.path.abspath(os.path.realpath(os.path.join(work_dir, rel)))` | S14 `new-case` on Windows only. Equivalent on POSIX (`normcase` is the identity there). |
+
+A10-R1's anchor (the `return ("file", …)` line) is unchanged. Every other declared anchor must still match exactly once: A12 changes only the key line and the docstring above it.
+
+### A12.4 Trackers
+- **`DECISIONS.md:192` (D53):** replace the line with "*D53 (A11, R2-F1; A12).*" and the amended text above.
+- **After `DECISIONS.md:192`:** add "*D54 (A12, R3-F1).*" with the text above, as one line.
+- **`DECISIONS.md:195` (Deferred):** append " A12.8: " and the items in A12.8.
+- **`DECISIONS.md:138`:** "A1 to A11" becomes "A1 to A12", and "(M3, 15 functions, 29 cases)" becomes "(M3, 17 functions, 32 cases)".
+- **`DECISIONS.md:198`:** "A1 to A11" becomes "A1 to A12".
+- **`PROGRESS.md:3`:** "63 new test functions (136 cases)" becomes "65 new test functions (139 cases)" (functions 25 + 23 + 17, cases 40 + 67 + 32).
+
+### A12.5 What A12 supersedes (the original lines stay)
+- **A11.1's key line and D53's wording:** replaced by A12.1 and A12.4.
+- **A11.3:** all three rows are replaced by A12.3. A11-R1's "equivalent on POSIX (lexical `normpath` against `realpath`, with `..` refused)" was false whenever the work directory holds `..` (R3-F1). It is replaced by A12-R2's ground: `realpath` already returns `abspath`.
+- **A11.6 item 5:** an existing directory symlink is now covered on POSIX (S15).
+- **9a:** the module has 17 functions and 32 cases.
+
+### A12.6 What the round-4 reviewer will likely flag
+1. **S16 pins composition, not behaviour.** It does so deliberately: it is the only discriminator of the order that runs on Windows. S15 is the behaviour evidence, and Ubuntu CI is its first native run.
+2. **S15 skips on Windows,** for error 1314, or because Win32 takes `..` lexically. Its reasons come from the host, not a platform name.
+3. **S15 calls the pre-pass, not a whole build with a non-canonical `work_dir`.** That route is injected-only (`worktree_manager.py:40-42` resolves the path), and how other components treat such a work directory is outside this delta.
+4. **A12-R2 and A12-R6 survive on Ubuntu,** equivalent there by construction.
+5. **A work directory beyond MAX_PATH:** if Windows `realpath` keeps the `\\?\` prefix, `abspath` does not trim the name. That gives two keys and a false refusal that fails closed. Round 3 found that the overlong-input guards stop these before the key line.
+
+### A12.7 Hot path
+The same calls as A11 in a new order: one `GetFullPathNameW` on Windows, and on POSIX a `normpath` of a path that is already normalised. No I/O is added.
+
+### A12.8 Considered, deferred (to #1523 F-153)
+- **R3-F3:** removing the device from `("file", st_dev, st_ino)` survives the module (P3, injected-only, not a regression). A test needs equal inode numbers on two devices, which means a process-wide `os.stat` seam that `DECISIONS.md:196` steers away from.
+- **A new file under a Windows directory junction** is covered by S16's order pin and by D32's unchanged `realpath`, not by a behaviour test.
+- **The MAX_PATH `\\?\` case** in A12.6 item 5.
+
+### Verified Against Codebase (2026-10-19, staged tree `70ffd4e5`)
+```
+builder.py:1784-1792  _write_target_key = normcase(realpath(join(work_dir, rel)))   (D32, untouched)
+builder.py:1797       "key = _write_target_key(work_dir, rel)"   (_first_found; differs from the new anchor)
+builder.py:3019-3029  A12.1's SEARCH, verbatim; 3051 the only call of _same_file_key
+builder.py:3060-3067  Path(work_dir) / rel -> exists / is_file / read_text
+builder.py:3076       "SEARCH block {i} not found in {rel}; refused"
+posixpath.py:420-425  def realpath ... return abspath(path)   (CPython 3.12.13, the venv's base)
+test module:17 docstring bullet; 56 pytestmark = needs_git; 59-66 constants (LINKED, FRESH);
+  513-526 _alias_repo (hardlink skip); 106-107 _init_repo mkdir(parents=True); 183 _modify_block;
+  820 end of S14; 823-825 E2 header
+DECISIONS.md:138, 192, 195, 196 (the seam rule), 198; PROGRESS.md:3 "63 new test functions (136 cases)"
+```
+
+### Absence Verified (2026-10-19)
+```
+CLAIM: no other path-normalisation call on the pre-pass or write path has a lexical step before a physical one
+RUN:   Grep "normpath|abspath|\.resolve\(|relpath|realpath|commonpath" in src/probos/cognitive/builder*.py
+FOUND: builder.py:48, 51 (Path(__file__).resolve(), module roots); 1792 (D32: realpath, then normcase);
+       1819 (repository_identity: realpath, then normcase); 3029 (the R3-F1 line);
+       builder_paths.py:335 (Path(work_dir).resolve(), physical)
+RUN:   Grep "Path\(work_dir\)|os\.path\.join\(work_dir" in builder.py
+FOUND: 531, 537, 1755, 2797, 2853, 3060, 3262, 3516 (pathlib joins: they never collapse '..',
+       and the kernel resolves the path); 1792, 3029
+HOLDS: yes. 3029 is the only lexical-before-physical step; nothing in _unapplied_blocks or the writer has one.
+```
