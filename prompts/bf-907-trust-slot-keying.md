@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-18
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-19 (live premises re-probed: the knowledge-store trust snapshot; anchors re-verified on `02eb27bc`)
-**Applied by:** the orchestrator, 2026-10-19: the 32 edits of the Architect's read-only re-validation (session `86b68b1f`), each SEARCH matched exactly once by the edit tool, plus two corrections of mine, both measured on copies of the live files: the in-memory key count at the merge is about 105 (102 measured plus this session's runtime ids), not the 101 the re-validation inferred, and the seven slot mappings it marked inferred are measured in `identity.db` (its asterisks are dropped). BF-906 merged as `84852598` after the candidate `02eb27bc` was re-validated; its production code is the tree of its source commit `0737c116`, and all 29 source blocks below still apply on `84852598` (0 failures).
+**Applied by:** the orchestrator, 2026-10-19: the 32 edits of the Architect's read-only re-validation (session `86b68b1f`), each SEARCH matched exactly once by the edit tool, plus two corrections of mine, both measured on copies of the live files: the in-memory key count at the merge is about 105 (102 measured plus this session's runtime ids), not the 101 the re-validation inferred, and the seven slot mappings it marked inferred are measured in `identity.db` (its asterisks are dropped). BF-906 merged as `84852598` after the candidate `02eb27bc` was re-validated; its production code is the tree of its source commit `0737c116`, and all 31 source blocks below apply on `84852598` (0 failures; the first check counted 29 because it skipped two blocks whose labels carry an annotation, see Amendment A1).
 **Issue:** #1597 (and its 2026-10-19 crew amendment, Captain-approved). **Number:** BF-907. Source: the #1597 title. `gh search issues "BF-907"` returns only #1597. The highest BF in git subjects is BF-905 (`02778c3d`), and BF-906 is #1594.
 **Status:** ready to build after BF-906 (#1594) merges. **Tier:** HIGH (identity and trust integrity). **Dependencies:** none on BF-906's code.
 **Estimated tests:** 28 new tests in `tests/test_bf907_trust_identity.py`, 5 updated tests.
@@ -80,7 +80,7 @@ Use the next free numbers on #1523: the highest seen is F-152 in its comments, s
 
 ## Implementation
 
-Every SEARCH block below is verbatim from `origin/main` @ `cf08d4c9`, unique in its file. Re-verified 2026-10-19 on `02eb27bc`: all 29 pairs apply once; BF-906 did not change the text of 4d or Section 5.
+Every SEARCH block below is verbatim from `origin/main` @ `cf08d4c9`, unique in its file. Re-verified 2026-10-19 on `02eb27bc`: all 31 pairs apply once (1a-1f, 2a-2h, 4a-4d, 5, 6a-6g, 7a-7e; Amendment A1); BF-906 did not change the text of 4d or Section 5.
 
 ### Section 1: `src/probos/identity.py`, the resolver
 
@@ -539,6 +539,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# BF-907 (D13): the merge event's name. A module constant, so AD-1195's census
+# resolves ('trust', 'trust_identity_merge') and freezes it as a resolved pair.
+MERGE_EVENT = "trust_identity_merge"
+
 
 @dataclass(frozen=True, slots=True)
 class TrustStoreReconciliation:
@@ -597,7 +601,7 @@ async def _record_merge_event(event_log: EventLog, merge: TrustKeyMerge) -> None
     try:
         await event_log.log(
             category="trust",
-            event="trust_identity_merge",
+            event=MERGE_EVENT,
             agent_id=merge.target_key,
             detail=f"BF-907: {merge.source_key} merged into {merge.target_key}",
             data={
@@ -995,6 +999,17 @@ REPLACE:
 | `tests/test_ad1258_self_knowledge.py:226` | `"Trust: no record yet"` | `"Trust: no record for this id"` |
 | `tests/test_feedback_engine.py:83-96` `_engine` and `:355-405` | a write keyed by `agent_type` | `_engine(agent_registry=…)` with one agent `SimpleNamespace(id="agent-1-slot", agent_type="agent-1")`; the propagation test still raises; add an assert that `record_outcome` was called with `"agent-1-slot"` |
 
+**Amendment A1 rows (2026-10-19; found by the whole-contract dry run; the test edits are for the Builder and each carries a `# BF-907:` reason).**
+
+| A1 | Milestone | File | Edit |
+|---|---|---|---|
+| A1.1 | M1 | `docs/development/store-baseline.yaml` | Run `scripts/check_store_registry.py --update-baseline`. The diff is exactly `+  - trust_key_merges` (before `trust_outcome_receipts`) and `+  - trust_snapshots` (after `trust_scores`). |
+| A1.2 | M2 | `tests/test_ad1195_eventlog_pair_freeze.py:108-111` | SEARCH `    ('tool', 'tool_record_budget_exhausted'),\n    ('tool', 'tool_started'),\n})`. REPLACE: the same two lines, then `    # BF-907 (#1597): a trust record merged from a sovereign-identity key into its slot,\n    # through MERGE_EVENT. Best effort: trust.db trust_key_merges is authoritative.\n    ('trust', 'trust_identity_merge'),\n})`. |
+| A1.3 | M3 | `tests/test_ad1258_self_knowledge.py` | (a) SEARCH `@dataclass\nclass _FakeTrustNetwork:` and insert before it `@dataclass(frozen=True)\nclass _FakeTrustRecord:\n    """BF-907: the fields telemetry reads (as test_ad1259…:63-66)."""\n\n    observations: int = 7\n    uncertainty: float = 0.123456\n\n\n`. (b) SEARCH `    def get_record(self, agent_id: str) -> None:\n        self.record_subjects.append(agent_id)\n        return None`. REPLACE: `    def get_record(self, agent_id: str) -> _FakeTrustRecord \| None:\n        # BF-907: telemetry scores only a subject with a record; a known subject has one.\n        self.record_subjects.append(agent_id)\n        return _FakeTrustRecord() if agent_id in self.scores else None`. (c) Replace all 4 occurrences of the literal `"Trust: 0.5124\n"` (`:338`, `:1675`, `:1721`, `:1751`) with `"Trust: 0.5124 (7 observations, uncertainty \u00b10.1235)\n"`. (d) SEARCH `        "_agent_id": "transient-agent",\n        "sovereign_id": subject,`. REPLACE: `        # BF-907: telemetry's subject is the slot id; the sovereign id differs (it was the subject: the defect).\n        "_agent_id": subject,\n        "sovereign_id": "query-consumer-sovereign",`. Fixes the 6 tests. |
+| A1.4 | M3 | `tests/test_ad1260_wellness_domain.py` | (a) SEARCH `    def get_record(self, agent_id: str) -> None:\n        return None`. REPLACE: `    def get_record(self, agent_id: str) -> Any:\n        # BF-907: telemetry scores only a subject with a record; a known subject has one.\n        return SimpleNamespace(observations=7, uncertainty=0.123456) if agent_id in self.scores else None`. (b) SEARCH `        "_agent_id": "transient-slot", "sovereign_id": _SUBJECT,`. REPLACE: `        # BF-907: the slot id is telemetry's subject; the sovereign id differs.\n        "_agent_id": _SUBJECT, "sovereign_id": "sovereign-of-subject",`. Fixes the 5 tests (`SimpleNamespace` and `Any` are already imported at `:10-11`). |
+| A1.5 | M3 | `tests/test_correction_runtime.py:420-435` | SEARCH `        engine = FeedbackEngine(trust_network=trust, hebbian_router=hebbian)\n\n        baseline = trust.get_score("fetch_news")`. REPLACE: `        # BF-907: trust is keyed by slot id; the one active agent of the type receives it.\n        registry = MagicMock(spec=AgentRegistry)\n        registry.all.return_value = [MagicMock(id="fetch_news-slot", agent_type="fetch_news")]\n        engine = FeedbackEngine(trust_network=trust, hebbian_router=hebbian, agent_registry=registry)\n\n        baseline = trust.get_score("fetch_news-slot")`. Then SEARCH `        assert trust.get_score("fetch_news") > baseline` and REPLACE: `        assert trust.get_score("fetch_news-slot") > baseline\n        assert trust.get_record("fetch_news") is None  # BF-907: no record keyed by the type`. (`MagicMock` and `AgentRegistry` are imported at `:7` and `:23`.) |
+| A1.6 | M3 | `tests/test_feedback_engine.py:353-405` (clarifies the existing row) | Both correction tests pass the one-agent registry. The busy test also asserts `trust.record_outcome.assert_called_once_with("agent-1-slot", success=True)`; without that it passes without testing anything. |
+
 Note: `tests/test_ad588_telemetry_introspection.py:547` sets `agent.sovereign_id = agent.id`, which is why the split was invisible. The new tests always use distinct ids.
 
 ## Tests: `tests/test_bf907_trust_identity.py`
@@ -1014,7 +1029,7 @@ Use a real `TrustNetwork(db_path=tmp/"trust.db")` with `await start()`, a real `
 11. `test_merge_refuses_a_source_below_the_prior` (`(1.9, 2.0)` → `below_prior`, untouched, kept)
 12. `test_merge_snapshot_holds_every_record_and_the_restore_sql_reverses_it` (runs the restore SQL below on the closed db file; `trust_scores` equals the pre-merge rows)
 13. `test_merge_persists_and_a_rerun_is_a_noop`: a second `reconcile_trust_identities` in the same process, then after `stop()` and a new network `start()`. Merged 0, no new `trust_snapshots`/`trust_key_merges`/event rows, values unchanged.
-14. `test_merge_event_recorded_in_event_log` (category `trust`, event `trust_identity_merge`, data fields, `merged_at` equals the `trust_key_merges` row)
+14. `test_merge_event_recorded_in_event_log` (also asserts `MERGE_EVENT == "trust_identity_merge"` against the literal) (category `trust`, event `trust_identity_merge`, data fields, `merged_at` equals the `trust_key_merges` row)
 15. `test_unmapped_identity_record_is_kept_and_reported` (unknown UUID → `unresolved`; certificate of an inactive slot → `slot_inactive`; both survive AD-280; WARNING per key)
 16. `test_non_identity_stale_keys_are_still_removed_by_ad280` (fixture holds a dashless-hex key, `system` and `captain` at (2.0, 2.0) beside an active tool slot: all three are removed, the tool slot stays, and the log reads `kept=0`)
 17. `test_merge_failure_rolls_back_and_keeps_records`. Wrap the connection so the `trust_key_merges` insert raises. File and memory are unchanged, the reason is `merge_failed`, and an ERROR is logged.
@@ -1030,15 +1045,15 @@ Use a real `TrustNetwork(db_path=tmp/"trust.db")` with `await start()`, a real `
 27. `test_memory_domain_still_counts_by_sovereign_id_given_the_slot` (guards Section 6 against the AD-1259 contract, `tests/test_ad1259_one_source_of_truth.py:205-249`)
 28. `test_warm_boot_restore_of_a_pre_merge_snapshot_re_merges_to_the_same_values` (D11). Merge, `stop()`, then a new network `start()` on the same file. Run the real `WarmBootService.restore()` (`warm_boot.py:46-101`) with a stub knowledge store whose `load_trust_snapshot` returns the pre-merge `raw_scores()` and whose other loaders return None, then `reconcile_trust_identities`. Assert the slot values equal the first merge's, no sovereign key remains, and a second set of `trust_key_merges` rows exists. Include a stray present only in the knowledge-store snapshot (no `trust_scores` row): it merges, and its DELETE is a no-op.
 
-**Focused gate (per milestone):** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf907_trust_identity.py tests/test_trust_reconcile.py tests/test_trust_concurrency.py tests/test_feedback_engine.py tests/test_ad588_telemetry_introspection.py tests/test_ad1258_self_knowledge.py tests/test_ad1259_one_source_of_truth.py tests/test_dreaming.py tests/test_identity.py tests/test_bf885_identity_db_units.py -n 0 -q`. **Broad gate:** once, by the orchestrator: `scripts/run_test_gate.py --label bf907 --receipt logs/gates/bf907.receipt.json`.
+**Focused gate (per milestone):** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf907_trust_identity.py tests/test_trust_reconcile.py tests/test_trust_concurrency.py tests/test_feedback_engine.py tests/test_ad588_telemetry_introspection.py tests/test_ad1258_self_knowledge.py tests/test_ad1259_one_source_of_truth.py tests/test_dreaming.py tests/test_identity.py tests/test_bf885_identity_db_units.py tests/test_ad1256_store_registry.py tests/test_ad1195_eventlog_pair_freeze.py tests/test_ad1260_wellness_domain.py tests/test_correction_runtime.py -n 0 -q`. **Broad gate:** once, by the orchestrator: `scripts/run_test_gate.py --label bf907 --receipt logs/gates/bf907.receipt.json`.
 
 ## Milestones (each at most about 150 tool calls)
 
 | # | Scope | Tests green at the cut | Cut point |
 |---|---|---|---|
-| M1 | Sections 1-2 | 1-6, 8-13, 17 | focused gate green; `git diff --stat` shows only `identity.py`, `trust.py` and the new test file |
-| M2 | Sections 3-5 | 7, 14-16, 18-21, 28 | focused gate green |
-| M3 | Sections 6-8 + trackers | 22-27 + updated tests | focused gate green; then Diff Reviewer, mutation campaign, local commit |
+| M1 | Sections 1-2 + A1.1 | 1-6, 8-13, 17 + `test_ad1256_store_registry.py` | focused gate green; `check_store_registry.py --check` clean; `git diff --stat` shows only `identity.py`, `trust.py`, `docs/development/store-baseline.yaml` (+2 lines) and the new test file |
+| M2 | Sections 3-5 (with `MERGE_EVENT`, D13) + A1.2 | 7, 14-16, 18-21, 28 + `test_ad1195_eventlog_pair_freeze.py` | focused gate green |
+| M3 | Sections 6-8 + A1.3-A1.6 + trackers | 22-27 + updated tests + A1 rows | focused gate green; then Diff Reviewer, mutation campaign, local commit |
 
 ## Mutation table (run once on the final tree; every anchor is a whole, unique line)
 
@@ -1072,6 +1087,8 @@ Use a real `TrustNetwork(db_path=tmp/"trust.db")` with `await start()`, a real `
 | R26 | feedback.py `            if len(target_ids) != 1:` → `            if not target_ids:` | 26 |
 | R27 | trust_identity.py `        if state.get("score") != header or "observations" not in state:` → `        if False:` | 21 |
 | R28 | trust_identity.py `        if agent.sovereign_id != cert.agent_uuid:` → `        if False:` | 21 |
+| R29 | trust_identity.py `MERGE_EVENT = "trust_identity_merge"` → `MERGE_EVENT = "trust_identity_merged"` | 14, `test_ad1195…::test_resolved_pairs_are_frozen` |
+| R30 | trust_identity.py `            event=MERGE_EVENT,` → `            event="trust_identity_merge",` | `test_ad1195…::test_literal_pairs_are_exactly_the_contract_37` |
 
 Record the campaign of record with the tree hash and the sha256 of each changed file. Rerun only rows whose file differs.
 
@@ -1088,6 +1105,9 @@ Record the campaign of record with the tree hash and the sha256 of each changed 
 9. Correction feedback writes trust only to the single active agent of the type.
 10. The finalize check cannot fail startup, and its log line carries crew and consistent counts.
 11. `consensus/trust.py` imports nothing from `identity` or `startup`. `trust_scores` is unchanged. The two new tables are additive.
+12. The merge event is written only in `startup/trust_identity.py`, through `MERGE_EVENT`. `_RESOLVED_PAIRS` grows by exactly `('trust', 'trust_identity_merge')`; `_LITERAL_PAIRS` (37), `_DYNAMIC_SITES`, `EventType` and `event_persistence.py` are unchanged.
+13. `store-baseline.yaml` changes by exactly two lines in the `probos.consensus.trust` row (D12); no declaration is added; `architecture-baseline.yaml` is byte-identical.
+14. No hidden-pin test loses its subject: each still asserts `get_score` on the slot id, and each query test passes a `sovereign_id` that differs from `_agent_id` (D15). No production line changes for them.
 
 ## What this changes beyond the telemetry line (intended; record in DECISIONS)
 
@@ -1118,6 +1138,11 @@ BF-906 (#1594, PR #1599) lands first; this prompt was re-verified on its candida
 | D9 | The telemetry miss renders "Trust: no record for this id" and warns once per subject. | Logging on every call (spam). | Architect |
 | D10 | A separate PR from BF-906. | One combined PR (different subsystems). | Architect |
 | D11 | The merge writes `trust.db` only; the knowledge-store snapshot converges at the next 60-s flush or shutdown. A death before that flush makes the next warm boot restore the pre-merge pair, and the merge reruns to identical values with a second snapshot, merge rows and events (test 28). | Passing the knowledge store into structural services to rewrite `snapshot.json` in the merge (a second store the transaction cannot join). Making warm boot skip identity keys (changes AD-162 restore semantics). | Architect |
+| D12 | **Update the reviewed baseline row; do not declare `trust.db` in BF-907.** The checker allows either. Declaring it needs a new `probos/consensus/storage_declarations.py` and a new entry in `DECLARATION_MODULES` (`storage/registry.py:57-65`), and reviewed retention and restore claims that are outside this defect (`save()` rewrites `trust_scores`, `trust_outcome_receipts` has no delete path, warm boot force-sets the table). BF-906 (D16) declared `acm.db` because it already had a home and had gained a reader. | Declaring `trust.db` (AD-1256 inventory work, #1302). | Architect |
+| D13 | **Name the merge event through a module constant, `MERGE_EVENT`, in `startup/trust_identity.py`.** The census then freezes `('trust', 'trust_identity_merge')` in `_RESOLVED_PAIRS`; `_LITERAL_PAIRS` stays at 37 and `_DYNAMIC_SITES` is unchanged. Unlike BF-906 (D19), nothing has to move: the module that writes the event owns the constant. | Adding the pair to `_LITERAL_PAIRS` (count 38). | Architect |
+| D14 | **No `event_persistence.py` entry.** The event is not an `EventType` member and is not a routed value. It is best effort: `trust_key_merges` is authoritative. | An entry (changes persistence policy). | Architect |
+| D15 | **The 11 hidden pins are test changes; no production change.** Each fake returns a record for a known subject, the same shape as `test_ad1259_one_source_of_truth.py:63-82`. The four query-site tests pinned the defect: they made the sovereign id the telemetry subject while `_agent_id` was a transient; they now carry the slot id in `_agent_id` and a distinct `sovereign_id`. | A production fallback to `get_score` for a missing record (re-creates the defect). | Architect |
+| D16 | **Re-run the whole-contract dry run with all 31 pairs plus A1's Section 3 edit and the baseline row, no test edits: expect exactly 18 failures** (the 15 telemetry tests, `test_ad1195…::test_resolved_pairs_are_frozen`, the 2 correction tests); with all test edits applied, expect 0. Any other failure is a new pin and goes back to the Architect. Must finish before M3 is dispatched. | Trusting the first dry run (it skipped 2h and 7d). | Architect |
 
 **Reversal procedure.** Stop the vessel. Revert BF-907; otherwise the restored strays merge again at the next start. Then:
 1. On `trust.db`: `BEGIN IMMEDIATE; DELETE FROM trust_scores; INSERT INTO trust_scores (agent_id, alpha, beta, updated) SELECT agent_id, alpha, beta, taken_at FROM trust_snapshots WHERE snapshot_id = :id; COMMIT;`
@@ -1162,7 +1187,7 @@ Expected merges (slot α + stray α − 2.0; every β is 2.0 and stays 2.0; know
 
 ## Tracking
 
-- `DECISIONS.md`: `### BF-907 -- Trust is keyed by slot id; sovereign identities resolve at the trust boundary (date, #1597)`, placed as `### BF-905` is at `DECISIONS.md:119`. Include D1-D10, the AD-280 finding, the behaviour changes above, and the campaign of record.
+- `DECISIONS.md`: `### BF-907 -- Trust is keyed by slot id; sovereign identities resolve at the trust boundary (date, #1597)`, placed as `### BF-905` is at `DECISIONS.md:119`. Include D1-D16, the AD-280 finding, the behaviour changes above, and the campaign of record.
 - `PROGRESS.md`: one paragraph covering the defect, the fix, the merge counts once live, and the reversal.
 - Ledger and `docs/development/roadmap.md` Bug Tracker: a BF-907 row (#1597) in the existing `| BF-NNN | … | [#NNNN](…) | n |` format (for example `roadmap.md:779`).
 - #1523: findings F-a to F-d, numbered from the next free F-number (F-154 or later).
