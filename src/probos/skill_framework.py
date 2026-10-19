@@ -1309,13 +1309,19 @@ class AgentSkillService:
         })
         return record
 
-    async def commission_agent(self, agent_id: str, agent_type: str) -> SkillProfile:
+    async def commission_agent(
+        self, agent_id: str, agent_type: str, *, skip_skill_ids: frozenset[str] = frozenset(),
+    ) -> SkillProfile:
         """Assign an agent their initial skill complement (PCCs + role skills).
 
-        Called during agent registration/onboarding.
+        Called during agent registration/onboarding. BF-906: ``skip_skill_ids`` names
+        skills the agent already holds; they are not re-acquired, so their
+        proficiency, exercise count and history are kept.
         """
         # All crew get PCCs at FOLLOW
         for pcc in BUILTIN_PCCS:
+            if pcc.skill_id in skip_skill_ids:
+                continue
             try:
                 await self.acquire_skill(
                     agent_id, pcc.skill_id, source="commissioning",
@@ -1327,6 +1333,8 @@ class AgentSkillService:
         # Role-specific skills
         role_skills = ROLE_SKILL_TEMPLATES.get(agent_type, [])
         for skill in role_skills:
+            if skill.skill_id in skip_skill_ids:
+                continue
             try:
                 await self.acquire_skill(
                     agent_id, skill.skill_id, source="commissioning",

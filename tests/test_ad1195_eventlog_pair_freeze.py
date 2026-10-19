@@ -99,6 +99,12 @@ _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     ('consensus', 'mcp_invoke_failed'),
     ('consensus', 'write_committed'),
     ('consensus', 'write_failed'),
+    # BF-906 (#1594): crew commissioning, through COMMISSIONED_EVENT. Best effort:
+    # ACM's commissioning_records is authoritative, so a missing row is never evidence.
+    ('lifecycle', 'crew_commissioned'),
+    # BF-906: the startup crew invariant failure, through INVARIANT_FAILED_EVENT. Best
+    # effort: the startup ERROR log and `probos doctor` are authoritative.
+    ('lifecycle', 'crew_invariant_failed'),
     ('tool', 'tool_invoked'),
     ('tool', 'tool_record_budget_exhausted'),
     ('tool', 'tool_started'),

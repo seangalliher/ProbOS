@@ -208,6 +208,7 @@ if TYPE_CHECKING:
     from probos.cognitive.skill_catalog import CognitiveSkillCatalog
     from probos.cognitive.skill_grants import SkillGrantStore
     from probos.cognitive.intent_grants import IntentGrantStore
+    from probos.crew_enrollment import CrewEnrollmentService
     from probos.cognitive.crew_session import CrewSessionService
     from probos.crew_session_delivery import CrewSessionDeliveryService
     from probos.skill_framework import AgentSkillService, SkillRegistry
@@ -514,6 +515,7 @@ class ProbOSRuntime:
     skill_grant_store: SkillGrantStore | None
     intent_grant_store: "IntentGrantStore | None"
     acm: AgentCapitalService | None
+    crew_enrollment: "CrewEnrollmentService | None"  # BF-906
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
     identity_key_binding: IdentityKeyBinding | None  # AD-1196
@@ -1185,6 +1187,7 @@ class ProbOSRuntime:
 
         # --- Agent Capital Management (AD-427) ---
         self.acm: AgentCapitalService | None = None
+        self.crew_enrollment: "CrewEnrollmentService | None" = None  # BF-906: set in start()
 
         # --- Vessel Ontology (AD-429a) ---
         self.ontology: VesselOntologyService | None = None
@@ -2605,15 +2608,8 @@ class ProbOSRuntime:
             for agent in self.registry.get_by_pool(name):
                 if on_agent_spawned is not None:
                     await on_agent_spawned(agent)
-                # AD-889: commission crew agents at birth — walk Role → Skills → Tools.
-                if self.acm and is_crew_agent(agent, self.ontology):
-                    try:
-                        await self.acm.commission(agent.id, agent.agent_type, self)
-                    except Exception:
-                        logger.debug(
-                            "AD-889: commission skipped for %s (type=%s)",
-                            agent.id, getattr(agent, "agent_type", "?"), exc_info=True,
-                        )
+                # AD-889 commissioning happens in onboarding.wire_agent through the
+                # BF-906 crew enroller (or, for the boot crew, in the Phase 7 pass).
 
             await self.event_log.log(
                 category="system",
@@ -3448,6 +3444,15 @@ class ProbOSRuntime:
         # before finalize/start of higher-level crew loops).
         await self._initialize_semantic_work_layer()
 
+        # BF-906 (#1594): onboard (AD-427/AD-442) and commission (AD-889) every crew
+        # member wired so far. They were wired in Phase 2, before ACM, the ontology and
+        # the skill service existed; agents wired from here on reach the same entry
+        # point through onboarding.wire_agent. Before Phase 8, so the AD-625
+        # communication-profile cache and the proactive loop see commissioned crew.
+        from probos.startup.crew_enrollment import enroll_boot_crew, report_crew_invariant
+
+        self.crew_enrollment = await enroll_boot_crew(runtime=self, boot_started_at=self._start_time_wall)
+
         # Phase 8: Finalization (AD-517)
         from probos.startup.finalize import finalize_startup
 
@@ -3459,6 +3464,10 @@ class ProbOSRuntime:
         self.ward_room_router = fin.ward_room_router
         self.self_mod_manager = fin.self_mod_manager
         self.dream_adapter = fin.dream_adapter
+
+        # BF-906: every crew member must now hold an ACM lifecycle record and a
+        # commissioning; a breach is an ERROR naming the agents, never silent.
+        await report_crew_invariant(runtime=self)
 
         from probos.avatars.telemetry import build_telemetry_snapshot
         from probos.startup.federation_telemetry import (

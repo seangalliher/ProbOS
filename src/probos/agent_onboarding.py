@@ -86,6 +86,17 @@ class AgentOnboardingService:
         # AD-1273: post-construction state, keyed by (agent_type, name).
         # Insertion-ordered; replacing a key keeps its original position.
         self._rehydrators: dict[tuple[str, str], Callable[[Any], Awaitable[None]]] = {}
+        # BF-906: the one crew enrollment entry point; set by the Phase 7 pass.
+        self._crew_enroller: Callable[[Any], Awaitable[Any]] | None = None
+
+    def set_crew_enroller(self, enroller: Callable[[Any], Awaitable[Any]] | None) -> None:
+        """BF-906: set the crew enrollment entry point (onboard + commission).
+
+        ``startup/crew_enrollment.enroll_boot_crew`` sets it once ACM, the ontology
+        and the skill service exist; every agent wired afterwards goes through it.
+        The ``acm`` constructor argument is no longer read (kept for its callers).
+        """
+        self._crew_enroller = enroller
 
     def set_birth_chamber(self, chamber: Any) -> None:
         """AD-486: Set the Birth Chamber (public setter for LoD)."""
@@ -502,22 +513,18 @@ class AgentOnboardingService:
             data=_wired_data if _wired_data else None,
         )
 
-        # AD-427: ACM onboarding for crew agents
-        if self._acm and is_crew_agent(agent, self._ontology):
+        # AD-427 / AD-889 / BF-906 (#1594): onboarding and commissioning go through
+        # the one crew enroller (probos.crew_enrollment). It is unset until Phase 7
+        # has ACM and the skill service; crew wired before then are enrolled by that
+        # phase's pass, so nothing here depends on when the agent was wired.
+        if self._crew_enroller is not None:
             try:
-                state = await self._acm.get_lifecycle_state(agent.id)
-                if state.value == "registered":
-                    from probos.cognitive.standing_orders import get_department
-                    department = (self._ontology.get_agent_department(agent.agent_type) if self._ontology else None) or get_department(agent.agent_type) or "operations"
-                    await self._acm.onboard(
-                        agent_id=agent.id,
-                        agent_type=agent.agent_type,
-                        pool=agent.pool,
-                        department=department,
-                        sovereign_id=getattr(agent, 'sovereign_id', ''),
-                    )
-            except Exception as e:
-                logger.debug("ACM onboard skipped for %s: %s", agent.id, e)
+                await self._crew_enroller(agent)
+            except Exception:
+                logger.error(
+                    "BF-906: crew enrollment failed for %s (%s); the crew invariant "
+                    "check reports it", agent.id, agent.agent_type, exc_info=True,
+                )
 
         # AD-442: Announce new crew member on Ward Room
         if is_crew and self._ward_room:

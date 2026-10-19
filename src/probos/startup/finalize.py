@@ -5553,7 +5553,8 @@ async def finalize_startup(
     # is created before these services exist.
     runtime.onboarding._ontology = runtime.ontology
     runtime.onboarding._ward_room = runtime.ward_room
-    runtime.onboarding._acm = runtime.acm
+    # BF-906: ACM onboarding no longer rides on a private ``_acm``; the crew
+    # enroller set in Phase 7 (startup/crew_enrollment.py) owns it.
     runtime.onboarding._start_time_wall = runtime._start_time_wall
     # AD-567g: Wire orientation service into onboarding
     if hasattr(runtime, '_orientation_service') and runtime._orientation_service:

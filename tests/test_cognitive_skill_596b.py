@@ -443,6 +443,9 @@ class TestOnboardingWiring:
         # AD-1273: __new__ bypasses __init__, so the rehydrator registry
         # wire_agent now runs has to be set explicitly, as above at L164.
         svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
         svc._cognitive_skill_catalog = catalog
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
@@ -498,6 +501,9 @@ class TestOnboardingWiring:
         # AD-1273: __new__ bypasses __init__, so the rehydrator registry
         # wire_agent now runs has to be set explicitly, as above at L164.
         svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
         svc._cognitive_skill_catalog = catalog
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
@@ -561,6 +567,9 @@ class TestOnboardingWiring:
         # AD-1273: __new__ bypasses __init__, so the rehydrator registry
         # wire_agent now runs has to be set explicitly, as above at L164.
         svc._rehydrators = {}
+        # BF-906: likewise the crew enroller wire_agent now reads; None means
+        # Phase 7 has not set one, so wire_agent enrolls nobody here.
+        svc._crew_enroller = None
         svc._cognitive_skill_catalog = None
         svc._callsign_registry = MagicMock()
         svc._callsign_registry.get_callsign.return_value = "TestBot"
