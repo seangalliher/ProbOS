@@ -4665,3 +4665,8 @@ FOUND: 531, 537, 1755, 2797, 2853, 3060, 3262, 3516 (pathlib joins: they never c
        and the kernel resolves the path); 1792, 3029
 HOLDS: yes. 3029 is the only lexical-before-physical step; nothing in _unapplied_blocks or the writer has one.
 ```
+
+### A12.9 Correction (round 4, R4-F1; documentation only)
+**Decided by:** the Architect, in a short read-only routing consult after round 4 (session `33684544`): no round 5, because nothing that runs changes.
+
+A12.6 item 4 is corrected. A12-R2 and A12-R6 are behaviorally equivalent on POSIX; S16 nevertheless kills R2 there because it deliberately pins composition (modeled-POSIX execution by the round-4 reviewer: A12 pass, R2 fail, R6 pass). Only A12-R6 survives the module on Ubuntu. Where the A12-R2 row says "equivalent on POSIX by construction" (A12.3), read it as behavioral equivalence, not survival. No source, test, campaign row or kill count changes; the campaign of record stays 134 of 134. The original lines stay.
