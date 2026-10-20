@@ -81,6 +81,7 @@ _FINAL_TEXT = "FIFTEEN-ROWS-DONE"
 # The exact keys the DM turn passed to ``executor.run`` before AD-1208, as
 # probe P-1 recorded them.
 _P1_RUN_KWARGS = [
+    "admitted_turn",  # AD-1343 A2: the DM turn is the agent's own admitted turn; the run entry skips its stop check
     "agent_id",
     "compaction_threshold",
     "compactor",

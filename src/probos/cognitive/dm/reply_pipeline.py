@@ -1046,6 +1046,15 @@ class DmReplyPipeline:
         if not envelopes:
             return
 
+        # AD-1343: a stopped agent proposes and runs no browser action, even in a turn admitted
+        # before the order (this inline tier-1 call bypasses the tool sink, #1523 F-177): the
+        # markers are stripped as for an unwired dispatcher, and the refusal counts as a tool call.
+        from probos.agent_stop import SEAM_TOOL, active_stop
+
+        if active_stop(getattr(self.ctx.runtime, "agent_stops", None), self.ctx.agent_id, SEAM_TOOL) is not None:
+            self.ctx.response_text = strip_action_markers(self.ctx.response_text)
+            return
+
         # Enforce per-DM-turn cap; extra envelopes dropped + logged.
         max_per_turn = int(getattr(
             browser_cfg, "action_dispatch_max_per_dm_turn", 1,

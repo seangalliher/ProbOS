@@ -29,6 +29,7 @@ def _strip_bracket_markers(text: str) -> str:
     return _BRACKET_MARKER_RE.sub(' ', text).strip()
 
 from probos.config import format_trust
+from probos.agent_stop import SEAM_PROACTIVE, active_stop
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
 from probos.cognitive.cognitive_agent import CognitiveAgent
@@ -1007,10 +1008,14 @@ class ProactiveCognitiveLoop:
 
         # AD-636: Count eligible agents for stagger calculation
         eligible_agents: list[Any] = []
+        _stops = getattr(rt, "agent_stops", None)  # AD-1343: the Captain's stop
         for agent in rt.registry.all():
             if not is_crew_agent(agent, rt.ontology):
                 continue
             if not agent.is_alive:
+                continue
+            # AD-1343: a stopped agent is offered no proactive work, duty or BF-156 DM sweep.
+            if active_stop(_stops, agent.id, SEAM_PROACTIVE) is not None:
                 continue
             # AD-486: Skip agents still in Birth Chamber (pre-graduation).
             # Default-disabled chamber (no runtime.birth_chamber) treats
@@ -1050,7 +1055,8 @@ class ProactiveCognitiveLoop:
             # BF-039: Cold-start dampening — 3x cooldown for first N minutes
             if time.monotonic() - self._started_at < self.COLD_START_WINDOW_SECONDS:
                 cooldown *= 3
-            if time.monotonic() - last < cooldown:
+            # BF-909: a never-recorded agent (last == 0.0) must pass: monotonic() is small on a machine that booted recently.
+            if last > 0 and time.monotonic() - last < cooldown:
                 continue
 
             # AD-494: Ensure agent personality traits are registered with circuit breaker
@@ -4806,7 +4812,8 @@ class ProactiveCognitiveLoop:
             dm_pair_key = f"{agent.id}:{target_callsign.lower()}"
             now = time.monotonic()
             last_dm_send = self._dm_send_cooldowns.get(dm_pair_key, 0.0)
-            if now - last_dm_send < 60.0:
+            # BF-909: a never-recorded pair (last_dm_send == 0.0) must pass: monotonic() is small on a machine that booted recently.
+            if last_dm_send > 0 and now - last_dm_send < 60.0:
                 logger.debug(
                     "BF-163: %s DM to a callsign of %s characters throttled (%.0fs remaining)",
                     getattr(agent, 'callsign', agent.agent_type),

@@ -2381,6 +2381,7 @@ class CognitiveAgent(BaseAgent):
             # AD-1248: a work item has no cognitive correlation id -- this path
             # never calls ``perceive()`` -- so the item's own id is the scope.
             failure_scope=str(work_item_id or ""),
+            admitted_turn=True,  # AD-1343: a work item the intent sink admitted (handle_intent)
             **_scope_kwargs,
         )
         if failures_sink is not None:
@@ -4896,6 +4897,7 @@ class CognitiveAgent(BaseAgent):
                     # model. Every other caller passes a static ``instructions``
                     # attribute and therefore wants the default, True.
                     compose_disposition=False,
+                    admitted_turn=True,  # AD-1343: this conversational turn was admitted by the intent sink
                     # AD-1248: every pass of THIS turn shares one scope, so a
                     # continuation supersedes its own earlier calls while a
                     # sibling's failures stay untouched.
@@ -5492,6 +5494,7 @@ class CognitiveAgent(BaseAgent):
                     compose_disposition=True,
                     failure_scope=work_item_id,
                     token_budget=amount,
+                    admitted_turn=True,  # AD-1343: S2 resumes a promoted turn the Captain approved (S1_SCOPE)
                     **plan_kwargs,
                 )
                 text = getattr(outcome, "final_text", "")
@@ -7744,6 +7747,16 @@ class CognitiveAgent(BaseAgent):
         Returns None (self-deselect) for intents not in _handled_intents,
         unless it's a targeted direct_message (AD-397 1:1 sessions).
         """
+        # AD-1343: the Captain's stop, before any skill, LLM, tool or memory work.
+        # Read through the ship's runtime, never from the agent's own state.
+        from probos.agent_stop import SEAM_INTENT, AgentStopService
+
+        _stops = getattr(getattr(self, "_runtime", None), "agent_stops", None)
+        if isinstance(_stops, AgentStopService):
+            _stopped = _stops.refusal(self.id, SEAM_INTENT)
+            if _stopped is not None:
+                return _stopped.refuse_intent(intent, self.id)
+
         # AD-397: always accept direct_message if targeted to this agent
         # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
@@ -8435,6 +8448,21 @@ class CognitiveAgent(BaseAgent):
     async def handle_consultation_request(self, request: Any) -> Any:
         """AD-594: Handle an incoming expert consultation request."""
         from probos.cognitive.consultation import ConsultationResponse
+
+        # AD-1343: a stopped agent gives no consultation; the requester is told which order.
+        from probos.agent_stop import SEAM_CONSULTATION, STOP_REASON_CODE, AgentStopService
+
+        _stops = getattr(getattr(self, "_runtime", None), "agent_stops", None)
+        if isinstance(_stops, AgentStopService):
+            _stopped = _stops.refusal(self.id, SEAM_CONSULTATION)
+            if _stopped is not None:
+                return ConsultationResponse(
+                    request_id=request.request_id,
+                    responder_id=self.id,
+                    answer=_stopped.sender_text(),
+                    confidence=0.0,
+                    reasoning_summary=STOP_REASON_CODE,
+                )
 
         callsign = getattr(self, "callsign", None) or self.agent_type
         logger.info(
