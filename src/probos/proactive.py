@@ -1055,7 +1055,8 @@ class ProactiveCognitiveLoop:
             # BF-039: Cold-start dampening — 3x cooldown for first N minutes
             if time.monotonic() - self._started_at < self.COLD_START_WINDOW_SECONDS:
                 cooldown *= 3
-            if time.monotonic() - last < cooldown:
+            # BF-909: a never-recorded agent (last == 0.0) must pass: monotonic() is small on a machine that booted recently.
+            if last > 0 and time.monotonic() - last < cooldown:
                 continue
 
             # AD-494: Ensure agent personality traits are registered with circuit breaker
@@ -4811,7 +4812,8 @@ class ProactiveCognitiveLoop:
             dm_pair_key = f"{agent.id}:{target_callsign.lower()}"
             now = time.monotonic()
             last_dm_send = self._dm_send_cooldowns.get(dm_pair_key, 0.0)
-            if now - last_dm_send < 60.0:
+            # BF-909: a never-recorded pair (last_dm_send == 0.0) must pass: monotonic() is small on a machine that booted recently.
+            if last_dm_send > 0 and now - last_dm_send < 60.0:
                 logger.debug(
                     "BF-163: %s DM to a callsign of %s characters throttled (%.0fs remaining)",
                     getattr(agent, 'callsign', agent.agent_type),

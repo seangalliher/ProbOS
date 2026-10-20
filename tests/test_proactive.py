@@ -23,6 +23,7 @@ from probos.substrate.registry import AgentRegistry
 from probos.types import IntentMessage, IntentResult
 from probos.ward_room import WardRoomService
 from probos.ward_room_router import WardRoomRouter
+from tests.fixtures.proactive_clock import install_loop_clock
 
 
 def _make_loop(**kwargs) -> ProactiveCognitiveLoop:
@@ -570,8 +571,10 @@ class TestPerAgentCooldown:
         assert loop.get_agent_cooldown("agent1") == 1800.0
 
     @pytest.mark.asyncio
-    async def test_per_agent_cooldown_used_in_cycle(self):
+    async def test_per_agent_cooldown_used_in_cycle(self, monkeypatch):
         """Agent with short cooldown thinks, agent with long cooldown skipped."""
+        # BF-909: a stamp of "now - 100" must be positive (production never stores a non-positive one), so read an old machine's clock
+        clock = install_loop_clock(monkeypatch, 10_000.0)
         agent_fast = _make_mock_agent(agent_type="architect", agent_id="fast")
         agent_fast.handle_intent.return_value = IntentResult(
             intent_id="x", agent_id="fast", success=True, result="[NO_RESPONSE]"
@@ -585,10 +588,10 @@ class TestPerAgentCooldown:
 
         loop = ProactiveCognitiveLoop(cooldown=300.0)
         loop.set_runtime(rt)
-        loop._started_at = time.monotonic() - 1200  # Past cold-start window
+        loop._started_at = clock() - 1200  # Past cold-start window
         # Both posted 100s ago
-        loop._last_proactive["fast"] = time.monotonic() - 100
-        loop._last_proactive["slow"] = time.monotonic() - 100
+        loop._last_proactive["fast"] = clock() - 100
+        loop._last_proactive["slow"] = clock() - 100
 
         # Fast agent has 60s cooldown (100s > 60s → thinks)
         # Slow agent uses global 300s (100s < 300s → skipped)
