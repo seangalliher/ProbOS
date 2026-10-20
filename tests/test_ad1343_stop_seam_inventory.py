@@ -25,228 +25,34 @@ under a name not ending in ``tool``; a synchronous method that starts work
 from __future__ import annotations
 
 import ast
-import functools
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
-import probos
 from probos import agent_stop
 from probos.security.url_guard import validate_public_url
-
-_PACKAGE = Path(probos.__file__).resolve().parent
-_ROOT = _PACKAGE.parents[1]
-_IMPLEMENTATION = "src/probos/agent_stop.py"
-_STOP_CALLEES = frozenset({"active_stop", "tool_refusal", "refusal", "refuse_new_run"})
-_RECORDED = _STOP_CALLEES | {
-    "invoke", "issue_stop", "lift_stop", "standing_stop", "WorkItemAgenticExecutor", "CrewAssignmentResolver",
-    "CrewSessionFinalizer", "_stopped", "complete",  # A3
-}
-_PINNED_KEYWORDS = frozenset({"admitted_turn", "agent_stops", "admitted_synthesis"})  # recorded as "name=value" on any call passing one
-
-# (file, enclosing function, callee) -> the seam constant it names.
-_STOP_CHECK_SITES: dict[tuple[str, str, str], str] = {
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.handle_intent", "refusal"): "SEAM_INTENT",
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.handle_consultation_request", "refusal"): "SEAM_CONSULTATION",
-    ("src/probos/tools/registry.py", "ToolRegistry.check_and_invoke", "tool_refusal"): "SEAM_TOOL",
-    ("src/probos/proactive.py", "ProactiveCognitiveLoop._run_cycle", "active_stop"): "SEAM_PROACTIVE",
-    ("src/probos/ward_room_router.py", "WardRoomRouter._route_to_agents", "active_stop"): "SEAM_WARD_ROOM",
-    ("src/probos/routers/agents.py", "_agent_chat_impl", "active_stop"): "SEAM_DM_ROUTE",
-    ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", "active_stop"): "SEAM_GROUP_FANOUT",
-    ("src/probos/routers/agent_actions.py", "ack_action", "active_stop"): "SEAM_BROWSER_ACTION",
-    ("src/probos/cognitive/agentic_dispatch.py", "WorkItemAgenticExecutor.run", "refuse_new_run"): "SEAM_AGENTIC_RUN",
-    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", "active_stop"): "SEAM_DELEGATION",
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", "active_stop"): "SEAM_AGENTIC_RUN",
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", "active_stop"): "SEAM_AGENTIC_RUN",
-    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", "active_stop"): "SEAM_AGENTIC_RUN",
-    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "active_stop"): "SEAM_AGENTIC_RUN",
-    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): "SEAM_TOOL",
-}
-
-# Every public coroutine on CognitiveAgent. sink: consults the stop itself; within_turn: runs
-# only inside a turn a sink admitted; dm_route: reached only after the DM route's check;
-# captain_persona / s2_in_flight / lifecycle: named S1 exceptions, reported in S1_SCOPE.
-_COGNITIVE_AGENT_COROUTINES: dict[str, str] = {
-    "handle_intent": "sink",
-    "handle_consultation_request": "sink",
-    "perceive": "within_turn",
-    "decide": "within_turn",
-    "act": "within_turn",
-    "report": "within_turn",
-    "consult": "within_turn",
-    "interpret_recall": "within_turn",
-    "interpret_own_dream": "within_turn",
-    "observe_self_avatar": "dm_route",
-    "check_own_render": "dm_route",
-    "propose_appearance": "captain_persona",
-    "propose_voice_profile": "captain_persona",
-    "recover_promoted_turn": "s2_in_flight",
-    "stop": "lifecycle",
-}
-_SYNC_WORK_STARTERS: dict[str, str] = {
-    "resume_promoted_turn": "s2_in_flight: AD-855 resume of a turn begun before the stop; tool calls refused",
-}
-
-# Direct tool invocations: each skips ToolRegistry.check_and_invoke unless it is that method.
-_DIRECT_TOOL_INVOKES: dict[tuple[str, str, str], str] = {
-    ("src/probos/tools/registry.py", "ToolRegistry.check_and_invoke", "tool"): "the tool sink, after its check",
-    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "browser_tool"):
-        "after its own stop check at SEAM_TOOL (A2, F2): a turn admitted before the order proposes and runs no action",
-    ("src/probos/routers/agent_actions.py", "ack_action", "browser_tool"): "after SEAM_BROWSER_ACTION",
-}
-
-_SOURCE_ORDER: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("src/probos/proactive.py", "ProactiveCognitiveLoop._run_cycle", ("_check_unread_dms", "_think_for_agent")),
-    ("src/probos/ward_room_router.py", "WardRoomRouter._route_to_agents", ("count_posts_by_author", "dispatch_async")),
-    ("src/probos/routers/agents.py", "_agent_chat_impl", ("get_or_create_default_for_agent", "send")),
-    ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", ("_capture_owned_steps_turn",)),
-    ("src/probos/routers/agent_actions.py", "ack_action", ("invoke", "mark_executed", "mark_failed")),
-    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", ("admit", "bind_delegated_run", "WorkItemAgenticExecutor")),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", ("admit_correction", "run")),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", ("admit_correction", "run")),
-    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", ("complete",)),
-    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", ("_claim_owned_synthesis", "synthesize_for_session")),
-    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", ("register", "invoke")),
+# AD-1343 M0: the census and its tables are shared with the seam registry guard (tests/test_ad1343_seam_registry.py);
+# imported under their S1 names so the tests below are unchanged.
+from tests.fixtures.ad1343_seam_census import (
+    IMPLEMENTATION as _IMPLEMENTATION,
+    ROOT as _ROOT,
+    STOP_CALLEES as _STOP_CALLEES,
+    calls as _calls,
+    census as _census,
+    first_line as _first_line,
+    function as _function,
 )
-
-# A2: every place a WorkItemAgenticExecutor is built, and how a stopped agent is refused there.
-_AGENTIC_RUN_OWNERS: dict[tuple[str, str], str] = {
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent._run_agentic_dispatch"): "admitted turn (handle_intent)",
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent._maybe_run_conversational_agentic"): "admitted turn",
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.recover_promoted_turn"): "S2 promoted resume",
-    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke"): "SEAM_DELEGATION, then the run entry",
-    ("src/probos/startup/finalize.py", "_wire_crew_orchestrator"): "crew eligibility, correction rounds, the run entry",
-}
-_ADMITTED_TURN_SITES: frozenset[tuple[str, str, str]] = frozenset({
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent._run_agentic_dispatch", "admitted_turn=True"),
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent._maybe_run_conversational_agentic._run_pass", "admitted_turn=True"),
-    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.recover_promoted_turn._recovered_pass", "admitted_turn=True"),
-})
-# A4 (F1): the one place a synthesis is admitted past the facilitator's stop: the owned resume, from its own claim.
-_ADMITTED_SYNTHESIS_SITES: frozenset[tuple[str, str, str]] = frozenset({
-    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "admitted_synthesis=admission is not None"),
-})
-
-# A3 (R1): every model call in the crew modules, by enclosing function, and whose name it runs under.
-_CREW_MODEL_CALLS: dict[tuple[str, str], str] = {
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.verify"): "verifier: picked stop-free, re-checked before the call",
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.verify_for_session"): "verifier: picked stop-free, re-checked before the call",
-    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session"):
-        "facilitator: SEAM_AGENTIC_RUN at the entry, unless the owned resume claimed it after its own check (I18)",
-    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer._synthesize_output"): "ship: the generic _SYSTEM_PROMPT, no crew identity or instructions",
-}
-# A3 (R1): the verifier's stop question, and every place that asks it.
-_VERIFIER_STOP_SITES: frozenset[tuple[str, str]] = frozenset({
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._pick_independent_verifier"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._pick_department_peer"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._pick_authority_chief"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._pick_live_session_verifier"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.verify"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.verify_for_session"),
-})
-_STANDING_STOP_SITES: frozenset[tuple[str, str]] = frozenset({
-    ("src/probos/cognitive/crew_assignment.py", "CrewAssignmentResolver.check_eligibility"),
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._stopped"),
-})
-
-
-@dataclass(frozen=True)
-class _Call:
-    file: str
-    function: str
-    callee: str
-    receiver: str
-    seam: str
-    keywords: tuple[str, ...] = ()
-
-
-class _Visitor(ast.NodeVisitor):
-    def __init__(self, rel: str) -> None:
-        self._rel = rel
-        self._scope: list[str] = []
-        self.calls: list[_Call] = []
-
-    def _enter(self, node: ast.AST, name: str) -> None:
-        self._scope.append(name)
-        self.generic_visit(node)
-        self._scope.pop()
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self._enter(node, node.name)
-
-    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self._enter(node, node.name)
-
-    visit_AsyncFunctionDef = visit_FunctionDef
-
-    def visit_Call(self, node: ast.Call) -> None:
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            callee, receiver = func.attr, ast.unparse(func.value)
-        elif isinstance(func, ast.Name):
-            callee, receiver = func.id, ""
-        else:
-            callee, receiver = "", ""
-        keywords = tuple(f"{k.arg}={ast.unparse(k.value)}" for k in node.keywords if k.arg in _PINNED_KEYWORDS)
-        if callee in _RECORDED or keywords:
-            seam = ""
-            if callee == "refusal" and len(node.args) >= 2:
-                seam = ast.unparse(node.args[1])
-            elif callee == "active_stop" and len(node.args) >= 3:
-                seam = ast.unparse(node.args[2])
-            elif callee == "tool_refusal":
-                seam = "SEAM_TOOL"
-            elif callee == "refuse_new_run":
-                seam = "SEAM_AGENTIC_RUN"
-            self.calls.append(_Call(self._rel, ".".join(self._scope) or "<module>", callee, receiver, seam, keywords))
-        self.generic_visit(node)
-
-
-@functools.lru_cache(maxsize=1)
-def _census() -> tuple[_Call, ...]:
-    calls: list[_Call] = []
-    for path in sorted(_PACKAGE.rglob("*.py")):
-        rel = path.relative_to(_ROOT).as_posix()
-        visitor = _Visitor(rel)
-        visitor.visit(ast.parse(path.read_bytes(), filename=rel))
-        calls += visitor.calls
-    return tuple(calls)
-
-
-def _function(rel: str, qualname: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
-    tree = ast.parse((_ROOT / rel).read_bytes(), filename=rel)
-
-    def walk(body: list[ast.stmt], prefix: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-        for node in body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                name = f"{prefix}.{node.name}" if prefix else node.name
-                if name == qualname and not isinstance(node, ast.ClassDef):
-                    return node
-                hit = walk(node.body, name)
-                if hit is not None:
-                    return hit
-        return None
-
-    found = walk(tree.body, "")
-    assert found is not None, (rel, qualname)
-    return found
-
-
-def _calls(name: str) -> Callable[[ast.AST], bool]:
-    def match(node: ast.AST) -> bool:
-        if not isinstance(node, ast.Call):
-            return False
-        func = node.func
-        return (isinstance(func, ast.Attribute) and func.attr == name) or (
-            isinstance(func, ast.Name) and func.id == name
-        )
-    return match
-
-
-def _first_line(node: ast.AST, predicate: Callable[[ast.AST], bool]) -> int:
-    lines = [n.lineno for n in ast.walk(node) if predicate(n)]
-    assert lines, f"nothing matched in {getattr(node, 'name', node)}"
-    return min(lines)
+from tests.fixtures.ad1343_seam_registry import (
+    ADMITTED_SYNTHESIS_SITES as _ADMITTED_SYNTHESIS_SITES,
+    ADMITTED_TURN_SITES as _ADMITTED_TURN_SITES,
+    AGENTIC_RUN_OWNERS as _AGENTIC_RUN_OWNERS,
+    COGNITIVE_AGENT_COROUTINES as _COGNITIVE_AGENT_COROUTINES,
+    CREW_MODEL_CALLS as _CREW_MODEL_CALLS,
+    DIRECT_TOOL_INVOKES as _DIRECT_TOOL_INVOKES,
+    SOURCE_ORDER as _SOURCE_ORDER,
+    STANDING_STOP_SITES as _STANDING_STOP_SITES,
+    STOP_CHECK_SITES as _STOP_CHECK_SITES,
+    SYNC_WORK_STARTERS as _SYNC_WORK_STARTERS,
+    VERIFIER_STOP_SITES as _VERIFIER_STOP_SITES,
+)
 
 
 def test_census_premise_reads_this_checkout() -> None:
