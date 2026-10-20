@@ -34,6 +34,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
+from probos.credential_store import crew_scope_token
 from probos.federation.mcp_server import bearer_token_matches, is_json_media_type, read_bounded_body
 from probos.federation.peer_requests import ATTACHMENT_REQUEST, MAX_PEER_REQUEST_BYTES
 from probos.routers.auth import require_crew_scope
@@ -98,7 +99,7 @@ async def serve_remote_attachment(
             status_code=404, detail="attachments_remote_serving_disabled"
         )
     if peer_requests_armed(runtime.config):  # AD-1198 armed: peers use signed requests, never a bearer token
-        if runtime.config.auth.crew_scope_token:
+        if crew_scope_token(runtime):
             logger.error(
                 "AD-1198: this ship's crew-scope token was presented from %s on GET /api/federation/attachments "
                 "while peer admission is armed, and was refused; peers fetch with signed requests and must never "
@@ -107,7 +108,7 @@ async def serve_remote_attachment(
             )
         raise HTTPException(status_code=403, detail="federation_peer_request_required")
     # 2. Fail-closed token hardening — never serve through a pass-through gate.
-    if not runtime.config.auth.crew_scope_token:
+    if not crew_scope_token(runtime):
         raise HTTPException(
             status_code=403, detail="remote_serving_requires_token"
         )
@@ -155,7 +156,7 @@ async def serve_peer_attachment(
         raise HTTPException(status_code=415, detail="peer_request_must_be_json")
     authorization = request.headers.get("authorization")
     if authorization is not None:  # AD-1198 a peer request carries no bearer credential
-        crew = getattr(getattr(runtime.config, "auth", None), "crew_scope_token", "") or ""
+        crew = crew_scope_token(runtime) or ""
         if crew and bearer_token_matches(authorization, crew):
             logger.error(
                 "AD-1198: a peer request from %s presented this ship's crew-scope token and was refused; peers "

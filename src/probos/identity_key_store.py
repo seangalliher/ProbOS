@@ -92,6 +92,30 @@ def _require_recommended(backend: Any) -> Any:
     return backend
 
 
+def secure_keyring_backend(backend: Any | None = None) -> Any:
+    """The recommended (secure) keyring backend to call: ``backend``, else the process default.
+
+    A ``ChainerBackend`` is replaced by its first recommended member and never called
+    through, because a chained miss falls through to whatever insecure backend answers.
+    Raises :class:`KeyStoreUnavailable` when no secure backend is available. AD-1196's
+    rule, shared with BF-908's crew-scope token (``probos/security/crew_scope.py``).
+    """
+    import keyring
+    import keyring.core
+    from keyring.backends.chainer import ChainerBackend
+
+    chosen = backend if backend is not None else keyring.get_keyring()
+    if not isinstance(chosen, ChainerBackend):
+        return _require_recommended(chosen)
+    candidates = [b for b in chosen.backends if keyring.core.recommended(b)]
+    if not candidates:
+        raise KeyStoreUnavailable(
+            "no chained keyring backend is recommended (secure): "
+            + ", ".join(f"{_qualified_name(b)} (priority {_priority(b)})" for b in chosen.backends)
+        )
+    return _require_recommended(candidates[0])
+
+
 class KeyringKeyStore:
     """Identity private keys in the OS keyring, through a recommended backend only."""
 
@@ -150,21 +174,7 @@ class KeyringKeyStore:
 
     def _resolve_backend(self) -> Any:
         """The secure backend for this call (runs in the worker thread)."""
-        import keyring
-        import keyring.core
-        from keyring.backends.chainer import ChainerBackend
-
-        backend = self._backend if self._backend is not None else keyring.get_keyring()
-        if not isinstance(backend, ChainerBackend):
-            return _require_recommended(backend)
-        candidates = [b for b in backend.backends if keyring.core.recommended(b)]
-        if not candidates:
-            raise KeyStoreUnavailable(
-                "no chained keyring backend is recommended (secure): "
-                + ", ".join(f"{_qualified_name(b)} (priority {_priority(b)})" for b in backend.backends)
-            )
-        backend = candidates[0]
-        return _require_recommended(backend)
+        return secure_keyring_backend(self._backend)
 
     async def _call(self, action: Callable[[Any], _T]) -> _T:
         """Run ``action(backend)`` off the loop under the time bound; any failure is unavailability."""

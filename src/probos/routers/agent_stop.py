@@ -5,12 +5,14 @@
     POST /api/stops/{agent_id}/lift  lift it
 
 Authority is the existing Captain authority on the API. ``require_crew_scope`` answers 401
-to a missing or wrong bearer token once ``auth.crew_scope_token`` is set; because it lets
+to a missing or wrong bearer token once a crew-scope token is set; because it lets
 every caller through while no token is set, these routes answer 403 until one is (the
 AD-1196 / AD-1340 rule: no Captain order through an open gate). Agent tools do not reach
 them: ``security/url_guard.py`` refuses loopback to ``http_fetch`` and to every browser
-context ProbOS creates. The residual is stated in the AD-1343 contract (C1): a shell or
-sandbox run that could read ``config/system.yaml`` could present the token.
+context ProbOS creates. BF-908: the token is ``credential_store.crew_scope_token(runtime)``,
+the OS keyring's before ``auth.crew_scope_token``. The residual (DECISIONS.md, BF-908): any
+process running as the vessel's user can read the keyring entry, and the config file while
+the token is still there.
 
 Every answer that reports an order carries ``scope`` (the list, a stop, a stop not written,
 a lift): what S1 refuses and what it does not end. A refused request (401, 403, 404, 422,
@@ -26,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from probos.agent_stop import LIFT_NOTE, S1_SCOPE, AgentStopService, StopNotFound
+from probos.credential_store import crew_scope_token
 from probos.crew_utils import is_crew_agent
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
@@ -51,7 +54,7 @@ async def _captain_stops(runtime: Any = Depends(get_runtime)) -> AgentStopServic
     stops = getattr(runtime, "agent_stops", None)
     if not isinstance(stops, AgentStopService):
         raise HTTPException(status_code=503, detail=_UNAVAILABLE)
-    if not runtime.config.auth.crew_scope_token:  # AD-1343: never a Captain order through an open gate
+    if not crew_scope_token(runtime):  # AD-1343: never a Captain order through an open gate (BF-908: one accessor)
         raise HTTPException(status_code=403, detail=_TOKEN_REQUIRED)
     return stops
 

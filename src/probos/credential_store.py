@@ -2,6 +2,10 @@
 
 Centralizes credential lookup across ProbOS agents and adapters.
 Resolution chain: explicit config -> environment variable -> CLI tool -> None.
+
+BF-908: the crew-scope token is not a CredentialSpec. ``crew_scope_token(runtime)``
+below is its one reader: the OS keyring's entry (``CredentialStore.crew_scope``,
+read once at startup), else ``auth.crew_scope_token`` from the runtime's config.
 """
 
 from __future__ import annotations
@@ -16,6 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from probos.execution.command_env import trusted_command_env
+from probos.security.crew_scope import (  # noqa: F401 -- CREW_SCOPE_UNAVAILABLE is re-exported for routers/auth.py
+    CREW_SCOPE_UNAVAILABLE,
+    CrewScopeKeyring,
+    configured_crew_scope_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +93,10 @@ class CredentialStore:
         # AD-456 v1 ungated-lookup behavior; finalize flips to True when
         # ``config.security_infra.credential_tier_enforcement`` is set.
         self._tier_enforcement: bool = False
+        # BF-908: the crew-scope token's keyring step. Not a CredentialSpec and never in
+        # the JSON store, so get(), available(), list_credentials() and rotate() never
+        # reach it; crew_scope_token(runtime) at the end of this module is its one reader.
+        self.crew_scope = CrewScopeKeyring()
         self._register_builtins()
 
     def _register_builtins(self) -> None:
@@ -410,3 +423,26 @@ class CredentialStore:
                 "description": spec.description,
             })
         return results
+
+
+def crew_scope_token(runtime: Any) -> str:
+    """BF-908 (#1605): the crew-scope token to enforce; the one read every route and startup use.
+
+    The OS keyring's entry (read once at startup through ``runtime.credential_store``),
+    else ``auth.crew_scope_token`` from the runtime's current config, else ``""``. A
+    runtime without a ``CredentialStore`` (a test double) reads its config only.
+    """
+    config = getattr(runtime, "config", None)
+    store = getattr(runtime, "credential_store", None)
+    if isinstance(store, CredentialStore):
+        return store.crew_scope.token(config)
+    return configured_crew_scope_token(config)
+
+
+def crew_scope_locked(runtime: Any) -> bool:
+    """BF-908: True when no token is configured and the keyring could not be read, or startup has not read it yet.
+
+    Refuse every caller then (A2, D21). A runtime without a real ``CredentialStore`` (a test double) is never locked.
+    """
+    store = getattr(runtime, "credential_store", None)
+    return isinstance(store, CredentialStore) and store.crew_scope.locked(getattr(runtime, "config", None))

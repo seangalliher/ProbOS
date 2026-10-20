@@ -40,6 +40,7 @@ from probos.identity_keys import (
     KeyEventInvalid,
     RecoveryAuthorizationInvalid,
 )
+from probos.credential_store import crew_scope_token
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 
@@ -160,7 +161,7 @@ def _binding(runtime: Any) -> Any:
 async def _key_action_binding(runtime: Any = Depends(get_runtime)) -> Any:
     """The binding for a mutating key route: 503 while unarmed, then 403 while no token is configured."""
     binding = _binding(runtime)
-    if not runtime.config.auth.crew_scope_token:
+    if not crew_scope_token(runtime):
         raise HTTPException(status_code=403, detail=_TOKEN_REQUIRED)
     return binding
 
@@ -303,7 +304,7 @@ async def _peer_reset_exchange(runtime: Any = Depends(get_runtime)) -> Any:
     exchange = getattr(runtime, "federation_identity_exchange", None)
     if exchange is None:  # AD-1198 slice 2c 503 while peer admission is unarmed
         raise HTTPException(status_code=503, detail=_PEERS_NOT_ARMED)
-    if not runtime.config.auth.crew_scope_token:  # AD-1198 slice 2c the AD-1196 A-0 rule: no reset through an open gate
+    if not crew_scope_token(runtime):  # AD-1198 slice 2c the AD-1196 A-0 rule: no reset through an open gate
         raise HTTPException(status_code=403, detail=_TOKEN_REQUIRED)
     return exchange
 
