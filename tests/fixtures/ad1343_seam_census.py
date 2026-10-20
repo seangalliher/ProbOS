@@ -35,6 +35,7 @@ GENERIC_AGENT_METHODS = frozenset({"perceive", "decide", "act", "report", "consu
 RECORDED = STOP_CALLEES | AGENT_WORK_METHODS | {
     "invoke", "issue_stop", "lift_stop", "standing_stop", "WorkItemAgenticExecutor", "CrewAssignmentResolver",
     "CrewSessionFinalizer", "_stopped", "complete",  # A3
+    "CrewRecoveryTransientError", "finalize", "run_crew_task",  # N1
 }
 PINNED_KEYWORDS = frozenset({"admitted_turn", "agent_stops", "admitted_synthesis"})  # recorded as "name=value" on any call passing one
 CREW_PREFIX = "src/probos/cognitive/crew_"
@@ -88,6 +89,8 @@ class Visitor(ast.NodeVisitor):
                 seam = "SEAM_TOOL"
             elif callee == "refuse_new_run":
                 seam = "SEAM_AGENTIC_RUN"
+            elif callee == "CrewRecoveryTransientError" and node.args:  # N1: the transient code it is built with
+                seam = ast.unparse(node.args[0])
             self.calls.append(Call(self._rel, ".".join(self._scope) or "<module>", callee, receiver, seam, keywords))
         self.generic_visit(node)
 

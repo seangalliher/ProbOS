@@ -24,7 +24,7 @@ from pydantic import (
 
 from probos import work_item_steps as owned_steps
 from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, AgentStopService, active_stop
-from probos.cognitive.crew_session import CrewSynthesisMetadata
+from probos.cognitive.crew_session import CrewRecoveryTransientError, CrewSynthesisMetadata
 from probos.crew_execution_usage import read_crew_execution_token_usage
 from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.cognitive.crew_trust import (
@@ -45,6 +45,7 @@ from probos.cognitive.crew_verdict import (
     validate_criteria,
 )
 from probos.cognitive.crew_verifier import (
+    CorrectionAdmittedNotExecuted,
     SessionConvergenceOutcome,
     SessionCorrectionTerminalAttempt,
     SessionVerificationFailureCode,
@@ -1689,8 +1690,10 @@ class CrewSessionFinalizer:
                     else {}
                 ),
             )
-        except AgentStopped as exc:  # A3 (R2): the producer was stopped before its correction; nothing is recorded
+        except CorrectionAdmittedNotExecuted as exc:  # N1 (F-177): its permit is kept; a retry would replay it as a defect
             raise ValueError("child_producer_unavailable") from exc
+        except AgentStopped as exc:  # A3 (R2), N1: stopped before its correction; nothing is recorded, so a retry is safe
+            raise CrewRecoveryTransientError("child_producer_stopped") from exc
         return await self._defer_checkpoint(self._checkpoint_child_convergence(
             session=session,
             child=child,
@@ -2008,11 +2011,13 @@ class CrewSessionFinalizer:
                 tokens_used=document["tokens_used"],
             ), recovery
         facilitator = self._live_agent(session.facilitator_id)
-        if facilitator is None or active_stop(self._agent_stops, session.facilitator_id, SEAM_AGENTIC_RUN) is not None:
-            # AD-1343 A3 (R1): a facilitator stopped by the Captain's order is not available, as one not live; checked
-            # before the synthesis is claimed, so no claim is left behind. Through the orchestrator this ends the session
-            # blocked (recovery_integrity_conflict), which the Captain cannot yet retry (D44; AD-1343 S2).
+        if facilitator is None:
             raise ValueError("synthesis_producer_unavailable")
+        if active_stop(self._agent_stops, session.facilitator_id, SEAM_AGENTIC_RUN) is not None:
+            # AD-1343 A3 (R1): checked before the synthesis is claimed, so no claim is left behind. N1: the order is
+            # transient, not an integrity conflict. The owner's recovery loop retries with backoff; the session continues
+            # if the order is lifted in time and otherwise ends recovery_retry_exhausted, which the Captain may retry.
+            raise CrewRecoveryTransientError("synthesis_producer_stopped")
         instructions = _text(
             getattr(facilitator, "instructions", None),
             maximum_codepoints=32_768,
@@ -2033,8 +2038,8 @@ class CrewSessionFinalizer:
                 outcomes=tuple(item.outcome for item in publications),
                 admitted_synthesis=admission is not None,  # A4 (F1): only a synthesis this resume has just claimed
             )
-        except AgentStopped as exc:  # A3 (R1), A4: a session with no owned steps, so nothing was claimed or synthesized
-            raise ValueError("synthesis_producer_unavailable") from exc
+        except AgentStopped as exc:  # A3 (R1), A4, N1: no owned steps, so nothing was claimed or synthesized; transient
+            raise CrewRecoveryTransientError("synthesis_producer_stopped") from exc
         recovery = await self._defer_checkpoint(self._checkpoint_synthesis(
             session=session,
             recovery=recovery,

@@ -155,6 +155,15 @@ def validate_session_denied_tools(value: Any) -> tuple[str, ...] | None:
     return tuple(validated)
 
 
+class CorrectionAdmittedNotExecuted(AgentStopped):
+    """AD-1343 N1 (F-177): a session correction admitted (its permit recorded) and then refused at the run entry.
+
+    Still an ``AgentStopped``, so every caller that maps a stop keeps its mapping. The owner's resume tells it apart:
+    a retry would replay the kept permit through the interrupted-correction path and fail closed as
+    ``correction_execution_defect``, so that session stays blocked for the Captain instead (D34).
+    """
+
+
 _MISSING_VERDICT_FIELD = object()
 """Sentinel: distinguishes an absent ``accepted`` from a present ``False``."""
 
@@ -1958,8 +1967,9 @@ class SubtaskVerifier:
 
         AD-1343 A3: raises ``AgentStopped`` when the producer of a refuted child is stopped by the
         Captain's order before its correction runs. No correction executes and no outcome is
-        returned, so nothing can read the stop as exhaustion; the finalizer blocks the session as
-        for a producer that is not available.
+        returned, so nothing can read the stop as exhaustion. N1: the owner's resume retries it as
+        transient; a correction admitted before the order landed raises the subclass
+        ``CorrectionAdmittedNotExecuted`` instead, and that session stays blocked (F-177).
         """
         current = replace(
             result,
@@ -2161,7 +2171,7 @@ class SubtaskVerifier:
                     outcome = None
             except asyncio.CancelledError:
                 raise
-            except AgentStopped:
+            except AgentStopped as stop_refusal:
                 # AD-1343 A3 (R2, R5): stopped after the check above, at the run entry. No correction executed and no
                 # outcome is recorded. A correction admitted first (an owned session) keeps its permit as the evidence
                 # of that admission, and is said so here.
@@ -2171,7 +2181,10 @@ class SubtaskVerifier:
                         "stopped by the Captain's order",
                         attempt_index, current.work_item_id, current.agent_id,
                     )
-                raise  # A3 (R2): the finalizer blocks the session as for a producer that is not available
+                    # N1 (F-177): told apart, so the owner's resume keeps this session blocked; a retry would replay the
+                    # kept permit and fail closed as correction_execution_defect.
+                    raise CorrectionAdmittedNotExecuted(stop_refusal.record) from stop_refusal
+                raise  # A3 (R2), N1: before admission; the owner's resume treats it as transient
             except Exception:
                 logger.warning(
                     "Session correction failed for child %s on attempt %d; "

@@ -36,7 +36,7 @@ from tests.fixtures.ad1343_seam_census import (
     model_call_report,
     scan,
 )
-from tests.fixtures.ad1343_seam_registry import AGENT_WORK_CALLS, MODEL_CALLS_OUTSIDE_CREW, SEAM_INDEX
+from tests.fixtures.ad1343_seam_registry import AGENT_WORK_CALLS, FIRST_RUN_DOOR, MODEL_CALLS_OUTSIDE_CREW, RECOVERY_TRANSIENT_SITES, SEAM_INDEX
 
 _WORK_STARTERS = seam_census.AGENT_WORK_METHODS | {"WorkItemAgenticExecutor", "invoke", "complete"}
 
@@ -138,3 +138,17 @@ def test_the_model_call_report_covers_the_sites_outside_the_crew_modules_and_gat
 def test_the_registry_imports_nothing() -> None:
     tree = ast.parse(Path(seam_registry.__file__).read_bytes())
     assert [type(n).__name__ for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))] == []
+
+
+# N1
+def test_every_recovery_transient_is_classified() -> None:
+    found = {(c.file, c.function, c.seam) for c in census() if c.callee == "CrewRecoveryTransientError"}
+    assert found == set(RECOVERY_TRANSIENT_SITES), sorted(found ^ set(RECOVERY_TRANSIENT_SITES))
+
+
+# N1 (P1)
+def test_the_first_run_finalize_door_is_reached_only_without_a_session_service() -> None:
+    found = {(c.file, c.function, c.callee) for c in census() if c.callee in {"finalize", "run_crew_task"}}
+    assert found == FIRST_RUN_DOOR, sorted(found ^ FIRST_RUN_DOOR)
+    owner = function("src/probos/cognitive/crew_orchestrator.py", "CrewOrchestrator._run_owned_parent")
+    assert "self._crew_session_service is None" in ast.unparse(owner)  # the run_crew_task branch needs no service

@@ -222,3 +222,20 @@ SEAM_INDEX: dict[str, tuple[str, tuple[object, ...]]] = {
 # Report only (never gated until #1601 M3): a hand classification of a model call outside the crew modules, keyed by
 # (file, enclosing function). Empty today; ``model_call_report()`` classifies the rest structurally.
 MODEL_CALLS_OUTSIDE_CREW: dict[tuple[str, str], str] = {}
+
+# N1: every construction of the recovery loop's transient error, by (file, function, the code it is built with).
+RECOVERY_TRANSIENT_SITES: dict[tuple[str, str, str], str] = {
+    ("src/probos/cognitive/crew_orchestrator.py", "CrewOrchestrator._translate_recovery_boundary_error", "code"):
+        "AD-1127: a timeout, connection, busy or OS error at a recovery boundary",
+    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_child_convergence", "'child_producer_stopped'"):
+        "N1: the producer of a refuted child is stopped before its correction is admitted",
+    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "'synthesis_producer_stopped'"):
+        "N1: the facilitator is stopped before its synthesis is claimed, or before an unclaimed synthesis starts",
+}
+
+# N1 (P1): the first-run door is reached only through run_crew_task, and run_crew_task only from the owner when no
+# session service is wired, which production refuses (startup/finalize.py, the mandatory dependency check).
+FIRST_RUN_DOOR: frozenset[tuple[str, str, str]] = frozenset({
+    ("src/probos/cognitive/crew_orchestrator.py", "CrewOrchestrator.run_crew_task", "finalize"),
+    ("src/probos/cognitive/crew_orchestrator.py", "CrewOrchestrator._run_owned_parent", "run_crew_task"),
+})

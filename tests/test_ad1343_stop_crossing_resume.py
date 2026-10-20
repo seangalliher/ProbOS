@@ -3,13 +3,15 @@
 ``CrewSessionFinalizer.resume`` rebuilds a durable CrewSession from its checkpoints. A3 makes it
 treat an agent the Captain has stopped exactly as it treats one that is not live:
 
-- X10  a stopped facilitator: ``ValueError("synthesis_producer_unavailable")`` BEFORE the owned
-       synthesis is claimed, so the synthesizer is not called and a resume after the lift is not read
+- X10  a stopped facilitator: ``CrewRecoveryTransientError("synthesis_producer_stopped")`` (N1) BEFORE the
+       owned synthesis is claimed, so the synthesizer is not called and a resume after the lift is not read
        as an interrupted synthesis (``owned_steps_synthesis_interrupted``);
 - X10b the race (A4, F1): the stop lands right after the durable claim. The claimed synthesis was
        admitted at the finalizer's check, so it runs to completion; no claim is left behind;
-- X11  a stopped producer of a refuted child: ``ValueError("child_producer_unavailable")`` as for a
-       producer with ``is_alive=False``, and no trust-outbox row.
+- X11  a stopped producer of a refuted child: ``CrewRecoveryTransientError("child_producer_stopped")``
+       (N1), otherwise as for a producer with ``is_alive=False``, and no trust-outbox row;
+- X10c (N1) a stop landing after the facilitator check of a synthesis that is not claimed (a session with
+       no owned steps) is transient too; X10d (N1) a facilitator that is not live keeps ``ValueError``.
 
 Every test crosses the whole chain: a real ``AgentStopService`` over ``agent_stops.db`` in ``tmp_path``
 -> the real verifier, synthesizer and finalizer over real stores -> ``finalizer.resume``. Each has a
@@ -26,7 +28,9 @@ from typing import Any
 import pytest
 
 from probos import work_item_steps as owned_steps
+from probos.agent_stop import AgentStopped
 from probos.cognitive.crew_finalizer import CrewSessionFinalizer
+from probos.cognitive.crew_session import CrewRecoveryTransientError
 from probos.cognitive.crew_trust import CrewSessionTrustRecorder
 from probos.consensus.trust import TrustNetwork
 from tests.test_ad1126_verified_finalization import (
@@ -110,10 +114,10 @@ async def test_resume_with_a_stopped_facilitator_is_refused_before_the_claim_and
         assert stops.stop_for(FACILITATOR) is not None  # premise: the order is in force
         assert await rig.synthesis_claim() is None  # premise: nothing is claimed yet
 
-        with pytest.raises(ValueError) as refused:
+        with pytest.raises(CrewRecoveryTransientError) as refused:
             await rig.finalizer.resume(rig.parent_id)
 
-        assert str(refused.value) == "synthesis_producer_unavailable"
+        assert refused.value.code == "synthesis_producer_stopped"  # N1: transient, so the owner's recovery loop retries it
         assert len(rig.judge.requests) == 1  # premise: the child was verified, so the resume reached the synthesis step
         assert rig.synth.requests == []  # the synthesizer was not called
         assert await rig.synthesis_claim() is None  # refused BEFORE the owned synthesis was claimed
@@ -196,7 +200,7 @@ async def test_resume_with_a_stopped_producer_ends_as_with_a_producer_not_live(
     tmp_path: Path, trust_network: TrustNetwork,
 ) -> None:
     async def observe(rig: _Rig) -> dict[str, Any]:
-        with pytest.raises(ValueError) as refused:
+        with pytest.raises((ValueError, CrewRecoveryTransientError)) as refused:
             await rig.finalizer.resume(rig.parent_id)
         child = await rig.case.stores.work.get_work_item(rig.case.child.id)
         session = await rig.case.service.get_session(rig.parent_id)
@@ -204,6 +208,7 @@ async def test_resume_with_a_stopped_producer_ends_as_with_a_producer_not_live(
         assert child is not None and session is not None and recovery is not None
         return {
             "error": str(refused.value),
+            "kind": type(refused.value).__name__,
             "state": session.state,
             "phase": recovery.phase,
             "child_verification": child.verification,
@@ -226,6 +231,7 @@ async def test_resume_with_a_stopped_producer_ends_as_with_a_producer_not_live(
             assert stops.stop_for(dead.producer_id) is None  # premise: no order, the producer is simply not live
             not_live = await observe(dead)
         assert not_live["error"] == "child_producer_unavailable"  # premise: the established vocabulary for a producer not live
+        assert not_live["kind"] == "ValueError"  # N1: a producer that is not live is still an integrity conflict
         assert not_live["outbox"] == [] and not_live["trust"] == {}
 
         async with _executed_session(tmp_path / "stopped") as case:
@@ -241,12 +247,13 @@ async def test_resume_with_a_stopped_producer_ends_as_with_a_producer_not_live(
 
             assert len(rig.judge.requests) == 1  # premise: round 0 was refuted, so a correction was due
             assert stopped["corrections"] == 0  # the stopped producer was not run again
-            assert stopped["error"] == "child_producer_unavailable"
+            assert (stopped["kind"], stopped["error"]) == ("CrewRecoveryTransientError", "child_producer_stopped")  # N1
             assert stopped["outbox"] == []  # no trust-outbox row: neither a verdict nor an exhaustion was charged
             assert stopped["trust"] == {} and trust_network.raw_scores() == {}
             assert stopped["child_verification"] in (None, {}) and stopped["synthesis_claim"] is None
-            # ends exactly as the same resume with the producer not live (the judge was asked once here, never there)
-            assert stopped == not_live
+            # N1: ends as the same resume with the producer not live in every other respect (the judge was asked once
+            # here, never there), except that the stop is transient
+            assert {**stopped, "kind": None, "error": None} == {**not_live, "kind": None, "error": None}
             assert stops.refused_counts(record.stop_id) == {"agentic_run": 1}  # the refused correction, counted once at its seam
 
 
@@ -269,3 +276,42 @@ async def test_resume_with_a_refuted_child_and_no_order_corrects_and_completes_a
         assert (len(rig.judge.requests), len(rig.synth.requests)) == (3, 1)
         assert await _outbox_rows(case.stores.work) != []  # the trust the session earned is recorded
         assert _loud(caplog) == []  # the stop module writes nothing when no order is in force
+
+
+# X10c (N1, D43)
+async def test_resume_of_an_unclaimed_synthesis_stopped_after_the_facilitator_check_is_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust_network: TrustNetwork,
+) -> None:
+    async with _executed_session(tmp_path) as case, _service(tmp_path / "stops") as stops:
+        rig = _Rig(case, tmp_path, stops, trust_network, judge=[_verdict(True)], synth=[])
+
+        async def claim_nothing_then_stop(session: Any) -> None:
+            # A session with no owned steps claims nothing; the order lands before the synthesizer's own entry check.
+            await stops.issue_stop(FACILITATOR, reason=REASON)
+            return None
+
+        monkeypatch.setattr(rig.finalizer, "_claim_owned_synthesis", claim_nothing_then_stop)
+        assert stops.stop_for(FACILITATOR) is None  # premise: the finalizer's own check passes
+
+        with pytest.raises(CrewRecoveryTransientError) as refused:
+            await rig.finalizer.resume(rig.parent_id)
+
+        assert refused.value.code == "synthesis_producer_stopped"
+        assert isinstance(refused.value.__cause__, AgentStopped)  # refused at the synthesizer's entry, not by the finalizer
+        assert rig.synth.requests == [] and await rig.synthesis_claim() is None
+
+
+# X10d (N1)
+async def test_resume_with_a_facilitator_that_is_not_live_is_still_an_integrity_conflict(
+    tmp_path: Path, trust_network: TrustNetwork,
+) -> None:
+    async with _executed_session(tmp_path) as case, _service(tmp_path / "stops") as stops:
+        rig = _Rig(case, tmp_path, stops, trust_network, judge=[_verdict(True)], synth=[])
+        rig.registry.get(FACILITATOR).is_alive = False
+        assert stops.stop_for(FACILITATOR) is None  # premise: no order; the facilitator is simply not live
+
+        with pytest.raises(ValueError) as refused:
+            await rig.finalizer.resume(rig.parent_id)
+
+        assert str(refused.value) == "synthesis_producer_unavailable"
+        assert rig.synth.requests == []
