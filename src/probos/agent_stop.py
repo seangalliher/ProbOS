@@ -79,10 +79,11 @@ S1_SCOPE: Final[dict[str, str]] = {
         "the DM route, tasks delegated to it, crew work under its name (it is not eligible for a crew "
         "subtask: a new one goes to an eligible colleague and one already assigned to it is not started; "
         "it is not picked to verify a colleague's work; a crew session it facilitates is not synthesized "
-        "and ends blocked for the Captain, as with a facilitator that is not live), correction re-runs of "
-        "its refuted subtasks (a crew session ends blocked for the Captain instead, as with a producer that "
-        "is not live, and cannot yet be retried after the lift (AD-1343 S2); elsewhere the result is "
-        "escalated unverified), browser actions and every "
+        "while the order stands: the session retries on its recovery schedule, continues if the order is "
+        "lifted in time and otherwise ends blocked for the Captain, who can retry it after the lift), "
+        "correction re-runs of its refuted subtasks (a crew session waits and ends in the same way; one whose "
+        "correction was admitted just before the order ends blocked and cannot be retried; elsewhere the "
+        "result is escalated unverified), browser actions and every "
         "tool call, protected effects included."
     ),
     "does_not_end": (
@@ -102,7 +103,8 @@ S1_SCOPE: Final[dict[str, str]] = {
 
 LIFT_NOTE: Final = (
     "Dispatch is restored. Work refused while the agent was stopped is not replayed; "
-    "refused_while_stopped counts it by seam since the last start."
+    "refused_while_stopped counts it by seam since the last start. A crew session that was waiting "
+    "on the agent continues on its own recovery schedule, or is blocked for the Captain to retry."
 )
 
 _SCHEMA: Final = """

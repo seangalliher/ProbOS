@@ -41,7 +41,12 @@ from probos.agent_stop import AgentStopped, AgentStopService
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.crew_executor import SubtaskResult
 from probos.cognitive.crew_synth import CrewSynthesizer, SessionSynthesisDraft
-from probos.cognitive.crew_verifier import SessionVerificationPass, SubtaskVerifier, VerificationVerdict
+from probos.cognitive.crew_verifier import (
+    CorrectionAdmittedNotExecuted,
+    SessionVerificationPass,
+    SubtaskVerifier,
+    VerificationVerdict,
+)
 from probos.consensus.trust import TrustNetwork
 from probos.ontology import VesselOntologyService
 from probos.substrate.registry import AgentRegistry
@@ -520,6 +525,7 @@ async def test_a_correction_admitted_then_refused_at_the_run_entry_logs_one_warn
 
         record = service.stop_for(AGENT)
         assert record is not None and raised.value.record == record  # the order landed during the admission
+        assert type(raised.value) is CorrectionAdmittedNotExecuted  # N1 (F-177): told apart from a refusal before admission
         assert record.stop_id in str(raised.value) and PRIVATE_FRAGMENT not in str(raised.value)
         assert port.admitted == [CHILD]  # exactly one admission
         assert port.recorded == []  # the correction was not recorded
