@@ -48,7 +48,7 @@ Projects appear here only as technical design references. Positioning against th
 | Voyager (skill library) | 2026-10-15 | passing | `cognitive-jit-procedural-learning-research.md`; AD-1338 (#1565) Prior art (from a search summary) |
 | Hermes Agent | 2026-06-06 | passing | `crew-capability-architecture.md` (self-improving skills, AD-596) |
 | Google Agent Development Kit | 2026-10-20 | checked | AD-1343 batch A (#1595) Prior Art, `prompts/ad-1343-batch-a-m0-seam-registry-n1-stop-retry.md` (`before_agent_callback` skips an agent at one entry: the single-gate shape #1601 targets; nothing to absorb for M0); `universal-agent-activation-research.md` (the agent layer of Solace Agent Mesh) |
-| OpenAI Agents SDK | 2026-10-20 | checked | AD-1343 batch A (#1595) Prior Art, `prompts/ad-1343-batch-a-m0-seam-registry-n1-stop-retry.md` (a guardrail tripwire raises an exception the application maps, as `AgentStopped` does; nothing new) |
+| OpenAI Agents SDK | 2026-10-20 | checked | AD-1343 batch A (#1595) Prior Art, `prompts/ad-1343-batch-a-m0-seam-registry-n1-stop-retry.md` (a guardrail tripwire raises an exception the application maps, as `AgentStopped` does; nothing new); `docs/architecture/architecture-review-2026-10-20.md` §7 (guardrail coverage limits: only the first agent's input, not handoffs, not hosted or built-in tools; rejected as the enforcement model); AD-1343 S1 (#1595) Prior Art (guardrail tripwires: refuse before dispatch, not in parallel) |
 
 ## Memory, retrieval and knowledge (interval: 180 days)
 
