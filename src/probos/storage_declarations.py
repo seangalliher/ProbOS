@@ -227,4 +227,27 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
             "ignores it). The probos doctor crew_enrollment check reads it with the adapter's read_only open."
         ),
     ),
+    StoreDeclaration(
+        id="agent-stop.captain-orders",
+        title="The Captain's stop orders for crew agents: issued, in force and lifted (AD-1343)",
+        owner_module="probos.agent_stop",
+        owner_symbol="AgentStopService",
+        canonical_path="agent_stops.db",
+        criticality=StoreCriticality.REQUIRED,
+        lifecycle_owner="probos.runtime.ProbOSRuntime.start",
+        retention=StoreRetention.UNBOUNDED,
+        retention_note=(
+            "No DELETE FROM in probos.agent_stop. One row per Captain's order; a lift updates its row and "
+            "never removes it, so the table is the record of every stop. Growth is bounded by the Captain's "
+            "own orders. No `probos reset` tier deletes it: a reset never lifts a stop."
+        ),
+        backup="included",
+        restore="unknown",
+        notes=(
+            "Started without a guard in ProbOSRuntime.start (Phase 1a, before any agent exists), so an "
+            "unopenable agent_stops.db aborts startup; closed in startup/shutdown.py, which keeps the "
+            "in-memory view. Opened through the ConnectionFactory. Table: agent_stops, with a partial unique "
+            "index allowing one active stop per agent. Inside the BF-758 file-read floor (the data directory)."
+        ),
+    ),
 )

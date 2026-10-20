@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from probos.agent_stop import standing_stop
 from probos.cognitive.agentic_dispatch import (
     AgenticIdentity,
     AgenticIdentityUnresolved,
@@ -35,6 +36,7 @@ from probos.cognitive.agentic_dispatch import (
 from probos.consultation.dispatch import WorkItemSpec
 
 if TYPE_CHECKING:
+    from probos.agent_stop import AgentStopService
     from probos.mesh.capability import CapabilityMatch, CapabilityRegistry
     from probos.substrate.agent import BaseAgent
 
@@ -58,7 +60,7 @@ class CrewAssignmentTrust(AgentIdentityTrust, Protocol):
 @dataclass(frozen=True)
 class CrewWorkerEligibility:
     identity: AgenticIdentity | None
-    reason: Literal["eligible", "missing", "inactive", "unresolved_identity"]
+    reason: Literal["eligible", "missing", "inactive", "unresolved_identity", "stopped"]
 
 
 class CrewWorkerEligibilityResolver(Protocol):
@@ -100,11 +102,13 @@ class CrewAssignmentResolver:
         ontology: AgentIdentityOntology,
         trust_network: CrewAssignmentTrust,
         agent_registry: CrewAssignmentRegistry,
+        agent_stops: "AgentStopService | None" = None,
     ) -> None:
         self._capability_registry = capability_registry
         self._ontology = ontology
         self._trust_network = trust_network
         self._agent_registry = agent_registry
+        self._agent_stops = agent_stops  # AD-1343: a stopped agent is not eligible for crew work
 
     # ------------------------------------------------------------------
     # Public API
@@ -114,6 +118,11 @@ class CrewAssignmentResolver:
         """Check current crew execution eligibility without changing lifecycle."""
         if type(agent_id) is not str or not agent_id:
             return CrewWorkerEligibility(None, "unresolved_identity")
+        # AD-1343: an agent stopped by the Captain's order is not eligible: it is never assigned,
+        # and a subtask already assigned to it is not started (CrewWorkerUnavailable, the existing
+        # lost-eligibility outcome). Memory only and not counted: asking about a candidate refuses no work.
+        if standing_stop(self._agent_stops, agent_id) is not None:
+            return CrewWorkerEligibility(None, "stopped")
         try:
             agent = self._agent_registry.get(agent_id)
             if agent is None:

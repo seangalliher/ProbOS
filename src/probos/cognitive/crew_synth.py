@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, active_stop
 from probos.cognitive.crew_verdict import criteria_to_json, judge_to_json
 from probos.cognitive.crew_verifier import SubtaskVerifier
 from probos.consensus.shapley import compute_shapley_values
@@ -893,8 +894,17 @@ class CrewSynthesizer:
         success_criteria: tuple[str, ...],
         expected_deliverable: str,
         outcomes: tuple["SessionConvergenceOutcome", ...],
+        admitted_synthesis: bool = False,
     ) -> SessionSynthesisDraft:
-        """Produce one bounded session draft without completion or learning writes."""
+        """Produce one bounded session draft without completion or learning writes.
+
+        AD-1343 A3: raises ``AgentStopped`` before the model call when the facilitator is stopped by
+        the Captain's order; invalid inputs still fail first, as before. A4 (F1): ``admitted_synthesis=True``
+        is passed only by the finalizer's owned resume once its durable synthesis claim is made (pinned by
+        tests/test_ad1343_stop_seam_inventory.py, I18): that synthesis was admitted at the finalizer's own
+        stop check before the claim, so it is not refused again (S1_SCOPE ``does_not_end``). Anything but
+        ``True`` is refused as before.
+        """
         parent_key = _session_id(parent_id)
         producer_key = _session_id(producer_agent_id)
         instructions = _session_text(
@@ -976,6 +986,12 @@ class CrewSynthesizer:
         if len(prompt.encode("utf-8")) > _MAX_SESSION_SYNTHESIS_INPUT_BYTES:
             raise ValueError("session_synthesis_input_too_large")
         system_prompt = f"{self._SESSION_SYSTEM_PROMPT}\n\nFACILITATOR INSTRUCTIONS:\n{instructions}"
+        # AD-1343 A3 (R1): the facilitator's model work is new work under its name and instructions. A stopped
+        # facilitator is refused here, after the inputs are validated and with no await before the model call.
+        if admitted_synthesis is not True:  # A4 (F1): claimed by the owned resume after its own check; not refused again
+            stopped = active_stop(getattr(self._runtime, "agent_stops", None), producer_key, SEAM_AGENTIC_RUN)
+            if stopped is not None:
+                raise AgentStopped(stopped)
         try:
             response = await self._llm.complete(LLMRequest(
                 prompt=prompt,

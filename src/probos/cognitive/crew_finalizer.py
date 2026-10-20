@@ -23,6 +23,7 @@ from pydantic import (
 )
 
 from probos import work_item_steps as owned_steps
+from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, AgentStopService, active_stop
 from probos.cognitive.crew_session import CrewSynthesisMetadata
 from probos.crew_execution_usage import read_crew_execution_token_usage
 from probos.crew_utils import CREW_EXECUTION_KEYS
@@ -698,6 +699,7 @@ class CrewSessionFinalizer:
         trust_recorder: CrewSessionTrustRecorder | None = None,
         approval_threshold: float = 0.6,
         use_confidence_weights: bool = True,
+        agent_stops: AgentStopService | None = None,
     ) -> None:
         if (
             type(approval_threshold) not in (int, float)
@@ -718,6 +720,7 @@ class CrewSessionFinalizer:
         self._trust_recorder = trust_recorder
         self._approval_threshold = float(approval_threshold)
         self._use_confidence_weights = use_confidence_weights
+        self._agent_stops = agent_stops  # AD-1343 A3: a stopped facilitator's synthesis is not claimed
         self._active_claims: dict[str, _ClaimAttempt] = {}
         register_owned = getattr(
             self._sessions,
@@ -1670,21 +1673,24 @@ class CrewSessionFinalizer:
             result,
             thread_id=session.thread_id,
         )
-        outcome = await self._verifier.converge_for_session(
-            result,
-            instructions=instructions,
-            task_text=task_text,
-            expected_output=self._expected_output(child),
-            parent_id=session.task_id,
-            thread_id=session.thread_id,
-            department=str(getattr(producer, "department", "") or ""),
-            rank=str(getattr(producer, "rank", "ensign") or "ensign"),
-            **(
-                {"owned_steps_snapshot": owned_snapshot}
-                if owned_snapshot is not None
-                else {}
-            ),
-        )
+        try:
+            outcome = await self._verifier.converge_for_session(
+                result,
+                instructions=instructions,
+                task_text=task_text,
+                expected_output=self._expected_output(child),
+                parent_id=session.task_id,
+                thread_id=session.thread_id,
+                department=str(getattr(producer, "department", "") or ""),
+                rank=str(getattr(producer, "rank", "ensign") or "ensign"),
+                **(
+                    {"owned_steps_snapshot": owned_snapshot}
+                    if owned_snapshot is not None
+                    else {}
+                ),
+            )
+        except AgentStopped as exc:  # A3 (R2): the producer was stopped before its correction; nothing is recorded
+            raise ValueError("child_producer_unavailable") from exc
         return await self._defer_checkpoint(self._checkpoint_child_convergence(
             session=session,
             child=child,
@@ -2002,23 +2008,33 @@ class CrewSessionFinalizer:
                 tokens_used=document["tokens_used"],
             ), recovery
         facilitator = self._live_agent(session.facilitator_id)
-        if facilitator is None:
+        if facilitator is None or active_stop(self._agent_stops, session.facilitator_id, SEAM_AGENTIC_RUN) is not None:
+            # AD-1343 A3 (R1): a facilitator stopped by the Captain's order is not available, as one not live; checked
+            # before the synthesis is claimed, so no claim is left behind. Through the orchestrator this ends the session
+            # blocked (recovery_integrity_conflict), which the Captain cannot yet retry (D44; AD-1343 S2).
             raise ValueError("synthesis_producer_unavailable")
         instructions = _text(
             getattr(facilitator, "instructions", None),
             maximum_codepoints=32_768,
             maximum_bytes=_MAX_INSTRUCTIONS_BYTES,
         )
-        await self._claim_owned_synthesis(session)
-        draft = await self._synthesizer.synthesize_for_session(
-            parent_id=session.task_id,
-            producer_agent_id=session.facilitator_id,
-            producer_instructions=instructions,
-            goal=session.goal,
-            success_criteria=session.success_criteria,
-            expected_deliverable=session.expected_deliverable,
-            outcomes=tuple(item.outcome for item in publications),
-        )
+        # A4 (F1): the check above is the admission; the claim records it. A stop landing after the check runs the
+        # admitted synthesis (S1_SCOPE does_not_end): a refusal after the claim would leave a fence that every later
+        # resume reads as an interrupted synthesis, though nothing ran.
+        admission = await self._claim_owned_synthesis(session)
+        try:
+            draft = await self._synthesizer.synthesize_for_session(
+                parent_id=session.task_id,
+                producer_agent_id=session.facilitator_id,
+                producer_instructions=instructions,
+                goal=session.goal,
+                success_criteria=session.success_criteria,
+                expected_deliverable=session.expected_deliverable,
+                outcomes=tuple(item.outcome for item in publications),
+                admitted_synthesis=admission is not None,  # A4 (F1): only a synthesis this resume has just claimed
+            )
+        except AgentStopped as exc:  # A3 (R1), A4: a session with no owned steps, so nothing was claimed or synthesized
+            raise ValueError("synthesis_producer_unavailable") from exc
         recovery = await self._defer_checkpoint(self._checkpoint_synthesis(
             session=session,
             recovery=recovery,
@@ -2027,10 +2043,12 @@ class CrewSessionFinalizer:
         ))
         return draft, recovery
 
-    async def _claim_owned_synthesis(self, session: CrewSessionContract) -> None:
+    async def _claim_owned_synthesis(self, session: CrewSessionContract) -> owned_steps.OwnedStepMutationResult | None:
+        """Claim the owned synthesis (the AD-1192 fence). A4 (F1): the admission is returned once the claim is made,
+        so the synthesis it records is admitted; None when the session has no owned steps and nothing is claimed."""
         snapshot = await self._owned_steps_snapshot(session.task_id)
         if snapshot is None:
-            return
+            return None
         control = snapshot.control
         token = owned_steps.OwnedStepsPlanToken(
             parent_id=control.parent_id, incarnation=control.incarnation,
@@ -2050,6 +2068,7 @@ class CrewSessionFinalizer:
                 "owned_steps_synthesis_interrupted", parent_id=session.task_id,
                 actions=("inspect_source", "interrupted_work"),
             )
+        return admission  # A4 (F1): the durable claim is made; the synthesis it records is admitted
 
     async def _checkpoint_synthesis(
         self,
@@ -2715,6 +2734,14 @@ class CrewSessionFinalizer:
                 correction_tokens = self._correction_tokens(outcome)
             except asyncio.CancelledError:
                 raise
+            except AgentStopped:  # A3 (R2): the producer was stopped before its correction; no outcome, no exhaustion
+                return await self._fail(
+                    session,
+                    reason="child_producer_unavailable",
+                    accepted_count=self._accepted_count(publications),
+                    total_count=len(children),
+                    blocked=True,
+                )
             except Exception:
                 return await self._fail(
                     session,
@@ -2879,6 +2906,14 @@ class CrewSessionFinalizer:
                 raise ValueError("crew_finalization_synthesis_invalid")
         except asyncio.CancelledError:
             raise
+        except AgentStopped:  # A3 (R1): the facilitator is stopped; nothing was synthesized, as a facilitator not live
+            return await self._fail(
+                session,
+                reason="synthesis_producer_unavailable",
+                accepted_count=self._accepted_count(publications),
+                total_count=len(children),
+                blocked=True,
+            )
         except Exception:
             return await self._fail(
                 session,

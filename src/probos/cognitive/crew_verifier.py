@@ -55,6 +55,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos import work_item_steps as owned_steps
+from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, active_stop, standing_stop
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
     JudgeProvenance,
@@ -459,6 +460,8 @@ class _SessionProjectedToolRegistry(ToolRegistry):
         explicit_denial_ids: frozenset[str],
     ) -> None:
         super().__init__()
+        # AD-1343: a projected registry enforces its source's stop (super() invokes here).
+        self.set_stop_gate(getattr(source_registry, "stop_gate", None))
         self._source_registry = source_registry
         self._source_backed_ids = source_backed_ids
         self._explicit_denial_ids = explicit_denial_ids
@@ -1445,6 +1448,14 @@ class SubtaskVerifier:
         prompt += await self._build_trace_section(
             getattr(result, "tool_trace_ref", None),
         )
+        if self._stopped(verifier_id):  # A3 (R1): stopped while its prompt was built; nothing is judged under its name
+            return VerificationVerdict(
+                accepted=False,
+                confidence=0.0,
+                critique="No independent verifier available; result unverified.",
+                verifier_agent_id="",
+                verification_defect=True,
+            )
         request_tier = self._judge_tier()
         request = LLMRequest(
             prompt=prompt,
@@ -1552,6 +1563,9 @@ class SubtaskVerifier:
             if fault_observer_for(self._runtime) is not None else {}
         )
         while rounds < self._max_rounds:
+            # AD-1343: a stopped producer is not re-run; its refuted result escalates unverified below.
+            if active_stop(getattr(self._runtime, "agent_stops", None), result.agent_id, SEAM_AGENTIC_RUN) is not None:
+                break
             rounds += 1
             critiqued_task = f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
             correction_permit = None
@@ -1728,6 +1742,8 @@ class SubtaskVerifier:
                             owned_steps_snapshot,
                             correction,
                         )
+            except AgentStopped:
+                break  # AD-1343: stopped after the check above; nothing ran, nothing is re-verified
             except owned_steps.OwnedStepsError:
                 raise
             except Exception:
@@ -1875,6 +1891,16 @@ class SubtaskVerifier:
             prompt += await self._build_trace_section(
                 getattr(result, "tool_trace_ref", None),
             )
+            if self._stopped(verifier_id):  # A3 (R1): stopped while its prompt was built (session); nothing is judged
+                return SessionVerificationPass(
+                    status="unavailable",
+                    accepted=False,
+                    confidence=0.0,
+                    critique="No eligible independent verifier is available.",
+                    verifier_agent_id="",
+                    tokens_used=0,
+                    failure_code="independent_verifier_unavailable",
+                )
             response = await self._llm.complete(LLMRequest(
                 prompt=prompt,
                 system_prompt=self._JUDGE_SYSTEM_PROMPT,
@@ -1928,7 +1954,13 @@ class SubtaskVerifier:
         rank: str,
         owned_steps_snapshot: owned_steps.OwnedStepsSnapshot | None = None,
     ) -> SessionConvergenceOutcome:
-        """Converge one child with bounded revisions and no learning writes."""
+        """Converge one child with bounded revisions and no learning writes.
+
+        AD-1343 A3: raises ``AgentStopped`` when the producer of a refuted child is stopped by the
+        Captain's order before its correction runs. No correction executes and no outcome is
+        returned, so nothing can read the stop as exhaustion; the finalizer blocks the session as
+        for a producer that is not available.
+        """
         current = replace(
             result,
             artifact_refs=[dict(ref) for ref in result.artifact_refs],
@@ -1984,6 +2016,11 @@ class SubtaskVerifier:
             if fault_observer_for(self._runtime) is not None else {}
         )
         for attempt_index in range(1, max_rounds + 1):
+            # AD-1343: a stopped producer is not re-run; checked before a correction is admitted. A3 (R2): raised, not
+            # returned, so no outcome is recorded and nothing reads the stop as exhaustion.
+            stopped = active_stop(getattr(self._runtime, "agent_stops", None), current.agent_id, SEAM_AGENTIC_RUN)
+            if stopped is not None:
+                raise AgentStopped(stopped)  # A3 (R2): before admission, so nothing was admitted or executed
             critiqued_task = (
                 f"{normalized_task}\n\nCRITIQUE:\n{verdict.critique}"
             )
@@ -2124,6 +2161,17 @@ class SubtaskVerifier:
                     outcome = None
             except asyncio.CancelledError:
                 raise
+            except AgentStopped:
+                # AD-1343 A3 (R2, R5): stopped after the check above, at the run entry. No correction executed and no
+                # outcome is recorded. A correction admitted first (an owned session) keeps its permit as the evidence
+                # of that admission, and is said so here.
+                if correction_permit is not None:
+                    logger.warning(
+                        "AD-1343: correction %d of child %s was admitted but not executed: its producer %s is "
+                        "stopped by the Captain's order",
+                        attempt_index, current.work_item_id, current.agent_id,
+                    )
+                raise  # A3 (R2): the finalizer blocks the session as for a producer that is not available
             except Exception:
                 logger.warning(
                     "Session correction failed for child %s on attempt %d; "
@@ -2273,6 +2321,15 @@ class SubtaskVerifier:
             terminal_attempt=None,
         )
 
+    def _stopped(self, agent_id: object) -> bool:
+        """AD-1343 A3 (R1): is ``agent_id`` stopped by the Captain's order? Memory only, and not counted.
+
+        Asked of each verifier candidate and again just before a judgment's model call. A candidate
+        passed over refuses no work (a colleague verifies, or the existing unavailable outcome stands),
+        the ``CrewAssignmentResolver.check_eligibility`` rule.
+        """
+        return standing_stop(getattr(self._runtime, "agent_stops", None), agent_id) is not None
+
     # ------------------------------------------------------------------ internals
 
     _JUDGE_SYSTEM_PROMPT = (
@@ -2321,6 +2378,8 @@ class SubtaskVerifier:
             if self._registry.get(candidate_id) is not candidate:
                 continue
             if getattr(candidate, "is_alive", None) is not True:
+                continue
+            if self._stopped(candidate_id):  # A3 (R1): a stopped colleague is never picked
                 continue
             return candidate_id
         return None
@@ -2812,7 +2871,7 @@ class SubtaskVerifier:
 
         for agent in agents:
             agent_id = getattr(agent, "id", None)
-            if agent_id and agent_id != producer_id:
+            if agent_id and agent_id != producer_id and not self._stopped(agent_id):  # A3 (R1): never a stopped agent
                 return agent_id
         return None
 
@@ -2837,6 +2896,8 @@ class SubtaskVerifier:
                 continue
             if self._registry.get(agent_id) is None:
                 continue  # dead/unregistered — excluded
+            if self._stopped(agent_id):  # A3 (R1): a stopped department peer is passed over
+                continue
             cand_type = getattr(agent, "agent_type", None)
             if cand_type is None:
                 continue
@@ -2865,6 +2926,8 @@ class SubtaskVerifier:
                     continue
                 if self._registry.get(cand_id) is None:
                     continue  # superior post unfilled by a live agent — excluded
+                if self._stopped(cand_id):  # A3 (R1): a stopped chief is passed over
+                    continue
                 return cand_id
         return None
 

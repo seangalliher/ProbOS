@@ -280,6 +280,7 @@ def create_app(runtime: Any) -> FastAPI:
         faults as faults_router,  # AD-1207: bounded fault observations (#1152)
         approval_authority as approval_authority_router,  # AD-1213: the Captain's approval-authority controls
         decision_pre_clearances as decision_pre_clearances_router,  # AD-1214: the Captain's decision pre-clearances
+        agent_stop as agent_stop_router,  # AD-1343: the Captain's stop for one agent
     )
     for r in (
         ontology, system, wardroom, wardroom_admin, records, identity,
@@ -325,6 +326,7 @@ def create_app(runtime: Any) -> FastAPI:
         faults_router,  # AD-1207: bounded fault observations (#1152)
         approval_authority_router,  # AD-1213: the Captain's approval-authority controls
         decision_pre_clearances_router,  # AD-1214: the Captain's decision pre-clearances
+        agent_stop_router,  # AD-1343: the Captain's stop for one agent
     ):
         app.include_router(r.router)
     if federation_attachments_router.peer_requests_armed(getattr(runtime, "config", None)):  # AD-1198 the signed peer route is served only while admission is armed

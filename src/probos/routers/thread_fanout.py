@@ -57,6 +57,7 @@ from probos.crew_profile import (
     extract_directed_callsign,
     extract_handoff_callsign,
 )
+from probos.agent_stop import SEAM_GROUP_FANOUT, active_stop
 from probos.crew_utils import is_crew_agent
 from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.types import IntentMessage
@@ -651,6 +652,10 @@ async def _fan_one_round(
                 callsign = runtime.callsign_registry.get_callsign(agent.agent_type) or ""
         except Exception:
             logger.debug("AD-914: callsign resolve failed for %s", agent_id, exc_info=True)
+        # AD-1343: a stopped agent takes no group turn; its slot is released as a decline, so the
+        # room is not stalled and nothing is captured, dispatched or stored for it.
+        if active_stop(getattr(runtime, "agent_stops", None), agent_id, SEAM_GROUP_FANOUT) is not None:
+            return {"agent_id": agent_id, "callsign": callsign, "text": "", "_declined": True}
         # BF-651: saved-output manifest so a reviewer verifies against STORAGE,
         # not memory (crew read_file outputs/X.docx came back empty — artifacts
         # live in the ArtifactStore by name, not on disk). Honest-degrade to [].

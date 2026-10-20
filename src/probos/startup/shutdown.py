@@ -1405,6 +1405,13 @@ async def shutdown(
             await runtime.acm.stop()
         runtime.acm = None
 
+    # Close the Captain's stop record (AD-1343). The runtime keeps the service: its
+    # in-memory view goes on refusing a stopped agent until the process ends.
+    agent_stops = getattr(runtime, "agent_stops", None)
+    if agent_stops is not None:
+        with steps("agent stop record stop", agent_stops):
+            await agent_stops.stop()
+
     # Stop Visiting Officer registry (AD-701)
     vo_registry = getattr(runtime, "visiting_officers", None)
     if vo_registry is not None:
