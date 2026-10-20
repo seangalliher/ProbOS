@@ -2041,3 +2041,210 @@ Blind spots found and settled: the Settings writer would persist an injected tok
 ## 15. Captain
 
 Nothing in this contract needs the Captain: the Captain's decision of 2026-10-20 delegated the config-file question (D7) to the Architect, every other choice is inside the envelope, and no control is weakened (D5 adds a fail-closed state; D10 widens the floor). The Captain's own actions after merge, not decisions: run `probos crew-token set` with the token in use, delete `auth.crew_scope_token` from the config file, restart the vessel.
+
+---
+
+## Amendment A1 (2026-10-20, after the whole-contract dry run)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+**Trigger.** Dry run of 2026-10-20 13:00-13:30Z (orchestrator): the contract's 41 SEARCH/REPLACE pairs and five new files applied to `2b97ca11`; the whole existing suite gave 1 failed, 48,927 passed, 147 skipped. The failure: `tests/test_ad1137_doctor.py::test_the_doctor_package_is_imported_only_by_the_cli` (`:1415-1437`, `assert importers == {"__main__.py"}`), because section 5.14's `_load` imports `probos.doctor.runner.describe_load_failure`. A second defect of the same class turned up in the self-check below: H1 as written (section 5.16) fails on the contract's own doctor check (`name: str = "crew_scope_token"`, section 5.13). The dry run could not catch it because the test tables were not applied.
+
+**Apply order.** Apply these blocks to the tree as it stands after the contract's own blocks (cumulative). Each SEARCH occurs exactly once in that tree.
+
+**Supersedes:**
+- D16's last clause, "the CLI reads the config through AD-1137's redacting `describe_load_failure`". Replaced by D19.
+- Section 5.14: the `_load` function and the docstring sentence that starts "This is the Captain's action". Replaced by A1.1 and A1.2.
+- Section 5.16: rows H1 and H2. Replaced by the rows below. New row G9.
+- Section 5.17: the `_imports` helper. Replaced by A1.4.
+- Section 10: the H1/H2 row. Added: a G9 row.
+- Section 12, "AD-1137 (doctor names settings, never values; `describe_load_failure`, reused)". It now reads: "AD-1137's rule kept: the CLI does not import the doctor package and points to `probos doctor`."
+- Section 13, criterion 6. Replaced below.
+- Header "Estimated tests": about 71 (one new parametrized test, G9).
+- Section 5.15 (`__main__.py`) is **unchanged**. A1 needs no `__main__` edit.
+
+### D19 (new; amends D16)
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D19 | **`probos crew-token` imports nothing from `probos.doctor`.** If the config does not load, the CLI prints the config path and the exception's **type name** only, then points to `probos doctor --config <path>`, which names the setting at fault without its value (AD-1137). It exits 2 before the keyring is read. No value can leak, by construction: the exception's text is never formatted. The standing AD-1137 guard stays unedited. | (1) Inject the describer from `__main__` (a `describe_load_failure` keyword on `run`): the guard passes, but it adds a `Callable` parameter, a second code path (a `None` default that must print the type only anyway) and a `__main__` edit, all to repeat in the CLI what `probos doctor` already reports. A config that does not load also stops the vessel, so the Captain runs `probos doctor` either way. (3) Widen the AD-1137 test to allow `crew_token_cli.py`: it weakens a standing structural guard to fit new code. The guard keeps the doctor package, which reaches `provider_setup`, inside one entry point. That is not this contract's call, and nothing needs it. |
+
+### A1.1 `src/probos/crew_token_cli.py`: the docstring states the rule
+
+SEARCH:
+```python
+This is the Captain's action. No route, crew tool or MCP server reaches it: only
+``probos/__main__.py`` imports this module (pinned by
+``tests/test_bf908_crew_scope_token.py``). An agent's shell command runs as the same
+```
+REPLACE:
+```python
+This is the Captain's action. No route, crew tool or MCP server reaches it: only
+``probos/__main__.py`` imports this module (pinned by
+``tests/test_bf908_crew_scope_token.py``), and it imports nothing from
+``probos.doctor`` (AD-1137: only ``__main__`` does, ``tests/test_ad1137_doctor.py``).
+An agent's shell command runs as the same
+```
+
+### A1.2 `src/probos/crew_token_cli.py`: `_load` shows the type only
+
+SEARCH:
+```python
+def _load(config_path: Path, console: Console) -> Any | None:
+    from probos.config import load_config
+    from probos.doctor.runner import describe_load_failure
+
+    try:
+        return load_config(config_path)
+    except Exception as exc:  # noqa: BLE001 -- reported without any value from the file (AD-1137)
+        console.print(escape(f"Config {config_path} does not load: {describe_load_failure(exc, config_path)}"), style="red")
+        return None
+```
+REPLACE:
+```python
+def _load(config_path: Path, console: Console) -> Any | None:
+    """The config at ``config_path``, or None after saying it does not load.
+
+    BF-908 A1 (D19): only the exception's type is shown, because its text can quote a
+    value from the file (Pydantic's input_value). ``probos doctor`` names the setting at
+    fault without its value; only ``__main__`` imports the doctor package (AD-1137).
+    """
+    from probos.config import load_config
+
+    try:
+        return load_config(config_path)
+    except Exception as exc:  # noqa: BLE001 -- BF-908 A1: the type name only, never the exception's text
+        console.print(escape(f"Config {config_path} does not load ({type(exc).__name__}); `probos doctor --config {config_path}` names the setting at fault."), style="red")
+        return None
+```
+
+### A1.3 Test rows (section 5.16): H1 and H2 replaced, G9 added
+
+| ID | Test | Asserts |
+|---|---|---|
+| G9 | `test_cli_a_config_that_does_not_load_shows_its_type_never_its_text` (parametrized over `"status"`, `"set"`, `"clear"`) | `path = tmp_path/"config.yaml"` = `yaml.safe_dump({"cognitive": {"llm_timeout_seconds": FILE_TOKEN}})`. Premise, following `tests/test_ad1137_doctor.py:316-323`: `pytest.raises(ValidationError)` on `load_config(path)` and `FILE_TOKEN in str(exc_info.value)`. Then `crew_token_cli.run(cmd, config_path=path, console=Console(file=io.StringIO(), soft_wrap=True, color_system=None), read_secret=<raises AssertionError>, stdin_is_tty=lambda: True, backend=mem)` returns 2. The output contains `str(path)`, `"ValidationError"` and `"probos doctor --config"`; `FILE_TOKEN not in` the output; `mem.entries == {}`; `read_secret` is never called. |
+| H1 | `test_no_module_reads_the_token_setting_directly` | AST scan of every `src/probos/**/*.py`, outside `probos/security/crew_scope.py`. A **read shape** fails, naming the file and line: (a) any `ast.Attribute` with `attr == "crew_scope_token"`; (b) an `ast.Constant` equal to `"crew_scope_token"` used as the second positional argument of a `getattr`, `hasattr` or `setattr` call, or as a `Subscript` slice. A constant in any other position is not a read and is allowed: the doctor check's `name: str = "crew_scope_token"` (section 5.13; the D14 check name, which F1/F2 pin). In the owner: exactly one such `ast.Attribute` (the read in `configured_crew_scope_token`). The scan visited more than 500 files. Detector premise: run the same detector on `ast.parse('getattr(a, "crew_scope_token", "")\nb["crew_scope_token"]\nc.auth.crew_scope_token\nname: str = "crew_scope_token"')` and it reports exactly lines 1, 2 and 3. |
+| H2 | `test_only_the_captain_s_cli_writes_the_keyring_entry` | As before: the modules calling `store_keyring_token` or `clear_keyring_token` (as `Name` or `Attribute`), other than the defining module, are `== {"probos.crew_token_cli"}`; the modules importing `probos.crew_token_cli` are `== {"probos.__main__"}`; the modules importing `probos.security.crew_scope` are `== {"probos.credential_store", "probos.crew_token_cli", "probos.doctor.checks.crew_scope_check"}`. **Added:** no name in `_imports("probos.crew_token_cli", tree)` equals `probos.doctor` or starts with `probos.doctor.` (AD-1137's rule, with a BF-908 failure message). Imports are collected with A1.4's helper, which resolves relative imports, so `from ..security import crew_scope` counts. Detector premise: `_imports("probos.routers.x", ast.parse("from ..security import crew_scope"))` contains `"probos.security.crew_scope"`. |
+
+Rows G1-G8 are unchanged: none of them reaches the load failure.
+
+### A1.4 Section 5.17's `_imports` helper, replaced (relative imports resolved)
+
+```python
+def _imports(module: str, tree: ast.Module) -> set[str]:
+    """Dotted names ``tree`` imports, anywhere in it; relative imports resolved against ``module``'s package.
+
+    ``module`` is the dotted name ``_modules()`` yields (``probos.routers.auth``; a package's
+    ``__init__`` yields ``probos.routers.__init__``, whose package is ``probos.routers``).
+    """
+    package = module.split(".")[:-1]
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                base = node.module or ""
+            else:
+                anchor = package[: len(package) - (node.level - 1)]
+                base = ".".join([*anchor, *([node.module] if node.module else [])])
+            found.add(base)
+            found.update(f"{base}.{alias.name}" for alias in node.names)
+    return found
+```
+
+(Pattern: `tests/test_ad1326_procedure_challenger.py:2322-2346`.) Callers pass the name `_modules()` yields. A package's `__init__` reports as `probos.x.__init__`, so H2 compares module names with any `.__init__` suffix stripped.
+
+### A1.5 Section 10 rows
+
+| Test | Proves | Does not prove |
+|---|---|---|
+| G9 | A config that does not load is refused (exit 2) before the keyring is read. The output names the file, the exception's type and `probos doctor`, never the exception's text, though that text quotes a value. | Which setting is at fault: that is `probos doctor`'s job (AD-1137 tests). |
+| H1, H2 | No module but the owner reads the setting (attribute, `getattr` or subscript); only the CLI calls the writers; only three modules import the keyring module (relative imports included), and none is a router, tool, federation or MCP module; the CLI imports nothing from the doctor package. | That a same-user process cannot call `keyring` itself (residual R1). A read through a computed name (`getattr(a, "crew_" + "scope_token")`). |
+
+### A1.6 Mutation table (section 9): one row added
+
+| # | File | Line (stripped, exact) | Mutate to | Killed by |
+|---|---|---|---|---|
+| 35 | `src/probos/crew_token_cli.py` | `` console.print(escape(f"Config {config_path} does not load ({type(exc).__name__}); `probos doctor --config {config_path}` names the setting at fault."), style="red") `` | the same line with `({type(exc).__name__})` replaced by `({exc})` | G9 |
+
+Rows 1-34 are unchanged. Rows 23-26 (`crew_token_cli.py`) are untouched by A1.1/A1.2 and still unique in their file.
+
+### A1.7 Section 8.1 and section 13
+
+- Section 8.1, "Startup and doctor": add `tests/test_ad1135_provider_setup.py` (its `provider_setup` importer set, `:703`). `tests/test_ad1137_doctor.py` is already listed. It must pass **unedited**.
+- Section 13, criterion 6, replaced: "`probos crew-token` takes no token from the command line, is reachable only from `__main__`, and imports nothing from `probos.doctor` (G8, H2; `tests/test_ad1137_doctor.py::test_the_doctor_package_is_imported_only_by_the_cli` passes unedited). A config that does not load is reported by type only (G9)."
+
+### A1.8 Premises to re-verify (section 14, items added)
+
+11. With A1 applied, `tests/test_ad1137_doctor.py::test_the_doctor_package_is_imported_only_by_the_cli` passes **unedited** (the dry run's single failure). `tests/test_ad1135_provider_setup.py:703` still passes: the CLI never imported `provider_setup` directly, and now does not reach it through the doctor package either.
+12. G9's premise holds: `str(ValidationError)` quotes `input_value` (no model sets `hide_input_in_errors`; Grep over `src/probos`: 0 hits). If it fails, report it; do not drop the `FILE_TOKEN not in output` assertion.
+13. H1's narrowed detector, run on the built tree, reports nothing outside the owner. Expected allowed constants: `doctor/checks/crew_scope_check.py` (`name: str = "crew_scope_token"`) only. The owner's `CREW_SCOPE_KEYRING_USERNAME = "crew_scope_token"` is inside the owner.
+14. Rerun the whole existing suite, or at least the files in 8.1, on the amended tree. Expected: 0 failed.
+
+### A1.9 Self-check: other structural or inventory guards the new or edited modules could trip
+
+The dry run applied every source file and the fixture, so each existing guard over `src/` ran against them and passed (the only failure is the one above). What the dry run did **not** exercise: guards that scan `tests/`, which will see the two new test files once the Builders write them, and the contract's own new guards (H1, H2, E4). Checked:
+
+```
+CLAIM: no other existing AST importer-set test is tripped by the new or edited modules
+RUN:   Grep "importers == |== \{\"__main__" tests/
+FOUND: test_ad1135_provider_setup.py:703 (provider_setup importers: the CLI never imports provider_setup; unaffected),
+       test_ad1137_doctor.py:1437 (the failure; fixed by A1.2),
+       test_ad1326_procedure_challenger.py:2366 (the procedure ledger module; not imported by any BF-908 module),
+       test_bf877_unapproved_design_is_refused.py:457 (ProbOSShell construction sites; none added),
+       test_codebase_index.py:396 (unrelated)
+HOLDS: yes
+
+CLAIM: no existing guard that scans tests/ would trip on the two new test files as specified
+RUN:   Grep for rglob/glob over the tests directory in tests/ and scripts/
+FOUND: test_ad1270e2g_crew_models.py:724 (flags reads of the literal "src/probos/config.py": the BF-908 tables have none);
+       test_ad1270f_shutdown_grace.py:902, :1069 (only files that contain "fast_teardown": none planned);
+       test_ad1248_slice_c_one_shape.py:251 (a set literal equal to the crew-execution key shape: none planned);
+       scripts/check_architecture_principles.py:1035 (source-text-tests: E4's getsource and H1/H2's read_text are
+         reported, never failed: REPORT_ONLY_CATEGORIES, :168);
+       scripts/check_config_profiles.py:81 (reads tests/conftest.py: applied in the dry run, preflight green);
+       tests/fixtures/file_durations.json (no inventory: an unknown file is weighed at the mean, test_ci_shards.py:498)
+HOLDS: yes
+
+CLAIM: the contract's own new guards hold against the contract's own code
+RUN:   Grep "[\"']crew_scope_token[\"']|\.crew_scope_token\b" over src/probos and over this contract's code blocks
+FOUND: base reads = the eleven sites, all replaced; contract code: security/crew_scope.py:136 (owner constant),
+       :187 (the owner's one Attribute read), doctor/checks/crew_scope_check.py (section 5.13) `name: str = "crew_scope_token"`
+       -> H1 as first written FAILS here; fixed by A1.3's narrowed H1 (a check name is not a read)
+RUN:   Grep "probos\.security\.crew_scope|store_keyring_token|clear_keyring_token|probos\.crew_token_cli" in this contract
+FOUND: importers credential_store (section 5.3), crew_token_cli (5.14), doctor/checks/crew_scope_check (5.13), and the
+       tests/fixtures file (outside src, not scanned by H2); writers called only in crew_token_cli; crew_token_cli
+       imported only by __main__ (5.15)
+HOLDS: yes, H2 holds; E4 asserts only strings the contract's runtime.py block adds
+```
+
+Also checked, no defect found: the doctor ordering pin `tests/test_bf906_doctor_check.py:350` (`extras` -> `verifier_independence`), since `crew_scope_check` sits after `security_check`, not between those two; and the AD-1343 seam inventory, the store registry and the architecture baseline over `src/`, all green in the dry run. A subtlety the dry run could not show: section 5.17's `_imports` ignored relative imports, which would have let a router escape H2's import check silently. A1.4 closes it.
+
+### A1.10 Verified Against Codebase (2026-10-20, tree `2b97ca11` plus the contract's blocks as the orchestrator reported them)
+
+```
+grep -n "def test_the_doctor_package_is_imported_only_by_the_cli|assert importers ==" tests/test_ad1137_doctor.py
+  1415: def test_the_doctor_package_is_imported_only_by_the_cli() -> None:   1437: assert importers == {"__main__.py"}
+grep -n "def describe_load_failure|from probos import provider_setup" src/probos/doctor/runner.py
+  87: def describe_load_failure(exc: Exception, path: Path) -> str:   92: from probos import provider_setup
+grep -n "from probos.doctor" src/probos/__main__.py
+  1871: from probos.doctor import run_doctor   1872: from probos.doctor.runner import build_context
+grep -n "doctor_parser.add_argument" src/probos/__main__.py
+  3118-3120: "--config", "-c", ... help="Check this config file (default: the one probos loads)"
+grep -n "raw = yaml.safe_load(f)" src/probos/config.py
+  4109 (a file stream: a YAML error carries no snippet, so G9 uses the ValidationError case)
+grep -n "assert secret in str(exc_info.value)" tests/test_ad1137_doctor.py
+  323 (the G9 premise pattern)
+grep -n "hide_input_in_errors" src/probos   -> 0 hits
+grep -n "def _from_module|def _imported_modules" tests/test_ad1326_procedure_challenger.py
+  2322, 2330 (A1.4's pattern)
+grep -n "REPORT_ONLY_CATEGORIES|SOURCE_TEXT_MARKERS" scripts/check_architecture_principles.py
+  168: ("private-access", "source-text-tests")   249: ("getsource", "read_text")
+Contract text used as SEARCH (each once in its file after the contract's blocks): section 5.14 lines 1153-1155
+  (docstring) and 1211-1219 (`_load`); "does not load" occurs once in crew_token_cli.py after A1.2 (mutation row 35).
+```
+
+### A1.11 Captain
+
+Nothing here needs the Captain. D19 removes a dependency; it does not weaken a control. The AD-1137 guard stays unedited, and D16's "no value is ever printed" becomes stronger: nothing is redacted because nothing is formatted. H1's narrowing applies to a test this contract introduces, not to any standing guard, and it still catches every read shape the base tree has (attribute, `getattr`).
