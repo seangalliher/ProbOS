@@ -162,6 +162,7 @@ if TYPE_CHECKING:
         GovernedEffectBrokerProtocol,
     )
     from probos.acm import AgentCapitalService
+    from probos.agent_stop import AgentStopService  # AD-1343
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
     from probos.continue_extension_permits import SqliteContinueExtensionPermitStore  # AD-1323
@@ -516,6 +517,7 @@ class ProbOSRuntime:
     intent_grant_store: "IntentGrantStore | None"
     acm: AgentCapitalService | None
     crew_enrollment: "CrewEnrollmentService | None"  # BF-906
+    agent_stops: "AgentStopService | None"  # AD-1343
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
     identity_key_binding: IdentityKeyBinding | None  # AD-1196
@@ -699,6 +701,7 @@ class ProbOSRuntime:
         self.event_log = EventLog(db_path=self._data_dir / "events.db")
         self.execution_authority = None
         self.effect_broker = None
+        self.agent_stops = None  # AD-1343: started in Phase 1a
         # AD-1195: persists DURABLE EventType members to the event log.
         self.durable_events = DurableEventRouter(self.event_log)
 
@@ -2759,6 +2762,13 @@ class ProbOSRuntime:
         self.identity_key_binding = infra.identity_key_binding  # AD-1196
         self.execution_authority = infra.execution_authority
         self.effect_broker = infra.effect_broker
+        # AD-1343 (Phase 1a): the Captain's stop record. Started before any agent exists,
+        # so no dispatch precedes it; an unopenable agent_stops.db aborts startup, so
+        # nothing runs without the record (fail-closed by construction).
+        from probos.agent_stop import AgentStopService
+
+        self.agent_stops = AgentStopService(data_dir=self._data_dir, event_log=self.event_log)
+        await self.agent_stops.start()
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
         self.durable_events.bind_loop(self._dispatch_loop)
 
@@ -3251,6 +3261,8 @@ class ProbOSRuntime:
         self.decision_pre_clearance_store = comm.decision_pre_clearance_store  # AD-1214
         self.continue_extension_permit_store = comm.continue_extension_permit_store  # AD-1323
         self.tool_registry = comm.tool_registry
+        if self.tool_registry is not None:  # AD-1343: every tool path ends in check_and_invoke
+            self.tool_registry.set_stop_gate(self.agent_stops)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

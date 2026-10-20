@@ -13,6 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from probos.agent_stop import STOP_REASON_CODE, tool_refusal
 from probos.events import EventType
 from probos.tools.protocol import (
     Tool,
@@ -27,6 +28,7 @@ from probos.tools.protocol import (
 )
 
 if TYPE_CHECKING:
+    from probos.agent_stop import AgentStopService
     from probos.execution.effect_types import (
         EffectPermit,
         GovernedEffectBrokerProtocol,
@@ -100,6 +102,9 @@ class ToolRegistry:
         acquire_lock / release_lock / break_lock / get_lock / list_locks — LOTO
     """
 
+    # AD-1343: the Captain's stop (set_stop_gate); None routes exactly as before.
+    _stop_gate: "AgentStopService | None" = None
+
     def __init__(self) -> None:
         self._tools: dict[str, ToolRegistration] = {}
 
@@ -122,6 +127,15 @@ class ToolRegistry:
     def set_event_callback(self, fn: Callable[..., Any]) -> None:
         """Late-bind event emission."""
         self._emit_event = fn
+
+    def set_stop_gate(self, gate: "AgentStopService | None") -> None:
+        """AD-1343: late-bind the Captain's stop; every tool path ends in check_and_invoke."""
+        self._stop_gate = gate
+
+    @property
+    def stop_gate(self) -> "AgentStopService | None":
+        """AD-1343: the stop this registry enforces (a projected registry inherits it)."""
+        return self._stop_gate
 
     def arm_effect_broker(
         self, broker: "GovernedEffectBrokerProtocol"
@@ -370,6 +384,15 @@ class ToolRegistry:
                 raise ProtectedEffectBypassDenied(
                     "protected_effect_permit_missing"
                 )
+
+        # AD-1343: a stopped agent invokes nothing, whichever path called; refused before any lookup.
+        stopped = tool_refusal(self._stop_gate, agent_id, tool_id)
+        if stopped is not None:
+            if effect_permit is not None:
+                from probos.execution.effect_broker import EffectDenied
+
+                raise EffectDenied(STOP_REASON_CODE, result=stopped)
+            return stopped
 
         # #1214: existence BEFORE permission. This ran the other way round, so
         # an unregistered id resolved to NONE, failed the permission check, and

@@ -13,10 +13,12 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.agent_stop import SEAM_WARD_ROOM, active_stop
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 
 if TYPE_CHECKING:
+    from probos.agent_stop import AgentStopService, StopRecord
     from probos.cognitive.episodic import EpisodicMemory
     from probos.config import SystemConfig
     from probos.consensus.trust import TrustNetwork
@@ -35,6 +37,8 @@ class WardRoomRouter:
     """Routes Ward Room events to crew agents via intents."""
 
     _WARD_ROOM_COOLDOWN_SECONDS = 30  # Minimum seconds between responses per agent (captain-triggered)
+    # AD-1343: the Captain's stop. A class default so a router built without it routes as before.
+    _agent_stops: "AgentStopService | None" = None
 
     def __init__(
         self,
@@ -51,6 +55,7 @@ class WardRoomRouter:
         config: SystemConfig,
         notify_fn: Callable | None = None,
         proactive_loop: ProactiveCognitiveLoop | None = None,
+        agent_stops: "AgentStopService | None" = None,
     ) -> None:
         self._ward_room = ward_room
         self._registry = registry
@@ -64,6 +69,7 @@ class WardRoomRouter:
         self._config = config
         self._notify_fn = notify_fn
         self._proactive_loop = proactive_loop
+        self._agent_stops = agent_stops
 
         # State
         self._cooldowns: dict[str, float] = {}  # agent_id -> last_response_timestamp
@@ -266,6 +272,29 @@ class WardRoomRouter:
             )
         except Exception:
             logger.debug("BF-200: Failed to post cap notification", exc_info=True)
+
+    async def _post_stop_notice(self, thread_id: str, agent_id: str, stopped: "StopRecord") -> None:
+        """AD-1343: tell a thread once that an agent it addressed is stopped by the Captain."""
+        if not self._ward_room:
+            return
+        notice_key = (thread_id, f"agent_stop:{stopped.stop_id}")
+        if notice_key in self._cap_notices_posted:
+            return
+        self._cap_notices_posted.add(notice_key)
+        agent = self._registry.get(agent_id)
+        callsign = (getattr(agent, "callsign", "") if agent is not None else "") or agent_id[:8]
+        try:
+            await self._ward_room.create_post(
+                thread_id=thread_id,
+                author_id="system",
+                body=f"[System] {stopped.notice(callsign)}",
+                author_callsign="System",
+            )
+        except Exception:
+            logger.warning(
+                "AD-1343: the stop notice for %s in thread %s was not posted", agent_id, thread_id[:8],
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -610,6 +639,13 @@ class WardRoomRouter:
                 agent_id in mentioned_agent_ids
                 or (channel and channel.channel_type == "dm")
             )
+
+            # AD-1343: a stopped agent is not notified; a thread that addressed it is told once.
+            stopped = active_stop(self._agent_stops, agent_id, SEAM_WARD_ROOM)
+            if stopped is not None:
+                if is_direct_target:
+                    await self._post_stop_notice(thread_id, agent_id, stopped)
+                continue
 
             # AD-614: DM thread exchange limit
             if channel and channel.channel_type == "dm":

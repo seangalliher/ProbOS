@@ -55,6 +55,7 @@ import uuid
 import time
 from typing import Any, NoReturn
 
+from probos.agent_stop import SEAM_DELEGATION, STOP_REASON_CODE, AgentStopped, StopRecord, active_stop
 from probos.tools.delegation_budget import (
     DELEGATION_TREE_BUDGET_KEY,
     DelegationTreeBudget,
@@ -83,6 +84,15 @@ from probos.execution.effect_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _stopped_target(record: StopRecord, t0: float) -> DelegatedToolResult:
+    """AD-1343: a delegation whose target is stopped by the Captain's order: nothing started, nothing queued."""
+    return DelegatedToolResult(
+        output={"delegated": False, "reason": STOP_REASON_CODE, "stop": record.sender_detail()},
+        duration_ms=(time.monotonic() - t0) * 1000.0,
+        evidence=unobserved_delegation_evidence(status="not_started"),
+    )
 
 
 class DelegateTaskTool:
@@ -365,6 +375,11 @@ class DelegateTaskTool:
                     evidence=unobserved_delegation_evidence(status="not_started"),
                 )
 
+            # AD-1343: a stopped target starts nothing; refused before any tree slot, binding or run.
+            stopped = active_stop(getattr(self._runtime, "agent_stops", None), target.id, SEAM_DELEGATION)
+            if stopped is not None:
+                return _stopped_target(stopped, t0)
+
             # AD-1190: admit against the tree budget the root run opened, after
             # every cheaper refusal so a refused call consumes no slot.
             budget = ctx.get(DELEGATION_TREE_BUDGET_KEY)
@@ -543,6 +558,8 @@ class DelegateTaskTool:
                 duration_ms=(time.monotonic() - t0) * 1000.0,
                 evidence=evidence,
             )
+        except AgentStopped as exc:  # AD-1343: the target was stopped after the check above; nothing ran
+            return _stopped_target(exc.record, t0)
         except CorrelatedEffectError as exc:
             if (
                 strict_dispatch is None

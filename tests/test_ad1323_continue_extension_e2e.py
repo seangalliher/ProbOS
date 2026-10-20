@@ -440,6 +440,7 @@ async def test_tier3_consensus_gating_unchanged_under_recovery(rig: Rig) -> None
     allowed = {
         "agent_id", "instructions", "task_text", "runtime", "thread_id", "max_iterations", "tier",
         "compose_disposition", "failure_scope", "token_budget", "plan_mode_tool_ids",
+        "admitted_turn",  # AD-1343 A2: S2's promoted resume is an admitted turn; the run entry skips its stop check
     }
     assert set(rig.runs[0]) <= allowed
     assert rig.runs[0]["runtime"] is rig.runtime

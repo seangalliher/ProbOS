@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Protocol
 
 from probos import work_item_steps as owned_steps
+from probos.agent_stop import refuse_new_run  # AD-1343 A2
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.swe_harness.agentic_loop import (
@@ -2609,8 +2610,17 @@ class WorkItemAgenticExecutor:
         plan_mode_tool_ids: frozenset[str] | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
         inner_loop_hook: Any = None,
+        admitted_turn: bool = False,
     ) -> WorkItemAgenticOutcome:
-        """Reserve browser use across offer construction, execution and finalization."""
+        """Reserve browser use across offer construction, execution and finalization.
+
+        AD-1343: a stopped agent starts no new run, whoever asks (a delegation, a crew child, a
+        correction): ``AgentStopped`` is raised before any validation, browser reservation, context
+        or model work. ``admitted_turn=True`` is passed only by the agent's own turn, which the
+        intent sink admitted or S2 resumes (pinned by tests/test_ad1343_stop_seam_inventory.py).
+        """
+        if not admitted_turn:
+            refuse_new_run(runtime, agent_id)
         if any(value is not None for value in (
             owned_steps_execution_port, owned_steps_execution_lease, owned_steps_execution_permit,
         )):

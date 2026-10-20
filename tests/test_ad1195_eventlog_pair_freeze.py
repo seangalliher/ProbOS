@@ -86,6 +86,10 @@ _LITERAL_PAIRS: frozenset[tuple[str, str]] = frozenset({
 
 # DRIFT-2: the pairs that resolve through a constant, EventType member or conditional arm.
 _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    # AD-1343 (#1595): the Captain's stop order and its lift, through STOP_ISSUED_EVENT and
+    # STOP_LIFTED_EVENT. Best effort: agent_stops.db is authoritative.
+    ('agent_stop', 'agent_stop_issued'),
+    ('agent_stop', 'agent_stop_lifted'),
     ('backup', 'backup_complete'),
     ('backup', 'backup_failed'),
     # AD-1156: /mode's transition record, through MODE_CHANGED_EVENT. Best effort:

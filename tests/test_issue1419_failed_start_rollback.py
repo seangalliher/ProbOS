@@ -1129,6 +1129,7 @@ _STOPPED_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("red_team_lead", "red team lead stop"),
     ("_eviction_audit", "eviction audit log stop"),
     ("acm", "ACM stop"),
+    ("agent_stops", "agent stop record stop"),  # AD-1343: the runtime keeps the service after it closes
     ("visiting_officers", "visiting officer registry stop"),
     ("workflow_cron", "workflow cron stop"),
     ("identity_registry", "identity registry stop"),

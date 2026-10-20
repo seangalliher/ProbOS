@@ -41,6 +41,7 @@ from probos.cognitive.introspective_telemetry import (
     UPTIME_POPULATION,
     UPTIME_SOURCE,
 )
+from probos.agent_stop import SEAM_DM_ROUTE, active_stop
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
@@ -2957,6 +2958,12 @@ async def _agent_chat_impl(
 
     if not is_crew_agent(agent, runtime.ontology):
         raise HTTPException(status_code=400, detail=f"Agent {agent_id} is not a crew agent — direct chat is crew-only")
+
+    # AD-1343: a stopped agent takes no DM turn. Refused before the thread, the owned-steps
+    # capture, the send and the reply pipeline, so nothing is held, stored or replayed.
+    _stopped = active_stop(getattr(runtime, "agent_stops", None), agent_id, SEAM_DM_ROUTE)
+    if _stopped is not None:
+        raise HTTPException(status_code=409, detail=_stopped.sender_detail())
 
     # AD-791a: resolve (or create) the implicit default 1:1 thread for this
     # agent. The chat-thread substrate exists since AD-791; AD-791a wires

@@ -2202,6 +2202,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
         ontology=ontology,
         trust_network=trust_network,
         agent_registry=registry,
+        agent_stops=getattr(runtime, "agent_stops", None),  # AD-1343: a stopped agent is not eligible for crew work
     )
     crew_session_service.bind_worker_resolver(assignment_resolver)
     delegator = CrewDelegator(
@@ -2314,6 +2315,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
             "use_confidence_weights",
             True,
         ),
+        agent_stops=getattr(runtime, "agent_stops", None),  # AD-1343 A3: a stopped facilitator's synthesis is not claimed
     )
     runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
         assignment_resolver=assignment_resolver,
@@ -5339,6 +5341,7 @@ async def finalize_startup(
             config=config,
             notify_fn=runtime.notify,
             proactive_loop=proactive_loop,
+            agent_stops=getattr(runtime, "agent_stops", None),
         )
         # AD-637c: Only wire router ref for fallback path (NATS disconnected).
         # When NATS is connected, events flow through JetStream → consumer callback.
