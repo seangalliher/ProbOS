@@ -53,6 +53,11 @@ logger = logging.getLogger(__name__)
 # guard works for a reader that has no runtime and no config at all.
 _DEFAULT_WORKSPACE_ROOT = "data/execution/workspaces"
 
+# BF-908: the checkout's config file, mirroring ``__main__._repo_default_config_path``
+# (``src/probos/security/file_access.py`` -> ``parents[3]`` is the checkout). A literal
+# for the same reason: a reader with no runtime must still refuse it.
+_REPO_DEFAULT_CONFIG = Path(__file__).resolve().parents[3] / "config" / "system.yaml"
+
 # Belt-and-braces on top of the floor: these are refused by NAME wherever they
 # are, in case an operator relocates the vault outside the data directory.
 # Taken from ``CredentialVaultConfig`` defaults -- the first draft guessed
@@ -142,7 +147,7 @@ def resolve_read_path(
         # Longest prefix wins: a deeper exemption lifts a shallower floor.
         if exempt is None or _depth(exempt) <= _depth(protect):
             raise FileAccessDenied(
-                raw, "path is inside the runtime's protected data directory"
+                raw, "path is protected: the runtime's data directory or a config file"
             )
 
     if permitted_roots and _longest_match(resolved, permitted_roots) is None:
@@ -183,11 +188,47 @@ def permitted_read_roots(runtime: Any) -> list[Path]:
 
 
 def protected_read_roots(runtime: Any) -> list[Path]:
-    """The floor: the runtime data directory (vault, governance databases).
+    """The floor: the runtime data directory (vault, governance databases) and the config files.
 
     Falls back to the platform data dir for the same reason as above -- the
     readers that need this most have no runtime.
+
+    BF-908: plus every config file that can hold ``auth.crew_scope_token``
+    (:func:`protected_config_files`). A file root matches that file only.
     """
+    return _protected_data_dir(runtime) + protected_config_files(runtime)
+
+
+def protected_config_files(runtime: Any) -> list[Path]:
+    """BF-908: the config files the floor refuses, resolved, whether or not they exist.
+
+    The file the vessel loaded (``runtime.config_path``: ``--config``,
+    ``~/.probos/config.yaml`` or the checkout's ``config/system.yaml``) and both
+    defaults, since either can hold ``auth.crew_scope_token`` whichever was loaded.
+    Paths, not leaf names: ``config.yaml`` is too common a name to refuse everywhere.
+    Each file once, in that order: the loaded file is usually one of the defaults.
+    Not covered: a copy or hard link of the file under another path, and every
+    reader that does not call this floor (a shell command, ``run_python``).
+    """
+    candidates: list[object] = [getattr(runtime, "config_path", None), _REPO_DEFAULT_CONFIG]
+    try:
+        candidates.append(Path.home() / ".probos" / "config.yaml")
+    except (RuntimeError, OSError):
+        pass
+    files: list[Path] = []
+    for candidate in candidates:
+        if not isinstance(candidate, (str, Path)) or not str(candidate):
+            continue
+        try:
+            resolved = Path(candidate).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved not in files:  # BF-908 A3: the loaded file is often a default; list each file once
+            files.append(resolved)
+    return files
+
+
+def _protected_data_dir(runtime: Any) -> list[Path]:
     data_dir = getattr(runtime, "data_dir", None)
     if data_dir is None:
         try:
