@@ -4783,3 +4783,427 @@ HOLDS: yes
 ### A4.12 Captain
 
 Nothing here needs the Captain. D32 and D33 restore and strengthen the final check without narrowing what the floor refuses; D33 withdraws a claim that was not true rather than weakening a control (what a search may return is unchanged); D35 fixes the table; D36 keeps the security tier's propagate rule; D37 and R14-R16 record what remains with its reach. No authority, gate or approval rule changes.
+
+## Amendment A5 (2026-10-20, after review round 3 of slice C1b)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+**Trigger.** Review round 3 of the C1b candidate as repaired by A4 (staged tree `81c7bd8847380f10ea3d2d63adae73cd39522a44` on `dc9c3e5b`; full text `logs/review-c1b-r3.md`) found that round 2's three findings are resolved. The retarget scenario is refused, the sparse-walk cost is back to round 1's, and all 59 mutation rows are killed. It found one new problem. Finding (P3, injected-only, **regression introduced by A4**): A4.3.3 moved `floor.permits(str(fp))` inside the Python engine's `try: with fp.open(...)` (`code_search.py:274-292`). Its `except OSError: continue` therefore also catches an `OSError` raised inside the floor. A floor defect then becomes `success=true` with that file left out, and the DM renderer shows it as an ordinary result. A3 propagated it, and D36 and R16 say it must propagate. A `RuntimeError` propagated in both A3 and A4. Ordinary `Path.resolve()` failures are turned into per-file denials by `resolve_read_path` (`security/file_access.py:137-139`) and are not affected.
+
+**Apply order.** Three groups, in this order:
+1. **Tests first** (A5.2). Apply them, run the file `-n 0` and confirm premise 23.
+2. **Source** (A5.3).
+3. **Trackers** (A5.4).
+
+Every SEARCH is written against the candidate's files (tree `81c7bd88`) and occurs exactly once in its file. The working tree is CRLF and the index LF, so match line by line.
+
+**Supersedes:**
+- A4.3.3's Python engine: the decision stays at a file's first match, but the file's open, read and `OSError` handler move into `_text_lines`. A5.3.
+- R16's wording: A5.7.
+- Section 9: rows 60-62 are added. A5.5.
+- C1b's test count goes from 36 to 40 (J20 x2, J21, J22).
+- `PROGRESS.md`: unchanged. Its line 3 makes no claim about error handling.
+
+### A5.1 Decisions D38-D41
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D38 | **The finding (P3, injected-only, regression from A4): fix it by moving the file's I/O and its handler into a generator, `_text_lines(fp)`.** The engine's loop body iterates the generator: the line-length check, the regex, the floor's first-match decision, the append and the cap. Python does not throw an exception raised in a `for` body into the generator being iterated. So the generator's `except OSError` covers only its own `open` and `next`, and an `OSError` from the floor, or from any statement later added to the body, propagates unchanged in type and identity, as in A3. Real I/O behaves as before A5: an open failure skips the file, and a read failure ends it while keeping the lines already matched. J22 pins both, and no test pinned either before (Absence below). **Closing:** a `break` drops the generator. CPython's reference counting then closes it at once: `GeneratorExit` at the `yield` leaves the `with`, which closes the file. An exception unwinding `_search_python` drops it the same way. **Cost:** one generator frame per walked file and one `yield from` hop per line; measured by the orchestrator on 600,000 lines with no match (four interleaved runs of each tree, medians): A4 537 ms, A5 545 ms (+1.5%). This does not weaken a control: what a search may return is unchanged, and a floor defect fails closed again. | **(a) Flag** (`deciding = True/False` around the call; `except OSError: if deciding: raise`). This is the smallest diff (about 5 lines, no reindent) and keeps the exception type. But the handler still wraps the whole body, so the next `OSError`-capable statement added there reopens the hole. It also adds per-file state with two mutation rows; killing the reset row needs a read failure after a permitted first match in the same file. Ranked second. **(b) Re-raise the floor's `OSError` as a non-`OSError`** (a new `_FloorDefect(RuntimeError)` raised from the original). This changes the type that propagates (A3 and R16 say `OSError`), adds an exception class, and keeps (a)'s whole-body weakness for every other call. **(c) Manual `next()`** with a `try` around the open and around each `next`. It has D38's property inline, but turns the `for` into a `while True` with three handlers (open, `StopIteration`, `OSError`), adds about 10 lines and more rows; the generator is the idiomatic form of the same thing. **(d) Collect, then decide**: buffer a file's matches inside the `try` and ask the floor once after it. The decision would follow the whole file's read (a refused file is read whole, not to its first match, which widens R14). It buffers up to `max_results` lines and re-derives truncation: a larger change for the same property. **(e) `except OSError: deny` in `permits`**: rejected by D36, because it hides floor bugs. |
+| D39 | **Tests.** **J20** (`act`, both engines): the floor raises a sentinel `OSError` for the config file's name, and the search raises that exact object. The Python variant is the discriminating one (red on A4). The rg variant is the control: its floor call (`code_search.py:223`) is outside every handler (the `try` at `:195-207` ends before it). **J21** (`handle_intent`, the DM boundary): the same, on the Python engine. **J22** (a guard, green before and after): an unopenable file contributes nothing, a file whose read fails after one matching line keeps that line, and the walk goes on. The injection patches `file_access.resolve_read_path`, which `_ReadFloor.permits` looks up at call time (`code_search.py:329`, J14's premise), and only for the config file's name; the root check and every other path delegate to the real function. No J20-J22 test starts a child, so the file's child-output rule is untouched. | One test with a patched `_ReadFloor.permits`: it would not exercise the floor's real lookup path, and J14's premise already shows the module lookup works. |
+| D40 | **R16 is reworded** (A5.7) to say the floor's exceptions propagate from both engines whatever their type, and that J20 and J21 pin it. No new residual. | None. |
+| D41 | **Round 4 reviews the delta only.** A5 changes one private method and adds one private module function in one module; no shared contract moves. A regression introduced by A5 in round 4 goes to the Captain (brake rule), not to a fifth round. | A whole-candidate round 4: the converged parts were reviewed in rounds 1-3 and are unchanged. |
+
+**Who records what.** The orchestrator posts D38-D41 and the new R16 wording on #1605, and updates R16 in the #1523 register (F-203). No new issue.
+
+### A5.2 Tests first: `tests/test_bf908_floor_and_children.py`
+
+Apply all three blocks, run the file `-n 0`, and confirm premise 23 before touching the source.
+
+#### A5.2.1 The import
+
+SEARCH:
+```python
+from pathlib import Path
+from types import SimpleNamespace
+```
+REPLACE:
+```python
+from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
+```
+
+#### A5.2.2 The header: J20-J22
+
+SEARCH:
+```text
+    Does not prove: wall-clock cost, or that a refused file is not read (it is, up to its first match: residual R14).
+K1  no agent command's child sees the token
+```
+REPLACE:
+```text
+    Does not prove: wall-clock cost, or that a refused file is not read (it is, up to its first match: residual R14).
+J20 an ``OSError`` inside the floor propagates from the search (``python`` and ``rg``)
+    Proves: when the floor's decision raises an ``OSError`` for the loaded config file (a defect in the floor, not a
+    path-resolution failure, which ``resolve_read_path`` turns into a denial), ``act`` raises that same exception object:
+    the Python engine's file-I/O handler does not take it for an unreadable file (review round 3 of C1b; A4 returned the
+    public match and dropped the error). The rg variant is the control: its floor call was never under a handler.
+    Detector premise: ``_ReadFloor.permits`` looks ``resolve_read_path`` up on ``probos.security.file_access`` at call time
+    (J14's premise); were it bound at import, nothing would raise and the test would fail, not pass.
+    Does not prove: what the mesh does with the exception.
+J21 ``handle_intent`` propagates an ``OSError`` inside the floor
+    Proves: the same at the boundary the DM pipeline consumes, on the Python engine.
+    Does not prove: the pipeline's handling of an agent that raises.
+J22 a file that cannot be opened or read still degrades
+    Proves: on the Python engine, a file whose text-mode open raises ``OSError`` contributes nothing, a file whose read fails
+    after one matching line keeps that line, and the walk goes on to the next file: the handler still covers the file's own
+    open and read. Only text-mode opens of those two names fail; the walker's binary sniff (``"rb"``) reads them as they are.
+    Does not prove: a real disk or permission error (both are injected).
+K1  no agent command's child sees the token
+```
+
+#### A5.2.3 J20-J22, after J19
+
+SEARCH:
+```python
+    # Only the root check decides; the engines' floor and the final check's floor are built and asked about nothing.
+    assert calls == {"roots_built": 3, "decisions": 1}
+```
+REPLACE:
+```python
+    # Only the root check decides; the engines' floor and the final check's floor are built and asked about nothing.
+    assert calls == {"roots_built": 3, "decisions": 1}
+
+
+def _floor_raises_oserror_on(monkeypatch: pytest.MonkeyPatch, target: Path) -> OSError:
+    """From now on the floor's decision raises a sentinel ``OSError`` for *target*'s name and decides every other path as before.
+
+    R16's defect: an error inside the floor that is not a path-resolution failure (``resolve_read_path`` turns those into a
+    denial). ``_ReadFloor.permits`` looks ``resolve_read_path`` up on ``probos.security.file_access`` at call time (J14's
+    premise), so the sentinel reaches every floor a search builds; the root check's path delegates to the real function.
+    """
+    injected = OSError("bf908-injected floor defect")
+    real_resolve = file_access.resolve_read_path
+
+    def _resolve(raw: str, **kwargs: object) -> Path:
+        if Path(raw).name == target.name:
+            raise injected
+        return real_resolve(raw, **kwargs)
+
+    monkeypatch.setattr(file_access, "resolve_read_path", _resolve)
+    return injected
+
+
+@pytest.mark.parametrize("engine", ["python", "rg"])
+async def test_an_oserror_inside_the_floor_propagates_from_the_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: str,
+) -> None:
+    root, rt, cfg, public = _quota_root(tmp_path, public_matches=1)
+    _use_engine(monkeypatch, engine, [cfg, *public])
+    injected = _floor_raises_oserror_on(monkeypatch, cfg)
+
+    with pytest.raises(OSError) as raised:
+        await _search(CodeSearchAgent(agent_id="cs-20", runtime=rt), root, max_results=5)
+
+    # The floor's own exception, unchanged: not taken for an unreadable file (A4 returned the public match instead).
+    assert raised.value is injected
+
+
+async def test_handle_intent_propagates_an_oserror_inside_the_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, rt, cfg, _public = _quota_root(tmp_path, public_matches=1)
+    _use_engine(monkeypatch, "python", [])
+    injected = _floor_raises_oserror_on(monkeypatch, cfg)
+
+    with pytest.raises(OSError) as raised:
+        await CodeSearchAgent(agent_id="cs-21", runtime=rt).handle_intent(
+            IntentMessage(intent="search_content", params={"path": str(root), "pattern": FILE_TOKEN, "max_results": 5})
+        )
+
+    assert raised.value is injected
+
+
+class _ReadFailsAfterOneLine:
+    """A text file handle that yields one matching line and then fails, as a read error part-way through a file would."""
+
+    def __enter__(self) -> _ReadFailsAfterOneLine:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def __iter__(self) -> Iterator[str]:
+        yield f"{FILE_TOKEN}\n"
+        raise OSError("bf908-injected read failure")
+
+
+async def test_a_file_that_cannot_be_opened_or_read_still_degrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, rt, _cfg, public = _quota_root(tmp_path, public_matches=2)
+    unopenable = root / "ab-unopenable.txt"  # walked after the config file, before note-0.txt
+    breaks = root / "note-0a-breaks.txt"  # walked between note-0.txt and note-1.txt
+    for path in (unopenable, breaks):
+        path.write_text(f"{FILE_TOKEN}\n", encoding="utf-8")
+    _use_engine(monkeypatch, "python", [])
+    real_open = Path.open
+
+    def _open(self: Path, mode: str = "r", *args: object, **kwargs: object) -> object:
+        # Text-mode opens of the two names only: the walker's binary sniff ("rb") reads every file as it is.
+        if mode == "r" and self.name == unopenable.name:
+            raise OSError("bf908-injected open failure")
+        if mode == "r" and self.name == breaks.name:
+            return _ReadFailsAfterOneLine()
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open)
+
+    result = await _search(CodeSearchAgent(agent_id="cs-22", runtime=rt), root, max_results=10)
+
+    assert result["success"] is True
+    assert result["engine"] == "python"
+    # The unopenable file contributes nothing; the failed read keeps the line read before it; the walk goes on.
+    assert _paths(result) == [public[0].resolve(), breaks.resolve(), public[1].resolve()]
+    assert result["count"] == 3
+```
+
+### A5.3 Source: `src/probos/agents/code_search.py` (nothing else)
+
+#### A5.3.1 The import
+
+SEARCH:
+```python
+import sys
+from pathlib import Path
+from typing import Any
+```
+REPLACE:
+```python
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+```
+
+#### A5.3.2 `_search_python`: the loop iterates `_text_lines`
+
+SEARCH:
+```python
+            try:
+                with fp.open("r", encoding="utf-8", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, start=1):
+                        if len(line) > _MAX_LINE_BYTES:
+                            continue
+                        if rx.search(line):
+                            # BF-908 A4: asked at the file's first match, after the open; later matches hit the cache.
+                            if floor is not None and not floor.permits(str(fp)):
+                                break  # BF-908 A4: a refused file is left at its first match; none of its lines is kept
+                            matches.append({
+                                "path": str(fp),
+                                "line": lineno,
+                                "text": line.rstrip("\n")[:_LINE_PREVIEW_CHARS],
+                            })
+                            if len(matches) >= max_results:
+                                truncated = True
+                                break
+            except OSError:
+                continue
+            if truncated:
+```
+REPLACE:
+```python
+            # BF-908 A5: the file's I/O and its OSError handler live in _text_lines; nothing in this
+            # body (the floor's decision included) runs under that handler, so a floor defect propagates.
+            for lineno, line in _text_lines(fp):
+                if len(line) > _MAX_LINE_BYTES:
+                    continue
+                if rx.search(line):
+                    # BF-908 A4: asked at the file's first match, after the open; later matches hit the cache.
+                    if floor is not None and not floor.permits(str(fp)):
+                        break  # BF-908 A4: a refused file is left at its first match; none of its lines is kept
+                    matches.append({
+                        "path": str(fp),
+                        "line": lineno,
+                        "text": line.rstrip("\n")[:_LINE_PREVIEW_CHARS],
+                    })
+                    if len(matches) >= max_results:
+                        truncated = True
+                        break
+            if truncated:
+```
+
+#### A5.3.3 `_text_lines`, before `_ReadFloor`
+
+SEARCH:
+```python
+class _ReadFloor:
+    """BF-908 A3: the read floor for one search, built once, deciding each path once.
+```
+REPLACE:
+```python
+def _text_lines(fp: Path) -> Iterator[tuple[int, str]]:
+    """BF-908 A5: ``(line number, line)`` for each line of *fp*, read as UTF-8 with replacement.
+
+    A failure to open or read the file ends it: the lines already yielded stand and the engine
+    goes on to the next file, as before A5. Only this generator's own I/O sits under the handler.
+    An exception raised in the caller's loop body is not thrown into the generator it iterates,
+    so an ``OSError`` from the read floor's decision propagates (D36, R16; review round 3 of
+    C1b). A loop that breaks out drops the generator, and CPython closes it at once, which
+    closes the file.
+    """
+    try:
+        with fp.open("r", encoding="utf-8", errors="replace") as fh:
+            yield from enumerate(fh, start=1)
+    except OSError:  # BF-908 A5: the file cannot be opened or read; it contributes no further line
+        return
+
+
+class _ReadFloor:
+    """BF-908 A3: the read floor for one search, built once, deciding each path once.
+```
+
+### A5.4 Trackers (after the source): `DECISIONS.md` only
+
+One fragment, in the BF-908 "As built" line (line 394). SEARCH:
+```text
+walk with no match costs no floor decision (amendment A4, D32-D37).
+```
+REPLACE:
+```text
+walk with no match costs no floor decision (amendment A4, D32-D37). Review round 3 found that A4's move put the floor's decision under the Python engine's file-I/O handler, so an `OSError` from a defect in the floor read as an unreadable file and the search returned without that file; the engine's file I/O and its handler now live in a generator the decision runs outside, so a floor defect propagates on both engines (amendment A5, D38-D41).
+```
+Then regenerate the ledger (`python scripts/gen_ad_ledger.py`) and run its `--check`.
+
+### A5.5 Mutation table (section 9): rows added
+
+| # | File | Line (stripped, exact) | Mutate to | Killed by |
+|---|---|---|---|---|
+| 60 (new) | `src/probos/agents/code_search.py` | `except OSError:  # BF-908 A5: the file cannot be opened or read; it contributes no further line` | `except ValueError:` | J22 |
+| 61 (new: the handler removed) | same | `for lineno, line in _text_lines(fp):` | `for lineno, line in enumerate(fp.open("r", encoding="utf-8", errors="replace"), start=1):` | J22 |
+| 62 (new) | same | `yield from enumerate(fh, start=1)` | `yield from ()` | J9[python], J10[python], J11[python], J22 |
+
+Rows 31-34 and 45-59 are unchanged, line and killers. Rows 46 and 59 move (dedented) with their stripped text unchanged, and they stay unique: row 47's floor call names `parsed["path"]`, and row 59's comment sets its `break` apart.
+
+The three new lines are unique after A5:
+- Row 60's comment sets it apart from the `except OSError:` at the old `:387`.
+- Row 61's line is new.
+- Row 62 replaces the removed `for lineno, line in enumerate(fh, start=1):`, and the file has no other `yield` (Absence below).
+
+**A4's regression is not a one-line mutant here.** Restoring it means wrapping the loop body back in a `try`. Premise 23 (J20[python] and J21 red on tree `81c7bd88`) is its evidence.
+
+**Equivalent mutants:**
+- Row 60's `return` -> `pass`: the generator ends either way.
+- Dropping the `with`: the file is not closed, but the results are the same.
+- The comment lines.
+
+**Campaign of record:** of the pinned files, only `code_search.py` changes. Rerun rows 31-34 and 45-62 on the repaired candidate, recording the base tree and the file's sha256. Rows 28-30 and 44 (`security/file_access.py`) carry over from round 3's campaign if that file's sha256 matches. Row 22 carries over from C1a.
+
+### A5.6 Sections 8.2, 10, 13 and 14
+
+**Section 8.2:** no change. A5 changes one private method and adds one private function in an already-listed module. Run `python scripts/gen_ad_ledger.py --check` after A5.4.
+
+**Section 10, rows added:**
+
+| Test | Proves | Does not prove |
+|---|---|---|
+| J20 | An `OSError` inside the floor propagates from `act` as the same object, on both engines. | The mesh's handling. |
+| J21 | The same through `handle_intent`. | The DM pipeline's handling. |
+| J22 | An unopenable file and a failed read still degrade, and the walk goes on. | A real disk or permission error. |
+
+**Section 13:**
+- Criterion 7 gains: "a defect in the floor propagates from both engines, never taken for an unreadable file (J20, J21), while a real open or read failure still degrades (J22)".
+- Criterion 9 covers rows 1-62.
+
+**Section 14, premises added:**
+
+23. **Tests first.** Against tree `81c7bd88`, these are **red**: J20[python] (`DID NOT RAISE`; A4 returns the public match) and J21 (the same). These are **green**: J20[rg], J22, and every other test in the file.
+
+24. Python does not throw an exception raised in a `for` body into the generator being iterated (generator semantics: only `throw()` and `close()` enter it). J20[python] is the empirical check.
+
+### A5.7 Residuals (R1-R15 stay; R16 reworded)
+
+- **R16 (recorded; extends F-203; P3, injected-only; predates A3).** An exception inside the floor that is not a path-resolution failure propagates out of the whole search, on both engines and whatever its type, `OSError` included. It is a bug, because `resolve_read_path` already turns `OSError`, `RuntimeError` and `ValueError` from `Path.resolve()` into a denial (`security/file_access.py:137-139`). The Python engine's I/O handler covers only the file's own open and read (A5, J20, J21). It fails closed: nothing is returned. Turning it into a per-file denial would hide the bug. Decide it with F-203's error paths.
+
+### A5.8 Self-check: guards the new code could trip
+
+```
+CLAIM: SRP size trigger not tripped
+RUN:   scripts/check_architecture_principles.py:187-188 (500 body lines, 15 methods per class)
+FOUND: CodeSearchAgent keeps 7 methods, body shrinks by ~1 line; _text_lines is a module function (~16 lines)
+HOLDS: yes
+
+CLAIM: no importer/layer guard tripped
+RUN:   A5.3.1 adds collections.abc (stdlib); A5.2.1 the same in the test file
+HOLDS: yes
+
+CLAIM: BF-892 spawn census and source-scan tests see no change
+RUN:   Grep "code_search\.py|getsource\(code_search" tests -> test_ad1025b_path_anchoring.py:56 (path anchoring only)
+       A5 adds no subprocess call; _search_rg untouched
+HOLDS: yes
+
+CLAIM: the raw engine's direct callers keep working
+RUN:   Grep "_search_python|CodeSearchAgent" tests -> test_ad989_code_search, test_bf895_rg_line_parse,
+       test_bf892_spawn_env_guard, test_bf758_file_read_confinement, this file; signature unchanged
+HOLDS: yes
+```
+
+### A5.9 Repair milestone
+
+**M5r3, one Builder pass, tests first, about 15-20 tool calls:**
+1. Apply A5.2's three blocks, run `tests/test_bf908_floor_and_children.py -n 0`, and confirm premise 23.
+2. Apply A5.3's three blocks.
+3. Rerun the file, then section 8.2 `-n 0`.
+4. Apply A5.4's fragment, regenerate the ledger and run its `--check`.
+5. Report every SEARCH that did not match exactly once; do not improvise.
+
+Then the orchestrator runs:
+- one consolidated focused check;
+- the campaign for rows 31-34 and 45-62;
+- review round 4 on the delta (D41).
+
+### A5.10 Prior art and blind spots
+
+- **Prior art:** none needed. This is Python exception-scoping plumbing with no outside analogue. The pattern is the standard library's own: a generator owns its I/O, and its consumer's exceptions are not thrown into it.
+- **Blind spot covered:** a read failure part-way through a file was never pinned. J22 now pins both the open and the read case.
+- **Considered, deferred:** `contextlib.closing` for deterministic close on non-CPython interpreters. ProbOS runs on CPython, where the close is immediate.
+
+### A5.11 Verified Against Codebase (2026-10-20, staged tree `81c7bd88` in worktree `bf908-2b97ca11`)
+
+```
+code_search.py:27-29   import sys / from pathlib import Path / from typing import Any
+code_search.py:163     return _within_floor(self._search_python(plan, root, floor=floor), ...)   (no try around it)
+code_search.py:195-207 rg's try/except (OSError, TimeoutError, ValueError) ends before :223
+code_search.py:223     if floor is not None and not floor.permits(parsed["path"]):   (outside every handler)
+code_search.py:271-294 for fp in files: / try: / with fp.open(...) / ... :281 floor.permits / :291 except OSError: / :292 continue
+code_search.py:304     class _ReadFloor:
+code_search.py:329     from probos.security.file_access import FileAccessDenied, resolve_read_path   (call-time lookup)
+code_search.py:387     except OSError:   (_resolve_rg_binary; the only other one)
+file_access.py:137-139 resolved = candidate.resolve() / except (OSError, RuntimeError, ValueError) -> FileAccessDenied
+file_walk.py:133       with path.open("rb") as fh:   (sniff is binary mode; J22's patch passes it through)
+file_walk.py:164,175   sorted(dirnames) / sorted(filenames)   (J22's walk order)
+test file:132-133      from pathlib import Path / from types import SimpleNamespace
+test file:254-255      _paths -> [Path(match["path"]).resolve() ...]
+test file:441-453,470-486  _quota_root, _use_engine, _search
+test file:740          assert calls == {"roots_built": 3, "decisions": 1}   (A5.2.3 anchor, unique)
+DECISIONS.md:394       "... walk with no match costs no floor decision (amendment A4, D32-D37)." (count 1)
+```
+
+### Absence Verified (2026-10-20)
+
+```
+CLAIM: no existing test pins the Python engine's degrade on an open/read OSError
+RUN:   Grep "OSError|PermissionError|unreadable|\"open\"" in test_ad989_code_search, test_bf895_rg_line_parse,
+       test_bf892_spawn_env_guard, test_bf758_file_read_confinement
+FOUND: bf758:150,463 and bf895:201,219 (symlink-creation helpers), bf892:228 (a docstring); none drives the engine
+HOLDS: yes
+
+CLAIM: code_search.py has no yield/Iterator/collections today (row 62 and the import are unique)
+RUN:   Grep "yield|Iterator|collections" src/probos/agents/code_search.py
+FOUND: no matches
+HOLDS: yes
+```
+
+### A5.12 Captain
+
+Nothing here needs the Captain. D38 restores D36's propagate rule without narrowing what the floor refuses or what a search may return. No authority, gate or approval rule changes.
