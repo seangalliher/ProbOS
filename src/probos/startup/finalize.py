@@ -18,6 +18,7 @@ from probos.startup.results import FinalizationResult
 from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis, BrowserOwnerRegistry
 from probos.utils import format_duration
 from probos.crew_utils import is_crew_agent
+from probos.credential_store import crew_scope_token
 
 if TYPE_CHECKING:
     from probos.capability_request import CapabilityRequestStore
@@ -420,7 +421,7 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
         registry=getattr(runtime, "registry", None),
         request_store=getattr(runtime, "capability_request_store", None),
         authority_basis=(
-            BrowserAuthorityBasis.SHARED_CREW_SCOPE if config.auth.crew_scope_token
+            BrowserAuthorityBasis.SHARED_CREW_SCOPE if crew_scope_token(runtime)
             else BrowserAuthorityBasis.SINGLE_OPERATOR_COMPATIBILITY
         ),
         approval_tracking_required=config.approval_inbox.enabled,
@@ -464,8 +465,7 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
     #     crew_scope_token (the metadata sidecar holds no secret values).
     runtime.credential_vault = None
     vault_cfg = getattr(cfg, "credential_vault", None)
-    auth_cfg = getattr(config, "auth", None)
-    crew_token = getattr(auth_cfg, "crew_scope_token", "") if auth_cfg else ""
+    crew_token = crew_scope_token(runtime)  # BF-908: the keyring's token, else the config's
     backend = getattr(vault_cfg, "backend", "file") if vault_cfg is not None else "file"
     if vault_cfg is not None and vault_cfg.enabled and backend == "keychain":
         try:
@@ -513,9 +513,9 @@ def _wire_browser_tool(*, runtime: Any, config: "SystemConfig") -> bool:
             )
     elif vault_cfg is not None and vault_cfg.enabled and backend == "file" and not crew_token:
         logger.warning(
-            "AD-706f: credential_vault.enabled=True but auth.crew_scope_token "
-            "is empty; vault disabled. Set auth.crew_scope_token in "
-            "config/system.yaml to enable."
+            "AD-706f: credential_vault.enabled=True but no crew-scope token "
+            "is set; vault disabled. Set one with `probos crew-token set` "
+            "(BF-908) and restart to enable."
         )
 
     # AD-706b: RecordingReaper attribute is declared here; the actual async

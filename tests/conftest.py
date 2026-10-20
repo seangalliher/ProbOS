@@ -49,6 +49,14 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 # extension seam opt in explicitly (monkeypatch.delenv); PROBOS_DISABLE_OVERLAY=0 opts a run in.
 os.environ.setdefault("PROBOS_DISABLE_OVERLAY", "1")
 
+# BF-908 (#1605): no test reaches the Captain's real OS keyring (the Windows credential store on
+# the Captain's machine). Forced, not setdefault: a shell that names a real backend must not reach
+# it either. keyring reads this when it first picks a backend, in this process and in every child
+# that inherits os.environ. A child started through execution/command_env.build_command_env does
+# NOT inherit it (the name is credential-shaped), so no such child in a test may import keyring.
+# tests/test_bf908_crew_scope_token.py fails if the real backend is reached.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+
 # Windows: closing an asyncio loop must not pin an ephemeral TCP port in TIME_WAIT. Module level, so it is in
 # force before any test builds a loop; it touches asyncio's self-pipe only, never a test's own socketpair --
 # see tests/fixtures/abortive_self_pipe.py (WinError 10055 at test setup).

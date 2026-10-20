@@ -2769,6 +2769,10 @@ class ProbOSRuntime:
 
         self.agent_stops = AgentStopService(data_dir=self._data_dir, event_log=self.event_log)
         await self.agent_stops.start()
+        # BF-908 (Phase 1a): the crew-scope token's keyring step, read once, before any route,
+        # the browser vault or an agent reads the token. It never raises: a secure keyring that
+        # cannot be read is held as "unavailable", and the routes that need the token fail closed.
+        await self.credential_store.crew_scope.load(config=self.config, config_path=self.config_path)
         # AD-1195: Phase 1 opened the EventLog; durable rows are written on this loop.
         self.durable_events.bind_loop(self._dispatch_loop)
 

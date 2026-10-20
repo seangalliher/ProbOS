@@ -22,6 +22,7 @@ from probos.cognitive.episode_archive import (
     EpisodeArchiveNotFound,
     EpisodeArchiveUnavailable,
 )
+from probos.credential_store import crew_scope_token
 from probos.knowledge.erasure import ErasureManager
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
@@ -220,7 +221,7 @@ async def lookup_archived_episodes(
     passes every caller through when the token is empty, and decoded episodes are never served through an
     open gate (the AD-1196 / AD-731a-1 rule). Every returned episode has one committed ``archive_access`` row.
     """
-    if not runtime.config.auth.crew_scope_token:  # AD-1340 S2a: never serve archived episodes through an open gate
+    if not crew_scope_token(runtime):  # AD-1340 S2a: never serve archived episodes through an open gate
         raise HTTPException(status_code=403, detail=_ARCHIVE_LOOKUP_TOKEN_REQUIRED)
     memory = getattr(runtime, "episodic_memory", None)
     if memory is None:
@@ -299,7 +300,7 @@ async def restore_archived_episode(
     ``episode_archive_restore_live_id``. AD-1340 S2b A2/A3: an error is logged as the ``repr`` of the id's first 8
     characters, the error code and an exception type name, never an exception's text or its cause's.
     """
-    if not runtime.config.auth.crew_scope_token:  # AD-1340 S2b: never restore through an open gate
+    if not crew_scope_token(runtime):  # AD-1340 S2b: never restore through an open gate
         raise HTTPException(status_code=403, detail=_ARCHIVE_RESTORE_TOKEN_REQUIRED)
     memory = getattr(runtime, "episodic_memory", None)
     if memory is None:

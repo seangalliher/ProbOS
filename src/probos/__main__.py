@@ -1879,6 +1879,23 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return asyncio.run(run_doctor(args, Console(soft_wrap=True), ctx=ctx))
 
 
+def _cmd_crew_token(args: argparse.Namespace) -> int:
+    """BF-908: ``probos crew-token set|rotate|clear|status``, the Captain's keyring action.
+
+    Reads the config ``probos`` and ``probos serve`` would load (``--config`` before or
+    after ``crew-token``, else ``_resolve_config_path``), as ``probos doctor`` does. The
+    work is in ``probos/crew_token_cli.py``; only this module imports it.
+    """
+    from probos import crew_token_cli
+
+    return crew_token_cli.run(
+        args.crew_token_cmd,
+        config_path=_resolve_config_path(getattr(args, "config", None)),
+        use_stdin=bool(getattr(args, "stdin", False)),
+        console=Console(soft_wrap=True),
+    )
+
+
 def _cmd_pairing(args: argparse.Namespace) -> int:
     """Handle ``probos pairing`` subcommands (AD-802).
 
@@ -3207,6 +3224,29 @@ def main() -> None:
         help="Password (skips interactive prompt; prefer the prompt to avoid shell history)",
     )
 
+    # --- probos crew-token (BF-908) ---
+    crew_token_parser = subparsers.add_parser(
+        "crew-token",
+        help="Set, rotate, clear or show the crew-scope token in the OS keyring (BF-908; the Captain's action)",
+    )
+    # SUPPRESS as for doctor: a --config given before `crew-token` (the root parser's) is kept.
+    crew_token_parser.add_argument(
+        "--config", "-c", type=Path, metavar="PATH", default=argparse.SUPPRESS,
+        help="The config file the vessel loads (default: the one probos loads)",
+    )
+    crew_token_sub = crew_token_parser.add_subparsers(dest="crew_token_cmd", required=True)
+    for _verb, _verb_help in (
+        ("set", "Store a token in the OS keyring (prompted twice, never shown)"),
+        ("rotate", "Replace the token the OS keyring holds"),
+    ):
+        _verb_parser = crew_token_sub.add_parser(_verb, help=_verb_help)
+        _verb_parser.add_argument(
+            "--stdin", action="store_true",
+            help="Read the token from one line of standard input; it is never taken from the command line",
+        )
+    crew_token_sub.add_parser("clear", help="Delete the token from the OS keyring (never refused)")
+    crew_token_sub.add_parser("status", help="Say where the token comes from, never its value")
+
     # --- probos migrate (AD-808) ---
     migrate_parser = subparsers.add_parser(
         "migrate",
@@ -3366,6 +3406,10 @@ def main() -> None:
         # AD-484: doctor returns non-zero exit code on failure
         import sys
         sys.exit(_cmd_doctor(args))
+
+    if args.command == "crew-token":  # BF-908
+        import sys
+        sys.exit(_cmd_crew_token(args))
 
     if args.command == "pairing":
         import sys

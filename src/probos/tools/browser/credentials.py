@@ -148,8 +148,8 @@ class EncryptedFileCredentialVault:
         if not crew_scope_token:
             raise RuntimeError(
                 "AD-706f credential vault requires a non-empty "
-                "auth.crew_scope_token. The KEK derivation needs a real "
-                "operator secret. Set auth.crew_scope_token in config/system.yaml "
+                "crew_scope_token. The KEK derivation needs a real "
+                "operator secret. Set one with `probos crew-token set` (BF-908) "
                 "and restart, or set credential_vault.enabled=False to disable."
             )
         # Lazy import — cryptography is a v1 hard dep but keep import close to use.

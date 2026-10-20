@@ -21,21 +21,11 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, WebSocket
 
+from probos.credential_store import CREW_SCOPE_UNAVAILABLE, crew_scope_locked, crew_scope_token
 from probos.routers.deps import get_runtime
 from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis
 
 logger = logging.getLogger(__name__)
-
-
-def _configured_token(runtime: Any) -> str:
-    """Pull ``auth.crew_scope_token`` from runtime config; empty when unset."""
-    cfg = getattr(runtime, "config", None)
-    if cfg is None:
-        return ""
-    auth_cfg = getattr(cfg, "auth", None)
-    if auth_cfg is None:
-        return ""
-    return auth_cfg.crew_scope_token
 
 
 async def require_crew_scope(
@@ -50,11 +40,18 @@ async def require_crew_scope(
     The ``<img src>`` element cannot set HTTP headers, so MJPEG streaming
     needs the query-param surface. Header-only callers are unchanged.
 
-    When ``auth.crew_scope_token`` is empty, this dependency is a pass-through -
+    When no token resolves, this dependency is a pass-through -
     backward-compatible with single-operator HXI installs. When configured,
     missing / malformed / wrong tokens raise HTTP 401.
+
+    BF-908: the token is ``crew_scope_token(runtime)``, the OS keyring's before
+    ``auth.crew_scope_token``. While a secure keyring cannot be read and no token
+    is configured, every caller is refused (403 ``crew_scope_token_unavailable``):
+    an unreadable keyring is never an open gate.
     """
-    expected = _configured_token(runtime)
+    if crew_scope_locked(runtime):  # BF-908: fail closed, never pass-through
+        raise HTTPException(status_code=403, detail=CREW_SCOPE_UNAVAILABLE)
+    expected = crew_scope_token(runtime)
     if not expected:
         return  # auth disabled
 
@@ -82,7 +79,7 @@ async def require_browser_actor(
     """Resolve operator provenance only after the existing crew-scope check."""
     basis = (
         BrowserAuthorityBasis.SHARED_CREW_SCOPE
-        if _configured_token(runtime)
+        if crew_scope_token(runtime)
         else BrowserAuthorityBasis.SINGLE_OPERATOR_COMPATIBILITY
     )
     return BrowserActor(basis)
@@ -95,8 +92,9 @@ async def verify_ws_token(websocket: WebSocket, runtime: Any) -> bool:
     return immediately. On success (or auth-disabled), returns True
     without modifying the WebSocket state.
     """
-    expected = _configured_token(runtime)
-    if not expected:
+    expected = crew_scope_token(runtime)
+    locked = crew_scope_locked(runtime)  # BF-908: an unreadable keyring refuses every socket
+    if not expected and not locked:
         return True
     presented = websocket.query_params.get("token", "") or ""
     if not presented or not hmac.compare_digest(presented, expected):
