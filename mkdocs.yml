@@ -77,6 +77,7 @@ nav:
     - Federation: architecture/federation.md
     - Knowledge: architecture/knowledge.md
     - Self-Perception Framing: architecture/self-perception-framing.md
+    - Architecture Review (2026-10-20): architecture/architecture-review-2026-10-20.md
     - HXI Glass Bridge (Design): design/hxi-glass-bridge.md
   - Agents:
     - Agent Inventory: agents/inventory.md
