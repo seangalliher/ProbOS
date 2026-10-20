@@ -2248,3 +2248,1050 @@ Contract text used as SEARCH (each once in its file after the contract's blocks)
 ### A1.11 Captain
 
 Nothing here needs the Captain. D19 removes a dependency; it does not weaken a control. The AD-1137 guard stays unedited, and D16's "no value is ever printed" becomes stronger: nothing is redacted because nothing is formatted. H1's narrowing applies to a test this contract introduces, not to any standing guard, and it still catches every read shape the base tree has (attribute, `getattr`).
+
+---
+
+## Amendment A2 (2026-10-20, after review round 1 of slice C1a)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+**Trigger.** Review round 1 of the C1a candidate (`gpt-6.1-sol`; staged tree `f5cc60ea534d4f44b24b2e726e6eb2ea3a206233` on `19e04ab7`; full text `logs/review-c1a-r1.md`): NOT READY, four findings. Everything else the reviewer was asked to verify held (section 5.16's rows, G10, the eleven reads, the writer boundary).
+
+**Apply order.** Every SEARCH below is written against the **candidate's files** (the C1a build, M1-M3), not the contract's original blocks, and occurs exactly once in its file. The two SEARCH/REPLACE pairs in A2.5 apply to the text of this contract's section 6.4 (the C1b Builder pastes that block into `DECISIONS.md`).
+
+**Supersedes:**
+- Section 5.1 (as built): `read_keyring_token_bounded`, `clear_keyring_token`, `CrewScopeKeyring.locked` and one module-docstring paragraph. Replaced by A2.2.
+- Section 5.3 (as built): the `crew_scope_locked` docstring. Replaced by A2.2.
+- Section 5.5 (as built): two ducks and one constant added. A2.3.
+- Section 5.16: the test file's header paragraph and rows B6, E4, G5, G8 reworded; rows B8, B9, B10, B11, C6, E5 and G11 added. A2.3, A2.4.
+- Section 9: rows 3 and 6 replaced; rows 14 and 22 gain killers; rows 36-43 added. A2.6.
+- Sections 8.1, 10, 13 and 14: A2.7.
+- Section 6.4's D3, D6 and "Residual, accepted" bullets. A2.5.
+- Header "Estimated tests": about 78 (A1's 71 plus B8, B9, B10, B11, C6, E5, G11).
+- Section 5.14 (`crew_token_cli.py`) and section 5.15 (`__main__.py`) are **unchanged**: the CLI already prints a `CrewScopeKeyringError` as "Not cleared: ..." with exit 1 (`crew_token_cli.py:176-178`).
+
+### A2.1 Decisions D20-D25
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D20 | **Finding 1 (P1, ordinary reach): fix.** `read_keyring_token_bounded` runs the blocking read on its own **daemon** `threading.Thread` (named `CREW_SCOPE_READ_THREAD_NAME`) that hands the result to an `asyncio.Future` through `loop.call_soon_threadsafe`; the caller awaits it with `asyncio.wait_for`. A late answer is dropped without an exception: the hand-over skips a future that is already done (timed out or cancelled), and the thread returns quietly when the loop has closed (`RuntimeError` from `call_soon_threadsafe`). On timeout the result stays `UNAVAILABLE`, "did not answer within N s"; the function still raises only `CancelledError`. One thread per read: startup reads once, `probos doctor` once. The same lesson and remedy, measured, is AD-1137 A-3 (`doctor/checks/llm_check.py:143-175`, "a pool's workers are joined at interpreter exit"); its helper is not reused because `probos.security` may not import `probos.doctor` (AD-1137's importer guard, `tests/test_ad1137_doctor.py:1415-1437`) and it is synchronous. | (a) `asyncio.to_thread` / `loop.run_in_executor(None, ...)` (the candidate): a timed-out `wait_for` cannot stop the call, and the default executor's worker is joined by `asyncio.run` (`asyncio/runners.py:73`, `shutdown_default_executor(THREAD_JOIN_TIMEOUT)`, 300 s, `asyncio/constants.py:34`) and again, without a limit, at interpreter exit (`concurrent/futures/thread.py:23,37`, `_python_exit` registered by `threading._register_atexit`). Measured by the reviewer: `asyncio.run` returned only when the backend was released. (b) A dedicated `ThreadPoolExecutor` with `shutdown(wait=False)`: the same atexit join holds the interpreter. (c) A subprocess per read: it could be killed, but it costs an interpreter start and a `keyring` import per read (about 0.3-1 s), re-opens which environment the child gets (D15, K5) and needs a Windows-safe kill; the abandoned daemon thread costs one blocked thread until exit (R7). |
+| D21 | **Finding 2 (P2, injected-only): fix with option (a).** `UNREAD` counts as locked when the config holds no token: `CrewScopeKeyring.locked` is true for `UNREAD` or `UNAVAILABLE` (`_LOCKED_SOURCES`) while `configured_crew_scope_token(config)` is empty; a file token is enforced in every state, as before. Executable proof that the read runs in the real boot order: E5 boots a real `ProbOSRuntime` (the BF-906 pattern); C6 asserts the before-load HTTP and WebSocket refusals. E4 stays (it pins the exact placement E5 cannot see). **Ranking:** (a) first: correctness and safety (a future change that skips or reorders the load becomes a loud 403 `crew_scope_token_unavailable`, not a silently open gate), no production behaviour changes (`probos serve` awaits `runtime.start()` at `__main__.py:650` before `create_app(runtime)` at `:812`; `tests/fixtures/federation_cluster_node.py:184` starts before it serves at `:192`), a one-line revert, and validation measured by the orchestrator: 2,274 passed in section 8.1's 59 files and 342 passed in the 10 other files that build a real runtime and drive the app or gates, 0 failed. The reach is only `require_crew_scope` and `verify_ws_token` (`crew_scope_locked`'s only callers, `routers/auth.py:52`, `:96`); `crew_scope_token` is unchanged, and a `MagicMock` or `SimpleNamespace` runtime is never locked (`credential_store.py:445`), so the remaining real-runtime files that do not drive those two cannot change. (b) second: keeps the unread-open posture and relies on a test to catch a skipped load; it fixes the test weakness but leaves the gate's default open. (c) last: records both and fixes neither. | (b), (c) as ranked. |
+| D22 | **Finding 3 (P2, ordinary reach): fix.** After any deletion error, `clear_keyring_token` answers `False` ("none was there") **only** when the error is `keyring.errors.PasswordDeleteError` **and** a read-back through the same backend returns `None`. An entry still present, or a read-back that itself fails, raises `CrewScopeKeyringError("the keyring <backend> refused to clear the token (PasswordDeleteError)")`, the type only; the CLI prints "Not cleared: ..." and exits 1 (unchanged code, `crew_token_cli.py:176-178`). Verified in the installed `keyring`: macOS maps every `api.Error` from a deletion, `KeychainDenied` and `SecAuthFailure` included, to `PasswordDeleteError` (`keyring/backends/macOS/__init__.py:74-77`; `api.py:111,129,133,137`); Windows raises it only when neither target exists and re-raises any other `pywintypes.error` (`Windows.py:147-164`); SecretService raises it for "No such password!" (`SecretService.py:94-101`). The read-back is correct on all three. | Matching the exception's text ("not found"): backend- and locale-specific, and the text may quote what the backend held. Treating every `PasswordDeleteError` as a failure: the second `clear` on an empty keyring would exit 1 on Windows and SecretService, where it means "absent" (G5 pins exit 0). |
+| D23 | **Finding 4 (P3, injected-only): record, not fix.** argparse's root parser echoes an unrecognized positional (`probos crew-token set <token>`) to standard error before exiting 2 (`__main__.py:3389`). The value was disclosed when it was typed: it is in the shell's history and in the process's command line, readable by any same-user process (the population of R1). The echo goes to the same terminal and adds no reader. D16 is read as "no value the CLI or ProbOS holds is printed or logged"; G8 now asserts the value is absent from the rejected child's stdout and leaves stderr unasserted, naming R8 (a test must not pin the echo as the contract). | Redacting: (1) `parse_known_args` in `main()` with a redacted error for `crew-token` only: about 8 lines in the shared root entry point for every command, plus a test; (2) a catch-all positional on the `crew-token` verb parsers: about 5 lines, but a value starting with `-` still reaches the root parser's "unrecognized arguments" error. Neither removes the disclosure that already happened; recorded as R8 with that price. |
+| D24 | **Scope: only `security/crew_scope.py`'s read is fixed here.** The same defect class predates BF-908 in `identity_key_store.py:186` (AD-1196, `asyncio.wait_for(asyncio.to_thread(run), ...)`, `git blame`: `c4f367503`, 2026-10-01) and in `security/keyring_backend.py` (AD-1016: eight `asyncio.to_thread` keyring calls with no timeout at all, `:160`, `:167`, `:170`, `:178`, `:189`, `:220`, `:228`, `:231`). Recorded as one follow-up (R6), filed by the orchestrator. The follow-up should lift D20's helper into a shared module rather than copy it. | Fixing them in this batch: different features and contracts (the identity key store and the browser vault backend), each with its own tests and review surface; it widens a HIGH batch that is one round from converging. |
+| D25 | **Three deviations of the candidate from the contract text, decided and kept (as built, A2.8).** | Reverting the code to the contract text: (a) loses D7's remediation in the log; (b) runs `gh auth token` against the GitHub CLI's real credential store; (c) removes tests that cross seams. |
+
+**Who records what.** The orchestrator posts D20-D25 and R6-R8 on #1605 and pastes R6-R8 into the #1523 register; it opens **one** follow-up issue for R6 (suggested title: "keyring I/O on asyncio's default executor can hold the process at exit (AD-1196 `identity_key_store.py:186`, AD-1016 `security/keyring_backend.py`)"), referencing #1605. R7 and R8 need no issue: they are recorded in `DECISIONS.md` through A2.5.
+
+### A2.2 Source changes (against the candidate)
+
+#### A2.2.1 `src/probos/security/crew_scope.py`: the import
+
+SEARCH:
+```python
+import hmac
+import logging
+from dataclasses import dataclass, field
+```
+REPLACE:
+```python
+import hmac
+import logging
+import threading
+from dataclasses import dataclass, field
+```
+
+#### A2.2.2 `src/probos/security/crew_scope.py`: the module docstring
+
+SEARCH:
+```python
+file. A secure backend that fails or does not answer is UNAVAILABLE, never "no
+token": with no token in the config file either, every route that needs the
+token refuses every caller instead of letting every caller through.
+```
+REPLACE:
+```python
+file. A secure backend that fails or does not answer is UNAVAILABLE, never "no
+token": with no token in the config file either, every route that needs the
+token refuses every caller instead of letting every caller through. So does a
+keyring step startup has not read yet (UNREAD). The read runs on a daemon thread,
+so a keyring that never answers cannot hold the vessel or ``probos doctor`` open
+at exit.
+```
+
+#### A2.2.3 `src/probos/security/crew_scope.py`: the thread's name
+
+SEARCH:
+```python
+CREW_SCOPE_UNAVAILABLE = "crew_scope_token_unavailable"
+_NO_SECURE_BACKEND = "no recommended (secure) keyring backend"
+```
+REPLACE:
+```python
+CREW_SCOPE_UNAVAILABLE = "crew_scope_token_unavailable"
+_NO_SECURE_BACKEND = "no recommended (secure) keyring backend"
+#: The daemon thread a bounded read runs on (BF-908 A2, D20). Never joined, so it never holds up exit.
+CREW_SCOPE_READ_THREAD_NAME = "probos-crew-scope-keyring-read"
+```
+
+#### A2.2.4 `src/probos/security/crew_scope.py`: the locked sources
+
+SEARCH:
+```python
+    UNAVAILABLE = "unavailable"  # a secure keyring failed, did not answer, or holds a malformed entry
+
+
+@dataclass(frozen=True)
+class KeyringRead:
+```
+REPLACE:
+```python
+    UNAVAILABLE = "unavailable"  # a secure keyring failed, did not answer, or holds a malformed entry
+
+
+#: BF-908 A2 (D21): with no token in the config, these refuse every caller. UNREAD is one of them, so a runtime
+#: whose startup never read the keyring refuses loudly instead of opening every crew-scope route.
+_LOCKED_SOURCES = frozenset({CrewScopeSource.UNREAD, CrewScopeSource.UNAVAILABLE})
+
+
+@dataclass(frozen=True)
+class KeyringRead:
+```
+
+#### A2.2.5 `src/probos/security/crew_scope.py`: the bounded read on a daemon thread
+
+SEARCH:
+```python
+async def read_keyring_token_bounded(
+    backend: Any | None = None, *, timeout_seconds: float = CREW_SCOPE_READ_TIMEOUT_SECONDS,
+) -> KeyringRead:
+    """:func:`read_keyring_token` off the event loop, bounded in time. Raises only ``CancelledError``."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(read_keyring_token, backend), timeout=timeout_seconds)
+    except TimeoutError:
+```
+REPLACE:
+```python
+def _hand_over(future: asyncio.Future[KeyringRead], read: KeyringRead) -> None:
+    """On ``future``'s loop: deliver ``read`` unless the caller has stopped waiting for it."""
+    if not future.done():  # timed out or cancelled: nobody waits for this read any more
+        future.set_result(read)
+
+
+def _read_on_daemon_thread(
+    backend: Any | None, loop: asyncio.AbstractEventLoop, future: asyncio.Future[KeyringRead],
+) -> None:
+    """The worker: the blocking read (it never raises), handed to ``loop`` if that loop still runs."""
+    read = read_keyring_token(backend)
+    try:
+        loop.call_soon_threadsafe(_hand_over, future, read)
+    except RuntimeError:  # the loop closed after the caller gave up: nothing to deliver to
+        return
+
+
+async def read_keyring_token_bounded(
+    backend: Any | None = None, *, timeout_seconds: float = CREW_SCOPE_READ_TIMEOUT_SECONDS,
+) -> KeyringRead:
+    """:func:`read_keyring_token` on a daemon thread, bounded in time. Raises only ``CancelledError``.
+
+    BF-908 A2 (D20): not ``asyncio.to_thread``. A timed-out ``wait_for`` stops waiting but cannot stop the
+    blocking call, and the default executor's worker is joined when ``asyncio.run`` closes its loop (up to
+    300 s) and again, without a limit, at interpreter exit, so a keyring that never answers would hold the
+    vessel or ``probos doctor`` open. A daemon thread is never joined; a late answer is dropped quietly.
+    One thread per read: startup reads once, the doctor once (AD-1137 A-3 measured the same remedy).
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[KeyringRead] = loop.create_future()
+    try:
+        worker = threading.Thread(
+            target=_read_on_daemon_thread, args=(backend, loop, future), name=CREW_SCOPE_READ_THREAD_NAME, daemon=True,
+        )
+        worker.start()
+        return await asyncio.wait_for(future, timeout=timeout_seconds)
+    except TimeoutError:
+```
+
+(The two `except` arms that follow are unchanged: `TimeoutError` -> "did not answer within N s"; `Exception` -> "the keyring read did not run (<type>)", which now also covers a thread that cannot start.)
+
+#### A2.2.6 `src/probos/security/crew_scope.py`: `clear_keyring_token` reports "none" only after a read-back
+
+SEARCH:
+```python
+def clear_keyring_token(*, backend: Any | None = None) -> bool:
+    """Delete the entry: ``True`` when one was removed, ``False`` when there was none. The Captain's action only."""
+    import keyring.errors
+
+    from probos.identity_keys import KeyStoreUnavailable
+
+    try:
+        chosen = _secure_backend(backend)
+    except KeyStoreUnavailable:
+        raise CrewScopeKeyringError(f"this host has {_NO_SECURE_BACKEND}") from None
+    name = _backend_name(chosen)
+    try:
+        chosen.delete_password(CREW_SCOPE_KEYRING_SERVICE, CREW_SCOPE_KEYRING_USERNAME)
+    except keyring.errors.PasswordDeleteError:
+        return False
+    except Exception as exc:  # noqa: BLE001 -- the type only
+        raise CrewScopeKeyringError(f"the keyring {name} refused to clear the token ({type(exc).__name__})") from None
+    return True
+```
+REPLACE:
+```python
+def _entry_absent(chosen: Any) -> bool:
+    """True only when ``chosen`` answers that it holds no entry. A read-back that fails is not "absent"."""
+    try:
+        held = chosen.get_password(CREW_SCOPE_KEYRING_SERVICE, CREW_SCOPE_KEYRING_USERNAME)
+    except Exception:  # noqa: BLE001 -- fail closed: never report "none was there" without an answer
+        return False  # BF-908 A2: an entry that cannot be read back is not "absent"
+    return held is None
+
+
+def clear_keyring_token(*, backend: Any | None = None) -> bool:
+    """Delete the entry: ``True`` when one was removed, ``False`` when a read-back shows there was none.
+
+    The Captain's action only. ``PasswordDeleteError`` alone does not mean "none was there": keyring's macOS
+    backend raises it for every refusal, a denied keychain included (BF-908 A2, D22). Raises
+    :class:`CrewScopeKeyringError`, whose message names the exception's type only.
+    """
+    import keyring.errors
+
+    from probos.identity_keys import KeyStoreUnavailable
+
+    try:
+        chosen = _secure_backend(backend)
+    except KeyStoreUnavailable:
+        raise CrewScopeKeyringError(f"this host has {_NO_SECURE_BACKEND}") from None
+    name = _backend_name(chosen)
+    try:
+        chosen.delete_password(CREW_SCOPE_KEYRING_SERVICE, CREW_SCOPE_KEYRING_USERNAME)
+    except Exception as exc:  # noqa: BLE001 -- the type only: a backend's text could quote the value
+        if isinstance(exc, keyring.errors.PasswordDeleteError) and _entry_absent(chosen):
+            return False
+        raise CrewScopeKeyringError(f"the keyring {name} refused to clear the token ({type(exc).__name__})") from None
+    return True
+```
+
+#### A2.2.7 `src/probos/security/crew_scope.py`: `locked`
+
+SEARCH:
+```python
+    def locked(self, config: Any) -> bool:
+        """True when a secure keyring could not be read and ``config`` holds no token: refuse every caller."""
+        return self._read.source is CrewScopeSource.UNAVAILABLE and not configured_crew_scope_token(config)
+```
+REPLACE:
+```python
+    def locked(self, config: Any) -> bool:
+        """True when ``config`` holds no token and the keyring is unreadable or not read yet: refuse every caller.
+
+        BF-908 A2 (D21): ``UNREAD`` counts, so a runtime whose startup never read the keyring refuses instead of
+        letting every caller through. A token in ``config`` is enforced in every state, as before.
+        """
+        return self._read.source in _LOCKED_SOURCES and not configured_crew_scope_token(config)
+```
+
+#### A2.2.8 `src/probos/credential_store.py`: the accessor's docstring
+
+SEARCH:
+```python
+    """BF-908: True when a secure keyring could not be read and no token is configured; refuse every caller."""
+```
+REPLACE:
+```python
+    """BF-908: True when no token is configured and the keyring could not be read, or startup has not read it yet.
+
+    Refuse every caller then (A2, D21). A runtime without a real ``CredentialStore`` (a test double) is never locked.
+    """
+```
+
+### A2.3 Fixture changes: `tests/fixtures/crew_scope_keyring.py`
+
+SEARCH:
+```python
+    def get_password(self, service: str, username: str) -> str | None:
+        self.release.wait(5)
+        return None
+```
+REPLACE:
+```python
+    def get_password(self, service: str, username: str) -> str | None:
+        self.release.wait(5)
+        return None
+
+
+#: The text a refusing duck's deletion error carries; no message may contain it (the type only, D16).
+DENIAL_DETAIL = "bf908-synthetic-denial-detail"
+
+
+class RefusingDeleteKeyring(MemoryKeyring):
+    """A recommended backend whose deletion is refused while the entry stays, as macOS reports a denied keychain.
+
+    keyring's macOS backend raises ``PasswordDeleteError`` for every ``api.Error`` from a deletion,
+    ``KeychainDenied`` included (``keyring/backends/macOS/__init__.py``), so that error alone does not mean
+    "none was there" (BF-908 A2, D22). ``MemoryKeyring`` raises it only when the entry is absent.
+    """
+
+    def delete_password(self, service: str, username: str) -> None:
+        raise keyring.errors.PasswordDeleteError(f"Can't delete password in keychain: {DENIAL_DETAIL}")
+
+
+class LockedDeleteKeyring(RefusingDeleteKeyring):
+    """A refused deletion whose read-back fails too (a keychain that locked between the calls)."""
+
+    def get_password(self, service: str, username: str) -> str | None:
+        raise keyring.errors.KeyringLocked(DENIAL_DETAIL)
+```
+
+### A2.4 Tests: `tests/test_bf908_crew_scope_token.py`
+
+#### A2.4.1 Rows (section 5.16)
+
+| ID | Test | Asserts |
+|---|---|---|
+| B6 (reworded only) | `test_keyring_step_a_keyring_that_does_not_answer_is_unavailable` (code unchanged) | As built. Its "Does not prove" adds: "that the process can exit while the read is blocked (B9)". |
+| B8 | `test_keyring_step_a_refused_deletion_is_never_reported_as_absent` | **Detector premise (upstream contract):** `inspect.getsource(keyring.backends.macOS.Keyring.delete_password)` contains `"except api.Error"` and `"raise PasswordDeleteError("` (the module imports on Windows: `api` is imported under `try`). **Duck premise:** `RefusingDeleteKeyring(token=KEYRING_TOKEN).delete_password(*ENTRY)` raises `PasswordDeleteError` and the entry stays. Then `clear_keyring_token(backend=refusing)` raises `CrewScopeKeyringError` whose text contains `"PasswordDeleteError"` and not `DENIAL_DETAIL`; the entry is still `KEYRING_TOKEN`. `LockedDeleteKeyring(token=KEYRING_TOKEN)`: raises `CrewScopeKeyringError` containing `"PasswordDeleteError"`. `MemoryKeyring()`: returns `False`. `MemoryKeyring(token=KEYRING_TOKEN)`: returns `True` and the entry is gone. |
+| B9 | `test_keyring_step_a_read_that_never_answers_does_not_hold_the_process_at_exit` | A real child: `subprocess.run([sys.executable, "-c", _NEVER_ANSWERS_CHILD], capture_output=True, text=True, timeout=60, check=False, cwd=tmp_path, env={**os.environ, "PYTHONPATH": <src dir>})`. Premise: the env holds `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring`. The script defines a recommended duck (`priority = 5`) whose `get_password` waits on an `Event` that is never set, runs `asyncio.run(main())` where `main` awaits `read_keyring_token_bounded(duck, timeout_seconds=0.2)` and prints `read.source.value` and `"did not answer" in read.reason`, then returns. `subprocess.TimeoutExpired` -> `pytest.fail` naming the cause. The child exits 0 and its stdout splits to `["unavailable", "True"]`. Against the candidate (`to_thread`) it fails after 60 s; that is the tests-first proof. |
+| B10 | `test_keyring_step_a_late_answer_is_dropped_quietly` | `threading.excepthook` monkeypatched to a recorder; the running loop's exception handler replaced by a recorder (restored in `finally`). `before = frozenset(threading.enumerate())`; `read_keyring_token_bounded(SilentKeyring(), timeout_seconds=0.05)`. The new threads named `CREW_SCOPE_READ_THREAD_NAME` are exactly one, `daemon is True` and still alive (premise: the backend is blocked when the caller gives up). Release the duck, `join(5)`, assert not alive, `await asyncio.sleep(0.05)` so the late hand-over runs on this loop. `read.source is UNAVAILABLE`, `"did not answer" in read.reason`, both recorders empty. |
+| B11 | `test_keyring_step_a_late_answer_after_the_loop_closed_is_dropped_quietly` | Synchronous. `threading.excepthook` recorder; `loop = asyncio.new_event_loop()`; `loop.run_until_complete(read_keyring_token_bounded(SilentKeyring(), timeout_seconds=0.05))`; `loop.close()`; then release the duck and `join(5)` the one new read thread. `read.source is UNAVAILABLE`; the recorder is empty (the thread's `call_soon_threadsafe` met a closed loop and returned). |
+| C6 | `test_accessor_an_unread_keyring_refuses_while_no_token_is_configured` | A real `CredentialStore(config=SystemConfig())` that never loaded, in a `SimpleNamespace` runtime. Premise: `source is UNREAD`. `crew_scope_locked` is `True`, `crew_scope_token == ""`; `require_crew_scope(_http_request(), authorization=None, runtime=...)` raises 403 `crew_scope_token_unavailable`; `verify_ws_token` returns `False` and closes 1008 for no token and for `KEYRING_TOKEN`. With `AuthConfig(crew_scope_token=FILE_TOKEN)`, still unread: not locked, `crew_scope_token == FILE_TOKEN`, `require_crew_scope` accepts `Bearer FILE_TOKEN` (`None`) and answers 401 to none. |
+| E4 (reworded only) | `test_startup_reads_the_keyring_once_before_anything_reads_the_token` (code unchanged) | "Does not prove" now reads: "that a real boot reaches it; E5 does. A source-order check passes with the call under `if False:`." |
+| E5 | `test_a_real_boot_reads_the_keyring_after_the_stop_record_and_before_nats` | A real `ProbOSRuntime(config=<BF-906 boot config>, data_dir=tmp_path/"data", llm_client=MockLLMClient())`; `runtime.credential_store.crew_scope` replaced by `_RecordingKeyringStep(runtime, MemoryKeyring(token=KEYRING_TOKEN))`, a `CrewScopeKeyring` subclass whose `load` records `(runtime.agent_stops is not None, runtime.nats_bus is None)` and calls `super().load`. Before `start()`: `source is UNREAD`, `crew_scope_locked(runtime) is True`, `crew_scope_token(runtime) == ""`. `probos.startup.nats.init_nats` monkeypatched to record `crew_scope.source` and delegate to the real one. After `await runtime.start()`: `calls == [(True, True)]`, the recorded source at NATS `== [KEYRING]`, `crew_scope_token(runtime) == KEYRING_TOKEN`, not locked; `await runtime.stop()` in `finally`. |
+| G5 (reworded only) | as built | "Proves" adds: "the second `clear` says the keyring held none only because the read-back found no entry (D22)". |
+| G8 (one assertion added) | `test_the_cli_takes_no_token_on_the_command_line` | Adds `KEYRING_TOKEN not in as_argument.stdout`. The rejected child's stderr is **not** asserted: argparse echoes the mistyped value there (R8, D23); a test must not pin that echo as the contract. |
+| G11 | `test_cli_clear_reports_a_refused_deletion_and_keeps_the_entry` | `crew_token_cli.run("clear", config_path=_config_file(tmp_path), console=<quiet>, backend=RefusingDeleteKeyring(token=KEYRING_TOKEN))` returns 1; the output contains `"Not cleared"` and `"PasswordDeleteError"`, not `"held no"`, not `DENIAL_DETAIL`, and no token (`_assert_prints_no_token`); the entry is still `KEYRING_TOKEN`. |
+
+#### A2.4.2 Imports
+
+SEARCH:
+```python
+import ast
+import contextlib
+```
+REPLACE:
+```python
+import ast
+import asyncio
+import contextlib
+```
+
+SEARCH:
+```python
+import subprocess
+import sys
+from collections.abc import AsyncIterator, Callable, Iterator
+```
+REPLACE:
+```python
+import subprocess
+import sys
+import threading
+from collections.abc import AsyncIterator, Callable, Iterator
+```
+
+SEARCH:
+```python
+import keyring
+import pytest
+```
+REPLACE:
+```python
+import keyring
+import keyring.errors
+import pytest
+```
+
+SEARCH:
+```python
+from probos.agent_stop import AgentStopService
+from probos.config import AttachmentsConfig, AuthConfig, SystemConfig, load_config
+```
+REPLACE:
+```python
+from probos.agent_stop import AgentStopService
+from probos.cognitive.llm_client import MockLLMClient
+from probos.config import AttachmentsConfig, AuthConfig, SystemConfig, load_config
+```
+
+SEARCH:
+```python
+from probos.security.crew_scope import (
+    CREW_SCOPE_KEYRING_SERVICE,
+    CrewScopeKeyring,
+    CrewScopeSource,
+    read_keyring_token,
+    read_keyring_token_bounded,
+    token_refusal,
+)
+```
+REPLACE:
+```python
+from probos.security.crew_scope import (
+    CREW_SCOPE_KEYRING_SERVICE,
+    CREW_SCOPE_READ_THREAD_NAME,
+    CrewScopeKeyring,
+    CrewScopeKeyringError,
+    CrewScopeSource,
+    KeyringRead,
+    clear_keyring_token,
+    read_keyring_token,
+    read_keyring_token_bounded,
+    token_refusal,
+)
+```
+
+SEARCH:
+```python
+from tests.fixtures.crew_scope_keyring import (
+    ENTRY,
+    FILE_TOKEN,
+    KEYRING_TOKEN,
+    ROTATED_TOKEN,
+    FailingKeyring,
+    ForgetfulKeyring,
+    InsecureKeyring,
+    MemoryKeyring,
+    SilentKeyring,
+    loaded_store,
+)
+```
+REPLACE:
+```python
+from tests.fixtures.crew_scope_keyring import (
+    DENIAL_DETAIL,
+    ENTRY,
+    FILE_TOKEN,
+    KEYRING_TOKEN,
+    ROTATED_TOKEN,
+    FailingKeyring,
+    ForgetfulKeyring,
+    InsecureKeyring,
+    LockedDeleteKeyring,
+    MemoryKeyring,
+    RefusingDeleteKeyring,
+    SilentKeyring,
+    loaded_store,
+)
+```
+
+#### A2.4.3 Module docstring
+
+SEARCH:
+```python
+test's own loop. None of them builds a real runtime, reads a real config file or calls ``CredentialStore.get``.
+The CLI tests (G) call ``crew_token_cli.run`` with an in-memory keyring duck, an injected secret reader and a config
+file under ``tmp_path``; only G8 starts a child, and it too passes ``--config <tmp file>`` and inherits the fail backend.
+```
+REPLACE:
+```python
+test's own loop. None of them builds a real runtime, reads a real config file or calls ``CredentialStore.get``.
+E5 alone boots a real ``ProbOSRuntime`` (the BF-906 real-boot pattern), because a source-order check cannot show
+that a real boot reaches the keyring read.
+The CLI tests (G) call ``crew_token_cli.run`` with an in-memory keyring duck, an injected secret reader and a config
+file under ``tmp_path``; only G8 starts a CLI child, and it too passes ``--config <tmp file>`` and inherits the fail
+backend. A1 and B9 start a ``python -c`` child that inherits it as well; B9's child reads only a duck its own
+script defines.
+```
+
+SEARCH:
+```python
+B6  a keyring that does not answer is UNAVAILABLE
+    Proves: the bounded read gives up on a blocked backend and reports it unavailable.
+    Does not prove: the 10 s production bound; the test passes a short one.
+B7  the stored-token rule
+    Proves: 15 characters, a space, a tab, non-ASCII text and a non-string are refused; 16 printable ASCII
+    characters are accepted.
+    Does not prove: the CLI's prompts (a later milestone).
+```
+REPLACE:
+```python
+B6  a keyring that does not answer is UNAVAILABLE
+    Proves: the bounded read gives up on a blocked backend and reports it unavailable.
+    Does not prove: the 10 s production bound; the test passes a short one. That the process can exit while
+    the read is blocked (B9).
+B7  the stored-token rule
+    Proves: 15 characters, a space, a tab, non-ASCII text and a non-string are refused; 16 printable ASCII
+    characters are accepted.
+    Does not prove: the CLI's prompts (a later milestone).
+B8  a refused deletion is never reported as absent
+    Proves: a ``PasswordDeleteError`` that leaves the entry in place, or whose read-back fails, is a refusal naming
+    the type only; "none was there" only when the read-back finds no entry. The premise pins keyring's macOS
+    backend, which raises that error for a denied keychain too.
+    Does not prove: a real keychain's answer; the backends are ducks shaped on keyring's source.
+B9  a read that never answers does not hold the process at exit
+    Proves: in a real child, ``asyncio.run`` returns and the interpreter exits while the keyring call is still
+    blocked, with the read reported unavailable.
+    Does not prove: what a real keychain prompt does; the child's backend is a duck that never returns.
+B10 a late answer is dropped quietly
+    Proves: the read runs on one daemon thread, and an answer that arrives after the caller gave up raises nothing
+    on the loop or in the thread.
+    Does not prove: B9's exit; this runs in the test's own process.
+B11 a late answer after the loop closed is dropped quietly
+    Proves: the worker meets a closed loop without an exception escaping the thread.
+    Does not prove: anything about a loop that is still running (B10).
+```
+
+SEARCH:
+```python
+    it can, as it can read any attribute.
+D1  the stop routes accept the keyring's token and refuse without it
+```
+REPLACE:
+```python
+    it can, as it can read any attribute.
+C6  an unread keyring refuses while no token is configured
+    Proves: a real ``CredentialStore`` that startup never loaded is locked with no configured token (403
+    ``crew_scope_token_unavailable``; sockets close 1008), and a configured token is enforced in that state.
+    Does not prove: that startup loads it (E5).
+D1  the stop routes accept the keyring's token and refuse without it
+```
+
+SEARCH:
+```python
+    Does not prove: that a real boot reaches it (a source-order check, as the AD-1343 Phase 1a ones are).
+```
+REPLACE:
+```python
+    Does not prove: that a real boot reaches it; E5 does. A source-order check passes with the call under
+    ``if False:``.
+E5  a real boot reads the keyring after the stop record and before NATS
+    Proves: ``ProbOSRuntime.start`` calls the keyring step's ``load`` exactly once, with the stop record already
+    built and NATS not yet started; the read has finished when NATS starts; before the boot the runtime refuses
+    (locked), after it the keyring's token is enforced.
+    Does not prove: the exact line (E4); the OS keyring (a duck is injected).
+```
+
+SEARCH:
+```python
+    says the keyring held none; on a host with no secure backend it exits 0 and touches no backend.
+```
+REPLACE:
+```python
+    says the keyring held none, because the read-back found no entry (D22); on a host with no secure backend it
+    exits 0 and touches no backend.
+```
+
+SEARCH:
+```python
+    Proves: the CLI's real entry takes no token as an argument and reaches the keyring layer end to end (refused here
+    by the fail backend).
+    Does not prove: interactive ``getpass`` on a real terminal.
+```
+REPLACE:
+```python
+    Proves: the CLI's real entry takes no token as an argument and reaches the keyring layer end to end (refused here
+    by the fail backend); a rejected argument is not in the child's standard output.
+    Does not prove: interactive ``getpass`` on a real terminal. Standard error: argparse echoes a mistyped value
+    there (residual R8, D23), so it is not asserted.
+```
+
+SEARCH:
+```python
+    Does not prove: the same across two real processes; the keyring is a duck here.
+H1, H2  one reader of the setting, one writer of the entry
+```
+REPLACE:
+```python
+    Does not prove: the same across two real processes; the keyring is a duck here.
+G11 a refused deletion is reported, and the entry stays
+    Proves: ``clear`` over a backend that refuses the deletion and keeps the entry exits 1 with "Not cleared" and
+    the error's type, never "held no", the backend's text or a token.
+    Does not prove: a real keychain (B8's premise pins keyring's macOS contract).
+H1, H2  one reader of the setting, one writer of the entry
+```
+
+#### A2.4.4 B8-B11 (after B6)
+
+SEARCH:
+```python
+    assert read.source is CrewScopeSource.UNAVAILABLE
+    assert "did not answer" in read.reason
+
+
+@pytest.mark.parametrize(
+```
+REPLACE:
+```python
+    assert read.source is CrewScopeSource.UNAVAILABLE
+    assert "did not answer" in read.reason
+
+
+def test_keyring_step_a_refused_deletion_is_never_reported_as_absent() -> None:
+    import keyring.backends.macOS as macos_backend
+
+    # Premise (keyring's own macOS backend): every api.Error from a deletion, a denied keychain included, is raised
+    # as PasswordDeleteError, so that error alone does not mean "none was there". If keyring changes this, re-examine D22.
+    deletion = inspect.getsource(macos_backend.Keyring.delete_password)
+    assert "except api.Error" in deletion
+    assert "raise PasswordDeleteError(" in deletion
+    refusing = RefusingDeleteKeyring(token=KEYRING_TOKEN)
+    with pytest.raises(keyring.errors.PasswordDeleteError):
+        refusing.delete_password(*ENTRY)  # premise: the duck raises it and keeps the entry
+    assert refusing.entries[ENTRY] == KEYRING_TOKEN
+
+    with pytest.raises(CrewScopeKeyringError) as kept:
+        clear_keyring_token(backend=refusing)
+    assert "PasswordDeleteError" in str(kept.value)
+    assert DENIAL_DETAIL not in str(kept.value)
+    assert refusing.entries[ENTRY] == KEYRING_TOKEN
+
+    with pytest.raises(CrewScopeKeyringError) as unreadable:  # the read-back fails too: not "absent"
+        clear_keyring_token(backend=LockedDeleteKeyring(token=KEYRING_TOKEN))
+    assert "PasswordDeleteError" in str(unreadable.value)
+    assert DENIAL_DETAIL not in str(unreadable.value)
+
+    assert clear_keyring_token(backend=MemoryKeyring()) is False  # truly absent
+    held = MemoryKeyring(token=KEYRING_TOKEN)
+    assert clear_keyring_token(backend=held) is True
+    assert ENTRY not in held.entries
+
+
+_NEVER_ANSWERS_CHILD = """
+import asyncio
+import threading
+
+from probos.security.crew_scope import read_keyring_token_bounded
+
+
+class NeverAnswers:
+    priority = 5  # recommended, as a secure backend is
+
+    def get_password(self, service, username):
+        threading.Event().wait()  # never returns: a keychain prompt nobody answers
+
+
+async def main():
+    read = await read_keyring_token_bounded(NeverAnswers(), timeout_seconds=0.2)
+    print(read.source.value, "did not answer" in read.reason, flush=True)
+
+
+asyncio.run(main())
+"""
+
+
+def test_keyring_step_a_read_that_never_answers_does_not_hold_the_process_at_exit(tmp_path: Path) -> None:
+    src_dir = Path(probos.__file__).resolve().parents[1]  # the tree this test runs against
+    env = {**os.environ, "PYTHONPATH": str(src_dir)}
+    assert env.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.fail.Keyring"  # premise: no real keyring in the child
+    try:
+        child = subprocess.run(
+            [sys.executable, "-c", _NEVER_ANSWERS_CHILD], capture_output=True, text=True, timeout=60,
+            check=False, cwd=tmp_path, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("BF-908 A2: the child did not exit within 60 s; a keyring read that never answers held it open")
+
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.split() == ["unavailable", "True"]
+
+
+def _read_threads_since(before: frozenset[threading.Thread]) -> list[threading.Thread]:
+    return [t for t in threading.enumerate() if t not in before and t.name == CREW_SCOPE_READ_THREAD_NAME]
+
+
+async def test_keyring_step_a_late_answer_is_dropped_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    thread_errors: list[object] = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: thread_errors.append(args.exc_type))
+    loop = asyncio.get_running_loop()
+    loop_errors: list[object] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: loop_errors.append(context.get("exception") or context["message"]))
+    silent = SilentKeyring()
+    before = frozenset(threading.enumerate())
+    try:
+        try:
+            read = await read_keyring_token_bounded(silent, timeout_seconds=0.05)
+            workers = _read_threads_since(before)
+            assert len(workers) == 1  # premise: the read ran on its own thread
+            assert workers[0].daemon is True  # D20: a daemon thread never holds up exit
+            assert workers[0].is_alive()  # premise: the backend was still blocked when the caller gave up
+        finally:
+            silent.release.set()
+        workers[0].join(5)
+        assert not workers[0].is_alive()
+        await asyncio.sleep(0.05)  # the late answer's hand-over runs on this loop
+    finally:
+        loop.set_exception_handler(previous)
+
+    assert read.source is CrewScopeSource.UNAVAILABLE
+    assert "did not answer" in read.reason
+    assert loop_errors == []
+    assert thread_errors == []
+
+
+def test_keyring_step_a_late_answer_after_the_loop_closed_is_dropped_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+    thread_errors: list[object] = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: thread_errors.append(args.exc_type))
+    silent = SilentKeyring()
+    before = frozenset(threading.enumerate())
+    loop = asyncio.new_event_loop()
+    try:
+        read = loop.run_until_complete(read_keyring_token_bounded(silent, timeout_seconds=0.05))
+    finally:
+        loop.close()
+        workers = _read_threads_since(before)
+        silent.release.set()
+
+    assert len(workers) == 1  # premise: the read ran on its own thread
+    workers[0].join(5)
+    assert not workers[0].is_alive()
+    assert read.source is CrewScopeSource.UNAVAILABLE
+    assert thread_errors == []  # the worker met the closed loop and returned
+
+
+@pytest.mark.parametrize(
+```
+
+#### A2.4.5 C6 (after C4)
+
+SEARCH:
+```python
+    no_backend = SimpleNamespace(config=empty, credential_store=await loaded_store(empty, InsecureKeyring()))
+    assert no_backend.credential_store.crew_scope.source is CrewScopeSource.NO_SECURE_BACKEND  # premise
+    assert crew_scope_locked(no_backend) is False
+```
+REPLACE:
+```python
+    no_backend = SimpleNamespace(config=empty, credential_store=await loaded_store(empty, InsecureKeyring()))
+    assert no_backend.credential_store.crew_scope.source is CrewScopeSource.NO_SECURE_BACKEND  # premise
+    assert crew_scope_locked(no_backend) is False
+
+
+async def test_accessor_an_unread_keyring_refuses_while_no_token_is_configured() -> None:
+    empty = SystemConfig()
+    unread = SimpleNamespace(config=empty, credential_store=CredentialStore(config=empty))
+    assert unread.credential_store.crew_scope.source is CrewScopeSource.UNREAD  # premise: startup never read it
+    assert crew_scope_locked(unread) is True  # D21: a skipped read refuses, never opens
+    assert crew_scope_token(unread) == ""
+    with pytest.raises(HTTPException) as refused:
+        await require_crew_scope(_http_request(), authorization=None, runtime=unread)
+    assert (refused.value.status_code, refused.value.detail) == (403, "crew_scope_token_unavailable")
+    for presented in (None, KEYRING_TOKEN):
+        socket = _DuckSocket(presented)
+        assert await verify_ws_token(socket, unread) is False, presented
+        assert [code for code, _reason in socket.closed] == [1008], presented
+
+    configured = SystemConfig(auth=AuthConfig(crew_scope_token=FILE_TOKEN))
+    with_file_token = SimpleNamespace(config=configured, credential_store=CredentialStore(config=configured))
+    assert with_file_token.credential_store.crew_scope.source is CrewScopeSource.UNREAD  # premise
+    assert crew_scope_locked(with_file_token) is False  # a configured token is enforced in every state
+    assert crew_scope_token(with_file_token) == FILE_TOKEN
+    assert await require_crew_scope(
+        _http_request(), authorization=f"Bearer {FILE_TOKEN}", runtime=with_file_token,
+    ) is None
+    with pytest.raises(HTTPException) as unauthenticated:
+        await require_crew_scope(_http_request(), authorization=None, runtime=with_file_token)
+    assert unauthenticated.value.status_code == 401
+```
+
+#### A2.4.6 E5 (after E4)
+
+SEARCH:
+```python
+    assert stop_record < keyring_read < source.index("await init_nats(") < source.index("finalize_startup(")
+```
+REPLACE:
+```python
+    assert stop_record < keyring_read < source.index("await init_nats(") < source.index("finalize_startup(")
+
+
+class _RecordingKeyringStep(CrewScopeKeyring):
+    """The real keyring step over a duck, recording what the runtime had started when startup called ``load``."""
+
+    def __init__(self, runtime: ProbOSRuntime, backend: Any) -> None:
+        super().__init__(backend=backend)
+        self._runtime = runtime
+        self.calls: list[tuple[bool, bool]] = []  # (the stop record exists, NATS not started yet)
+
+    async def load(self, *, config: Any = None, config_path: str | None = None) -> KeyringRead:
+        self.calls.append((self._runtime.agent_stops is not None, self._runtime.nats_bus is None))
+        return await super().load(config=config, config_path=config_path)
+
+
+def _boot_config() -> SystemConfig:
+    # The BF-906 real-boot configuration (tests/test_bf906_crew_enrollment_boot.py, ``_config``).
+    config = SystemConfig()
+    config.onboarding.naming_ceremony = False
+    config.proactive_cognitive.enabled = False
+    config.qa.enabled = False
+    return config
+
+
+async def test_a_real_boot_reads_the_keyring_after_the_stop_record_and_before_nats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from probos.startup import nats as startup_nats
+
+    runtime = ProbOSRuntime(config=_boot_config(), data_dir=tmp_path / "data", llm_client=MockLLMClient())
+    step = _RecordingKeyringStep(runtime, MemoryKeyring(token=KEYRING_TOKEN))
+    runtime.credential_store.crew_scope = step
+    assert step.source is CrewScopeSource.UNREAD  # premise
+    assert crew_scope_locked(runtime) is True  # D21: before the read, no configured token -> refuse
+    assert crew_scope_token(runtime) == ""
+
+    real_init_nats = startup_nats.init_nats
+    seen_at_nats: list[CrewScopeSource] = []
+
+    async def recording_init_nats(config: SystemConfig) -> Any:
+        seen_at_nats.append(runtime.credential_store.crew_scope.source)
+        return await real_init_nats(config)
+
+    monkeypatch.setattr(startup_nats, "init_nats", recording_init_nats)
+    await runtime.start()
+    try:
+        assert step.calls == [(True, True)]  # once, after the stop record, before NATS
+        assert seen_at_nats == [CrewScopeSource.KEYRING]  # the read had finished when NATS started
+        assert crew_scope_token(runtime) == KEYRING_TOKEN
+        assert crew_scope_locked(runtime) is False
+    finally:
+        await runtime.stop()
+```
+
+#### A2.4.7 G8's added assertion
+
+SEARCH:
+```python
+    assert as_argument.returncode == 2, as_argument.stderr  # argparse refuses the extra argument
+```
+REPLACE:
+```python
+    assert as_argument.returncode == 2, as_argument.stderr  # argparse refuses the extra argument
+    # BF-908 A2 (D23): stderr is deliberately not asserted. argparse echoes the mistyped value there (residual R8);
+    # it was already in the shell's history. Pinning the echo as the contract would be wrong; so would asserting
+    # its absence, which no test here can make true without redacting the root parser.
+    assert KEYRING_TOKEN not in as_argument.stdout
+```
+
+#### A2.4.8 G11 (after G5)
+
+SEARCH:
+```python
+    assert no_secure_backend == 0
+    assert insecure.entries[ENTRY] == KEYRING_TOKEN  # a backend that is not secure is never touched
+    _assert_prints_no_token(out.getvalue())
+```
+REPLACE:
+```python
+    assert no_secure_backend == 0
+    assert insecure.entries[ENTRY] == KEYRING_TOKEN  # a backend that is not secure is never touched
+    _assert_prints_no_token(out.getvalue())
+
+
+def test_cli_clear_reports_a_refused_deletion_and_keeps_the_entry(tmp_path: Path) -> None:
+    refusing = RefusingDeleteKeyring(token=KEYRING_TOKEN)
+    console, out = _quiet_console()
+
+    code = crew_token_cli.run("clear", config_path=_config_file(tmp_path), console=console, backend=refusing)
+
+    text = out.getvalue()
+    assert code == 1
+    assert "Not cleared" in text
+    assert "PasswordDeleteError" in text
+    assert "held no" not in text  # D22: a refusal is never reported as "none was there"
+    assert DENIAL_DETAIL not in text
+    assert refusing.entries[ENTRY] == KEYRING_TOKEN
+    _assert_prints_no_token(text)
+```
+
+### A2.5 Section 6.4 (`DECISIONS.md` block): SEARCH/REPLACE against this contract's own text
+
+Apply to section 6.4's REPLACE block before the C1b Builder pastes it. Section 6.5 (`PROGRESS.md`) needs **no** change: "A keyring that cannot be read refuses every caller instead of opening the routes" stays true.
+
+SEARCH:
+```markdown
+- *D3 (fail closed).* A secure keyring that fails, does not answer within 10 s or holds a malformed entry, with no token in the config, makes every crew-scope route answer 403 `crew_scope_token_unavailable`. A host with no secure backend has no keyring step and behaves as before.
+```
+REPLACE:
+```markdown
+- *D3 (fail closed).* A secure keyring that fails, does not answer within 10 s or holds a malformed entry, or a keyring step that startup has not read yet, with no token in the config, makes every crew-scope route answer 403 `crew_scope_token_unavailable`. A host with no secure backend has no keyring step and behaves as before. The read runs on a daemon thread, so a keyring that never answers cannot hold the vessel or `probos doctor` open at exit (`asyncio.to_thread`'s worker would be joined there).
+```
+
+SEARCH:
+```markdown
+A change is refused while the browser file vault holds entries under the token in use; `clear` never is.
+```
+REPLACE:
+```markdown
+A change is refused while the browser file vault holds entries under the token in use; `clear` never is, and it says the keyring held no token only when a read-back shows the entry absent (macOS reports a denied keychain with the same error as a missing entry).
+```
+
+SEARCH:
+```markdown
+A change takes effect only at a restart.
+```
+REPLACE:
+```markdown
+A change takes effect only at a restart. A keyring read that never answers is abandoned on its daemon thread, which holds that one blocked call until the process exits. A token typed as a command-line argument by mistake is refused, and argparse echoes it to the same terminal's standard error; it was already in the shell's history. The identity-key store's bounded read (AD-1196) and the browser vault's keychain calls (AD-1016) still run on asyncio's default executor, so a keyring that never answers can hold those processes at exit: a follow-up issue.
+```
+
+### A2.6 Mutation table (section 9): rows changed and added
+
+| # | File | Line (stripped, exact) | Mutate to | Killed by |
+|---|---|---|---|---|
+| 3 (replaced) | `src/probos/security/crew_scope.py` | `return self._read.source in _LOCKED_SOURCES and not configured_crew_scope_token(config)` | `return False` | C4, C6, D1, D3, D5, E5 |
+| 6 (replaced; the old anchor is gone) | same | `return await asyncio.wait_for(future, timeout=timeout_seconds)` | `return read_keyring_token(backend)` | B6 (the read blocks the loop ~5 s, then answers ABSENT) |
+| 14 (killers widened; line unchanged) | `src/probos/credential_store.py` | `return isinstance(store, CredentialStore) and store.crew_scope.locked(getattr(runtime, "config", None))` | `return False` | C4, C6, D5, E5 |
+| 22 (killers widened; line unchanged) | `src/probos/runtime.py` | `await self.credential_store.crew_scope.load(config=self.config, config_path=self.config_path)` | delete the line | E4, E5 |
+| 36 | `src/probos/security/crew_scope.py` | `_LOCKED_SOURCES = frozenset({CrewScopeSource.UNREAD, CrewScopeSource.UNAVAILABLE})` | `_LOCKED_SOURCES = frozenset({CrewScopeSource.UNAVAILABLE})` | C6, E5 |
+| 37 | same | `target=_read_on_daemon_thread, args=(backend, loop, future), name=CREW_SCOPE_READ_THREAD_NAME, daemon=True,` | the same line with `daemon=False` | B9, B10 |
+| 38 | same | `if not future.done():  # timed out or cancelled: nobody waits for this read any more` | `if True:` | B10 (`InvalidStateError` reaches the loop's handler) |
+| 39 | same | `except RuntimeError:  # the loop closed after the caller gave up: nothing to deliver to` | `except ValueError:` | B11 (the `RuntimeError` escapes the thread) |
+| 40 | same | `if isinstance(exc, keyring.errors.PasswordDeleteError) and _entry_absent(chosen):` | `if isinstance(exc, keyring.errors.PasswordDeleteError):` | B8, G11 |
+| 41 | same | `return held is None` | `return True` | B8, G11 |
+| 42 | same | `return False  # BF-908 A2: an entry that cannot be read back is not "absent"` | `return True` | B8 (`LockedDeleteKeyring`) |
+| 43 | `src/probos/runtime.py` | `await self.credential_store.crew_scope.load(config=self.config, config_path=self.config_path)` | the same line indented under a new `if False:` line (the reviewer's mutant) | E5 (E4 survives it, by design) |
+
+Rows 1-2, 4-5, 7-13, 15-35 are unchanged; their lines are untouched by A2 and stay unique (row 4's `return KeyringRead(CrewScopeSource.UNAVAILABLE, backend=name, reason=f"the keyring failed ({type(exc).__name__})")` included; A2 adds no line of that text). Rows 37-42's lines each occur once in `crew_scope.py` after A2 (each is new text; `return False` and `return True` occur elsewhere, which is why rows 42 and 41 anchor on a comment or a unique expression, and why the absent branch's bare `return False` and `clear`'s `return True` are not rows).
+
+**Equivalent or excluded mutants:** dropping `isinstance(exc, keyring.errors.PasswordDeleteError) and` from row 40's line (a non-`PasswordDeleteError` failure whose read-back finds no entry would then read "none was there", which is true; no false success, no disclosure); deleting `worker.start()` (every load then times out after 10 s; killed by C1 and the D rows at about 10 s each, too slow to list as a row); removing `_hand_over`'s `future.set_result(read)` (same: every read times out; killed by C1). Rows 37 and 43 need their own run of B9 and E5 respectively (each about 1-60 s and a real boot).
+
+**Campaign of record:** the orchestrator runs the whole table on the repaired candidate, recording the base tree and each pinned file's sha256 (standing order); rows 37-43 and replaced rows 3 and 6 are new, the rest rerun only for files whose sha256 changed (`crew_scope.py`, `credential_store.py`; `runtime.py` is untouched by A2, so rows 21-22 need no rerun if its hash matches the candidate's, and row 22's new killer E5 is shown by row 43).
+
+### A2.7 Sections 8.1, 10, 13 and 14
+
+**Section 8.1, added files:**
+- Real boot and leftovers: `tests/test_bf906_crew_enrollment_boot.py tests/test_issue1452_stop_leftovers.py` (E5 uses BF-906's pattern; the new daemon thread is excluded from leftover checks, `tests/fixtures/runtime_lifecycle.py:144-156`).
+- Option (a)'s reach, as measured by the orchestrator: `tests/test_ad1194_unified_capability_triage.py tests/test_ad719_chat_fanout.py tests/test_ad719_episodic_writes.py tests/test_ad914_group_chat_fanout.py tests/test_ad916_chat_file_sharing.py tests/test_architect_api.py tests/test_bf756_agent_tools_without_management.py tests/test_builder_api.py tests/test_dispatch_wiring.py tests/test_selfmod_e2e.py`.
+- Unchanged: the four scripts. Section 8.2 (C1b) is unchanged.
+
+**Section 10, rows added or replaced:**
+
+| Test | Proves | Does not prove |
+|---|---|---|
+| B8 | A refused deletion that keeps the entry, or whose read-back fails, is reported by type, never as "none was there". | A real keychain's answer (ducks shaped on keyring's macOS source, pinned as a premise). |
+| B9 | A keyring read that never answers does not hold `asyncio.run` or the interpreter at exit. | A real keychain prompt. |
+| B10, B11 | A late answer, on a running or a closed loop, raises nothing anywhere; the read runs on one daemon thread. | B9's exit. |
+| C6 | An unread keyring step refuses every caller while no token is configured, and enforces a configured one. | That startup loads it (E5). |
+| E4 | Exactly one `load` call, between the stop record and NATS, in `start`'s source. | That a real boot reaches it (E5); it passes under `if False:`. |
+| E5 | A real boot calls `load` once, after the stop record and before NATS; refused before, the keyring's token enforced after. | The exact line (E4). |
+| G8 | No token argument is accepted; it is not in the child's stdout. | Its stderr: argparse echoes a mistyped value there (R8). |
+| G11 | The CLI reports a refused deletion as "Not cleared" with exit 1 and keeps the entry. | A real keychain. |
+
+**Section 13, criteria:**
+- Criterion 4 adds: "so does a keyring step that startup has not read yet (C6, E5)."
+- New criterion 11: "A keyring read that never answers does not hold the vessel or `probos doctor` open at exit, and a late answer raises nothing (B9, B10, B11)."
+- New criterion 12: "`probos crew-token clear` says the keyring held none only when a read-back shows the entry absent; a refused deletion exits 1 and keeps the entry (B8, G11)."
+- Criterion 9 covers rows 1-43 (A2.6).
+
+**Section 14, premises added:**
+15. E5 boots under the conftest's fail backend exactly as `tests/test_bf906_crew_enrollment_boot.py:55-58` does. If the boot fails for a reason outside BF-908, report it; do not skip E5.
+16. Tests first: against the unrepaired candidate, B8, B9 (after 60 s), B10, B11 (no thread of that name), C6, E5 (its before-boot premise) and G11 fail; G8's added assertion passes.
+17. `import keyring.backends.macOS` succeeds on Windows (`api` is imported under `try`, `macOS/__init__.py:10-13`) and `inspect.getsource` unwraps `warn_keychain` (`functools.wraps`).
+
+**Self-check: guards the new code could trip.**
+
+```
+CLAIM: no AST importer-set guard is tripped
+RUN:   Grep "importers == " tests/ (A1.9's enumeration); A2 adds `import threading` to crew_scope.py only
+FOUND: test_ad1137_doctor.py:1437 (doctor importers: crew_scope.py still imports nothing from probos.doctor;
+       D20 deliberately does not reuse llm_check._bounded for this reason), test_ad1135_provider_setup.py:703,
+       test_ad1326_procedure_challenger.py:2366, test_bf877:457, test_codebase_index.py:396: none affected
+HOLDS: yes
+
+CLAIM: H1 and H2 hold
+RUN:   the new src lines read no `crew_scope_token` attribute; no new importer of probos.security.crew_scope;
+       store/clear are still called only by crew_token_cli (B8 and G11 are in tests/, which H2 does not scan)
+HOLDS: yes
+
+CLAIM: K5 ("no child script imports keyring") does not apply to B9
+RUN:   contract section 6.3 row K5: `all("keyring" not in command for command in _CHILD_COMMANDS)`, in C1b's file
+FOUND: K5 is scoped to C1b's build_command_env children; B9's child inherits os.environ (the fail backend) and is
+       in C1a's file
+HOLDS: yes
+
+CLAIM: no thread or leftover guard trips on the new daemon thread
+RUN:   Grep "threading.enumerate(" tests/ src/; Grep "Thread|to_thread" scripts/check_seam_contracts.py
+FOUND: tests/fixtures/runtime_lifecycle.py:144-156 counts non-daemon threads only; test_ad1137_doctor.py:819 counts
+       "probos-doctor-probe" only; check_seam_contracts.py: no match; check_architecture_principles.py's gating
+       categories are srp-size, layer-import (and report-only private-access, source-text-tests: :168, :573, :608,
+       :632, :741), none about threads
+HOLDS: yes
+
+CLAIM: the "AD-734 hook" named in the request
+RUN:   Grep "AD-734" over the repo outside prompts/
+FOUND: tests/test_ad734_wire_shape_contract.py (the vision wire-shape test; scans no test files), DECISIONS.md:6937,
+       PROGRESS.md, the AD ledger; no hook, and no .githooks/ or .pre-commit-config.yaml in this tree
+HOLDS: nothing to trip; if the orchestrator means another hook, name it and I will check it
+```
+
+E5 does not use `started_runtime` or the text `fast_teardown`, so the AD-1270f scan of test files (`tests/test_ad1270f_shutdown_grace.py:902`, `:1069`) does not see it.
+
+### A2.8 As built (D25): three deviations kept
+
+(a) **The startup log carries the remediation.** `CrewScopeKeyring.load` logs `posture.message` followed by `posture.remediation`, when present, in one record at the posture's level (`security/crew_scope.py:272-280`). D7 and E1 require the command (`probos crew-token set`) in the startup log; section 5.1's sample logged the message only. E1 asserts exactly one record.
+
+(b) **C5 stubs the GitHub CLI and clears four variables.** C5 replaces `probos.credential_store.subprocess` with a recorder that fails as an absent CLI does, and deletes `GH_TOKEN`, `GITHUB_TOKEN`, `PROBOS_DISCORD_TOKEN` and `LLM_API_KEY` from the environment (`tests/test_bf908_crew_scope_token.py:446-452`). Section 5.16's row as written would have run `gh auth token` against the GitHub CLI's real credential store (the built-in `github` spec ends in a CLI step, `credential_store.py:375`). **Standing rule for this batch:** any later test that calls `get()`, `available()` or `list_credentials()` on a real `CredentialStore` needs the same guard; C1b's children tests must honour it.
+
+(c) **Tests beyond the rows.** G10 (`test_a_token_the_cli_stored_is_the_one_the_vessel_enforces`: CLI `set` -> keyring -> startup read -> accessor -> the stop route, 200 and 401) and a read counter in G9 (`_CountingKeyring`, `mem.reads == 0`: refused before the keyring is read). Both are kept as rows.
+
+### A2.9 Residuals and follow-ups (R1-R5 stay)
+
+Worded for the #1523 register and the DECISIONS entry:
+
+- **R6 (follow-up issue; the orchestrator files it).** The identity-key store's bounded keyring read (`identity_key_store.py:186`, AD-1196) and the browser vault's keychain backend (`security/keyring_backend.py`, AD-1016: eight `asyncio.to_thread` calls with no timeout) run on asyncio's default executor. A keyring call that never returns holds `asyncio.run` at exit for up to 300 s and then the interpreter without a limit; the AD-1016 calls also hold their awaiting caller indefinitely. **Reach:** ordinary on a host whose keychain prompts and nobody answers, or whose secret service stalls. Predates BF-908. Fix: lift BF-908's daemon-thread read (D20) into a shared helper and use it for both.
+- **R7 (recorded).** A keyring read that never answers is abandoned on a daemon thread, which holds that one blocked call until the process exits. One thread per bounded read; startup and `probos doctor` each read once, so it does not grow. **Reach:** the same hosts as R6.
+- **R8 (recorded; P3).** `probos crew-token <verb> <token>` is refused (exit 2), and argparse echoes the mistyped value to the same terminal's standard error. The value was already in the shell's history and the process's command line. **Reach:** the Captain mistyping. Fix if wanted later: `parse_known_args` in `main()` with a redacted error for `crew-token` (about 8 lines in the shared entry point plus a test).
+
+### A2.10 Repair milestone
+
+**M3r (C1a repair), one Builder pass, tests first, about 35-45 tool calls.** (1) A2.3 fixture and A2.4 test blocks; run `tests/test_bf908_crew_scope_token.py -n 0` and confirm premise 16 (seven new tests red; B9 takes 60 s to fail). (2) A2.2 source blocks. (3) Rerun the file, then section 8.1 with A2.7's additions, `-n 0`. (4) Report every SEARCH that did not match exactly once; do not improvise. Then the orchestrator: one consolidated focused check, review round 2 on the **delta** (A2 touches no shared contract beyond `locked()`'s widened state, which C6/E5 pin and the measured 69 files cover), commit.
+
+### A2.11 Prior art and blind spots
+
+- **Internal.** AD-1137 A-3 measured the same exit hang for doctor probes and chose a daemon thread over an executor (`doctor/checks/llm_check.py:146-151`): adopted, not imported (D20). BF-906's real-boot tests (`tests/test_bf906_crew_enrollment_boot.py:55-58`): E5's pattern, adopted. The BF-906 lesson (a source-text test passes on dead code): why E5 accompanies E4.
+- **External.** CPython [issue #96827](https://github.com/python/cpython/issues/96827): `asyncio.run`'s cleanup waits in `shutdown_default_executor` for a thread still running in the default executor. It confirms the finding; nothing in CPython stops `asyncio.run` waiting for such a thread, hence a thread outside the executor. ProbOS-specific plumbing otherwise; `docs/research/reference-projects.md` not consulted (a bug-fix amendment, not a design AD).
+- **Blind spots checked.** A late answer on a cancelled future, or on a closed loop (B10, B11); a thread that cannot start (the existing `except Exception` arm, "did not run"); Windows and SecretService delete semantics (D22: the read-back is correct on both); a real runtime that is never started serving no-token routes (D21: no production path; the test suites are measured).
+
+### A2.12 Verified Against Codebase (2026-10-20, candidate tree `f5cc60ea` in worktree `bf908-a2`)
+
+```
+grep -n "asyncio.to_thread(read_keyring_token" src/probos/security/crew_scope.py
+  150: return await asyncio.wait_for(asyncio.to_thread(read_keyring_token, backend), timeout=timeout_seconds)
+grep -n "except keyring.errors.PasswordDeleteError" src/probos/security/crew_scope.py      196
+grep -n "return self._read.source is CrewScopeSource.UNAVAILABLE" src/probos/security/crew_scope.py   291
+grep -n "self._read = KeyringRead(CrewScopeSource.UNREAD)" src/probos/security/crew_scope.py         254
+grep -n "def crew_scope_locked|store.crew_scope.locked" src/probos/credential_store.py   442, 445
+grep -n "crew_scope_locked" src/probos      routers/auth.py:24, :52, :96; credential_store.py:442, :445 (only)
+grep -n "await self.agent_stops.start()|crew_scope.load(|await init_nats(" src/probos/runtime.py   2771, 2775, 2782
+grep -n "self.agent_stops = None|self.nats_bus: NATSBus | None = None|self.config_path: str | None = None" src/probos/runtime.py
+  704, 1657, 1279
+grep -n "async def init_nats" src/probos/startup/nats.py     19 (one caller: runtime.py:2782)
+grep -n "await runtime.start()|create_app(runtime" src/probos/__main__.py   650, 812
+grep -n "await runtime.start()|_serve_api(runtime" tests/fixtures/federation_cluster_node.py   184, 192
+grep -n "removed = clear_keyring_token|Not cleared|held no" src/probos/crew_token_cli.py   175, 177, 180
+grep -n "args = parser.parse_args()" src/probos/__main__.py   3389
+grep -n "def delete_password|except api.Error|raise PasswordDeleteError" .venv/.../keyring/backends/macOS/__init__.py   70, 76, 77
+grep -n "^class (Error|NotFound|KeychainDenied|SecAuthFailure)" .venv/.../keyring/backends/macOS/api.py   111, 129, 133, 137
+grep -n "def delete_password|raise PasswordDeleteError|winerror == 1168" .venv/.../keyring/backends/Windows.py   147, 156, 162
+grep -n "def delete_password|No such password" .venv/.../keyring/backends/SecretService.py   94, 101
+grep -n "shutdown_default_executor" <python 3.12.13>/Lib/asyncio/runners.py   73;  constants.py:34 THREAD_JOIN_TIMEOUT = 300
+grep -n "def _python_exit|_register_atexit" <python 3.12.13>/Lib/concurrent/futures/thread.py   23, 37
+grep -n "asyncio.wait_for(asyncio.to_thread(run)" src/probos/identity_key_store.py   186 (git blame c4f367503, 2026-10-01)
+grep -n "asyncio.to_thread" src/probos/security/keyring_backend.py   160, 167, 170, 178, 189, 220, 228, 231
+grep -n "worker = threading.Thread(target=run, name=\"probos-doctor-probe\", daemon=True)" src/probos/doctor/checks/llm_check.py   166
+grep -n "def _quiet_console|soft_wrap=True" tests/test_bf908_crew_scope_token.py   873, 876
+grep -n "def nondaemon_threads_since|not thread.daemon" tests/fixtures/runtime_lifecycle.py   144, 154
+interpreter: d:/ProbOS/.venv (pyvenv.cfg version_info = 3.12.13)
+```
+
+**Absence verified (2026-10-20):**
+
+```
+CLAIM: no production path serves crew-scope routes from a runtime whose start() has not run (D21's "no behaviour change")
+RUN:   Grep "create_app\(" src/probos  ->  api.py:111 (the definition); Grep "create_app\(runtime" src/probos -> __main__.py:812 only
+FOUND: __main__.py:650 awaits runtime.start() before :812; tests/fixtures/federation_cluster_node.py starts (:184) before serving (:192)
+HOLDS: yes
+
+CLAIM: crew_scope_locked has no caller beyond the two gates
+RUN:   Grep "crew_scope_locked|\.locked\(" src/probos
+FOUND: routers/auth.py:52, :96; the definition; unrelated asyncio Lock.locked() calls (telemetry_relay, perception, crew_orchestrator)
+HOLDS: yes
+
+CLAIM: a MagicMock or SimpleNamespace runtime is never locked, so the other real-runtime-free app tests cannot change
+RUN:   credential_store.py:445 `isinstance(store, CredentialStore) and ...`; e.g. tests/test_ad1270f_shutdown_grace.py:252 (MagicMock runtime)
+HOLDS: yes
+```
+
+### A2.13 Captain
+
+Nothing here needs the Captain. D20 and D22 repair defects without changing a control; D21 makes an unread keyring step fail closed (a control strengthened, no production behaviour changed); D23 records a P3 the convergence rule allows recording (injected-only, no repair introduced it) and narrows D16's wording to what holds; D24 files a pre-existing defect as a follow-up rather than widening this batch.
