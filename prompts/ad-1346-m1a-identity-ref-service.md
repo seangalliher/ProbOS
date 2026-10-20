@@ -906,3 +906,456 @@ routers/identity.py:101-111 GET /assets lists get_asset_tags()
 | Nothing deletes an asset tag | Grep `_asset_cache\.(pop\|clear)\|del self\._asset_cache\|DELETE FROM asset_tags` over `src/probos` | none | yes |
 | `init_communication` is imported only inside `start()` | Grep `init_communication` over `src/probos` | `runtime.py:3179,3181`; the other hits are docstrings and storage-declaration strings | yes |
 | No test already wraps `init_communication` for a start that passes | Grep `"init_communication"` over `tests` | `runtime_lifecycle.py:377` only (the failure injector) | yes |
+
+## Amendment A2 (2026-10-20, after review round 2)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+**Trigger.** Review round 2 (`gpt-6.1-sol`) found one P2, a regression introduced by A1, in claims only. D14 and the A1 binding said that on a later boot every crew agent resolves to its stored certificate from Phase 2, and that "only a vessel's first boot has an unresolved window or an asset-to-certificate change". That is false when a later boot adds crew slots that have no stored certificate. Measured by the reviewer and reproduced by the orchestrator (`logs/probe_m1a_second_boot.py.txt`). Boot 1 ran with `utility_agents.enabled = False`, and boot 2 ran over the same data directory with it True. Boot 2 had 16 crew. The 7 slots stored by boot 1 resolved unchanged at Phase 7 entry. The 9 added slots were unresolved (8) or an asset ref (1, the yeoman) at Phase 7 entry, and certificate refs with a DID on the same slots after Phase 7. The window belongs to a slot that has no stored certificate, on any boot. A2 also corrects one source attribution: the crew test at wiring reads the onboarding service's ontology, which is None from `runtime.py:2804` until Phase 8 (`startup/finalize.py:5557`). It does not read `runtime.ontology`.
+
+**Wording rule (binding on this amendment and on later M1a text).** State a claim only if a test pins it or a cited line shows it. Qualify every claim about when an identity state is possible by the slot's state at Phase 1 (a stored certificate or not) and by the phase, never by "first boot" or "later boot". Where neither a test nor a line supports a statement, remove it rather than rewrite it.
+
+**Apply order.** Tests first, then source (none), then trackers. Apply these blocks to the staged candidate tree `e21e11618a37dda21c52f2ce68724b3bed5f19e1`. Each SEARCH occurs exactly once in its file. The working tree uses CRLF, so match line by line.
+
+**Supersedes:**
+- Header "Estimated tests": now **19 new (13 unit and structural, 6 real-boot)**.
+- Problem, fact 3, its first two sentences ("Crew certificates are issued in Phase 7, not Phase 2. At wiring the onboarding service has `ontology=None` (`runtime.py:2797`), so a crew agent's certificate is deferred"). Replaced below.
+- A1 Trigger, the sentence "The same statement is also false on every later boot (D14)." Replaced by: "It is also false for a crew slot with a stored certificate, which resolves to it from Phase 2 on any boot (D14 as restated by D17)."
+- A1 D13, its first sentence. Replaced below. The rest of D13 and its rejected alternatives stand.
+- A1 D14. Replaced by D17.
+- A1 D16, the sentence "T18 measures it." Replaced by: "T18 measures it for crew slots with a stored certificate, and T19 for the crew slots a configuration change adds (D18)."
+- A1 Corrected statements: the Binding on M3's contract, the Tests intro, blind spot 1, blind spot 9 and R4. Replaced below. Through A1, this also supersedes the original binding sentence at the contract's "Binding on M3's contract" and blind spot 1 of the original list.
+- A1 New test rows T17 and T18. Replaced below. New row T19.
+- File 2 heading now reads "(a real boot; 6 tests)". "That makes **18 tests**" now reads "That makes **19 tests** in total (13 + 6)".
+- A1's apply blocks (A1.T1, A1.T5, A1.D1 to A1.D5 and the A1 `PROGRESS.md` blocks): their text for the T14 to T18 docstrings, comments and messages, the T18 name and the tracker sentences named below is superseded by the A2 blocks. The A1 blocks are history and are not reapplied.
+- Acceptance Criterion 2a and Diff Reviewer property 8. Replaced below. New properties 9 and 10.
+- Mutation table: **no change**. A2 changes no file under `src/`, so the sha256 values of the campaign of record stand. T19 kills only mutants that T17 (asset-first precedence) or T18 (skipping the stored slot-mapping load) already kill. No one-line mutant is left alive that T19 alone kills.
+- Milestone focused checks: **no change**. M2 already runs the whole boot file.
+
+### Decisions
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D17 | **D14 restated per slot, not per boot.** The identity registry loads every stored slot-to-certificate mapping in Phase 1 of every boot, before any agent is wired: `AgentIdentityRegistry.start()` (`startup/infrastructure.py:173`; native certificates `identity.py:589-596`, foreign ones `:626-632`). Slot ids are deterministic (`substrate/identity.py:17-27`). So a crew slot with a stored certificate resolves to it from Phase 2 (`identity_service.py:115-125`), and Phase 7 returns the same one (`identity.py:1021-1024`) (T18, T19). A crew slot with no stored certificate has D13's window on any boot. It is unresolved from its wiring, or an asset ref if the crew test tagged it, until Phase 7 issues its certificate (T17 on a fresh data directory, T19 for the crew slots a later boot adds). A slot's ref changes from an asset ref to a certificate ref at most once, because nothing removes a certificate from a slot (Absence Verified). | (1) **Per boot** (A1): refuted by round 2's two-boot measurement. (2) **"A slot first seen on this boot"**: a slot that was registered before but never certified also has no stored certificate. Examples are a boot that stopped between the slot's registration and Phase 7, or a mapping whose certificate row is missing (`identity.py:594-595`). The slot's state decides, not its history. |
+| D18 | **T19 is a separate test.** Boot 1 runs with `utility_agents.enabled = False`, and boot 2 runs over the same data directory with the default (True), which adds crew pools (`startup/agent_fleet.py:100-271`). The crew sets come from the ontology, and no type is hardcoded. Cost: two boots and two stops. | (1) **Fold into T18**: T18 would lose its same-configuration control, and a T18 failure would no longer say which half broke. (2) **Wording only**: the added-slot half, the case round 2 found, would be pinned by no test, against the wording rule. (3) **A helper shared with T18**: it would rewrite T18's body in this delta. The duplicated stored-slot loop is test-only. |
+| D19 | **T18 is renamed and its docstring and two messages narrowed.** The new name is `test_a_crew_slot_with_a_stored_certificate_resolves_to_it_before_and_after_phase_7`. The old name ("every crew agent ... on a second boot") reads as the refuted rule. T18's assertions are unchanged. | Keep the name: it states a claim that no test pins. |
+| D20 | **The binding on M3 is stated in slot state only.** M3 handles None and an asset ref for any crew slot whenever the facade returns one, and infers no identity state from the boot number or the phase. | Give M3 a phase guarantee: the onboarding service gets the ontology in Phase 8 (`startup/finalize.py:5557`), after Phase 7's issuance loop (`startup/communication.py:898-921`). A guarantee by phase would need a test or a line for every wiring path. |
+
+### Corrected statements
+
+- **Problem, fact 3** (replaces its first two sentences): "A crew slot with no stored certificate gets its certificate in Phase 7, not Phase 2. The onboarding service is built with `ontology=None` (`runtime.py:2804` on the staged tree) and receives the ontology only in Phase 8 (`startup/finalize.py:5557`), so at wiring a crew agent's certificate is deferred (`agent_onboarding.py:430-431`)." The rest of fact 3 stands.
+- **D13, first sentence** (replaced): "At wiring in Phase 2 of every boot the onboarding service's ontology is None (`runtime.py:2804`; set in Phase 8, `startup/finalize.py:5557`), so `is_crew_agent` (`agent_onboarding.py:421`) falls back to `_WARD_ROOM_CREW` (`crew_utils.py:58-76`). A crew slot of a type outside that set (the yeoman today) that has no stored certificate gets an asset tag at wiring (`agent_onboarding.py:461-476`) and its certificate in Phase 7 (`communication.py:898-921`), on the same slot."
+- **Binding on M3's contract** (replaces A1's text): "A crew slot with a stored certificate resolves to it from Phase 2 (D17). A crew slot without one, on any boot, is unresolved from its wiring until Phase 7 issues its certificate. Until then it resolves to an asset ref if the Phase 2 crew test tagged it as an asset (D13). M3 infers neither state from the boot number or the phase: it handles None and an asset ref for any crew slot whenever the facade returns one (D20). M3 keys and aggregates on `slot_id` only. It reads `sovereign_id` and `did` as facts of the record's moment. These change at most once in a slot's life, from an asset ref (`did == ""`) to a certificate ref on the same slot. M3 treats that change as one principal, not as a reused slot, and does not compare refs across it (D3 makes them unequal). A certificate ref followed by a different certificate ref on one slot is a reused slot. `agent_type` does not change across it; `callsign` is live. An asset-tag UUID from an earlier record still resolves to the slot's current ref (T17, T19). M3 never reads `agent.sovereign_id`, which lags the facade before Phase 7 for a crew slot with a stored certificate (blind spot 9). M3 calls the facade on the event loop only (blind spot 8)."
+- **Tests intro** (replaces A1's text): "No test sleeps of its own. A clean `stop()` in T14, T16, T17, T18 and T19 runs the production shutdown grace waits (`startup/shutdown.py:999,1055`, 1.0 s and 2.0 s); T15's zero-grace config skips them."
+- **Blind spot 1** (replaced): "A crew slot with no stored certificate, on any boot, may be unresolved, or resolve to an asset ref, until Phase 7 issues its certificate (D13, D17). M3 records None as unresolved, never as a raw id, and infers no state from the boot number or the phase."
+- **Blind spot 9** (replaced): "Between Phase 2 and Phase 7, for a crew slot with a stored certificate, `agent.sovereign_id` has two lagging values while the facade already returns the stored certificate. It is `\"\"` for a deferred crew agent (`agent_onboarding.py:430-431`; default `substrate/agent.py:44`). It is the tag UUID for an asset-tagged one (`agent_onboarding.py:475`). The facade is right and the attribute lags, so a migration slice must not prefer `agent.sovereign_id` over the facade."
+- **Blind spot 10** (new): "The phase alone does not tell a crew slot's state. The onboarding service gets the ontology in Phase 8 (`startup/finalize.py:5557`), after Phase 7's issuance loop (`startup/communication.py:898-921`). Whether a crew slot has a certificate at a given moment depends on what was stored for it and when it was wired. M3 reads the facade (D20)."
+- **R4** (replaced): "A crew slot asset-tagged at wiring before its certificate was issued keeps that tag after Phase 7 certifies it, and `GET /assets` lists it (`routers/identity.py:101-111`). This predates M1a, which neither causes nor changes it. It is a follow-up issue, not this slice."
+
+### New and replaced test rows (File 2)
+
+| # | Test | Proves |
+|---|---|---|
+| T17 | **`test_across_phase_7_a_crew_agent_keeps_its_slot_and_only_an_asset_ref_is_replaced`** (unchanged name) | One boot on a fresh data directory, where no slot has a stored certificate. The facade is read through the D15 wrapper at Phase 7 entry and again after the boot. Assertions are unchanged from A1. Docstring and two messages are reworded per A2. |
+| T18 | **`test_a_crew_slot_with_a_stored_certificate_resolves_to_it_before_and_after_phase_7`** (renamed, D19) | First boot: record every crew slot's ref (each with a DID). Second boot on the same `data_dir` with the same configuration, through the D15 wrapper: every recorded crew slot present at Phase 7 entry resolves there to an equal ref with the same DID, and to the same ref after the boot. Premise: at least one slot was checked. Assertions are unchanged from A1. |
+| T19 | **`test_after_a_config_change_the_added_crew_slots_wait_for_phase_7_and_the_stored_ones_do_not`** | Boot 1 with `utility_agents.enabled = False`; record every crew slot's ref. Boot 2 on the same `data_dir` with the default configuration, through the D15 wrapper. Crew sets come from `is_crew_agent(a, rt.ontology)` after each boot, and no type is hardcoded. Premises: boot 1 has crew and certified all of them; boot 2 keeps every boot-1 crew slot and adds at least one; Phase 7 ran once; at least one stored slot and one added slot were registered at Phase 7 entry; at least one added slot was unresolved and at least one was an asset ref there. Each stored slot resolves at Phase 7 entry to its boot-1 ref with the same DID, and to the same ref after Phase 7. Each added slot resolves after Phase 7 with a DID and its own `slot_id`. At Phase 7 entry an added slot is None or an asset ref (`did == ""`) on the same slot, and its asset-tag UUID resolves to its ref after Phase 7. |
+
+### Tests first: `tests/test_ad1346_identity_service_boot.py`
+
+A2.T1: the T14 line of the module docstring.
+
+SEARCH:
+```text
+- T14  after a real boot every identified agent resolves through ``runtime.identity_service`` to its own slot,
+       sovereign id, DID and live callsign. Crew certificates are issued in Phase 7, after the facade is built at
+       Phase 2 entry, so a crew agent that resolves proves the facade holds a reference, not a copy.
+```
+REPLACE:
+```text
+- T14  after a real boot every identified agent resolves through ``runtime.identity_service`` to its own slot,
+       sovereign id, DID and live callsign. On a fresh data directory no slot has a stored certificate, so the crew
+       certificates are issued in Phase 7, after the facade is built at Phase 2 entry, and a crew agent that
+       resolves proves the facade holds a reference, not a copy.
+```
+
+A2.T2: the T17 and T18 lines of the module docstring, and the new T19 line.
+
+SEARCH:
+```text
+- T17  across Phase 7 of a first boot, a crew agent asset-tagged at wiring keeps its slot and gains its certificate
+       ref (a new sovereign id and a DID), every crew agent resolves with a DID after Phase 7, and no asset changes.
+- T18  on a second boot over the same data directory, every crew agent resolves to its stored certificate from
+       Phase 2 on, so the change T17 pins happens once in a slot's life.
+```
+REPLACE:
+```text
+- T17  across Phase 7 on a fresh data directory, a crew slot asset-tagged at wiring keeps its slot and gains its
+       certificate ref (a new sovereign id and a DID), every crew agent resolves with a DID after Phase 7, and no
+       asset changes.
+- T18  on the next boot over the same data directory and configuration, each crew slot with a stored certificate
+       resolves to it at Phase 7 entry and after it.
+- T19  on the next boot with a configuration that adds crew slots, the added slots (no stored certificate) go
+       through T17's window while the stored ones resolve as in T18: the window is per slot, not per boot.
+```
+
+A2.T3: the import.
+
+SEARCH:
+```text
+from probos.config import SystemConfig
+```
+REPLACE:
+```text
+from probos.config import SystemConfig, UtilityAgentsConfig
+```
+
+A2.T4: T14's premise comment.
+
+SEARCH:
+```text
+        # Premises. A crew certificate is issued in Phase 7, after the facade exists, so a crew agent with a DID
+        # that resolves proves a reference rather than a copy. An asset (a non-crew agent holding a tag and no
+        # DID) is the other identity the facade resolves.
+```
+REPLACE:
+```text
+        # Premises. On this fresh data directory a crew certificate is issued in Phase 7, after the facade exists, so
+        # a crew agent with a DID that resolves proves a reference rather than a copy. An asset (a non-crew agent
+        # holding a tag and no DID) is the other identity the facade resolves.
+```
+
+A2.T5: T17's docstring.
+
+SEARCH:
+```text
+    """T17: one first boot, read through the facade before and after Phase 7 (AD-1346 M1a A1, D13).
+
+    ``rt.ontology`` is None until Phase 7, so the crew test at wiring falls back to a legacy set, and a crew type
+    outside it is asset-tagged at Phase 2 and certified in Phase 7 on the same slot. The crew are therefore read
+    after the boot, from the ontology; no crew type is named here.
+```
+REPLACE:
+```text
+    """T17: one boot on a fresh data directory, read through the facade before and after Phase 7 (AD-1346 M1a, D13).
+
+    No slot has a stored certificate. The onboarding service is built without the ontology and receives it in
+    Phase 8, so the crew test at wiring falls back to a legacy set, and a crew type outside it is asset-tagged at
+    Phase 2 and certified in Phase 7 on the same slot. The crew are therefore read after the boot, from the
+    ontology; no crew type is named here.
+```
+
+A2.T6: T17's asset-tag message.
+
+SEARCH:
+```text
+            assert before.did == "", f"{who}: before Phase 7 a crew agent can hold only an asset tag, got {before}"
+```
+REPLACE:
+```text
+            assert before.did == "", (
+                f"{who}: before Phase 7 a crew slot with no stored certificate can hold only an asset tag: {before}"
+            )
+```
+
+A2.T7: T17's premise message.
+
+SEARCH:
+```text
+            "type of the ontology is now in crew_utils._WARD_ROOM_CREW, or the ontology is loaded before Phase 2. "
+            "A crew ref then no longer changes at Phase 7: remove this test, and in DECISIONS.md (AD-1346 M1a) "
+            "drop D13's asset-then-certificate case and the matching clause of the binding on M3."
+```
+REPLACE:
+```text
+            "type of the ontology is now in crew_utils._WARD_ROOM_CREW, or the onboarding service gets the ontology "
+            "before Phase 2. A crew slot's ref then no longer changes at Phase 7: remove this test and T19's asset "
+            "premise, and in DECISIONS.md (AD-1346 M1a) drop D13's asset-then-certificate case and the matching "
+            "clauses of D14 and the binding on M3."
+```
+
+A2.T8: T18's name and docstring.
+
+SEARCH:
+```text
+async def test_on_a_second_boot_every_crew_agent_resolves_from_phase_2_to_its_stored_certificate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T18: the change T17 pins happens once in a slot's life (AD-1346 M1a A1, D14).
+
+    On a later boot the identity registry loads the stored slot mappings in Phase 1, so every crew agent resolves to
+    its certificate ref from Phase 2 on, and Phase 7 returns the same certificate.
+    """
+```
+REPLACE:
+```text
+async def test_a_crew_slot_with_a_stored_certificate_resolves_to_it_before_and_after_phase_7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T18: a crew slot with a stored certificate has no Phase 7 window (AD-1346 M1a, D14).
+
+    The identity registry loads the stored slot mappings in Phase 1 of every boot, before any agent is wired. A
+    second boot over the same data directory and the same configuration therefore resolves each crew slot of the
+    first boot to its certificate ref at Phase 7 entry, and Phase 7 returns the same certificate. T19 covers the
+    crew slots a configuration change adds, which have no stored certificate.
+    """
+```
+
+A2.T9: T18's two messages.
+
+SEARCH:
+```text
+            assert early is not None, f"{slot}: a stored certificate must resolve before Phase 7 of a later boot"
+            assert early == ref and early.did == ref.did, f"{slot}: {early} before Phase 7, {ref} after the first boot"
+            assert service.resolve(slot) == ref, f"{slot}: Phase 7 of a later boot must not change the ref"
+```
+REPLACE:
+```text
+            assert early is not None, f"{slot}: a slot with a stored certificate must resolve to it before Phase 7"
+            assert early == ref and early.did == ref.did, f"{slot}: {early} before Phase 7, {ref} after the first boot"
+            assert service.resolve(slot) == ref, f"{slot}: Phase 7 must not change a stored certificate's ref"
+```
+
+A2.T10: T19, after T18.
+
+SEARCH:
+```python
+        assert checked > 0, "premise: at least one crew slot was registered before Phase 7 of the second boot"
+    finally:
+        await second.stop()
+```
+REPLACE:
+```python
+        assert checked > 0, "premise: at least one crew slot was registered before Phase 7 of the second boot"
+    finally:
+        await second.stop()
+
+
+async def test_after_a_config_change_the_added_crew_slots_wait_for_phase_7_and_the_stored_ones_do_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T19: the Phase 7 window belongs to a crew slot with no stored certificate, on any boot (AD-1346 M1a, D14).
+
+    The first boot runs with the utility agent pools off; the next boot over the same data directory turns them on,
+    which adds crew slots that have no stored certificate. Each added slot is unresolved, or an asset ref, at Phase 7
+    entry and a certificate ref with a DID on the same slot after it, as in T17; each crew slot of the first boot
+    resolves to its stored certificate at Phase 7 entry and after it, as in T18. The crew are read from the ontology
+    after each boot; no crew type is named here.
+    """
+    data_dir = tmp_path / "data"
+    first_config = _config()
+    first_config.utility_agents = UtilityAgentsConfig(enabled=False)
+    first = ProbOSRuntime(config=first_config, data_dir=data_dir, llm_client=MockLLMClient())
+    await first.start()
+    try:
+        first_service = first.identity_service
+        assert isinstance(first_service, IdentityService), "premise: the first boot built the facade"
+        stored = {
+            a.id: first_service.resolve(a.id) for a in first.registry.all() if is_crew_agent(a, first.ontology)
+        }
+    finally:
+        await first.stop()
+    assert stored, "premise: the first boot has crew"
+    assert all(ref is not None and ref.did for ref in stored.values()), (
+        "premise: the first boot certified every crew agent"
+    )
+
+    second_config = _config()
+    assert second_config.utility_agents.enabled, "premise: the utility agent pools are on by default"
+    second = ProbOSRuntime(config=second_config, data_dir=data_dir, llm_client=MockLLMClient())
+    reads = _read_the_facade_at_phase_7_entry(monkeypatch, second)
+    await second.start()
+    try:
+        assert len(reads) == 1, "premise: Phase 7 ran once"
+        entry = reads[0]
+        assert entry is not None, "premise: the facade existed at Phase 7 entry"
+        service = second.identity_service
+        assert isinstance(service, IdentityService), "premise: the second boot built the facade"
+        crew = {a.id for a in second.registry.all() if is_crew_agent(a, second.ontology)}
+        assert set(stored) <= crew, "premise: the second boot keeps every crew slot of the first"
+        added = crew - set(stored)
+        assert added, (
+            "premise: turning the utility agent pools on added no crew slot; use another configuration change that "
+            "adds a crew pool (startup/agent_fleet.py)"
+        )
+
+        kept = 0  # stored crew slots read at Phase 7 entry
+        for slot, ref in stored.items():
+            assert ref is not None, slot
+            if slot not in entry:
+                continue  # wired in Phase 7, so not readable before it
+            early = entry[slot]
+            assert early is not None, f"{slot}: a slot with a stored certificate must resolve to it before Phase 7"
+            assert early == ref and early.did == ref.did, f"{slot}: {early} before Phase 7, {ref} after the first boot"
+            assert service.resolve(slot) == ref, f"{slot}: Phase 7 must not change a stored certificate's ref"
+            kept += 1
+        assert kept > 0, "premise: at least one stored crew slot was registered before Phase 7"
+
+        deferred = 0  # added crew slots unresolved at Phase 7 entry
+        tagged = 0  # added crew slots that resolved to an asset ref at Phase 7 entry
+        for slot in sorted(added):
+            after = service.resolve(slot)
+            assert after is not None and after.did, f"{slot}: an added crew slot must resolve with a DID after Phase 7"
+            assert after.slot_id == slot, slot
+            if slot not in entry:
+                continue  # wired in Phase 7, so not readable before it
+            before = entry[slot]
+            if before is None:
+                deferred += 1
+                continue
+            tagged += 1
+            assert before.did == "", (
+                f"{slot}: before Phase 7 a crew slot with no stored certificate can hold only an asset tag: {before}"
+            )
+            assert before.slot_id == after.slot_id, f"{slot}: Phase 7 must keep the slot"
+            assert service.resolve(before.sovereign_id) == after, (
+                f"{slot}: the asset-tag UUID read before Phase 7 must resolve to the slot's ref after it"
+            )
+        assert deferred > 0, "premise: at least one added crew slot was unresolved at Phase 7 entry"
+        assert tagged > 0, (
+            "premise: no added crew slot resolved to an asset ref at Phase 7 entry. T17's premise fails for the same "
+            "cause; follow its message, and also drop this premise and the asset clause of T19's docstring."
+        )
+    finally:
+        await second.stop()
+```
+
+### Source
+
+None. No file under `src/` changes.
+
+### Trackers: `DECISIONS.md`
+
+A2.D1: D13's first sentence.
+
+SEARCH:
+```text
+On a vessel's first boot the ontology is None at Phase 2, so the crew test at wiring falls back to a legacy set; a crew type outside it (the yeoman today) gets an asset tag at Phase 2 and its certificate in Phase 7, on the same slot.
+```
+REPLACE:
+```text
+At wiring in Phase 2 of every boot the onboarding service has no ontology (it is built without one and receives it in Phase 8), so the crew test falls back to a legacy set; a crew slot of a type outside it (the yeoman today) that has no stored certificate gets an asset tag at Phase 2 and its certificate in Phase 7, on the same slot.
+```
+
+A2.D2: D14.
+
+SEARCH:
+```text
+- *D14 (once in a slot's life).* On a later boot the identity registry loads the stored slot mappings in Phase 1, and slot ids are deterministic, so every crew agent resolves to its stored certificate from Phase 2 and Phase 7 returns the same one. Only a vessel's first boot has an unresolved window or an asset-to-certificate change.
+```
+REPLACE:
+```text
+- *D14 (per slot, not per boot).* The identity registry loads every stored slot-to-certificate mapping in Phase 1 of every boot, before any agent is wired, and slot ids are deterministic, so a crew slot with a stored certificate resolves to it from Phase 2 and Phase 7 returns the same one. A crew slot with no stored certificate, on any boot, has D13's window: unresolved from its wiring, or an asset ref if the crew test tagged it, until Phase 7 issues its certificate. That is every crew slot of a fresh data directory, and every crew slot a later boot adds (a configuration change that adds a crew pool, for one). A slot's ref changes from an asset ref to a certificate ref at most once, because nothing removes a certificate from a slot. Rejected: stating the window by boot number, which a later boot that adds crew slots refutes.
+```
+
+A2.D3: the binding's window clause.
+
+SEARCH:
+```text
+On a vessel's first boot crew agents are unresolved from Phase 2 until Phase 7 issues their certificates, except a crew agent the Phase 2 crew test tagged as an asset, which resolves to that asset ref until Phase 7 (D13); on a later boot every crew agent resolves to its stored certificate from Phase 2 (D14).
+```
+REPLACE:
+```text
+A crew slot with a stored certificate resolves to it from Phase 2 (D14). A crew slot without one, on any boot, is unresolved from its wiring until Phase 7 issues its certificate, or resolves until then to an asset ref if the Phase 2 crew test tagged it as an asset (D13). M3 infers neither state from the boot number or the phase: it handles None and an asset ref for any crew slot whenever the facade returns one.
+```
+
+A2.D4: the binding's lag clause.
+
+SEARCH:
+```text
+which lags the facade before Phase 7 on a later boot.
+```
+REPLACE:
+```text
+which lags the facade before Phase 7 for a crew slot with a stored certificate.
+```
+
+A2.D5: the test count.
+
+SEARCH:
+```text
+- *Tests.* 18: 13 in `tests/test_ad1346_identity_service.py`, over real registries, and 5 real-boot tests in `tests/test_ad1346_identity_service_boot.py` (every identified agent resolves after a boot, the facade exists before the fleet and a failed start releases it, a clean stop releases it, a crew agent's ref across Phase 7 of a first boot, and every crew agent's stored certificate from Phase 2 of a second boot).
+```
+REPLACE:
+```text
+- *Tests.* 19: 13 in `tests/test_ad1346_identity_service.py`, over real registries, and 6 real-boot tests in `tests/test_ad1346_identity_service_boot.py` (every identified agent resolves after a boot, the facade exists before the fleet and a failed start releases it, a clean stop releases it, a crew slot's ref across Phase 7 on a fresh data directory, a crew slot's stored certificate before and after Phase 7 of the next boot, and the crew slots a configuration change adds on the next boot, which go through the window while the stored ones do not).
+```
+
+A2.D6: R4.
+
+SEARCH:
+```text
+(R4) A crew slot asset-tagged on its first boot keeps that tag
+```
+REPLACE:
+```text
+(R4) A crew slot asset-tagged at wiring before its certificate was issued keeps that tag
+```
+
+### Trackers: `PROGRESS.md`
+
+A2.P1: the window sentence.
+
+SEARCH:
+```text
+crew certificates are issued in Phase 7 of a vessel's first boot, so the facade holds references to the registries and sees them; a crew agent the Phase 2 crew test missed (the yeoman) resolves to an asset ref until then and to its certificate on the same slot after, once in the slot's life.
+```
+REPLACE:
+```text
+a crew slot with no stored certificate, on any boot, gets its certificate in Phase 7, so the facade holds references to the registries and sees it; until then that slot is unresolved, or an asset ref if the Phase 2 crew test missed its type (the yeoman), and from then on the certificate ref on the same slot, a change made once in the slot's life; a crew slot with a stored certificate resolves to it from Phase 2.
+```
+
+A2.P2: the test count.
+
+SEARCH:
+```text
+18 new tests (13 unit and structural, 5 real-boot).
+```
+REPLACE:
+```text
+19 new tests (13 unit and structural, 6 real-boot).
+```
+
+### Acceptance Criteria (replaced and added)
+
+2a (replaced). On a fresh data directory, every crew slot that resolved at Phase 7 entry was an asset ref and keeps its slot, every crew agent resolves with a DID after Phase 7, and no asset ref changes (T17). On the next boot over the same data directory, each crew slot with a stored certificate resolves to it at Phase 7 entry and after it (T18, T19). Each crew slot that boot adds is unresolved or an asset ref at Phase 7 entry, and a certificate ref with a DID on the same slot after it (T19).
+
+2b (new). No M1a text (contract, `DECISIONS.md`, `PROGRESS.md`, the boot test file) states when an identity state is possible by "first boot" or "later boot". Every such statement is qualified by the slot's state at Phase 1 and by the phase, and is pinned by a test or shown by a cited line.
+
+Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### Diff Reviewer: properties to verify (replaced and added)
+
+8 (replaced). The "Binding on M3" text in `DECISIONS.md` agrees with D13 and D14. It is keyed on `slot_id`, with at most one asset-to-certificate change per slot. It states every identity state per slot (a stored certificate at Phase 1 or not) and never by boot number. It tells M3 to handle None and an asset ref whenever the facade returns one.
+9 (new). T19's premises are asserted and reached. Boot 1 has crew and certified all of them. Boot 2 keeps every boot-1 crew slot and adds at least one. At least one stored slot and one added slot are read at Phase 7 entry. At least one added slot is unresolved there and at least one is an asset ref. The crew sets come from the ontology, and no crew type is named. Boot 2's configuration differs from boot 1's only in `utility_agents`. T19 is green on the unchanged source.
+10 (new). A2 changes no file under `src/`. In the boot test file it changes only: the module docstring; T14's premise comment; T17's docstring and two messages; T18's name, docstring and two messages (T18's assertions unchanged); the `UtilityAgentsConfig` import; and the new T19. A grep for `first boot|later boot|second boot|vessel's first|on its first boot` over `DECISIONS.md` (the AD-1346 M1a entry), `PROGRESS.md` line 3 and the boot test file leaves only lines that name a test's own `first` or `second` runtime.
+
+### Verified Against Codebase (2026-10-20, on the staged tree `e21e1161`)
+
+```
+runtime.py:2796-2811 AgentOnboardingService(..., ontology=None at :2804, ...); :2818 IdentityService(...); :2820 create_agent_fleet
+runtime.py:1198 self.ontology = None; :3326 self.ontology = comm.ontology (after Phase 7 returns)
+startup/finalize.py:3936 async def finalize_startup; :5557 runtime.onboarding._ontology = runtime.ontology
+agent_onboarding.py:421 is_crew_agent(agent, self._ontology); :425-431 instance_id from ontology, else "Identity deferred"; :446 resolve_or_issue; :469-476 asset tag, sovereign_id = tag.asset_uuid, did = ""
+substrate/agent.py:44-45 sovereign_id = "", did = ""
+crew_utils.py:69-76 is_crew_agent: ontology crew types, else _WARD_ROOM_CREW
+identity.py:567 if not self._db (the load runs once); :589-596 slot_mappings -> _slot_cache (native); :626-632 slot_mappings -> foreign certs; :794 get_by_slot = _slot_cache.get
+identity.py:1021-1024 resolve_or_issue returns the stored certificate; :1573-1600 reassign_slot replaces a slot's certificate
+startup/communication.py:787-793 ontology built in Phase 7; :889 identity_registry.start(instance_id=...); :898-921 deferred crew certificates
+startup/infrastructure.py:170-173 AgentIdentityRegistry(...); await identity_registry.start()
+identity_service.py:115-135 _ref_for_slot: certificate first, then asset tag, else None
+config_models/crew.py:226-229 UtilityAgentsConfig, enabled: bool = True; config.py:151 re-exported, :3902 SystemConfig.utility_agents
+startup/agent_fleet.py:100,121,163,171,179,196,244,252,260,268 if config.utility_agents.enabled; :164 architect, :172 scout, :188 counselor, :197 yeoman, :245-271 officers
+tests/test_ad1197_envelope_wiring.py:33-40 from probos.config import ..., UtilityAgentsConfig (import precedent)
+tests/test_ad1346_identity_service_boot.py:32 from probos.config import SystemConfig; :55-77 _read_the_facade_at_phase_7_entry; :218-262 T18
+```
+
+Measured by others, not by the Architect: the reviewer's probe (`logs/review-m1a-r2.md`) and the orchestrator's probe (`logs/probe_m1a_second_boot.py.txt`). Boot 1 (`utility_agents.enabled = False`): 41 agents, 7 crew. Boot 2: 70 agents, 16 crew. Old slots: 7 certificate refs at Phase 7 entry, unchanged. Added slots: 8 unresolved and 1 asset ref (yeoman) at entry, 9 certificate refs after.
+
+### Absence Verified (2026-10-20)
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| Nothing removes a certificate from a slot | Grep `_slot_cache\s*(:[^=]*)?=[^=]\|_slot_cache\.\w+\(` and `_slot_cache\[\|_slot_cache\.(pop\|clear\|update)\|del self\._slot_cache\|DELETE FROM slot_mappings` over `src/probos` | init `identity.py:540`; writes `:596, :632, :959, :1594`, each assigning a certificate; reads `:794, :821, :949, :1591`; no pop, clear, del or DELETE | yes |
+| No test or check selects T18 by its old name | Grep `test_on_a_second_boot` over the repository, excluding `logs/` | `tests/test_ad1346_identity_service_boot.py:218`; contract `:571, :745` (A1 history) | yes |
+| The ledger files carry no wording A2 changes | Grep `first boot\|18 new\|real-boot\|once in the slot` over `docs/development/{ad-ledger-snapshot.json,open-ads-report.md}` | none | yes |
+| The two consensus proposer types are not crew | Grep `consensus_proposer` over `config/ontology` | none | yes |
