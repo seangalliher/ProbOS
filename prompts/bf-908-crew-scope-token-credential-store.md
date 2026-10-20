@@ -4280,3 +4280,506 @@ HOLDS: yes (a maintainer passing -l by hand would print locals; that is outside 
 ### A3.12 Captain
 
 Nothing here needs the Captain. D26-D30 repair defects without weakening a control (the floor is applied earlier, not narrowed); D31 corrects tracker wording to what holds and records three follow-ups (R9-R11) and two notes (R12, R13) rather than widening a HIGH batch; no authority, gate or approval rule changes.
+
+## Amendment A4 (2026-10-20, after review round 2 of slice C1b)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+**Trigger.** Review round 2 of the C1b candidate as repaired by A3 (`gpt-6.1-sol`; staged tree `58a3dc0d2109b5d623245b6543e5f6f6e2d5a6c5` on `d935fe07`; full text `logs/review-c1b-r2.md`): NOT READY. Round 1's four findings are resolved and everything else it was asked to verify held (result shape, the BF-895 fallback, floor equivalence for static policy, root shape, per-search cache lifetime, the engines' direct callers, mutation rows 28-34 and 44-56, the ledger). Findings: (1) P2, ordinary reach, **regression introduced by A3**: `_within_floor` reuses the engines' floor, so the final check returns the cached allow for a path retargeted (junction or symlink) before the read, and the protected synthetic text came back through the real Python engine, `handle_intent()` and the DM renderer; (2) P3: A3's "never read" is false, because `iter_files(skip_binary=True)` opens every candidate and reads up to 8 KiB before the floor decides; (3) P3, validation: mutation row 33 as "delete the line" is an `IndentationError`; (4) to record, predates A3: an unexpected exception inside the floor propagates out of the whole search; (5) a measured cost: A3 pays one floor decision per WALKED file (5,000 unmatched files: round 1 1,119 ms, A3 2,821 ms).
+
+**Apply order.** Three groups, in this order: **tests first** (A4.2: apply, run the file `-n 0`, confirm A4.6 premise 21), **source** (A4.3), **trackers** (A4.4). Every SEARCH is written against the **candidate's** files (tree `58a3dc0d`) and occurs exactly once in its file. A4.4's SEARCH blocks are fragments of single long lines in `DECISIONS.md`; replace the fragment in place.
+
+**Supersedes:**
+- A3.3's `act` (D26): the final check gets a fresh `_ReadFloor`, built after the engine ran. A4.3.1.
+- A3.3's Python engine (D26: "asks it about each file before opening it, so a protected file is never read"): the engine asks at a file's first match, after the open. A4.3.2, A4.3.3.
+- A3.10's cost claim ("small against the read of a public one"): withdrawn (D34).
+- A3.2's J14 (counts and header); rows J17-J19 added. A4.2.
+- Section 9 (as amended by A3): rows 22, 31, 32, 33, 34, 45, 46, 48, 55, 56 change; rows 57-59 added. A4.5.
+- Sections 8.2, 10, 13 and 14: A4.6.
+- C1b's test count: 32 cases becomes 36 (J17 x2, J18, J19).
+- `PROGRESS.md`: unchanged. Its line 3 says content search "asks the floor about each file before it counts a match", which stays true; it claims neither "never read" nor an independent re-check.
+
+### A4.1 Decisions D32-D37
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D32 | **Finding 1 (P2, ordinary reach, regression from A3): fix with a fresh floor for the final check.** `act` passes `_within_floor` a NEW `_ReadFloor(runtime)`, constructed as the call's second argument, so it is built after the engine returned (Python evaluates arguments left to right; for rg the result already exists). It caches only its own decisions, so each distinct RESULT path is resolved once, at the time of the final check: the cost is one root-list build per search plus one resolution per distinct matched path (at most `max_results`), not per walked file. `_within_floor`'s signature is unchanged (it takes a floor), so the A3 regression is exactly the one-line mutant "pass `floor`" (rows 57, 58), killed by J17 and J18. The engines keep their floor for the quota (D26). | (a) `_within_floor(result, runtime)` building the floor inside: the same behaviour, but the regression is then not a one-line mutant of `act`, and the function no longer states what it consumes. (b) Bind the read to the authorized file identity: the codebase has an identity-checked reader (`read_verified_file`, `PinnedDirectory.read_bytes`, `_same_file`, `security/file_access.py:380,561,721`), which closes the race for the Python engine, but rg opens its own files, so rg's results still need a path check; it reads bounded bytes, not text lines, so the engine's line loop and `_MAX_LINE_BYTES` rule would be rebuilt; and on Windows it queries each handle's path (`:393-463`). Deferred with the race that remains (R15). (c) Re-resolve inside the engine at open time only: D33 does move the Python engine's decision after the open, but without a final fresh check the rg engine (and any future engine) would be authorized by a decision taken before rg read the file. (d) No cache at all (round 1): 1,005 resolutions for 200 matches in one file (the reviewer's count). |
+| D33 | **Finding 2 (P3; the I/O predates A3, the claim is A3's): option (c), the Python engine asks the floor at a file's FIRST MATCH.** The check moves inside the match branch; a refused file is left at once (`break`); later matches in a permitted file hit the cache. The rg engine already decides per parsed line (rg prints only matches), so both engines now decide at a file's first match, and a walk with no match makes no floor decision (J19). Because the Python engine now decides after the open, the reviewer's sequence (allowed, then retargeted before the open) is refused by the engine itself; the fresh final check (D32) covers rg. The claim becomes what is true: a refused file is read up to its first match, the walker's binary sniff reads up to 8 KiB of every candidate before either engine sees it (`substrate/file_walk.py:129-137,182`), rg reads it whole (R12), and nothing of any of it reaches a result (R14). Does not weaken a control: what a search may RETURN is unchanged; only the moment the engine asks moves. **Ranked:** (c) first: correct, removes the false claim and finding 5's cost, touches only `code_search.py`, reversible, validation one moved line, one new line, J19 and J14's counts. (a) second: reword only, correct and cheapest to validate, but keeps the measured 2.5x cost on sparse walks. (b) third: the floor before any open needs `iter_files(skip_binary=False)` plus a sniff in the engine, which makes binary files count toward `max_files` (20,000, `file_walk.py:47,186`) so a binary-heavy tree searches fewer text files, or a new pre-sniff predicate on a shared helper (`agents/file_search.py:145` is its other caller); it keeps one decision per walked file; and "never read" would still hold for one engine only, since rg reads every file (R12). | Listed in the ranking. |
+| D34 | **Finding 5 (cost): reworded, and removed by D33.** A3.10's "small against the read of a public one" is withdrawn: A3 paid one floor decision per walked file (the reviewer's three-run medians: 5,000 files with no match, round 1 5 resolutions / 1 root-list build / 1,119 ms, A3 5,009 / 2 / 2,821 ms; 200 matches in 200 files, 1,005 / 201 / 189 ms vs 209 / 2 / 77 ms; 200 matches in one file, 1,005 / 201 / 164 ms vs 10 / 2 / 2.8 ms). After A4 the floor's cost is one decision per file WITH a match plus one per distinct result path, and three root-list builds per search (J14, J19 pin the counts; expected for the sparse case: 1 decision, 3 builds). The orchestrator may re-measure in round 3; it is not a gate. | Recording the sparse cost as a residual and keeping A3's shape (option (a)): D33 removes it for less than the cost of explaining it. |
+| D35 | **Finding 3 (P3, validation): fix the table.** Rows 22, 33 and 48 are "replace the line with `pass`", not "delete the line": row 33's line is the sole body of an `if` (an `IndentationError` otherwise, INVALID, not killed), and rows 22 and 48 were already run that way. | None. |
+| D36 | **Finding 4 (P3, injected-only, predates A3): record; the floor keeps propagating.** `resolve_read_path` already turns path-resolution failures into `FileAccessDenied` (`security/file_access.py:137-139`), so only a bug in the floor raises; propagation fails closed (no result is returned) and is the three-tier rule's tier for security. A catch-all in `permits` would turn a defect in the floor into a silently refused file, narrowing a search's results with no signal. Recorded as R16, extending F-203 (the same module's fail-open containment comparison), where the follow-up decides it with the floor's other error paths. | `except Exception: deny` in `permits`, with a test raising `RuntimeError` from a patched `resolve_read_path`: fail-closed either way, and it hides bugs in a security check. |
+| D37 | **Not fixed here: the path-based race that remains (R15).** The fresh floor decides by path at the time of the final check. A link that points at a protected file when an engine reads it and at a permitted one when both checks run still returns the protected line; this holds for the Python engine (the read precedes its first-match decision) and for rg, and it predates A3 (round 1's check was path-based too). **Who can reach it:** an actor that can create and retarget a link under the search root during a search. No ProbOS tool creates symbolic links or junctions (absence below; the only links ProbOS code creates are hard links, made by the backup and by the pinned write's publish step, `infrastructure/backup.py:740` and `security/file_access.py:632-635`, and neither is aimed at a search root; orchestrator's enumeration, `rg 'symlink|os\.link|mklink|junction' src/probos`); an agent's shell can create links (`mklink` is an allowed internal command, `execution/command_gate.py:172`), and that same shell can read the config file directly (R2, pinned by K4). So the race gives no actor a route it does not already have. Fix belongs with identity binding (D32 (b)). | Binding identities now: D32 (b)'s price, for a route that is already open to the only actors who can use it. |
+
+**Who records what.** The orchestrator posts D32-D37 and R14-R16 on #1605 and pastes R14-R16 into the #1523 register: R14 extends F-204, R16 extends F-203, R15 is a new entry (the next free F number) and joins the R9/R10 follow-up issue (F-202, F-203), since it is the same floor's next step. No new issue.
+
+### A4.2 Tests first: `tests/test_bf908_floor_and_children.py`
+
+Apply all four blocks, run the file with `-n 0`, and confirm premise 21 before touching the source.
+
+#### A4.2.1 The header: J14
+
+SEARCH:
+```text
+    Proves: for one public file with thirty matching lines, a search builds the floor's roots twice (the root check, the
+    search) and makes three decisions (the root, the config file, the public file), never one per line.
+```
+REPLACE:
+```text
+    Proves: for one public file with thirty matching lines, a search builds the floor's roots three times (the root check,
+    the engines' floor, the final check's fresh floor) and makes four decisions (the root; the config file and the public
+    file, each at its first match; the public file again, in the final check), never one per line.
+```
+
+#### A4.2.2 The header: J17-J19
+
+SEARCH:
+```text
+    Does not prove: a symlink's target (BF-758's tests cover resolution).
+K1  no agent command's child sees the token
+```
+REPLACE:
+```text
+    Does not prove: a symlink's target (BF-758's tests cover resolution).
+J17 the final check decides with a fresh floor (``python`` and ``rg``)
+    Proves: when the floor the engines ask allows the loaded config file (a double, standing for a decision taken before a
+    link under the root was retargeted), ``act`` builds a second, real ``_ReadFloor`` after the engine ran and drops that
+    file's match: the engines' cached allows are not the final authorization (review round 2 of C1b). Runs without ``rg``.
+    Detector premise: ``act`` looks ``_ReadFloor`` up on the module at call time, so the double sees every floor a search
+    builds; were it bound elsewhere, ``built`` would be empty and the test would fail, not pass.
+    Does not prove: a real link retargeted mid-search (none is created here: creating one needs privileges on Windows), or
+    a link changed back before the final check runs (residual R15).
+J18 ``handle_intent`` returns no match only the fresh floor refuses
+    Proves: the same at the boundary the DM pipeline consumes, on the Python engine (the reviewer's reproduction path).
+    Does not prove: the pipeline's rendering (it renders the list it is given).
+J19 a walk with no match asks the floor about no file
+    Proves: on the Python engine, twenty-one walked files with no match cost the root check's decision and no other: the
+    engines' floor is asked at a file's first match, not before every open (A3 asked once per walked file).
+    Does not prove: wall-clock cost, or that a refused file is not read (it is, up to its first match: residual R14).
+K1  no agent command's child sees the token
+```
+
+#### A4.2.3 J14: a shared counter, and the new counts
+
+SEARCH:
+```python
+async def test_the_floor_decides_each_file_once_per_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, rt, _cfg, public = _quota_root(tmp_path, public_matches=1)
+    public[0].write_text("".join(f"{FILE_TOKEN} {index}\n" for index in range(30)), encoding="utf-8")
+    _use_engine(monkeypatch, "python", [])
+    calls = {"roots_built": 0, "decisions": 0}
+    real_roots, real_resolve = file_access.protected_read_roots, file_access.resolve_read_path
+
+    def _roots(runtime: object) -> list[Path]:
+        calls["roots_built"] += 1
+        return real_roots(runtime)
+
+    def _resolve(raw: str, **kwargs: object) -> Path:
+        calls["decisions"] += 1
+        return real_resolve(raw, **kwargs)
+
+    monkeypatch.setattr(file_access, "protected_read_roots", _roots)
+    monkeypatch.setattr(file_access, "resolve_read_path", _resolve)
+
+    result = await _search(CodeSearchAgent(agent_id="cs-14", runtime=rt), root, max_results=200)
+
+    assert result["count"] == 30  # control: one public file, thirty matching lines
+    # The root check builds the roots and decides once; the search builds them once more and decides once per FILE (the
+    # config file and the public file), never once per matching line.
+    assert calls == {"roots_built": 2, "decisions": 3}
+```
+REPLACE:
+```python
+def _count_floor_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count the floor's root-list builds (``protected_read_roots``) and decisions (``resolve_read_path``) from now on.
+
+    Detector premise: ``_ReadFloor`` and ``resolve_for_runtime`` look both up on ``probos.security.file_access`` at call
+    time (the module's lazy-import convention); if either bound them at import, the counts would fall and a test would fail.
+    """
+    calls = {"roots_built": 0, "decisions": 0}
+    real_roots, real_resolve = file_access.protected_read_roots, file_access.resolve_read_path
+
+    def _roots(runtime: object) -> list[Path]:
+        calls["roots_built"] += 1
+        return real_roots(runtime)
+
+    def _resolve(raw: str, **kwargs: object) -> Path:
+        calls["decisions"] += 1
+        return real_resolve(raw, **kwargs)
+
+    monkeypatch.setattr(file_access, "protected_read_roots", _roots)
+    monkeypatch.setattr(file_access, "resolve_read_path", _resolve)
+    return calls
+
+
+async def test_the_floor_decides_each_file_once_per_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, rt, _cfg, public = _quota_root(tmp_path, public_matches=1)
+    public[0].write_text("".join(f"{FILE_TOKEN} {index}\n" for index in range(30)), encoding="utf-8")
+    _use_engine(monkeypatch, "python", [])
+    calls = _count_floor_calls(monkeypatch)
+
+    result = await _search(CodeSearchAgent(agent_id="cs-14", runtime=rt), root, max_results=200)
+
+    assert result["count"] == 30  # control: one public file, thirty matching lines
+    # The root check builds the roots and decides once; the engines' floor builds them and decides once per FILE with a
+    # match (the config file, the public file); the final check builds a fresh floor and decides once per distinct RESULT
+    # path (the public file). Never once per matching line.
+    assert calls == {"roots_built": 3, "decisions": 4}
+```
+
+#### A4.2.4 J17-J19, after J16
+
+SEARCH:
+```python
+    assert decided == [_admitted(path) for path in paths]
+    assert decided == [True, False, False, True, False]
+```
+REPLACE:
+```python
+    assert decided == [_admitted(path) for path in paths]
+    assert decided == [True, False, False, True, False]
+
+
+class _AllowAll:
+    """A floor double: the engines' floor as it answered before a link under the root was retargeted (it allows every path)."""
+
+    def __init__(self, _runtime: object) -> None:
+        self.asked: list[Path] = []
+
+    def permits(self, path: str) -> bool:
+        self.asked.append(Path(path).resolve())
+        return True
+
+
+def _first_floor_allows_all(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """The first ``_ReadFloor`` a search builds is ``_AllowAll``; every later one is the real floor. Returns the floors built."""
+    real = code_search._ReadFloor
+    built: list[object] = []
+
+    def _floor(runtime: object) -> object:
+        floor = _AllowAll(runtime) if not built else real(runtime)
+        built.append(floor)
+        return floor
+
+    monkeypatch.setattr(code_search, "_ReadFloor", _floor)
+    return built
+
+
+@pytest.mark.parametrize("engine", ["python", "rg"])
+async def test_the_final_check_decides_with_a_fresh_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: str,
+) -> None:
+    root, rt, cfg, public = _quota_root(tmp_path, public_matches=1)
+    _use_engine(monkeypatch, engine, [cfg, *public])
+    built = _first_floor_allows_all(monkeypatch)
+
+    result = await _search(CodeSearchAgent(agent_id="cs-17", runtime=rt), root, max_results=5)
+
+    assert [type(floor).__name__ for floor in built] == ["_AllowAll", "_ReadFloor"]
+    # Premise: the engines' floor was asked about the config file and allowed it, so the engine kept its match.
+    assert cfg.resolve() in built[0].asked
+    assert result["engine"] == engine
+    assert _paths(result) == [public[0].resolve()]
+    assert result["count"] == 1
+
+
+async def test_handle_intent_returns_no_match_only_the_fresh_floor_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, rt, cfg, public = _quota_root(tmp_path, public_matches=1)
+    _use_engine(monkeypatch, "python", [])
+    built = _first_floor_allows_all(monkeypatch)
+
+    result = await CodeSearchAgent(agent_id="cs-18", runtime=rt).handle_intent(
+        IntentMessage(intent="search_content", params={"path": str(root), "pattern": FILE_TOKEN, "max_results": 5})
+    )
+
+    assert [type(floor).__name__ for floor in built] == ["_AllowAll", "_ReadFloor"]
+    assert cfg.resolve() in built[0].asked
+    assert result is not None
+    assert result.success is True
+    assert [Path(match["path"]).resolve() for match in result.result] == [public[0].resolve()]
+
+
+async def test_a_walk_with_no_match_asks_the_floor_about_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, rt, _cfg, _public = _quota_root(tmp_path, public_matches=20)
+    _use_engine(monkeypatch, "python", [])
+    assert len(list(code_search.iter_files(root.resolve()))) == 21  # premise: the config file and twenty others are walked
+    agent = CodeSearchAgent(agent_id="cs-19", runtime=rt)
+    plan = await agent.decide({"params": {"path": str(root), "pattern": "bf908-no-file-holds-this"}})
+    calls = _count_floor_calls(monkeypatch)
+
+    result = await agent.act(plan)
+
+    assert result["engine"] == "python"
+    assert result["count"] == 0
+    # Only the root check decides; the engines' floor and the final check's floor are built and asked about nothing.
+    assert calls == {"roots_built": 3, "decisions": 1}
+```
+
+### A4.3 Source: `src/probos/agents/code_search.py` (nothing else)
+
+#### A4.3.1 `act`: the final check gets a fresh floor
+
+SEARCH:
+```python
+        # BF-908 A3: one read floor per search. Both engines ask it about a file BEFORE they
+        # count its matches, so a protected file never uses up max_results (a protected first
+        # match made a legitimate search come back empty); _within_floor then re-checks what
+        # an engine returned, from the same floor's cached decisions.
+        floor = _ReadFloor(getattr(self, "_runtime", None))
+        # Prefer the operator's ripgrep binary; fall back to pure Python.
+        rg = _resolve_rg_binary()
+        if rg is not None:
+            rg_result = await self._search_rg(rg, plan, root, floor=floor)
+            if rg_result is not None:
+                return _within_floor(rg_result, floor)
+            # Tier-2: rg failed -> fall through to the Python engine.
+        return _within_floor(self._search_python(plan, root, floor=floor), floor)
+```
+REPLACE:
+```python
+        # BF-908 A3: one read floor per search for the engines. Both ask it about a file before
+        # they count its matches, so a protected file never uses up max_results (a protected first
+        # match made a legitimate search come back empty).
+        floor = _ReadFloor(getattr(self, "_runtime", None))
+        # Prefer the operator's ripgrep binary; fall back to pure Python.
+        rg = _resolve_rg_binary()
+        if rg is not None:
+            rg_result = await self._search_rg(rg, plan, root, floor=floor)
+            if rg_result is not None:
+                # BF-908 A4: a FRESH floor, built after the engine ran, decides what is returned:
+                # the engines' cached allows are not the final authorization (review round 2 of
+                # C1b returned a protected line through a link retargeted during the search).
+                return _within_floor(rg_result, _ReadFloor(getattr(self, "_runtime", None)))
+            # Tier-2: rg failed -> fall through to the Python engine.
+        return _within_floor(self._search_python(plan, root, floor=floor), _ReadFloor(getattr(self, "_runtime", None)))
+```
+
+#### A4.3.2 `_search_python`: the docstring says what is true
+
+SEARCH:
+```python
+        """BF-908 A3: a file *floor* refuses is skipped before it is opened, so it is never
+        read and never counted. ``floor=None`` is the raw engine (the tests' control);
+        ``act`` always passes one."""
+```
+REPLACE:
+```python
+        """BF-908 A3/A4: no line of a file *floor* refuses is kept or counted. The floor is
+        asked at a file's first match, so a walk pays for the files that match, not for every
+        file it walks. A refused file is still read up to its first match, and ``iter_files``'s
+        binary sniff reads up to 8 KiB of every file first; neither reaches a result.
+        ``floor=None`` is the raw engine (the tests' control); ``act`` always passes one."""
+```
+
+#### A4.3.3 `_search_python`: ask at the first match
+
+SEARCH:
+```python
+        for fp in files:
+            if glob and not fp.match(glob):
+                continue
+            if floor is not None and not floor.permits(str(fp)):
+                continue
+            try:
+                with fp.open("r", encoding="utf-8", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, start=1):
+                        if len(line) > _MAX_LINE_BYTES:
+                            continue
+                        if rx.search(line):
+                            matches.append({
+```
+REPLACE:
+```python
+        for fp in files:
+            if glob and not fp.match(glob):
+                continue
+            try:
+                with fp.open("r", encoding="utf-8", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, start=1):
+                        if len(line) > _MAX_LINE_BYTES:
+                            continue
+                        if rx.search(line):
+                            # BF-908 A4: asked at the file's first match, after the open; later matches hit the cache.
+                            if floor is not None and not floor.permits(str(fp)):
+                                break  # BF-908 A4: a refused file is left at its first match; none of its lines is kept
+                            matches.append({
+```
+
+#### A4.3.4 `_within_floor`: the docstring names its input
+
+SEARCH:
+```python
+    re-checks what an engine returned, so an engine that forgets the floor still
+    cannot return a protected file's lines. *floor* has decided each path once.
+    """
+```
+REPLACE:
+```python
+    re-checks what an engine returned, so an engine that forgets the floor still
+    cannot return a protected file's lines. *floor* must be a fresh ``_ReadFloor``,
+    built after the engine ran, never the one the engine asked (A4): it decides each
+    distinct result path once, at this check. The decision is by path (residual R15).
+    """
+```
+
+### A4.4 Trackers (after the source): `DECISIONS.md` only
+
+Fragment 1 (D7, line 391). SEARCH:
+```text
+content search asks the floor about each file before it counts a match, so a protected file neither shows a line nor uses up the result quota, and re-checks every match it returns.
+```
+REPLACE:
+```text
+content search asks the floor about each file at its first match, before it counts it, so a protected file neither shows a line nor uses up the result quota, and re-checks every match it returns against a fresh floor, built after the search, not the decisions the search cached.
+```
+
+Fragment 2 (Residual, accepted, line 392). SEARCH:
+```text
+(`security/file_access.py:85-95`; predates BF-908; a follow-up).
+```
+REPLACE:
+```text
+(`security/file_access.py:85-95`; predates BF-908; a follow-up). The floor decides by path, so a link that points at a protected file when content search reads it and at a permitted file when the floor decides still returns that file's line; only an actor that can change links under the search root during a search can do it, and that actor's shell can read the file directly (a follow-up, with identity-checked reads). Content search reads a protected file up to its first match, and its walker's binary check reads the first 8 KiB of every file; none of it reaches a result.
+```
+
+Fragment 3 (As built, line 394; the SEARCH starts with the comma). SEARCH:
+```text
+, and decide each file once per search (amendment A3, D26-D31).
+```
+REPLACE (starts with a space):
+```text
+ (amendment A3, D26-D31). Review round 2 found that the final re-check reused the search's cached decisions, so a link retargeted during a search returned a protected file's line; the re-check now uses a fresh floor, and the Python engine asks at a file's first match rather than before opening each file, so a walk with no match costs no floor decision (amendment A4, D32-D37).
+```
+
+Fragment 3 leaves the sentence reading "both engines now ask the floor about a file before counting its matches (amendment A3, D26-D31). Review round 2 ...". Then regenerate the ledger (`python scripts/gen_ad_ledger.py`) and run its `--check`.
+
+### A4.5 Mutation table (section 9): rows changed and added
+
+| # | File | Line (stripped, exact) | Mutate to | Killed by |
+|---|---|---|---|---|
+| 22 (replacement restated) | `src/probos/runtime.py` | unchanged | replace the line with `pass` | E4 (unchanged; file unchanged) |
+| 31 (replaced) | `src/probos/agents/code_search.py` | `return _within_floor(self._search_python(plan, root, floor=floor), _ReadFloor(getattr(self, "_runtime", None)))` | `return self._search_python(plan, root, floor=floor)` | J13[python], J17[python], J18 |
+| 32 (replaced) | same | `return _within_floor(rg_result, _ReadFloor(getattr(self, "_runtime", None)))` | `return rg_result` | J13[rg], J17[rg] |
+| 33 (replacement fixed) | same | `kept.append(match)` | replace the line with `pass` | J5, J7, J13, J17 |
+| 34 (killers changed) | same | `if len(kept) == len(matches):` | `if True:` | J13, J17, J18 |
+| 45 (killers changed) | same | `floor = _ReadFloor(getattr(self, "_runtime", None))` | `floor = _ReadFloor(None)` | J9, J10, J11 (J5 no longer: the fresh final floor drops what the engine kept) |
+| 46 (line moved, text unchanged) | same | `if floor is not None and not floor.permits(str(fp)):` | `if False:` | J9[python], J10[python], J11[python] |
+| 48 (replacement restated) | same | `parsed_lines += 1` | replace the line with `pass` | J9[rg], J10[rg], J11[rg] (unchanged) |
+| 55 (killers widened) | same | `if isinstance(match, dict) and floor.permits(str(match.get("path", ""))):` | `if isinstance(match, dict):` | J13, J17, J18 |
+| 56 (anchor moved to row 31's new line) | same | row 31's line | `return _within_floor(self._search_python(plan, root), _ReadFloor(getattr(self, "_runtime", None)))` | J9[python], J10[python], J11[python] |
+| 57 (new: the A3 regression) | same | row 31's line | `return _within_floor(self._search_python(plan, root, floor=floor), floor)` | J17[python], J18 |
+| 58 (new: the A3 regression) | same | row 32's line | `return _within_floor(rg_result, floor)` | J17[rg] |
+| 59 (new) | same | `break  # BF-908 A4: a refused file is left at its first match; none of its lines is kept` | replace the line with `pass` | J9[python], J10[python], J11[python] |
+
+Row 51 (`if path not in self._decided:` -> `if True:`) keeps J14 as its killer; the expected counts change (A4.2.3) and the mutant still breaks them (thirty decisions for the public file). Rows 28-30, 44, 47, 49, 50, 52-54 are unchanged, line and killers. Every new line is unique in its file after A4: rows 31 and 32's lines are the only two holding `_ReadFloor(getattr(` inside a `return`, and row 45's line is the only whole line `floor = _ReadFloor(getattr(self, "_runtime", None))`; row 59's comment makes its `break` unique (two bare `break` lines remain).
+
+**Equivalent or excluded mutants:** row 59's `break` -> `continue` (the refused file is read on; each later match is a cache hit and is skipped; the result is the same, only more is read: equivalent for results, not a row); the comment lines in A4.3.1 and A4.3.3 (comments); A4.3.2 and A4.3.4 (docstrings).
+
+**Campaign of record:** of the pinned files only `src/probos/agents/code_search.py` changes. Rerun rows 31-34 and 45-59 (every `code_search.py` row) on the repaired candidate, recording the base tree and the file's sha256; rows 28-30 and 44 (`security/file_access.py`, unchanged) carry over from A3's campaign if that file's sha256 matches; row 22 (`runtime.py`) carries over from C1a's.
+
+### A4.6 Sections 8.2, 10, 13 and 14
+
+**Section 8.2:** no change. A4 changes one file's private functions; their consumers (`tests/test_ad869_mesh_read_inline.py`, `tests/test_ad989_code_search.py`, `tests/test_bf895_rg_line_parse.py`, `tests/test_capability.py`, `tests/test_ad1260_wellness_domain.py`, `tests/test_bf892_spawn_env_guard.py`) are already listed. `python scripts/gen_ad_ledger.py --check` after A4.4.
+
+**Section 10, rows added or replaced:**
+
+| Test | Proves | Does not prove |
+|---|---|---|
+| J14 (replaced) | Three root-list builds per search and one decision per file with a match plus one per distinct result path, never one per line. | Wall-clock cost. |
+| J17 | The final check uses a fresh floor built after the engine ran, on both engines: a match the engines' floor allowed is dropped when the real floor refuses it. | A real link retargeted mid-search; a link changed back before the check (R15). |
+| J18 | The same through `handle_intent`. | The DM pipeline's rendering. |
+| J19 | A walk with no match asks the floor about no file. | That a refused file is unread (R14). |
+
+**Section 13:** criterion 7 becomes: "The config files are on the floor, each once (J8); content search asks the floor about a file at its first match, before it counts it, so a protected file neither leaks a line nor shortens or empties a legitimate search (J9-J12, J15), and a walk with no match costs no decision (J19); `act` re-checks what an engine returns against a fresh floor built after the engine ran (J13, J17, J18); the floor decides as `resolve_for_runtime` would, each file once per floor (J14, J16); the residuals are pinned or recorded (K4, DECISIONS.md)." Criterion 9 covers rows 1-59.
+
+**Section 14, premises added:**
+21. Tests first: against the unrepaired candidate, **red**: J14 (`{"roots_built": 2, "decisions": 3}`), J17 (both: one floor built, and the config file's match kept), J18 (the same), J19 (`{"roots_built": 2, "decisions": 22}`). **Green:** every other test in the file.
+22. `act` reads `_ReadFloor` from the module's globals at call time (`code_search.py:153,159,161`), so `monkeypatch.setattr(code_search, "_ReadFloor", ...)` replaces every floor a search builds (J17's detector premise).
+
+### A4.7 Self-check: guards the new code could trip
+
+```
+CLAIM: the SRP size trigger is not tripped
+RUN:   scripts/check_architecture_principles.py:187-188 (500 body lines, 15 direct methods per class)
+FOUND: CodeSearchAgent keeps its 7 methods; its body grows by about 4 lines (comments); _ReadFloor and _within_floor
+       change only in a docstring
+HOLDS: yes
+
+CLAIM: no importer or layer guard is tripped
+RUN:   A4.3 adds no import; A4.2 adds none (code_search.iter_files is the module's own import, code_search.py:33)
+HOLDS: yes
+
+CLAIM: the engines' direct callers keep working
+RUN:   Grep "_ReadFloor|_within_floor" src tests -> code_search.py only, and this file (:76, :85, :630)
+       test_bf895_rg_line_parse.py:186-226 and J5-J7 call the engines with floor=None: the moved check sits behind
+       `floor is not None`, so the raw engines are unchanged
+HOLDS: yes
+
+CLAIM: BF-892's spawn census and the AD-989 suite see no change
+RUN:   A4 adds no subprocess call; _search_rg is untouched
+HOLDS: yes
+```
+
+### A4.8 Residuals and follow-ups (R1-R13 stay)
+
+Worded for the #1523 register and the DECISIONS entry:
+
+- **R14 (recorded; extends F-204; reach none to an agent).** Content search's Python engine reads a refused file up to its first match, and its walker's binary sniff (`iter_files(skip_binary=True)`, `substrate/file_walk.py:129-137,182`) opens every candidate file and reads up to 8 KiB before either engine sees it; rg reads a protected file whole (R12). None of it reaches a result.
+- **R15 (new register entry; joins the R9/R10 follow-up issue; predates A3).** The floor decides by path. A link that points at a protected file when an engine reads it and at a permitted file when the engine's first-match decision and the fresh final check run still returns a protected line, on both engines. **Reach:** an actor that can create and retarget a link under the search root during a search; no ProbOS tool creates symbolic links or junctions (hard links are made only by the backup and the pinned write's publish step, `infrastructure/backup.py:740` and `security/file_access.py:632-635`), and an agent's shell, which can create links, already reads the file directly (R2, K4). Fix: identity-checked reads for the Python engine (`read_verified_file`, `security/file_access.py:721`) and a no-links rule for content search; rg needs its own answer (it opens its files itself).
+- **R16 (recorded; extends F-203; P3, injected-only; predates A3).** An exception inside the floor that is not a path-resolution failure (a bug: `resolve_read_path` already turns `OSError`, `RuntimeError` and `ValueError` from `Path.resolve()` into a denial, `security/file_access.py:137-139`) propagates out of the whole search. It fails closed (nothing is returned); turning it into a per-file denial would hide the bug. Decide with F-203's error paths.
+
+### A4.9 Repair milestone
+
+**M5r2 (C1b repair 2), one Builder pass, tests first, about 20-28 tool calls.** (1) A4.2's four blocks; run `tests/test_bf908_floor_and_children.py -n 0` and confirm premise 21. (2) A4.3's four blocks, all in `code_search.py`. (3) Rerun the file; then section 8.2, `-n 0`. (4) A4.4's three fragments; regenerate the ledger and run its `--check`. (5) Report every SEARCH that did not match exactly once; do not improvise. Then the orchestrator: one consolidated focused check, the campaign for rows 31-34 and 45-59, and review round 3 on the **delta** (A4 changes private functions of one module; no shared contract moves).
+
+### A4.10 Prior art and blind spots
+
+- **Internal.** The identity-checked reader (`PinnedDirectory`, `read_verified_file`, `_same_file`, `security/file_access.py:380-735`, AD-1200) is the codebase's answer to check-then-open races: considered for D32 (b) and deferred to R15, since rg cannot use it. The three-call floor composition (A3.10) is unchanged.
+- **External.** The race is CWE-367 (time-of-check, time-of-use, https://cwe.mitre.org/data/definitions/367.html); its standard mitigation, checking the opened object rather than the name, is D32 (b). A bug-fix amendment with no other outside design question: no web search; `docs/research/reference-projects.md` not consulted.
+- **Blind spots checked.** A single-file root (`files = [root]`: decided at its first match, as any file); a permitted file with many matches (one decision, then cache hits: J14); an empty result (the fresh floor is built and asked nothing: J19); a refused file met before the cap (left at once, no slot taken: J9); a non-dict match (dropped by the final check, as before); the reverse retarget (a link pointing at a public file at the read and at a protected one at a check: a false refusal, safe).
+
+### A4.11 Verified Against Codebase (2026-10-20, candidate tree `58a3dc0d` in worktree `bf908-a4`)
+
+```
+code_search.py   :33 from probos.substrate.file_walk import iter_files  :149-161 act's floor and engine calls
+                 :248-251 _search_python signature, docstring  :261-265 iter_files(root, skip_binary=True, ...)
+                 :267-287 walk loop (pre-open check :270-271, open :273, append :278)  :299-335 _ReadFloor (cache :319,
+                 :323-335)  :338-357 _within_floor (permits :352, kept.append :353)
+file_walk.py     :47 DEFAULT_MAX_FILES 20000  :48 _SNIFF_BYTES 8192  :129-137 is_binary opens "rb", reads sniff_bytes
+                 :182 if skip_binary and is_binary(fp)  :186 yielded >= max_files
+file_search.py   :145 iter_files(p, skip_binary=False) (the walker's other caller)
+file_access.py   :98 resolve_read_path  :137-139 Path.resolve() errors -> FileAccessDenied  :380 _same_file
+                 :393-463 Windows handle-path API  :561 PinnedDirectory.read_bytes  :721 read_verified_file
+command_gate.py  :172 "mklink" among cmd internal commands
+tests/test_bf908_floor_and_children.py  :73-78 J14 header  :86-88 J16 header end, K1  :425-470 _quota_root, _FakeRg,
+                 _use_engine, _search  :571-594 J14  :630-634 J16 end
+DECISIONS.md     :391 D7 fragment  :392 Residual fragment  :394 As built fragment (each once in the file)
+PROGRESS.md      :3 "asks the floor about each file before it counts a match" (still true; unchanged)
+#1523 register   F-202 R9, F-203 R10, F-204 R12, F-205 R13 (gh issue view 1523 --comments)
+```
+
+**Absence verified (2026-10-20):**
+
+```
+CLAIM: nothing but act and this test file uses _ReadFloor or _within_floor
+RUN:   Grep "_ReadFloor|_within_floor" {src,tests}/**/*.py
+FOUND: code_search.py:151,153,159,161,171,248,299,338; test_bf908_floor_and_children.py:76,85,630
+HOLDS: yes
+
+CLAIM: no ProbOS tool creates a symlink or junction (R15's reach)
+RUN:   Grep "symlink_to|os\.symlink|_winapi\.CreateJunction|mklink" src/probos
+FOUND: command_gate.py:172 and command_policy.py:126 ("mklink" in the cmd internal-command lists, i.e. a shell can) only
+HOLDS: yes: only a shell command creates links
+
+CLAIM: DECISIONS.md and PROGRESS.md hold no other "never read" or "independent re-check" claim for BF-908
+RUN:   Grep "never read|re-check|independen|before it is opened" DECISIONS.md (BF-908 entry :381-395); Grep "content search" PROGRESS.md
+FOUND: DECISIONS.md:391 (fragment 1) only within the entry; PROGRESS.md:3 two sentences, neither claiming either
+HOLDS: yes
+```
+
+### A4.12 Captain
+
+Nothing here needs the Captain. D32 and D33 restore and strengthen the final check without narrowing what the floor refuses; D33 withdraws a claim that was not true rather than weakening a control (what a search may return is unchanged); D35 fixes the table; D36 keeps the security tier's propagate rule; D37 and R14-R16 record what remains with its reach. No authority, gate or approval rule changes.
