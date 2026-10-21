@@ -1556,3 +1556,135 @@ RUN:   Grep 'ResourcePool\(|registry\.register\(|\.wire_agent\(' src/probos
 FOUND: runtime.py:2592,2654; self_mod_manager.py:219; spawner.py:49; (the rest are tool/model registries)
 HOLDS: yes: pool births wire through runtime.py:2572-2576; the hot-swap, the red team and system_qa do not wire and issue nothing
 ```
+
+## Amendment A4 (2026-10-21, after review round 4)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
+
+**Trigger.** Review round 4 (`gpt-6.1-sol`, `logs/review-m1a-r4.md`) found two P2s and one P3, all ordinary reach, all in claims only. (R4-1, an incomplete repair of R3-F1) D14's "until Phase 7, as is every crew slot of a fresh data directory" is false for a crew slot born later on that directory. (R4-2, introduced by A3) "a pool that is disabled and then re-enabled returns slots whose certificates are stored" is false: a startup can stop after wiring and before Phase 7 (A2 D17), and the reviewer's probe re-enabled such a pool with no certificate stored. (R4-3, introduced by A3) A3.P1's parenthetical in `PROGRESS.md:3` carries no cited line and no named test. Every finding in rounds 1 to 4 was a timing statement added by a repair. A4 therefore adds no statement to any tracker or test file: it only deletes.
+
+**Wording rule (replaces A3's; binding on A4 and on later M1a tracker text).** The M1a text of `DECISIONS.md` and `PROGRESS.md` gives no example and no universal timing statement. It names a phase only as the location of a call site or a fact cited to a line, as the scenario of a named test (T14 to T19), or in a statement that a named test measured something can happen ("can"). Timing scenarios live only in the contract's D21 and in the boot test file, each tied to its test.
+
+**Apply order.** Trackers only. Apply these blocks to the staged candidate tree `47f4f57e000596f24355c5eb3fe828ebe3d4d790`. Each SEARCH occurs exactly once in its file; `DECISIONS.md:414-418` and `PROGRESS.md:3` are single long lines, so the SEARCH texts are unique substrings. Each REPLACE is its SEARCH with text removed and nothing added.
+
+**Supersedes (withdrawn; the A3 text remains as history):**
+- D22, the sentence "So a pool that is disabled and then re-enabled returns slots that already have certificates." Slot state decides, not re-enablement. A3's Trigger F2 sentence "Its slots already have stored certificates" stands only as the result of `logs/probe_m1a_reenabled_pool.py.txt`.
+- A3.D1 REPLACE, the sentences "For example, ... (a recycle re-wires the same slot)." and "A configuration change decides nothing by itself: ... stored."
+- A3.D2 REPLACE, the clause "; a later boot that adds crew slots, a pool surge after Phase 8 and a re-enabled pool each refute one of them".
+- A3.P1 REPLACE, the parenthetical "(in Phase 7 for a slot wired in Phase 2, ... such as a pool surge)".
+- A3 Acceptance criterion 2b and Diff Reviewer property 11. Replaced below.
+- These stand: D21 with its examples, the contract's only home for them; for its post-loop case, round 4's reviewer reports a component probe, not a boot, in which slots wired after the loop got neither site (`logs/review-m1a-r4.md`, finding 1). D23. A3's corrected Problem fact 3, Binding and Blind spot 1. The T14 to T19 docstrings.
+- Mutation table: **no change**. Test count: **no change** (19 = 13 + 6). No file under `src/` or `tests/` changes.
+
+### Trackers: `DECISIONS.md`
+
+**A4.D1** (D13, line 414)
+
+SEARCH:
+```
+that has no stored certificate gets an asset tag at Phase 2 and its certificate in Phase 7, on the same slot. The facade reports an asset ref (empty DID) until Phase 7, then the certificate ref,
+```
+REPLACE:
+```
+that has no stored certificate gets an asset tag at Phase 2. The facade reports an asset ref (empty DID), then the certificate ref,
+```
+
+**A4.D2** (D13, line 414)
+
+SEARCH:
+```
+so the slot would resolve to its stale tag even after Phase 7, against
+```
+REPLACE:
+```
+so the slot would resolve to its stale tag, against
+```
+
+**A4.D3** (D14, line 415)
+
+SEARCH:
+```
+resolves to it from Phase 2 and Phase 7 returns the same one.
+```
+REPLACE:
+```
+resolves to it from Phase 2.
+```
+
+**A4.D4** (D14, line 415)
+
+SEARCH:
+```
+so this entry gives no deadline. For example, a crew slot wired in Phase 2 is unresolved, or an asset ref if the crew test tagged it (D13), until Phase 7, as is every crew slot of a fresh data directory; a crew slot wired once the onboarding service has the ontology, such as one a pool surge adds (`substrate/scaler.py:77-100` does not check `excluded_pools`, and the Surgeon calls it), gets its certificate at wiring and no asset tag; a crew slot wired after Phase 7's loop and before `startup/finalize.py:5557` gets neither, and stays unresolved or an asset ref until one of the two sites runs for it again (a recycle re-wires the same slot). A configuration change decides nothing by itself: a pool that is disabled and then re-enabled returns slots whose certificates are stored. A slot's ref changes
+```
+REPLACE:
+```
+so this entry gives no deadline. A slot's ref changes
+```
+
+**A4.D5** (D14, line 415)
+
+SEARCH:
+```
+by phase or by configuration change; a later boot that adds crew slots, a pool surge after Phase 8 and a re-enabled pool each refute one of them.
+```
+REPLACE:
+```
+by phase or by configuration change.
+```
+
+**A4.D6** (Binding on M3, line 416)
+
+SEARCH:
+```
+M3 never reads `agent.sovereign_id`, which lags the facade before Phase 7 for a crew slot with a stored certificate.
+```
+REPLACE:
+```
+M3 never reads `agent.sovereign_id`.
+```
+
+**A4.D7** (Residual R4, line 418)
+
+SEARCH:
+```
+keeps that tag after Phase 7 certifies it,
+```
+REPLACE:
+```
+keeps that tag,
+```
+
+### Trackers: `PROGRESS.md`
+
+**A4.P1** (line 3)
+
+SEARCH:
+```
+until a certificate is issued for it (in Phase 7 for a slot wired in Phase 2, at wiring for a slot wired once the onboarding service has the ontology, such as a pool surge), and then
+```
+REPLACE:
+```
+until a certificate is issued for it, and then
+```
+
+### Acceptance Criteria (replaces A3's 2b)
+
+- 2b. The M1a text of `DECISIONS.md` and `PROGRESS.md` meets A4's wording rule: no "for example" or "such as" example, and no universal timing statement; a phase appears only as a call site or line-cited fact, a named test's scenario, or a "can" that a named test measured.
+
+### Diff Reviewer: properties to verify (replaces A3's 11; adds 13)
+
+- 11. Every sentence of the M1a text of `DECISIONS.md` and `PROGRESS.md` that names a phase meets A4's wording rule. The two-site claim still holds against `resolve_or_issue\(|resolve_or_issue_asset_tag\(|issue_birth_certificate|reassign_slot\(` over `src/probos`.
+- 13. The delta deletes and adds nothing outside this amendment. (a) `git diff --word-diff=porcelain --word-diff-regex=. 47f4f57e000596f24355c5eb3fe828ebe3d4d790 <A4 tree> -- DECISIONS.md PROGRESS.md | grep -c "^+[^+]"` prints 0. (b) `git diff --quiet 47f4f57e000596f24355c5eb3fe828ebe3d4d790 <A4 tree> -- src tests` exits 0. (c) `git diff --stat` between the two trees lists only `DECISIONS.md`, `PROGRESS.md` and this contract, plus the two generated ledger files only if `gen_ad_ledger` regenerated them. (d) No deleted text was a qualifier of a sentence that remains: each remaining sentence that held a deleted clause is still true as read.
+
+### Verified Against Codebase (2026-10-21, on the staged tree `47f4f57e`)
+
+```
+runtime.py:2804                   ontology=None,
+startup/finalize.py:5557          runtime.onboarding._ontology = runtime.ontology
+agent_onboarding.py:421,430-431   if is_crew_agent(agent, self._ontology): ... if not instance_id: logger.debug("Identity deferred ...")
+agent_onboarding.py:446,461,469   resolve_or_issue( ... else: ... resolve_or_issue_asset_tag(
+startup/communication.py:898-899  for agent in registry.all(): if _is_crew(agent, ontology) and not getattr(agent, 'did', ''):
+startup/communication.py:922-923  except Exception as e: logger.debug("Deferred identity skipped ...")
+logs/review-m1a-r4.md:9-15        AFTER_LOOP_ARCHITECT null; AFTER_LOOP_YEOMAN ... "did": ""
+```
