@@ -273,13 +273,15 @@ async def test_m1_long_run_promotes_keeps_running_and_reports_once(
     store, threads = conversation_stores
     thread = threads.create_thread(title="Probe", participants=["conversation-agent"])
     beat_file = tmp_path / "beats.txt"
+    # BF-913: promotion at 2.0 s (at 0.6 s two loaded gates found no beat yet, beats_at_ack == 0: #1523 F-194, F-197);
+    # 50 beats, at least 4.9 s of sleeps, keep the child running at the acknowledgement and 0.5 s after it.
     runtime = _run_python_runtime(
         scratch=tmp_path / "scratch", max_runtime_seconds=600.0,
-        dm_agentic=DmAgenticConfig(enabled=True, promote_to_task_after_seconds=0.6),
+        dm_agentic=DmAgenticConfig(enabled=True, promote_to_task_after_seconds=2.0),
         work_items=store, threads=threads,
     )
     service = runtime.execution_long_runs
-    llm = _ScriptedLLM("run_python", {"code": _beats_code(beat_file, 30), "timeout": 400})
+    llm = _ScriptedLLM("run_python", {"code": _beats_code(beat_file, 50), "timeout": 400})
     agent = _conversational_agent(runtime, llm)
     try:
         ack = await asyncio.wait_for(_conversation(agent, thread.id), timeout=10)
@@ -290,7 +292,7 @@ async def test_m1_long_run_promotes_keeps_running_and_reports_once(
         assert len(items) == 1
         promoted = items[0]
         assert ack == _ACK_TEMPLATE.format(work_item_id=promoted.id)
-        assert 1 <= beats_at_ack < 30, beats_at_ack
+        assert 1 <= beats_at_ack < 50, beats_at_ack
 
         # (b) Acceptance 3: the child outlives the acknowledgement, on the long-run pool.
         await asyncio.sleep(0.5)
@@ -312,7 +314,7 @@ async def test_m1_long_run_promotes_keeps_running_and_reports_once(
         assert records[0]["timeout_seconds"] == 400.0
         assert records[0]["launch_state"] == "launched"
         assert records[0]["success"] is True
-        assert _beats(beat_file) == 30
+        assert _beats(beat_file) == 50
         agent_posts = [message for message in threads.list_messages(thread.id) if message.role == "agent"]
         assert [message.body for message in agent_posts] == [_FINAL_TEXT]
         assert agent_posts[0].metadata.get("work_item_id") == promoted.id
@@ -321,7 +323,7 @@ async def test_m1_long_run_promotes_keeps_running_and_reports_once(
 
         # (e) The model read the run's own output, and nothing was lowered.
         seen = _tool_result_seen(llm)
-        assert "beats done: 30" in seen
+        assert "beats done: 50" in seen
         assert "wall_clock" not in seen
     finally:
         await _cancel_owned_tasks(agent._promoted_turn_tasks)

@@ -48,7 +48,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +76,9 @@ _SURVIVED = "the grandchild survived the timeout and wrote its marker"
 
 #: How long the heartbeat grandchild may beat (one beat per 0.1 s). Nothing waits for that: a test ends it first.
 _BEAT_LIMIT_SECONDS = 60
+
+#: How long a check waits before it calls a heartbeat silent; the controls require a live beater to advance within it.
+_SILENT_SECONDS = 1.0
 
 #: The spawner starts a grandchild that writes ``marker`` after ``seconds``, records the grandchild's
 #: pid in ``marker + ".started"``, then waits for it.
@@ -331,19 +334,29 @@ def _rerun(agent: RedTeamAgent, command: str, claimed_stdout: str = "") -> Corou
     return agent._verify_run_command("shell-1", intent, claimed, intent.params)
 
 
-async def _beats_until_ended(marker: Path, call: asyncio.Task[Any]) -> None:
+async def _beats_until_ended(marker: Path, call: asyncio.Task[Any], in_time: Callable[[Any], bool]) -> None:
     """Control for the heartbeat checks: a command nothing ends keeps beating, until the test asks it to stop.
 
-    *call* runs a heartbeat command under a generous deadline and is never cancelled. Wait for its grandchild to
-    start, watch the count advance (so "unchanged" in the real check can be told from "still beating"), then ask
-    the grandchild to stop (the stop file), let the call finish and see the count stop.
+    *call* runs a heartbeat command under a generous deadline and is never cancelled. Wait, 20 s in all, for its
+    grandchild to start and write its first beat (BF-913: a cold start under load can take longer than the fixed
+    0.5 s this waited before), then for the count to advance within ``_SILENT_SECONDS``, the window the real check
+    gives a live beater (so "unchanged" there can be told from "still beating"). Then ask the grandchild to stop
+    (the stop file): the call must return the result *in_time* accepts, which a command ended by its own deadline
+    does not, and the count must stop.
     """
+    deadline = time.monotonic() + 20
     assert await _appears_async(_started(marker), 20), "control: the grandchild never started"
+    while _beats(marker) < 1 and not call.done() and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
     first = _beats(marker)
-    await asyncio.sleep(0.5)
+    assert first >= 1, "control: the grandchild never wrote its first beat"
+    rise_by = min(time.monotonic() + _SILENT_SECONDS, deadline)
+    while _beats(marker) <= first and time.monotonic() < rise_by:
+        await asyncio.sleep(0.05)
     assert _beats(marker) > first, "control: a command nothing ended did not keep beating"
     _request_stop(marker)
-    await asyncio.wait_for(call, timeout=20)
+    result = await asyncio.wait_for(call, timeout=20)
+    assert in_time(result), "control: after the stop request the call did not return its in-time result"
     stopped = _beats(marker)
     await asyncio.sleep(0.5)
     assert _beats(marker) == stopped, "control: the stop request did not end the heartbeat"
@@ -364,7 +377,7 @@ async def _assert_silent_after_the_call(marker: Path) -> None:
     assert _started(marker).exists(), "premise: the grandchild did not exist when the call ended"
     ended = _beats(marker)
     assert ended >= 2, "premise: the heartbeat had not advanced when the call ended"
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(_SILENT_SECONDS)
     assert _beats(marker) == ended, "a descendant was still beating after the call ended"
 
 
@@ -741,13 +754,15 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
         control = asyncio.create_task(
             agent._run_command(_spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
         )
-        await _beats_until_ended(control_marker, control)
+        await _beats_until_ended(control_marker, control, lambda result: result.get("success") is True)
 
-        # Test: a 3.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time.
+        # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
+        # with 3.0 s left for PowerShell, the root, the grandchild and two beats (BF-913, preventive: this 2.0 s window
+        # has no recorded failure; the late-worker test's 1.0 s, the same shape, failed under gate load).
         # The teardown grace is cut to 0.5 s so that 1.0 s of pickup delay outlasts it, as a delay over the production
         # 5 s would: a worker that kept a fresh full budget instead of the shared deadline then ends after the
         # caller's backstop, which reports the timeout while the command still runs.
-        agent.DEFAULT_TIMEOUT = 3.0
+        agent.DEFAULT_TIMEOUT = 4.0
         agent.WORKER_TEARDOWN_GRACE = 0.5
         async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(
@@ -757,7 +772,7 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
             assert not _started(marker).exists(), "premise: the command started while the executor was still held"
             contended.release()
             result = await asyncio.wait_for(call, timeout=15)
-            assert result == {"success": False, "error": "Command timed out after 3.0s"}
+            assert result == {"success": False, "error": "Command timed out after 4.0s"}
             await _assert_silent_after_the_call(marker)
     finally:
         _stop_heartbeat(control_marker)
@@ -771,12 +786,14 @@ async def test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop(
     """A worker picked up late reports the timeout at the shared deadline, not at the caller's backstop.
 
     The slot ends the tree at the backstop anyway, so the heartbeat stops before the call returns whichever budget
-    the worker runs on; what the single deadline changes is WHEN the report arrives. A worker whose own budget
-    restarted at pickup (1.0 s late) would end its tree, and the call would report, at about 3.0 s instead of
-    2.0 s. The grace is 6.0 s (backstop at 8 s), so the backstop cannot be mistaken for the pickup delay.
+    the worker runs on; what the single deadline changes is WHEN the report arrives. The deadline is 4.0 s and the
+    executor is held for 1.0 s, which leaves 3.0 s for PowerShell, the root, the grandchild and two beats (BF-913:
+    1.0 s did not hold under load). A worker whose own budget restarted at pickup would end its tree, and the call
+    would report, no earlier than 5.0 s (1.0 s held plus 4.0 s); the bound 4.7 s lies between that and the 4.0 s
+    deadline. The grace is 6.0 s (backstop at 10 s), later than both.
     """
     agent = ShellCommandAgent(pool="shell")
-    agent.DEFAULT_TIMEOUT = 2.0
+    agent.DEFAULT_TIMEOUT = 4.0
     agent.WORKER_TEARDOWN_GRACE = 6.0
     marker = tmp_path / "marker"
     try:
@@ -791,8 +808,8 @@ async def test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop(
             await _heartbeat_is_running(marker, call)
             result = await asyncio.wait_for(call, timeout=15)
             elapsed = time.monotonic() - started
-            assert result == {"success": False, "error": "Command timed out after 2.0s"}
-            assert elapsed < 2.7, "the caller waited for the backstop, not the shared deadline"
+            assert result == {"success": False, "error": "Command timed out after 4.0s"}
+            assert elapsed < 4.7, "the call reported after the shared deadline (a budget restarted at pickup?)"
             await _assert_silent_after_the_call(marker)
     finally:
         _stop_heartbeat(marker)
@@ -849,11 +866,13 @@ async def test_red_team_rerun_started_late_leaves_no_descendant_when_the_timeout
         control = asyncio.create_task(
             _rerun(agent, _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
         )
-        await _beats_until_ended(control_marker, control)
+        await _beats_until_ended(control_marker, control, lambda verdict: verdict.verified is True)
 
-        # Test: a 3.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time.
-        # The teardown grace is cut to 0.5 s for the reason given in the shell agent's test.
-        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 3.0)
+        # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
+        # with 3.0 s left for the start (BF-913, preventive, as in the shell agent's test). The teardown grace is cut
+        # to 0.5 s for the reason given there: a re-run whose budget restarted at pickup would return at 5.0 s or
+        # later, after the backstop (4.5 s), whose verdict is "Verification error: ", not the worker's.
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 4.0)
         monkeypatch.setattr("probos.agents.red_team._RERUN_TEARDOWN_GRACE_S", 0.5)
         async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(
@@ -888,7 +907,7 @@ async def test_shell_cancel_ends_tree(tmp_path: Path, beater: Path) -> None:
         control = asyncio.create_task(
             agent._run_command(_spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
         )
-        await _beats_until_ended(control_marker, control)
+        await _beats_until_ended(control_marker, control, lambda result: result.get("success") is True)
 
         async with _ContendedCall(hold=False, heartbeats=(marker,)) as pool:
             call = pool.submit(
@@ -924,7 +943,7 @@ async def test_redteam_outer_timeout_ends_rerun(
         control = asyncio.create_task(
             _rerun(agent, _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
         )
-        await _beats_until_ended(control_marker, control)
+        await _beats_until_ended(control_marker, control, lambda verdict: verdict.verified is True)
 
         monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 5.0)
         async with _ContendedCall(hold=False, heartbeats=(marker,)) as pool:
@@ -1119,7 +1138,7 @@ async def test_swe_run_command_cancel_ends_tree(tmp_path: Path, beater: Path) ->
         control = asyncio.create_task(tool.invoke(
             {"command": _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=False), "timeout": 20},
         ))
-        await _beats_until_ended(control_marker, control)
+        await _beats_until_ended(control_marker, control, lambda ran: ran.success)
 
         call = asyncio.create_task(tool.invoke(
             {"command": _spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=False), "timeout": 20},
