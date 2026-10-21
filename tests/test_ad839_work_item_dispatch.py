@@ -65,11 +65,16 @@ class _FakeWorkItem:
     def __init__(self, work_item_id: str, assigned_to: str | None = None) -> None:
         self.id = work_item_id
         self.assigned_to = assigned_to
+        # BF-900: the claim reads the status and moves the item only from it (a compare-and-set),
+        # so the fake item carries one; ``open`` is a dispatched task's status before the claim.
+        self.status = "open"
 
 
 class _FakeWorkItemStore:
     def __init__(self, assigned_to: str | None = None) -> None:
         self.transitions: list[tuple[str, str, str]] = []
+        # BF-900: the ``expected_status`` each claim passed, in order.
+        self.expected_statuses: list[str | None] = []
         self.raise_on_transition = False
         # BF-607: track assignment so the claim path can be exercised.
         self.updates: list[tuple[str, str | None]] = []
@@ -85,11 +90,13 @@ class _FakeWorkItemStore:
         return self._item
 
     async def transition_work_item(
-        self, work_item_id: str, new_status: str, source: str = "system"
+        self, work_item_id: str, new_status: str, source: str = "system",
+        *, expected_status: str | None = None,
     ) -> Any:
         if self.raise_on_transition:
             raise RuntimeError("invalid transition")
         self.transitions.append((work_item_id, new_status, source))
+        self.expected_statuses.append(expected_status)
         return MagicMock()
 
 
@@ -191,6 +198,8 @@ async def test_handler_transitions_and_threads_messages() -> None:
     assert result.result == "On it, Captain."
     # transitioned to in_progress with the agent as source
     assert work_item_store.transitions == [("wi-1", "in_progress", agent.id)]
+    # BF-900: only from the status the claim read, so a park made since is not undone
+    assert work_item_store.expected_statuses == ["open"]
     # captain task message + agent acknowledgment both logged
     roles = [m["role"] for m in thread_store.appended]
     assert roles == ["captain", "agent"]

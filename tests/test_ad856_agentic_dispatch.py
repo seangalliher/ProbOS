@@ -106,6 +106,9 @@ class _AlwaysToolLLM:
 
 
 class _FakeGapDriver:
+    """Records each gap and parks nothing. BF-900: so no test with it can show the dispatch claim undoing
+    a park; ``tests/test_bf900_dispatch_claim_keeps_the_park.py`` runs the real ``CapabilityGapDriver``."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
@@ -348,11 +351,18 @@ async def test_handle_work_item_dispatch_falls_back_when_gated_off() -> None:
     transitions: list[tuple[str, str, str]] = []
 
     class _WorkItemStore:
+        # BF-900: the claim reads the item and moves it only from the status it read
+        # (``expected_status``), so this fake answers the read (an open item the agent already
+        # holds) and takes the keyword.
+        async def get_work_item(self, work_item_id: str) -> Any:
+            return SimpleNamespace(id=work_item_id, status="open", assigned_to="counselor-001")
+
         async def transition_work_item(
-            self, work_item_id: str, new_status: str, source: str = "system"
+            self, work_item_id: str, new_status: str, source: str = "system",
+            *, expected_status: str | None = None,
         ) -> Any:
             transitions.append((work_item_id, new_status, source))
-            return None
+            return SimpleNamespace(id=work_item_id, status=new_status)
 
     runtime = SimpleNamespace(
         config=SimpleNamespace(agentic_dispatch=SimpleNamespace(enabled=False)),

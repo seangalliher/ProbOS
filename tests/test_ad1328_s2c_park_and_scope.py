@@ -154,6 +154,9 @@ def _text_response(text: str) -> _FakeLLMResponse:
 
 
 class _FakeGapDriver:
+    """Records each gap and parks nothing. BF-900: so no test with it can show the dispatch claim undoing
+    a park; ``tests/test_bf900_dispatch_claim_keeps_the_park.py`` runs the real ``CapabilityGapDriver``."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
