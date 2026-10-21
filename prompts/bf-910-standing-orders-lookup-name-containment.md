@@ -1069,3 +1069,306 @@ async def test_adapter_registered_handler_is_the_guarded_one(
 10. `scripts/check_architecture_principles.py --check` exits 0, and `git diff --quiet HEAD -- docs/development/architecture-baseline.yaml` exits 0. The span probe prints `491 16`.
 11. T21-T35 pass. Rows 22-35 are killed, with rows 24-26 on their A2 anchors.
 12. `scripts/gen_ad_ledger.py --check` exits 0 after the tracker edits. `check_seam_contracts.py`, `check_store_registry.py` and `check_config_facade.py` each exit 0 with `--check`.
+
+## Amendment A3 (2026-10-20, after review round 1, finding F1)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+### What A3 supersedes
+- **Section 3b's REPLACE:** the lines `if scope not in _STANDING_ORDERS_SCOPES:` and `if name is None or name == "":` are replaced by Section 9's.
+- **D3:** "absent, `None` or `""`" now reads "absent, `None` or an exact `""` (`type(v) is str`, tested before the comparison)". The refused list now includes "an empty `str` subclass and any object that compares equal to `""`".
+- **D7:** the scope refusal's *text* is unchanged; D21 adds an exact-type condition to it.
+- **Solution overview, step 2:** "scope gate (unchanged)" now reads "scope gate (exact `str`, D21)".
+- **Mutation table:** row 13's anchor changes, and rows 36-39 are added (below).
+
+### Decisions
+D20-D22 as above.
+
+### Section 9 (source): `src/probos/cognitive/swe_harness/tools.py`
+9a:
+```
+<<<<<<< SEARCH
+        scope = params.get("scope")
+        if scope not in _STANDING_ORDERS_SCOPES:
+=======
+        scope = params.get("scope")
+        # BF-910 (D21): the type first, so a caller's __eq__ or __ne__ does not run.
+        if type(scope) is not str or scope not in _STANDING_ORDERS_SCOPES:
+>>>>>>> REPLACE
+```
+9b:
+```
+<<<<<<< SEARCH
+            name = params.get("department")
+            if name is None or name == "":
+                name = "engineering"
+=======
+            name = params.get("department")
+            # BF-910 (D20): the type first, so a subclass or a non-string is not compared.
+            if name is None or (type(name) is str and name == ""):
+                name = "engineering"
+>>>>>>> REPLACE
+```
+
+### Section 10 (tests, applied FIRST): `tests/test_bf910_standing_orders_lookup.py`
+10a (docstring, T numbering):
+```
+<<<<<<< SEARCH
+Tests section, T21 to T34 in its Amendment A1 and T35 in its Amendment A2. T19b
+=======
+Tests section, T21 to T34 in its Amendment A1, T35 in its Amendment A2 and T36
+in its Amendment A3. T19b
+>>>>>>> REPLACE
+```
+10b (docstring, T3):
+```
+<<<<<<< SEARCH
+  or 10000 characters (T2), and any value that is not an exact ``str``, falsy
+  or not (T3). The result holds no marker planted outside the directory, never
+=======
+  or 10000 characters (T2), and any value that is not an exact ``str``, falsy
+  or not: an empty ``str`` subclass, an object equal to ``""`` and an object
+  whose ``==`` raises are refused too, with no exception and without falling to
+  the default (T3). The result holds no marker planted outside the directory, never
+>>>>>>> REPLACE
+```
+10c (docstring, T5):
+```
+<<<<<<< SEARCH
+  ``ship`` ignores ``department`` (T4). No value, ``None`` or ``""`` means
+  ``engineering`` (T5).
+=======
+  ``ship`` ignores ``department`` (T4). No value, ``None`` or an exact ``""``
+  means ``engineering`` (T5).
+>>>>>>> REPLACE
+```
+10d (docstring, T17/T36):
+```
+<<<<<<< SEARCH
+  fixed text (T16); the scope refusal is unchanged and comes first (T17).
+=======
+  fixed text (T16); the scope refusal is unchanged and comes first (T17). A
+  ``scope`` that is not an exact ``str`` gets it too, before it is compared,
+  even one that equals a scope name, with no exception (T36).
+>>>>>>> REPLACE
+```
+10e (docstring, T22/T23):
+```
+<<<<<<< SEARCH
+  ``str``: ``5``, ``1.5``, ``True``, a list, a dict, bytes and a ``str``
+  subclass (T22). For T2's values the reply also holds no marker planted
+=======
+  ``str``: ``5``, ``1.5``, ``True``, a list, a dict, bytes, a ``str``
+  subclass, an object equal to ``""`` and an object whose ``==`` raises
+  (T22). For T2's values the reply also holds no marker planted
+>>>>>>> REPLACE
+```
+```
+<<<<<<< SEARCH
+- A falsy ``department`` (absent, ``None``, ``""``, ``0``, ``False``, ``[]`` or
+  ``{}``) still answers ``No department specified`` and no read is made (T23).
+=======
+- A falsy ``department`` (absent, ``None``, ``""``, ``0``, ``False``, ``[]``,
+  ``{}`` or an empty ``str`` subclass) still answers ``No department
+  specified`` and no read is made (T23).
+>>>>>>> REPLACE
+```
+10f (import):
+```
+<<<<<<< SEARCH
+import os
+from pathlib import Path
+=======
+import operator
+import os
+from pathlib import Path
+>>>>>>> REPLACE
+```
+10g (helpers):
+```
+<<<<<<< SEARCH
+class _Str(str):
+    """A ``str`` subclass: a name must be an exact ``str``, never a subclass."""
+=======
+class _Str(str):
+    """A ``str`` subclass: a name must be an exact ``str``, never a subclass."""
+
+
+class _EqualsEmpty:
+    """Not a ``str``, but equal to ``""`` under ``==``: it is refused, not taken for no value."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and other == ""
+
+
+class _EqRaises:
+    """Not a ``str``; ``==``, and so ``!=`` and ``in``, raise: it is refused before any comparison."""
+
+    def __eq__(self, other: object) -> bool:
+        raise ValueError("compared before its type was checked")
+
+
+class _PassesTheScopeGate:
+    """Not a ``str``: equal to ``"department"`` under ``==`` and ``in``, while ``!=`` raises."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, str) and other == "department"
+
+    def __ne__(self, other: object) -> bool:
+        raise ValueError("compared after the scope gate")
+>>>>>>> REPLACE
+```
+10h (T3 rows and the T36 table):
+```
+<<<<<<< SEARCH
+    ("bytes", b"engineering"),
+    ("str-subclass", _Str("engineering")),
+)
+=======
+    ("bytes", b"engineering"),
+    ("str-subclass", _Str("engineering")),
+    ("empty-str-subclass", _Str("")),
+    ("equals-empty", _EqualsEmpty()),
+    ("eq-raises", _EqRaises()),
+)
+
+# T36: a ``scope`` that is not an exact ``str``, two of them equal to a scope name, as (id, value).
+_NOT_A_STR_SCOPE: tuple[tuple[str, object], ...] = (
+    ("str-subclass-ship", _Str("ship")),
+    ("str-subclass-department", _Str("department")),
+    ("passes-the-scope-gate", _PassesTheScopeGate()),
+    ("eq-raises", _EqRaises()),
+)
+>>>>>>> REPLACE
+```
+10i (T23 row):
+```
+<<<<<<< SEARCH
+    ("empty-dict", {"department": {}}),
+)
+=======
+    ("empty-dict", {"department": {}}),
+    ("empty-str-subclass", {"department": _Str("")}),
+)
+>>>>>>> REPLACE
+```
+10j (T3 docstring):
+```
+<<<<<<< SEARCH
+    """T3: a non-string value, falsy or not, and a ``str`` subclass get the same refusal."""
+=======
+    """T3: a non-string value, falsy or not, and a ``str`` subclass, empty or not, get the same refusal, with no exception."""
+>>>>>>> REPLACE
+```
+10k (T36 and its premise, after T17):
+```
+<<<<<<< SEARCH
+    assert result.error == "scope must be one of ship|department|agent"
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+async def test_every_read_stays_in_the_base(
+=======
+    assert result.error == "scope must be one of ship|department|agent"
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+def test_premise_the_probes_compare_as_their_rows_say() -> None:
+    """T36 (premise): each probe really equals, or raises, as T3's and T36's rows rely on."""
+    assert _EqualsEmpty() == ""
+    with pytest.raises(ValueError):
+        operator.eq(_EqRaises(), "")
+    probe = _PassesTheScopeGate()
+    assert probe in tools._STANDING_ORDERS_SCOPES
+    with pytest.raises(ValueError):
+        operator.ne(probe, "ship")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [pytest.param(value, id=name) for name, value in _NOT_A_STR_SCOPE])
+async def test_a_scope_that_is_not_an_exact_str_is_refused(
+    value: object, tmp_path: Path, orders: Path, reads: _Reads
+) -> None:
+    """T36: a ``scope`` that is not an exact ``str`` gets the scope refusal, before it is compared."""
+    result = await _tool(tmp_path, orders).invoke({"scope": value, "department": "engineering"})
+
+    assert result.output is None
+    assert result.error == "scope must be one of ship|department|agent"
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+async def test_every_read_stays_in_the_base(
+>>>>>>> REPLACE
+```
+No change to `tests/test_copilot_adapter.py`. The new truthy rows reach the adapter's T22 and T34 through `_TRUTHY_NOT_A_STR` (`:243`; `if case[1]` is True for both new objects because neither defines `__bool__` or `__len__`). `_Str("")` is falsy, so the filter leaves it out of T22, and T23 gets it from 10i.
+
+### Effect on T1-T35 (worked through by hand)
+- **T5:** absent and `None` hit `is None`; an exact `""` is `str` and equal to `""`. Passes.
+- **T3, existing rows:** `type(...)` is not `str`, so they are refused as before.
+- **T4, T6-T8:** exact non-empty `str`, unchanged. T4 `ship` still ignores `department`.
+- **T17 and the AD-1179 test at `:117`:** `"fleet"` is an exact `str` that is not a member, so it gets the same text.
+- **T18:** its inputs grow through `_NOT_A_STR`.
+- **T22, T23, T34:** inputs grow, and they pass on the candidate as well, since the adapter is unchanged.
+- **Moved:** no assertion changes. The test count rises by 14: T3 +6, T22 +2, T23 +1, T36 +4, premise +1.
+- **Pins:** no `?raw` test pins the changed lines (searched `tests/` for `scope not in _STANDING_ORDERS_SCOPES|name is None or|or "engineering"`: no hits in the BF-910 surfaces).
+
+### Mutation table delta (`tools.py`; run against `tests/test_bf910_standing_orders_lookup.py`)
+| # | Line (stripped, whole) | Mutant | Killed by |
+|---|---|---|---|
+| 13 (re-anchored) | `if name is None or (type(name) is str and name == ""):` | `if name is None:` | T5[empty] |
+| 36 | row 13's line | `if name is None or name == "":` | T3[empty-str-subclass], T3[equals-empty], T3[eq-raises], T18 |
+| 37 | row 13's line | `if name is None or (isinstance(name, str) and name == ""):` | T3[empty-str-subclass] |
+| 38 | `if type(scope) is not str or scope not in _STANDING_ORDERS_SCOPES:` | `if scope not in _STANDING_ORDERS_SCOPES:` | T36 (all four rows) |
+| 39 | row 38's line | `if type(scope) is not str:` | T17 |
+
+- **Uniqueness:** before the change, neither `type(name)` nor `type(scope)` occurs in `tools.py`. Grep for `type\(name\)|type\(scope\)|is None or|_STANDING_ORDERS_SCOPES:` returned only `:809`, `:863`, `:872`, `:1071`, `:1211`, `:1238`. Both anchors are therefore unique after the change, and the old `:863` and `:872` lines are gone.
+- **Excluded as equivalent:** `… (type(name) is str and not name)`.
+- **Running:** rows 13 and 36-37 share a line and run separately; so do rows 38 and 39.
+
+### Milestone M4 (Builder)
+1. Apply Section 10 only. Run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf910_standing_orders_lookup.py -n 0 -q`. It must report exactly these 11 failures or errors, and everything else passing (T9 may skip on Windows):
+   - T3 × [empty-str-subclass, equals-empty, eq-raises] × [department, agent]: 6
+   - T36: 4
+   - T18: 1
+
+   This step measures D21's premise.
+2. Apply Section 9, then rerun the file: all pass.
+3. Focused check: `… -m pytest tests/test_bf910_standing_orders_lookup.py tests/test_ad1179_vocabulary_constants.py tests/test_ad1179_tool_schema_golden.py tests/test_ad544_native_tools.py tests/test_copilot_adapter.py -n 0 -q`.
+4. Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`. It must exit 0: the class grows by two comment lines, and `tools.py` has no baseline row.
+
+### Trackers
+**DECISIONS.md, BF-910 entry:**
+```
+<<<<<<< SEARCH
+Absent, `None` or `""` still means `engineering`; other non-strings are refused;
+=======
+Absent, `None` or an exact `""` still means `engineering`; any other value that is not an exact `str`, a `str` subclass included, is refused;
+>>>>>>> REPLACE
+```
+```
+<<<<<<< SEARCH
+- *Residual.* A hard link or a same-user process writing into `config/standing_orders/` is not distinguishable from a standing order.
+=======
+- *A3 (D20-D22).* The tool tests `type(name) is str` before `name == ""`. An empty `str` subclass, or an object equal to `""`, is therefore refused instead of being read as `engineering`, and an object whose `==` raises is refused instead of raising out of `invoke` (T3). `scope` is refused with the unchanged scope text unless it is an exact `str`, tested before the membership test, so a caller's `__eq__` or `__ne__` does not run on it (T36). The candidate had moved a second `scope` comparison out of the `try` that held it before. The visiting handler is unchanged: its `if not department:` is the line it had before BF-910, and a falsy value gets `No department specified` with no read (T23). Not changed: the `params` mapping's own methods, which the file's other tools also call before their `try`.
+- *Residual.* A hard link or a same-user process writing into `config/standing_orders/` is not distinguishable from a standing order.
+>>>>>>> REPLACE
+```
+- **PROGRESS.md:** no change. Its BF-910 text does not describe the default or the types.
+- **Ledger:** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then `--check`. Commit anything it regenerates.
+
+### Acceptance criteria (added)
+13. Step M4.1 shows exactly the 11 failures listed; M4.2 and M4.3 pass.
+14. Rows 13 and 36-39 are killed, with row 13 on its A3 anchor. The `tools.py` rows of the campaign are rerun on the new sha256.
+15. `check_architecture_principles.py --check` and `gen_ad_ledger.py --check` exit 0.
+16. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### Verified Against Codebase (2026-10-20, staged tree `d01c9a4d`)
+- `tools.py:862-876` and `:877` (try); `standing_orders.py:100`; `registry.py:490`; `protocol.py:186-188`; `copilot_adapter.py:90-100`.
+- Base `5548a476`: `tools.py:837-859`; `copilot_adapter.py:580-589`.
+- Test file: `:162`, `:209-219`, `:243`, `:246-252`, `:460-473`, `:499-509`, `:704-745`, `:821-848`, `:1024-1048`.
+- `test_ad1179_vocabulary_constants.py:113-121`. `git ls-files --eol`: index LF, working tree CRLF.
