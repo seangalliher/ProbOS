@@ -1359,3 +1359,200 @@ Measured by others, not by the Architect: the reviewer's probe (`logs/review-m1a
 | No test or check selects T18 by its old name | Grep `test_on_a_second_boot` over the repository, excluding `logs/` | `tests/test_ad1346_identity_service_boot.py:218`; contract `:571, :745` (A1 history) | yes |
 | The ledger files carry no wording A2 changes | Grep `first boot\|18 new\|real-boot\|once in the slot` over `docs/development/{ad-ledger-snapshot.json,open-ads-report.md}` | none | yes |
 | The two consensus proposer types are not crew | Grep `consensus_proposer` over `config/ontology` | none | yes |
+
+## Amendment A3 (2026-10-21, after review round 3)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
+
+**Trigger.** Review round 3 (`gpt-6.1-sol`) found two P2s, both ordinary reach, both in claims only. (F1) A crew slot with no stored certificate does not always get it in Phase 7. A crew slot wired once the onboarding service has the ontology gets it at wiring. `PoolScaler.request_surge` (`substrate/scaler.py:77-100`) does not check `excluded_pools`, and `SurgeonAgent.act` calls it (`agents/medical/surgeon.py:87-89`). Measured after a completed boot (`logs/probe_m1a_surge.py.txt`): a surge of the `architect` pool added slot `architect_architect_1_d72da96d` with a certificate ref and a DID. (F2, a regression A2 introduced) "Every crew slot a later boot adds" is false for a pool that is disabled and then re-enabled. Its slots already have stored certificates (`logs/probe_m1a_reenabled_pool.py.txt`: 9 slots added relative to the previous boot, all 9 certificate refs at Phase 7 entry, all 9 equal to the original). Three rounds of findings were all claims about when an identity state is possible. Each repair widened the claim, and the next round refuted it.
+
+**Wording rule (replaces A2's; binding on this amendment and on later M1a text).** M1a states no rule for when a crew identity state begins or ends. It states the mechanism: the two call sites that issue a crew certificate (D21), each with its line. Anything about timing is either a tested scenario (T14 to T19), named as one, or an example marked "for example" or "such as", with cited lines. "Phase 7" may name a call site or a test's measurement point, never a deadline. A configuration history, a boot number or a phase alone is never used to infer a slot's state.
+
+**Apply order.** Tests first, then source (none), then trackers. Apply these blocks to the staged candidate tree `744c4c08c6c5f2d0d73f4aa0b30b3ac201ccaa38`. Each SEARCH occurs exactly once in its file. The working tree uses CRLF; `DECISIONS.md:415-417` and `PROGRESS.md:3` are single long lines, so the SEARCH texts are unique substrings of them.
+
+**Supersedes:**
+- A2 Problem, fact 3: its replacement first sentence ("A crew slot with no stored certificate gets its certificate in Phase 7, not Phase 2."). Replaced below. A2's second sentence and the rest of fact 3 stand.
+- A2 Trigger, the sentence "The window belongs to a slot that has no stored certificate, on any boot." This is history; D21 states the rule.
+- A2 D17: the sentences from "A crew slot with no stored certificate has D13's window on any boot." through "(T17 on a fresh data directory, T19 for the crew slots a later boot adds)." Replaced by D21. The rest of D17, including its rejected alternatives, stands.
+- A2 Corrected statements: the Binding on M3's contract, its sentences "A crew slot without one, on any boot, is unresolved from its wiring until Phase 7 issues its certificate. Until then it resolves to an asset ref if the Phase 2 crew test tagged it as an asset (D13)." Replaced below. The rest of A2's binding stands.
+- A2 Blind spot 1. Replaced below.
+- These stand, and are checked against D21:
+  - A2's D13 first sentence: it is limited to wiring in Phase 2, and the onboarding service's ontology is None until `startup/finalize.py:5557` on every boot.
+  - Blind spot 9: a true example, and the rule "never prefer `agent.sovereign_id`" does not depend on it.
+  - Blind spot 10.
+  - The T17, T18 and T19 rows and names (D23).
+- A2 Acceptance Criteria and Diff Reviewer properties: new criterion 2b and new properties 11 and 12, below.
+- Mutation table: **no change**. A3 changes no file under `src/` and no executable line of any test.
+- Test count: **no change** (19 = 13 + 6).
+
+### Decisions
+
+| # | Decision | Rejected alternatives, and why |
+|---|---|---|
+| D21 | **Mechanism, not timing.** A crew slot with no stored certificate gets one from `resolve_or_issue` at one of two call sites, and nowhere else (Absence Verified): (a) its wiring, when the onboarding service has the ontology and the vessel has an instance id (`agent_onboarding.py:421-457`; the onboarding service is built with `ontology=None`, `runtime.py:2804`, and gets it in Phase 8, `startup/finalize.py:5557`); (b) Phase 7's deferred-issuance loop, which tries each crew agent registered at that moment without a DID (`startup/communication.py:895-923`; a failure is logged at debug and skipped). A stored certificate, loaded in Phase 1 (`identity.py:589-596`), is what both return (`identity.py:1021-1024`). Which site applies, and when, depends on when the slot is wired. Examples: a crew slot wired in Phase 2 waits for (b), unresolved or an asset ref meanwhile (T17, T19). A crew slot wired once the onboarding service has the ontology, such as a pool surge (`substrate/scaler.py:77-100`) or a pool refill (`substrate/pool.py:528-536`), gets (a) at wiring, and no asset tag, because the crew test and the asset tag are the two branches of one if/else (`agent_onboarding.py:421`, `:461`). A crew slot wired after (b) has run and before `startup/finalize.py:5557` gets neither. It stays unresolved, or an asset ref, until one of the two sites runs for it again; a recycle re-wires the same slot (`substrate/pool.py:209-233`). This last case follows from the two sites and was not measured. Every agent-creation path after Phase 2 wires through `onboarding.wire_agent` (`runtime.py:2572-2576`); the self-mod hot-swap (`self_mod_manager.py:214-219`) and the red team (`runtime.py:2641-2656`) do not wire and issue nothing. | (1) **Widen the phase rule again** ("Phase 7, or at wiring after Phase 8"): it misses the window between (b) and `finalize.py:5557`, and the recycle. A fourth widening invites a fourth refutation. (2) **Make `request_surge` check `excluded_pools`**: a source change in the substrate, outside M1a. The Surgeon's surge is deliberate, and refill and recycle would still wire crew slots after boot. (3) **Give the onboarding service the ontology before Phase 2**: already rejected in D13. |
+| D22 | **No inference from configuration history (F2).** The clause "every crew slot a later boot adds (a configuration change that adds a crew pool, for one)" is deleted. Phase 1 loads every stored mapping whatever the configuration (`identity.py:589-596`), and slot ids are deterministic (`substrate/identity.py:17-27`). So a pool that is disabled and then re-enabled returns slots that already have certificates. What matters is the slot's state when it is wired. T19's scenario is described only as itself: a first boot without the utility agent pools, then a boot with them, over one data directory. | Qualify it as "a later boot adds, with no stored certificate": that is D21's "no stored certificate" plus a history clause that adds nothing. |
+| D23 | **No new test, no source change; T19's name stays.** D21's claims are call sites with cited lines plus an enumeration, which meets the wording rule. T19's name labels its scenario, and its docstring (A3.T3) now limits it. | (1) **T20, a surge test**: it would make the scaler's and onboarding's timing part of M1a's contract. It costs a full boot and adds a review surface, and M3 tests its own handling of None and asset refs. (2) **Rename T19**: churns the test id and the campaign records for a label its docstring already limits. |
+
+### Corrected statements
+
+- **Problem, fact 3** (replaces A2's first sentence): "A crew slot with no stored certificate gets its certificate from one of two call sites (D21): at its wiring once the onboarding service has the ontology, or in Phase 7's deferred-issuance loop if it is registered when that loop runs."
+- **Binding on M3's contract** (replaces the two A2 sentences named above): "A crew slot without one may be unresolved, or resolve to an asset ref if the crew test tagged it at wiring (D13), until a certificate is issued for it. D21 names the two sites that issue one and gives no deadline. In one case, none comes for the rest of the process unless the slot is re-wired."
+- **Blind spot 1** (replaced): "A crew slot with no stored certificate may be unresolved, or resolve to an asset ref, until one of D21's two sites issues its certificate. That may be Phase 7, its wiring, or not in this process. M3 records None as unresolved, never as a raw id, and infers no state from the phase, the boot number or the configuration history (D20, D21, D22)."
+
+### Tests first: `tests/test_ad1346_identity_service_boot.py` (docstrings only)
+
+**A3.T1**
+
+SEARCH:
+```
+- T19  on the next boot with a configuration that adds crew slots, the added slots (no stored certificate) go
+       through T17's window while the stored ones resolve as in T18: the window is per slot, not per boot.
+```
+REPLACE:
+```
+- T19  on the next boot, with the utility agent pools the first boot ran without turned on, the crew slots this
+       adds (none has a stored certificate) go through T17's window while the stored ones resolve as in T18: the
+       window is per slot, not per boot.
+```
+
+**A3.T2**
+
+SEARCH:
+```
+    crew slots a configuration change adds, which have no stored certificate.
+```
+REPLACE:
+```
+    crew slots added after a first boot that ran without their pools, which have no stored certificate.
+```
+
+**A3.T3**
+
+SEARCH:
+```
+    """T19: the Phase 7 window belongs to a crew slot with no stored certificate, on any boot (AD-1346 M1a, D14).
+```
+REPLACE:
+```
+    """T19: a crew slot wired in Phase 2 with no stored certificate waits for Phase 7 (AD-1346 M1a, D14).
+```
+
+### Source
+
+None.
+
+### Trackers: `DECISIONS.md`
+
+**A3.D1** (D14, line 415)
+
+SEARCH:
+```
+A crew slot with no stored certificate, on any boot, has D13's window: unresolved from its wiring, or an asset ref if the crew test tagged it, until Phase 7 issues its certificate. That is every crew slot of a fresh data directory, and every crew slot a later boot adds (a configuration change that adds a crew pool, for one).
+```
+REPLACE:
+```
+A crew slot with no stored certificate gets one from `resolve_or_issue` at one of two call sites, and nowhere else: its wiring, when the onboarding service has the ontology and the vessel an instance id (`agent_onboarding.py:421-457`; the onboarding service gets the ontology in Phase 8, `startup/finalize.py:5557`), and Phase 7's deferred-issuance loop, which tries each crew agent registered at that moment without a DID (`startup/communication.py:895-923`; a failure there is logged and skipped). Which site, and when, depends on when the slot is wired, so this entry gives no deadline. For example, a crew slot wired in Phase 2 is unresolved, or an asset ref if the crew test tagged it (D13), until Phase 7, as is every crew slot of a fresh data directory; a crew slot wired once the onboarding service has the ontology, such as one a pool surge adds (`substrate/scaler.py:77-100` does not check `excluded_pools`, and the Surgeon calls it), gets its certificate at wiring and no asset tag; a crew slot wired after Phase 7's loop and before `startup/finalize.py:5557` gets neither, and stays unresolved or an asset ref until one of the two sites runs for it again (a recycle re-wires the same slot). A configuration change decides nothing by itself: a pool that is disabled and then re-enabled returns slots whose certificates are stored.
+```
+
+**A3.D2** (D14, line 415)
+
+SEARCH:
+```
+Rejected: stating the window by boot number, which a later boot that adds crew slots refutes.
+```
+REPLACE:
+```
+Rejected: stating the window by boot number, by phase or by configuration change; a later boot that adds crew slots, a pool surge after Phase 8 and a re-enabled pool each refute one of them.
+```
+
+**A3.D3** (Binding on M3, line 416)
+
+SEARCH:
+```
+A crew slot without one, on any boot, is unresolved from its wiring until Phase 7 issues its certificate, or resolves until then to an asset ref if the Phase 2 crew test tagged it as an asset (D13).
+```
+REPLACE:
+```
+A crew slot without one may be unresolved, or resolve to an asset ref if the crew test tagged it at wiring (D13), until a certificate is issued for it; D14 names the two sites that issue one and gives no deadline.
+```
+
+**A3.D4** (Tests, line 417)
+
+SEARCH:
+```
+and the crew slots a configuration change adds on the next boot, which go through the window while the stored ones do not)
+```
+REPLACE:
+```
+and, after a first boot with the utility agent pools off, the crew slots that turning them on adds on the next boot, which go through the window while the stored ones do not)
+```
+
+### Trackers: `PROGRESS.md`
+
+**A3.P1** (line 3)
+
+SEARCH:
+```
+a crew slot with no stored certificate, on any boot, gets its certificate in Phase 7, so the facade holds references to the registries and sees it; until then that slot is unresolved, or an asset ref if the Phase 2 crew test missed its type (the yeoman), and from then on the certificate ref on the same slot, a change made once in the slot's life; a crew slot with a stored certificate resolves to it from Phase 2.
+```
+REPLACE:
+```
+the facade holds references to the registries, so it reports each slot as it stands at the call: a crew slot with a stored certificate resolves to it from Phase 2, and one without resolves to None, or to an asset ref if the crew test at wiring missed its type (the yeoman), until a certificate is issued for it (in Phase 7 for a slot wired in Phase 2, at wiring for a slot wired once the onboarding service has the ontology, such as a pool surge), and then to the certificate ref on the same slot, a change made at most once in the slot's life.
+```
+
+### Acceptance Criteria (added)
+
+- 2b. No sentence in the M1a text of `DECISIONS.md` or `PROGRESS.md`, or in the boot test file's docstrings, comments and messages, states when a crew identity state begins or ends except by naming one of D21's two call sites, a tested scenario (T14 to T19), or an example marked as one with cited lines.
+
+### Diff Reviewer: properties to verify (added)
+
+- 11. Every timing statement in the A3 delta is a D21 call site with its line, a T14 to T19 scenario, or a marked example with cited lines. The two-site claim holds against `resolve_or_issue\(|resolve_or_issue_asset_tag\(|issue_birth_certificate|reassign_slot\(` over `src/probos`. No configuration history, boot number or phase alone is used to infer a slot's state.
+- 12. The delta is docstrings and tracker text only. The boot test file's AST with docstrings removed equals the staged one; the counts stay 13 + 6; no file under `src/` changes.
+
+### Verified Against Codebase (2026-10-21, on the staged tree `744c4c08`)
+
+```
+agent_onboarding.py:421       if is_crew_agent(agent, self._ontology):
+agent_onboarding.py:430-431   if not instance_id: logger.debug("Identity deferred for crew agent ...")
+agent_onboarding.py:446       cert = await self._identity_registry.resolve_or_issue(
+agent_onboarding.py:461,469   else: ... tag = await self._identity_registry.resolve_or_issue_asset_tag(
+startup/communication.py:898-899  for agent in registry.all(): if _is_crew(agent, ontology) and not getattr(agent, 'did', ''):
+startup/communication.py:910  cert = await identity_registry.resolve_or_issue(
+startup/communication.py:922-923  except Exception as e: logger.debug("Deferred identity skipped ...")
+startup/finalize.py:5557      runtime.onboarding._ontology = runtime.ontology
+substrate/scaler.py:84-90     pool = self.pools.get(pool_name) ... new_id = await pool.add_agent()   (no excluded_pools check)
+substrate/scaler.py:145       if pool_name in self.excluded_pools: continue   (_evaluate_and_scale only)
+agents/medical/surgeon.py:89  await rt.pool_scaler.request_surge(target, extra=1)
+startup/fleet_organization.py:247  escalation_manager._surge_fn = pool_scaler.request_surge
+substrate/pool.py:528-536     refill: new_id = generate_agent_id(...); spawn; _adopt_dynamic_agent
+substrate/pool.py:209-233     recycle: spawner.recycle(agent_id, respawn=True) ... _notify_agent_spawned(new_agent)
+runtime.py:2572-2576          on_agent_spawned = self.onboarding.wire_agent
+self_mod_manager.py:218-219   new_agent._id = aid; self._registry.register(new_agent)   (no wiring)
+runtime.py:2654               await self.registry.register(agent)   (red team, no wiring)
+crew_utils.py:74-76           if ontology: ... return agent.agent_type in _WARD_ROOM_CREW
+```
+
+### Absence Verified (2026-10-21)
+
+```
+CLAIM: a crew certificate is issued to a slot only at agent_onboarding.py:446 and startup/communication.py:910
+RUN:   Grep 'resolve_or_issue\(|resolve_or_issue_asset_tag\(|issue_birth_certificate|reassign_slot\(' src/probos
+FOUND: agent_onboarding.py:446,469; startup/communication.py:910; visiting_officers.py:120 (no slot_id);
+       identity.py:870,893,1004,1027 (definitions, internal call); identity.py:1573 (reassign_slot, defined only)
+HOLDS: yes
+
+CLAIM: nothing removes a certificate or an asset tag from a slot
+RUN:   Grep 'DELETE FROM|\.pop\(|del self\._|\.clear\(\)' src/probos/identity.py
+FOUND: 1638, 1641 (foreign_chains only)
+RUN:   Grep 'self\._\w+\[[^\]]+\]\s*=' src/probos/identity.py
+FOUND: 587, 608-609, 624, 855-856, 957, 959, 1318, 1533, 1594 (writes only; 1594 is reassign_slot, which has no caller)
+HOLDS: yes
+
+CLAIM: every agent-creation path after Phase 2 wires through onboarding.wire_agent, or wires nothing and issues nothing
+RUN:   Grep '\.add_agent\(|request_surge\(|_surge_fn|create_pool\(|\.spawn\(|spawn_agent\(|wire_agent\(' src/probos
+FOUND: scaler.py:90,172; surgeon.py:89; escalation.py:73,89,201,205; fleet_organization.py:247; pool.py:308,533,620;
+       spawner.py:125; finalize.py:201,2614,4876; runtime.py:2530,2588; agent_onboarding.py:189,608 (definitions)
+RUN:   Grep 'ResourcePool\(|registry\.register\(|\.wire_agent\(' src/probos
+FOUND: runtime.py:2592,2654; self_mod_manager.py:219; spawner.py:49; (the rest are tool/model registries)
+HOLDS: yes: pool births wire through runtime.py:2572-2576; the hot-swap, the red team and system_qa do not wire and issue nothing
+```
