@@ -2,6 +2,8 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, section 15: prose only)
+
 **Status:** build-ready. **Part of #1523** (F-194 and F-195, the "child-start budget family"; #1523 stays open). **Tier LOW** (test-only): one cross-family review round, the mutation rows in section 9, one receipted broad gate (because `tests/` changes). **Base:** `origin/main` `b72194ab`. **Dependencies:** none. **Tests:** 0 new, 7 changed (the list in section 6 is the one statement of it). **Source:** option (a') of the Architect's consult of 2026-10-21 (18:12Z), re-verified on this tree; section 2 says where this contract departs from it, and why.
 
 **Not in this contract:** product code; the gate wrapper (`scripts/run_test_gate.py`, `scripts/_gate_pytest_plugin.py`); CI; F-193 (`knowledge/store.py`, its own MEDIUM slice).
@@ -12,14 +14,14 @@
 
 ## 1. Problem
 
-Five of twelve canonical gate runs kept in the 2026-10-21 session were red, every failure in this family, each green on an unchanged re-gate (`register-flake-family.md`, the table on #1523). The product code under test is correct; the tests' windows do not fit the start chain under 8 to 16 xdist workers. On Windows the agents start every command as `powershell -NoProfile -Command <command>` (`src/probos/agents/shell_command.py:292`, `src/probos/agents/red_team.py:474`), so a heartbeat test waits for PowerShell, a Python root, a Python grandchild and its beats.
+Five of twelve canonical gate runs kept in the 2026-10-21 session were red, every failure in this family, each green on an unchanged re-gate (`register-flake-family.md`, the table on #1523). The product code under test is correct; the recorded failures (#1523 F-187, F-194, F-195, F-197; each failing assertion is in the table below) show windows too short for a child's start under the gate's parallel load (16 workers in batch A r1 to r3, 12 in r5, 8 in the BF-911 first gate). On Windows the shell and red-team agents start every command as `powershell -NoProfile -Command <command>` (`src/probos/agents/shell_command.py:292`, `src/probos/agents/red_team.py:474`), so their heartbeat tests wait for PowerShell, a Python root, a Python grandchild and its beats. The SWE `run_command` tool starts its command through `asyncio.create_subprocess_shell` (`src/probos/cognitive/swe_harness/tools.py:1316`), and AD-1246 M1's child is started by `SubprocessSandbox` as `python -I -B` directly (`src/probos/execution/isolation.py:1007-1038`): neither waits for PowerShell.
 
 | Test (`tests/test_bf893_process_tree.py` unless named) | The window on this tree | What it must contain |
 |---|---|---|
 | `test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop` (`:768`) | deadline `DEFAULT_TIMEOUT = 2.0` (`:779`), executor held `asyncio.sleep(1.0)` (`:788`): 1.0 s from release to the deadline | the whole start chain and two beats, before `_heartbeat_is_running` (`:791`) sees `call.done()` (`:356`, `:358`). Failed in batch A r1, r2, r3 and the BF-911 first gate ("premise: the grandchild never started", `Command timed out after 2.0s`) |
-| `_beats_until_ended` (`:334-349`), the control of five tests | a fixed `asyncio.sleep(0.5)` (`:343`) from `.started` to the rise check (`:344`) | the grandchild's cold Python start and its first two beats. Failed in the BF-911 first gate (`test_shell_cancel_ends_tree`, `:344`, `0 > 0`) |
-| the two `_started_late_` tests (`:726`, `:839`) | deadline 3.0 s (`:750`, `:856`), held 1.0 s (`:756`, `:862`): 2.0 s | the start chain and two beats before the deadline, for `_assert_silent_after_the_call`'s premises (`:364`, `:366`). No failure recorded; same shape |
-| `tests/test_ad1246_long_run_promotion.py::test_m1_long_run_promotes_keeps_running_and_reports_once` (`:270`) | promotion at 0.6 s (`:278`), premise `1 <= beats_at_ack < 30` (`:293`) | the scripted turn, the sandbox start, a Python start and the first beat. Failed in batch A r1 and r5 (the failing assertion line is not in the evidence I hold: section 12) |
+| `_beats_until_ended` (`:334-349`), the control of five tests | a fixed `asyncio.sleep(0.5)` (`:343`) from `.started` to the rise check (`:344`) | the grandchild's cold Python start and its first two beats. Failed at `:344` (`0 > 0`) in the BF-911 first gate (`test_shell_cancel_ends_tree`) and in the batch A contract dry run (the shell `_started_late_` test's control, #1523 F-187) |
+| the two `_started_late_` tests (`:726`, `:839`) | deadline 3.0 s (`:750`, `:856`), held 1.0 s (`:756`, `:862`): 2.0 s | the start chain and two beats before the deadline, for `_assert_silent_after_the_call`'s premises (`:364`, `:366`). No failure of this window recorded; widening it is preventive (the late-worker row's shape). The shell test's control did fail once (F-187): the control row above |
+| `tests/test_ad1246_long_run_promotion.py::test_m1_long_run_promotes_keeps_running_and_reports_once` (`:270`) | promotion at 0.6 s (`:278`), premise `1 <= beats_at_ack < 30` (`:293`) | the scripted turn, the sandbox start, a Python start and the first beat. Failed in batch A r1 and r5, both at `:293` with `beats_at_ack == 0` (#1523 F-194, F-197): the child had written no beat at the 0.6 s promotion. The child is started by `SubprocessSandbox` (`src/probos/execution/isolation.py:1007-1038`), not PowerShell |
 
 A second defect, found while deriving the mutation rows: **the control's stop check does not discriminate the stop file.** `_beats_until_ended` asks the grandchild to stop (`:345`), awaits the call (`:346`) and checks the count is still (`:347-349`). A beater that ignores the stop file also passes: the call then returns at its own deadline, after `tree.kill()` (`shell_command.py:320`, `red_team.py:493`), and the count is just as still. So the consult's validation row "remove the stop file from the control; the control check must fail" has no assertion that fails on this tree.
 
@@ -27,7 +29,7 @@ A second defect, found while deriving the mutation rows: **the control's stop ch
 
 Fix the premises, not the guarantees (consult option (a')): each window that waits for a process to start gets room for the start chain, and each assertion that tells a correct behaviour from a defect keeps a stated gap. Where this contract departs from the consult:
 
-1. **The control's rise window is 1.0 s, not 2 s.** The control exists so that "the count did not change for 1.0 s" in `_assert_silent_after_the_call` (`:367`) means "nothing is beating". A control that allows a live beater 2 s to advance would no longer show that a live beater advances within the 1.0 s the check waits. Both now read one constant, `_SILENT_SECONDS = 1.0`. The cold start, the cause of the failure at `:344`, is handled by polling for the first beat, as the consult said.
+1. **The control's rise window is 1.0 s, not 2 s.** The control exists so that "the count did not change for 1.0 s" in `_assert_silent_after_the_call` (`:367`) means "nothing is beating". A control that allows a live beater 2 s to advance would no longer show that a live beater advances within the 1.0 s the check waits. Both now read one constant, `_SILENT_SECONDS = 1.0`. The late first beat (the count read `0 > 0` at `:344` in both recorded control failures; a cold start of the grandchild is the inferred reason) is handled by polling for the first beat, as the consult said.
 2. **The control requires the call's in-time result after the stop request** (a predicate passed by each caller), so a beater that ignores the stop file fails the control (row T4). This is an addition to the consult; the consult assumed the existing check did it.
 3. **The stress harness runs seven tests, not six**: the helper change reaches five tests (section 5), and with the late-worker test and M1 that is seven. Leaving one out would leave a changed window unexercised.
 
@@ -115,6 +117,7 @@ Times are from the test's own clock (`time.monotonic()`); "at least" bounds come
 | swe cancel | 40.5 + 40 + 1.0 + 4.0 = 85.5 s (86.0) | lower than shell cancel |
 | `_started_late_` (each) | 40.5 + 1.0 + 15 + 1.0 + 4.0 = 61.5 s (62.0) | about 22.5 + 1 + 4.5 + 5 = 33 s |
 | late-worker | 1.0 + 40 + 15 + 1.0 + 2.0 = 59 s (59) | about 24 s |
+| M1 (no marker; global `timeout = 180`) | 10 `wait_for` (`:287`) + 0.5 (`:298`) + 15 drain (`:117`) + 5.0 `wait_settled` (`:262`) = 30.5 s (30.5; no cap changes) | the child's sleeps are 5.0 s (were 3.0 s), inside the 15 s drain |
 
 (`_stop_heartbeat` is at most 8 × 0.25 = 2.0 s per call, `:241-243`; `is_free(3.0)`, `:902`, `:940`.) Each sum is lower than the base's or equal; the largest, 89.5 s, is under the 90 s timeout, before process teardown overheads, which the second column shows are not reached together.
 
@@ -262,7 +265,8 @@ REPLACE:
         await _beats_until_ended(control_marker, control, lambda result: result.get("success") is True)
 
         # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
-        # with 3.0 s left for PowerShell, the root, the grandchild and two beats (BF-913: 2.0 s did not hold under load).
+        # with 3.0 s left for PowerShell, the root, the grandchild and two beats (BF-913, preventive: this 2.0 s window
+        # has no recorded failure; the late-worker test's 1.0 s, the same shape, failed under gate load).
         # The teardown grace is cut to 0.5 s so that 1.0 s of pickup delay outlasts it, as a delay over the production
         # 5 s would: a worker that kept a fresh full budget instead of the shared deadline then ends after the
         # caller's backstop, which reports the timeout while the command still runs.
@@ -366,9 +370,9 @@ REPLACE:
         await _beats_until_ended(control_marker, control, lambda verdict: verdict.verified is True)
 
         # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
-        # with 3.0 s left for the start (BF-913). The teardown grace is cut to 0.5 s for the reason given in the shell
-        # agent's test: a re-run whose budget restarted at pickup would return at 5.0 s or later, after the backstop
-        # (4.5 s), whose verdict is "Verification error: ", not the worker's.
+        # with 3.0 s left for the start (BF-913, preventive, as in the shell agent's test). The teardown grace is cut
+        # to 0.5 s for the reason given there: a re-run whose budget restarted at pickup would return at 5.0 s or
+        # later, after the backstop (4.5 s), whose verdict is "Verification error: ", not the worker's.
         monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 4.0)
         monkeypatch.setattr("probos.agents.red_team._RERUN_TEARDOWN_GRACE_S", 0.5)
 ```
@@ -448,8 +452,8 @@ SEARCH:
 ```
 REPLACE:
 ```python
-    # BF-913: promotion at 2.0 s (0.6 s did not leave a loaded host room for the child's first beat), over 50 beats,
-    # at least 4.9 s of sleeps, so the child is still running at the acknowledgement and 0.5 s after it.
+    # BF-913: promotion at 2.0 s (at 0.6 s two loaded gates found no beat yet, beats_at_ack == 0: #1523 F-194, F-197);
+    # 50 beats, at least 4.9 s of sleeps, keep the child running at the acknowledgement and 0.5 s after it.
     runtime = _run_python_runtime(
         scratch=tmp_path / "scratch", max_runtime_seconds=600.0,
         dm_agentic=DmAgenticConfig(enabled=True, promote_to_task_after_seconds=2.0),
@@ -511,7 +515,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-913 (2026-10-21), part of #1523 -- the child-start-sensitive tests get windows that hold under load; each keeps the gap that tells the correct behaviour from its mutant.** Test-only. In `tests/test_bf893_process_tree.py`: the late-worker test's deadline is 4.0 s (was 2.0 s), with the executor held 1.0 s and the grace 6.0 s, and it requires the report before 4.7 s (a budget restarted at pickup reports at 5.0 s or later); the two `_started_late_` tests' deadline is 4.0 s (was 3.0 s), grace 0.5 s; the heartbeat control `_beats_until_ended` waits for the first beat within one 20 s budget (it allowed 0.5 s after `.started`), requires the next beat within `_SILENT_SECONDS` (1.0 s, the window the silence check uses) and requires the call's in-time result after the stop request (its stop check passed when the beater ignored the stop file). In `tests/test_ad1246_long_run_promotion.py`, M1 promotes at 2.0 s (was 0.6 s) over a 50-beat child and checks `1 <= beats_at_ack < 50`. Seven tests change; none is added. No product code, gate wrapper or CI change; F-193 (`knowledge/store.py`) is its own slice. The decisions are in DECISIONS.md (BF-913); the contract is `prompts/bf-913-child-start-test-budgets.md`.
+**BF-913 (2026-10-21), part of #1523 -- the child-start-sensitive tests get windows that hold under load; each keeps the gap that tells the correct behaviour from its mutant.** Test-only. In `tests/test_bf893_process_tree.py`: the late-worker test's deadline is 4.0 s (was 2.0 s), with the executor held 1.0 s and the grace 6.0 s, and it requires the report before 4.7 s (a budget restarted at pickup reports at 5.0 s or later); the two `_started_late_` tests' deadline is 4.0 s (was 3.0 s; preventive, that window has no recorded failure), grace 0.5 s; the heartbeat control `_beats_until_ended` waits for the first beat within one 20 s budget (it allowed 0.5 s after `.started`), requires the next beat within `_SILENT_SECONDS` (1.0 s, the window the silence check uses) and requires the call's in-time result after the stop request (on the base its stop check would also pass a beater that ignored the stop file: the call's deadline kills the tree and the count is as still). In `tests/test_ad1246_long_run_promotion.py`, M1 promotes at 2.0 s (was 0.6 s) over a 50-beat child and checks `1 <= beats_at_ack < 50`. Seven tests change; none is added. No product code, gate wrapper or CI change; F-193 (`knowledge/store.py`) is its own slice. The decisions are in DECISIONS.md (BF-913); the contract is `prompts/bf-913-child-start-test-budgets.md`.
 
 ```
 
@@ -530,7 +534,7 @@ REPLACE:
 ### BF-913 -- The child-start-sensitive tests get windows that hold under load; each widened window keeps its discriminating gap (2026-10-21, part of #1523)
 
 - *Scope.* `tests/test_bf893_process_tree.py` and `tests/test_ad1246_long_run_promotion.py` only (F-194, F-195 on #1523, the "child-start budget family"). Contract: `prompts/bf-913-child-start-test-budgets.md` (option (a') of the Architect's consult of 2026-10-21, 18:12Z).
-- *Cause.* On Windows every command starts as `powershell -NoProfile -Command` (`agents/shell_command.py:292`); under 8 to 16 xdist workers the chain PowerShell, Python root, Python grandchild, beat did not fit 1.0 s (the late-worker test), a fixed 0.5 s after `.started` (the heartbeat control) or 0.6 s (AD-1246 M1). The product code was correct.
+- *Cause (the recorded failures, #1523 F-187, F-194, F-195, F-197).* Under the broad gate's parallel load (16, 12 and 8 workers in the failing runs) three windows were too short. The shell and red-team agents start every command on Windows as `powershell -NoProfile -Command` (`agents/shell_command.py:292`, `agents/red_team.py:474`): the late-worker test's 1.0 s after the release did not hold PowerShell, the Python root, the grandchild and two beats ("the call ended before the heartbeat ran", "the grandchild never started"), and the heartbeat control's fixed 0.5 s after `.started` did not hold the grandchild's first beats (`0 > 0`). AD-1246 M1 runs its child in `SubprocessSandbox`, which starts Python directly (`execution/isolation.py:1007-1038`): at the 0.6 s promotion the child had written no beat (`beats_at_ack == 0`). The two `_started_late_` windows (2.0 s after the release) have no recorded failure; widening them is preventive. The product code was correct.
 - *D1.* Fix each start window and keep each discriminating gap; nothing in the gate wrapper or CI changes.
 - *D2.* Late-worker test: deadline 4.0 s, hold 1.0 s, grace 6.0 s, bound 4.7 s: a budget restarted at pickup reports at 5.0 s or later.
 - *D3.* `_started_late_` tests: deadline 4.0 s, hold 1.0 s, grace 0.5 s: the hold stays longer than the grace, so the red team's worker verdict ("Verification command timed out") is still told from its backstop's ("Verification error: ").
@@ -894,7 +898,7 @@ HOLDS: yes
 
 **Considered, deferred (same shape, not in the evidence):** `test_redteam_outer_timeout_ends_rerun`'s `< 4.5` (`:938`) counts the heartbeat's start from `started_at` (`:931`), so a start over 3.5 s fails it; it is in the harness, so a failure there will show. `test_shell_agent_timeout_ends_the_grandchild` needs `.started` within its 4.0 s deadline (`:616-620`); not in the harness. `_heartbeat_is_running` keeps polling `.started` for 20 s after its call ended (`:354`), which lengthens a failing run only. The red `_started_late_` test keeps the base's 0.5 s teardown room before its backstop.
 
-**Could not verify here:** the idle start-chain times (0.38-0.66 s) are the consult's, not re-measured; which assertion failed in the F-194 runs (the evidence names the test only; the consult's cause, a promotion before the first beat, is the premise of D7); that P1 is killed (section 9 says what to do if not); `src/probos/execution/process_tree.py` was not read (no number here depends on it beyond `tree.kill()` ending the tree, which BF-893's own tests pin).
+**Could not verify here:** the idle start-chain times (0.38-0.66 s) are the consult's, not re-measured; why a start is slow under load (the failures record that each window was too short, not why); that P1 is killed (section 9 says what to do if not); `src/probos/execution/process_tree.py` was not read (no number here depends on it beyond `tree.kill()` ending the tree, which BF-893's own tests pin).
 
 **Prior art:** not applicable: a test-only BF on ProbOS's own timing windows, not a capability or design AD.
 
@@ -904,7 +908,7 @@ HOLDS: yes
 2. In each `_started_late_` test the hold (1.0 s) is longer than the grace (0.5 s), so a restarted budget ends after the backstop; the red-team test's verdict assertion still separates the worker's verdict from the backstop's.
 3. The control's rise window equals the silence check's window (`_SILENT_SECONDS`), and both read the constant.
 4. No premise became an assertion that holds whatever the code does: the control's in-time assertion fails when the stop file is ignored (row T4); `1 <= beats_at_ack` fails on a promotion before the first beat (P1); `beats_at_ack < 50` fails if the child had finished.
-5. Every changed poll is bounded, and each test's sum of poll caps is at most the base's and under `@pytest.mark.timeout(90)` (section 6).
+5. Every changed poll is bounded, and each test's sum of poll caps is at most the base's and under its timeout: `@pytest.mark.timeout(90)` for the six `tests/test_bf893_process_tree.py` tests; M1 has no marker and runs under the configured global `timeout = 180` (`pyproject.toml:190`), with 30.5 s of caps (section 6).
 6. The callers of each changed helper keep their own windows: the five `_beats_until_ended` callers keep their control deadlines (10, 10, 20, 10, 20 s); the six `_assert_silent_after_the_call` callers keep 1.0 s; no other test's `DEFAULT_TIMEOUT`, grace or `_RERUN_*` value changed.
 7. Each `in_time` predicate accepts that site's success result and refuses its timeout result (`{"success": False, ...}`; `verified is False`; `ToolResult.error` set).
 8. Nothing outside the two test files, the two trackers and the two generated ledger files changed.
@@ -918,3 +922,11 @@ HOLDS: yes
 5. The trackers carry BF-913 as in section 8, the ledger files are regenerated, and `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass.
 6. One receipted broad gate, green, on the committed tree.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 15. Amendment A1 (2026-10-21, review round 1, F1)
+
+**F1 (P3):** the rationale stated inferred failures as observed and gave M1 the PowerShell launch chain. **Evidence re-read on #1523:** late-worker F-83 and F-195 (`:358`, "the call ended before the heartbeat ran"; the BF-911 first gate, "the grandchild never started"); control F-187 and the BF-911 first gate (`:344`, `0 > 0`); M1 F-194 and F-197 (`:293`, `beats_at_ack == 0`); the `_started_late_` windows: no failure. So the M1 cause is recorded (sections 1 and 12 had said it was not), and the `_started_late_` widening is preventive.
+
+**Changed (comments and Markdown only):** the `_started_late_` comments say "preventive"; the M1 comment cites F-194 and F-197; the DECISIONS *Cause* names the recorded failures and restricts the PowerShell chain to the shell and red-team tests (M1: `SubprocessSandbox`, `python -I -B`, `isolation.py:1007-1038`; SWE `run_command`: `create_subprocess_shell`, `tools.py:1316`); PROGRESS says "preventive" and that the base stop check "would" pass an ignoring beater; sections 1, 2, 6, 12 and 13 match, and section 13 property 5 and section 6 give M1's timeout (no marker, global 180 s, 30.5 s of caps). A passing control is faster; a failing one now waits up to its call's deadline for a first beat, where it waited 0.5 s.
+
+**Not changed:** the executable code of both test files (only `#` comment lines change; no docstring or string constant: the AST is identical), every number in sections 3 to 10, the mutation rows (section 9), the stress harness (section 10, including its message at its `SystemExit`), the trackers' headings and D-bullets, product code.
