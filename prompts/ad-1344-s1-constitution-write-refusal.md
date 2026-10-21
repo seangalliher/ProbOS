@@ -53,7 +53,7 @@ D1 to D13 are the 2026-10-19 decisions re-verified on `e237c352`. D14 onward are
 | D11 | `FIX_LOOP_SELF_TEST` gets no rows. BF-894's `_LEGIT` gains two neighbour rows. The refused forms live in the new file's table, judged through `builder_write_refusal` and `fix_loop_write_refusal` too. | **Holds.** | A constitution row in the self-test: it passes without AD-1344 (BF-898 refuses anything outside `src/probos`), so it proves nothing. |
 | D12 | No roadmap row. | **Holds.** Searched `AD-134[0-9]` in `roadmap.md`: 0 matches. | — |
 | D13 | No config field. `config/system.yaml` untouched. Zero-config boot unchanged. | **Holds.** | — |
-| D14 | Case 1: the rule and `builder_write_refusal` refuse a value that is not an exact `str`, before reading anything of it. The reason formats nothing of the value. `_exception_name` reads `type(exc).__name__` only when `type(type(exc)) is type`; otherwise it reports `Exception`. | **New** (the BF-910 caller-code and exception-formatting lessons). Writers pass exact strings: `str(path)`, `str(p)`, `str(target)`. A `str` subclass reaching `builder_write_refusal` is refused there; on the base it was judged. | Accepting `os.PathLike`: `__fspath__` would run caller code inside the rule. |
+| D14 | Case 1: the rule refuses a value that is not an exact `str` before reading anything of it; `builder_write_refusal` returns that refusal from the lexical check after its empty-path check (A1, D23). The reason formats nothing of the value. `_exception_name` reads `type(exc).__name__` only when `type(type(exc)) is type`; otherwise it reports `Exception`. | **New** (the BF-910 caller-code and exception-formatting lessons). Writers pass the result of `str()`: `str(path)` (once, A1 D21), `str(p)`, `str(target)`. A `str` subclass reaching `builder_write_refusal` is refused there; on the base it was judged. | Accepting `os.PathLike`: `__fspath__` would run caller code inside the rule. |
 | D15 | Writer-level tests use paths inside a temporary vessel tree only. Forms outside the tree (another drive, another worktree, POSIX absolute, extended-length) go to the rule alone, and a UNC form only to the lexical-only checks (`builder_write_refusal`/`fix_loop_write_refusal` without a `work_dir`). | **New** (mutation safety). A mutant that removes a writer's check then writes only under `tmp_path`, and no UNC host is contacted. | Driving every form through every writer: a surviving mutant would write outside the sandbox. |
 | D16 | No seam registration. | **New.** S1 adds no place where agent work starts, no tool invocation and no model call. The AD-1343 registry (`tests/fixtures/ad1343_seam_registry.py`) and the AD-1346 admission package are unaffected. | — |
 | D17 | The resolve-failure test injects `ValueError` through `Path.resolve`, so it does not skip. | **New.** My draft's NUL premise could skip on the host, which would leave its mutant unkilled. | — |
@@ -1419,7 +1419,7 @@ def test_the_captains_channels_do_not_consult_the_rule() -> None:
 |---|---|---|
 | T1–T2 | Location ownership; the composer reads the file through the constant | — |
 | T3–T7 | The form table (case, separators, `./`, `..`, empty and dot-only components, trailing dot and space, both stream forms, 8.3 file and directory, HFS-ignorable, Windows, POSIX and extended-length absolute, another worktree, drive-relative, UNC lexically) and the neighbours, through the rule, `builder_write_refusal` and `fix_loop_write_refusal` | rule, builder lexical, fix loop lexical |
-| T8 | A non-exact `str` is refused and none of its code runs | rule, builder |
+| T8 | A non-exact `str` is refused by the rule, which runs none of its code, and by the builder boundary | rule, builder |
 | T9–T12 | Hard link under the root; hard link to the running checkout's file; root still checked when the checkout's file is missing; directory link with the file missing | rule |
 | T13–T16 | Failing closed: unexaminable constitution, unexaminable target, metaclass-safe naming, resolution failure | rule |
 | T17 | No friction: no on-disk change; a direct write works | — |
@@ -1584,13 +1584,13 @@ After both edits: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.p
 ## Diff Reviewer: properties to verify (gpt-6.1-sol)
 
 1. In each function of `_EXPECTED_CALLERS`, the call to `constitution_write_refusal` comes before every operation on that path that creates, opens for writing, truncates, saves or links a file (`mkdir`, `write_text`, `save`, the strict-native open).
-2. Each refusal string contains `AD-1344` and no line break. The only value it formats is an exact `str` through `repr`; the non-`str` reason formats nothing.
+2. Each refusal string contains `AD-1344` and no line break. It formats exact `str` values: the path through `repr`, and an exception class name that is an identifier, else the literal `Exception` (A1 D22, T39). The non-`str` reason formats nothing.
 3. `constitution_write_refusal` returns non-None in exactly these cases: a non-exact-`str` value; a lexical match; a resolved-name match; `samestat` with either candidate; `OSError`/`ValueError` (other than `FileNotFoundError`/`NotADirectoryError`) from `os.stat` of a candidate or the target; `OSError`/`RuntimeError`/`ValueError` from `resolve`. Every other exception propagates.
 4. `_exception_name` reads no attribute of an exception class whose metaclass is not exactly `type`.
 5. For an exact-`str` path that does not end in the constitution's components and is not an identity alias, `builder_write_refusal` returns what it returns on `e237c352`. The BF-894, BF-898 and BF-904a suites pass with only `_LEGIT` changed.
 6. The `.git` identity check runs before the constitution identity check.
 7. Caller-code operations against the base. For each writer, list every operation on a caller-controlled value (`if not path`, `str(path)`, `Path(path)`, `str(p)`, `os.path.expanduser(...)`) and whether it sits inside or outside a `try`, in the base and in the change. The change adds no such operation outside a `try` that held it on the base, and no handler is changed.
-8. The constitution's location is defined only in `standing_orders.py`, and no module outside it reads `_DEFAULT_ORDERS_DIR` (grep).
+8. `CONSTITUTION_FILENAME`, `CONSTITUTION_RELATIVE_PATH` and `constitution_path()` are defined in `standing_orders.py`, and `builder_paths.py` takes the location from them. (Read-side, as on the base: `experience/commands/commands_directives.py:20-22` reads `_DEFAULT_ORDERS_DIR` and `:48` compares the literal `"federation.md"`; recorded on #1523.)
 9. No change under `.github/`, `scripts/`, hooks or `config/`; no chmod or lock; no new config field.
 10. The census tables match the tree, and each `guarded` row's function contains a guard call. Spot-check two fixed-path reasons against the code.
 11. No import cycle, and no new layer-import, srp-size, db-connect or unowned-task row.
@@ -1631,7 +1631,7 @@ After both edits: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.p
 1. Each writer in `_EXPECTED_CALLERS`, and the native build, fix loop and visiting session through `builder_write_refusal`, refuses the constitution in each form its test drives, with a reason naming AD-1344 (T5–T7, T18–T33). A hard link is refused through each writer whose test makes one; a directory link is refused through the rule and `write_file`.
 2. The neighbours are still writable through the same writers (T4, T6, T20, T22, T24, T28, T29, T31–T33; BF-894 `_LEGIT`).
 3. Both censuses and the channels scan pass (T34–T36).
-4. The campaign of record kills every row of the mutation table (42 rows).
+4. The campaign of record kills every row of the mutation table (56 rows with Amendment A1).
 5. One receipted broad gate and CI are green.
 6. No friction: T17 and T36 pass, and the diff touches no hook, CI or `config/` file.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -1751,3 +1751,341 @@ Run on scratch worktrees before any Builder, as for AD-1346 M3a. The evidence fi
 
 1. The `Base` line, the `Interplay` bullet and the `DECISIONS.md` note say that AD-1346 M3a has merged (PR #1612). Its entry is the newest of the recent run and precedes the same anchor, so this entry goes after it.
 2. **The autouse guard names the repository's constitution by a literal path.** First run of the table: 40 rows killed, S1 and S3 INVALID. S1 (`CONSTITUTION_FILENAME = "federation2.md"`) and S3 (`constitution_path()` returns a path that does not exist) made the guard's `real.read_bytes()` raise in every test's setup, so the first test ended in an error and T1's assertions never ran: detected, but not killed by the named test, and acceptance 4 asks for kills. With `_REAL_CONSTITUTION = _REPO_ROOT / "config" / "standing_orders" / "federation.md"`, S1, S2 and S3 fail T1 and S4 and S5 fail T2. The guard now watches the file itself, not whatever `constitution_path()` returns. Rerun of the whole table: 42 of 42.
+
+---
+
+## Amendment A1 (2026-10-21, round-1 review F1 to F4; `claude-architect`)
+
+Applies to candidate r1 (`80c6eaae`). It supersedes Section 2's `_exception_name` and the `builder_write_refusal` docstring, and Section 4's 4b and 4c blocks. With A1 the file has 39 test functions, and the mutation table has 56 rows.
+
+### Decisions
+
+| # | Decision | Rejected alternatives |
+|---|---|---|
+| D20 | (F1) The refusal log line of `write_file`/`edit_file` is a constant: `AD-1344 <Tool> refused operation=<op> reason_code=constitution_refused`. It is the same with and without `_effect_dispatch_context`, and it formats nothing. The returned error is unchanged. An exception from logging filters or handlers outside `Handler.handleError` goes to the existing `except Exception` of the same `try`. (T37) | Keeping the refusal text outside the strict context: a branch, and the raw path reaches a shared log. No log line: loses the reason code under the broker, which stores only a digest (`effect_broker.py:920-930`), and loses the only log record outside it. |
+| D21 | (F2) The first statement of each tool's existing `try` is `path_text = str(path)`. The rule, `_resolve_path` and the returned path use `path_text`. Handlers unchanged. (T38) | Converting before the `try`: it moves `str(path)` outside the `try` that held it (BF-910 F1/F3). Accepting `os.PathLike`: `__fspath__` runs caller code. |
+| D22 | (F4) `_exception_name` returns the class name read through `type`'s descriptor when the metaclass is exactly `type` and the name is an exact-`str` identifier, else `Exception`. (T39) | Narrowing the "one-line" and "formats only exact `str`" claims in five places instead: adds conditions to the prose. Importing `swe_harness.tools._exception_kind`: an import cycle, and that helper accepts a name with a line break (follow-up). |
+| D23 | (F3) No code change. The claims that `builder_write_refusal` runs none of the value's code are narrowed to the rule. Recorded on #1523. | Moving the lexical check above `builder_paths.py:200`: changes the builder's result for a value that is not a `str` (`None` raises there on the base and on r1), outside S1, for an injected-only reach. |
+| D24 | Prose: property 8 and T36's docstring are narrowed to what they check (review items (a) and (b)). | — |
+
+### Tests
+
+| T | What it pins | Writer |
+|---|---|---|
+| T37 | The refusal log line holds no caller path, with and without the strict effect context, and carries `operation=… reason_code=constitution_refused`. The returned error still names the path. | SWE tools |
+| T38 | A path whose `__str__` gives the neighbour first and then the constitution: `__str__` runs once, the neighbour is written and edited, the constitution is unchanged, the returned path is the neighbour. | SWE tools |
+| T39 | An exception class whose name has a line break, or is held as a `str` subclass, is reported as `Exception`; the reason has no line break, and none of the name's code runs. | rule |
+
+### A1-W1 `src/probos/cognitive/swe_harness/tools.py` (WriteFileTool)
+
+SEARCH:
+```python
+        try:
+            refused = constitution_write_refusal(str(path), _PROJECT_ROOT)  # AD-1344: write_file
+            if refused is not None:
+                logger.warning("AD-1344 WriteFileTool refused: %s", refused)
+                return ToolResult(error=refused)
+            target = _resolve_path(str(path))
+```
+REPLACE:
+```python
+        try:
+            path_text = str(path)  # AD-1344: write_file, the one conversion
+            refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: write_file
+            if refused is not None:
+                logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged
+```
+
+### A1-W2 `tools.py`
+
+SEARCH:
+```python
+            return ToolResult(
+                output={"path": str(path), "bytes_written": len(str(content))}
+            )
+```
+REPLACE:
+```python
+            return ToolResult(
+                output={"path": path_text, "bytes_written": len(str(content))}
+            )
+```
+
+### A1-W3 `tools.py` (EditFileTool)
+
+SEARCH:
+```python
+        try:
+            refused = constitution_write_refusal(str(path), _PROJECT_ROOT)  # AD-1344: edit_file
+            if refused is not None:
+                logger.warning("AD-1344 EditFileTool refused: %s", refused)
+                return ToolResult(error=refused)
+            target = _resolve_path(str(path))
+```
+REPLACE:
+```python
+        try:
+            path_text = str(path)  # AD-1344: edit_file, the one conversion
+            refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
+            if refused is not None:
+                logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged
+```
+
+### A1-W4 `tools.py`
+
+SEARCH:
+```python
+            return ToolResult(output={"replacements": count, "path": str(path)})
+```
+REPLACE:
+```python
+            return ToolResult(output={"replacements": count, "path": path_text})
+```
+
+### A1-B1 `src/probos/cognitive/builder_paths.py`
+
+SEARCH:
+```python
+def _exception_name(exc: BaseException) -> str:
+    """The class name of *exc* through ``type``'s own descriptor; ``Exception`` under another metaclass."""
+    return type(exc).__name__ if type(type(exc)) is type else "Exception"
+```
+REPLACE:
+```python
+def _exception_name(exc: BaseException) -> str:
+    """The class name of *exc*, read through ``type``'s own descriptor, if it is an exact-``str`` identifier.
+
+    ``Exception`` under another metaclass (nothing of the class is read) or for any other name.
+    """
+    cls = type(exc)
+    if type(cls) is not type:
+        return "Exception"
+    name = cls.__name__
+    return name if type(name) is str and name.isidentifier() else "Exception"
+```
+
+### A1-B2 `builder_paths.py`
+
+SEARCH:
+```python
+    AD-1344: after the empty-path check, a value that is not an exact ``str`` or that names
+    the Federation Constitution is refused with that rule's reason; with *work_dir*,
+    ``constitution_write_refusal`` runs after the ``.git`` identity check.
+```
+REPLACE:
+```python
+    AD-1344: after the empty-path check, ``_constitution_lexical_refusal`` judges *path_str*
+    and its reason, if any, is returned; with *work_dir*, ``constitution_write_refusal``
+    runs after the ``.git`` identity check.
+```
+
+### A1-T1 `tests/test_ad1344_constitution_write_refusal.py` (T8)
+
+SEARCH:
+```python
+def test_a_value_that_is_not_an_exact_str_is_refused_without_running_its_code(vessel: Path) -> None:
+    """T8."""
+```
+REPLACE:
+```python
+def test_a_value_that_is_not_an_exact_str_is_refused_and_the_rule_runs_none_of_its_code(vessel: Path) -> None:
+    """T8: the rule runs none of the value's code; ``builder_write_refusal`` refuses it."""
+```
+
+### A1-T2 test file (T39, after T15)
+
+SEARCH:
+```python
+    assert refusal is not None and "(target: Exception)" in refusal
+    assert ran == [], "the metaclass's __name__ ran"
+```
+REPLACE:
+```python
+    assert refusal is not None and "(target: Exception)" in refusal
+    assert ran == [], "the metaclass's __name__ ran"
+
+
+def test_a_failure_whose_class_name_is_not_an_exact_identifier_is_named_exception(
+    vessel: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T39 (A1, F4): a class name with a line break, or held as a ``str`` subclass, is reported as ``Exception``."""
+    ran: list[str] = []
+
+    class Name(str):
+        def __format__(self, spec: str) -> str:
+            ran.append("__format__")
+            return str.__format__(self, spec)
+
+    class TwoLines(PermissionError):
+        pass
+
+    class Formatted(PermissionError):
+        pass
+
+    TwoLines.__name__ = "Two\nLines"
+    Formatted.__name__ = Name("Formatted")
+    assert type(TwoLines) is type and type(Formatted.__name__) is Name, "premise: metaclass type, names as set"
+    (vessel / "docs" / "other.md").write_text("x", encoding="utf-8")
+    real_stat = os.stat
+    for cls in (TwoLines, Formatted):
+
+        def _stat(path, *args, _cls=cls, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == "other.md":
+                raise _cls(13, "denied")
+            return real_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(builder_paths.os, "stat", _stat)
+        refusal = constitution_write_refusal("docs/other.md", vessel)
+        monkeypatch.undo()
+        assert refusal is not None and "(target: Exception)" in refusal and "\n" not in refusal, cls
+    assert ran == [], "the class name's own code ran"
+```
+
+### A1-T3 test file (T37, T38, after T28)
+
+SEARCH:
+```python
+    result = await tool.invoke({"path": "docs/alias.md", "old_text": "CONSTITUTION v1", "new_text": "AMENDED"})
+    assert not result.success and _AD in (result.error or "")
+    assert _unchanged(swe_root)
+```
+REPLACE:
+```python
+    result = await tool.invoke({"path": "docs/alias.md", "old_text": "CONSTITUTION v1", "new_text": "AMENDED"})
+    assert not result.success and _AD in (result.error or "")
+    assert _unchanged(swe_root)
+
+
+async def test_the_swe_tools_log_a_refusal_without_the_callers_path(
+    swe_root: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T37 (A1, F1): the refusal's log line carries the operation and a reason code, not the caller's path.
+
+    Driven with the strict effect context (as ``test_strict_list_files_logging_omits_raw_arguments`` in
+    ``tests/test_ad1316_real_effect_routes.py``) and without it; the returned error still names the path.
+    """
+    caplog.set_level("WARNING", logger=swe_tools.__name__)
+    sentinel = f"SENTINEL_PRIVATE_DIR/{CONSTITUTION_RELATIVE_PATH}"
+    for context in ({"_effect_dispatch_context": object()}, None):
+        written = await WriteFileTool(SimpleNamespace()).invoke({"path": sentinel, "content": "AMENDED\n"}, context)
+        edited = await EditFileTool(SimpleNamespace()).invoke(
+            {"path": sentinel, "old_text": "CONSTITUTION v1", "new_text": "AMENDED"}, context,
+        )
+        for result in (written, edited):
+            assert not result.success and _AD in (result.error or ""), context
+            assert "SENTINEL_PRIVATE_DIR" in (result.error or ""), "the returned error keeps the path"
+    assert "SENTINEL_PRIVATE_DIR" not in caplog.text
+    assert "operation=write_file reason_code=constitution_refused" in caplog.text
+    assert "operation=edit_file reason_code=constitution_refused" in caplog.text
+    assert not (swe_root / "SENTINEL_PRIVATE_DIR").exists()
+
+
+class _ShiftingPath:
+    """A caller's path whose text is *first* at its first conversion and *then* afterwards (A1, F2)."""
+
+    def __init__(self, first: str, then: str) -> None:
+        self.conversions = 0
+        self._first, self._then = first, then
+
+    def __str__(self) -> str:
+        self.conversions += 1
+        return self._first if self.conversions == 1 else self._then
+
+
+async def test_the_swe_tools_judge_the_text_they_write(swe_root: Path) -> None:
+    """T38 (A1, F2): the tool converts the path once; the rule judges the text it then writes and returns."""
+    ship = "config/standing_orders/ship.md"
+    written = _ShiftingPath(ship, CONSTITUTION_RELATIVE_PATH)
+    result = await WriteFileTool(SimpleNamespace()).invoke({"path": written, "content": "SHIP v2\n"})
+    assert result.success, result.error
+    assert written.conversions == 1
+    assert result.output["path"] == ship
+    assert (swe_root / ship).read_text(encoding="utf-8") == "SHIP v2\n"
+    assert _unchanged(swe_root)
+    edited = _ShiftingPath(ship, CONSTITUTION_RELATIVE_PATH)
+    result = await EditFileTool(SimpleNamespace()).invoke({"path": edited, "old_text": "v", "new_text": "V"})
+    assert result.success, result.error
+    assert edited.conversions == 1
+    assert result.output == {"replacements": 1, "path": ship}
+    assert (swe_root / ship).read_text(encoding="utf-8") == "SHIP V2\n"
+    assert _unchanged(swe_root)
+```
+
+### A1-T4 test file (T36 docstring)
+
+SEARCH:
+```python
+    """T36: no script, hook or workflow calls the rule (acceptance 4: no friction)."""
+```
+REPLACE:
+```python
+    """T36: no tracked script, hook or workflow with a suffix in ``_CHANNEL_SUFFIXES`` names the rule or ``_names_constitution`` (acceptance 4: no friction)."""
+```
+
+### A1-D `DECISIONS.md`
+
+SEARCH:
+```markdown
+- *D9.* Each writer refuses in its existing error shape. In the SWE tools the call is the first statement of the `try` that already held `str(path)`.
+```
+REPLACE:
+```markdown
+- *D9.* Each writer refuses in its existing error shape. In the SWE tools the first statement of the `try` that already held `str(path)` is that one conversion; the rule, the path resolution and the returned path use its result.
+- *Amendment A1 (round-1 review F1 to F4).* D20: the SWE tools' refusal log line is a constant naming the operation and the reason code `constitution_refused`, with and without the strict effect context, so it holds no caller path (T37); the returned error is unchanged. D21: one conversion of the caller's path inside the existing `try` (T38). D22: an exception class name enters a reason when it is an exact-`str` identifier, else `Exception` (T39). D23: `builder_write_refusal`'s first statement, as on the base, calls `replace` on its argument; recorded on #1523, and the claim that it runs none of the value's code is narrowed to the rule. Rejected: keeping the path in the log outside the strict context; no log line; narrowing the one-line claims instead of D22; moving the builder's lexical check above its first statement.
+```
+
+`PROGRESS.md`: no edit. Its claims ("one-line reason"; the rule refuses a value that is not an exact `str`) hold after D22, and it says nothing about logs or about the builder running no code.
+
+### A1-C contract prose (`prompts/ad-1344-s1-constitution-write-refusal.md`)
+
+C1 SEARCH: `| D14 | Case 1: the rule and \`builder_write_refusal\` refuse a value that is not an exact \`str\`, before reading anything of it.`
+REPLACE: `| D14 | Case 1: the rule refuses a value that is not an exact \`str\` before reading anything of it; \`builder_write_refusal\` returns that refusal from the lexical check after its empty-path check (A1, D23).`
+
+C2 SEARCH: `Writers pass exact strings: \`str(path)\`, \`str(p)\`, \`str(target)\`.`
+REPLACE: `Writers pass the result of \`str()\`: \`str(path)\` (once, A1 D21), \`str(p)\`, \`str(target)\`.`
+
+C3 SEARCH: `| T8 | A non-exact \`str\` is refused and none of its code runs | rule, builder |`
+REPLACE: `| T8 | A non-exact \`str\` is refused by the rule, which runs none of its code, and by the builder boundary | rule, builder |`
+
+C4 SEARCH: `2. Each refusal string contains \`AD-1344\` and no line break. The only value it formats is an exact \`str\` through \`repr\`; the non-\`str\` reason formats nothing.`
+REPLACE: `2. Each refusal string contains \`AD-1344\` and no line break. It formats exact \`str\` values: the path through \`repr\`, and an exception class name that is an identifier, else the literal \`Exception\` (A1 D22, T39). The non-\`str\` reason formats nothing.`
+
+C5 SEARCH: `8. The constitution's location is defined only in \`standing_orders.py\`, and no module outside it reads \`_DEFAULT_ORDERS_DIR\` (grep).`
+REPLACE: `8. \`CONSTITUTION_FILENAME\`, \`CONSTITUTION_RELATIVE_PATH\` and \`constitution_path()\` are defined in \`standing_orders.py\`, and \`builder_paths.py\` takes the location from them. (Read-side, as on the base: \`experience/commands/commands_directives.py:20-22\` reads \`_DEFAULT_ORDERS_DIR\` and \`:48\` compares the literal \`"federation.md"\`; recorded on #1523.)`
+
+C6 SEARCH: `4. The campaign of record kills every row of the mutation table (42 rows).`
+REPLACE: `4. The campaign of record kills every row of the mutation table (56 rows with Amendment A1).`
+
+### Mutation rows (A1; replaces rows W1 to W4, B21a and B21b, and adds the rest)
+
+| ID | File | Line (stripped) → mutant | Killed by |
+|---|---|---|---|
+| W1 | tools.py | `refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: write_file` → `refused = None` | T23, T26 |
+| W2 | tools.py | same → `refused = constitution_write_refusal(path_text, None)` | T25 |
+| W3 | tools.py | `refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file` → `refused = None` | T27 |
+| W4 | tools.py | same → `refused = constitution_write_refusal(path_text, None)` | T28 |
+| W13 | tools.py | `target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged` → `target = _resolve_path(str(path))` | T38 |
+| W14 | tools.py | `output={"path": path_text, "bytes_written": len(str(content))}` → `output={"path": str(path), "bytes_written": len(str(content))}` | T38 |
+| W15 | tools.py | W1's line → `refused = constitution_write_refusal(str(path), _PROJECT_ROOT)  # AD-1344: write_file` | T38 |
+| W16 | tools.py | `target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged` → `target = _resolve_path(str(path))` | T38 |
+| W17 | tools.py | `return ToolResult(output={"replacements": count, "path": path_text})` → `return ToolResult(output={"replacements": count, "path": str(path)})` | T38 |
+| W18 | tools.py | W3's line → `refused = constitution_write_refusal(str(path), _PROJECT_ROOT)  # AD-1344: edit_file` | T38 |
+| W19 | tools.py | `logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")` → `logger.warning("AD-1344 WriteFileTool refused: %s", refused)` | T37 |
+| W19b | tools.py | same → `pass` | T37 |
+| W20 | tools.py | `logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")` → `logger.warning("AD-1344 EditFileTool refused: %s", refused)` | T37 |
+| W20b | tools.py | same → `pass` | T37 |
+| W21 | tools.py | `path_text = str(path)  # AD-1344: write_file, the one conversion` → `path_text = path` | T38 |
+| W22 | tools.py | `path_text = str(path)  # AD-1344: edit_file, the one conversion` → `path_text = path` | T38 |
+| B21a | builder_paths | `if type(cls) is not type:` → `if False:` | T15 |
+| B21b | builder_paths | `return name if type(name) is str and name.isidentifier() else "Exception"` → `return "Exception"` | T13 |
+| B21c | builder_paths | same → `return name if name.isidentifier() else "Exception"` | T39 |
+| B21d | builder_paths | same → `return name if type(name) is str else "Exception"` | T39 |
+
+A failed assertion kills each new row. W13 and W16 fail `conversions == 1`. W14 and W17 fail on the returned path or the conversion count. W15 and W18 fail `result.success`, because the second conversion is the constitution. W21 and W22 fail `result.success`, because the rule refuses a value that is not an exact `str`. W19 fails on the sentinel in the log, and W19b on the missing reason code (W20 and W20b the same). B21a returns `Spoofed`, B21b returns `Exception` where T13 expects `PermissionError`, and B21c and B21d both fail `(target: Exception)`. None depends on a fixture error.
+
+**Rerun:** every row. `builder_paths.py`, `tools.py` and the test file all change, and the test file holds every killer.
+
