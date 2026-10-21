@@ -162,6 +162,7 @@ if TYPE_CHECKING:
         GovernedEffectBrokerProtocol,
     )
     from probos.acm import AgentCapitalService
+    from probos.admission import AdmissionService  # AD-1346 M3a
     from probos.agent_stop import AgentStopService  # AD-1343
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
@@ -523,6 +524,7 @@ class ProbOSRuntime:
     identity_registry: AgentIdentityRegistry | None
     identity_key_binding: IdentityKeyBinding | None  # AD-1196
     identity_service: IdentityService | None  # AD-1346 M1a: built at Phase 2 entry, released with the identity registry
+    admission_service: AdmissionService | None  # AD-1346 M3a: set in start() after identity_service; set to None in shutdown
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
     federation_telemetry_relay: "FederationTelemetryRelay | None"
@@ -1201,6 +1203,7 @@ class ProbOSRuntime:
         self.identity_registry: AgentIdentityRegistry | None = None
         self.identity_key_binding: IdentityKeyBinding | None = None  # AD-1196
         self.identity_service: IdentityService | None = None  # AD-1346 M1a: set at Phase 2 entry in start()
+        self.admission_service: AdmissionService | None = None  # AD-1346 M3a: set after identity_service in start()
 
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
@@ -2816,6 +2819,18 @@ class ProbOSRuntime:
         from probos.identity_service import IdentityService
 
         self.identity_service = IdentityService(infra.identity_registry, self.callsign_registry)
+
+        # AD-1346 M3a: the shadow admission decision, over the facade above and the stop record
+        # Phase 1a started. Nothing calls it yet (AD-1346 M3c adds the seams). The import and the
+        # constructor are inside the try; the except branch logs an Exception and assigns nothing, so
+        # the attribute keeps its __init__ None (#1604, property 11; D31, D34). Its log call has no
+        # guard of its own (D36).
+        try:
+            from probos.admission import AdmissionService
+
+            self.admission_service = AdmissionService(self.identity_service, self.agent_stops)
+        except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
+            logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
 
         fleet = await create_agent_fleet(
             config=self.config,
