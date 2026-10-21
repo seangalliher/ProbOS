@@ -3,11 +3,12 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21: Amendment A1 (end of this file), re-anchored on `d2447e09`, the final AD-1344 S1 commit
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21: Amendment A2 (review round 1, F1–F3 and notes), on `3dfb6f81`
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21: Amendment A3 (review round 2, F4–F7), read-only consult on candidate r2 (tree `eae5051f`)
 **Status:** build-ready contract. **Tier: HIGH** (a Captain-only credential and the vessel's governance settings).
 **Number:** BF-911 is allocated (#1613). Ceilings run 2026-10-21: `scripts/ad_ceiling.py` CEILING AD-1346, NEXT AD-1347 (git subjects, 1,452 issue titles, prompt filenames); BF: `git log --all` subjects top out at BF-910 and `prompts/bf-91*.md` holds only `bf-910-…`. Nothing allocated here.
 **Base:** `d2447e09`, the final AD-1344 S1 commit on `origin/main` `7171aded` (tree `5e72cb12c1451e723e1a1822f2f73b6bf92bcb36`; it merges as "Part of #1596"; contract `prompts/ad-1344-s1-constitution-write-refusal.md` with its Amendment A1). Drafted on S1's round-1 candidate `f3747799`; Amendment A1 (end of this file) re-anchors on `d2447e09`. **Build only after S1 merges**; the orchestrator re-runs every SEARCH on the merged main and amends through the Architect if S1 moved. The S1 lines each anchor depends on are listed under "Dependence on AD-1344 S1".
 **Ruling:** option A of the Architect's 10:36Z ruling on #1613. What changed since the ruling is listed under "Changes since the ruling".
-**Estimated tests:** 44 test functions (about 118 collected items) in one new file; T36–T40 added by Amendment A1, T41–T44 by Amendment A2. No existing test file changes.
+**Estimated tests:** 45 test functions (about 119 collected items) in one new file; T36–T40 added by Amendment A1, T41–T44 by Amendment A2, T45 by Amendment A3. No existing test file changes.
 
 ---
 
@@ -27,7 +28,7 @@
 2. a path whose resolved form names a file in `protected_config_files(runtime)`, whether or not that file exists, compared component by component in BF-894's canonical form (separators, `..`, case, trailing dots and spaces, HFS+-ignorable code points, NTFS stream suffixes, `\\?\`, `\\.\` and `\\?\UNC\` prefixes; an 8.3 short form with the same first two characters matches);
 3. a path whose resolved last component is a credential vault file name (`PROTECTED_LEAF_NAMES`, `:66-69`), in the same canonical form;
 4. an existing file with the `os.stat` identity of an existing protected config file (a hard link);
-5. an `os.stat` the rule makes that raises `OSError` or `ValueError` other than not-found, or a resolution of the path or of a file `protected_config_files` names that raises `OSError`, `RuntimeError` or `ValueError` (A2: `fail_closed=True`; the read floor still leaves such a file out).
+5. an `os.stat` the rule makes that raises `OSError` or `ValueError` other than not-found, or a resolution of the path, or a call of `protected_config_files(runtime, fail_closed=True)` (which reads `runtime.config_path`, converts its value and resolves each file it names), that raises `OSError`, `RuntimeError` or `ValueError` (A2, A3; the read floor still leaves a file it cannot resolve out).
 
 Amendment A2 (review round 1, F1): the DAG executor fails a consensus-gated plan node whose result reports `committed` false after an approving vote, so a refused or failed commit no longer releases the node's dependents.
 
@@ -95,8 +96,11 @@ Any other exception propagates to the writer. A copy in another tree (a worktree
 | D16 | (A1; S1 D20) Each of BF-911's eight log lines is a constant, `BF-911 <Writer> refused operation=<op> reason_code=protected_write_refused`, with `<op>` one of `write_file`, `edit_file`, `propose_write`, `commit_write`, `docx_create`, `docx_revise`, `pptx_create`, `xlsx_update`. It formats nothing, so it is the same with and without the strict effect context. The returned or raised refusal still names the path. An exception from a logging filter (outside `Handler.handleError`), like one the rule raises, enters the handlers of the `try` that holds the call, in their order: `write_file` `except Exception` (`tools.py:1041`); `edit_file` `except FileNotFoundError` (`:1161`), then `except Exception` (`:1169`); `FileWriterAgent` `except Exception` (`file_writer.py:131`, `:156`); the office writers have no `try`, so it reaches `handle_intent`'s caller. (T37, T39, T40) | Logging the reason, as drafted: it holds `repr(path)`, so the caller's path reaches a shared log, under the strict context too (S1 round-1 F1). One code per refusal kind: the returned reason already names the kind. Changing S1's adjacent lines in `file_writer.py` and `skill_framework.py`: S1's contract (R10). |
 | D17 | (A1; S1 D22) `_exception_class_name` returns the class name read through `type`'s descriptor when the metaclass is exactly `type` and the name is an exact-`str` identifier, else `Exception`. (T16, T36) | Importing S1's helper: D10. |
 | D18 | (A2, review F1) In `DAGExecutor._execute_node`'s gated branch, a result whose `committed` is present and falsy, after a vote that was neither REJECTED nor INSUFFICIENT, sets the node `failed`; the existing BF-830 block emits `NODE_FAILED`; `_handle_rejection` and `escalate` are not called. A node whose dependency failed never becomes ready (`types.py:441-447`), and the executor fails it as a dependency deadlock (`decomposer.py:847-855` on `3dfb6f81`). A result without `committed` is judged by its vote, as on the base; both production gated paths set it on every return (`runtime.py:4800`, `:4931`). This covers `write_file` and `mcp_invoke`: a refusal, a failed verification, a failed disk write, a missing or failing MCP bridge. (T41, T43, T44) | Through `_handle_rejection`: Tier 2's "approve" (`escalation.py:303-310`) and Tier 3's approval (`:453-465`, reusing the proposals, `:494-510`) resolve the node and `decomposer.py:1164-1198` completes it with nothing committed. Raising from `submit_write_with_consensus`: changes the `committed` contract read by `agentic_dispatch.py:1742`, `runtime.py:5382`, `routers/agents.py:1571`. A separate BF: leaves an ordinary-reach finding open. |
-| D19 | (A2, review F2) `protected_config_files(runtime, *, fail_closed=False)`: with `fail_closed=True` a resolution error of a candidate is raised instead of the file being left out; the write rule passes it and refuses with `(config resolved: <class>)`. `Path.home()` failing still leaves the home config out in both modes (it names no file). The read floor's callers keep the default and the same list. (T42) | Narrowing the claims instead: a credential floor failing open under an error. A second list of config paths for the write side (D1). Keeping the unresolved path in the list: a weaker name match and a different list for each side. |
+| D19 | (A2, review F2) `protected_config_files(runtime, *, fail_closed=False)`: with `fail_closed=True` a resolution error of a candidate is raised instead of the file being left out; the write rule passes it and refuses with `(config resolved: <class>)`. Its `try` holds the whole call, so an `OSError`, `RuntimeError` or `ValueError` raised while reading `runtime.config_path` or converting its value is refused the same way (A3, D22, T45). `Path.home()` failing still leaves the home config out in both modes (it names no file). The read floor's callers keep the default and the same list. (T42) | Narrowing the claims instead: a credential floor failing open under an error. A second list of config paths for the write side (D1). Keeping the unresolved path in the list: a weaker name match and a different list for each side. |
 | D20 | (A2, review F3) Not fixed: `EscalationManager._tier1_retry`'s consensus branch (`escalation.py:211-234`) reads the vote, not `committed`. Both production callers of `escalate` (`decomposer.py:1067`, `:1146`) pass `category="consensus"` for every consensus node (`:1076-1080`, `:1151-1155`), which skips Tier 1 (`escalation.py:135`). Residual R12. | Fixing it here: a second shared module changed for a branch no production caller reaches. |
+| D21 | (A3, review round 2 F4, F5) Not fixed here; recorded as R16 and R17 and as one follow-up for the node event stream. F4: the HXI drops a consensus-gated node's terminal event, and no node event carries `node_id`. F5: the deadlock fill emits no `NODE_FAILED`. Both reproduce on `3dfb6f81` without BF-911: F4 for an allowed gated write, F5 for a failed node with a dependent, such as a rejected vote declined at Tier 3 (`decomposer.py:1197` in candidate r2). BF-911's diff touches none of `routers/chat.py`, `ws_event_stream.py`, `ui/` or the fill. | Fixing them here: a wire payload contract in three files outside #1613, read by the UI, and for F5 an existing event emitted in a new place (a `NODE_FAILED` with no `NODE_START`, which the HXI turns into an error sound, `useStore.ts:3683`), so a shared-contract change in round 3. Fixing F5 alone: its HXI half needs F4's `node_id`. |
+| D22 | (A3, F6) The rule's code is r2's. The `try` around `protected_config_files(runtime, fail_closed=True)` also refuses an exception raised while reading `runtime.config_path` or converting its value; the docstring, Solution item 5, D19, the caller-code paragraph, R11, R14 and the trackers say so (T45). | Narrowing the `try` to resolution only (r1's route for the attribute: `edit_file` reports a missing file, nothing written): two routes for one failure of the config step, the second reported under another cause. |
+| D23 | (A3, F7) The approved-but-uncommitted node is not escalated because the escalation tiers can report approval without running the gated commit (R13, #1615). The comment and `DECISIONS.md` no longer say that a retry or an approval cannot commit; the review committed the same write after a transient failure. | Escalating with a commitment check: #1615's scope. |
 
 ---
 
@@ -260,10 +264,12 @@ def protected_write_refusal(
     :func:`_write_key`, an 8.3 short form accepted for a config file's components); an
     existing file with the ``os.stat`` identity of an existing protected config file; an
     ``os.stat`` that raises ``OSError`` or ``ValueError`` other than ``FileNotFoundError`` or
-    ``NotADirectoryError``; and a resolution of *path*, or of a file
-    :func:`protected_config_files` names (``fail_closed=True``), that raises ``OSError``,
-    ``RuntimeError`` or ``ValueError``. Any other exception propagates. A file at another
-    path with another identity, such as a worktree's ``config/system.yaml``, is not refused.
+    ``NotADirectoryError``; a resolution of *path* that raises ``OSError``, ``RuntimeError``
+    or ``ValueError``; and a call of ``protected_config_files(runtime, fail_closed=True)``
+    that raises one of those three, such as one raised while reading ``runtime.config_path``,
+    converting its value or resolving a file it names (the reason says ``config resolved``).
+    Any other exception propagates. A file at another path with another identity, such as a
+    worktree's ``config/system.yaml``, is not refused.
     """
     if type(path) is not str:
         return _NOT_A_STR
@@ -505,9 +511,9 @@ REPLACE:
                 elif not result.get("committed", True):
                     # BF-911 (#1613) review F1: the vote approved, the commit did not happen
                     # (refused, verification-blocked, failed on disk or at the bridge). Fail
-                    # the node so its dependents do not run. Not escalated: a retry or an
-                    # approval cannot make the commit happen, and _handle_rejection would
-                    # complete the node on a Tier 2 or Tier 3 approval.
+                    # the node so its dependents do not run. Not escalated: the escalation
+                    # tiers can report approval without running the gated commit
+                    # (_handle_rejection completes the node on a Tier 2 or Tier 3 approval).
                     node.status = "failed"  # BF-911 review F1: approved but not committed
                 else:
                     node.status = "completed"
@@ -1305,6 +1311,43 @@ async def test_an_exception_from_the_rule_enters_the_swe_tools_existing_handlers
     assert _unchanged(layout)
 
 
+class _VesselWhoseConfigPathRaises:
+    """A runtime whose ``config_path`` attribute raises ``FileNotFoundError`` (review round 2, F6)."""
+
+    @property
+    def config_path(self) -> str:
+        raise FileNotFoundError(2, "the loaded config moved")
+
+
+async def test_a_config_path_attribute_that_raises_is_refused_not_reported_missing(layout: SimpleNamespace) -> None:
+    """T45 (A3, review round 2 F6): the rule's config step includes reading ``runtime.config_path``.
+
+    The ``FileNotFoundError`` that attribute raises is refused as ``(config resolved: FileNotFoundError)``,
+    so ``edit_file`` returns the refusal, with and without the effect dispatch context, instead of
+    taking its ``except FileNotFoundError`` (R11). Nothing is written.
+    """
+    vessel = _VesselWhoseConfigPathRaises()
+    with pytest.raises(FileNotFoundError):
+        _ = vessel.config_path  # premise: the attribute raises
+    neighbour = "../config/other.yaml"
+    assert protected_write_refusal(neighbour, root=layout.src, runtime=layout.runtime) is None, "premise: accepted"
+    try:
+        refusal = protected_write_refusal(neighbour, root=layout.src, runtime=vessel)
+    except Exception as exc:  # r1's route: the exception left the rule
+        refusal = f"raised {type(exc).__name__}"
+    assert _refused(refusal) and "(config resolved: FileNotFoundError)" in refusal, refusal
+    edit = {"path": neighbour, "old_text": "other: 1", "new_text": "other: 2"}
+    outcomes: list[str | None] = []
+    for context in (None, {"_effect_dispatch_context": object()}):
+        try:
+            outcomes.append((await EditFileTool(vessel).invoke(edit, context)).error)
+        except Exception as exc:  # r1's route under the dispatch context: NoEffectFailure("file_not_found")
+            outcomes.append(f"raised {type(exc).__name__}")
+    assert outcomes == [refusal, refusal], outcomes
+    assert (layout.checkout / "config" / "other.yaml").read_text(encoding="utf-8") == "other: 1\n"
+    assert _unchanged(layout)
+
+
 # ── 3. FileWriterAgent and its callers ────────────────────────────────────
 
 
@@ -1671,6 +1714,7 @@ def test_census_the_captains_channels_do_not_consult_the_rule() -> None:
 | T42 | (A2, F2) A protected config whose resolution raises `PermissionError`: the rule refuses a hard link to it and a new file with `(config resolved: PermissionError)`; `protected_config_files(runtime)` (the read default) still leaves it out | rule | same; skips without hard links |
 | T43 | (A2) A gated result without `committed` completes on approval, as on the base | `DAGExecutor` | same |
 | T44 | (A2, F1) A plan's consensus `mcp_invoke` with no bridge wired: approved, not invoked; the node fails, its dependent waits, nothing escalates | `DAGExecutor` | same |
+| T45 | (A3, F6) A runtime whose `config_path` attribute raises `FileNotFoundError`: the rule refuses with `(config resolved: FileNotFoundError)`; `edit_file` returns that refusal with and without the dispatch context; nothing is written | rule, SWE | same: no link |
 
 A mutant whose only killer skipped counts as **not run**, not killed. With BF-911's behaviour disabled (review round 1's counterfactual), T3, T6, T7, T8, T19, T35, T38 and T39's substituted-rule case pass: they pin unchanged behaviour or the helpers' properties, not a refusal; T43 is of that kind too. The campaign host (win32 NTFS) makes both link kinds.
 
@@ -1770,17 +1814,18 @@ Apply one mutant at a time, run the named tests at `-n 0`, restore. **Campaign o
 | C2 | file_access | `configs = protected_config_files(runtime, fail_closed=True)` → `configs = protected_config_files(runtime)` | T42 |
 | C3 | file_access | `return _protected_unverifiable(path, "config resolved", exc)` → `return None` | T42 |
 | C4 | file_access | `def protected_config_files(runtime: Any, *, fail_closed: bool = False) -> list[Path]:` → `def protected_config_files(runtime: Any, *, fail_closed: bool = True) -> list[Path]:` | T42 |
+| C5 | file_access | `return _protected_unverifiable(path, "config resolved", exc)` → `raise` | T45 |
 | D1 | decomposer | `elif not result.get("committed", True):` → `elif False:` | T41, T44 |
 | D2 | decomposer | `node.status = "failed"  # BF-911 review F1: approved but not committed` → `node.status = "completed"` | T41, T44 |
 | D3 | decomposer | `elif not result.get("committed", True):` → `elif not result.get("committed", False):` | T43 |
 
-73 rows (Amendment A2; 66 with Amendment A1). A2's rows fail assertions in the test body: D1 and D2 fail T41's and T44's `status == "failed"`; D3 fails T43's `status == "completed"`; C1–C3 fail T42's `_refused(...)` (the refusal is `None`); C4 fails T42's `read_side is not None` (the `PermissionError` is caught in the body). In T29–T30 a surviving check-free writer raises a different exception or no exception, so `pytest.raises(PermissionError, match="BF-911")` fails the test body (a failure, not a setup error). Amendment A1's rows fail assertions in the test body: each L row fails on the sentinel in the module loggers' messages and each Lb row on the missing `operation=… reason_code=protected_write_refused`; W22 and W23 fail `result.success` in T38, because the second conversion is the live config; R12 fails T16's `(target: Exception)` (the metaclass's `__name__` gives `Spoofed`); R13 fails T14's `(config: PermissionError)`; R15 fails T36's `(target: Exception)` for the `str`-subclass name; R16 fails T36's no-line-break check.
+74 rows (Amendment A3; 73 with Amendment A2, 66 with Amendment A1). A3's row C5 fails T45's `_refused(refusal)`: the test catches the `FileNotFoundError` that the mutant re-raises and records it as `raised FileNotFoundError`. T42 ends in an uncaught `PermissionError` under C5, which is not counted as its kill. A2's rows fail assertions in the test body: D1 and D2 fail T41's and T44's `status == "failed"`; D3 fails T43's `status == "completed"`; C1–C3 fail T42's `_refused(...)` (the refusal is `None`); C4 fails T42's `read_side is not None` (the `PermissionError` is caught in the body). In T29–T30 a surviving check-free writer raises a different exception or no exception, so `pytest.raises(PermissionError, match="BF-911")` fails the test body (a failure, not a setup error). Amendment A1's rows fail assertions in the test body: each L row fails on the sentinel in the module loggers' messages and each Lb row on the missing `operation=… reason_code=protected_write_refused`; W22 and W23 fail `result.success` in T38, because the second conversion is the live config; R12 fails T16's `(target: Exception)` (the metaclass's `__name__` gives `Spoofed`); R13 fails T14's `(config: PermissionError)`; R15 fails T36's `(target: Exception)` for the `str`-subclass name; R16 fails T36's no-line-break check.
 
 Equivalent mutants, excluded with reasons:
 - `if root is not None and not target.is_absolute():` → `if root is not None:`. Joining an absolute path to a root yields the absolute path.
 - `return None  # not on disk, so not a second name of an existing config file` → `continue`. The next iteration stats the same missing target, and the loop ends in `return None`.
 
-Wiring a campaign cannot reach by tests alone (verified by reading; the Diff Reviewer checks): the effect broker's dispatch into `WriteFileTool.invoke` when `effect_broker_enabled` is on (T23 drives the context the executor passes, `tools/executor.py:866`, `:870`); `register_native_swe_tools` constructing the tools with the real runtime (`swe_harness/tools.py:1396-1397`). Not pinned by a test: the `except FileNotFoundError` route in `edit_file` for an exception from the rule or a logging filter (D16, R11; by reading, `tools.py:1161-1168`).
+Wiring a campaign cannot reach by tests alone (verified by reading; the Diff Reviewer checks): the effect broker's dispatch into `WriteFileTool.invoke` when `effect_broker_enabled` is on (T23 drives the context the executor passes, `tools/executor.py:866`, `:870`); `register_native_swe_tools` constructing the tools with the real runtime (`swe_harness/tools.py:1396-1397`). Not pinned by a test: the `except FileNotFoundError` route in `edit_file` for an exception from the rule or a logging filter (D16, R11; by reading, `tools.py:1161-1168`). T45 pins that a `FileNotFoundError` raised by the runtime's `config_path` attribute does not take it (A3).
 
 ---
 
@@ -1797,7 +1842,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-911 (2026-10-21), #1613 -- agents cannot rewrite the running vessel's config files; BF-908's config floor gains its write side.** One rule, `security.file_access.protected_write_refusal`, refuses a write with a one-line reason naming BF-911 when the resolved path names a file in `protected_config_files(runtime)` (the loaded `--config` file, the checkout's `config/system.yaml`, `~/.probos/config.yaml`), present or absent, or a credential vault file name; the comparison is per component in BF-894's canonical form (case, separators, `..`, stream suffixes, trailing dots and spaces, 8.3 short forms, `\\?\` and UNC prefixes). An existing file with the `os.stat` identity of an existing protected config file (a hard link), a value that is not an exact `str`, and a path for which a resolution of the path or of a protected config file raises `OSError`, `RuntimeError` or `ValueError`, or an `os.stat` the rule makes raises `OSError` or `ValueError` other than not-found, are refused too. The callers: the SWE-harness `write_file` and `edit_file`, `FileWriterAgent` (the proposal and the write; `commit_write` takes the vessel as `runtime=`, passed by the consensus commit and by the bundled agents' direct write) and the office writers `docx_create`, `docx_revise`, `pptx_create` and `xlsx_update`. A file at another path, such as a build worktree's `config/system.yaml`, stays writable; the builder boundary is unchanged. Census tests in `tests/test_bf911_protected_config_write_refusal.py` pin the callers, pair them with AD-1344's and pin that each `commit_write` call passes the vessel. The DAG executor fails a consensus-gated plan node whose result reports `committed` false after an approving vote (a refusal, a failed verification, a failed disk write or MCP bridge), without escalating it, so its dependents do not run (review round 1, F1). Shell and code execution stay outside, as for AD-1344. No config field.
+**BF-911 (2026-10-21), #1613 -- agents cannot rewrite the running vessel's config files; BF-908's config floor gains its write side.** One rule, `security.file_access.protected_write_refusal`, refuses a write with a one-line reason naming BF-911 when the resolved path names a file in `protected_config_files(runtime)` (the loaded `--config` file, the checkout's `config/system.yaml`, `~/.probos/config.yaml`), present or absent, or a credential vault file name; the comparison is per component in BF-894's canonical form (case, separators, `..`, stream suffixes, trailing dots and spaces, 8.3 short forms, `\\?\` and UNC prefixes). An existing file with the `os.stat` identity of an existing protected config file (a hard link), a value that is not an exact `str`, and a path for which a resolution of the path, the reading of the vessel's `config_path` or a resolution of a protected config file raises `OSError`, `RuntimeError` or `ValueError`, or an `os.stat` the rule makes raises `OSError` or `ValueError` other than not-found, are refused too. The callers: the SWE-harness `write_file` and `edit_file`, `FileWriterAgent` (the proposal and the write; `commit_write` takes the vessel as `runtime=`, passed by the consensus commit and by the bundled agents' direct write) and the office writers `docx_create`, `docx_revise`, `pptx_create` and `xlsx_update`. A file at another path, such as a build worktree's `config/system.yaml`, stays writable; the builder boundary is unchanged. Census tests in `tests/test_bf911_protected_config_write_refusal.py` pin the callers, pair them with AD-1344's and pin that each `commit_write` call passes the vessel. The DAG executor fails a consensus-gated plan node whose result reports `committed` false after an approving vote (a refusal, a failed verification, a failed disk write or MCP bridge), without escalating it, so its dependents do not run (review round 1, F1). Shell and code execution stay outside, as for AD-1344. No config field.
 
 ```
 
@@ -1817,10 +1862,12 @@ REPLACE:
 - *D4 (the runtime).* Each writer passes the runtime it holds; `FileWriterAgent.commit_write` gains a keyword-only `runtime`, passed by `submit_write_with_consensus` and both `_mesh_write_file`. Without a runtime the checkout default and `~/.probos/config.yaml` are still refused.
 - *D5/D6.* Each call follows AD-1344's call in the same writer. The builder boundary is unchanged: BF-897 keeps a build in a linked worktree, whose config is another file.
 - *D15-D17 (after AD-1344 S1's Amendment A1).* In the SWE tools the call judges `path_text`, S1's one conversion of the caller's path (T38). Each BF-911 log line is a constant naming the operation and the reason code `protected_write_refused`, the same with and without the strict effect context; the returned or raised refusal still names the path (T37, T40). An exception class name enters a reason when it is an exact-`str` identifier, else `Exception`, as in S1's helper (T36). For the writers listed, this answers S1's residual that BF-908's read floor had no write-side sibling.
-- *Amendment A2 (review round 1, F1–F3).* F1: `DAGExecutor._execute_node`'s gated branch fails a node whose result reports `committed` false after an approving vote, without escalating (no retry or approval can make that commit happen, and `_handle_rejection` would complete the node on a Tier 2 or Tier 3 approval); its dependents never become ready and are failed as a dependency deadlock (T41, T44). A result without `committed` is judged by its vote, as before; both production gated paths set it (T43). F2: `protected_config_files(runtime, *, fail_closed=False)`; the write rule passes `fail_closed=True` and refuses with `(config resolved: <class>)` when a protected config's resolution raises; the read floor's list is unchanged (T42). F3 recorded: Tier 1's consensus branch is unreachable from both production callers.
+- *Amendment A2 (review round 1, F1–F3).* F1: `DAGExecutor._execute_node`'s gated branch fails a node whose result reports `committed` false after an approving vote, without escalating (the escalation tiers can report approval without running the gated commit: `_handle_rejection` completes the node on a Tier 2 or Tier 3 approval, #1615); its dependents never become ready and are failed as a dependency deadlock (T41, T44). A result without `committed` is judged by its vote, as before; both production gated paths set it (T43). F2: `protected_config_files(runtime, *, fail_closed=False)`; the write rule passes `fail_closed=True` and refuses with `(config resolved: <class>)` when its call of `protected_config_files` raises `OSError`, `RuntimeError` or `ValueError` (a protected config's resolution, or, per Amendment A3, reading the runtime's `config_path` or converting its value); the read floor's list is unchanged (T42). F3 recorded: Tier 1's consensus branch is unreachable from both production callers.
 - *Rejected.* Generalising AD-1344's rule (a Captain-document rule mixed with a credential rule, no runtime); refusing only edits of `auth.crew_scope_token` (fragile, leaves the other settings open); a keyring-only token (changes the credential model; deferred); a boot-time registration of the loaded file (module state, global lookup); a lock or mode change (friction).
-- *Residuals (numbered on #1523 by the orchestrator).* Shell and code execution; MCP servers and agent-designed code; check-then-write is not atomic outside the Windows strict-native path; the data directory is not on the write floor and the vault is refused by name only; a writer without a runtime does not know a `--config` file outside the defaults; a relative `--config` resolves against the working directory at check time; a link to the live config placed inside a build worktree; over-refusal of 8.3-shaped names and of case variants on case-sensitive filesystems; the census bounds; AD-1344's refusal log lines in `FileWriterAgent` and the office writers, and `write_file`'s failure line outside the strict context, format the caller's path; in `edit_file` a `FileNotFoundError` from the runtime's `config_path` or a logging filter is reported as a missing file.
-- *Residuals added by Amendment A2 (numbered on #1523 by the orchestrator).* Tier 1's consensus retry reads the vote, not `committed` (unreachable from the production callers); a gated node rejected by its vote and then approved at Tier 2 or Tier 3 completes with nothing committed (on the base; filed as its own BF); each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included, and a config that cannot be resolved refuses every guarded write until it resolves; the censuses are name inventories (a guard under `if False`, or `runtime=None`, passes them).
+- *Residuals (numbered on #1523 by the orchestrator).* Shell and code execution; MCP servers and agent-designed code; check-then-write is not atomic outside the Windows strict-native path; the data directory is not on the write floor and the vault is refused by name only; a writer without a runtime does not know a `--config` file outside the defaults; a relative `--config` resolves against the working directory at check time; a link to the live config placed inside a build worktree; over-refusal of 8.3-shaped names and of case variants on case-sensitive filesystems; the census bounds; AD-1344's refusal log lines in `FileWriterAgent` and the office writers, and `write_file`'s failure line outside the strict context, format the caller's path; in `edit_file` a `FileNotFoundError` from a logging filter is reported as a missing file (one from the runtime's `config_path` attribute is refused, Amendment A3).
+- *Residuals added by Amendment A2 (numbered on #1523 by the orchestrator).* Tier 1's consensus retry reads the vote, not `committed` (unreachable from the production callers); a gated node rejected by its vote and then approved at Tier 2 or Tier 3 completes with nothing committed (on the base; filed as its own BF); each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included, and a config that cannot be resolved, or a runtime whose `config_path` attribute raises `OSError`, `RuntimeError` or `ValueError`, refuses every guarded write until it recovers (T42, T45); the censuses are name inventories (a guard under `if False`, or `runtime=None`, passes them).
+- *Amendment A3 (review round 2, F4–F7).* F6: the write rule's `try` holds its whole call of `protected_config_files(runtime, fail_closed=True)`, so an `OSError`, `RuntimeError` or `ValueError` raised while reading the runtime's `config_path` or converting its value is refused as `(config resolved: <class>)`; before A2 a `FileNotFoundError` from that attribute reached `edit_file`'s missing-file handler. Kept as the safer route; the docstring, R11 and this entry now say so (T45). F7: the approved-but-uncommitted node is not escalated because the escalation tiers can report approval without running the gated commit (#1615); the review committed the same write after a transient failure, and A2's statement that no retry or approval could commit it is withdrawn. F4 and F5 recorded as one follow-up: neither is in BF-911's diff, and both reproduce on the base.
+- *Residuals added by Amendment A3 (numbered on #1523 by the orchestrator).* The HXI receives no usable terminal event for a consensus-gated plan node: the hub drops the raw node and result, which hold a `datetime`, and no node event carries the `node_id` the UI reads (on the base for allowed writes too). The dependency-deadlock fill fails dependents without `NODE_FAILED`, so the event-fed displays show them `pending` (on the base for any failed node with a dependent).
 - *Reversal.* Revert the BF-911 commits. Nothing persisted changes.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1881,7 +1928,7 @@ Base = `d2447e09` (S1 final). "Caller code" = a method of a value the caller cho
 | `DAGExecutor._execute_node` (gated branch, A2) | `result.get("consensus")`, `consensus.outcome` on the dict the gated path returned | `result.get("committed", True)` on the same dict | inside the existing `try`; no handler changed |
 | `protected_config_files` (A2) | `Path(candidate).resolve()` | none: the same call; with `fail_closed=True` the caught error is re-raised | inside the existing `try` |
 
-The rule reads an exact `str` and nothing of another value; `protected_config_files` reads `runtime.config_path` (the writer's own runtime, not a caller value); the rule formats an exception class name through `_exception_class_name` (D17). No handler changes. An exception the rule lets propagate (one that is not among the `OSError`/`ValueError`/`RuntimeError` cases it turns into refusals) enters the handlers of the `try` holding the call, in their order (D16): `write_file` and both `FileWriterAgent` functions have one `except Exception`; `edit_file` has `except FileNotFoundError` (`tools.py:1161`), then `except Exception` (`:1169`); the office writers have no `try`. T39 pins the `except Exception` route for both SWE tools. In the rule, `Path.resolve` and both `os.stat` calls catch `FileNotFoundError`; from Section 1c's statements, one can come from the runtime's `config_path` attribute or its `__str__` (`file_access.py:213`, `:220`) or from a logging filter, and `edit_file` reports it as a missing file (R11).
+The rule reads an exact `str` and nothing of another value; `protected_config_files` reads `runtime.config_path` (the writer's own runtime, not a caller value); the rule formats an exception class name through `_exception_class_name` (D17). No handler changes. An exception the rule lets propagate (one that is not among the `OSError`/`ValueError`/`RuntimeError` cases it turns into refusals) enters the handlers of the `try` holding the call, in their order (D16): `write_file` and both `FileWriterAgent` functions have one `except Exception`; `edit_file` has `except FileNotFoundError` (`tools.py:1161`), then `except Exception` (`:1169`); the office writers have no `try`. T39 pins the `except Exception` route for both SWE tools. In the rule, `Path.resolve`, the call of `protected_config_files` (which reads the runtime's `config_path` attribute and converts its value, `file_access.py:224`, `:231` in candidate r2) and both `os.stat` calls catch `FileNotFoundError`; one from a logging filter reaches `edit_file`'s `except FileNotFoundError`, which reports it as a missing file (R11; T45 pins the attribute's route, A3).
 
 **Filesystem access before the write.** The rule resolves the target (`Path.resolve`, which also `stat`s it) and `os.stat`s it, and `os.stat`s each protected file. AD-1344's check, which runs first, already resolves the same target and `stat`s it whenever a constitution file exists, and the base writer opens the path. The protected config paths are new contacts for a write: each guarded write resolves and `os.stat`s the loaded `--config` (a UNC `--config` included; the review's metadata-seam probe recorded `resolve` and `stat` of a UNC config for a local write, with no remote I/O), the checkout default and `~/.probos/config.yaml`; on the base a write touched none of them. Measured by the review on the fixture with all three files present (Python-level `Path.resolve`/`os.stat` counts, not round trips or latency): an allowed SWE write went from 1 resolve and 5 stats to 5 and 15; a `FileWriterAgent` commit from 2 and 7 to 6 and 17. After A2 a protected config whose resolution raises refuses every guarded write until it resolves (R14).
 
@@ -1904,11 +1951,16 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 13. Tracker and docstring prose makes no claim about when a state holds, and each universal word is pinned by a named test or enumeration.
 14. Each of the eight BF-911 `logger.warning` calls has one argument, a string literal `BF-911 <Writer> refused operation=<op> reason_code=protected_write_refused` (D16, T37, T40). In the SWE tools the call passes `path_text` (D15, T38).
 15. (A2) In `_execute_node`'s gated branch, a result with `committed` present and falsy after a vote that is neither REJECTED nor INSUFFICIENT sets the node `failed`, emits `NODE_FAILED` once through the existing BF-830 block, and calls neither `_handle_rejection` nor `escalate`; a result without `committed` behaves as on the base; the REJECTED/INSUFFICIENT branch and the non-gated branches are unchanged.
-16. (A2) Every consumer of node status and the `NODE_*` events accepts a failed gated node: `runtime._execute_dag` (working memory, workflow cache), the renderer, event persistence, introspect, and the deadlock fill of dependents.
-17. (A2) `protected_config_files` with the default returns, for every input, the base's list; only `fail_closed=True` raises, and only the three types it catches; a `Path.home()` failure is still left out in both modes.
-18. (A2) The write rule turns those into `(config resolved: <class>)` before the name comparison; no other exception changes route; the `(config: …)` stage of the `os.stat` loop is unchanged.
+16. (A2, A3) The status consumers accept a failed gated node: `runtime._execute_dag` (working memory, workflow cache), the final renderer panel, event persistence, introspect, checkpoint read-back, and the deadlock fill of dependents. The event-fed displays are R16 and R17 (D21), as on the base.
+17. (A2) `protected_config_files` with the default behaves as on the base for every input: its body equals the base's apart from the `fail_closed` branch. With `fail_closed=True` a candidate's resolution error is raised instead of the candidate being left out. An exception other than `AttributeError` from reading `runtime.config_path` propagates in both modes, as on the base (`getattr`'s default covers `AttributeError` only). A `Path.home()` failure is still left out in both modes.
+18. (A2, A3) The write rule turns an `OSError`, `RuntimeError` or `ValueError` from its call of `protected_config_files(runtime, fail_closed=True)`, whether from a resolution, from reading `runtime.config_path` or from converting its value, into `(config resolved: <class>)` before the name comparison (T42, T45); `edit_file` returns that refusal where r1 reported a missing file (F6); the `(config: …)` stage of the `os.stat` loop is unchanged.
 19. (A2) T41 and T44 cross the seam with the production gate table, adapters and consensus methods (T41 also with `commit_write` and the rule); only the vote is stubbed. T42's resolution patch touches only the protected config's name.
 20. (A2) The contract's statements about filesystem contact, examination failures and the censuses state their mechanism (Filesystem access paragraph, D19, R14, R15).
+21. (A3, F6) A3's diff to `security/file_access.py` is `protected_write_refusal`'s docstring only; the module's AST with that docstring removed equals r2's. The docstring describes the config step's catch as implemented.
+22. (A3, F7) A3's diff to `cognitive/decomposer.py` is the comment above `node.status = "failed"  # BF-911 review F1: approved but not committed` only: the same number of lines and an identical AST, so `DAGExecutor` stays at 461 lines. The comment and the `DECISIONS.md` A2 bullet give the mechanism (the escalation tiers can report approval without running the gated commit) and claim no impossibility.
+23. (A3, F6) R11, the caller-code paragraph, the "not pinned" note, Solution item 5, D19, D22, R14, `PROGRESS.md` and `DECISIONS.md` agree with T45: a `FileNotFoundError` from the `config_path` attribute is a refusal; one from a logging filter takes `edit_file`'s `except FileNotFoundError`.
+24. (A3) T45 asserts its premises first, calls the code under test only in its body, and fails an assertion in its body under C5 and under r1's rule (no `try` around the call); A3's diff to the test file only adds lines.
+25. (A3, F4, F5) The candidate changes none of `routers/`, `ws_event_stream.py`, `ui/` or the deadlock fill (`decomposer.py:847-855`). R16, R17, D21 and the `DECISIONS.md` A3 bullets record F4 and F5 with their reach and their reproduction on the base. Each sentence A3 adds states a mechanism, and each universal word in it is pinned by a named test or an enumeration.
 
 ---
 
@@ -1917,6 +1969,7 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 - The builder boundary, the test-fix loop, the visiting session's permission handler, `FIX_LOOP_PROTECTED_PATHS`.
 - BF-908's read floor: `protected_config_files(runtime)` returns the base's list for every read-side caller (A2's `fail_closed` defaults to `False`; T42).
 - The DAG executor's other branches, `_handle_rejection` and the escalation manager: A2 changes only the gated branch's approved-but-not-committed case (D18, D20).
+- The node events' wire payload (`routers/chat.py`'s callback, `ws_event_stream.py`, the UI store) and the dependency-deadlock fill's events (A3, D21; R16, R17).
 - The Captain's channels: the HXI settings route (`routers/config.py:262`), `probos setup`/`init`, an editor, git, hooks, CI.
 - Shell (`run_command`), `run_python`, `install_package`, MCP servers, agent-designed code.
 - The effect broker and its adapters.
@@ -1941,11 +1994,13 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 - **R8** Over-refusal: 8.3-shaped names sharing the first two characters, and case variants on case-sensitive filesystems.
 - **R9** The census reads AST call names: dynamic dispatch and names imported under another alias are outside it.
 - **R10** AD-1344's refusal log lines in `FileWriterAgent` (`file_writer.py:113`, `:147`) and the office writers (`skill_framework.py:211`, `:263`, `:410`, `:535`) format S1's reason, which holds the caller's path; `write_file`'s failure line outside the strict context formats `path` (`tools.py:1050`). BF-911's own lines format nothing (D16); S1's lines are S1's contract.
-- **R11** In `edit_file`, a `FileNotFoundError` raised inside the `try` by the runtime's `config_path` attribute or its `__str__`, or by a logging filter, takes `except FileNotFoundError` (`tools.py:1161`): it is reported as a missing file, or as `NoEffectFailure("file_not_found")` under the dispatch context. Nothing is written.
+- **R11** In `edit_file`, a `FileNotFoundError` raised inside the `try` by a logging filter, or one the rule lets propagate, takes `except FileNotFoundError` (D16): it is reported as a missing file, or as `NoEffectFailure("file_not_found")` under the dispatch context. Nothing is written. Amendment A3 (review round 2, F6): one raised while the rule reads the runtime's `config_path` attribute or converts its value is inside the rule's `try` around `protected_config_files` and is refused as `(config resolved: FileNotFoundError)` (T45); A2's `try` changed that route from r1's.
 - **R12** (review F3) `EscalationManager._tier1_retry`'s consensus branch (`escalation.py:211-234`) returns `resolved=True` on an approving vote without reading `committed`. Both production callers pass `category="consensus"` for every consensus node (`decomposer.py:1076-1080`, `:1151-1155` on `3dfb6f81`), which skips Tier 1 (`escalation.py:135`): reach injected-only.
 - **R13** (on the base, found while designing A2; not exercised by BF-911's refusal) For a gated node whose vote was REJECTED or INSUFFICIENT, `_handle_rejection` completes the node when Tier 2's arbiter answers "approve" (`escalation.py:303-310`) or the Captain approves at Tier 3 (`:453-465`, reusing the proposals, `:494-510`; wired in the shell, `experience/shell.py:146`), and nothing is committed (`decomposer.py:1164-1198`). Reach for Tier 2 needs a non-mock arbiter answering "approve"; neither tier was executed here. To be filed as its own BF.
-- **R14** (review note a) Each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included (Filesystem access paragraph); a config whose resolution raises refuses every guarded write until it resolves (D19); a home directory that cannot be determined leaves `~/.probos/config.yaml` out of both floors.
+- **R14** (review note a) Each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included (Filesystem access paragraph); a config whose resolution raises, or a `config_path` attribute that raises `OSError`, `RuntimeError` or `ValueError`, refuses every guarded write until it recovers (D19, D22); a home directory that cannot be determined leaves `~/.probos/config.yaml` out of both floors.
 - **R15** (review note b) The censuses (T32–T35) are name and keyword inventories: they pass with a guard under `if False`, and T34 accepts `runtime=None`. That the guards run and receive the vessel is pinned by the behaviour tests (T20–T30, T41) and the W rows, not by the census.
+- **R16** (review round 2 F4; P2, ordinary reach, on the base) The HXI receives no usable terminal event for a consensus-gated plan node. `routers/chat.py:828-842` broadcasts the raw node and result; the hub's `detach_json_value` rejects `ConsensusResult.timestamp` (a `datetime`) and drops the event (`wire_value_unsupported`, `ws_event_stream.py:367-395`, `:431`, per the review); and the UI store reads `data.node_id`, which no node event carries (`useStore.ts:3659`, `:3672`, `:3686`). Reproduced on `3dfb6f81` for an allowed write and for AD-1344's refusal; on r2 the refused write's `node_failed` is dropped the same way. One follow-up with R17 (D21).
+- **R17** (review round 2 F5; P3, ordinary reach, on the base) The dependency-deadlock fill (`decomposer.py:847-855`) sets each pending dependent `failed` without `NODE_FAILED`, so the CLI renderer's event-fed map (`renderer.py:406`, `:538-539`, `:581`) shows it `pending` beside a summary that counts it failed; the HXI's map has the same gap. On the base a failed node with a dependent reaches it; BF-911 adds the approved-but-uncommitted gated node to those. One follow-up with R16 (D21).
 
 ## Acceptance Criteria
 
@@ -2120,3 +2175,49 @@ Run on scratch worktrees before the repair Builder, as for Amendment A1 of AD-13
 | The two mutants the contract calls equivalent | both survive (265 passed), as the contract argues |
 
 **Tool:** `bf911_apply_a2.py` applied the Architect's pairs in the two ways above; `bf911_campaign_table.py` built the rows (73, the two equivalents and S1's 24).
+
+---
+
+## Amendment A3 (2026-10-21, `claude-architect`, read-only consult on candidate r2, tree `eae5051f`)
+
+Review round 2 (`gpt-6.1-sol`): F1 and F2 resolved; F3 is R12; R13 is #1615. F4 and F5 (pre-existing, ordinary reach, not regressions) are recorded as R16 and R17 and as one follow-up (D21). F6 and F7 (regressions in prose; the code route is r2's) are corrected (D22, D23); T45 and C5 pin F6's route. No behaviour changes: `file_access.py` gains docstring lines only and `decomposer.py` changes a comment only.
+
+**Mutation campaign scope after A3.** C5 is new and runs. A3 changes `file_access.py` (docstring), `decomposer.py` (comment) and the test file (one inserted test). A record made on an earlier tree stands for every other row if (a) each source file's AST, with `protected_write_refusal`'s docstring removed, equals that tree's, and (b) `git diff` of the test file shows added lines only. Otherwise rerun the rows of the file that differs.
+
+| Claim | Evidence (candidate r2) |
+|---|---|
+| The config step reads the attribute and converts its value inside the rule's `try` | `file_access.py:224` `getattr(runtime, "config_path", None)`; `:231` `str(candidate)`; `:233-238` resolve, re-raised when `fail_closed`; `:347-350` the rule's `try` |
+| `edit_file`'s handlers | `tools.py:1106-1115` (AD-1344 then BF-911, returning `ToolResult(error=refused)` under any context); `:1170-1177` `except FileNotFoundError` → `NoEffectFailure("file_not_found")` under the dispatch context |
+| F7's branch | `decomposer.py:965-971`; BF-830 emission `:1043-1047` |
+| F5's mechanism | `types.py:441-447` (ready = all dependencies completed); `decomposer.py:847-855` (fill, no event); `NODE_FAILED` emitted at `:1047`, `:1110`, `:1127`, `:1132`, `:1197`, `:1213`, `:1217` |
+| F4's consumers | `routers/chat.py:828-842` (raw `data`); `useStore.ts:3659`, `:3672`, `:3683`, `:3686`; `renderer.py:406`, `:535-545`, `:581` (reads `data["node"]` in process) |
+| BF-911's diff | `git diff --stat HEAD~1 HEAD`: 13 files, none under `routers/`, `ui/` or `ws_event_stream.py`; the decomposer diff is the gated branch only |
+
+**Absence verified (2026-10-21).**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No test pins R11's old route or A2's prose | Grep `def config_path\|R11\|config resolved` and `names \(``fail_closed=True``\)\|a retry or an\|approval cannot make` in `tests/` | T42's `(config resolved: PermissionError)` (`:440`) and unrelated R11 labels in other ADs' test files | yes |
+| No existing issue for F4 or F5 | `gh issue list --state all --search` with `wire_value_unsupported`, `detach_json_value`, `node_complete node_id in:body`, `deadlock NODE_FAILED` | none | yes |
+
+---
+
+## Orchestrator verification of Amendment A3 (2026-10-21, on `3dfb6f81`)
+
+Run on scratch worktrees before the repair Builder, as for Amendment A2. The evidence files are outside the repository.
+
+| Check | Result |
+|---|---|
+| This amended file against its sources | reproduced byte-for-byte: the committed A2 contract (sha256 `65655b60`) with the 26 pairs of Amendment A3 applied in order, each SEARCH exactly once (`bf911_apply_a3.py contract`) gives this file's text (sha256 `3a582726`, before this section) |
+| Every tree SEARCH of this amended file against `3dfb6f81` (`check_search_replace_blocks.py`) | 23 pairs, 0 failures; each SEARCH occurs exactly once |
+| The 9 file-targeted pairs of A3, applied to a copy of candidate r2's working files | each SEARCH occurs exactly once; the result is byte-identical (sha256) to the whole amended contract applied to a clean `3dfb6f81` tree for `file_access.py`, `decomposer.py`, the test file, `PROGRESS.md` and `DECISIONS.md` |
+| A3 changes no executable code (probe `bf911_a3_ast_check.py`, which asserts its premises) | `decomposer.py`: the raw text differs and the AST is identical, 1,217 lines in both; `file_access.py`: the raw ASTs differ and are identical once `protected_write_refusal`'s docstring is removed from both; the test file: one insertion block, +37/-0 lines, every line of r2 kept in order |
+| T45 against r1's rule (the counterfactual: r1's `file_access.py` with this test file) | fails at `_refused(refusal)` with `raised FileNotFoundError`; in the whole file 2 failed (T42 and T45) and 117 passed |
+| T45 under C5 (the mutant applied by hand: the one line `return _protected_unverifiable(path, "config resolved", exc)` becomes `raise`) | T45 alone fails at `_refused(refusal)` with `raised FileNotFoundError`; in the whole file 2 failed (T42 and T45), 117 passed |
+| `tests/test_bf911_protected_config_write_refusal.py` with the whole of A3, `-n 4` | 119 passed (45 test functions), no skip; T45 alone passes |
+| The architecture (srp-size 92, layer-import 0), seam-contract and store-registry checks, the regenerated AD ledger and the ledger and seam-registry tests | pass (`gen_ad_ledger.py --check` current; 41 passed) |
+| The mutation table, 74 rows, on the scratch tree (commit `f0ed0a74`, tree `32717597`) | 74 killed by a named test (32, 31 and 11 rows in three worktrees): C5's first failing test in file order is T42, T45 kills it too (the row above); none INVALID or INERT |
+| AD-1344 S1's 24 `W` rows on this tree, against S1's unchanged test file and the BF-894 table | 24 killed |
+| The two mutants the contract calls equivalent | both survive (266 passed), as the contract argues |
+
+**Tool:** `bf911_apply_a3.py` applied the Architect's pairs in the two ways above; `bf911_campaign_table.py --a3` built the rows (74, the two equivalents and S1's 24).
