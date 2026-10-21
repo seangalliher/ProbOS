@@ -1372,3 +1372,461 @@ Absent, `None` or an exact `""` still means `engineering`; any other value that 
 - Base `5548a476`: `tools.py:837-859`; `copilot_adapter.py:580-589`.
 - Test file: `:162`, `:209-219`, `:243`, `:246-252`, `:460-473`, `:499-509`, `:704-745`, `:821-848`, `:1024-1048`.
 - `test_ad1179_vocabulary_constants.py:113-121`. `git ls-files --eol`: index LF, working tree CRLF.
+
+## Amendment A4 (2026-10-20, after review round 2, finding F3)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+### What A4 supersedes
+- **Section 3b's REPLACE:** the lines from `name: object = "ship"` to `return ToolResult(error=_STANDING_ORDERS_NAME_REFUSAL)` move inside the `try` (Section 11b). The handler's last two lines become Section 11c's.
+- **Section 3b, "Exception tiers":** the catch-all also receives an exception raised by the caller's `params.get("department")` (D23), and it names the type through `_exception_kind` (D24).
+- **D7:** "Any other failure is `standing_orders_lookup failed: <ExceptionType>`" now reads "… `<ExceptionType>`, read by `_exception_kind`, or `Exception` when the class's metaclass is not exactly `type` or its name is not an exact `str` (D24); the log line is `BF-910: standing_orders_lookup failed: <same>`".
+- **Solution overview, step 2:** "scope gate (exact `str`, D21) -> in one `try`: choose the name -> shape check -> resolve the base -> listing membership -> `read_verified_file` -> decode".
+- **Compatibility, new row:** a mapping whose `get` raises for `department` (an injected caller). Before BF-910: `standing_orders_lookup failed: <message>`. After: `standing_orders_lookup failed: <type>`, or the fixed denied text for `FileAccessDenied`.
+- **A3:** it classed `params.get("department")` as a residual that was not fixed. That classification is withdrawn: the base held this lookup inside its `try`.
+- **Mutation table:** row 11 is retired and replaced by A4-5. Rows A4-1 to A4-4 and A4-6 are added.
+
+### Decisions
+- **D23:** one `try` from just after the scope gate, holding the department lookup, as the base had it. Rejected: a narrow second `try` (two handlers, the same text twice); `dict.get(params, …)` (stored keys' `__eq__` still runs, and it raises `TypeError` for a mapping that is not a dict); one `try` around all of `invoke` (that changes behaviour the base already had; deferred to a decision for the whole file).
+- **D24:** the handler names the type with `_exception_kind`, which runs no code of the exception's class or metaclass.
+
+### Section 11 (source): `src/probos/cognitive/swe_harness/tools.py`
+11a:
+```
+<<<<<<< SEARCH
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+
+
+class StandingOrdersLookupTool:
+=======
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+
+
+def _exception_kind(exc: BaseException) -> str:
+    """BF-910 (D24): the class name of *exc*, read without running code of its class or metaclass.
+
+    The tool's ``try`` holds the caller's ``department`` lookup, so its handler can
+    receive an exception of a caller's class. For a class whose metaclass is
+    exactly ``type``, ``type``'s own ``__name__`` descriptor answers, and only an
+    exact ``str`` is used; any other class or name is reported as ``Exception``.
+    """
+    cls = type(exc)
+    if type(cls) is not type:
+        return "Exception"
+    name = cls.__name__
+    return name if type(name) is str else "Exception"
+
+
+class StandingOrdersLookupTool:
+>>>>>>> REPLACE
+```
+11b:
+```
+<<<<<<< SEARCH
+                error="scope must be one of " + "|".join(_STANDING_ORDERS_SCOPES)
+            )
+        name: object = "ship"
+        if scope != "ship":
+            # The department and agent tiers are both <name>.md in the one flat
+            # directory (compose_instructions), so both scopes select by name.
+            name = params.get("department")
+            # BF-910 (D20): the type first, so a subclass or a non-string is not compared.
+            if name is None or (type(name) is str and name == ""):
+                name = "engineering"
+        # BF-910: a name, never a path; the refusal never echoes the value.
+        if not is_standing_order_name(name):
+            return ToolResult(error=_STANDING_ORDERS_NAME_REFUSAL)
+        try:
+            base = (self._orders_dir or standing_orders_dir()).resolve()
+=======
+                error="scope must be one of " + "|".join(_STANDING_ORDERS_SCOPES)
+            )
+        # BF-910 (D23): the department lookup is inside the try, so a mapping whose
+        # get raises is answered with the handler's fixed text, not raised out of invoke.
+        try:
+            name: object = "ship"
+            if scope != "ship":
+                # The department and agent tiers are both <name>.md in the one flat
+                # directory (compose_instructions), so both scopes select by name.
+                name = params.get("department")
+                # BF-910 (D20): the type first, so a subclass or a non-string is not compared.
+                if name is None or (type(name) is str and name == ""):
+                    name = "engineering"
+            # BF-910: a name, never a path; the refusal never echoes the value.
+            if not is_standing_order_name(name):
+                return ToolResult(error=_STANDING_ORDERS_NAME_REFUSAL)
+            base = (self._orders_dir or standing_orders_dir()).resolve()
+>>>>>>> REPLACE
+```
+11c:
+```
+<<<<<<< SEARCH
+        except Exception as exc:
+            logger.warning("BF-910: standing_orders_lookup read failed: %s", type(exc).__name__)
+            return ToolResult(error=f"standing_orders_lookup failed: {type(exc).__name__}")
+=======
+        except Exception as exc:
+            kind = _exception_kind(exc)
+            logger.warning("BF-910: standing_orders_lookup failed: %s", kind)
+            return ToolResult(error=f"standing_orders_lookup failed: {kind}")
+>>>>>>> REPLACE
+```
+
+### Section 12 (tests, applied FIRST): `tests/test_bf910_standing_orders_lookup.py`
+12a:
+```
+<<<<<<< SEARCH
+Tests section, T21 to T34 in its Amendment A1, T35 in its Amendment A2 and T36
+in its Amendment A3. T19b
+=======
+Tests section, T21 to T34 in its Amendment A1, T35 in its Amendment A2, T36
+in its Amendment A3, and T37, T37b and T38 in its Amendment A4. T19b
+>>>>>>> REPLACE
+```
+12b:
+```
+<<<<<<< SEARCH
+  ``scope`` that is not an exact ``str`` gets it too, before it is compared,
+  even one that equals a scope name, with no exception (T36).
+=======
+  ``scope`` that is not an exact ``str`` gets it too, before it is compared,
+  even one that equals a scope name, with no exception (T36).
+- A ``department`` lookup that raises, in the ``department`` and the ``agent``
+  scope, called directly and through a real ``ToolRegistry``, is answered with
+  ``standing_orders_lookup failed: <type>``, or the fixed denied text for a
+  ``FileAccessDenied``, with no read, no exception and not the exception's
+  message, and only the type is logged (T37); ``ship`` does not look it up
+  (T37b). The type is read with none of the code of the exception's class or
+  metaclass: a class whose metaclass is not ``type``, or whose name is not an
+  exact ``str``, is named ``Exception`` (T38).
+>>>>>>> REPLACE
+```
+12c:
+```
+<<<<<<< SEARCH
+- The registry path: T13 makes the registration call's one argument,
+  ``runtime``, but never goes through the registry.
+=======
+- The registry the vessel builds: T37 and T37b send their calls through a real
+  ``ToolRegistry`` that the test builds, with an ensign's read permission, and
+  T13 makes the registration call's one argument, ``runtime``; none goes
+  through ``register_native_swe_tools`` or the native tool loop.
+>>>>>>> REPLACE
+```
+12d:
+```
+<<<<<<< SEARCH
+import os
+from pathlib import Path
+=======
+import os
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+>>>>>>> REPLACE
+```
+12e:
+```
+<<<<<<< SEARCH
+from probos.security.file_access import FileAccessDenied
+=======
+from probos.security.file_access import FileAccessDenied
+from probos.tools.protocol import ToolResult
+from probos.tools.registry import ToolRegistry
+>>>>>>> REPLACE
+```
+12f:
+```
+<<<<<<< SEARCH
+    def __ne__(self, other: object) -> bool:
+        raise ValueError("compared after the scope gate")
+=======
+    def __ne__(self, other: object) -> bool:
+        raise ValueError("compared after the scope gate")
+
+
+_MARKER_GET = "MARKER-BF910-GET"  # T37/T38: the message of each exception a ``department`` lookup raises
+
+
+class _GetRaises(dict[str, object]):
+    """A call's parameters whose ``get`` raises *error* for ``department``; other keys read as a ``dict``'s."""
+
+    def __init__(self, items: dict[str, object], error: Exception) -> None:
+        super().__init__(items)
+        self.error = error
+        self.department_lookups = 0
+
+    def get(self, key: object, default: object = None) -> object:
+        if key == "department":
+            self.department_lookups += 1
+            raise self.error
+        return super().get(key, default)
+
+
+class _Warnings:
+    """Stands in for ``tools.logger``: the formatted message of each ``warning`` call."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def warning(self, msg: str, *args: object) -> None:
+        self.messages.append(msg % args)
+
+
+def _metaclass_named_failure() -> Exception:
+    """T38: an exception whose metaclass raises when its class's ``__name__`` is read."""
+
+    class NameRaises(type):
+        @property
+        def __name__(cls) -> str:
+            raise RuntimeError("the class name was read")
+
+    class Failure(Exception, metaclass=NameRaises):
+        pass
+
+    return Failure(_MARKER_GET)
+
+
+def _renamed_failure() -> Exception:
+    """T38: an exception whose class's ``__name__`` is a ``str`` subclass that raises when formatted."""
+
+    class FormatRaises(str):
+        def __format__(self, spec: str) -> str:
+            raise RuntimeError("the class name was formatted")
+
+    class Failure(Exception):
+        pass
+
+    Failure.__name__ = FormatRaises("Failure")
+    return Failure(_MARKER_GET)
+
+
+async def _send(route: str, tool: StandingOrdersLookupTool, params: dict[str, object]) -> ToolResult:
+    """*params* sent to *tool* directly, or through a real ``ToolRegistry`` as an ensign holding read permission."""
+    if route == "direct":
+        return await tool.invoke(params)
+    registry = ToolRegistry()
+    registry.register(tool, default_permissions={"ensign": "read"})
+    return await registry.check_and_invoke("bf910-probe", tool.tool_id, params)
+
+
+async def _contained(call: Awaitable[ToolResult]) -> tuple[ToolResult | None, str | None]:
+    """*call*'s result, or the ``__qualname__`` of the exception that left it.
+
+    The exception is caught here rather than by pytest, so no report reads a
+    probe's ``__name__``; ``__qualname__`` is answered by ``type``'s own lookup.
+    """
+    try:
+        return await call, None
+    except Exception as exc:  # the defect under test: a failure that left ``invoke``
+        return None, type(exc).__qualname__
+
+
+# T37: a ``department`` lookup that raises, as (id, the exception, the reply, the warnings logged).
+_LOOKUP_FAILURES: tuple[tuple[str, Callable[[], Exception], str, tuple[str, ...]], ...] = (
+    (
+        "runtime-error",
+        lambda: RuntimeError(_MARKER_GET),
+        "standing_orders_lookup failed: RuntimeError",
+        ("BF-910: standing_orders_lookup failed: RuntimeError",),
+    ),
+    (
+        "file-access-denied",
+        lambda: FileAccessDenied(_MARKER_GET, _MARKER_GET),
+        tools._STANDING_ORDERS_DENIED,
+        (),
+    ),
+)
+>>>>>>> REPLACE
+```
+12g (after T36):
+```
+<<<<<<< SEARCH
+    result = await _tool(tmp_path, orders).invoke({"scope": value, "department": "engineering"})
+
+    assert result.output is None
+    assert result.error == "scope must be one of ship|department|agent"
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+async def test_every_read_stays_in_the_base(
+=======
+    result = await _tool(tmp_path, orders).invoke({"scope": value, "department": "engineering"})
+
+    assert result.output is None
+    assert result.error == "scope must be one of ship|department|agent"
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["direct", "registry"])
+@pytest.mark.parametrize("scope", ["department", "agent"])
+@pytest.mark.parametrize(
+    ("make_error", "reply", "logged"),
+    [pytest.param(make, text, warned, id=name) for name, make, text, warned in _LOOKUP_FAILURES],
+)
+async def test_a_department_lookup_that_raises_is_answered(
+    make_error: Callable[[], Exception],
+    reply: str,
+    logged: tuple[str, ...],
+    scope: str,
+    route: str,
+    tmp_path: Path,
+    orders: Path,
+    reads: _Reads,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T37: a ``department`` lookup that raises gets a fixed reply, directly and through the registry."""
+    warnings = _Warnings()
+    monkeypatch.setattr(tools, "logger", warnings)
+    params = _GetRaises({"scope": scope, "department": "engineering"}, make_error())
+
+    result, escaped = await _contained(_send(route, _tool(tmp_path, orders), params))
+
+    assert escaped is None
+    assert result is not None
+    assert result.output is None
+    assert result.error == reply
+    assert _MARKER_GET not in result.error
+    assert tuple(warnings.messages) == logged
+    assert params.department_lookups == 1
+    assert reads.verified == []
+    assert reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["direct", "registry"])
+async def test_ship_does_not_look_up_department(
+    route: str, tmp_path: Path, orders: Path, reads: _Reads
+) -> None:
+    """T37b: the ``ship`` scope never asks the mapping for ``department``, and reads ``ship``."""
+    params = _GetRaises({"scope": "ship", "department": "engineering"}, RuntimeError(_MARKER_GET))
+
+    result, escaped = await _contained(_send(route, _tool(tmp_path, orders), params))
+
+    assert escaped is None
+    assert result is not None
+    assert result.error is None
+    assert result.output == _SHIP
+    assert params.department_lookups == 0
+    assert reads.verified == [orders.resolve() / "ship.md"]
+
+
+def test_premise_the_failure_probes_run_their_own_code() -> None:
+    """T38 (premise): each probe's class name runs the probe's code where a plain class's does not."""
+    with pytest.raises(RuntimeError, match="the class name was read"):
+        _ = type(_metaclass_named_failure()).__name__
+    renamed = type(_renamed_failure()).__name__
+    assert isinstance(renamed, str)
+    assert type(renamed) is not str
+    with pytest.raises(RuntimeError, match="the class name was formatted"):
+        format(renamed, "")
+    assert type(type(RuntimeError()).__name__) is str
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        pytest.param(_metaclass_named_failure, id="metaclass-name-raises"),
+        pytest.param(_renamed_failure, id="name-format-raises"),
+    ],
+)
+async def test_a_failure_is_named_without_its_class_code(
+    make_error: Callable[[], Exception],
+    tmp_path: Path,
+    orders: Path,
+    reads: _Reads,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T38: the failure reply names the type with none of its class's or metaclass's code, else ``Exception``."""
+    warnings = _Warnings()
+    monkeypatch.setattr(tools, "logger", warnings)
+    params = _GetRaises({"scope": "department", "department": "engineering"}, make_error())
+
+    result, escaped = await _contained(_tool(tmp_path, orders).invoke(params))
+
+    assert escaped is None
+    assert result is not None
+    assert result.error == "standing_orders_lookup failed: Exception"
+    assert warnings.messages == ["BF-910: standing_orders_lookup failed: Exception"]
+    assert params.department_lookups == 1
+    assert reads.verified == []
+
+
+@pytest.mark.asyncio
+async def test_every_read_stays_in_the_base(
+>>>>>>> REPLACE
+```
+No change to `tests/test_copilot_adapter.py` or `copilot_adapter.py`. The adapter's `args.get("department", "")` (`copilot_adapter.py:91`) sits outside its `try`, as it did in the base (base `:582`; the base handler had no `try` at all). Its `try` (`:97-123`) only ever holds an exact `str` (`:95`), so no caller exception reaches its handler.
+
+### Effect on T1-T36 (worked through by hand)
+- **T2-T8, T18:** the moved lines are re-indented only and return the same `ToolResult`s; `T3[eq-raises]` is still refused by the type test before any comparison.
+- **T14, T17, T36:** these run before the `try`, which is unchanged.
+- **T16:** `_exception_kind(PermissionError(...))` is `"PermissionError"` (its metaclass is `type` and its name an exact `str`), so the text is identical.
+- **The warning text:** it changes from `read failed:` to `failed:`. No test reads it (grep outside `prompts/`: only `tools.py:901` and `copilot_adapter.py:122`).
+- **`test_ad1179_schema_vocabulary_guards` G3:** it walks the AST of `invoke`. The keys read are still `{scope, department}`, and `ast.walk` reaches inside the `try`.
+- **Adapter T21-T35:** unchanged.
+- **Moved assertions:** none. The count rises by 13: T37 +8, T37b +2, T38 +2, premise +1.
+
+### Mutation table delta (`tools.py`; run against `tests/test_bf910_standing_orders_lookup.py`)
+| # | Line (stripped, whole) | Mutant | Killed by |
+|---|---|---|---|
+| A4-1 | `kind = _exception_kind(exc)` | `kind = type(exc).__name__` | T38 (both) |
+| A4-2 | `if type(cls) is not type:` | `if False:` | T38[metaclass-name-raises] |
+| A4-3 | `return name if type(name) is str else "Exception"` | `return name` | T38[name-format-raises] |
+| A4-4 | `logger.warning("BF-910: standing_orders_lookup failed: %s", kind)` | `logger.warning("BF-910: standing_orders_lookup failed: %s", exc)` | T37[runtime-error] (all 4), T38 |
+| A4-5 (replaces row 11) | `return ToolResult(error=f"standing_orders_lookup failed: {kind}")` | `return ToolResult(error=f"standing_orders_lookup failed: {exc}")` | T16, T37[runtime-error] |
+| A4-6 | `name = params.get("department")` | `name = dict.get(params, "department")` | T37 (all 8: no lookup is counted and ENG is read) |
+
+- **Uniqueness:** grep `\bkind\b|_exception_kind|"Exception"|return name if` in `tools.py` before the change: no hits. `type(cls)` appears nowhere in `tools.py`. `params.get("department")` appears only at `:872`. So each anchor is unique after the change.
+- **Row 20:** T37[file-access-denied] also kills it.
+- **Re-indented anchors:** rows 1, 12, 13/36/37, 14 and 15. Their stripped text is unchanged and they stay unique; every other `tools.py` row only shifts in line number.
+- **D23's containment:** no single-line mutant can move a statement across a `try`, so its evidence is step M5.1 (the red step).
+
+### Milestone M5 (Builder)
+1. Apply Section 12 only. Run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf910_standing_orders_lookup.py -n 0 -q`. It must report exactly **10** failures, each on `assert escaped is None`, with `escaped` naming the raised class:
+   - T37 × {runtime-error, file-access-denied} × {department, agent} × {direct, registry}: 8.
+   - T38 × 2.
+
+   T37b (2) and the T38 premise pass; everything else passes; T9 may skip on Windows.
+2. Apply Section 11, then rerun the file: everything passes.
+3. Focused check: the M4.3 list, plus `tests/test_ad1179_schema_vocabulary_guards.py`.
+4. `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` must exit 0.
+5. Make the tracker edit below. Then run `… -P scripts/gen_ad_ledger.py` and then `--check`, and commit anything it regenerates.
+
+### Trackers
+**DECISIONS.md, BF-910 entry:**
+```
+<<<<<<< SEARCH
+- *A3 (D20-D22).* The tool tests `type(name) is str` before `name == ""`. An empty `str` subclass, or an object equal to `""`, is therefore refused instead of being read as `engineering`, and an object whose `==` raises is refused instead of raising out of `invoke` (T3). `scope` is refused with the unchanged scope text unless it is an exact `str`, tested before the membership test, so a caller's `__eq__` or `__ne__` does not run on it (T36). The candidate had moved a second `scope` comparison out of the `try` that held it before. The visiting handler is unchanged: its `if not department:` is the line it had before BF-910, and a falsy value gets `No department specified` with no read (T23). Not changed: the `params` mapping's own methods, which the file's other tools also call before their `try`.
+=======
+- *A3 (D20-D22).* The tool tests `type(name) is str` before `name == ""`. An empty `str` subclass, or an object equal to `""`, is therefore refused instead of being read as `engineering`, and an object whose `==` raises is refused instead of raising out of `invoke` (T3). `scope` is refused with the unchanged scope text unless it is an exact `str`, tested before the membership test, so a caller's `__eq__` or `__ne__` does not run on it (T36). The candidate had moved a second `scope` comparison out of the `try` that held it before. The visiting handler is unchanged: its `if not department:` is the line it had before BF-910, and a falsy value gets `No department specified` with no read (T23). A3 left `params.get("department")` outside the `try`; A4 moves it back.
+- *A4 (D23-D24).* The candidate had moved `params.get("department")` out of the `try` that held it before BF-910, so a mapping whose `get` raises for `department` raised out of `invoke`, called directly or through `ToolRegistry.check_and_invoke`, which returns what `invoke` returns (round-2 review, by execution). The lookup is inside the `try` again: such a mapping gets `standing_orders_lookup failed: <type>`, or the fixed denied text for a `FileAccessDenied`, with no read and without the exception's message, in both scopes and both routes (T37); `ship` does not call it (T37b). The handler names the type through `_exception_kind`, which runs no code of the exception's class or metaclass and answers `Exception` when the metaclass is not exactly `type` or the name is not an exact `str` (T38); the handler before BF-910 formatted the exception, which runs its `__str__`. Pre-existing and unchanged: `refuse_undeclared_params(self, params)` and `params.get("scope")` run before the `try`, as they did before BF-910, and can raise out of `invoke` (round-2 review, by execution).
+>>>>>>> REPLACE
+```
+- **PROGRESS.md:** no change. Its BF-910 text does not describe exception handling.
+
+### Acceptance criteria (added)
+17. Step M5.1 shows exactly the 10 failures listed, each on `escaped`; M5.2 and M5.3 pass.
+18. Rows A4-1 to A4-6 are killed. Every `tools.py` row is rerun on the new sha256, with row 11 retired in favour of A4-5.
+19. After A4, the only operations in `invoke` outside the `try` that run caller code are `refuse_undeclared_params(self, params)` and `params.get("scope")`, both identical to the base.
+20. `check_architecture_principles.py --check` and `gen_ad_ledger.py --check` exit 0.
+21. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### Verified Against Codebase (2026-10-20, staged tree `8c842c62`)
+- `tools.py:809-818`, `:856-902`; base `5548a476` `tools.py:834-859`.
+- `protocol.py:80-91`, `:156-199`; `standing_orders.py:98-119`; `registry.py:269-334`, `:355-490`; `agent_stop.py:563-585`; `file_access.py:72-78`.
+- `copilot_adapter.py:81-123`; base `:580-589`.
+- Test file `:148-197`, `:315-466`, `:726-815`; `test_ad1179_schema_vocabulary_guards.py:153-178`, `:395-426`.
+- `params\.get\(` count: base 27, r2 26.
+- Absence: `metaclass=` in `src/probos`: no hits. `\bkind\b|_exception_kind|"Exception"|return name if` in `tools.py`: no hits. Warning text outside `prompts/`: only `tools.py:901` and `copilot_adapter.py:122`.
+
+### Prior Art and Blind Spots
+This is a bug fix in ProbOS-specific code with no outside analogue, so I did no external search. One blind spot came out of the review: the handler itself is a place where caller code can run, which is D24.
