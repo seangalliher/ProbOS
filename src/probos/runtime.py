@@ -4779,7 +4779,7 @@ class ProbOSRuntime:
             ]
             if not failed_verifications:
                 # Commit the write
-                commit_result = await FileWriterAgent.commit_write(path, content)
+                commit_result = await FileWriterAgent.commit_write(path, content, runtime=self)  # BF-911: the loaded config file too
                 committed = commit_result.get("success", False)
 
                 await self.event_log.log(

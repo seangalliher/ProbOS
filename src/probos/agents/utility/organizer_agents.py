@@ -62,7 +62,7 @@ async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
     """
     from probos.agents.file_writer import FileWriterAgent
 
-    result = await FileWriterAgent.commit_write(path, content)
+    result = await FileWriterAgent.commit_write(path, content, runtime=runtime)  # BF-911: the loaded config file too
     return result.get("success", False)
 
 

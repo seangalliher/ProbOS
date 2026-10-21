@@ -20,6 +20,7 @@ import aiosqlite
 
 from probos.cognitive.builder_paths import constitution_write_refusal
 from probos.protocols import ConnectionFactory, DatabaseConnection
+from probos.security.file_access import protected_write_refusal
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.tools.protocol import ToolPreference
 from probos.types import IntentDescriptor, IntentMessage, IntentResult
@@ -210,6 +211,10 @@ class DocxAgent(SkillBasedAgent):
             if refused is not None:
                 logger.warning("AD-1344 DocxAgent refused: %s", refused)
                 raise PermissionError(refused)
+            refused = protected_write_refusal(str(target), runtime=self._runtime)  # BF-911: docx_create
+            if refused is not None:
+                logger.warning("BF-911 DocxAgent refused operation=docx_create reason_code=protected_write_refused")
+                raise PermissionError(refused)
             target.parent.mkdir(parents=True, exist_ok=True)
             doc.save(str(target))
             return str(target)
@@ -261,6 +266,10 @@ class DocxAgent(SkillBasedAgent):
         refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: docx_revise
         if refused is not None:
             logger.warning("AD-1344 DocxAgent refused: %s", refused)
+            raise PermissionError(refused)
+        refused = protected_write_refusal(str(source), runtime=self._runtime)  # BF-911: docx_revise
+        if refused is not None:
+            logger.warning("BF-911 DocxAgent refused operation=docx_revise reason_code=protected_write_refused")
             raise PermissionError(refused)
 
         doc = Document(str(source))
@@ -409,6 +418,10 @@ class PptxAgent(SkillBasedAgent):
             if refused is not None:
                 logger.warning("AD-1344 PptxAgent refused: %s", refused)
                 raise PermissionError(refused)
+            refused = protected_write_refusal(str(target), runtime=self._runtime)  # BF-911: pptx_create
+            if refused is not None:
+                logger.warning("BF-911 PptxAgent refused operation=pptx_create reason_code=protected_write_refused")
+                raise PermissionError(refused)
             target.parent.mkdir(parents=True, exist_ok=True)
             deck.save(str(target))
             return str(target)
@@ -533,6 +546,10 @@ class XlsxAgent(SkillBasedAgent):
         refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: xlsx_update
         if refused is not None:
             logger.warning("AD-1344 XlsxAgent refused: %s", refused)
+            raise PermissionError(refused)
+        refused = protected_write_refusal(str(source), runtime=self._runtime)  # BF-911: xlsx_update
+        if refused is not None:
+            logger.warning("BF-911 XlsxAgent refused operation=xlsx_update reason_code=protected_write_refused")
             raise PermissionError(refused)
 
         workbook = load_workbook(str(source))

@@ -962,6 +962,13 @@ class DAGExecutor:
                         f"Consensus {consensus.outcome.value}",
                         on_event=on_event,
                     )
+                elif not result.get("committed", True):
+                    # BF-911 (#1613) review F1: the vote approved, the commit did not happen
+                    # (refused, verification-blocked, failed on disk or at the bridge). Fail
+                    # the node so its dependents do not run. Not escalated: the escalation
+                    # tiers can report approval without running the gated commit
+                    # (_handle_rejection completes the node on a Tier 2 or Tier 3 approval).
+                    node.status = "failed"  # BF-911 review F1: approved but not committed
                 else:
                     node.status = "completed"
             elif node.use_consensus:
