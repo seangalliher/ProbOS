@@ -199,6 +199,7 @@ if TYPE_CHECKING:
     from probos.federation.a2a.server import FederationA2AServer
     from probos.identity import AgentIdentityRegistry
     from probos.identity_key_binding import IdentityKeyBinding  # AD-1196
+    from probos.identity_service import IdentityService  # AD-1346 M1a
     from probos.infrastructure.backup import BackupResult, BackupService
     from probos.knowledge.records_store import RecordsStore
     from probos.knowledge.store import KnowledgeStore
@@ -521,6 +522,7 @@ class ProbOSRuntime:
     ontology: VesselOntologyService | None
     identity_registry: AgentIdentityRegistry | None
     identity_key_binding: IdentityKeyBinding | None  # AD-1196
+    identity_service: IdentityService | None  # AD-1346 M1a: built at Phase 2 entry, released with the identity registry
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
     federation_telemetry_relay: "FederationTelemetryRelay | None"
@@ -1198,6 +1200,7 @@ class ProbOSRuntime:
         # --- Sovereign Agent Identity (AD-441) ---
         self.identity_registry: AgentIdentityRegistry | None = None
         self.identity_key_binding: IdentityKeyBinding | None = None  # AD-1196
+        self.identity_service: IdentityService | None = None  # AD-1346 M1a: set at Phase 2 entry in start()
 
         # BF-034: Cold-start flag — True when booting with empty state (post-reset)
         self._cold_start: bool = False
@@ -2806,6 +2809,13 @@ class ProbOSRuntime:
             ward_room=None,
             acm=None,
         )
+
+        # AD-1346 M1a: the one identity facade, over the registry Phase 1 started and the
+        # callsign registry built in __init__. Built before any agent is wired; it holds
+        # references, so the crew certificates Phase 7 issues resolve through it.
+        from probos.identity_service import IdentityService
+
+        self.identity_service = IdentityService(infra.identity_registry, self.callsign_registry)
 
         fleet = await create_agent_fleet(
             config=self.config,
