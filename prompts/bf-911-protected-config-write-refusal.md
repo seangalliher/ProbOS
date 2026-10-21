@@ -2,11 +2,12 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21: Amendment A1 (end of this file), re-anchored on `d2447e09`, the final AD-1344 S1 commit
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21: Amendment A2 (review round 1, F1–F3 and notes), on `3dfb6f81`
 **Status:** build-ready contract. **Tier: HIGH** (a Captain-only credential and the vessel's governance settings).
 **Number:** BF-911 is allocated (#1613). Ceilings run 2026-10-21: `scripts/ad_ceiling.py` CEILING AD-1346, NEXT AD-1347 (git subjects, 1,452 issue titles, prompt filenames); BF: `git log --all` subjects top out at BF-910 and `prompts/bf-91*.md` holds only `bf-910-…`. Nothing allocated here.
 **Base:** `d2447e09`, the final AD-1344 S1 commit on `origin/main` `7171aded` (tree `5e72cb12c1451e723e1a1822f2f73b6bf92bcb36`; it merges as "Part of #1596"; contract `prompts/ad-1344-s1-constitution-write-refusal.md` with its Amendment A1). Drafted on S1's round-1 candidate `f3747799`; Amendment A1 (end of this file) re-anchors on `d2447e09`. **Build only after S1 merges**; the orchestrator re-runs every SEARCH on the merged main and amends through the Architect if S1 moved. The S1 lines each anchor depends on are listed under "Dependence on AD-1344 S1".
 **Ruling:** option A of the Architect's 10:36Z ruling on #1613. What changed since the ruling is listed under "Changes since the ruling".
-**Estimated tests:** 40 test functions (about 114 collected items) in one new file; T36–T40 added by Amendment A1. No existing test file changes.
+**Estimated tests:** 44 test functions (about 118 collected items) in one new file; T36–T40 added by Amendment A1, T41–T44 by Amendment A2. No existing test file changes.
 
 ---
 
@@ -26,7 +27,9 @@
 2. a path whose resolved form names a file in `protected_config_files(runtime)`, whether or not that file exists, compared component by component in BF-894's canonical form (separators, `..`, case, trailing dots and spaces, HFS+-ignorable code points, NTFS stream suffixes, `\\?\`, `\\.\` and `\\?\UNC\` prefixes; an 8.3 short form with the same first two characters matches);
 3. a path whose resolved last component is a credential vault file name (`PROTECTED_LEAF_NAMES`, `:66-69`), in the same canonical form;
 4. an existing file with the `os.stat` identity of an existing protected config file (a hard link);
-5. an `os.stat` that raises `OSError` or `ValueError` other than not-found, or a resolution that raises `OSError`, `RuntimeError` or `ValueError`.
+5. an `os.stat` the rule makes that raises `OSError` or `ValueError` other than not-found, or a resolution of the path or of a file `protected_config_files` names that raises `OSError`, `RuntimeError` or `ValueError` (A2: `fail_closed=True`; the read floor still leaves such a file out).
+
+Amendment A2 (review round 1, F1): the DAG executor fails a consensus-gated plan node whose result reports `committed` false after an approving vote, so a refused or failed commit no longer releases the node's dependents.
 
 Any other exception propagates to the writer. A copy in another tree (a worktree's `config/system.yaml`) has another path and another identity, so it is not refused. The eight agent-facing write functions that call AD-1344's rule call this one right after it, each passing the runtime it holds; `FileWriterAgent.commit_write` gains a keyword-only `runtime` that the consensus commit and the bundled agents' direct write pass. The builder boundary, the visiting session's handler, hooks, CI, `config/` and the Captain's channels are untouched.
 
@@ -65,6 +68,8 @@ Any other exception propagates to the writer. A copy in another tree (a worktree
 | D9 | A sibling census in the new file pairs the two rules' callers; S1's test file is not edited. | Keeps S1's tables truthful and its test file's hash unchanged. |
 | D10 | The canonical-form helpers are mirrored in `security`, with a parity test, instead of imported from `cognitive`. | `execution/workspace.py:53` imports `file_access` at module scope; importing `cognitive` from `security` reverses the dependency and risks a cycle. |
 | D11, D12 | The vault is refused by name only; the data directory is not on the write floor. | Out of #1613's scope; residuals R4. |
+| D18 | (A2) The DAG executor fails an approved consensus-gated node whose commit did not happen. | Review F1 (ordinary reach): the refusal returned `committed=False` and the node completed, releasing its dependent. **Shared contract:** behaviour of `DAGExecutor._execute_node` for every gated plan node. |
+| D19 | (A2) `protected_config_files` gains `*, fail_closed: bool = False`. | Review F2: a resolution error left a config off the write floor. **Shared contract:** a public signature change, backward compatible; the read side's list is unchanged. |
 
 ---
 
@@ -89,6 +94,9 @@ Any other exception propagates to the writer. A copy in another tree (a worktree
 | D15 | (A1; S1 D21) In the SWE tools the call judges `path_text`, S1's one conversion of the caller's path (`tools.py:1013`, `:1102`). It sits between S1's refusal block and `target = _resolve_path(path_text)`, so the text both rules judge is the text the tool resolves, writes and returns. The order of D5 is kept: AD-1344's call, then BF-911's. (T38; S1's T38 counts the conversions too.) | `str(path)`, as drafted: a second call of the caller's `__str__` (S1 round-1 F2), and S1's T38 (`test_ad1344…:632`, `:639`) asserts one. BF-911's call first: S1's reasons and campaign rows would change (D5). |
 | D16 | (A1; S1 D20) Each of BF-911's eight log lines is a constant, `BF-911 <Writer> refused operation=<op> reason_code=protected_write_refused`, with `<op>` one of `write_file`, `edit_file`, `propose_write`, `commit_write`, `docx_create`, `docx_revise`, `pptx_create`, `xlsx_update`. It formats nothing, so it is the same with and without the strict effect context. The returned or raised refusal still names the path. An exception from a logging filter (outside `Handler.handleError`), like one the rule raises, enters the handlers of the `try` that holds the call, in their order: `write_file` `except Exception` (`tools.py:1041`); `edit_file` `except FileNotFoundError` (`:1161`), then `except Exception` (`:1169`); `FileWriterAgent` `except Exception` (`file_writer.py:131`, `:156`); the office writers have no `try`, so it reaches `handle_intent`'s caller. (T37, T39, T40) | Logging the reason, as drafted: it holds `repr(path)`, so the caller's path reaches a shared log, under the strict context too (S1 round-1 F1). One code per refusal kind: the returned reason already names the kind. Changing S1's adjacent lines in `file_writer.py` and `skill_framework.py`: S1's contract (R10). |
 | D17 | (A1; S1 D22) `_exception_class_name` returns the class name read through `type`'s descriptor when the metaclass is exactly `type` and the name is an exact-`str` identifier, else `Exception`. (T16, T36) | Importing S1's helper: D10. |
+| D18 | (A2, review F1) In `DAGExecutor._execute_node`'s gated branch, a result whose `committed` is present and falsy, after a vote that was neither REJECTED nor INSUFFICIENT, sets the node `failed`; the existing BF-830 block emits `NODE_FAILED`; `_handle_rejection` and `escalate` are not called. A node whose dependency failed never becomes ready (`types.py:441-447`), and the executor fails it as a dependency deadlock (`decomposer.py:847-855` on `3dfb6f81`). A result without `committed` is judged by its vote, as on the base; both production gated paths set it on every return (`runtime.py:4800`, `:4931`). This covers `write_file` and `mcp_invoke`: a refusal, a failed verification, a failed disk write, a missing or failing MCP bridge. (T41, T43, T44) | Through `_handle_rejection`: Tier 2's "approve" (`escalation.py:303-310`) and Tier 3's approval (`:453-465`, reusing the proposals, `:494-510`) resolve the node and `decomposer.py:1164-1198` completes it with nothing committed. Raising from `submit_write_with_consensus`: changes the `committed` contract read by `agentic_dispatch.py:1742`, `runtime.py:5382`, `routers/agents.py:1571`. A separate BF: leaves an ordinary-reach finding open. |
+| D19 | (A2, review F2) `protected_config_files(runtime, *, fail_closed=False)`: with `fail_closed=True` a resolution error of a candidate is raised instead of the file being left out; the write rule passes it and refuses with `(config resolved: <class>)`. `Path.home()` failing still leaves the home config out in both modes (it names no file). The read floor's callers keep the default and the same list. (T42) | Narrowing the claims instead: a credential floor failing open under an error. A second list of config paths for the write side (D1). Keeping the unresolved path in the list: a weaker name match and a different list for each side. |
+| D20 | (A2, review F3) Not fixed: `EscalationManager._tier1_retry`'s consensus branch (`escalation.py:211-234`) reads the vote, not `committed`. Both production callers of `escalate` (`decomposer.py:1067`, `:1146`) pass `category="consensus"` for every consensus node (`:1076-1080`, `:1151-1155`), which skips Tier 1 (`escalation.py:135`). Residual R12. | Fixing it here: a second shared module changed for a branch no production caller reaches. |
 
 ---
 
@@ -252,9 +260,10 @@ def protected_write_refusal(
     :func:`_write_key`, an 8.3 short form accepted for a config file's components); an
     existing file with the ``os.stat`` identity of an existing protected config file; an
     ``os.stat`` that raises ``OSError`` or ``ValueError`` other than ``FileNotFoundError`` or
-    ``NotADirectoryError``; and a resolution that raises ``OSError``, ``RuntimeError`` or
-    ``ValueError``. Any other exception propagates. A file at another path with another
-    identity, such as a worktree's ``config/system.yaml``, is not refused.
+    ``NotADirectoryError``; and a resolution of *path*, or of a file
+    :func:`protected_config_files` names (``fail_closed=True``), that raises ``OSError``,
+    ``RuntimeError`` or ``ValueError``. Any other exception propagates. A file at another
+    path with another identity, such as a worktree's ``config/system.yaml``, is not refused.
     """
     if type(path) is not str:
         return _NOT_A_STR
@@ -268,7 +277,10 @@ def protected_write_refusal(
     key = _write_key(str(resolved))
     if key[-1] in _PROTECTED_LEAF_KEYS:
         return _protected_refusal(path, _VAULT_FILE)
-    configs = protected_config_files(runtime)
+    try:
+        configs = protected_config_files(runtime, fail_closed=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _protected_unverifiable(path, "config resolved", exc)
     if any(_same_key(key, _write_key(str(config))) for config in configs):
         return _protected_refusal(path, _CONFIG_FILE)
     for config in configs:
@@ -287,6 +299,53 @@ def protected_write_refusal(
         if os.path.samestat(current, config_stat):
             return _protected_refusal(path, _CONFIG_FILE)
     return None
+```
+
+**1d** (A2, review F2: the signature of `protected_config_files`)
+
+SEARCH:
+```python
+def protected_config_files(runtime: Any) -> list[Path]:
+    """BF-908: the config files the floor refuses, resolved, whether or not they exist.
+```
+REPLACE:
+```python
+def protected_config_files(runtime: Any, *, fail_closed: bool = False) -> list[Path]:
+    """BF-908: the config files the floor refuses, resolved, whether or not they exist.
+```
+
+**1e** (A2, review F2: its docstring)
+
+SEARCH:
+```python
+    reader that does not call this floor (a shell command, ``run_python``).
+    """
+```
+REPLACE:
+```python
+    reader that does not call this floor (a shell command, ``run_python``).
+    A file whose resolution raises ``OSError``, ``RuntimeError`` or ``ValueError`` is left out
+    (the read floor's default); with *fail_closed* (BF-911's write rule) the error is raised,
+    so the write is refused. A home directory that cannot be determined names no file and is
+    left out either way.
+    """
+```
+
+**1f** (A2, review F2: re-raise a resolution error when `fail_closed`)
+
+SEARCH:
+```python
+            resolved = Path(candidate).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+```
+REPLACE:
+```python
+            resolved = Path(candidate).resolve()
+        except (OSError, RuntimeError, ValueError):
+            if fail_closed:
+                raise  # BF-911: the write floor refuses a write rather than lose a file it cannot resolve
+            continue
 ```
 
 ### Section 2: `src/probos/cognitive/swe_harness/tools.py`
@@ -431,6 +490,28 @@ REPLACE:
                 # Commit the write
                 commit_result = await FileWriterAgent.commit_write(path, content, runtime=self)  # BF-911: the loaded config file too
                 committed = commit_result.get("success", False)
+```
+
+### Section 4b: `src/probos/cognitive/decomposer.py` (Amendment A2, review F1)
+
+SEARCH:
+```python
+                else:
+                    node.status = "completed"
+            elif node.use_consensus:
+```
+REPLACE:
+```python
+                elif not result.get("committed", True):
+                    # BF-911 (#1613) review F1: the vote approved, the commit did not happen
+                    # (refused, verification-blocked, failed on disk or at the bridge). Fail
+                    # the node so its dependents do not run. Not escalated: a retry or an
+                    # approval cannot make the commit happen, and _handle_rejection would
+                    # complete the node on a Tier 2 or Tier 3 approval.
+                    node.status = "failed"  # BF-911 review F1: approved but not committed
+                else:
+                    node.status = "completed"
+            elif node.use_consensus:
 ```
 
 ### Section 5: the bundled agents' direct write
@@ -584,8 +665,9 @@ loaded ``--config`` file lies outside the checkout, and the home directory is a 
 without ``.probos/config.yaml``. Each refusal is paired with a neighbour the same writer still
 writes, and a copy of the config in another tree stays writable. An autouse guard snapshots the
 repository's own ``config/system.yaml`` and the real ``~/.probos/config.yaml`` and compares them
-after each test. The census tests pin the callers, pair them with AD-1344's, and pin that each
-``commit_write`` call passes the vessel.
+after each test. The census tests are name and keyword inventories: they pin the callers, pair them
+with AD-1344's and pin that each ``commit_write`` call passes ``runtime=``; the behaviour tests pin
+that the guards run. T41-T44 drive a plan through the DAG executor and the production gate table.
 """
 
 from __future__ import annotations
@@ -602,13 +684,15 @@ import pytest
 from probos.agents.file_writer import FileWriterAgent
 from probos.agents.utility import organizer_agents, productivity_agents
 from probos.cognitive import builder_paths
+from probos.cognitive.decomposer import DAGExecutor
 from probos.cognitive.swe_harness import tools as swe_tools
 from probos.cognitive.swe_harness.tools import EditFileTool, WriteFileTool
+from probos.events import EventType
 from probos.runtime import ProbOSRuntime
 from probos.security import file_access
 from probos.security.file_access import PROTECTED_LEAF_NAMES, protected_write_refusal
 from probos.skill_framework import DocxAgent, PptxAgent, XlsxAgent
-from probos.types import ConsensusOutcome, IntentMessage
+from probos.types import ConsensusOutcome, IntentMessage, IntentResult, TaskDAG, TaskNode
 from tests.test_ad1344_constitution_write_refusal import (
     _CHANNEL_SUFFIXES,
     _ShiftingPath,
@@ -982,6 +1066,35 @@ def test_rule_refuses_a_path_that_cannot_be_resolved(
     assert _refused(refusal) and "(resolved: ValueError)" in refusal
 
 
+def test_rule_refuses_when_a_config_file_cannot_be_resolved(
+    layout: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T42 (A2, review F2): a protected config whose resolution raises refuses the write; the read floor still leaves it out."""
+    alias = _link(layout.custom, layout.checkout / "docs" / "custom-alias.yaml")
+    assert _refused(protected_write_refusal(str(alias), runtime=layout.runtime)), "premise: the alias is refused"
+    assert protected_write_refusal("../docs/new.yaml", root=layout.src, runtime=layout.runtime) is None, "premise: accepted"
+    real_resolve = Path.resolve
+
+    def resolve(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self.name == layout.custom.name:
+            raise PermissionError(13, "denied")
+        return real_resolve(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "resolve", resolve)
+        try:
+            read_side: list[Path] | None = file_access.protected_config_files(layout.runtime)
+        except PermissionError:
+            read_side = None
+        through_alias = protected_write_refusal(str(alias), runtime=layout.runtime)
+        new_file = protected_write_refusal("../docs/new.yaml", root=layout.src, runtime=layout.runtime)
+    assert read_side is not None and layout.custom.resolve() not in read_side and len(read_side) == 2, (
+        "the read floor's default: a file it cannot resolve is left out, as on the base"
+    )
+    for refusal in (through_alias, new_file):
+        assert _refused(refusal) and "(config resolved: PermissionError)" in refusal, refusal
+
+
 def test_rule_refusal_changes_nothing_on_disk_and_a_direct_write_still_works(layout: SimpleNamespace) -> None:
     """T18: no friction. The rule does not lock, chmod or mark the file; the Captain's own write is untouched."""
     before = (layout.live.read_bytes(), os.stat(layout.live).st_mode)
@@ -1248,6 +1361,100 @@ async def test_the_bundled_agents_direct_write_cannot_reach_a_config_file(layout
     assert (notes / "note.md").read_text(encoding="utf-8") == "a note\n"
 
 
+class _GatedVessel(_ConsensusVessel):
+    """The DAG executor's view of the vessel: the production gate table, adapters and consensus commits run; the quorum approves."""
+
+    def __init__(self, config_path: Path) -> None:
+        super().__init__(config_path)
+        self.mcp_bridge = None  # no bridge wired: an approved invoke cannot run
+        self.dependent_calls: list[str] = []
+        self.episodes: list[dict] = []
+
+    def gated_commit_for(self, intent):  # type: ignore[no-untyped-def]
+        return ProbOSRuntime.gated_commit_for(self, intent)
+
+    async def _gated_commit_write(self, params, *, timeout=None):  # type: ignore[no-untyped-def]
+        return await ProbOSRuntime._gated_commit_write(self, params, timeout=timeout)
+
+    async def _gated_commit_mcp_invoke(self, params, *, timeout=None):  # type: ignore[no-untyped-def]
+        return await ProbOSRuntime._gated_commit_mcp_invoke(self, params, timeout=timeout)
+
+    async def submit_write_with_consensus(self, path, content, timeout=None, policy=None):  # type: ignore[no-untyped-def]
+        return await ProbOSRuntime.submit_write_with_consensus(self, path, content, timeout=timeout, policy=policy)
+
+    async def submit_mcp_invoke_with_consensus(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return await ProbOSRuntime.submit_mcp_invoke_with_consensus(self, *args, **kwargs)
+
+    async def _store_mcp_invoke_episode(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.episodes.append(kwargs)
+
+    async def submit_intent(self, intent, params, timeout=None):  # type: ignore[no-untyped-def]
+        self.dependent_calls.append(intent)
+        return [IntentResult(intent_id="i2", agent_id="a2", success=True, result={"ran": True}, confidence=0.9)]
+
+
+async def _run_plan(vessel: _GatedVessel, first: TaskNode) -> tuple[TaskDAG, dict, list, SimpleNamespace]:
+    """*first*, then a node that depends on it, through the production executor with an escalation manager that records."""
+    escalation = SimpleNamespace(user_wait_seconds=0.0, escalate=AsyncMock())
+    events: list[tuple[object, str]] = []
+
+    async def _on_event(event, data):  # type: ignore[no-untyped-def]
+        events.append((event, data["node"].id))
+
+    dag = TaskDAG(nodes=[first, TaskNode(id="after", intent="observe_after", depends_on=[first.id])])
+    outcome = await DAGExecutor(vessel, escalation_manager=escalation).execute(dag, on_event=_on_event)  # type: ignore[arg-type]
+    return dag, outcome, events, escalation
+
+
+async def test_a_refused_consensus_write_fails_its_plan_node_and_holds_its_dependent(layout: SimpleNamespace) -> None:
+    """T41 (A2, review F1): plan -> gate table -> consensus commit -> commit_write refused; the node fails, its dependent does not run, nothing escalates."""
+    other = layout.checkout / "config" / "other.yaml"
+    vessel = _GatedVessel(layout.custom)
+    dag, _, _, _ = await _run_plan(vessel, TaskNode(
+        id="write", intent="write_file", params={"path": str(other), "content": "other: 2\n"}, use_consensus=True))
+    assert [node.status for node in dag.nodes] == ["completed", "completed"], "premise: an allowed write completes and releases its dependent"
+    assert vessel.dependent_calls == ["observe_after"] and other.read_text(encoding="utf-8") == "other: 2\n"
+
+    vessel = _GatedVessel(layout.custom)
+    dag, outcome, events, escalation = await _run_plan(vessel, TaskNode(
+        id="write", intent="write_file", params={"path": str(layout.custom), "content": _CHOSEN}, use_consensus=True))
+    write, after = dag.nodes
+    assert outcome["results"]["write"]["committed"] is False, "premise: the vote approved and the commit was refused"
+    assert vessel.event_log.log.await_args.kwargs["event"] == "write_failed", "premise: the production commit ran"
+    assert write.status == "failed", write.status
+    assert (EventType.NODE_FAILED, "write") in events and (EventType.NODE_COMPLETE, "write") not in events, events
+    assert vessel.dependent_calls == [], "the dependent ran on a write that never happened"
+    assert after.status == "failed" and outcome["results"]["after"] == {"error": "Dependency deadlock"}
+    assert escalation.escalate.await_count == 0, "an approved commit that did not happen is not escalated"
+    assert (outcome["completed_count"], outcome["failed_count"]) == (0, 2)
+    assert _unchanged(layout)
+
+
+async def test_a_gated_path_that_does_not_report_committed_is_judged_by_its_vote() -> None:
+    """T43 (A2): without a ``committed`` key an approved gated node completes, as on the base; both production gated paths set the key."""
+    async def _gate(params, *, timeout=None):  # type: ignore[no-untyped-def]
+        return {"results": [], "consensus": SimpleNamespace(outcome=ConsensusOutcome.APPROVED)}
+
+    node = TaskNode(id="t1", intent="write_file", params={}, use_consensus=True)
+    dag = TaskDAG(nodes=[node])
+    await DAGExecutor(SimpleNamespace(gated_commit_for=lambda intent: _gate)).execute(dag)  # type: ignore[arg-type]
+    assert node.status == "completed", node.status
+
+
+async def test_an_approved_mcp_invoke_that_did_not_run_fails_its_plan_node(layout: SimpleNamespace) -> None:
+    """T44 (A2): the gate table's other path; with no bridge wired the approved invoke does not run, so the node fails and its dependent waits."""
+    vessel = _GatedVessel(layout.custom)
+    dag, outcome, events, escalation = await _run_plan(vessel, TaskNode(
+        id="invoke", intent="mcp_invoke", params={"server_url": "srv", "tool": "do_thing", "arguments": {}}, use_consensus=True))
+    invoke, after = dag.nodes
+    assert outcome["results"]["invoke"]["committed"] is False, "premise: approved, not invoked"
+    assert vessel.event_log.log.await_args.kwargs["event"] == "mcp_invoke_failed", "premise: the production consensus path ran"
+    assert invoke.status == "failed", invoke.status
+    assert (EventType.NODE_FAILED, "invoke") in events and (EventType.NODE_COMPLETE, "invoke") not in events, events
+    assert vessel.dependent_calls == [] and after.status == "failed"
+    assert escalation.escalate.await_count == 0
+
+
 # ── 4. Office document writers ────────────────────────────────────────────
 
 
@@ -1409,8 +1616,15 @@ def test_census_every_caller_of_ad1344s_rule_but_the_builder_calls_this_one() ->
 def test_census_every_commit_write_call_passes_the_vessel() -> None:
     """T34."""
     sites = _call_sites().get("commit_write", frozenset())
-    assert {(rel, scope) for rel, scope, _ in sites} == _COMMIT_WRITE_CALLERS
-    assert all(passes for _, _, passes in sites), sorted(sites)
+    found = {(rel, scope) for rel, scope, _ in sites}
+    assert found == _COMMIT_WRITE_CALLERS, (
+        f"commit_write callers changed: new {sorted(found - _COMMIT_WRITE_CALLERS)}, gone "
+        f"{sorted(_COMMIT_WRITE_CALLERS - found)}. Pass runtime=<the vessel> at a new call, add it to "
+        "_COMMIT_WRITE_CALLERS and report the inventory change to the Architect (a name census, not a reachability proof)"
+    )
+    assert all(passes for _, _, passes in sites), (
+        f"a commit_write call does not pass runtime=: {sorted(site for site in sites if not site[2])}"
+    )
 
 
 def test_census_the_captains_channels_do_not_consult_the_rule() -> None:
@@ -1453,8 +1667,12 @@ def test_census_the_captains_channels_do_not_consult_the_rule() -> None:
 | T38 | A path whose `__str__` gives a neighbour, then the live config: one conversion; the neighbour is written, edited and returned; the live file is unchanged | SWE | same |
 | T39 | A `LookupError` from the rule takes each SWE tool's `except Exception`: an error result without the dispatch context, re-raised with it; nothing written | SWE | same |
 | T40 | `FileWriterAgent` (proposal, write) and the four office writers log the operation and the reason code and no caller path; the refusal names the path | `FileWriterAgent`, office | same: no link needed |
+| T41 | (A2, F1) A plan's consensus write of the loaded config through the production gate table, adapter, `submit_write_with_consensus` and `commit_write` (only the vote is stubbed): the node fails with `NODE_FAILED`, its dependent never runs and is failed as a deadlock, nothing escalates; an allowed write completes and releases its dependent | `DAGExecutor` | same: no link |
+| T42 | (A2, F2) A protected config whose resolution raises `PermissionError`: the rule refuses a hard link to it and a new file with `(config resolved: PermissionError)`; `protected_config_files(runtime)` (the read default) still leaves it out | rule | same; skips without hard links |
+| T43 | (A2) A gated result without `committed` completes on approval, as on the base | `DAGExecutor` | same |
+| T44 | (A2, F1) A plan's consensus `mcp_invoke` with no bridge wired: approved, not invoked; the node fails, its dependent waits, nothing escalates | `DAGExecutor` | same |
 
-A mutant whose only killer skipped counts as **not run**, not killed. The campaign host (win32 NTFS) makes both link kinds.
+A mutant whose only killer skipped counts as **not run**, not killed. With BF-911's behaviour disabled (review round 1's counterfactual), T3, T6, T7, T8, T19, T35, T38 and T39's substituted-rule case pass: they pin unchanged behaviour or the helpers' properties, not a refusal; T43 is of that kind too. The campaign host (win32 NTFS) makes both link kinds.
 
 ---
 
@@ -1468,13 +1686,15 @@ A mutant whose only killer skipped counts as **not run**, not killed. The campai
 
 **Census rule for the Builder (M3).** If T33 reports a function that calls AD-1344's rule and not this one, add the BF-911 call there only when the path comes from an intent or tool parameter, and **stop** to report it either way: a new caller is an inventory change for the Architect. The broad gate is the main session's.
 
+**A2 focused checks (M2, with pairs 1d–1f and 4b).** `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_bf911_protected_config_write_refusal.py -v -n 0 -k "plan_node or gated_path or config_file_cannot_be_resolved"`; `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1284_consensus_gate_reachability.py tests/test_bf830_rejected_consensus_does_not_rerun.py tests/test_escalation.py tests/test_decomposer.py tests/test_ad152_regressions.py tests/test_cognitive_integration.py tests/test_checkpoint.py tests/test_attention_cross_request.py tests/test_issue1421_http_fetch_safe_methods.py tests/test_consensus_integration.py tests/test_ad1019c_consensus.py tests/test_bf908_floor_and_children.py tests/test_bf908_crew_scope_token.py -q -n 0`; `d:/ProbOS/.venv/Scripts/python.exe -c "import probos.cognitive.decomposer, probos.security.file_access"`.
+
 **Interpreter note.** The venv's `probos` is an editable install of `D:\ProbOS\src`. In a worktree, run with `PYTHONPATH=<worktree>\src;<worktree>` as the orchestrator's probe did, or the tests import the main checkout's code.
 
 ---
 
 ## Mutation table (run once on the final tree; every anchor is a whole, unique, stripped line)
 
-Apply one mutant at a time, run the named tests at `-n 0`, restore. **Campaign of record:** record the tree SHA and the sha256 of `security/file_access.py`, `swe_harness/tools.py`, `agents/file_writer.py`, `runtime.py`, `agents/utility/organizer_agents.py`, `agents/utility/productivity_agents.py`, `skill_framework.py`, `tests/test_bf911_protected_config_write_refusal.py` and `tests/test_ad1344_constitution_write_refusal.py`. A later Builder whose hashes match does not repeat it; if one file differs, rerun only that file's rows.
+Apply one mutant at a time, run the named tests at `-n 0`, restore. **Campaign of record:** record the tree SHA and the sha256 of `security/file_access.py`, `swe_harness/tools.py`, `agents/file_writer.py`, `runtime.py`, `agents/utility/organizer_agents.py`, `agents/utility/productivity_agents.py`, `skill_framework.py`, `cognitive/decomposer.py`, `tests/test_bf911_protected_config_write_refusal.py` and `tests/test_ad1344_constitution_write_refusal.py`. A later Builder whose hashes match does not repeat it; if one file differs, rerun only that file's rows.
 
 **AD-1344 S1's campaign.** S1's record (`DECISIONS.md:466`, 56 of 56) pins the sha256 of `swe_harness/tools.py`, `agents/file_writer.py` and `skill_framework.py`, which BF-911 changes. Rerun S1's 24 rows on those files on BF-911's tree, against S1's unchanged test file: `tools.py` S1-W1–W4 (A1-re-anchored), S1-W13–W18, S1-W19, S1-W19b, S1-W20, S1-W20b, S1-W21, S1-W22; `file_writer.py` S1-W5–W7; `skill_framework.py` S1-W8–W12. S1's other 32 rows (B, S and H) mutate files outside BF-911's diff, and S1's test file is unchanged, so S1's record stands for them.
 
@@ -1485,7 +1705,7 @@ Apply one mutant at a time, run the named tests at `-n 0`, restore. **Campaign o
 | R3 | file_access | `return _protected_unverifiable(path, "resolved", exc)` → `return None` | T17 |
 | R4 | file_access | `key = _write_key(str(resolved))` → `key = _write_key(path)` | T2, T13 (T1 rows are rescued by identity, since the live file exists) |
 | R5 | file_access | `if key[-1] in _PROTECTED_LEAF_KEYS:` → `if False:` | T4 |
-| R6 | file_access | `configs = protected_config_files(runtime)` → `configs = protected_config_files(None)` | T5 |
+| R6 | file_access | `configs = protected_config_files(runtime, fail_closed=True)` → `configs = protected_config_files(None, fail_closed=True)` | T5 |
 | R7 | file_access | `if any(_same_key(key, _write_key(str(config))) for config in configs):` → `if False:` | T2 |
 | R8 | file_access | `continue  # not on disk: the name comparison above is the whole check` → `return None` | T12 |
 | R9 | file_access | `return _protected_unverifiable(path, "config", exc)` → `continue` | T14 |
@@ -1546,8 +1766,15 @@ Apply one mutant at a time, run the named tests at `-n 0`, restore. **Campaign o
 | L7b | skill_framework | same line → `pass` | T40 |
 | L8 | skill_framework | `logger.warning("BF-911 XlsxAgent refused operation=xlsx_update reason_code=protected_write_refused")` → `logger.warning("BF-911 XlsxAgent refused: %s", refused)` | T40 |
 | L8b | skill_framework | same line → `pass` | T40 |
+| C1 | file_access | `if fail_closed:` → `if False:` | T42 |
+| C2 | file_access | `configs = protected_config_files(runtime, fail_closed=True)` → `configs = protected_config_files(runtime)` | T42 |
+| C3 | file_access | `return _protected_unverifiable(path, "config resolved", exc)` → `return None` | T42 |
+| C4 | file_access | `def protected_config_files(runtime: Any, *, fail_closed: bool = False) -> list[Path]:` → `def protected_config_files(runtime: Any, *, fail_closed: bool = True) -> list[Path]:` | T42 |
+| D1 | decomposer | `elif not result.get("committed", True):` → `elif False:` | T41, T44 |
+| D2 | decomposer | `node.status = "failed"  # BF-911 review F1: approved but not committed` → `node.status = "completed"` | T41, T44 |
+| D3 | decomposer | `elif not result.get("committed", True):` → `elif not result.get("committed", False):` | T43 |
 
-66 rows (Amendment A1). In T29–T30 a surviving check-free writer raises a different exception or no exception, so `pytest.raises(PermissionError, match="BF-911")` fails the test body (a failure, not a setup error). Amendment A1's rows fail assertions in the test body: each L row fails on the sentinel in the module loggers' messages and each Lb row on the missing `operation=… reason_code=protected_write_refused`; W22 and W23 fail `result.success` in T38, because the second conversion is the live config; R12 fails T16's `(target: Exception)` (the metaclass's `__name__` gives `Spoofed`); R13 fails T14's `(config: PermissionError)`; R15 fails T36's `(target: Exception)` for the `str`-subclass name; R16 fails T36's no-line-break check.
+73 rows (Amendment A2; 66 with Amendment A1). A2's rows fail assertions in the test body: D1 and D2 fail T41's and T44's `status == "failed"`; D3 fails T43's `status == "completed"`; C1–C3 fail T42's `_refused(...)` (the refusal is `None`); C4 fails T42's `read_side is not None` (the `PermissionError` is caught in the body). In T29–T30 a surviving check-free writer raises a different exception or no exception, so `pytest.raises(PermissionError, match="BF-911")` fails the test body (a failure, not a setup error). Amendment A1's rows fail assertions in the test body: each L row fails on the sentinel in the module loggers' messages and each Lb row on the missing `operation=… reason_code=protected_write_refused`; W22 and W23 fail `result.success` in T38, because the second conversion is the live config; R12 fails T16's `(target: Exception)` (the metaclass's `__name__` gives `Spoofed`); R13 fails T14's `(config: PermissionError)`; R15 fails T36's `(target: Exception)` for the `str`-subclass name; R16 fails T36's no-line-break check.
 
 Equivalent mutants, excluded with reasons:
 - `if root is not None and not target.is_absolute():` → `if root is not None:`. Joining an absolute path to a root yields the absolute path.
@@ -1570,7 +1797,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-911 (2026-10-21), #1613 -- agents cannot rewrite the running vessel's config files; BF-908's config floor gains its write side.** One rule, `security.file_access.protected_write_refusal`, refuses a write with a one-line reason naming BF-911 when the resolved path names a file in `protected_config_files(runtime)` (the loaded `--config` file, the checkout's `config/system.yaml`, `~/.probos/config.yaml`), present or absent, or a credential vault file name; the comparison is per component in BF-894's canonical form (case, separators, `..`, stream suffixes, trailing dots and spaces, 8.3 short forms, `\\?\` and UNC prefixes). An existing file with the `os.stat` identity of an existing protected config file (a hard link), a value that is not an exact `str` and a path it cannot examine are refused too. The callers: the SWE-harness `write_file` and `edit_file`, `FileWriterAgent` (the proposal and the write; `commit_write` takes the vessel as `runtime=`, passed by the consensus commit and by the bundled agents' direct write) and the office writers `docx_create`, `docx_revise`, `pptx_create` and `xlsx_update`. A file at another path, such as a build worktree's `config/system.yaml`, stays writable; the builder boundary is unchanged. Census tests in `tests/test_bf911_protected_config_write_refusal.py` pin the callers, pair them with AD-1344's and pin that each `commit_write` call passes the vessel. Shell and code execution stay outside, as for AD-1344. No config field.
+**BF-911 (2026-10-21), #1613 -- agents cannot rewrite the running vessel's config files; BF-908's config floor gains its write side.** One rule, `security.file_access.protected_write_refusal`, refuses a write with a one-line reason naming BF-911 when the resolved path names a file in `protected_config_files(runtime)` (the loaded `--config` file, the checkout's `config/system.yaml`, `~/.probos/config.yaml`), present or absent, or a credential vault file name; the comparison is per component in BF-894's canonical form (case, separators, `..`, stream suffixes, trailing dots and spaces, 8.3 short forms, `\\?\` and UNC prefixes). An existing file with the `os.stat` identity of an existing protected config file (a hard link), a value that is not an exact `str`, and a path for which a resolution of the path or of a protected config file raises `OSError`, `RuntimeError` or `ValueError`, or an `os.stat` the rule makes raises `OSError` or `ValueError` other than not-found, are refused too. The callers: the SWE-harness `write_file` and `edit_file`, `FileWriterAgent` (the proposal and the write; `commit_write` takes the vessel as `runtime=`, passed by the consensus commit and by the bundled agents' direct write) and the office writers `docx_create`, `docx_revise`, `pptx_create` and `xlsx_update`. A file at another path, such as a build worktree's `config/system.yaml`, stays writable; the builder boundary is unchanged. Census tests in `tests/test_bf911_protected_config_write_refusal.py` pin the callers, pair them with AD-1344's and pin that each `commit_write` call passes the vessel. The DAG executor fails a consensus-gated plan node whose result reports `committed` false after an approving vote (a refusal, a failed verification, a failed disk write or MCP bridge), without escalating it, so its dependents do not run (review round 1, F1). Shell and code execution stay outside, as for AD-1344. No config field.
 
 ```
 
@@ -1590,8 +1817,10 @@ REPLACE:
 - *D4 (the runtime).* Each writer passes the runtime it holds; `FileWriterAgent.commit_write` gains a keyword-only `runtime`, passed by `submit_write_with_consensus` and both `_mesh_write_file`. Without a runtime the checkout default and `~/.probos/config.yaml` are still refused.
 - *D5/D6.* Each call follows AD-1344's call in the same writer. The builder boundary is unchanged: BF-897 keeps a build in a linked worktree, whose config is another file.
 - *D15-D17 (after AD-1344 S1's Amendment A1).* In the SWE tools the call judges `path_text`, S1's one conversion of the caller's path (T38). Each BF-911 log line is a constant naming the operation and the reason code `protected_write_refused`, the same with and without the strict effect context; the returned or raised refusal still names the path (T37, T40). An exception class name enters a reason when it is an exact-`str` identifier, else `Exception`, as in S1's helper (T36). For the writers listed, this answers S1's residual that BF-908's read floor had no write-side sibling.
+- *Amendment A2 (review round 1, F1–F3).* F1: `DAGExecutor._execute_node`'s gated branch fails a node whose result reports `committed` false after an approving vote, without escalating (no retry or approval can make that commit happen, and `_handle_rejection` would complete the node on a Tier 2 or Tier 3 approval); its dependents never become ready and are failed as a dependency deadlock (T41, T44). A result without `committed` is judged by its vote, as before; both production gated paths set it (T43). F2: `protected_config_files(runtime, *, fail_closed=False)`; the write rule passes `fail_closed=True` and refuses with `(config resolved: <class>)` when a protected config's resolution raises; the read floor's list is unchanged (T42). F3 recorded: Tier 1's consensus branch is unreachable from both production callers.
 - *Rejected.* Generalising AD-1344's rule (a Captain-document rule mixed with a credential rule, no runtime); refusing only edits of `auth.crew_scope_token` (fragile, leaves the other settings open); a keyring-only token (changes the credential model; deferred); a boot-time registration of the loaded file (module state, global lookup); a lock or mode change (friction).
 - *Residuals (numbered on #1523 by the orchestrator).* Shell and code execution; MCP servers and agent-designed code; check-then-write is not atomic outside the Windows strict-native path; the data directory is not on the write floor and the vault is refused by name only; a writer without a runtime does not know a `--config` file outside the defaults; a relative `--config` resolves against the working directory at check time; a link to the live config placed inside a build worktree; over-refusal of 8.3-shaped names and of case variants on case-sensitive filesystems; the census bounds; AD-1344's refusal log lines in `FileWriterAgent` and the office writers, and `write_file`'s failure line outside the strict context, format the caller's path; in `edit_file` a `FileNotFoundError` from the runtime's `config_path` or a logging filter is reported as a missing file.
+- *Residuals added by Amendment A2 (numbered on #1523 by the orchestrator).* Tier 1's consensus retry reads the vote, not `committed` (unreachable from the production callers); a gated node rejected by its vote and then approved at Tier 2 or Tier 3 completes with nothing committed (on the base; filed as its own BF); each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included, and a config that cannot be resolved refuses every guarded write until it resolves; the censuses are name inventories (a guard under `if False`, or `runtime=None`, passes them).
 - *Reversal.* Revert the BF-911 commits. Nothing persisted changes.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1610,7 +1839,8 @@ After both edits: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.p
 ### GitHub (orchestrator)
 
 - #1613: delivered; closes on merge.
-- #1523: the residuals R1–R9 below, each given its F-number.
+- #1523: the residuals R1–R15 below, each given its F-number.
+- R13: file as its own BF issue (the orchestrator allocates the number); it is on the base and outside #1613.
 - `docs/research/reference-projects.md` row updates under Prior Art (next docs change).
 
 ---
@@ -1629,8 +1859,9 @@ After both edits: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.p
 | AD ledger | `PROGRESS.md` and `DECISIONS.md` change: regenerate (Section 8). |
 | AD-1195 event freeze | No `EventType`. |
 | AD-1179 schema golden and vocabulary guards | No schema or `params.get` key added. |
+| A2: srp-size, layers, seams, pins | `DAGExecutor` (`decomposer.py:757-1210` on `3dfb6f81`, 454 lines, 7 methods) +7 lines, no method; no class in `file_access.py`. No import added (`ConsensusOutcome` is already imported). `decomposer` is named in neither `docs/development/seams/` nor `tests/fixtures/ad1343_seam_*.py`. No config field, schema or `EventType`. Source-scan pins: `test_ad1284…:355` (the dispatch segment of `_execute_node` holds no quoted intent name; A2's lines add none) and `test_bf830…:300` (`_handle_rejection`, unchanged). Doubles: `_GateRuntime`'s write override returns `committed: True` (`test_ad1284…:121-127`) and its MCP path commits through `_FakeMcpBridge`; `test_escalation.py:73` and `test_ad1284…:645` return no gated path; `test_ad152`'s `MockRuntime` has no `gated_commit_for`. |
 | Import cycle | `file_access.py` gains `posixpath` and `re` only (stdlib); its `probos` imports stay function-level (`:182`, `:235`, `:251`). M1 and M2 run a fresh-interpreter import. |
-| Hidden pins | `test_builder_guardrails.py:36` and BF-894 `_LEGIT` (`:31`): builder untouched. BF-908 floor tests: `protected_config_files` unchanged; `_REPO_DEFAULT_CONFIG == _repo_default_config_path()` (`test_bf908_floor_and_children.py:299`) unchanged. AD-1344 S1's tests: unchanged file; its writers keep their calls; census A (callers of AD-1344's rule) and B (write primitives) see no new site. `test_utility_agents.py:837-840` patches `commit_write` with `return_value=`: the patched mock accepts `runtime=`. `test_ad1284…:412-429` (`path=123` stays noisy): `Path(123)` raises inside `commit_write`'s `try` before either rule. `_GateRuntime` (`test_ad1284…:114-127`) overrides `submit_write_with_consensus`, so it never reaches `commit_write`. |
+| Hidden pins | `test_builder_guardrails.py:36` and BF-894 `_LEGIT` (`:31`): builder untouched. BF-908 floor tests: `protected_config_files(runtime)` returns the same list (A2's `fail_closed` defaults to `False`; T42 pins the default); `_REPO_DEFAULT_CONFIG == _repo_default_config_path()` (`test_bf908_floor_and_children.py:299`) unchanged. AD-1344 S1's tests: unchanged file; its writers keep their calls; census A (callers of AD-1344's rule) and B (write primitives) see no new site. `test_utility_agents.py:837-840` patches `commit_write` with `return_value=`: the patched mock accepts `runtime=`. `test_ad1284…:412-429` (`path=123` stays noisy): `Path(123)` raises inside `commit_write`'s `try` before either rule. `_GateRuntime` (`test_ad1284…:114-127`) overrides `submit_write_with_consensus`, so it never reaches `commit_write`. |
 
 ---
 
@@ -1647,10 +1878,12 @@ Base = `d2447e09` (S1 final). "Caller code" = a method of a value the caller cho
 | office `create_docx`, `create_pptx` | no `try`: `os.path.expanduser(output_path)`, `Path(...)`, `str(target)` | `str(target)` of a `Path` | no `try`, as on the base |
 | office `revise_docx`, `update_xlsx` | no `try`: `Path(file_path)`, `.suffix`, `.exists()`, `str(source)` | `str(source)` of a `Path` | no `try`, as on the base |
 | `submit_write_with_consensus`, `_mesh_write_file` | — | passes the runtime object | — |
+| `DAGExecutor._execute_node` (gated branch, A2) | `result.get("consensus")`, `consensus.outcome` on the dict the gated path returned | `result.get("committed", True)` on the same dict | inside the existing `try`; no handler changed |
+| `protected_config_files` (A2) | `Path(candidate).resolve()` | none: the same call; with `fail_closed=True` the caught error is re-raised | inside the existing `try` |
 
 The rule reads an exact `str` and nothing of another value; `protected_config_files` reads `runtime.config_path` (the writer's own runtime, not a caller value); the rule formats an exception class name through `_exception_class_name` (D17). No handler changes. An exception the rule lets propagate (one that is not among the `OSError`/`ValueError`/`RuntimeError` cases it turns into refusals) enters the handlers of the `try` holding the call, in their order (D16): `write_file` and both `FileWriterAgent` functions have one `except Exception`; `edit_file` has `except FileNotFoundError` (`tools.py:1161`), then `except Exception` (`:1169`); the office writers have no `try`. T39 pins the `except Exception` route for both SWE tools. In the rule, `Path.resolve` and both `os.stat` calls catch `FileNotFoundError`; from Section 1c's statements, one can come from the runtime's `config_path` attribute or its `__str__` (`file_access.py:213`, `:220`) or from a logging filter, and `edit_file` reports it as a missing file (R11).
 
-**Filesystem access before the write.** The rule resolves the target (`Path.resolve`, which also `stat`s it) and `os.stat`s it, and `os.stat`s each protected file. AD-1344's check, which runs first, already resolves the same target and `stat`s it whenever a constitution file exists, and the base writer opens the path; so no new path form (a UNC path included) is contacted that the base did not touch. The new accesses are the `os.stat` of the protected files: the operator's own `--config`, the checkout default and `~/.probos/config.yaml`, which the read floor already resolves on each guarded read.
+**Filesystem access before the write.** The rule resolves the target (`Path.resolve`, which also `stat`s it) and `os.stat`s it, and `os.stat`s each protected file. AD-1344's check, which runs first, already resolves the same target and `stat`s it whenever a constitution file exists, and the base writer opens the path. The protected config paths are new contacts for a write: each guarded write resolves and `os.stat`s the loaded `--config` (a UNC `--config` included; the review's metadata-seam probe recorded `resolve` and `stat` of a UNC config for a local write, with no remote I/O), the checkout default and `~/.probos/config.yaml`; on the base a write touched none of them. Measured by the review on the fixture with all three files present (Python-level `Path.resolve`/`os.stat` counts, not round trips or latency): an allowed SWE write went from 1 resolve and 5 stats to 5 and 15; a `FileWriterAgent` commit from 2 and 7 to 6 and 17. After A2 a protected config whose resolution raises refuses every guarded write until it resolves (R14).
 
 ---
 
@@ -1670,13 +1903,20 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 12. No import cycle; no new layer-import, srp-size, db-connect or unowned-task row.
 13. Tracker and docstring prose makes no claim about when a state holds, and each universal word is pinned by a named test or enumeration.
 14. Each of the eight BF-911 `logger.warning` calls has one argument, a string literal `BF-911 <Writer> refused operation=<op> reason_code=protected_write_refused` (D16, T37, T40). In the SWE tools the call passes `path_text` (D15, T38).
+15. (A2) In `_execute_node`'s gated branch, a result with `committed` present and falsy after a vote that is neither REJECTED nor INSUFFICIENT sets the node `failed`, emits `NODE_FAILED` once through the existing BF-830 block, and calls neither `_handle_rejection` nor `escalate`; a result without `committed` behaves as on the base; the REJECTED/INSUFFICIENT branch and the non-gated branches are unchanged.
+16. (A2) Every consumer of node status and the `NODE_*` events accepts a failed gated node: `runtime._execute_dag` (working memory, workflow cache), the renderer, event persistence, introspect, and the deadlock fill of dependents.
+17. (A2) `protected_config_files` with the default returns, for every input, the base's list; only `fail_closed=True` raises, and only the three types it catches; a `Path.home()` failure is still left out in both modes.
+18. (A2) The write rule turns those into `(config resolved: <class>)` before the name comparison; no other exception changes route; the `(config: …)` stage of the `os.stat` loop is unchanged.
+19. (A2) T41 and T44 cross the seam with the production gate table, adapters and consensus methods (T41 also with `commit_write` and the rule); only the vote is stubbed. T42's resolution patch touches only the protected config's name.
+20. (A2) The contract's statements about filesystem contact, examination failures and the censuses state their mechanism (Filesystem access paragraph, D19, R14, R15).
 
 ---
 
 ## What This Does NOT Change
 
 - The builder boundary, the test-fix loop, the visiting session's permission handler, `FIX_LOOP_PROTECTED_PATHS`.
-- BF-908's read floor and `protected_config_files`.
+- BF-908's read floor: `protected_config_files(runtime)` returns the base's list for every read-side caller (A2's `fail_closed` defaults to `False`; T42).
+- The DAG executor's other branches, `_handle_rejection` and the escalation manager: A2 changes only the gated branch's approved-but-not-committed case (D18, D20).
 - The Captain's channels: the HXI settings route (`routers/config.py:262`), `probos setup`/`init`, an editor, git, hooks, CI.
 - Shell (`run_command`), `run_python`, `install_package`, MCP servers, agent-designed code.
 - The effect broker and its adapters.
@@ -1702,13 +1942,17 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 - **R9** The census reads AST call names: dynamic dispatch and names imported under another alias are outside it.
 - **R10** AD-1344's refusal log lines in `FileWriterAgent` (`file_writer.py:113`, `:147`) and the office writers (`skill_framework.py:211`, `:263`, `:410`, `:535`) format S1's reason, which holds the caller's path; `write_file`'s failure line outside the strict context formats `path` (`tools.py:1050`). BF-911's own lines format nothing (D16); S1's lines are S1's contract.
 - **R11** In `edit_file`, a `FileNotFoundError` raised inside the `try` by the runtime's `config_path` attribute or its `__str__`, or by a logging filter, takes `except FileNotFoundError` (`tools.py:1161`): it is reported as a missing file, or as `NoEffectFailure("file_not_found")` under the dispatch context. Nothing is written.
+- **R12** (review F3) `EscalationManager._tier1_retry`'s consensus branch (`escalation.py:211-234`) returns `resolved=True` on an approving vote without reading `committed`. Both production callers pass `category="consensus"` for every consensus node (`decomposer.py:1076-1080`, `:1151-1155` on `3dfb6f81`), which skips Tier 1 (`escalation.py:135`): reach injected-only.
+- **R13** (on the base, found while designing A2; not exercised by BF-911's refusal) For a gated node whose vote was REJECTED or INSUFFICIENT, `_handle_rejection` completes the node when Tier 2's arbiter answers "approve" (`escalation.py:303-310`) or the Captain approves at Tier 3 (`:453-465`, reusing the proposals, `:494-510`; wired in the shell, `experience/shell.py:146`), and nothing is committed (`decomposer.py:1164-1198`). Reach for Tier 2 needs a non-mock arbiter answering "approve"; neither tier was executed here. To be filed as its own BF.
+- **R14** (review note a) Each guarded write resolves and `os.stat`s the protected config files, a UNC `--config` included (Filesystem access paragraph); a config whose resolution raises refuses every guarded write until it resolves (D19); a home directory that cannot be determined leaves `~/.probos/config.yaml` out of both floors.
+- **R15** (review note b) The censuses (T32–T35) are name and keyword inventories: they pass with a guard under `if False`, and T34 accepts `runtime=None`. That the guards run and receive the vessel is pinned by the behaviour tests (T20–T30, T41) and the W rows, not by the census.
 
 ## Acceptance Criteria
 
 1. Each writer in `_EXPECTED_CALLERS` refuses the live config in each form its test drives, the loaded `--config` file through its runtime, and the absent `~/.probos/config.yaml`, with a reason naming BF-911 (T20–T30). A hard link is refused through each writer whose test makes one; a directory link through the rule and `write_file`.
 2. The neighbours, a worktree copy and a build's worktree config stay writable (T3, T6, T21, T25, T26, T28–T31).
-3. The census tests pass (T32–T35).
-4. The campaign of record kills every row of the mutation table (66 rows with Amendment A1), and S1's 24 rows on `tools.py`, `file_writer.py` and `skill_framework.py` stay killed on this tree.
+3. The census tests pass (T32–T35). A consensus-gated plan node whose commit did not happen fails and its dependent does not run (T41, T44); a gated result without `committed` completes on approval (T43); a protected config whose resolution raises refuses the write while the read floor leaves it out (T42).
+4. The campaign of record kills every row of the mutation table (73 rows with Amendment A2), and S1's 24 rows on `tools.py`, `file_writer.py` and `skill_framework.py` stay killed on this tree.
 5. One receipted broad gate and CI are green.
 6. No friction: T18 and T35 pass, and the diff touches no hook, CI or `config/` file.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -1810,6 +2054,18 @@ scripts/ad_ceiling.py -> CEILING AD-1346, NEXT AD-1347
 
 ---
 
+## Re-verified for Amendment A2 (2026-10-21, on `3dfb6f81`)
+
+| Claim | Evidence |
+|---|---|
+| Gated branch | `decomposer.py:949-966` (`_lookup`, `gated(params, timeout=10.0)`, REJECTED/INSUFFICIENT → `_handle_rejection`, else `completed`); `:967` `elif node.use_consensus:` (one occurrence); BF-830 emission `:1036-1046`; deadlock `:847-855`; `DAGExecutor` `:757`, file ends `:1210` |
+| `committed` producers | `runtime.py:4773-4801` (write: false unless the commit succeeded; set on every return); `:4840-4933` (MCP: false without a bridge or on a non-strict exception); adapters `:5243-5269`; table `:5238-5241` |
+| `committed` readers | `agentic_dispatch.py:1742`, `runtime.py:5382`, `routers/agents.py:1571` |
+| Escalation | `runtime.py:1038-1047` (the executor has a manager); `escalation.py:135` (Tier 1 skipped for consensus), `:211-234`, `:303-310`, `:453-465`, `:494-510`; `experience/shell.py:146` (Tier 3 callback); callers of `escalate`: `decomposer.py:1067`, `:1146` only |
+| Status consumers | `runtime.py:5888-5966`; `renderer.py:536-539`; `event_persistence.py:308-309`; `types.py:441-450` |
+| Floor | `file_access.py:202-235` (`protected_config_files`; resolve `:223-225`; home `:221-224`); callers `:206`, `:340` in the candidate; `__main__.py:80` |
+| Absent: a test pinning a completed gated node with `committed` false or missing | `gated_commit_for` in tests: `test_ad1284…:91` (`committed: True` `:121-127`), `:645` and `test_escalation.py:73` (None). `DAGExecutor(` in 6 files; `use_consensus=True` in none of `test_ad152`, `test_checkpoint`, `test_attention_cross_request`, `test_issue1421`. `"committed": False` in `test_ad1019c_adapter_tiers`, `test_ad1021b`, `test_ad1154`, `test_ad1208`: none drives `DAGExecutor` |
+
 ## Amendment A1 (2026-10-21, `claude-architect`, re-anchored on `d2447e09`)
 
 Applied in place by the orchestrator: pairs A1-1 to A1-8 took the place of the pairs 2b, 2c, 3b, 3c, 6b, 6c, 6d and 6e (each label line says so); pairs A1-9 to A1-47 edited the text of this file. The pairs above are therefore the whole set the Builder applies, once each, in order. The Architect's answer (the decisions below, then the 47 pairs) is banked outside the repository.
@@ -1845,3 +2101,22 @@ Run on scratch worktrees before any Builder, as for AD-1344 S1 and AD-1346 M3a. 
 **Corrections applied before the build:** none to the contract's code or tests. The one count in Amendment A1's prose (18 tree pairs) is 19.
 
 **Tools the orchestrator used** (outside the repository): `bf911_amend_contract.py` built this file from the drafted contract and the Architect's answer (47 pairs: 39 text edits and 8 in-place replacements); `bf911_campaign_table.py` turned the mutation table into the runner's rows (66, the two equivalents and S1's 24).
+
+---
+
+## Orchestrator verification of Amendment A2 (2026-10-21, on `3dfb6f81`)
+
+Run on scratch worktrees before the repair Builder, as for Amendment A1 of AD-1344 S1. The evidence files are outside the repository.
+
+| Check | Result |
+|---|---|
+| Every tree SEARCH of this amended file against `3dfb6f81` (`check_search_replace_blocks.py`) | 23 pairs (19, and 1d, 1e, 1f and 4b); each SEARCH occurs exactly once |
+| The 16 pairs of A2 that edit files of candidate r1 (the new source pairs, Section 1c's code, the test file and the tracker text), applied to a copy of r1 | each SEARCH occurs exactly once; the result is byte-identical (sha256) to the whole amended contract applied to a clean `3dfb6f81` tree for `file_access.py`, `decomposer.py`, the six other source files, the test file, `PROGRESS.md` and `DECISIONS.md` |
+| The new tests against r1's source (tests first) | T41, T42 and T44 fail (T41 and T44 at `status == "failed"`, which is `completed`; T42 at `_refused(refusal)`), T43 passes (it pins the base behaviour), the censuses pass: 3 failed, 5 passed in the selection |
+| `tests/test_bf911_protected_config_write_refusal.py` with the whole of A2, `-n 4` | 118 passed (44 test functions), no skip |
+| The architecture (srp-size 92, layer-import 0), seam-contract and store-registry checks, a fresh-interpreter import of the eight changed modules, the regenerated AD ledger and the ledger and seam-registry tests | pass (`gen_ad_ledger.py --check` current; 41 passed) |
+| The mutation table, 73 rows, on the scratch tree | 73 killed by a named test (31, 31 and 11 rows in three worktrees): C1 to C4 by T42, D1 and D2 by T41, D3 by T43; none INVALID |
+| AD-1344 S1's 24 `W` rows on this tree, against S1's unchanged test file and the BF-894 table | 24 killed |
+| The two mutants the contract calls equivalent | both survive (265 passed), as the contract argues |
+
+**Tool:** `bf911_apply_a2.py` applied the Architect's pairs in the two ways above; `bf911_campaign_table.py` built the rows (73, the two equivalents and S1's 24).
