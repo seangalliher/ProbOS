@@ -27,7 +27,9 @@ from probos.cognitive.builder_paths import builder_write_refusal
 
 _HAS_GIT = shutil.which("git") is not None
 _POINTER = "gitdir: ../elsewhere/.git/worktrees/wt\n"
-_LEGIT = ("src/probos/x.py", "tests/test_x.py", "config/system.yaml", "docs/a b.md", "conftest.py", ".gitignore", "tests/fixtures/.gitkeep", "tests/-n.py")
+# AD-1344 (#1596): the ship and department tiers beside the constitution stay writable.
+_LEGIT = ("src/probos/x.py", "tests/test_x.py", "config/system.yaml", "docs/a b.md", "conftest.py", ".gitignore", "tests/fixtures/.gitkeep", "tests/-n.py",
+          "config/standing_orders/ship.md", "config/standing_orders/engineering.md")
 _ALIASES = [".GiT", "GIT~1", ".git.", ".git::$DATA", "pointer-alias"]
 
 

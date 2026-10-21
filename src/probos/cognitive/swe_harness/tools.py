@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.builder_paths import constitution_write_refusal
 from probos.cognitive.standing_orders import (
     is_standing_order_name,
     standing_order_names,
@@ -1009,7 +1010,12 @@ class WriteFileTool:
         if content is None:
             return ToolResult(error="content is required")
         try:
-            target = _resolve_path(str(path))
+            path_text = str(path)  # AD-1344: write_file, the one conversion
+            refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: write_file
+            if refused is not None:
+                logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
             if (
@@ -1030,7 +1036,7 @@ class WriteFileTool:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(str(content), encoding="utf-8")
             return ToolResult(
-                output={"path": str(path), "bytes_written": len(str(content))}
+                output={"path": path_text, "bytes_written": len(str(content))}
             )
         except Exception as exc:
             if (context or {}).get("_effect_dispatch_context") is not None:
@@ -1093,7 +1099,12 @@ class EditFileTool:
         replace_all = bool(params.get("replace_all", False))
         mutation_started = False
         try:
-            target = _resolve_path(str(path))
+            path_text = str(path)  # AD-1344: edit_file, the one conversion
+            refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
+            if refused is not None:
+                logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
             lock = (
@@ -1146,7 +1157,7 @@ class EditFileTool:
                     else:
                         mutation_started = True
                         locked.write_text(updated, encoding="utf-8")
-            return ToolResult(output={"replacements": count, "path": str(path)})
+            return ToolResult(output={"replacements": count, "path": path_text})
         except FileNotFoundError:
             if (context or {}).get("_effect_dispatch_context") is not None:
                 if mutation_started:

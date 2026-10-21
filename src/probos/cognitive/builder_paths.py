@@ -28,14 +28,22 @@ The identity check applies when ``work_dir`` is given and ``<work_dir>/.git`` ex
 every existing prefix of the target is compared with that entry by ``os.stat``
 identity, so any name the filesystem resolves to it (a form the lexical rules do not
 name, or a hard link) is refused. A prefix that cannot be examined is refused.
+
+AD-1344 (#1596): ``constitution_write_refusal`` refuses a write to the Federation
+Constitution (``standing_orders.CONSTITUTION_RELATIVE_PATH``); its docstring lists the
+cases. ``builder_write_refusal`` calls it, and so do the writers listed in
+``tests/test_ad1344_constitution_write_refusal.py`` (``_EXPECTED_CALLERS``).
 """
 
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import unicodedata
 from pathlib import Path
+
+from probos.cognitive.standing_orders import CONSTITUTION_RELATIVE_PATH, constitution_path
 
 # Allowed top-level directories for builder file operations (moved from builder.py).
 ALLOWED_PATH_PREFIXES = (
@@ -68,16 +76,140 @@ def _canonical(part: str) -> str:
     return _HFS_IGNORABLE.sub("", part).rstrip(" .").upper()
 
 
+# AD-1344 (#1596): the constitution's path components, as written and in canonical form.
+_CONSTITUTION_RELATIVE_PARTS = tuple(CONSTITUTION_RELATIVE_PATH.split("/"))
+_CONSTITUTION_PARTS = tuple(_canonical(part) for part in _CONSTITUTION_RELATIVE_PARTS)
+# A leading drive (``C:``), which a drive-relative path carries before its first component.
+_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
+_NOT_A_STR = "Constitution write refused (AD-1344): the path is not an exact str, so it is not checked"
+
+
+def _exception_name(exc: BaseException) -> str:
+    """The class name of *exc*, read through ``type``'s own descriptor, if it is an exact-``str`` identifier.
+
+    ``Exception`` under another metaclass (nothing of the class is read) or for any other name.
+    """
+    cls = type(exc)
+    if type(cls) is not type:
+        return "Exception"
+    name = cls.__name__
+    return name if type(name) is str and name.isidentifier() else "Exception"
+
+
+def _constitution_component(name: str, expected: str) -> bool:
+    """Whether canonical *name* is *expected*, or an 8.3 short form with its first two characters."""
+    return name == expected or (_SHORT_NAME.search(name) is not None and name[:2] == expected[:2])
+
+
+def _names_constitution(path_text: str) -> bool:
+    """AD-1344: whether *path_text* (an exact ``str``) ends in the constitution's three components.
+
+    Separators become ``/``, a leading drive is dropped and ``..`` is collapsed; each
+    component loses any ``:`` suffix (an NTFS stream) and is put in canonical form;
+    components then empty (``.``, ``...``) are dropped. What lies above the three is not
+    compared, so a copy in another tree matches too.
+    """
+    unified = _DRIVE_PREFIX.sub("", path_text.replace("\\", "/"), count=1)
+    collapsed = posixpath.normpath(unified)
+    names = [_canonical(part.split(":", 1)[0]) for part in collapsed.split("/")]
+    names = [name for name in names if name]
+    tail = names[-len(_CONSTITUTION_PARTS):]
+    return len(tail) == len(_CONSTITUTION_PARTS) and all(
+        _constitution_component(name, expected) for name, expected in zip(tail, _CONSTITUTION_PARTS)
+    )
+
+
+def _constitution_refusal(path_text: str) -> str:
+    return (
+        f"Constitution write refused (AD-1344): {path_text!r} is the Federation Constitution "
+        f"({CONSTITUTION_RELATIVE_PATH}), which the Captain amends through ordinary "
+        "development, not an agent"
+    )
+
+
+def _constitution_unverifiable(path_text: str, stage: str, exc: BaseException) -> str:
+    return (
+        f"Constitution write refused (AD-1344): cannot verify that {path_text!r} is not the "
+        f"Federation Constitution ({stage}: {_exception_name(exc)})"
+    )
+
+
+def _constitution_lexical_refusal(path_text: object) -> str | None:
+    """AD-1344: the refusal for a value that is not an exact ``str`` or that names the constitution as written.
+
+    The type is compared first, so no method of a ``str`` subclass or other object runs.
+    """
+    if type(path_text) is not str:
+        return _NOT_A_STR
+    if _names_constitution(path_text):
+        return _constitution_refusal(path_text)
+    return None
+
+
+def constitution_write_refusal(
+    path: str, root: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """AD-1344 (#1596): why an agent-reachable writer must not write *path*, or None if it may.
+
+    *path* is the path as the writer received it, relative to *root* (the writer's base
+    directory) or absolute; a relative *path* with no *root* is taken relative to the
+    working directory. Refused, with a one-line reason naming AD-1344: a value that is
+    not an exact ``str``; a path whose last three components name the constitution as
+    written or once resolved; an existing file with the ``os.stat`` identity of the
+    constitution under *root* or of ``standing_orders.constitution_path()``; an
+    examination by ``os.stat`` that raises ``OSError`` or ``ValueError`` other than
+    ``FileNotFoundError`` or ``NotADirectoryError``; and a resolution that raises
+    ``OSError``, ``RuntimeError`` or ``ValueError``. Any other exception propagates.
+    """
+    lexical = _constitution_lexical_refusal(path)
+    if lexical is not None:
+        return lexical
+    target = Path(path)
+    if root is not None and not target.is_absolute():
+        target = Path(root) / target
+    try:
+        resolved = target.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _constitution_unverifiable(path, "resolved", exc)
+    if _names_constitution(str(resolved)):
+        return _constitution_refusal(path)
+    candidates = [constitution_path()]
+    if root is not None:
+        candidates.append(Path(root).joinpath(*_CONSTITUTION_RELATIVE_PARTS))
+    for candidate in candidates:
+        try:
+            constitution = os.stat(candidate)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # no constitution there: nothing to alias
+        except (OSError, ValueError) as exc:
+            return _constitution_unverifiable(path, "constitution", exc)
+        try:
+            current = os.stat(target)
+        except (FileNotFoundError, NotADirectoryError):
+            return None  # not on disk, so not a second name of an existing file
+        except (OSError, ValueError) as exc:
+            return _constitution_unverifiable(path, "target", exc)
+        if os.path.samestat(current, constitution):
+            return _constitution_refusal(path)
+    return None
+
+
 def builder_write_refusal(
     path_str: str, work_dir: str | os.PathLike[str] | None = None,
 ) -> str | None:
     """Return why the builder must not write *path_str*, or None if it may.
 
     *path_str* is relative to *work_dir*. Without *work_dir* only the lexical rules run.
+    AD-1344: after the empty-path check, ``_constitution_lexical_refusal`` judges *path_str*
+    and its reason, if any, is returned; with *work_dir*, ``constitution_write_refusal``
+    runs after the ``.git`` identity check.
     """
     normalized = path_str.replace("\\", "/")
     if not normalized.strip():
         return "Empty path blocked"
+    constitution = _constitution_lexical_refusal(path_str)  # AD-1344: ahead of the rules below, so its reason is given
+    if constitution is not None:
+        return constitution
     if ".." in normalized:
         return f"Path traversal blocked: {path_str}"
     if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
@@ -109,7 +241,10 @@ def builder_write_refusal(
 
     if work_dir is None:
         return None
-    return _git_identity_refusal(parts, path_str, Path(work_dir))
+    git_refusal = _git_identity_refusal(parts, path_str, Path(work_dir))
+    if git_refusal is not None:
+        return git_refusal
+    return constitution_write_refusal(path_str, work_dir)  # AD-1344: after the .git identity check
 
 
 def _git_identity_refusal(parts: list[str], path_str: str, root: Path) -> str | None:

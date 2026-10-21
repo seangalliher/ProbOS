@@ -105,6 +105,17 @@ def standing_orders_dir() -> Path:
     return _DEFAULT_ORDERS_DIR
 
 
+# AD-1344 (#1596): the constitution tier's file and its place under the project root.
+# The agent write boundary (builder_paths.constitution_write_refusal) reads both from here.
+CONSTITUTION_FILENAME = "federation.md"
+CONSTITUTION_RELATIVE_PATH = f"config/standing_orders/{CONSTITUTION_FILENAME}"
+
+
+def constitution_path() -> Path:
+    """AD-1344 (#1596): the Federation Constitution in the directory :func:`standing_orders_dir` returns."""
+    return standing_orders_dir() / CONSTITUTION_FILENAME
+
+
 def standing_order_names(orders_dir: Path | None = None) -> tuple[str, ...]:
     """BF-910: the names a caller may select, sorted: each ``<name>.md`` directly in the directory.
 
@@ -172,7 +183,7 @@ def get_order_tiers(
     dept = get_department(agent_type)
 
     specs: list[tuple[str, str | None]] = [
-        ("federation", "federation.md"),
+        ("federation", CONSTITUTION_FILENAME),
         ("ship", "ship.md"),
         ("department", f"{dept}.md" if dept else None),
         ("agent", f"{agent_type}.md"),
@@ -473,7 +484,7 @@ def compose_instructions(
         parts.append(personality_block)
 
     # 2. Federation Constitution (universal principles)
-    fed = _load_file(d / "federation.md")
+    fed = _load_file(d / CONSTITUTION_FILENAME)
     if fed:
         parts.append(f"## Federation Constitution\n\n{fed}")
 

@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from probos.cognitive.builder_paths import constitution_write_refusal
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
 
@@ -107,6 +108,10 @@ class FileWriterAgent(BaseAgent):
             # Validate that the write is feasible
             try:
                 p = Path(path)
+                refused = constitution_write_refusal(str(p), Path.cwd())  # AD-1344: the proposal
+                if refused is not None:
+                    logger.warning("AD-1344 FileWriterAgent proposal refused: %s", refused)
+                    return {"success": False, "error": refused}
                 parent = p.parent
                 if not parent.exists():
                     return {
@@ -137,6 +142,10 @@ class FileWriterAgent(BaseAgent):
         """Actually write the file. Called by the runtime after consensus approval."""
         try:
             p = Path(path)
+            refused = constitution_write_refusal(str(p), Path.cwd())  # AD-1344: the write
+            if refused is not None:
+                logger.warning("AD-1344 FileWriterAgent write refused: %s", refused)
+                return {"success": False, "error": refused}
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             return {

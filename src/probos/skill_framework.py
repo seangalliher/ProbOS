@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 import aiosqlite
 
+from probos.cognitive.builder_paths import constitution_write_refusal
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.substrate.skill_agent import SkillBasedAgent
 from probos.tools.protocol import ToolPreference
@@ -205,6 +206,10 @@ class DocxAgent(SkillBasedAgent):
 
         if output_path:
             target = Path(os.path.expanduser(output_path))
+            refused = constitution_write_refusal(str(target), Path.cwd())  # AD-1344: docx_create
+            if refused is not None:
+                logger.warning("AD-1344 DocxAgent refused: %s", refused)
+                raise PermissionError(refused)
             target.parent.mkdir(parents=True, exist_ok=True)
             doc.save(str(target))
             return str(target)
@@ -253,6 +258,10 @@ class DocxAgent(SkillBasedAgent):
             raise ValueError("revise_docx requires a .docx file")
         if not source.exists():
             raise FileNotFoundError(file_path)
+        refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: docx_revise
+        if refused is not None:
+            logger.warning("AD-1344 DocxAgent refused: %s", refused)
+            raise PermissionError(refused)
 
         doc = Document(str(source))
         doc.add_paragraph(f"Revision instructions: {instructions}")
@@ -396,6 +405,10 @@ class PptxAgent(SkillBasedAgent):
 
         if output_path:
             target = Path(os.path.expanduser(output_path))
+            refused = constitution_write_refusal(str(target), Path.cwd())  # AD-1344: pptx_create
+            if refused is not None:
+                logger.warning("AD-1344 PptxAgent refused: %s", refused)
+                raise PermissionError(refused)
             target.parent.mkdir(parents=True, exist_ok=True)
             deck.save(str(target))
             return str(target)
@@ -517,6 +530,10 @@ class XlsxAgent(SkillBasedAgent):
             raise ValueError("update_xlsx requires a .xlsx file")
         if not source.exists():
             raise FileNotFoundError(file_path)
+        refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: xlsx_update
+        if refused is not None:
+            logger.warning("AD-1344 XlsxAgent refused: %s", refused)
+            raise PermissionError(refused)
 
         workbook = load_workbook(str(source))
         if sheet not in workbook.sheetnames:
