@@ -753,3 +753,319 @@ The test used to patch `_PROJECT_ROOT`. The handler no longer reads it, so the t
 - **Acceptance criteria:** add "9. T21-T34 pass; rows 22-31 are killed; `tests/test_copilot_adapter.py::test_handle_standing_orders` passes with the injected directory."
 
 **Absence verified (A1):** a Grep of the tree outside `prompts/` for `No department specified|No standing orders found|standing_orders_dir|is_standing_order_name` finds `copilot_adapter.py:584,589` only. A Grep for `_handle_standing_orders` in tests finds only `test_copilot_adapter.py:295`. No test depends on the old reply texts.
+
+## Amendment A2 (2026-10-20, after the M3 architecture-check hard stop)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-20
+
+### What A2 replaces
+- **Header, Files:** add `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`, both regenerated rather than hand-edited (D19). `docs/development/architecture-baseline.yaml` is **not** in the change.
+- **Mutation table delta (A1):** rows 24-26 get new anchors. Rows 32-35 are added. The "equivalent mutant" note is deleted, because it is now row 35.
+
+### Decisions
+D16-D19 as above.
+
+### Section 7 (source): `src/probos/cognitive/copilot_adapter.py`, written against the candidate
+
+7a: the module-level reply. Its SEARCH occurs once (`:76-78`).
+```
+<<<<<<< SEARCH
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+=======
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+
+
+def _standing_orders_reply(
+    invocation: Any, orders_dir: Path | None, runtime: ProbOSRuntime | None
+) -> Any:
+    """BF-910: the reply to the visiting session's ``standing_orders_lookup``.
+
+    ``CopilotBuilderAdapter._handle_standing_orders`` is the registered handler and
+    passes its ``orders_dir`` and ``runtime``. The body sits outside the class so the
+    class stays under the repository's 500-line SRP review trigger (BF-910 D16).
+    """
+    args = getattr(invocation, "arguments", None) or {}
+    department = args.get("department", "") if isinstance(args, dict) else ""
+    if not department:
+        return ToolResult(text_result_for_llm="No department specified")
+    # BF-910: a name from the loader's flat directory, never a path.
+    if not is_standing_order_name(department):
+        return ToolResult(text_result_for_llm=_STANDING_ORDERS_NAME_REFUSAL)
+    try:
+        base = (orders_dir or standing_orders_dir()).resolve()
+        names = standing_order_names(base)
+        if department not in names:
+            return ToolResult(
+                text_result_for_llm="No standing orders found for that department; available: "
+                + (", ".join(names) or "none")
+            )
+        # BF-910: the BF-758 floor, the operator's read policy and a pinned,
+        # link-refusing read. runtime None (dispatcher route) is the
+        # platform-data-dir floor with no policy.
+        snapshot = read_verified_file(
+            base / f"{department}.md",
+            protected_roots=protected_read_roots(runtime),
+            exempt_roots=workspace_exempt_roots(runtime),
+            permitted_roots=permitted_read_roots(runtime) or None,
+        )
+        # Path.read_text(encoding="utf-8", errors="replace")'s output, as before.
+        with io.TextIOWrapper(
+            io.BytesIO(snapshot.data), encoding="utf-8", errors="replace", newline=None,
+        ) as text:
+            return ToolResult(text_result_for_llm=text.read())
+    except FileAccessDenied:
+        return ToolResult(text_result_for_llm=_STANDING_ORDERS_DENIED)
+    except Exception as exc:
+        logger.warning("BF-910: visiting standing_orders_lookup read failed: %s", type(exc).__name__)
+        return ToolResult(text_result_for_llm=f"standing_orders_lookup failed: {type(exc).__name__}")
+>>>>>>> REPLACE
+```
+**Why the names resolve:**
+- `ToolResult` is bound at module scope before this point, at `:51` or by the fallback at `:57`.
+- `logger` is bound at `:67`.
+- `ProbOSRuntime` is a `TYPE_CHECKING` import (`:47`). Annotations are strings under `from __future__ import annotations` (`:12`).
+
+7b: the handler becomes the delegate. Its SEARCH is `:606-640` and occurs once.
+```
+<<<<<<< SEARCH
+    async def _handle_standing_orders(self, invocation: Any) -> Any:
+        args = getattr(invocation, "arguments", None) or {}
+        department = args.get("department", "") if isinstance(args, dict) else ""
+        if not department:
+            return ToolResult(text_result_for_llm="No department specified")
+        # BF-910: a name from the loader's flat directory, never a path.
+        if not is_standing_order_name(department):
+            return ToolResult(text_result_for_llm=_STANDING_ORDERS_NAME_REFUSAL)
+        try:
+            base = (self._orders_dir or standing_orders_dir()).resolve()
+            names = standing_order_names(base)
+            if department not in names:
+                return ToolResult(
+                    text_result_for_llm="No standing orders found for that department; available: "
+                    + (", ".join(names) or "none")
+                )
+            # BF-910: the BF-758 floor, the operator's read policy and a pinned,
+            # link-refusing read. runtime None (dispatcher route) is the
+            # platform-data-dir floor with no policy.
+            snapshot = read_verified_file(
+                base / f"{department}.md",
+                protected_roots=protected_read_roots(self._runtime),
+                exempt_roots=workspace_exempt_roots(self._runtime),
+                permitted_roots=permitted_read_roots(self._runtime) or None,
+            )
+            # Path.read_text(encoding="utf-8", errors="replace")'s output, as before.
+            with io.TextIOWrapper(
+                io.BytesIO(snapshot.data), encoding="utf-8", errors="replace", newline=None,
+            ) as text:
+                return ToolResult(text_result_for_llm=text.read())
+        except FileAccessDenied:
+            return ToolResult(text_result_for_llm=_STANDING_ORDERS_DENIED)
+        except Exception as exc:
+            logger.warning("BF-910: visiting standing_orders_lookup read failed: %s", type(exc).__name__)
+            return ToolResult(text_result_for_llm=f"standing_orders_lookup failed: {type(exc).__name__}")
+=======
+    async def _handle_standing_orders(self, invocation: Any) -> Any:
+        # BF-910 (D16): the registered handler; the reply is _standing_orders_reply's.
+        return _standing_orders_reply(invocation, self._orders_dir, self._runtime)
+>>>>>>> REPLACE
+```
+
+### Section 8 (tests): `tests/test_bf910_standing_orders_lookup.py`, written against the candidate
+
+T21-T34 stay as they are, apart from T33's setup (8e). T35 is new (8f).
+
+8a (docstring, `:13-14`):
+```
+<<<<<<< SEARCH
+session's ``standing_orders_lookup``; its tests, T21 to T34, are in this file as
+well.
+=======
+session's ``standing_orders_lookup``; its tests, T21 to T35, are in this file as
+well.
+>>>>>>> REPLACE
+```
+8b (`:18-19`):
+```
+<<<<<<< SEARCH
+Tests section and T21 to T34 in its Amendment A1. T19b is a row added to the
+first of them, for the order of the names.
+=======
+Tests section, T21 to T34 in its Amendment A1 and T35 in its Amendment A2. T19b
+is a row added to the first of them, for the order of the names.
+>>>>>>> REPLACE
+```
+8c (`:85-90`):
+```
+<<<<<<< SEARCH
+- Built with neither ``runtime`` nor ``orders_dir`` (the platform data directory
+  that the floor then falls back to is pointed into ``tmp_path``), the handler
+  returns the ``engineering`` file of the loader's directory, the checkout's
+  tracked ``config/standing_orders/`` (T33).
+- Across the inputs of T21 to T25, every verified read is of a file directly in
+  the base, and no ``.md`` file is read with ``Path.read_text`` (T34).
+=======
+- Built with neither ``runtime`` nor ``orders_dir`` (the platform data directory
+  that the floor then falls back to is pointed into ``tmp_path``), the handler
+  returns the ``engineering`` file of the loader's directory, the checkout's
+  tracked ``config/standing_orders/``, and not the file of a decoy tree that
+  ``_PROJECT_ROOT`` is pointed at for the test (T33).
+- Across the inputs of T21 to T25, every verified read is of a file directly in
+  the base, and no ``.md`` file is read with ``Path.read_text`` (T34).
+- The handler that ``_build_mcp_tools`` registers under the name
+  ``standing_orders_lookup`` refuses a path with the fixed text and returns a
+  listed name's file (T35); a recorder stands in for the SDK's ``Tool``.
+>>>>>>> REPLACE
+```
+8d (`:117-130`):
+```
+<<<<<<< SEARCH
+- The Copilot session around the handler. T21 to T34 call
+  ``_handle_standing_orders`` directly, with a ``SimpleNamespace`` in the place
+  of the SDK's tool invocation: they do not start the SDK, a client or a
+  session, and they use no network. That the handler is registered as the
+  session's ``standing_orders_lookup``, and what a session sends it, are not
+  exercised here.
+=======
+- The Copilot session around the handler. T21 to T34 call
+  ``_handle_standing_orders`` directly, and T35 calls the handler that
+  ``_build_mcp_tools`` registers, with a ``SimpleNamespace`` in the place of the
+  SDK's tool invocation and a recorder in the place of the SDK's ``Tool``: they
+  do not start the SDK, a client or a session, and they use no network. What a
+  session sends the handler is not exercised here.
+>>>>>>> REPLACE
+```
+```
+<<<<<<< SEARCH
+- That the handler no longer reads the checkout root for its default directory:
+  in a checkout, ``standing_orders_dir()`` and the
+  ``_PROJECT_ROOT/config/standing_orders`` it used to read are the same
+  directory, so T33 cannot tell them apart.
+=======
+- That the handler reads no checkout root other than through ``_PROJECT_ROOT``:
+  T33 points ``_PROJECT_ROOT`` at a decoy, which tells the loader's directory
+  from the one the handler used to read, but a handler that computed the
+  checkout root afresh would, in a checkout, read the loader's directory.
+>>>>>>> REPLACE
+```
+8e (T33's setup, `:1001-1005`):
+```
+<<<<<<< SEARCH
+    # With no runtime the floor falls back to the platform data directory: point it into tmp_path,
+    # so that no live data directory is consulted.
+    monkeypatch.setenv("PROBOS_DATA_DIR", str(tmp_path / "data"))
+    expected = (standing_orders_dir() / "engineering.md").read_text(encoding="utf-8", errors="replace")
+    assert expected
+=======
+    # With no runtime the floor falls back to the platform data directory: point it into tmp_path,
+    # so that no live data directory is consulted.
+    monkeypatch.setenv("PROBOS_DATA_DIR", str(tmp_path / "data"))
+    # A decoy checkout root whose config/standing_orders holds other text: a handler that read
+    # _PROJECT_ROOT's directory rather than the loader's would answer with the decoy (row 35).
+    decoy_marker = "MARKER-BF910-DECOY"
+    decoy_orders = tmp_path / "decoy" / "config" / "standing_orders"
+    decoy_orders.mkdir(parents=True)
+    (decoy_orders / "engineering.md").write_text(decoy_marker, encoding="utf-8")
+    monkeypatch.setattr(copilot_adapter, "_PROJECT_ROOT", tmp_path / "decoy")
+    expected = (standing_orders_dir() / "engineering.md").read_text(encoding="utf-8", errors="replace")
+    assert expected
+    assert decoy_marker not in expected
+>>>>>>> REPLACE
+```
+8f (T35, appended after T34's last three lines, `:1034-1036`; the first line occurs once, and `:739` reads `assert reads.verified`):
+```
+<<<<<<< SEARCH
+    assert adapter_reads.verified, "no verified read happened, so the check below would prove nothing"
+    assert all(path.parent == orders.resolve() for path in adapter_reads.verified)
+    assert adapter_reads.plain_markdown == []
+=======
+    assert adapter_reads.verified, "no verified read happened, so the check below would prove nothing"
+    assert all(path.parent == orders.resolve() for path in adapter_reads.verified)
+    assert adapter_reads.plain_markdown == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_registered_handler_is_the_guarded_one(
+    tmp_path: Path, orders: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T35: the handler ``_build_mcp_tools`` registers as ``standing_orders_lookup`` is the guarded one.
+
+    Crosses registration to handler: the callable the visiting session is given
+    refuses a path with the fixed text and returns a listed name's file.
+    """
+    registered: list[dict[str, Any]] = []
+
+    def tool(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert not args, "the adapter registers its tools by keyword"
+        registered.append(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(copilot_adapter, "_SDK_AVAILABLE", True)
+    monkeypatch.setattr(copilot_adapter, "Tool", tool, raising=False)
+    adapter = _adapter(tmp_path, orders)
+
+    adapter._build_mcp_tools()
+    handlers = [kwargs["handler"] for kwargs in registered if kwargs.get("name") == "standing_orders_lookup"]
+    assert len(handlers) == 1
+    handler = handlers[0]
+
+    refused = await handler(SimpleNamespace(arguments={"department": "../secret"}))
+    found = await handler(SimpleNamespace(arguments={"department": "engineering"}))
+
+    assert refused.text_result_for_llm == copilot_adapter._STANDING_ORDERS_NAME_REFUSAL
+    assert found.text_result_for_llm == _ENG
+>>>>>>> REPLACE
+```
+**Why T35 works without the SDK:**
+- `_build_mcp_tools` uses only `_SDK_AVAILABLE` and `Tool` (`:458-554`).
+- Each of its `Tool(...)` calls is keyword-only (`:464-475`, `:547-552`).
+- With `runtime` set, it also registers `system_self_model`, without calling the runtime.
+
+### Mutation table (file `copilot_adapter.py`, after A2): rows 22-35
+| # | Line (stripped) | Mutant | Killed by |
+|---|---|---|---|
+| 22 | `if not is_standing_order_name(department):` | `if False:` | T21 |
+| 23 | `if department not in names:` | `if False:` | T25 |
+| 24 | `base = (orders_dir or standing_orders_dir()).resolve()` | `base = orders_dir or standing_orders_dir()` | T28 |
+| 25 | `protected_roots=protected_read_roots(runtime),` | `protected_roots=[],` | T29 |
+| 26 | `permitted_roots=permitted_read_roots(runtime) or None,` | `permitted_roots=None,` | T30 |
+| 27 | `return ToolResult(text_result_for_llm=f"standing_orders_lookup failed: {type(exc).__name__}")` | `...{exc}")` | T31 |
+| 28 | `io.BytesIO(snapshot.data), encoding="utf-8", errors="replace", newline=None,` | `newline="",` | T32 |
+| 29 | same line | `errors="strict"` | T32 |
+| 30 | `except FileAccessDenied:` | `except ValueError:` | T27, T29 |
+| 31 | `+ (", ".join(names) or "none")` | `+ ", ".join(names)` | T26 |
+| 32 | `return _standing_orders_reply(invocation, self._orders_dir, self._runtime)` | `(invocation, None, self._runtime)` | T24, T35 |
+| 33 | same line | `(invocation, self._orders_dir, None)` | T30 |
+| 34 | `handler=self._handle_standing_orders,` | `handler=self._handle_find_callers,` | T35 |
+| 35 | row 24's line | `base = (orders_dir or _PROJECT_ROOT / "config" / "standing_orders").resolve()` | T33 |
+
+**Running the rows:**
+- Rows that share a line run separately: 28 and 29, 32 and 33, 24 and 35.
+- Rows 1-21 are in `standing_orders.py` and `tools.py`, which A2 does not touch. If the campaign of record's sha256 for those two files still matches, they are not rerun.
+- Rows 22-35 are run against `copilot_adapter.py`'s new sha256.
+
+**Uniqueness:** with 7b applied, the old `self._runtime` forms of rows 25-26 are gone. `except FileAccessDenied:` and `orders_dir or standing_orders_dir()` each have one hit in the candidate (Grep `:615`, `:636`). `handler=self._handle_standing_orders,` has one (`:474`).
+
+### Milestone M3b (Builder)
+1. Apply Sections 7 and 8.
+2. Focused check: `pytest tests/test_bf910_standing_orders_lookup.py tests/test_copilot_adapter.py tests/test_bf896_session_permission_handler.py tests/test_bf896_dispatcher_confinement_seam.py -n 0 -q`.
+3. Import smoke as in A1's M3.
+4. Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`.
+5. Run the span probe; it must print `491 16`: `d:/ProbOS/.venv/Scripts/python.exe -c "import ast,pathlib;t=ast.parse(pathlib.Path('src/probos/cognitive/copilot_adapter.py').read_text(encoding='utf-8'));c=[n for n in t.body if isinstance(n,ast.ClassDef) and n.name=='CopilotBuilderAdapter'][0];print(c.end_lineno-c.lineno+1, sum(isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef)) for x in c.body))"`
+
+### Trackers (docs milestone)
+**DECISIONS.md, BF-910 entry.** After the A1 bullet, insert:
+
+"- *A2 (D16-D19).* The visiting handler's body is the module-level `copilot_adapter._standing_orders_reply(invocation, orders_dir, runtime)`. `CopilotBuilderAdapter._handle_standing_orders` stays the registered handler and passes its `orders_dir` and `runtime`. With the body in the class, the class spanned 523 lines, which crossed the 500-line SRP review trigger and failed `check_architecture_principles.py --check` as trigger drift. With the body moved out it spans 491, and its `srp-size` baseline row (`triggers: [methods]`, owner AD-1270h) is unchanged. A shared reply helper in `standing_orders.py` was rejected: the tool and the adapter differ in decoding and reply type, and the tests spy each module's own `read_verified_file`. T35 calls the handler that `_build_mcp_tools` registers. T33 points `_PROJECT_ROOT` at a decoy tree, so it tells the loader's directory from the checkout root's."
+
+**PROGRESS.md:** no text beyond A1's sentence.
+
+**Ledger (D19):** after editing both trackers, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then `... gen_ad_ledger.py --check`. Commit the regenerated `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` with the trackers.
+
+### Acceptance criteria (added)
+10. `scripts/check_architecture_principles.py --check` exits 0, and `git diff --quiet HEAD -- docs/development/architecture-baseline.yaml` exits 0. The span probe prints `491 16`.
+11. T21-T35 pass. Rows 22-35 are killed, with rows 24-26 on their A2 anchors.
+12. `scripts/gen_ad_ledger.py --check` exits 0 after the tracker edits. `check_seam_contracts.py`, `check_store_registry.py` and `check_config_facade.py` each exit 0 with `--check`.
