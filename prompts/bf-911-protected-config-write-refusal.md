@@ -2007,7 +2007,7 @@ The rule reads an exact `str` and nothing of another value; `protected_config_fi
 1. Each writer in `_EXPECTED_CALLERS` refuses the live config in each form its test drives, the loaded `--config` file through its runtime, and the absent `~/.probos/config.yaml`, with a reason naming BF-911 (T20–T30). A hard link is refused through each writer whose test makes one; a directory link through the rule and `write_file`.
 2. The neighbours, a worktree copy and a build's worktree config stay writable (T3, T6, T21, T25, T26, T28–T31).
 3. The census tests pass (T32–T35). A consensus-gated plan node whose commit did not happen fails and its dependent does not run (T41, T44); a gated result without `committed` completes on approval (T43); a protected config whose resolution raises refuses the write while the read floor leaves it out (T42).
-4. The campaign of record kills every row of the mutation table (73 rows with Amendment A2), and S1's 24 rows on `tools.py`, `file_writer.py` and `skill_framework.py` stay killed on this tree.
+4. The campaign of record kills every row of the mutation table (74 rows with Amendment A3), and S1's 24 rows on `tools.py`, `file_writer.py` and `skill_framework.py` stay killed on this tree.
 5. One receipted broad gate and CI are green.
 6. No friction: T18 and T35 pass, and the diff touches no hook, CI or `config/` file.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
