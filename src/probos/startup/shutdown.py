@@ -1431,6 +1431,7 @@ async def shutdown(
         with steps("identity registry stop", runtime.identity_registry):
             await runtime.identity_registry.stop()
         runtime.identity_registry = None
+        runtime.identity_service = None  # AD-1346 M1a: the facade holds the registry; released with it
 
     # Stop SIF (AD-370)
     if runtime.sif:
