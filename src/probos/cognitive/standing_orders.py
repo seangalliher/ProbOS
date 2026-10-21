@@ -88,6 +88,37 @@ def register_department(agent_type: str, department: str) -> None:
     _AGENT_DEPARTMENTS[agent_type] = department
 
 
+# BF-910: a standing-orders name is one file stem in the flat directory, never a
+# path. ASCII letters, digits, '_' and '-', 1 to 64 characters: no dot, slash,
+# backslash, colon, NUL or space, so no '..', absolute, drive, UNC, stream or
+# trailing-dot form can be spelled.
+_STANDING_ORDER_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def is_standing_order_name(value: object) -> bool:
+    """BF-910: True for an exact ``str`` (never a subclass) of the name shape."""
+    return type(value) is str and _STANDING_ORDER_NAME.fullmatch(value) is not None
+
+
+def standing_orders_dir() -> Path:
+    """BF-910: the directory :func:`compose_instructions` reads by default."""
+    return _DEFAULT_ORDERS_DIR
+
+
+def standing_order_names(orders_dir: Path | None = None) -> tuple[str, ...]:
+    """BF-910: the names a caller may select, sorted: each ``<name>.md`` directly in the directory.
+
+    A source of names, not an authority: the caller reads through a verified
+    reader. A missing or unreadable directory has no names.
+    """
+    d = orders_dir or _DEFAULT_ORDERS_DIR
+    try:
+        stems = [entry.name[:-3] for entry in d.iterdir() if entry.name.endswith(".md")]
+    except OSError:
+        return ()
+    return tuple(sorted(stem for stem in stems if is_standing_order_name(stem)))
+
+
 def set_directive_store(store: Any) -> None:
     """Wire the DirectiveStore for tier 6 composition (AD-386)."""
     global _directive_store
