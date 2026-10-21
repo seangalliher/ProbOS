@@ -55,6 +55,7 @@ from probos.security.file_access import (
     FileAccessDenied,
     permitted_read_roots,
     protected_read_roots,
+    protected_write_refusal,
     read_verified_file,
     resolve_for_runtime,
     workspace_exempt_roots,
@@ -1015,6 +1016,10 @@ class WriteFileTool:
             if refused is not None:
                 logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
                 return ToolResult(error=refused)
+            refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
+            if refused is not None:
+                logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
+                return ToolResult(error=refused)
             target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
@@ -1103,6 +1108,10 @@ class EditFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
             if refused is not None:
                 logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
+            if refused is not None:
+                logger.warning("BF-911 EditFileTool refused operation=edit_file reason_code=protected_write_refused")
                 return ToolResult(error=refused)
             target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")

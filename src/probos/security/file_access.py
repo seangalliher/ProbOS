@@ -31,6 +31,11 @@ data dir" would block the one folder agents are meant to work in.
 own boundary honestly -- "a determined script can still read host files by
 absolute path" -- and raising that is Tier 2 (AD-995). This module closes the
 ungoverned, unaudited, one-tag route, which is the part that was wrong.
+
+BF-911 (#1613): the write side. ``protected_write_refusal`` refuses an agent-reachable
+write to a file in :func:`protected_config_files` or to a credential vault file name
+(``PROTECTED_LEAF_NAMES``), by resolved path and by ``os.stat`` identity. Its callers are
+listed in ``tests/test_bf911_protected_config_write_refusal.py`` (``_EXPECTED_CALLERS``).
 """
 
 from __future__ import annotations
@@ -38,6 +43,8 @@ from __future__ import annotations
 import logging
 import ntpath
 import os
+import posixpath
+import re
 import stat
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -199,7 +206,7 @@ def protected_read_roots(runtime: Any) -> list[Path]:
     return _protected_data_dir(runtime) + protected_config_files(runtime)
 
 
-def protected_config_files(runtime: Any) -> list[Path]:
+def protected_config_files(runtime: Any, *, fail_closed: bool = False) -> list[Path]:
     """BF-908: the config files the floor refuses, resolved, whether or not they exist.
 
     The file the vessel loaded (``runtime.config_path``: ``--config``,
@@ -209,6 +216,10 @@ def protected_config_files(runtime: Any) -> list[Path]:
     Each file once, in that order: the loaded file is usually one of the defaults.
     Not covered: a copy or hard link of the file under another path, and every
     reader that does not call this floor (a shell command, ``run_python``).
+    A file whose resolution raises ``OSError``, ``RuntimeError`` or ``ValueError`` is left out
+    (the read floor's default); with *fail_closed* (BF-911's write rule) the error is raised,
+    so the write is refused. A home directory that cannot be determined names no file and is
+    left out either way.
     """
     candidates: list[object] = [getattr(runtime, "config_path", None), _REPO_DEFAULT_CONFIG]
     try:
@@ -222,10 +233,141 @@ def protected_config_files(runtime: Any) -> list[Path]:
         try:
             resolved = Path(candidate).resolve()
         except (OSError, RuntimeError, ValueError):
+            if fail_closed:
+                raise  # BF-911: the write floor refuses a write rather than lose a file it cannot resolve
             continue
         if resolved not in files:  # BF-908 A3: the loaded file is often a default; list each file once
             files.append(resolved)
     return files
+
+
+# BF-911 (#1613): the write side of the floor. Components are compared in BF-894's canonical
+# form (``builder_paths._canonical``: HFS+ ignorable code points dropped, trailing dots and
+# spaces trimmed, upper-cased) with its 8.3 short-name pattern. Mirrored here so this module
+# imports nothing from ``cognitive``; tests/test_bf911_protected_config_write_refusal.py T19
+# pins the parity.
+_HFS_IGNORABLE = re.compile("[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]")
+_SHORT_NAME = re.compile(r"~[0-9]")
+# The Win32 file and device namespace prefixes, with separators already ``/``.
+_DEVICE_PREFIXES = ("//?/", "//./")
+_CONFIG_FILE = "a protected config file (the loaded --config, the checkout's config/system.yaml or ~/.probos/config.yaml)"
+_VAULT_FILE = "a credential vault file"
+_NOT_A_STR = "Protected write refused (BF-911): the path is not an exact str, so it is not checked"
+
+
+def _canonical_name(part: str) -> str:
+    """One component in the form a case-insensitive filesystem compares it (BF-894's form)."""
+    return _HFS_IGNORABLE.sub("", part).rstrip(" .").upper()
+
+
+_PROTECTED_LEAF_KEYS = frozenset(_canonical_name(name) for name in PROTECTED_LEAF_NAMES)
+
+
+def _write_key(path_text: str) -> tuple[str, ...]:
+    """BF-911: the components of *path_text* in the form the write floor compares them.
+
+    Separators become ``/``; a ``//?/`` or ``//./`` prefix is dropped and ``//?/UNC/``
+    becomes ``//``; the drive (``C:`` or ``//server/share``), upper-cased, is the first
+    component; ``..`` is collapsed; each other component loses any ``:`` suffix (an NTFS
+    stream) and is put in canonical form, and components then empty are dropped.
+    """
+    unified = path_text.replace("\\", "/")
+    if unified[:4] in _DEVICE_PREFIXES:
+        unified = unified[4:]
+        if unified[:4].upper() == "UNC/":
+            unified = "//" + unified[4:]
+    drive, rest = ntpath.splitdrive(unified)
+    names = [_canonical_name(part.split(":", 1)[0]) for part in posixpath.normpath(rest or "/").split("/")]
+    return (drive.upper(), *(name for name in names if name))
+
+
+def _same_key(candidate: tuple[str, ...], protected: tuple[str, ...]) -> bool:
+    """Whether *candidate* names *protected*: each component equal, or an 8.3 short form with its first two characters."""
+    return len(candidate) == len(protected) and all(
+        name == expected or (_SHORT_NAME.search(name) is not None and name[:2] == expected[:2])
+        for name, expected in zip(candidate, protected)
+    )
+
+
+def _exception_class_name(exc: BaseException) -> str:
+    """The class name of *exc*, read through ``type``'s own descriptor, if it is an exact-``str`` identifier.
+
+    ``Exception`` under another metaclass (nothing of the class is read) or for any other name.
+    The body of AD-1344's ``builder_paths._exception_name``; T36 compares the two.
+    """
+    cls = type(exc)
+    if type(cls) is not type:
+        return "Exception"
+    name = cls.__name__
+    return name if type(name) is str and name.isidentifier() else "Exception"
+
+
+def _protected_refusal(path_text: str, what: str) -> str:
+    return f"Protected write refused (BF-911): {path_text!r} is {what}, which an agent does not write"
+
+
+def _protected_unverifiable(path_text: str, stage: str, exc: BaseException) -> str:
+    return (
+        f"Protected write refused (BF-911): cannot verify that {path_text!r} is not a protected "
+        f"config or credential file ({stage}: {_exception_class_name(exc)})"
+    )
+
+
+def protected_write_refusal(
+    path: str, *, root: str | os.PathLike[str] | None = None, runtime: Any = None,
+) -> str | None:
+    """BF-911 (#1613): why an agent-reachable writer must not write *path*, or None if it may.
+
+    *path* is the path as the writer received it: relative to *root*, or to the working
+    directory when *root* is None, or absolute. *runtime* supplies ``config_path``; see
+    :func:`protected_config_files` for the files named with and without it. Refused, with a
+    one-line reason naming BF-911: a value that is not an exact ``str`` (nothing of it is
+    read); a path whose resolved form names one of those files, whether or not it exists,
+    or whose resolved last component is in ``PROTECTED_LEAF_NAMES`` (compared by
+    :func:`_write_key`, an 8.3 short form accepted for a config file's components); an
+    existing file with the ``os.stat`` identity of an existing protected config file; an
+    ``os.stat`` that raises ``OSError`` or ``ValueError`` other than ``FileNotFoundError`` or
+    ``NotADirectoryError``; a resolution of *path* that raises ``OSError``, ``RuntimeError``
+    or ``ValueError``; and a call of ``protected_config_files(runtime, fail_closed=True)``
+    that raises one of those three, such as one raised while reading ``runtime.config_path``,
+    converting its value or resolving a file it names (the reason says ``config resolved``).
+    Any other exception propagates. A file at another path with another identity, such as a
+    worktree's ``config/system.yaml``, is not refused.
+    """
+    if type(path) is not str:
+        return _NOT_A_STR
+    target = Path(path)
+    if root is not None and not target.is_absolute():
+        target = Path(root) / target
+    try:
+        resolved = target.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _protected_unverifiable(path, "resolved", exc)
+    key = _write_key(str(resolved))
+    if key[-1] in _PROTECTED_LEAF_KEYS:
+        return _protected_refusal(path, _VAULT_FILE)
+    try:
+        configs = protected_config_files(runtime, fail_closed=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _protected_unverifiable(path, "config resolved", exc)
+    if any(_same_key(key, _write_key(str(config))) for config in configs):
+        return _protected_refusal(path, _CONFIG_FILE)
+    for config in configs:
+        try:
+            config_stat = os.stat(config)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # not on disk: the name comparison above is the whole check
+        except (OSError, ValueError) as exc:
+            return _protected_unverifiable(path, "config", exc)
+        try:
+            current = os.stat(target)
+        except (FileNotFoundError, NotADirectoryError):
+            return None  # not on disk, so not a second name of an existing config file
+        except (OSError, ValueError) as exc:
+            return _protected_unverifiable(path, "target", exc)
+        if os.path.samestat(current, config_stat):
+            return _protected_refusal(path, _CONFIG_FILE)
+    return None
 
 
 def _protected_data_dir(runtime: Any) -> list[Path]:
