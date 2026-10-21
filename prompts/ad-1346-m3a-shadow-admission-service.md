@@ -1608,3 +1608,231 @@ A8 CLAIM: config.py declares no field whose name starts with "admission" (T13's 
 Nothing observable is expected: no route, log line on a healthy boot, file or event changes. Optional check, read-only: the vessel's startup log has no line containing `shadow admission service was not built`. If it has one, the service is absent (`runtime.admission_service` None) and the boot continued; report it on #1604.
 
 **Needs the Captain:** nothing.
+
+---
+
+## Amendment A1 (2026-10-21, after review round 1: findings F2 and F3; F1 is process)
+
+### A1: round-1 findings F2 (narrow the fail-open claims to the mechanism) and F3 (resolve first for a `system:` id)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
+
+Every SEARCH below is written against candidate r1 (staged tree `3907ba15`) and occurs once in its file. The only source changes are docstrings, comments and one log-message string.
+
+**Decisions.**
+
+| # | Decision | Rejected alternative | Why |
+|---|---|---|---|
+| D36 | Each of the two `except Exception` branches (`shadow`, and the runtime's from D31 and D34) holds one log call with no guard of its own. The prose states that mechanism and no wider fail-open claim. Recorded as F-212 on #1523. **Binding on M3c:** its contract, which adds the first caller of `shadow`, decides whether `shadow` guards its log call and pins the answer with a test. The runtime block stays as it is. | Guard both log calls now | In M3a, `shadow` has no caller (T16). The one `logging.Handler` subclass in `src/` counts records (`__main__.py:97-111`). The stdlib handlers `__main__.py` installs send an `emit` failure other than `RecursionError` to `handleError`. `start()` already logs without a guard on the same logger (`runtime.py:2696-2698`). |
+| D37 | T8 also registers `system:dream_scheduler` as an asset slot. It pins that the facade's answer comes first: unresolved, the id is `system` / would-refuse / `system_principal_unlisted`; registered, the id and its tag UUID are `asset` / admit / `admitted`, keyed on the slot. The code is unchanged (D22). | Test the prefix first | This is D22's rejection: a slot id with the `system:` prefix would skip the stop check. |
+
+**A1-1 `src/probos/admission/service.py`**
+
+SEARCH:
+```python
+verdict and its latency in memory and returns None, so a seam has no result to act on; when
+anything in it raises it counts the failure, logs it and returns None. M3a has no caller,
+no store and no configuration field; AD-1346 M3b persists the counts.
+```
+REPLACE:
+```python
+verdict and its latency in memory and returns None, so a seam has no result to act on. Its
+``except Exception`` counts an ``Exception`` raised by that work, passes it to the module
+logger and returns None (T12); the log call has no guard of its own (D36). M3a has no caller,
+no store and no configuration field; AD-1346 M3b persists the counts.
+```
+
+SEARCH:
+```python
+        that raises propagates from here; ``shadow`` is where a failure is contained.
+```
+REPLACE:
+```python
+        that raises propagates from here (T12); ``shadow`` holds the ``except Exception``.
+```
+
+SEARCH:
+```python
+        """Decide in shadow, count the verdict and its latency, and return None (fail open, #1604 property 6)."""
+```
+REPLACE:
+```python
+        """Decide in shadow, count the verdict and its latency, and return None; count and log an ``Exception`` (#1604 property 6; D24, D25, D36)."""
+```
+
+SEARCH:
+```python
+        """Shadow calls that raised since this service was built."""
+```
+REPLACE:
+```python
+        """Exceptions that ``shadow``'s ``except Exception`` counted since this service was built."""
+```
+
+**A1-2 `src/probos/runtime.py` (comments and the log string only)**
+
+SEARCH:
+```python
+        # Phase 1a started. Nothing calls it yet (AD-1346 M3c adds the seams). If the import or the
+        # constructor raises, the failure is logged, the attribute keeps its __init__ None and the
+        # boot goes on (#1604, property 11; D31, D34).
+        try:
+            from probos.admission import AdmissionService
+
+            self.admission_service = AdmissionService(self.identity_service, self.agent_stops)
+        except Exception:  # AD-1346 M3a: a failed construction is logged and the boot goes on (#1604, property 11)
+            logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None and the boot continues", exc_info=True)
+```
+REPLACE:
+```python
+        # Phase 1a started. Nothing calls it yet (AD-1346 M3c adds the seams). The import and the
+        # constructor are inside the try; the except branch logs an Exception and assigns nothing, so
+        # the attribute keeps its __init__ None (#1604, property 11; D31, D34). Its log call has no
+        # guard of its own (D36).
+        try:
+            from probos.admission import AdmissionService
+
+            self.admission_service = AdmissionService(self.identity_service, self.agent_stops)
+        except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
+            logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
+```
+
+**A1-3 `tests/test_ad1346_admission_service.py`**
+
+SEARCH: `- T8  the system-principal allowlist.`
+REPLACE: `- T8  the system-principal allowlist, for an id the facade does not resolve; a ``system:`` id it resolves is that slot's.`
+
+SEARCH: `- T12 ``shadow`` fails open: a malformed request or a raising dependency is counted and logged, not raised.`
+REPLACE: `- T12 ``shadow`` counts and logs a malformed request and a raising facade and returns None; ``decide`` propagates.`
+
+SEARCH:
+```python
+async def test_only_an_allowlisted_system_principal_is_admitted(gate: AdmissionService) -> None:
+    """T8: ``system:ship_computer`` is admitted, any other ``system:`` id is not (kills M3, M13, M15, M21, M37)."""
+```
+REPLACE:
+```python
+async def test_the_system_allowlist_applies_to_an_id_the_facade_does_not_resolve(
+    registry: AgentIdentityRegistry, gate: AdmissionService,
+) -> None:
+    """T8: unresolved, ``system:ship_computer`` is admitted and ``system:dream_scheduler`` is not; registered as an asset
+    slot, ``system:dream_scheduler`` and its tag UUID resolve through the facade first and are admitted as an asset (D22,
+    D37; kills M3, M13, M15, M21, M37, M38). Not covered: a certificate slot with the prefix, or a stop on one."""
+```
+
+SEARCH:
+```python
+    assert "'system:dream_scheduler'" in unlisted.cause
+```
+REPLACE:
+```python
+    assert "'system:dream_scheduler'" in unlisted.cause
+    tag = await registry.resolve_or_issue_asset_tag("system:dream_scheduler", "dream_scheduler", "dream_scheduler")
+    for key in ("system:dream_scheduler", tag.asset_uuid):
+        resolved = gate.decide(_request(key, origin="system", origin_id="system:dream_scheduler"))
+        assert (resolved.outcome, resolved.reason_code, resolved.check, resolved.principal_kind, resolved.key) == (
+            "admit", "admitted", "", "asset", "system:dream_scheduler",
+        ), key
+        assert resolved.principal is not None and resolved.principal.slot_id == "system:dream_scheduler"
+        assert resolved.principal.did == ""
+```
+
+SEARCH: `    """T10: the constructor refuses anything but the two real types, and ``decide`` anything but a request (kills M18 to M20)."""`
+REPLACE: `    """T10: the constructor refuses an object that is not an instance of the two types, and ``decide`` one whose type is not ``WorkRequest`` (kills M18 to M20)."""`
+
+SEARCH:
+```python
+async def test_shadow_fails_open_counts_and_logs(
+```
+REPLACE:
+```python
+async def test_shadow_counts_and_logs_an_exception_and_returns_none(
+```
+
+SEARCH: `    """T12: a malformed request and a raising facade are counted and logged, never raised (kills M30 to M32)."""`
+REPLACE: `    """T12: with healthy logging, a malformed request and a raising facade are counted, logged and answered with None (kills M30 to M32)."""`
+
+SEARCH: `        gate.decide(_request(SURGEON_SLOT))  # decide propagates; only shadow contains a failure`
+REPLACE: `        gate.decide(_request(SURGEON_SLOT))  # decide propagates the facade's exception`
+
+**A1-4 `tests/test_ad1346_admission_service_boot.py`**
+
+SEARCH: `"""AD-1346 M3a (#1604) - real-boot tests: the shadow ``AdmissionService`` is wired, and its failure does not stop a boot.`
+REPLACE: `"""AD-1346 M3a (#1604) - real-boot tests: the shadow ``AdmissionService`` is wired, and a constructor that raises is logged.`
+
+SEARCH:
+```
+- T19 a constructor that raises is logged once at WARNING with its traceback, ``runtime.admission_service`` stays None,
+      and the boot completes.
+```
+REPLACE:
+```
+- T19 a constructor that raises ``RuntimeError`` is logged once at WARNING with its traceback,
+      ``runtime.admission_service`` stays None, and that boot completes.
+```
+
+SEARCH: `    """T19: #1604 property 11, the gate's startup failure leaves the boot going (kills M34, M35)."""`
+REPLACE: `    """T19: #1604 property 11 for a constructor that raises ``RuntimeError``: logged, the attribute None, the boot completes (kills M34, M35)."""`
+
+**A1-5 `PROGRESS.md` (substrings of line 3)**
+
+SEARCH: `(an id that the facade does not resolve and that has no `system:` prefix, or a `system:` id outside the allowlist `{"system:ship_computer"}`, is a would-refuse)`
+REPLACE: `(an id that the facade does not resolve is a would-refuse unless it is a `system:` id on the allowlist `{"system:ship_computer"}`; the facade is asked first, so a `system:` id that names a registered slot is that slot's certificate or asset principal)`
+
+SEARCH: `; when anything in it raises it counts the failure, logs it and returns None.`
+REPLACE: `; its `except Exception` counts an `Exception` raised by that work in `failures`, passes it to the module logger and returns None.`
+
+SEARCH: `; when the constructor raises (a real-boot test injects it), the failure is logged, `runtime.admission_service` stays None and the boot continues.`
+REPLACE: `; its `except Exception` logs the exception and assigns nothing, so `runtime.admission_service` keeps its `__init__` None (a real-boot test injects a constructor `RuntimeError`, and that boot completes). Neither `except` guards its own log call (F-212 on #1523).`
+
+**A1-6 `DECISIONS.md` (the AD-1346 M3a entry)**
+
+SEARCH: `a failure increments `failures`, the first is logged at WARNING with its traceback and later ones at DEBUG.`
+REPLACE: `an `Exception` raised inside the `try` increments `failures`; the first is passed to the logger at WARNING with its traceback and later ones at DEBUG (T12). The log call has no guard of its own (D36).`
+
+SEARCH: `**Binding on M3c:** seams call `shadow()`, not `decide()`, on the event loop.`
+REPLACE:
+```
+**Binding on M3c:** seams call `shadow()`, not `decide()`, on the event loop.
+- *D36 (the fail-open mechanism; round-1 F2, F-212 on #1523).* Each `except Exception` (`shadow`'s, and the runtime's of D31 and D34) holds one log call with no guard of its own; the prose states that mechanism and no wider fail-open claim. M3a guards neither: `shadow` has no caller in M3a (T16), the one `logging.Handler` subclass in `src/` counts records (`__main__.py:97-111`), the stdlib handlers `__main__.py` installs send an `emit` failure other than `RecursionError` to `handleError`, and `start()` logs unguarded on the same logger (`runtime.py:2696-2698`). **Binding on M3c:** its contract, which adds the first caller, decides whether `shadow` guards its log call and pins the answer with a test; the runtime block stays as it is. Rejected: guard both log calls now.
+- *D37 (resolve first for a `system:` id; round-1 F3).* T8 registers `system:dream_scheduler` as an asset slot: unresolved it is `system` / would-refuse / `system_principal_unlisted`; registered, it and its tag UUID are `asset` / admit / `admitted`, keyed on the slot (M38). The code is unchanged (D22). Rejected: test the prefix first (D22).
+```
+
+SEARCH: `a raising constructor is logged and the boot completes`
+REPLACE: `a constructor that raises `RuntimeError` is logged and that boot completes`
+
+SEARCH: `a resolvable `system:` slot is an agent principal`
+REPLACE: `a `system:` id the facade resolves is a certificate or asset principal, T8 pinning the asset case`
+
+**Mutation table changes:** M34 and M35 get new anchors, and M38 is a new row. The full rows are in section 5 below.
+
+**Tests first: the measurement against r1.** No production behaviour changes, so with the A1 tests the r1 code passes 19 of 19 and collects 16 + 3 tests. The discriminating measurement is M38:
+1. Apply M38 with the **r1** test file at `-n 0`. T8 passes: M38 survives on r1.
+2. Apply M38 with the **A1** test file. T8 fails.
+3. On the A1 tree, check that T19 kills M34 and M35 at their new anchors.
+
+**What This Does NOT Change:** the code paths of `checks.py`, `service.py` or `runtime.py`; T14's logger rule; the number of tests.
+
+**Acceptance:** verify that all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+**Verified against r1 (2026-10-21):**
+- `service.py`: :6-8, :53-54, :81, :88-95, :113
+- `runtime.py`: :2696-2698, :2823-2832
+- `checks.py`: :63-69, :74-80, :85-86
+- `identity.py:870-881` (`resolve_or_issue_asset_tag(slot_id, asset_type, pool_name, …)`)
+- `__main__.py`: :97-111, :148, :155, :171
+- CPython 3.12.13: `logging/__init__.py:1159-1168`, `logging/handlers.py:65-77`
+- tests: `…service.py:17`, `:22`, `:325-338`, `:365`, `:404-407`, `:419`; `…boot.py:1`, `:11-12`, `:128`
+
+**Absence verified (2026-10-21):**
+- **Claim:** no other `Handler` subclass exists in `src/`. **Run:** Grep `class \w+\([^)]*Handler[^)]*\)` in src. **Found:** `__main__.py:97` only.
+- **Claim:** no test pins the narrowed runtime text. **Run:** Grep `boot goes on|a failed construction|AD-1346 M3a` in tests/, excluding the two M3a test files. **Found:** nothing.
+- **Claim:** nothing outside the T1 file and the contract uses the renamed test names. **Run:** Grep `only_an_allowlisted_system_principal|shadow_fails_open`. **Found:** the T1 file and the contract only.
+
+**5. Mutation rows (from the Architect's answer to A1; the orchestrator reruns the whole table, now 38 rows, on the final tree)**
+
+| ID | File | Whole stripped line → mutant | Killed by | Status |
+|---|---|---|---|---|
+| M34 | runtime.py | `except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)` → `except TypeError:  # AD-1346 M3a` | T19 | Re-anchored. Unique: Grep `AD-1346 M3a` in runtime.py shows only :2831 with this `except` form. |
+| M35 | runtime.py | `logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)` → `pass` | T19 | Re-anchored; new text. T19 matches only the substring "shadow admission service was not built". |
+| M38 | checks.py | `if ref is not None:` → `if ref is not None and not presented_id.startswith(SYSTEM_PRINCIPAL_PREFIX):` | T8 | New row. Unique: `checks.py:64`; the nearby lines are `:85 if principal.ref is None:` and `:88 if record is None:`. |
