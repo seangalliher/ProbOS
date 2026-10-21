@@ -1688,3 +1688,13 @@ startup/communication.py:898-899  for agent in registry.all(): if _is_crew(agent
 startup/communication.py:922-923  except Exception as e: logger.debug("Deferred identity skipped ...")
 logs/review-m1a-r4.md:9-15        AFTER_LOOP_ARCHITECT null; AFTER_LOOP_YEOMAN ... "did": ""
 ```
+
+## Amendment A5 (2026-10-21, after review round 5)
+
+**Recorded by:** the orchestrator, under the Architect's stop rule of the second round-three brake (read-only consult; `#1601` comment 6305193186): a finding against the contract only gets an A5 "superseded" line and no tracker edit. The Architect did not draft this amendment.
+
+**Trigger.** Review round 5 (`gpt-6.1-sol`, `logs/review-m1a-r5.md`) found one P3, ordinary reach, introduced by A4, in this contract's text only (R5-1). Every tracker deletion, the two-site claim and properties 13(b) to 13(d) passed. The finding is not in `src/`, in an executable test line, in tracker text or in a load-bearing sentence, and its smallest fix is to withdraw the clause, so the stop rule sends no new consult and no round six.
+
+**R5-1 (P3), superseded.** A4's Diff Reviewer property 13(a) reads: "(a) `git diff --word-diff=porcelain --word-diff-regex=. 47f4f57e000596f24355c5eb3fe828ebe3d4d790 <A4 tree> -- DECISIONS.md PROGRESS.md | grep -c "^+[^+]"` prints 0." On this delta that command prints 28 although the new text is a character subsequence of the old: git's character-level alignment of a long single-line deletion is not minimal and reports spurious added fragments (the same with `--minimal`, `--patience` and `--histogram`). The command and its expected result are withdrawn. Property 13(a) is satisfied when, for each changed block, the new text is a character subsequence of the old text; the orchestrator's check found `DECISIONS.md` 2 changed blocks with 1083 characters deleted and `PROGRESS.md` 1 changed block with 136 characters deleted, and the check rejects an inserted word and the A3 docstring rewordings. Properties 13(b) to 13(d) stand.
+
+**Apply order.** None. No SEARCH/REPLACE block: no tracker, test or source file changes. Mutation table and test count: no change.
