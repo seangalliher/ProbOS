@@ -12,6 +12,7 @@ The SDK import is guarded with try/except — the package is optional.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -22,6 +23,18 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from probos.cognitive.builder_paths import builder_write_refusal
+from probos.cognitive.standing_orders import (
+    is_standing_order_name,
+    standing_order_names,
+    standing_orders_dir,
+)
+from probos.security.file_access import (
+    FileAccessDenied,
+    permitted_read_roots,
+    protected_read_roots,
+    read_verified_file,
+    workspace_exempt_roots,
+)
 from probos.repository_instructions import (
     append_repository_instructions,
     discover_build_repository_instructions,
@@ -53,6 +66,61 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+# BF-910: fixed replies for the visiting session's standing_orders_lookup; none
+# echoes the caller's value or a path, and none contains a dot.
+_STANDING_ORDERS_NAME_REFUSAL = (
+    "department must name one standing-orders file: 1 to 64 ASCII letters, "
+    "digits, '_' or '-', for example 'engineering'"
+)
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+
+
+def _standing_orders_reply(
+    invocation: Any, orders_dir: Path | None, runtime: ProbOSRuntime | None
+) -> Any:
+    """BF-910: the reply to the visiting session's ``standing_orders_lookup``.
+
+    ``CopilotBuilderAdapter._handle_standing_orders`` is the registered handler and
+    passes its ``orders_dir`` and ``runtime``. The body sits outside the class so the
+    class stays under the repository's 500-line SRP review trigger (BF-910 D16).
+    """
+    args = getattr(invocation, "arguments", None) or {}
+    department = args.get("department", "") if isinstance(args, dict) else ""
+    if not department:
+        return ToolResult(text_result_for_llm="No department specified")
+    # BF-910: a name from the loader's flat directory, never a path.
+    if not is_standing_order_name(department):
+        return ToolResult(text_result_for_llm=_STANDING_ORDERS_NAME_REFUSAL)
+    try:
+        base = (orders_dir or standing_orders_dir()).resolve()
+        names = standing_order_names(base)
+        if department not in names:
+            return ToolResult(
+                text_result_for_llm="No standing orders found for that department; available: "
+                + (", ".join(names) or "none")
+            )
+        # BF-910: the BF-758 floor, the operator's read policy and a pinned,
+        # link-refusing read. runtime None (dispatcher route) is the
+        # platform-data-dir floor with no policy.
+        snapshot = read_verified_file(
+            base / f"{department}.md",
+            protected_roots=protected_read_roots(runtime),
+            exempt_roots=workspace_exempt_roots(runtime),
+            permitted_roots=permitted_read_roots(runtime) or None,
+        )
+        # Path.read_text(encoding="utf-8", errors="replace")'s output, as before.
+        with io.TextIOWrapper(
+            io.BytesIO(snapshot.data), encoding="utf-8", errors="replace", newline=None,
+        ) as text:
+            return ToolResult(text_result_for_llm=text.read())
+    except FileAccessDenied:
+        return ToolResult(text_result_for_llm=_STANDING_ORDERS_DENIED)
+    except Exception as exc:
+        logger.warning("BF-910: visiting standing_orders_lookup read failed: %s", type(exc).__name__)
+        return ToolResult(text_result_for_llm=f"standing_orders_lookup failed: {type(exc).__name__}")
 
 # ── Visiting Builder identity ──────────────────────────────────────────────
 
@@ -339,8 +407,11 @@ class CopilotBuilderAdapter:
         cwd: str = "",
         github_token: str = "",
         instruction_work_dir: str | None = None,
+        orders_dir: Path | None = None,
     ) -> None:
         self._codebase_index = codebase_index
+        # BF-910: None reads the loader's standing-orders directory at each call; tests inject one.
+        self._orders_dir = orders_dir
         self._runtime = runtime
         self._model = model
         # BF-896: repository instructions are discovered from instruction_work_dir
@@ -578,15 +649,8 @@ class CopilotBuilderAdapter:
         return ToolResult(text_result_for_llm=self_model.to_context())
 
     async def _handle_standing_orders(self, invocation: Any) -> Any:
-        args = getattr(invocation, "arguments", None) or {}
-        department = args.get("department", "") if isinstance(args, dict) else ""
-        if not department:
-            return ToolResult(text_result_for_llm="No department specified")
-        orders_path = _PROJECT_ROOT / "config" / "standing_orders" / f"{department}.md"
-        if orders_path.is_file():
-            content = orders_path.read_text(encoding="utf-8", errors="replace")
-            return ToolResult(text_result_for_llm=content)
-        return ToolResult(text_result_for_llm=f"No standing orders found for department: {department}")
+        # BF-910 (D16): the registered handler; the reply is _standing_orders_reply's.
+        return _standing_orders_reply(invocation, self._orders_dir, self._runtime)
 
     # ── Prompt construction ────────────────────────────────────────────
 

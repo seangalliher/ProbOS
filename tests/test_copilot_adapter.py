@@ -289,10 +289,10 @@ class TestMCPToolHandlers:
             orders_dir.mkdir(parents=True)
             (orders_dir / "engineering.md").write_text("# Engineering Protocol\nBuild well.")
 
-            adapter = CopilotBuilderAdapter()
-            # Patch the project root to use our temp dir
-            with patch("probos.cognitive.copilot_adapter._PROJECT_ROOT", Path(tmpdir)):
-                result = await adapter._handle_standing_orders(_make_invocation(department="engineering"))
+            # BF-910: the handler reads standing_orders_dir() (the loader's directory),
+            # not _PROJECT_ROOT, so the directory is injected rather than patched.
+            adapter = CopilotBuilderAdapter(orders_dir=orders_dir)
+            result = await adapter._handle_standing_orders(_make_invocation(department="engineering"))
             assert "Build well" in result.text_result_for_llm
 
 

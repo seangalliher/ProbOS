@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.cognitive.standing_orders import (
+    is_standing_order_name,
+    standing_order_names,
+    standing_orders_dir,
+)
 from probos.execution.command_env import build_command_env
 from probos.execution.command_escalation import CommandEscalations
 from probos.execution.command_gate import (
@@ -803,9 +808,39 @@ class CodebaseReadSourceTool:
 # boot.
 _STANDING_ORDERS_SCOPES: tuple[str, ...] = ("ship", "department", "agent")
 
+# BF-910: fixed texts, so no refusal or failure echoes the caller's value or a path.
+_STANDING_ORDERS_NAME_REFUSAL = (
+    "department must name one standing-orders file: 1 to 64 ASCII letters, "
+    "digits, '_' or '-', for example 'engineering'"
+)
+_STANDING_ORDERS_DENIED = (
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+)
+
+
+def _exception_kind(exc: BaseException) -> str:
+    """BF-910 (D24): the class name of *exc*, read without running code of its class or metaclass.
+
+    The tool's ``try`` holds the caller's ``department`` lookup, so its handler can
+    receive an exception of a caller's class. For a class whose metaclass is
+    exactly ``type``, ``type``'s own ``__name__`` descriptor answers, and only an
+    exact ``str`` is used; any other class or name is reported as ``Exception``.
+    """
+    cls = type(exc)
+    if type(cls) is not type:
+        return "Exception"
+    name = cls.__name__
+    return name if type(name) is str else "Exception"
+
 
 class StandingOrdersLookupTool:
-    """AD-544: Read a standing-orders manual file."""
+    """AD-544: Read a standing-orders manual file.
+
+    BF-910: ``department`` selects one name from the flat directory the loader
+    composes agents' standing orders from (``standing_orders_dir()``); it is
+    never joined into a path unchecked, and the read is a verified read under
+    the BF-758 floor and the operator's read policy.
+    """
 
     tool_id: str = "standing_orders_lookup"
     name: str = "Standing Orders Lookup"
@@ -828,8 +863,10 @@ class StandingOrdersLookupTool:
         "properties": {"content": {"type": "string"}},
     }
 
-    def __init__(self, runtime: "ProbOSRuntime") -> None:
+    def __init__(self, runtime: "ProbOSRuntime", orders_dir: Path | None = None) -> None:
         self._runtime = runtime
+        # BF-910: None reads the loader's directory at each call; tests inject one.
+        self._orders_dir = orders_dir
 
     async def invoke(
         self, params: dict[str, Any], context: dict[str, Any] | None = None
@@ -838,25 +875,49 @@ class StandingOrdersLookupTool:
         if refusal is not None:
             return refusal
         scope = params.get("scope")
-        if scope not in _STANDING_ORDERS_SCOPES:
+        # BF-910 (D21): the type first, so a caller's __eq__ or __ne__ does not run.
+        if type(scope) is not str or scope not in _STANDING_ORDERS_SCOPES:
             return ToolResult(
                 error="scope must be one of " + "|".join(_STANDING_ORDERS_SCOPES)
             )
-        base = _PROJECT_ROOT / "config" / "standing_orders"
+        # BF-910 (D23): the department lookup is inside the try, so a mapping whose
+        # get raises is answered with the handler's fixed text, not raised out of invoke.
         try:
-            if scope == "ship":
-                target = base / "ship.md"
-            elif scope == "department":
-                dept = params.get("department") or "engineering"
-                target = base / "departments" / f"{dept}.md"
-            else:
-                dept = params.get("department") or "engineering"
-                target = base / "departments" / f"{dept}.md"
-            if not target.exists():
-                return ToolResult(error=f"Standing orders not found: {target.name}")
-            return ToolResult(output=target.read_text(encoding="utf-8"))
+            name: object = "ship"
+            if scope != "ship":
+                # The department and agent tiers are both <name>.md in the one flat
+                # directory (compose_instructions), so both scopes select by name.
+                name = params.get("department")
+                # BF-910 (D20): the type first, so a subclass or a non-string is not compared.
+                if name is None or (type(name) is str and name == ""):
+                    name = "engineering"
+            # BF-910: a name, never a path; the refusal never echoes the value.
+            if not is_standing_order_name(name):
+                return ToolResult(error=_STANDING_ORDERS_NAME_REFUSAL)
+            base = (self._orders_dir or standing_orders_dir()).resolve()
+            names = standing_order_names(base)
+            if name not in names:
+                return ToolResult(
+                    error="Standing orders not found for that name; available: "
+                    + (", ".join(names) or "none")
+                )
+            # BF-910: the floor, the operator's read policy and a pinned,
+            # link-refusing read, exactly as the verified source read does.
+            snapshot = read_verified_file(
+                base / f"{name}.md",
+                protected_roots=protected_read_roots(self._runtime),
+                exempt_roots=workspace_exempt_roots(self._runtime),
+                permitted_roots=permitted_read_roots(self._runtime) or None,
+            )
+            # Path.read_text's UTF-8 and universal-newline output, as before.
+            with io.TextIOWrapper(io.BytesIO(snapshot.data), encoding="utf-8", newline=None) as text:
+                return ToolResult(output=text.read())
+        except FileAccessDenied:
+            return ToolResult(error=_STANDING_ORDERS_DENIED)
         except Exception as exc:
-            return ToolResult(error=f"standing_orders_lookup failed: {exc}")
+            kind = _exception_kind(exc)
+            logger.warning("BF-910: standing_orders_lookup failed: %s", kind)
+            return ToolResult(error=f"standing_orders_lookup failed: {kind}")
 
 
 class SystemSelfModelTool:
