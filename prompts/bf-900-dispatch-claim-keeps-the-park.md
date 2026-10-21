@@ -4,7 +4,7 @@
 
 **Status:** build-ready. **Closes #1573.** **Tier HIGH** (a governance path: a parked work item waits on a Captain decision). **Base:** `origin/main` `8c8bc4415e6279a22ffe2151cbd6cbc81b993691`. **Batch:** item 1 of 3 (BF-900, then BF-901 S1 `prompts/bf-901-s1-shared-estimator-and-usage-presence.md`, then BF-901 S2 `prompts/bf-901-s2-journal-token-provenance.md`), one broad gate for the batch. **Dependencies:** none. **Source:** the Architect's consult of 2026-10-21 (13:58Z), re-verified on this tree (section 11); section 2 lists where this contract departs from it.
 
-**Tests:** the one statement of the count is section 6: 7 new test cases in one new file, 1 assertion added to an existing test, 4 test fakes changed.
+**Tests:** the one statement of the count is section 6: 8 new test cases in one new file, 1 assertion added to an existing test, 4 test fakes changed.
 
 **Line endings:** every edited file's working copy is CRLF (`git ls-files --eol`: `i/lf w/crlf`). The SEARCH blocks are written with LF; match and write with the file's own line endings.
 
@@ -34,12 +34,12 @@ The claim becomes a compare-and-set on the status the BF-607 read returned:
 1. `current = None` before the BF-607 `try`, so a read that raises or finds no item leaves it `None`.
 2. `read_status = current.status if current is not None else None`.
 3. `read_status is None`: no transition; a warning says the item could not be read and was not moved. There is no fallback to the unconditional move (on a store fault that fallback would bring the defect back).
-4. `read_status == "blocked"`: no transition; an INFO line says the item stays parked for the request it waits on.
+4. `read_status == "blocked"`: no transition; an INFO line says the item was blocked when read and the claim does not move it. It does not say why: a `blocked` item need not wait on a request (section 9, item 1).
 5. Otherwise: `transition_work_item(..., expected_status=read_status)`. A `None` result (the store refused: the status changed since the read, the move is illegal from that status, or the item is gone; `workforce.py:10750-10755`, `:10784-10788`) logs a warning that names the status that was read. The warning is in the `try`'s `else:` arm, so the AD-839 `except` still covers exactly the one call it covered before.
 
 Where this contract departs from the consult:
 
-- **The reconciler route.** The consult's blind spot said the reconciler's dead-assignee branch (`work_reconciler.py:148`) leads to `quartermaster.py:405-415`, which re-dispatches. On this tree those files are `src/probos/cognitive/work_reconciler.py` and `src/probos/agents/quartermaster.py`, and the quartermaster scans only `open` and `in_progress` items (`agents/quartermaster.py:164-165`, `:441-442`), so it does not hand the router an item that is `blocked` when it scans. The blind spot stands in a narrower form (section 9): a dispatch whose dict was read before a park, or a park made by another agent's run, reaches this claim with the item already `blocked`.
+- **The reconciler route.** The consult's blind spot said the reconciler's dead-assignee branch (`work_reconciler.py:148`) leads to `quartermaster.py:405-415`, which re-dispatches. On this tree those files are `src/probos/cognitive/work_reconciler.py` and `src/probos/agents/quartermaster.py`, and the quartermaster scans only `open` and `in_progress` items (`agents/quartermaster.py:164-165`, `:441-442`), so it does not hand the router an item that is `blocked` when it scans. The blind spot stands in another form (section 9, item 1): five routes can hand this claim an item that is already `blocked`, one of them with no request behind it (an item created `blocked`).
 - **Three `_FakeGapDriver` copies exist**, not two: `test_ad856_agentic_dispatch.py:108`, `test_ad1328_s2c_park_and_scope.py:156` and `test_ad859a_agentic_executor.py:100`. The third serves executor tests that never reach `_handle_work_item_dispatch` (section 12, Absence Verified), so only the first two get the inline note.
 - **The fakes to update** are four, not three: besides `test_ad839_work_item_dispatch.py:64-93` and `test_ad856_agentic_dispatch.py:350-355`, the `_FakeGapDriver` notes above. `test_bf773_failure_reaches_the_captain.py:65-76` needs no change (section 5).
 
@@ -91,6 +91,7 @@ The value that changes: after a run, the claim no longer writes `in_progress` ov
 | T4 | `...::test_a_move_made_after_the_read_is_not_undone` | The compare-and-set: the real store, and another writer parks the item between the claim's read and its move; the item stays `blocked`, and the warning names the item and the status read (`'open'`) |
 | T5a, T5b | `...::test_an_item_that_cannot_be_read_is_not_moved[raises]`, `[missing]` | A read that raises, and a read that finds no item: no transition is attempted, and a BF-900 warning names the item |
 | T6 | `...::test_an_item_parked_before_the_run_stays_parked` | Section 9, item 1, pinned: an item parked before this agent's run stays `blocked` on its earlier request after a clean run; `assigned_to` is still claimed |
+| T7 | `...::test_an_item_created_blocked_with_no_request_is_not_moved` | Section 9, item 1, with no request (A1): an item created `blocked` (`blocked_reason`, `dispatchable`) stays `blocked` with no move after a clean run, nothing is filed, `assigned_to` is claimed, and the one BF-900 INFO line is exactly `BF-900: work_item <id> was blocked when read; the claim does not move it` |
 | E1 | `tests/test_ad839_work_item_dispatch.py::test_handler_transitions_and_threads_messages` (one assertion added) | The claim passes the status it read: `expected_statuses == ["open"]` |
 
 Changed fakes (no new test): `tests/test_ad839_work_item_dispatch.py` `_FakeWorkItem` (gains `status`) and `_FakeWorkItemStore.transition_work_item` (takes and records `expected_status`); `tests/test_ad856_agentic_dispatch.py` `_WorkItemStore` in `test_handle_work_item_dispatch_falls_back_when_gated_off` (gains `get_work_item`, takes `expected_status`); the `_FakeGapDriver` notes in `tests/test_ad856_agentic_dispatch.py` and `tests/test_ad1328_s2c_park_and_scope.py`.
@@ -143,7 +144,9 @@ REPLACE:
             # BF-900 (#1573): the claim moves the item only from the status read above; the store
             # checks it inside its write transaction (``expected_status``). So a park made earlier in
             # this run (``on_capability_gap`` in ``_run_agentic_dispatch``), or a move another writer
-            # made after the read, is not undone. A blocked item is left for the request it waits on.
+            # made after the read, is not undone. A blocked item is not moved: the claim reads its
+            # status only, so it does not know what holds the item (a request, or a status set at
+            # creation).
             read_status = current.status if current is not None else None
             if read_status is None:
                 logger.warning(
@@ -153,8 +156,7 @@ REPLACE:
                 )
             elif read_status == "blocked":
                 logger.info(
-                    "BF-900: work_item %s is blocked; the claim leaves it parked for the "
-                    "request it waits on",
+                    "BF-900: work_item %s was blocked when read; the claim does not move it",
                     work_item_id,
                 )
             else:
@@ -336,7 +338,7 @@ event bus (``_EventBus``), the thread store (``_ThreadStore``); in T4 one concur
 an unreadable store. The store records no ``source`` for a move (``transition_work_item`` does not read it), so "the
 driver resumed it" is shown by the router's hand-back, which only the driver makes here.
 
-Mutants (the contract's section 10): B1 is killed by T1 (and T3), B2 by T4, B3 by T5, B4 by T4.
+Mutants (the contract's section 10): B1 is killed by T1 (and T3), B2 by T4, B3 by T5, B4 by T4, B5 by T7.
 
 Helpers are copies, because tests do not import each other: tests/test_ad1328_s2c_resume_seam.py (``_RecordingRouter``,
 ``_EventBus``, ``_EventLog``, ``_Runtime``, ``_ThreadStore``, ``_FakeLLMResponse``, ``_ScriptedLLM``, ``_text_response``,
@@ -912,6 +914,40 @@ async def test_an_item_parked_before_the_run_stays_parked(wired: _Wired) -> None
     assert current.assigned_to == AGENT
     assert wired.transitions.of(item.id) == [("open", "blocked")]
     assert wired.router.dispatched == []
+
+
+async def test_an_item_created_blocked_with_no_request_is_not_moved(
+    wired: _Wired, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T7, the contract's section 9 item 1 with no request behind it (Amendment A1). The work-item API keeps a status
+    it is given (``routers/workforce.py:223``), so a dispatchable task can be created already ``blocked`` on a
+    dependency, and the router dispatches on dispatchability, not status (``mesh/work_item_router.py:59-66``, ``:187``).
+    The claim reads ``blocked`` and does not move it. Its INFO line states only what it read, because nothing links
+    the item to a request."""
+    caplog.set_level(logging.INFO, logger=CA_LOGGER)
+    item = await wired.work_items.create_work_item(
+        title="waits on a dependency", description="waits on a dependency", work_type="task",
+        created_by="captain", status="blocked",
+        metadata={"blocked_reason": "awaiting dependency", "dispatchable": True},
+    )
+    assert (await _current(wired, item)).status == "blocked"  # premise: created blocked, not moved there
+
+    result = await _dispatch(wired, item, _text_response("Done."))
+
+    assert result.success is True
+    current = await _current(wired, item)
+    assert current.status == "blocked"
+    assert "capability_request_id" not in current.metadata  # premise: no request linkage
+    assert await wired.requests.list_pending() == []
+    assert current.assigned_to == AGENT
+    assert wired.transitions.of(item.id) == []
+    assert wired.router.dispatched == []
+    infos = [
+        rec.getMessage() for rec in caplog.records
+        if rec.name == CA_LOGGER and rec.levelno == logging.INFO and rec.getMessage().startswith("BF-900")
+    ]
+    assert infos == [f"BF-900: work_item {item.id} was blocked when read; the claim does not move it"]
+    assert _bf900_warnings(caplog) == []
 ```
 
 ## 8. Tracking (tracker pairs)
@@ -927,7 +963,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-900 (2026-10-21), closes #1573 -- the dispatch claim no longer undoes a park made in the same run.** `CognitiveAgent._handle_work_item_dispatch`'s AD-839 claim moved a dispatched work item to `in_progress` with no expected status, after the run had already parked it `blocked` on a capability request (a denied tool, AD-855), so the grant found the item not blocked (BF-878's guard) and never resumed it. The claim now moves the item only from the status the BF-607 read returned (`expected_status`, checked inside the store's write transaction); it leaves a `blocked` item parked; a read that fails or finds no item moves nothing (warning); a refused move logs a warning naming the status read. The driver, the BF-878 guard, the transition table, the router and the reconciler are unchanged. Two limits are recorded, not repaired: an item parked before this agent's claim (another run's park) stays `blocked` while this agent works it, and a gap park followed by a command park in one run ends parked on the command request, the gap request pending with no item parked on it (the base's end state too; pinned). New: `tests/test_bf900_dispatch_claim_keeps_the_park.py` (real stores and the real driver). The decisions are in DECISIONS.md (BF-900); the contract is `prompts/bf-900-dispatch-claim-keeps-the-park.md`.
+**BF-900 (2026-10-21), closes #1573 -- the dispatch claim no longer undoes a park made in the same run.** `CognitiveAgent._handle_work_item_dispatch`'s AD-839 claim moved a dispatched work item to `in_progress` with no expected status, after the run had already parked it `blocked` on a capability request (a denied tool, AD-855), so the grant found the item not blocked (BF-878's guard) and never resumed it. The claim now moves the item only from the status the BF-607 read returned (`expected_status`, checked inside the store's write transaction); it leaves a `blocked` item parked; a read that fails or finds no item moves nothing (warning); a refused move logs a warning naming the status read. The driver, the BF-878 guard, the transition table, the router and the reconciler are unchanged. Two limits are recorded, not repaired: an item already `blocked` when this agent's claim reads it (created `blocked`, parked by another run, or parked after its dispatch was read) stays `blocked` while this agent works it, and the claim's log does not say why it is blocked, and a gap park followed by a command park in one run ends parked on the command request, the gap request pending with no item parked on it (the base's end state too; pinned). New: `tests/test_bf900_dispatch_claim_keeps_the_park.py` (real stores and the real driver). The decisions are in DECISIONS.md (BF-900); the contract is `prompts/bf-900-dispatch-claim-keeps-the-park.md`.
 
 ```
 
@@ -949,7 +985,7 @@ REPLACE:
 - *Cause.* `_run_agentic_dispatch` parks the item `blocked` on a capability request for each denied tool (`on_capability_gap` -> `block_on_request`). The claim that follows moved it to `in_progress` with no expected status, and `blocked -> in_progress` is legal for a `task`, so the request's FULFILLED event found the item not blocked (BF-878's guard) and nothing resumed it. The claim's return value was ignored.
 - *D1-D3.* The claim is a compare-and-set on the status the BF-607 read returned (`transition_work_item(..., expected_status=...)`, checked inside the write transaction). A `blocked` item is not moved. A read that raises or finds no item moves nothing, with a warning: no fallback to the unconditional move, which on a store fault would bring the defect back.
 - *D4-D5.* A refused move (the status changed since the read, the move is illegal from it, or the item is gone) logs a warning naming the status read, log-and-degrade like the claim's existing warning. The check is in the `try`'s `else:` arm, so the AD-839 handler covers the one store call it covered before.
-- *Limits recorded, not repaired (Do Not Build).* (1) An item already `blocked` when this agent's claim reads it (another run's park, or a dispatch whose dict predates a park) stays `blocked` while this agent works it; the quartermaster's reconciler scans only `open` and `in_progress` items, so it does not re-dispatch a parked one. (2) A gap park and a command park in one run: the command park writes last (`blocked -> blocked` with its metadata), so the item waits on the command request and the gap request stays pending with no item parked on it, the same end state as before this fix; test T3 pins it. Repairing it means making `block_on_request` a compare-and-set, which changes `CapabilityGapDriver`.
+- *Limits recorded, not repaired (Do Not Build).* (1) An item already `blocked` when this agent's claim reads it stays `blocked` while this agent works it. The claim reads the status, not what holds the item, and its INFO line says only that. Routes: an item created `blocked` (the work-item API keeps a supplied status; the router checks dispatchability, not status), or parked after its creation event; a quartermaster or gap-driver re-dispatch whose dict predates a park; a broadcast where another agent's run parked it first. The quartermaster scans only `open` and `in_progress` items, so it does not itself pick a parked one. (2) A gap park and a command park in one run: the command park writes last (`blocked -> blocked` with its metadata), so the item waits on the command request and the gap request stays pending with no item parked on it, the same end state as before this fix; test T3 pins it. Repairing it means making `block_on_request` a compare-and-set, which changes `CapabilityGapDriver`.
 - *Rejected.* A second read just before the move (the race only moves); refusing `blocked -> in_progress` in the store for callers other than the driver (changes the transition table); filtering `blocked` items in the router or reconciler (out of scope).
 - *Reversal.* Revert the BF-900 commit. Nothing persisted changes.
 
@@ -966,7 +1002,7 @@ REPLACE:
 
 ## 9. What this does NOT change
 
-1. **An item already `blocked` when the claim reads it stays `blocked` while the agent works it.** It arrives that way when another agent's run parked it (the router can hand one item to several agents) or when the dispatched dict was read before a park. The quartermaster does not re-dispatch a parked item: it scans `open` and `in_progress` only (`agents/quartermaster.py:164-165`, `:441-442`). This matches the open request the item waits on; it is not a regression. T6 pins it.
+1. **An item already `blocked` when the claim reads it stays `blocked` while the agent works it.** The claim reads the status, not what holds the item. Routes that hand it a `blocked` item: the creation listener (`mesh/work_item_router.py:187`), for an item created `blocked` (the work-item API passes its body to the store, `routers/workforce.py:223`, which keeps a supplied status, `workforce.py:7662-7663`; the router checks dispatchability, not status, `mesh/work_item_router.py:59-66`) or parked after its creation event; the quartermaster's re-dispatches (`agents/quartermaster.py:316`, `:415`) and the gap driver's resumed re-dispatch (`capability_gap_driver.py:352`), when a park lands after the dict was read; and the dispatcher's broadcast (`activation/dispatcher.py:282-287`), when another agent's run parks it first. The quartermaster does not itself pick a parked item: it scans `open` and `in_progress` only (`agents/quartermaster.py:164-165`, `:441-442`). Not moving the item leaves whatever holds it in control; the base moved it to `in_progress`. T6 pins it with a request, T7 without one.
 2. **A gap park and a command park in the same run end on the command request.** The command park (`park_on_command_escalation`, after the claim, `cognitive_agent.py:2306`) writes `blocked -> blocked` with its own metadata (`workforce.py:10781-10800`), so the last writer wins; the gap request stays pending with no item parked on it. Before this fix the end state was the same (the claim's `in_progress` came between the two parks). Changing it means a compare-and-set in `block_on_request`, which Do Not Build forbids. T3 pins it.
 3. `CapabilityGapDriver` (including `block_on_request`, `_resume`, `_cancel` and the BF-878 guard), the AD-855 state machine, the work-item transition table, `WorkItemRouter`, the reconciler, the BF-607 assignee claim (a parked item still gets `assigned_to`, T1), the AD-1328 S2c park, configuration (no field; `config/system.yaml` untouched), the UI, and existing items (none are stranded in the vessel's data, per the issue).
 4. The thread messages and the returned `IntentResult` (`cognitive_agent.py:2252-2266`, `:2311-2317`).
@@ -981,6 +1017,7 @@ Run against `tests/test_bf900_dispatch_claim_keeps_the_park.py` on the contract-
 | B2 | `expected_status=read_status,` | `expected_status=None,` | T4: `assert current.status == "blocked"` (the unconditional move overwrites the concurrent park) |
 | B3 | `if read_status is None:` | `if False:` | T5 (both ids): `assert store.transitions == []` (with no status read the mutant reaches the move with `expected_status=None`, the unconditional move D3 forbids) |
 | B4 | `if claimed is None:` | `if False:` | T4: `assert len(warnings) == 1` (no warning for the refused move) |
+| B5 | `"BF-900: work_item %s was blocked when read; the claim does not move it",` | `"BF-900: work_item %s is blocked; the claim leaves it parked for the request it waits on",` | T7: `assert infos == [...]` (the message names a request the item does not have) |
 
 Campaign of record: name the base tree and the sha256 of `src/probos/cognitive/cognitive_agent.py` and the new test file; a later run whose hashes match does not repeat it.
 
@@ -1083,10 +1120,11 @@ HOLDS: yes
 6. Each changed test fake still answers every call the handler makes on it, and each changed fake's inline comment states why it changed.
 7. T1 and T3 run the real `CapabilityGapDriver`, `WorkItemStore` and `CapabilityRequestStore`; no fixture replaces `_handle_work_item_dispatch`, `_run_agentic_dispatch` or the driver.
 8. The DECISIONS entry and the PROGRESS line describe the two recorded limits as unchanged behaviour, not as fixed.
+9. The `blocked` branch's comment and INFO line state what the claim read and did and name no request; T7 creates the item `blocked` with no request and pins the INFO text exactly.
 
 ## 15. Acceptance criteria
 
-1. The claim never undoes a park made earlier in the same run: a `blocked` item is not moved; any other read status is passed as `expected_status` (T1, E1, B1, B2).
+1. The claim never undoes a park made earlier in the same run: a `blocked` item is not moved; any other read status is passed as `expected_status` (T1, E1, B1, B2); the INFO line for a `blocked` item names no request (T7, B5).
 2. A compare-and-set miss is log-and-degrade with a warning naming the status read (T4, B4); a failed or empty read moves nothing (T5, B3).
 3. The seam test runs the issue's reproduction with real stores and no fake gap driver: parked after dispatch, one `blocked -> in_progress` and one re-dispatch after `mark_fulfilled`, and the clean-run control ends `in_progress` (T1, T2).
 4. A command-escalation park is not suppressed by the `blocked` skip (T3; P-S1 in `test_ad1328_s2c_resume_seam.py` unchanged and green).
@@ -1094,3 +1132,20 @@ HOLDS: yes
 6. Every test fake that reaches the claim takes `expected_status`, and each change says why inline (sections 7.2 to 7.4).
 7. Every mutation row in section 10 is killed by the named assertion.
 8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## Amendment A1 (2026-10-21): review round 1, finding F1 (P3, ordinary reach, a regression in the new text)
+
+**The finding.** The comment and the INFO line of the `blocked` branch said the claim leaves the item "parked for the request it waits on". `blocked` does not imply a request: the work-item API keeps a status it is given, so a dispatchable task can be created already `blocked` on a dependency, with no capability request, and still reach the claim. The state behaviour (not moving a `blocked` item) was right; the explanation was false for that route.
+
+**The evidence** (the Architect's check on the candidate tree `bd489d83`, and the reviewer's probe through the real API function, SQLite stores, router, dispatcher and `handle_intent`):
+
+| Step | Evidence |
+|---|---|
+| The API passes the request body straight to the store | `routers/workforce.py:220-223` |
+| The store keeps a status the caller supplies | `workforce.py:7662-7663` |
+| Nothing rejects `status` or `blocked_reason` | `workforce.py:949`, `:984-993`, `:1682-1694` |
+| The store announces the new item and the router listens | `workforce.py:7734-7737`, `startup/finalize.py:2799-2802` |
+| The router checks dispatchability, not status | `mesh/work_item_router.py:59-66`, `:86`, `:187` |
+| The claim reads `blocked` and logs | `cognitive_agent.py:2302-2306` on candidate r1 |
+
+**What A1 changes.** The comment and the INFO line say what the claim read and did ("was blocked when read; the claim does not move it") and name no request. The new test T7 creates the item `blocked` with no request and pins the INFO text exactly. Mutation row B5 restores the old text. Section 9 item 1, the DECISIONS entry and the PROGRESS line list the routes by which a `blocked` item reaches the claim, one of them with no request behind it. **Scope:** wording, one test and one mutation row. No router, driver, transition-table or other source change, and no new file. Nothing S1 or S2 anchors on moves (S1 anchors on the head of BF-900's PROGRESS line and on its DECISIONS *Reversal* line; S2 on S1's entries).
