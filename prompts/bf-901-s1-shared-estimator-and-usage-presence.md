@@ -24,7 +24,7 @@ BF-680 (#1078) found that the Copilot proxy answers every completion with `usage
 - `LLMResponse.usage_reported: bool | None = None`. `_call_openai` sets it from `"total_tokens" in usage`; `_call_ollama_native` from both count keys being present. The counts stay exactly as the provider reported them.
 - `charge_completion(outbound, response) -> TokenCharge(prompt_tokens, completion_tokens, total_tokens, source)`: BF-680's rule plus presence (section 3, D5). `request_messages(request)` builds the estimator's view of one `LLMRequest`; `answered_model_name(response)` names the model that answered. S2 calls all three; nothing in S1 calls them outside the tests.
 
-**Not applicable: streamed replies.** ProbOS never streams: `Grep "\"stream\":\s*True|stream=True|stream_options" src/probos/` finds nothing; `"stream": False` appears at `llm_client.py:1352` and `:2453` only. #1575's streamed clause is recorded as not applicable (DECISIONS entry).
+**Not applicable: streamed replies.** ProbOS never streams: `Grep "\"stream\":\s*True|stream=True|stream_options" src/probos/` finds nothing; `"stream": False` appears at the sites listed under Absence Verified (section 11): the Ollama model warm-up in `__main__.py`, and the client's probe and native-chat payloads. #1575's streamed clause is recorded as not applicable (DECISIONS entry).
 
 ## 3. Decisions
 
@@ -32,9 +32,9 @@ BF-680 (#1078) found that the Copilot proxy answers every completion with `usage
 |---|---|---|
 | D1 | The three functions move to `probos/cognitive/token_accounting.py`; `agentic_loop` imports them by name at module scope | A second estimator for the one-shot path (the issue forbids it: one owner). Importing the module and calling `token_accounting._estimate_call_tokens(...)` from the loop: the five monkeypatch seams on the loop module would stop working |
 | D2 | **DD-3 override, stated:** AD-1142's DD-3 kept `_estimate_context_tokens` module-local "rather than imported from `session_compactor`" so the loop takes no dependency on the compactor. The move keeps that reason (the new module does not import the compactor) and drops "module-local", because one owner now serves the loop and the journal paths. The docstring says so; `_completion_is_non_empty`'s first sentence ("`LLMResponse` carries no 'usage was present' flag") is rewritten to say the loop reads none | Keeping the docstrings verbatim: two sentences would be false. Moving into `swe_harness/`: the owner serves non-harness callers (S2) |
-| D3 | `usage_reported: bool | None = None`, a trailing defaulted field. `True`: the reply carried its counts. `False`: the transport found no count keys. `None`: not stated (test doubles, the mock client, cache replays, errors) | A `bool` defaulting to `False`: every double that sets `tokens_used=42` (for example `test_ad632e_evaluate_reflect.py:285-288`) would be charged as an estimate in S2. Defaulting to `True`: claims presence for objects that never parsed a reply |
+| D3 | `usage_reported: bool | None = None`, a trailing defaulted field. `True`: the transport found the usage keys (OpenAI format: `total_tokens` in `usage`; Ollama native: both count keys). `False`: it did not, which can sit beside a nonzero partial count (`eval_count` alone). `None`: not stated (test doubles, the mock client, cache replays, errors) | A `bool` defaulting to `False`: every double that sets `tokens_used=42` (for example `test_ad632e_evaluate_reflect.py:285-288`) would be charged as an estimate in S2. Defaulting to `True`: claims presence for objects that never parsed a reply |
 | D4 | The counts on `LLMResponse` are unchanged; only the flag is added | Rewriting a missing count to an estimate in the transport: changes what the agentic loop reads (byte-identity) and what 53 caller files see |
-| D5 | `charge_completion` rule: an error response, or no output with usage absent: nothing to account for (`source ""`, zeros). Otherwise usage not absent (`True` or `None`) and not "zero beside output": **measured**, the counts as reported. Otherwise output: **estimated** (`_estimate_context_tokens(outbound)` for the prompt, `_estimate_call_tokens(outbound, response)` for the total, the difference for the completion). Remaining case (usage reported, total 0, no output): measured 0 | Labelling a no-output, no-usage call `measured 0`: it was not measured. Estimating when the provider reported counts: discards a measurement |
+| D5 | `charge_completion` rule: an error response, or no output with usage absent: nothing to account for (`source ""`, zeros). Otherwise usage not absent (`True` or `None`) and not "zero beside output": **measured**, the counts as reported when each is a non-negative exact `int` (any other count reads as 0, D6's exact-type reading). Otherwise output: **estimated** (`_estimate_context_tokens(outbound)` for the prompt, `_estimate_call_tokens(outbound, response)` for the total, the difference for the completion). Remaining case (usage reported, total 0, no output): measured 0 | Labelling a no-output, no-usage call `measured 0`: it was not measured. Estimating when the provider reported counts: discards a measurement |
 | D6 | `charge_completion` reads the response with `getattr` and exact-type checks (`type(x) is int`, `type(x) is bool`, `type(x) is str`) and treats a response without `content_blocks` as having no output | Attribute access only: the four sub-task handlers' doubles include `MagicMock` responses (`test_ad632d_compose_handler.py:58-62`) and S2's charge must not turn a double into a handler failure. The loop's own charge reads the same way (`agentic_loop.py:889`, `:914`) |
 | D7 | `answered_model_name`: AD-1327's `answered_model` when it is a non-blank string, else `model`, else `"unknown"` | `model` alone: that is the id sent, and #1575 asks for the model that answered (`types.py:355-361`) |
 | D8 | The loop does not read `usage_reported` | Letting it: the loop's arithmetic and labels would change for a provider that omits usage, and BF-680's tests and AD-1152's golden observation pin them |
@@ -274,7 +274,8 @@ def charge_completion(outbound: list[dict], response: Any) -> TokenCharge:
 
     * an error response (``error`` a non-empty string) carries no reply: nothing to account for;
     * ``usage_reported`` not ``False`` (``True``, or ``None`` = not stated) and not BF-680's "zero beside
-      output": **measured**, the counts as the provider reported them;
+      output": **measured**, the counts as the provider reported them, each read through ``_count`` (a
+      count that is not a non-negative exact ``int``, such as ``-7`` or ``5.5``, is charged as 0);
     * no output (and usage absent): nothing to account for (``source ""``, never read as measured);
     * otherwise **estimated**: the prompt is ``_estimate_context_tokens(outbound)``, the total
       ``_estimate_call_tokens(outbound, response)``, the completion their difference.
@@ -514,9 +515,11 @@ REPLACE:
 ```python
     answered_tier: str | None = None
     answered_model: str | None = None
-    # BF-901: whether the provider's reply carried its usage counts. True: they are the provider's. False:
-    # the reply had no count keys, so the zeros above are absent, not measured. None: not stated (test
-    # doubles, the mock client, cache replays, errors). The counts are never rewritten; only
+    # BF-901: whether the transport found the provider's usage keys; the counts above stay as parsed.
+    # True: OpenAI format, ``usage`` has a ``total_tokens`` key (the other two may be absent and read 0);
+    # Ollama native, both ``prompt_eval_count`` and ``eval_count`` are present. False: that test failed,
+    # which does not make the counts zero (``eval_count`` alone keeps its value beside False). None: not
+    # stated (test doubles, the mock client, cache replays, errors). The counts are never rewritten; only
     # ``probos.cognitive.token_accounting.charge_completion`` reads this (the agentic loop does not).
     usage_reported: bool | None = None
 
@@ -1085,9 +1088,9 @@ REPLACE:
 
 - *Scope.* `probos/cognitive/token_accounting.py` (new), `swe_harness/agentic_loop.py` (the move), `types.py` (`LLMResponse.usage_reported`), `cognitive/llm_client.py` (the two parsers) and tests. Contract: `prompts/bf-901-s1-shared-estimator-and-usage-presence.md` (the Architect's consult of 2026-10-21, 13:58Z). S2 records the charge in the journal; S3 shows it.
 - *D1-D2, the DD-3 override.* The three estimator functions move with their bodies unchanged to one owner the journal paths can share; a second estimator would drift from the loop's. AD-1142's DD-3 kept `_estimate_context_tokens` module-local so the loop takes no dependency on `session_compactor`; that reason is kept (the new module does not import the compactor) and "module-local" is dropped, because the loop and the one-shot paths now share it. The loop imports the names at module scope and calls them unqualified, so the monkeypatches on the loop module still replace what it calls.
-- *D3-D4.* `usage_reported: bool | None = None`: `True` the reply carried its counts, `False` the transport found none, `None` not stated (doubles, the mock client, cache replays, errors). The counts are never rewritten, and the agentic loop never reads the flag, so its totals and labels are as BF-680 left them.
+- *D3-D4.* `usage_reported: bool | None = None`: `True` when the transport found the usage keys (OpenAI format: `total_tokens` in `usage`; Ollama native: both `prompt_eval_count` and `eval_count`), `False` when it did not, `None` not stated (doubles, the mock client, cache replays, errors). The flag records keys, not values: `False` can sit beside a nonzero partial count (`eval_count` alone), and an OpenAI `True` carrying only `total_tokens` reads 0 for the other two. The counts are never rewritten, and the agentic loop never reads the flag, so its totals and labels are as BF-680 left them.
 - *D5-D7.* `charge_completion`: an error, or no output with usage absent, is nothing to account for (`source ""`, never read as measured); usage reported or not stated, and not a zero beside output, is measured; otherwise output is estimated (the prompt from the outbound history, the total from `_estimate_call_tokens`, the completion their difference). The response is read with exact types so a test double's mock never becomes a count. `answered_model_name` prefers AD-1327's `answered_model` over the id sent, then `unknown`.
-- *Not applicable.* Streamed replies: ProbOS never streams (no `"stream": True`, `stream=True` or `stream_options` in `src/probos`; `"stream": False` is set at the two non-streaming payloads).
+- *Not applicable.* Streamed replies: ProbOS never streams (no `"stream": True`, `stream=True` or `stream_options` in `src/probos`; `"stream": False` is set at all three payloads that carry the key: the Ollama model warm-up in `__main__.py`, and the client's Ollama probe and native-chat payloads).
 - *Considered, deferred.* `MockLLMClient`'s `len(content)//4` counts carry no presence, so S2 records them as measured under the not-stated rule; their rows carry `model="mock"`. A journal tap inside the client for the model calls that write no journal row (about 48 files): a design change (it would double-record the existing sites), noted on #1575.
 - *Reversal.* Revert the BF-901 S1 commit (and S2 first, which depends on it). Nothing persisted changes.
 
@@ -1161,11 +1164,10 @@ Campaign of record: name the base tree and the sha256 of `llm_client.py`, `types
 
 ```
 CLAIM: ProbOS never streams
-RUN:   Grep "\"stream\":\s*True|stream=True|stream_options" src/probos/
-FOUND: nothing
-RUN:   Grep "\"stream\": False" src/probos/
-FOUND: cognitive/llm_client.py:1352, :2453
-HOLDS: yes
+RUN:   Grep "\"stream\":\s*True|stream\s*=\s*True|stream_options|\"stream\":\s*False" src/probos/   (A1, 2026-10-21)
+FOUND: no key set to stream; "stream": False at __main__.py:297 (the Ollama model warm-up, :284-307),
+       cognitive/llm_client.py:1352 (the Ollama probe) and :2453 (native chat; :2456 after S1)
+HOLDS: yes (the first enumeration listed only the llm_client.py sites; __main__.py:297 dates from e419c1bb9)
 
 CLAIM: nothing in src/ calls the three estimator names outside the loop
 RUN:   Grep "_estimate_call_tokens|_completion_is_non_empty|_estimate_context_tokens" src/
@@ -1230,7 +1232,7 @@ HOLDS: yes
 3. `_call_openai` and `_call_ollama_native` compute the counts exactly as on the base; the only additions are `usage_reported` and its keyword.
 4. No code in `agentic_loop.py` reads `usage_reported`.
 5. `charge_completion` never returns `source="measured"` for an error response, nor for a reply with no output whose transport reported no usage.
-6. `charge_completion` returns the reported counts unchanged whenever it labels them measured.
+6. `charge_completion` returns the reported counts unchanged whenever it labels them measured and each is a non-negative exact `int`; any other count is charged as 0 (`_count`, D6). S1 has no production caller, so a malformed count is reachable only by injection (A1, F3).
 7. `answered_model_name` never returns an empty or blank string.
 8. The AD-1325 fixture still compares byte-exact, with only `usage_reported` added to the excluded keys.
 9. G1 imports the functions from the loop module (so it runs on the base), and its integers match the arithmetic in section 11.
@@ -1244,3 +1246,12 @@ HOLDS: yes
 5. The streamed clause is recorded as not applicable, with the search that shows it (section 2, DECISIONS).
 6. Every mutation row in section 10 is killed by the named assertion, and G1 passes on the base.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (2026-10-21, Diff Reviewer round 1)
+
+Round 1 (GPT-6.1 Sol) verified all nine section 14 properties and found three P3 wording defects; none changes behaviour.
+
+- **F1 (ordinary reach).** `usage_reported` was described as "no count keys" for `False` with zero counts. The predicates are narrower: OpenAI format tests only the `total_tokens` key; Ollama native needs both count keys. So `False` can sit beside a nonzero partial count (`eval_count` alone: `(0, 5, 5, False)`, pinned by P6), and an OpenAI `True` can carry only a total (`(0, 0, 11, True)`). Rewritten: the `types.py` comment (section 7.3), D3, and the DECISIONS D3-D4 bullet (section 8).
+- **F2 (ordinary reach).** The streaming census missed the Ollama model warm-up payload in `__main__.py`. Corrected in section 2, Absence Verified and the DECISIONS *Not applicable* bullet. The conclusion (ProbOS never streams) is unchanged.
+- **F3 (injected-only, not repaired).** The measured branch normalises counts through `_count`, so "the counts unchanged" holds only for non-negative exact `int`s. Qualified: the `charge_completion` docstring (section 7.1), D5 and section 14 property 6. No code or test is added; it is recorded in the follow-up register.
+- **Unchanged.** Every code line (the A1 edits to `types.py` and `token_accounting.py` are comment and docstring text only), both parsers, every count value, the tests and section 6's test count, the section 10 mutation rows, the PROGRESS entry, and the anchors S2 relies on (the PROGRESS head and the DECISIONS *Reversal* line).
