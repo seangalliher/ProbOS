@@ -10,13 +10,17 @@
 
 **Amendment A3:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: the M1 review's six findings (round 1). Approve checks a pending row's names before it consumes the row, a repeated request is checked before its idempotent return, the CLI prints a refused name as text, and a malformed agent DID costs no lookup; the offline issuer and the restore path are recorded for the AD that wires pairing (section 18).
 
+**Amendment A4:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: the M1 review (round 2) and the M2 and M3 reviews (round 1). An expired pending row answers "expired" whatever names it holds; the assignment routes check every member before their first write and the teaching route answers 403; the MCP walk counts a container before it reads one; P2 and P3 deliver over a real bus and Q1 asserts that no peer is registered; a `str`-subclass actor id is recorded (section 19).
+
+**Mechanical repair before A4 was committed (orchestrator, 2026-10-22; no decision changed):** section 7.12c's first pair (the import of `VisitorScopeRefused` in `routers/procedures.py`) no longer quotes the line below the imports that builds the module's router. `scripts/phantom-api-precheck.ps1` flags a call to FastAPI's router class in a python fence (it is not a ProbOS class), and the staged contract has to pass the precheck at preflight. The pair now anchors on the single `from probos.routers.deps import get_runtime` line, which occurs once in the file; the built file is the same.
+
 **Status:** M1 and M2 are build-ready on `origin/main` `0e122174`. M3 (recognition by either key form, the channel adapters and the inbound MCP server) is sections 7.13-7.19 and 8b, in the same PR; M3 closes #1581. **Tier HIGH.** No new AD or BF number. Both flags stay off: `config/system.yaml:297` and `:933` are not edited. AD-1342 stays paused.
 
 **Tests:** four new files.
-- M1 `tests/test_bf903_visitor_scope.py`: 9 functions, 14 cases (A3 adds V9 and a third V5 case; M3 widens V7 and V8 in place, section 7.14).
-- M2 `tests/test_bf903_ward_room_scope.py`: 8 functions, 35 cases.
+- M1 `tests/test_bf903_visitor_scope.py`: 10 functions, 16 cases (A3 adds V9 and a third V5 case; A4 adds V10, two cases; M3 widens V7 and V8 in place, section 7.14).
+- M2 `tests/test_bf903_ward_room_scope.py`: 11 functions, 38 cases (A4 adds W9-W11).
 - M2 `tests/test_bf903_seam_was_open.py`: 1 case. It is written against names that exist before BF-903, so on today's tree it fails for its premise, not on an import.
-- M3 `tests/test_bf903_channel_and_mcp.py`: 8 functions, 22 cases.
+- M3 `tests/test_bf903_channel_and_mcp.py`: 9 functions, 23 cases (A4 adds Q4).
 - Updated, each with an inline reason: `tests/test_ad701_visiting_officers.py` (6 call sites) and `tests/test_ad802_pairing.py` (1 test) in M1; `tests/test_bf804_pairing_notification.py` (2 tests) and `tests/test_ad807_discord_refresh.py` (1 test) in M3.
 
 **Line endings:** every edited working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own line endings. New files are written LF.
@@ -47,6 +51,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
   - The module gains `is_visiting_identity` (by certificate) and the one guard, `require_visitor_capability`.
 - **M2.**
   - The Ward Room facade calls the guard at the eleven methods that act for an actor id. The twelve test cases count the DM channel twice, once per participant side.
+  - (A4) `check_subscribe` makes `subscribe`'s check alone, so `AssignmentService` checks every member before its first side effect; the teaching route lets a refusal reach the 403.
   - A write needs `dm.send` in a DM channel and `ward_room.post` elsewhere.
   - Finalize attaches the registry, and the API answers a refusal with 403.
 - **M3** (Amendment A1, sections 7.13-7.19).
@@ -82,16 +87,18 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
 1. These now raise `UnknownCapabilityError` (a `ValueError`) for an undeclared name: `register`, `request_pairing`, `approve_pairing`, `probos pairing approve` (prints the reason and returns 1) and `VisitingOfficersConfig`.
    - A `system.yaml` that lists an undeclared name under `visiting_officers.default_capabilities` no longer loads.
    - AD-802's example `--cap tool.use` is refused.
-   - A pending row minted before BF-903 that holds an undeclared name is refused at approve before it is consumed, and kept: a declared `--cap` approves it (A3). Without `--cap` an expired one is refused by name too, and stays until `sweep_expired_pending` runs (no production caller, AV21).
+   - An unexpired pending row minted before BF-903 that holds an undeclared name is refused at approve before it is consumed, and kept: a declared `--cap` approves it (A3). An expired pending row is consumed and refused as expired (`UnknownPairingCode`), whatever names it holds (A4).
    - A repeated `request_pairing` that names an undeclared capability is refused even when the sender holds an unexpired pending row (A3).
    - `probos pairing approve` prints a refusal as text: Rich markup and emoji codes in a name are not interpreted (A3).
 2. `VisitingOfficerRegistry.get` returns None for an expired session.
 3. A visiting DID at a guarded entry is refused unless a live session holds the capability; with no registry attached, it is always refused. The API answers 403 `{"error": "visitor_scope_refused", "capability", "reason", "surface"}`.
+   - (A4) So do `POST /api/assignments` and `POST /api/assignments/{id}/members`, which check each member's `ward_room.read` before a channel, a subscription or a row exists and then write nothing, and `POST /api/procedures/teach`, which no longer turns the refusal into 200.
+   - (A4) An assignment is admitted at entry: a session that lapses between that check and its subscription is refused there, recorded, and logged by the service's existing handler (register R11).
 4. Crew, Captain and system ids behave as before. A slot id, "captain" and "system" cost no lookup or query; a crew certificate's DID or bare UUID costs one in-memory certificate lookup (A1).
 5. (M3) A visiting officer's bare certificate UUID is refused wherever its DID is.
 6. (M3) A paired channel sender's slash command or natural language is answered with a refusal naming the reason; its `@callsign` DM needs a live `dm.send` (always refused with no registry).
 7. (M3) A `resolve_did` failure refuses the message with `PairingLookupError`, a `PairingNotificationError`: Gmail leaves the mail unread and retries; Slack, Telegram, Matrix and Discord drop it with a log; Teams answers HTTP 200 with the channel-only text.
-8. (M3) An MCP `tools/call` whose arguments name a visiting officer, or hold more than 10,000 values, is refused with JSON-RPC -32602 and `MCP_BRIDGE_FAILED`, through either door.
+8. (M3) An MCP `tools/call` whose arguments name a visiting officer, or hold more than 10,000 values, is refused with JSON-RPC -32602 and `MCP_BRIDGE_FAILED`, through either door. (A4) The walk counts a container's children from its length before it reads them, so a refused call's wide container is never iterated; the threshold is unchanged.
 
 ## 4. Milestones
 
@@ -100,7 +107,7 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 | Milestone | Production files | Tests | Focused gate |
 |---|---|---|---|
 | **M1** | `visiting_officers.py` (7.1), `config_models/crew.py` (7.2), `security/pairing/service.py` (7.3), `__main__.py` (7.4) | new 7.7; update 7.5, 7.6 | `tests/test_bf903_visitor_scope.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2g_crew_models.py tests/test_ad1346_identity_service.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py` |
-| **M2** and trackers | `ward_room/service.py` (7.8), `startup/finalize.py` (7.9), `api.py` (7.10); trackers (section 8) | new 7.11, 7.12 | `tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_bf903_visitor_scope.py tests/test_ward_room.py tests/test_ward_room_dms.py tests/test_ward_room_agents.py tests/test_api_wardroom.py tests/test_ad615_wardroom_db_hardening.py tests/test_ad613_wardroom_performance.py tests/test_ad1229_message_receipts.py tests/test_ad1229_receipt_facts.py tests/test_ad630_leadership_feedback.py tests/test_bf771_intent_authorization.py tests/test_ad1184_ad_ledger.py` |
+| **M2** and trackers | `ward_room/service.py` (7.8), `startup/finalize.py` (7.9), `api.py` (7.10), `assignment.py` (7.12b, A4), `routers/procedures.py` (7.12c, A4); trackers (section 8) | new 7.11, 7.12 | `tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_bf903_visitor_scope.py tests/test_ward_room.py tests/test_ward_room_dms.py tests/test_ward_room_agents.py tests/test_api_wardroom.py tests/test_ad615_wardroom_db_hardening.py tests/test_ad613_wardroom_performance.py tests/test_ad1229_message_receipts.py tests/test_ad1229_receipt_facts.py tests/test_ad630_leadership_feedback.py tests/test_bf771_intent_authorization.py tests/test_assignment.py tests/test_api_assignment.py tests/test_database_hardening.py tests/test_ad486_birth_chamber.py tests/test_observational_routing.py tests/test_ad1184_ad_ledger.py` |
 | **M3** and trackers | `visiting_officers.py` (7.13, on M1's text), `channels/base.py` (7.15), `federation/mcp_server.py` (7.16); trackers (section 8b) | new 7.19; update 7.14, 7.17, 7.18 | `tests/test_bf903_channel_and_mcp.py tests/test_bf903_visitor_scope.py tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py tests/test_bf803_gmail_ack.py tests/test_ad764_gmail.py tests/test_ad803a_telegram.py tests/test_ad804_slack.py tests/test_ad805_teams.py tests/test_ad806_matrix.py tests/test_ad807_discord_refresh.py tests/test_ad472_channel_adapters.py tests/test_discord_adapter.py tests/test_callsign_routing.py tests/test_bf875_mcp_inbound_auth.py tests/test_ad480_federation_mcp_a2a.py tests/test_ad597_mcp_server_apps.py tests/test_bf884_sidecar_bind_failure.py tests/test_layer_boundaries.py tests/test_ad1184_ad_ledger.py` |
 
 **Hard stops**
@@ -127,6 +134,9 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 | `PairingLookupError` (7.15) | every `handle_message` caller: Gmail `gmail_adapter.py:156-178` (unacknowledged, retried); Slack `receive` `slack_adapter.py:203-205` (returns ""); Slack poll `:290-297`, Telegram `telegram_adapter.py:197-204`, Matrix `matrix_adapter.py:177-184` (log, move on); Discord `discord_adapter.py:330` (log, post nothing); Teams `teams_adapter.py:141` to `routers/teams_webhook.py:41-47` (HTTP 200 with the fixed text); Webhook (no `channel_name`, never reaches `resolve_did`) | the message is refused; only Gmail retries |
 | the paired-sender replies (7.15) | the same callers send a non-empty reply as they send any reply | the sender is told why |
 | `visitor_argument_refusal` (7.16) | `_handle_tools_call`, reached by door A (`build_mcp_app`) and door B (the HXI bridge, `routers/system.py`; `test_bf875:592-603`) | refused before the app-tool and intent branches; `tools/list` and `resources/read` unchanged |
+| `WardRoomService.check_subscribe` (A4, 7.8) | `AssignmentService.create_assignment` and `add_member` (7.12b), reached only by `routers/assignments.py:31`, `:61` with body-supplied ids (AV23) | a refused member reaches the API's handler (`except ValueError` only, `:39`, `:63`): 403, nothing written |
+| `VisitorScopeRefused` re-raised by the teaching route (A4, 7.12c) | `POST /api/procedures/teach` only (AV24) | 403 instead of 200 with an error string |
+| the walk's count before it reads (A4, 7.16) | `_handle_tools_call` (both doors) | the same refusals and threshold; a refused wide container is never iterated |
 
 ## 6. Tests
 
@@ -145,6 +155,7 @@ Every BF-903 test errors on today's tree at its `probos.visiting_officers` impor
 | V7 | `test_a_visitor_is_known_by_its_certificate_and_other_ids_are_never_looked_up` | a visitor is known by its DID and its bare certificate UUID, and a certificate outlives its session; crew, ship and unknown DIDs and UUIDs and slot ids are not visitors; no lookup for an id of neither shape | fails without 7.1; the UUID cases fail without 7.13 |
 | V8 | `test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allow` | crew pass; held served; missing refused; a certificate UUID is checked under its DID; registry off refused; an undeclared name raises, also at `require_session_capability` | fails without 7.1; the UUID and session-check cases fail without 7.13 |
 | V9 | `test_a_malformed_agent_did_is_never_looked_up` | a did:probos DID whose agent part is not a lower-case certificate UUID (invalid, empty, upper-case, NUL-bearing) is not a visitor, passes the guard and costs no lookup (A3) | fails on `bfc8c98a` (looked up); the M3 form fails without A3's 7.13 line |
+| V10 | `test_an_expired_pending_row_is_consumed_and_answers_expired_whatever_names_it_holds[declared, row-minted-before-bf903]` | through `probos pairing approve` without `--cap`: returns 1, prints "expired" and not the name, consumes the row (both lookups None), records no pairing (A4) | `[row-minted-before-bf903]` fails on A3's candidate `6911e258` (refused by name, kept); `[declared]` is a control |
 | W0 | `test_a_visitor_without_ward_room_post_cannot_open_a_thread` (`test_bf903_seam_was_open.py`) | a reader cannot open a thread | **fails today: DID NOT RAISE**, and on the M1-only tree; passes after M2 |
 | W1 | `test_a_visitor_without_the_capability_is_refused_at_each_entry[12 entries]` | each entry refuses the one missing capability, naming it and the entry, with one event | fails on M1-only (DID NOT RAISE) |
 | W2 | `test_a_visitor_with_only_that_capability_is_served_at_each_entry[12 entries]` | exactly that capability is enough | guard (catches over-refusal) |
@@ -152,16 +163,20 @@ Every BF-903 test errors on today's tree at its `probos.visiting_officers` impor
 | W4 | `test_a_lapsed_or_unattached_session_is_refused_at_its_next_request[expired, deregistered, registry-off]` | expired before the sweep, deregistered and registry off are all refused; crew still post | fails on M1-only |
 | W5 | `test_crew_and_the_captain_are_served_as_before_without_a_lookup` | golden: every entry, registry on and off, and no certificate read | guard |
 | W6 | `test_a_crew_did_is_served` | a crew certificate DID is not a visitor | guard |
-| W7 | `test_the_api_answers_a_visitor_refusal_with_403_and_the_reason` | 403 with the body | fails on M1-only (500) |
+| W7 | `test_the_api_answers_a_visitor_refusal_with_403_and_the_reason` | 403 with the body; the app is built in an empty working directory and leaves it empty (A4) | fails on M1-only (500) |
 | W8 | `test_a_real_boot_scopes_visitors_in_the_ward_room` | finalize attaches the registry: refused for capability, then served | fails on M1-only |
+| W9 | `test_an_assignment_naming_a_refused_visitor_changes_nothing_and_answers_403` | `POST /api/assignments` naming a visitor without `ward_room.read`: 403 with the envelope; no assignment, channel, subscription or deferred subscription; one event per request; a reader joins with every member subscribed (A4) | fails on M2 r1 `0a2a6026` (200, the refusal swallowed) |
+| W10 | `test_adding_a_refused_visitor_to_an_assignment_writes_no_member_and_answers_403` | the members route: 403, no member row; a reader joins and is subscribed (A4) | fails on M2 r1 (200, the row written) |
+| W11 | `test_the_teaching_route_answers_a_visitor_refusal_with_403` | 403 for a visitor target without `dm.receive`, no channel opened; a crew target is taught (A4) | fails on M2 r1 (200 with an error string) |
 | P1 | `test_a_paired_sender_is_refused_commands_and_conversation[slash-command, natural-language, unknown-callsign]` | a paired sender's slash command and natural language get a reply naming the reason; no LLM turn, no event | fails without 7.15 |
-| P2 | `test_a_paired_sender_holding_dm_send_reaches_the_crew_member` | a live `dm.send` is enough for an `@callsign` DM | guard (catches over-refusal) |
-| P3 | `test_a_paired_dm_without_a_live_dm_send_is_refused[capability-missing, session-expired, registry-off]` | refused with the code; one event, none with the registry off | fails without 7.15 |
+| P2 | `test_a_paired_sender_holding_dm_send_reaches_the_crew_member` | a live `dm.send` is enough for an `@callsign` DM, delivered once to the Counselor's live agent over a real `IntentBus` (A4) | guard (catches over-refusal) |
+| P3 | `test_a_paired_dm_without_a_live_dm_send_is_refused[capability-missing, session-expired, registry-off]` | refused with the code; one event, none with the registry off; nothing delivered although the agent is on duty (A4) | fails without 7.15; the delivery assertion kills C21 |
 | P4 | `test_an_unreadable_pairing_store_refuses_the_message_and_its_callers_still_catch_it` | `PairingLookupError`, a `PairingNotificationError` naming only the channel; Slack's webhook returns "" | fails without 7.15 (the message is processed) |
 | P5 | `test_a_sender_the_gate_does_not_pair_is_served_as_before[no-pairing-service, adapter-opted-out]` | golden: unpaired traffic is processed as before | guard |
-| Q1 | `test_a_tools_call_naming_a_visitor_is_refused_before_either_branch[intent-did, intent-certificate-uuid, object-key, list-item, nested-value, deregistered-visitor, app-tool]` | -32602 with the reason; nothing dispatched; one `MCP_BRIDGE_FAILED` | fails without 7.16 |
-| Q2 | `test_crew_ids_and_prose_that_mentions_a_visitor_are_dispatched[crew-did, crew-certificate-uuid, slot-id, prose-with-a-visitor-did]` | only a whole visiting id refuses | guard |
+| Q1 | `test_a_tools_call_naming_a_visitor_is_refused_before_either_branch[intent-did, intent-certificate-uuid, object-key, list-item, nested-value, deregistered-visitor, app-tool]` | -32602 with the reason; nothing dispatched; no peer registered (A4); one `MCP_BRIDGE_FAILED` | fails without 7.16; the peer assertion kills C22 |
+| Q2 | `test_crew_ids_and_prose_that_mentions_a_visitor_are_dispatched[crew-did, crew-certificate-uuid, slot-id, prose-with-a-visitor-did]` | only a whole visiting id refuses; a dispatched call registers its peer (A4) | guard |
 | Q3 | `test_the_argument_walk_reads_up_to_its_bound_and_refuses_past_it` | 10,000 values dispatch; 10,001 are refused unread | fails without 7.16 |
+| Q4 | `test_the_argument_walk_counts_a_container_before_it_reads_one` | a container that takes the call past the bound is refused with none of its items read; under the bound every item is read; an object counts two per entry (A4) | fails on the M3 r1 candidate (10,000 items read) |
 
 ## 7. The contract
 
@@ -568,7 +583,7 @@ REPLACE:
             require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed
         else:
             stored = self._registry.get_pending(channel, code)  # BF-903 (A3): read, not consumed, so a refused row is kept
-            if stored is not None:
+            if stored is not None and stored.expires_at >= self._clock():  # BF-903 (A4): an expired row goes on to the consume and answers "expired"
                 require_known_capabilities(stored.capabilities or DEFAULT_CAPABILITIES)  # BF-903 (A3): a row minted before BF-903 may hold any string
         pending = self._registry.consume_pending(channel, code)
         if pending is None:
@@ -928,6 +943,32 @@ def test_the_cli_names_an_undeclared_capability_and_keeps_the_code(
     assert store.get_pending("telegram", "ABCDEF") is None
 
 
+@pytest.mark.parametrize(
+    "stored", [[CAP_DM_SEND], [CAP_DM_SEND, "tool.use"]], ids=["declared", "row-minted-before-bf903"],
+)
+def test_an_expired_pending_row_is_consumed_and_answers_expired_whatever_names_it_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], stored: list[str],
+) -> None:
+    """V10 (A4): `probos pairing approve` without --cap consumes an expired pending row and answers that it expired,
+    whatever names the row holds: one minted before BF-903 with an undeclared name is neither refused by name nor
+    kept (A3's candidate did both); the declared row is the control."""
+    data = tmp_path / "data"
+    monkeypatch.setattr(probos_main, "_default_data_dir", lambda: data)
+    minted_long_ago = PairingRegistry(data / "pairings.db", clock=lambda: 1000.0)  # the row expires at 1600.0
+    minted_long_ago.mint_pending("telegram", "tg-10", "ABCDEF", stored, ttl_seconds=600.0)
+    status = probos_main._cmd_pairing(
+        _Namespace(pairing_cmd="approve", channel="telegram", code="ABCDEF", cap=None, ttl_days=None),
+    )
+    assert status == 1
+    out = capsys.readouterr().out
+    assert "expired" in out
+    assert "tool.use" not in out
+    store = PairingRegistry(data / "pairings.db")
+    assert store.get_pending("telegram", "ABCDEF") is None
+    assert store.get_pending_by_raw_id("telegram", "tg-10") is None
+    assert store.list_paired() == []
+
+
 async def test_a_malformed_agent_did_is_never_looked_up(
     identities: AgentIdentityRegistry, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1213,6 +1254,14 @@ REPLACE:
 ```python
         self._require_visitor(agent_id, CAP_WARD_ROOM_READ, "subscribe")  # BF-903
         await self._messages.subscribe(agent_id, channel_id, role)
+
+    def check_subscribe(self, agent_id: str) -> None:
+        """BF-903 (A4): raise ``VisitorScopeRefused`` exactly where ``subscribe(agent_id, ...)`` would, and do nothing else.
+
+        A caller that subscribes several members, or writes its own rows first, checks every member before its
+        first side effect, so a refused visiting officer changes nothing (``AssignmentService``).
+        """
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, entry="subscribe")  # BF-903 (A4): subscribe's check, with no side effect
 ```
 
 SEARCH:
@@ -1328,10 +1377,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient as _TestClient  # FastAPI's, not a ProbOS name
+from httpx import ASGITransport as _ASGITransport  # httpx's names, not ProbOS's
+from httpx import AsyncClient as _AsyncClient
 
 from probos.api import create_app
+from probos.assignment import AssignmentService
 from probos.cognitive.llm_client import MockLLMClient
-from probos.config import AuthConfig, SystemConfig
+from probos.config import TEACHING_MIN_COMPILATION_LEVEL, AuthConfig, SystemConfig
 from probos.identity import AgentIdentityRegistry
 from probos.runtime import ProbOSRuntime
 from probos.visiting_officers import (
@@ -1613,12 +1665,21 @@ def _api_runtime(ward_room: Any) -> Any:
     runtime.ontology = None
     runtime.add_event_listener = MagicMock()
     runtime.ward_room = ward_room
+    # A4: a MagicMock data directory is truthy, and create_app would create its model folders under the working
+    # directory (api.py:377-389); this double has none.
+    runtime._data_dir = None
+    runtime.data_dir = None
     return runtime
 
 
-def test_the_api_answers_a_visitor_refusal_with_403_and_the_reason() -> None:
-    """W7: a refusal from the Ward Room reaches the client as 403 with the capability, reason and surface."""
+def test_the_api_answers_a_visitor_refusal_with_403_and_the_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W7: a refusal from the Ward Room reaches the client as 403 with the capability, reason and surface. The app is
+    built in an empty working directory and leaves it empty: the runtime double has no data directory (A4)."""
+    monkeypatch.chdir(tmp_path)
     client = _TestClient(create_app(_api_runtime(_RefusingWardRoom())), raise_server_exceptions=False)
+    assert list(tmp_path.iterdir()) == []
     response = client.post(
         "/api/wardroom/channels/c1/threads",
         json={"author_id": "did:probos:ship:visitor", "title": "t", "body": "b"},
@@ -1630,6 +1691,149 @@ def test_the_api_answers_a_visitor_refusal_with_403_and_the_reason() -> None:
         "reason": REFUSED_CAPABILITY,
         "surface": "ward_room.create_thread",
     }
+
+
+_SUBSCRIBE_REFUSED = {
+    "error": "visitor_scope_refused",
+    "capability": CAP_WARD_ROOM_READ,
+    "reason": REFUSED_CAPABILITY,
+    "surface": "ward_room.subscribe",
+}
+
+
+class _Chamber:
+    """A Birth Chamber that has graduated no one, so ``AssignmentService`` defers every subscription to it (AD-486)."""
+
+    def __init__(self) -> None:
+        self.queued: list[tuple[str, str]] = []
+
+    def is_graduated(self, agent_id: str) -> bool:
+        return False
+
+    def queue_pending_subscription(self, agent_id: str, channel_id: str, subscribe: Any) -> None:
+        self.queued.append((agent_id, channel_id))
+
+
+class _Procedure:
+    """The members the teaching route reads from an approved Level-5 procedure."""
+
+    name = "bf903-procedure"
+    description = "a procedure fit to teach"
+    compilation_level = TEACHING_MIN_COMPILATION_LEVEL
+    steps: tuple[Any, ...] = ()
+
+
+class _TeachingStore:
+    """The three ``ProcedureStore`` reads the teaching route makes; the store is upstream of the seam under test."""
+
+    async def get(self, procedure_id: str) -> _Procedure:
+        return _Procedure()
+
+    async def get_promotion_status(self, procedure_id: str) -> str:
+        return "approved"
+
+    async def get_quality_metrics(self, procedure_id: str) -> dict[str, Any]:
+        return {"total_completions": 10, "effective_rate": 0.9}
+
+
+def _client(runtime: Any) -> _AsyncClient:
+    """The real API app over an in-process ASGI transport, on the test's own event loop."""
+    return _AsyncClient(transport=_ASGITransport(app=create_app(runtime)), base_url="http://bf903.test")
+
+
+async def test_an_assignment_naming_a_refused_visitor_changes_nothing_and_answers_403(rig: _Rig, tmp_path: Path) -> None:
+    """W9 (A4): POST /api/assignments checks every member before the channel, a subscription or a row exists, so a
+    request naming a visitor without ward_room.read answers 403 with the reason and leaves no assignment, channel,
+    subscription or deferred subscription; a visitor holding ward_room.read joins with every member subscribed.
+    Before A4 the service swallowed the refusal: 200, every member recorded, the members after the visitor not
+    subscribed."""
+    service = AssignmentService(db_path=str(tmp_path / "assignments.db"), ward_room=rig.ward_room)
+    await service.start()
+    try:
+        runtime = _api_runtime(rig.ward_room)
+        runtime.assignment_service = service
+        refused_visitor = await _visitor(rig, CAP_DM_SEND)
+        reader = await _visitor(rig, CAP_WARD_ROOM_READ)
+        channels = [c.id for c in await rig.ward_room.list_channels()]
+        chamber = _Chamber()
+        async with _client(runtime) as client:
+            refused = await client.post(
+                "/api/assignments",
+                json={"name": "Away", "assignment_type": "away_team", "members": [CREW_SLOT, refused_visitor, "captain"]},
+            )
+            assert refused.status_code == 403, refused.text
+            assert refused.json() == _SUBSCRIBE_REFUSED
+            service.set_birth_chamber(chamber)
+            deferred = await client.post(
+                "/api/assignments",
+                json={"name": "Away", "assignment_type": "away_team", "members": [CREW_SLOT, refused_visitor]},
+            )
+            assert deferred.status_code == 403, deferred.text
+            assert chamber.queued == []
+            assert await service.list_assignments() == []
+            assert [c.id for c in await rig.ward_room.list_channels()] == channels
+            assert [p["surface"] for p in _refusals(rig.events)] == ["ward_room.subscribe", "ward_room.subscribe"]
+            service.set_birth_chamber(None)
+            served = await client.post(
+                "/api/assignments",
+                json={"name": "Away", "assignment_type": "away_team", "members": [CREW_SLOT, reader, "captain"]},
+            )
+        assert served.status_code == 200, served.text
+        channel = served.json()["ward_room_channel_id"]
+        for member in (CREW_SLOT, reader, "captain"):
+            assert channel in [c.id for c in await rig.ward_room.list_channels(member)]
+    finally:
+        await service.stop()
+
+
+async def test_adding_a_refused_visitor_to_an_assignment_writes_no_member_and_answers_403(
+    rig: _Rig, tmp_path: Path,
+) -> None:
+    """W10 (A4): POST /api/assignments/{id}/members checks the member before its row is written, so a visitor without
+    ward_room.read answers 403 and the assignment keeps its members; a visitor holding it joins and is subscribed.
+    Before A4 the row was committed, the refusal swallowed and the answer 200."""
+    service = AssignmentService(db_path=str(tmp_path / "assignments.db"), ward_room=rig.ward_room)
+    await service.start()
+    try:
+        runtime = _api_runtime(rig.ward_room)
+        runtime.assignment_service = service
+        assignment = await service.create_assignment("Away", "away_team", "captain", [CREW_SLOT])
+        refused_visitor = await _visitor(rig, CAP_DM_SEND)
+        reader = await _visitor(rig, CAP_WARD_ROOM_READ)
+        async with _client(runtime) as client:
+            refused = await client.post(f"/api/assignments/{assignment.id}/members", json={"agent_id": refused_visitor})
+            assert refused.status_code == 403, refused.text
+            assert refused.json() == _SUBSCRIBE_REFUSED
+            assert set((await service.get_assignment(assignment.id)).members) == {CREW_SLOT}
+            served = await client.post(f"/api/assignments/{assignment.id}/members", json={"agent_id": reader})
+        assert served.status_code == 200, served.text
+        assert set((await service.get_assignment(assignment.id)).members) == {CREW_SLOT, reader}
+        assert assignment.ward_room_channel_id in [c.id for c in await rig.ward_room.list_channels(reader)]
+    finally:
+        await service.stop()
+
+
+async def test_the_teaching_route_answers_a_visitor_refusal_with_403(rig: _Rig) -> None:
+    """W11 (A4): POST /api/procedures/teach lets a scope refusal reach the API's handler instead of answering 200 with
+    an error string, so a visitor target without dm.receive answers 403 and no DM channel is opened; a crew target is
+    taught as before."""
+    runtime = _api_runtime(rig.ward_room)
+    runtime.procedure_store = _TeachingStore()
+    visitor = await _visitor(rig, CAP_DM_SEND)
+    channels = [c.id for c in await rig.ward_room.list_channels()]
+    async with _client(runtime) as client:
+        refused = await client.post("/api/procedures/teach", json={"procedure_id": "p1", "target_callsign": visitor})
+        assert refused.status_code == 403, refused.text
+        assert refused.json() == {
+            "error": "visitor_scope_refused",
+            "capability": CAP_DM_RECEIVE,
+            "reason": REFUSED_CAPABILITY,
+            "surface": "ward_room.get_or_create_dm_channel",
+        }
+        assert [c.id for c in await rig.ward_room.list_channels()] == channels
+        served = await client.post("/api/procedures/teach", json={"procedure_id": "p1", "target_callsign": CREW_SLOT})
+    assert served.status_code == 200, served.text
+    assert served.json()["success"] is True
 
 
 async def test_a_real_boot_scopes_visitors_in_the_ward_room(tmp_path: Path) -> None:
@@ -1692,6 +1896,77 @@ async def test_a_visitor_without_ward_room_post_cannot_open_a_thread(tmp_path: P
     finally:
         await ward_room.stop()
         await identities.stop()
+```
+
+### 7.12b `src/probos/assignment.py` (M2, A4: every member is checked before the first side effect)
+
+`create_assignment` and `add_member` treat any Ward Room failure as optional (`except Exception`, `assignment.py:202`, `:339`). A refused subscribe therefore skipped the members after it and the route answered 200 (M2 review, finding 1). Each now checks every member with `check_subscribe` (7.8) before the channel, any subscription or any row, and only where a subscription would follow. The refusal reaches the API's handler through the router's `except ValueError`. The handlers themselves are unchanged (R11).
+
+SEARCH:
+```python
+        now = time.time()
+        assignment_id = str(uuid.uuid4())
+        ward_room_channel_id = ""
+```
+REPLACE:
+```python
+        if self._ward_room:
+            # BF-903 (#1581, A4): the subscription loop below swallows a refusal, so every member is checked before
+            # the channel, any subscription or any row exists; a refusal reaches the API's 403 with nothing written.
+            for agent_id in members:
+                self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): every member is checked before the channel or any row exists
+
+        now = time.time()
+        assignment_id = str(uuid.uuid4())
+        ward_room_channel_id = ""
+```
+
+SEARCH:
+```python
+        if agent_id in assignment.members:
+            raise ValueError(f"Agent {agent_id} is already a member")
+
+        now = time.time()
+```
+REPLACE:
+```python
+        if agent_id in assignment.members:
+            raise ValueError(f"Agent {agent_id} is already a member")
+        if self._ward_room and assignment.ward_room_channel_id:
+            self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): checked before the member row is written
+
+        now = time.time()
+```
+
+### 7.12c `src/probos/routers/procedures.py` (M2, A4: the teaching route lets a scope refusal through)
+
+The route's `except Exception` (`:207-208`) turned a refusal for a body-supplied `target_callsign` into HTTP 200 with an error string (M2 review, finding 2). The refusal now reaches the API's 403 handler. Other failures keep their answer.
+
+SEARCH:
+```python
+from probos.routers.deps import get_runtime
+```
+REPLACE:
+```python
+from probos.routers.deps import get_runtime
+from probos.visiting_officers import VisitorScopeRefused
+```
+
+SEARCH:
+```python
+            author_callsign="captain",
+        )
+    except Exception as e:
+        return {"success": False, "error": f"Teaching DM failed: {e}"}
+```
+REPLACE:
+```python
+            author_callsign="captain",
+        )
+    except VisitorScopeRefused:  # BF-903 (A4): a scope refusal reaches the API's 403 handler, not this route's error string
+        raise
+    except Exception as e:
+        return {"success": False, "error": f"Teaching DM failed: {e}"}
 ```
 
 ### 7.13 `src/probos/visiting_officers.py` (M3: a visitor is named by its DID or its certificate UUID; applies to the text 7.1 builds)
@@ -2203,7 +2478,7 @@ def bearer_token_matches(authorization: str, expected: str) -> bool:
 REPLACE:
 ```python
 _BIND_FAILED = "AD-480a: MCP server bind failed (port %d): %s; the MCP server is not listening and ProbOS carries on (BF-884)"
-MAX_ARGUMENT_VALUES = 10_000  # BF-903: values the visitor walk reads in one tools/call; cost: a call with more is refused (the HXI games send a handful)
+MAX_ARGUMENT_VALUES = 10_000  # BF-903: values the visitor walk counts, queues and reads in one tools/call, a container counted from its length before its children are read (A4); cost: a call with more is refused (the HXI games send a handful)
 REFUSED_VISITOR_UNBOUND = "visitor_unbound"
 REFUSED_ARGUMENTS_UNWALKED = "arguments_unwalked"
 _VISITOR_REFUSALS = {
@@ -2226,26 +2501,35 @@ def visitor_argument_refusal(arguments: dict[str, Any], identity_registry: Any) 
     run unscoped. Every key and every string value counts, at any depth in objects and arrays,
     when the whole string is a visiting officer's DID or certificate UUID
     (``is_visiting_identity``); text that merely contains one is not an actor id. The walk is
-    iterative, so nesting costs no stack, and reads at most ``MAX_ARGUMENT_VALUES`` values; past
-    that it refuses rather than dispatch what it did not read. With no identity registry no
-    visiting certificate exists.
+    iterative, so nesting costs no stack. It counts an object's keys and values, or an array's
+    items, from its length before it reads or queues any of them, so it reads, queues and looks up
+    at most ``MAX_ARGUMENT_VALUES`` values (A4); a call holding more is refused rather than
+    dispatched with values nobody read. A call that both holds more and names a visiting officer is
+    refused for whichever the walk meets first; either way it is refused. With no identity registry
+    no visiting certificate exists.
     """
     if identity_registry is None:
         return None
     pending: list[Any] = [arguments]
-    read = 0
+    counted = 1  # the arguments object itself
     while pending:
         value = pending.pop()
-        read += 1
-        if read > MAX_ARGUMENT_VALUES:
+        if isinstance(value, dict):
+            width = 2 * len(value)  # BF-903 (A4): a key and a value per entry, counted before either is read
+        elif isinstance(value, list):
+            width = len(value)
+        elif is_visiting_identity(identity_registry, value):
+            return REFUSED_VISITOR_UNBOUND
+        else:
+            continue
+        counted += width
+        if counted > MAX_ARGUMENT_VALUES:  # BF-903 (A4): refused before a container's children are read or queued
             return REFUSED_ARGUMENTS_UNWALKED
         if isinstance(value, dict):
             pending.extend(value.keys())
             pending.extend(value.values())
-        elif isinstance(value, list):
+        else:
             pending.extend(value)
-        elif is_visiting_identity(identity_registry, value):
-            return REFUSED_VISITOR_UNBOUND
     return None
 
 
@@ -2472,11 +2756,13 @@ class _Runtime:
 
     def __init__(
         self, pairing_service: Any, visiting_officers: Any, callsign_registry: CallsignRegistry, processed: list[str],
+        intent_bus: IntentBus,
     ) -> None:
         self.pairing_service = pairing_service
         self.visiting_officers = visiting_officers
         self.callsign_registry = callsign_registry
         self.processed = processed
+        self.intent_bus = intent_bus  # A4: the real bus, so a resolved DM reaches a live receiver
 
     async def process_natural_language(self, text: str, **kwargs: Any) -> dict[str, Any]:
         self.processed.append(text)
@@ -2511,13 +2797,30 @@ class _OptedOut(_Adapter):
     channel_name = ""
 
 
+class _OnDuty:
+    """The two members ``CallsignRegistry.resolve`` reads from a live agent (A4)."""
+
+    def __init__(self, agent_id: str) -> None:
+        self.id = agent_id
+        self.is_alive = True
+
+
+class _Roster:
+    """The agent registry's one method ``resolve`` calls: the Counselor's pool holds one live agent (A4)."""
+
+    def get_by_pool(self, agent_type: str) -> list[_OnDuty]:
+        return [_OnDuty(CREW_SLOT)] if agent_type == "counselor" else []
+
+
 class _Rig:
-    """The real registries and pairing service behind one ``_Adapter``."""
+    """The real registries and pairing service behind one ``_Adapter``; the Counselor is on duty and receives its
+    direct messages over a real ``IntentBus`` (A4)."""
 
     def __init__(self, identities: AgentIdentityRegistry, tmp_path: Path) -> None:
         self.clock = _Clock()
         self.events: Events = []
         self.processed: list[str] = []
+        self.delivered: list[IntentMessage] = []
         self.officers = _officers(identities, self.clock, self.events)
         self.store = PairingRegistry(tmp_path / "pairings.db")
         self.pairing = PairingService(self.store, self.officers)
@@ -2526,8 +2829,16 @@ class _Rig:
         (profiles / "counselor.yaml").write_text("callsign: Counselor\ndepartment: medical\n", encoding="utf-8")
         callsigns = CallsignRegistry()
         callsigns.load_from_profiles(str(profiles))
-        self.runtime = _Runtime(self.pairing, self.officers, callsigns, self.processed)
+        callsigns.bind_registry(_Roster())
+        bus = IntentBus(SignalManager())
+        bus.subscribe(CREW_SLOT, self._receive, intent_names=["direct_message"])
+        self.runtime = _Runtime(self.pairing, self.officers, callsigns, self.processed, bus)
         self.adapter = _Adapter(self.runtime)
+
+    async def _receive(self, intent: IntentMessage) -> IntentResult:
+        """The Counselor's direct-message handler: records what reached the crew member (A4)."""
+        self.delivered.append(intent)
+        return IntentResult(intent_id=intent.id, agent_id=CREW_SLOT, success=True, result="aye", confidence=0.9)
 
     async def pair(self, user_id: str, capabilities: list[str] | None = None) -> str:
         """Pair ``user_id`` as the Captain would: a pending code, then approval."""
@@ -2569,11 +2880,13 @@ async def test_a_paired_sender_is_refused_commands_and_conversation(rig: _Rig, t
 
 async def test_a_paired_sender_holding_dm_send_reaches_the_crew_member(rig: _Rig) -> None:
     """P2: AD-802's default capabilities hold dm.send, which is enough for an @callsign direct message. The
-    Counselor's profile is loaded but no agent is bound, so the crew side answers "not currently on duty"."""
+    Counselor is on duty (A4), so the DM is delivered once, over the real bus, to its live agent, and its answer is
+    the reply."""
     did = await rig.pair("u-2")
     session = rig.officers.get(did)
     assert session is not None and CAP_DM_SEND in session.capabilities
-    assert await rig.adapter.handle_message(_message("u-2", DM_TEXT)) == "Counselor is not currently on duty."
+    assert await rig.adapter.handle_message(_message("u-2", DM_TEXT)) == "Counselor: aye"
+    assert [(i.intent, i.target_agent_id) for i in rig.delivered] == [("direct_message", CREW_SLOT)]
     assert rig.processed == []
     assert _refusals(rig.events) == []
 
@@ -2591,8 +2904,10 @@ async def test_a_paired_dm_without_a_live_dm_send_is_refused(rig: _Rig, lapse: s
         rig.clock.now += SESSION_TTL
     elif lapse == "registry-off":
         rig.runtime.visiting_officers = None
+    assert rig.runtime.callsign_registry.resolve("Counselor")["agent_id"] == CREW_SLOT  # A4: deliverable if allowed
     reply = await rig.adapter.handle_message(_message("u-3", DM_TEXT))
     assert reply == _PAIRED_DM_REFUSED.format(reason=expected[lapse])
+    assert rig.delivered == []  # A4: nothing reached the crew member, before the check or after it
     assert rig.processed == []
     surfaces = [p["surface"] for p in _refusals(rig.events)]
     assert surfaces == ([] if lapse == "registry-off" else [f"channel.{CHANNEL}.dm"])
@@ -2738,6 +3053,7 @@ async def test_a_tools_call_naming_a_visitor_is_refused_before_either_branch(
         "code": -32602, "message": _VISITOR_REFUSALS[REFUSED_VISITOR_UNBOUND].format(name=tool),
     }
     assert (mcp.calls, mcp.moves) == ([], [])
+    assert len(mcp.runtime.federation_peer_registry) == 0  # A4: the refusal registers no peer
     assert mcp.failures() == [
         {"side": "server", "method": "tools/call", "reason": REFUSED_VISITOR_UNBOUND, "detail": tool},
     ]
@@ -2759,6 +3075,7 @@ async def test_crew_ids_and_prose_that_mentions_a_visitor_are_dispatched(
     reply = await mcp.call(ECHO_INTENT, {"note": note})
     assert json.loads(reply["result"]["content"][0]["text"]) == {"ok": True}
     assert mcp.calls == [{"note": note}]
+    assert len(mcp.runtime.federation_peer_registry) == 1  # A4: a dispatched call registers its peer, so Q1's zero is observable
     assert mcp.failures() == []
 
 
@@ -2776,6 +3093,34 @@ async def test_the_argument_walk_reads_up_to_its_bound_and_refuses_past_it(ident
     }
     assert mcp.calls == []
     assert [f["reason"] for f in mcp.failures()] == [REFUSED_ARGUMENTS_UNWALKED]
+
+
+class _CountingList(list[int]):
+    """A JSON array that counts the items read from it; ``list.extend`` iterates a list subclass through ``__iter__``."""
+
+    def __init__(self, items: range) -> None:
+        super().__init__(items)
+        self.read = 0
+
+    def __iter__(self) -> Any:
+        for item in super().__iter__():
+            self.read += 1
+            yield item
+
+
+async def test_the_argument_walk_counts_a_container_before_it_reads_one(identities: AgentIdentityRegistry) -> None:
+    """Q4 (A4): the walk counts an array's items and an object's keys and values from their length before it reads
+    them, so a container that takes the call past the bound is refused with none of its items read or queued; under
+    the bound every item is read, which shows the counter sees the walk. Before A4 all 10,000 items were enumerated
+    and queued before the refusal."""
+    wide = _CountingList(range(MAX_ARGUMENT_VALUES))
+    assert visitor_argument_refusal({"items": wide}, identities) == REFUSED_ARGUMENTS_UNWALKED
+    assert wide.read == 0
+    narrow = _CountingList(range(MAX_ARGUMENT_VALUES - 3))
+    assert visitor_argument_refusal({"items": narrow}, identities) is None
+    assert narrow.read == MAX_ARGUMENT_VALUES - 3
+    wide_object = {f"k{i}": i for i in range(MAX_ARGUMENT_VALUES // 2)}
+    assert visitor_argument_refusal(wide_object, identities) == REFUSED_ARGUMENTS_UNWALKED
 ```
 
 ## 8. Tracking (tracker pairs, in M2's commit; Amendment A1 updates both for M3)
@@ -2883,7 +3228,7 @@ SEARCH:
 REPLACE:
 ```markdown
 - *D7 (M3, coupled).* `_check_pairing` fails closed when the pairing store cannot be read: it raises `PairingLookupError`, a `PairingNotificationError`, so every adapter's existing handling applies (Gmail leaves the mail unread and retries; the others drop it with a log; Teams answers 200). A paired sender's slash commands and natural language are refused with a reply naming the reason: no declared capability grants them. Its `@callsign` DM needs a live `dm.send`, checked against the paired DID's session directly, since pairing registered it as a visitor. The AD that wires pairing declares what more a paired sender may do.
-- *Disclosed effects.* An undeclared capability is refused at `register`, pairing (a repeated request included), `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; a pending row minted before BF-903 with one is refused at approve before it is consumed and kept, so a declared `--cap` approves it; the CLI prints a refused name as text. `get` hides an expired session. A visiting officer, named by its DID or its certificate UUID, is refused at a guarded entry unless a live session holds the capability (always, with no registry attached); the API answers 403; a did:probos DID whose agent part is not a certificate UUID costs no lookup. A paired channel sender is refused slash commands and natural language, and an unreadable pairing store refuses the message; an MCP tools/call naming a visiting officer, or with more than 10,000 argument values, is refused. Pairing is not wired and MCP is off in production, so no live sender is affected. Crew, Captain and system ids are unchanged; a crew certificate's UUID costs one in-memory lookup.
+- *Disclosed effects.* An undeclared capability is refused at `register`, pairing (a repeated request included), `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; an unexpired pending row minted before BF-903 with one is refused at approve before it is consumed and kept, so a declared `--cap` approves it, and an expired one is consumed and answers that it expired; the CLI prints a refused name as text. `get` hides an expired session. A visiting officer, named by its DID or its certificate UUID, is refused at a guarded entry unless a live session holds the capability (always, with no registry attached); the API answers 403, the assignment routes check every member before they write anything, and the teaching route lets the refusal through; a did:probos DID whose agent part is not a certificate UUID costs no lookup. A paired channel sender is refused slash commands and natural language, and an unreadable pairing store refuses the message; an MCP tools/call naming a visiting officer, or with more than 10,000 argument values, is refused, and a wide container is counted before it is read. Pairing is not wired and MCP is off in production, so no live sender is affected. Crew, Captain and system ids are unchanged; a crew certificate's UUID costs one in-memory lookup.
 - *Reversal.* Revert the BF-903 commits. Nothing persisted changes; the facade stops checking visitors, any capability string is accepted again, a channel admits a sender whose pairing cannot be read and serves paired senders natural language again, and MCP dispatches whatever arguments it is sent.
 ```
 
@@ -2896,13 +3241,15 @@ REPLACE:
 - These Ward Room entries: `create_channel`, `unsubscribe`, `update_thread`, the reads with no actor id (`get_thread`, `list_threads`, `get_post`, `get_recent_activity`, `get_posts_by_author`), and the subject-id queries (`get_credibility`, `get_agent_comm_stats`, `count_posts_by_author`, `dm_receipt_facts`).
 - `admission/`, `identity_service.py`, `identity.py` and `EventType`.
 - The routers' acceptance of body-supplied actor ids (register R6).
+- (A4) `AssignmentService`'s `except Exception` handlers, which still log a Ward Room failure and a refusal that arrives after the entry check (R11); `remove_member`, `complete_assignment` and `dissolve_assignment`. The shell's `procedure teach` (`commands_procedure.py:444-461`), which prints a refusal as "Teaching failed" and writes nothing (AV24).
+- (A4) Recognition's exact-type check (`type(actor_id) is not str`): a `str` subclass is recorded, not changed (R10).
 
 ## 10. Mutation rows
 
-There are 77 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1; A2 moved A1 and A2 to `config_models/crew.py`, rewrote A21 and added A33; A3 rewrote A25 and added A34-A36).
+There are 86 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1; A2 moved A1 and A2 to `config_models/crew.py`, rewrote A21 and added A33; A3 rewrote A25 and added A34-A36; A4 added A37, B24-B27 and C19-C22 and rewrote C11).
 
 Tier HIGH: every changed production file has rows.
-- Run A1-A36 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
+- Run A1-A37 against `tests/test_bf903_visitor_scope.py`, B1-B27 against `tests/test_bf903_ward_room_scope.py`, and C1-C22 against `tests/test_bf903_channel_and_mcp.py`.
 - Start each group with an unmutated run of its file that passes.
 - Restore the file after each row.
 - "First failing" is in file order. Where another test fails first, run the named test alone against the mutant.
@@ -2945,6 +3292,7 @@ Tier HIGH: every changed production file has rows.
 | A34 | `src/probos/security/pairing/service.py` | `stored = self._registry.get_pending(channel, code)  # BF-903 (A3): read, not consumed, so a refused row is kept` | `stored = None` | V5 `[row-minted-before-bf903]` (the backstop refuses after the consume; the kept-row assertion fails) |
 | A35 | `src/probos/__main__.py` | `console.print(f"[red]Approve failed:[/red] {escape(str(exc))}", emoji=False)  # BF-903 (A3): a refused name prints as text` | `console.print(f"[red]Approve failed:[/red] {exc}")` | V5 `[markup-in-a-name]` (`MarkupError`) |
 | A36 | `src/probos/visiting_officers.py` | `if not is_sovereign_identity_key(agent_uuid):  # BF-903 (A3): a malformed agent part costs no lookup` | `if False:` | V9 (the malformed DID is looked up) |
+| A37 | `src/probos/security/pairing/service.py` | `if stored is not None and stored.expires_at >= self._clock():  # BF-903 (A4): an expired row goes on to the consume and answers "expired"` | `if stored is not None:` | V10 `[row-minted-before-bf903]` (refused by name and kept) |
 | B1 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ?"` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ? AND 0"` | W3 `[thread-in-dm-channel]` |
 | B2 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ?"` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ? AND 0"` | W3 `[post-in-dm-thread]` |
 | B3 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ?"` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ? AND 0"` | W3 `[edit-in-dm-thread]` |
@@ -2968,6 +3316,10 @@ Tier HIGH: every changed production file has rows.
 | B21 | `src/probos/startup/finalize.py` | `runtime.ward_room.attach_visiting_officers(runtime.visiting_officers)` | `pass` | W8 (reason is registry off) |
 | B22 | `src/probos/api.py` | `@app.exception_handler(VisitorScopeRefused)` | `@app.exception_handler(LookupError)` | W7 (500) |
 | B23 | `src/probos/api.py` | `"error": "visitor_scope_refused",` | `"error": "intent_denied",` | W7 |
+| B24 | `src/probos/ward_room/service.py` | `self._require_visitor(agent_id, CAP_WARD_ROOM_READ, entry="subscribe")  # BF-903 (A4): subscribe's check, with no side effect` | `pass` | W9 (200: the subscribe refusal is swallowed) |
+| B25 | `src/probos/assignment.py` | `self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): every member is checked before the channel or any row exists` | `pass` | W9 (200: the assignment is written) |
+| B26 | `src/probos/assignment.py` | `self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): checked before the member row is written` | `pass` | W10 (200: the member row is written) |
+| B27 | `src/probos/routers/procedures.py` | `except VisitorScopeRefused:  # BF-903 (A4): a scope refusal reaches the API's 403 handler, not this route's error string` | `except LookupError:` | W11 (200 with an error string) |
 | C1 | `src/probos/channels/base.py` | `class PairingLookupError(PairingNotificationError):` | `class PairingLookupError(RuntimeError):` | P4 |
 | C2 | `src/probos/channels/base.py` | `raise PairingLookupError(_PAIRING_LOOKUP_FAILED.format(channel=self.channel_name)) from exc` | `return True` | P4 |
 | C3 | `src/probos/channels/base.py` | `if message.paired_did is not None:  # BF-903 (#1581): a paired sender is a visiting officer` | `if False:` | P1 `[slash-command]` |
@@ -2978,7 +3330,7 @@ Tier HIGH: every changed production file has rows.
 | C8 | `src/probos/channels/base.py` | `except VisitorScopeRefused as refused:` | `except LookupError as refused:` | P3 `[capability-missing]` |
 | C9 | `src/probos/channels/base.py` | `return _PAIRED_DM_REFUSED.format(reason=refused.reason)` | `return _PAIRED_DM_REFUSED.format(reason="")` | P3 `[capability-missing]` |
 | C10 | `src/probos/federation/mcp_server.py` | `if identity_registry is None:` | `if True:` | Q1 `[intent-did]` |
-| C11 | `src/probos/federation/mcp_server.py` | `if read > MAX_ARGUMENT_VALUES:` | `if False:` | Q3 |
+| C11 | `src/probos/federation/mcp_server.py` | `if counted > MAX_ARGUMENT_VALUES:  # BF-903 (A4): refused before a container's children are read or queued` | `if False:` | Q3 |
 | C12 | `src/probos/federation/mcp_server.py` | `return REFUSED_ARGUMENTS_UNWALKED` | `return None` | Q3 |
 | C13 | `src/probos/federation/mcp_server.py` | `pending.extend(value.keys())` | `pass` | Q1 `[object-key]` |
 | C14 | `src/probos/federation/mcp_server.py` | `pending.extend(value.values())` | `pass` | Q1 `[intent-did]` |
@@ -2986,6 +3338,10 @@ Tier HIGH: every changed production file has rows.
 | C16 | `src/probos/federation/mcp_server.py` | `elif is_visiting_identity(identity_registry, value):` | `elif False:` | Q1 `[intent-did]` |
 | C17 | `src/probos/federation/mcp_server.py` | `refusal = visitor_argument_refusal(arguments, getattr(self._runtime, "identity_registry", None))` | `refusal = None` | Q1 `[intent-did]` |
 | C18 | `src/probos/federation/mcp_server.py` | `self._emit_failed("tools/call", reason=refusal, detail=str(tool_name))` | `pass` | Q1 `[intent-did]` (the event) |
+| C19 | `src/probos/federation/mcp_server.py` | `width = 2 * len(value)  # BF-903 (A4): a key and a value per entry, counted before either is read` | `width = len(value)` | Q4 (the wide object is dispatched) |
+| C20 | `src/probos/federation/mcp_server.py` | `width = len(value)` | `width = 0` | Q4 (the wide array is read and dispatched) |
+| C21 | `src/probos/channels/base.py` | `require_session_capability(` | `await self._handle_callsign_resolved(resolved, mention[0], mention[1]) and require_session_capability(` | P3 `[capability-missing]` (one delivery before the refusal) |
+| C22 | `src/probos/federation/mcp_server.py` | `if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch` | `if refusal is not None and not await self._ensure_peer_registered(f"mcp-session:{session_id}"):` | Q1 `[intent-did]` (one peer registered before the refusal) |
 
 **Lines without a row**
 - `_require_visitor_write`'s `if not is_visiting_identity(...)`: equivalent, since removing it only adds a query for crew.
@@ -2993,15 +3349,15 @@ Tier HIGH: every changed production file has rows.
 - `if self._db is not None:`: only the in-memory mode has no database.
 - `agent_uuid = parsed["agent_uuid"]` and `agent_uuid = actor_id`: removing either breaks the same lookups A29 and A28 kill.
 - `return _PAIRED_NO_COMMANDS` and `return _PAIRED_NO_CONVERSATION`: P1 asserts each reply by equality.
-- `if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch`: equivalent to C17.
-- `read += 1`: the mutant never refuses, which Q3 kills as it kills C11.
+- `if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch` is C22's line; its `if False:` mutant is equivalent to C17.
+- (A4) `counted += width`: removing it never refuses, which Q3 kills as it kills C11. `counted = 1  # the arguments object itself`: `counted = 0` moves the bound by one, which Q3 pins on both sides. `continue`: removing it sends a leaf to `counted += width` (`UnboundLocalError`, or a stale width that extends a string by its characters), and Q2 fails.
 - `MAX_ARGUMENT_VALUES = 10_000`: Q3 pins both sides of the bound.
 - The walk's `if identity_registry is None:` short-circuit with a mutant that removes it: only a runtime with no identity registry, which production never has (`runtime.py:1203`, `:2766`), would then refuse past the bound.
 - `if unknown:` (in `visiting_officers.py` and in `crew.py`'s validator) and the validator's `raise ValueError(`: equivalent to A3 and A21.
 - `if runtime.ward_room is not None:`: equivalent to B21.
 - `status_code=403,`: not unique in `api.py`.
 - A3: `require_known_capabilities(caps)  # BF-903: a row minted before BF-903 may hold any string` is a backstop. It matters only when a request re-mints the same code between approve's read and its consume, and that row holds declared names (AV19); `register` checks again on the runtime path. Equivalent to A25 otherwise.
-- A3: `if stored is not None:`. Removing it makes an unknown code raise `AttributeError`, which `test_ad802_pairing.py:174` catches outside the campaign's file. `from rich.markup import escape`: removing it raises `NameError` at A35's line, the same kill.
+- A3/A4: the pre-read's guard is A37. Dropping its `stored is not None and` makes an unknown code raise `AttributeError`, which `test_ad802_pairing.py:174` catches outside the campaign's file. `from rich.markup import escape`: removing it raises `NameError` at A35's line, the same kill. `from probos.visiting_officers import VisitorScopeRefused` in `routers/procedures.py`: removing it raises `NameError` at B27's line when the route fails, the same kill.
 - A3: M1's `if not is_sovereign_identity_key(parsed["agent_uuid"]):` is replaced by 7.13 and is not in the final tree; A36 is its M3 form. The reorder in `request_pairing` is not a single-line mutant; V4's repeat fails on `bfc8c98a`.
 - Log lines and docstrings.
 
@@ -3101,6 +3457,34 @@ src/probos/visiting_officers.py         192 register checks names before issuing
 src/probos/channels/base.py             198 pairing_service read by getattr | 220-223 request_pairing with the defaults | 343-365 a paired DM checks the session by DID (M3)
 tests/test_ad802_pairing.py             62-84 real PairingRegistry fixture | 174 unknown code
 tests/test_bf903_visitor_scope.py       136-155 V4 | 158-179 V5 (179 pinned the consumed row) | 214 V7 | 238 V8 (M1-built)
+```
+
+A4 (2026-10-22), on scratch `58900dee` (M1', M2' and M3' as `47acc253` holds them; contract blob `3aa9bfe8`). Uniqueness: each A4 SEARCH was grepped in the contract (`stored is not None` 571 only as a code line; `assert retried == 0` 926; `"subscribe")  # BF-903` 1214 and row B17; `runtime.add_event_listener = MagicMock()` 1614; `assert response.status_code == 403, response.text` 1626; `MAX_ARGUMENT_VALUES = 10_000  # BF-903` 2206; `read = 0` 2236; `The real registries and pairing service behind one` 2515; `self.runtime = _Runtime(` 2529; `handle_message(_message("u-3"` 2594; `(mcp.calls, mcp.moves)` 2740; `mcp.calls == [{"note": note}]` 2761; `== [REFUSED_ARGUMENTS_UNWALKED]` 2778) and read in the whole-file or whole-region reads below.
+
+```
+src/probos/security/pairing/service.py  98-102 request_pairing (live is `>`) | 155-160 A3 pre-read | 161-163 consume | 165 expiry `<` | 173 backstop
+src/probos/security/pairing/store.py    76-85 __init__(db_path, *, clock=time.time) | 101-137 mint_pending (expires = clock() + ttl) | 159-177 get_pending (no expiry filter) | 206-220 consume_pending | 222-231 sweep `expires_at < now`
+src/probos/__main__.py                  1955-1958 the CLI's service (default clock) | 1976-1978 refusal print | 1979-1983 approve output
+src/probos/assignment.py                79-96 __init__(ward_room) | 146-241 create_assignment (channel try 181-203, rows 216-231) | 303-351 add_member (INSERT 316-322, subscribe try 325-340)
+src/probos/routers/assignments.py       26-40 create (except ValueError) | 53-64 members (except ValueError)
+src/probos/api_models.py                512-522 CreateAssignmentRequest, ModifyMembersRequest
+src/probos/routers/procedures.py        1-13 imports | 148-215 teach_procedure (except Exception 207-208)
+src/probos/config.py                    289 TEACHING_MIN_COMPILATION_LEVEL
+src/probos/ward_room/service.py         257-285 attach, _require_visitor(actor_id, capability, entry), _require_visitor_write | 478-483 subscribe, unsubscribe
+src/probos/ward_room/channels.py        129-147 list_channels(agent_id) filters by membership
+src/probos/api.py                       184-197 VisitorScopeRefused handler | 376-394 data-directory model mounts (mkdir)
+src/probos/runtime.py                   640 self._data_dir ; experience/commands/commands_wake_word.py 65 runtime.data_dir
+src/probos/federation/mcp_server.py     43 MAX_ARGUMENT_VALUES | 58-86 visitor_argument_refusal | 469-478 refusal before peer_id 480 | 492, 528 _ensure_peer_registered | 591-601
+src/probos/federation/peer.py           59-72 register_peer | 122-123 __len__
+src/probos/channels/base.py             332-367 _handle_paired (check 359-365, the only require_session_capability( line 360) | 369-402 _handle_callsign_resolved (on duty 374-375, send 385, reply 402)
+src/probos/crew_profile.py              705-707 bind_registry | 709-732 resolve (get_by_pool, is_alive, id)
+src/probos/mesh/intent.py               457-474 subscribe | 1133-1197 send (local handler 1180-1194)
+src/probos/dm_reply.py                  898-912 DmReply.from_intent_result (body = result.result) | 816-840 render (the body unchanged with no disclosure)
+tests/test_bf903_visitor_scope.py       162-194 V5 | 197 V9
+tests/test_bf903_ward_room_scope.py     84-111 rig | 114-116 _visitor | 282-303 _api_runtime | 306-319 W7
+tests/test_bf903_channel_and_mcp.py     98-114 _Runtime | 142-166 _Rig | 198-226 P2, P3 | 287-300 _McpRuntime | 352-371 Q1 | 374-390 Q2 | 393-406 Q3
+tests/test_assignment.py                25-48 real WardRoomService fixture | 263-292 membership read
+tests/test_observational_routing.py     66-95 the teaching route's existing test (a MagicMock Ward Room)
 ```
 
 ## Absence Verified (2026-10-22)
@@ -3214,6 +3598,41 @@ AV22 CLAIM: no test drives approve_pairing through a store that lacks get_pendin
     HOLDS: yes
 ```
 
+A4 (2026-10-22), on `58900dee`:
+
+```
+AV23 CLAIM: the assignment service is reached only through the HTTP router, whose member ids come from the request body
+     RUN:   Grep '\.(create_assignment|add_member|remove_member|complete_assignment)\(' src/probos
+     FOUND: routers/assignments.py:31 (create, req.members), :59 (remove), :61 (add, req.agent_id), :72 (complete)
+     HOLDS: yes; no shell command, startup path or agent calls them
+AV24 CLAIM: of the teaching DM's three callers, only the HTTP route turned a scope refusal into success
+     RUN:   Grep 'teach_procedure|/teach' src/probos ; read commands_procedure.py:444-461
+     FOUND: routers/procedures.py:148-149 (the route); commands_procedure.py:62, :381 (prints "Teaching failed: ..." and writes nothing);
+            cognitive/cognitive_agent.py:2813 (an agent's own action; log-and-degrade is the intended outcome)
+     HOLDS: yes
+AV25 CLAIM: no production code catches VisitorScopeRefused by name except the paired-DM reply; check_subscribe does not exist yet
+     RUN:   Grep 'except VisitorScopeRefused|check_subscribe' src/probos
+     FOUND: channels/base.py:364
+     HOLDS: yes
+AV26 CLAIM: no test enumerates WardRoomService's methods or names the guard outside the BF-903 files, and none pins assignment.py or routers/procedures.py
+     RUN:   Grep 'getmembers\(WardRoomService|dir\(WardRoomService|vars\(WardRoomService|WardRoomService\.__dict__' tests ;
+            Grep 'require_visitor|_require_visitor|check_subscribe|VisitorScopeRefused' tests (files) ;
+            Grep 'assignment\.py|routers/procedures|procedures\.py|getsource\(.*(assignment|procedures)' tests
+     FOUND: none ; test_bf903_visitor_scope.py, test_bf903_ward_room_scope.py ; cognitive/crew_assignment.py and cognitive/procedures.py only (other files)
+     HOLDS: yes
+AV27 CLAIM: every AssignmentService built with a Ward Room is given the real WardRoomService
+     RUN:   Grep 'AssignmentService\(' (repository) ; Grep 'queue_pending_subscription|set_birth_chamber' tests
+     FOUND: startup/communication.py:568; test_assignment.py:15 (no Ward Room), :40 (real WardRoomService); test_api_assignment.py:13 and
+            test_database_hardening.py:34 (no Ward Room) ; test_ad486_birth_chamber.py:485-486 (the chamber alone)
+     HOLDS: yes
+AV28 CLAIM: the client-facing consumers that turned a facade refusal into success were the assignment service and the teaching route
+     RUN:   the orchestrator's bf903_swallow_probe.py (AST over 1,057 files: every try around a guarded facade call on a ward|wr|room receiver whose
+            handler catches Exception, BaseException, OSError or PermissionError, or is bare); not re-run in this consult; its output was read
+     FOUND: 59 handlers, all swallowing; reachable with a body-supplied actor id: assignment.py:182, :326 (AV23) and routers/procedures.py:195;
+            routers/recreation.py:109 and recreation/service.py:196 post as "captain"; the other 54 act as crew slots, "captain" or the system
+     HOLDS: yes, within the filter: a facade held under a receiver name outside ward|wr|room is not listed
+```
+
 ## 12. Deterministic gate checks, resolved up front
 
 - **Precheck** (`scripts/phantom-api-precheck.ps1`):
@@ -3229,6 +3648,7 @@ AV22 CLAIM: no test drives approve_pairing through a store that lacks get_pendin
   - A1: the test runtimes keep their recorders as their own attributes (`self.processed`, `self.events`) and the tests read them from the rig, so no `runtime.<name>` outside `src` appears.
   - A1: the only float parameter given a constant is `session_ttl_seconds=SESSION_TTL` (`60.0`); 7.18's SEARCH stops before the existing `RuntimeError(...)` line.
   - A3: `escape` is rich.markup's lower-case function, imported as `__main__.py` already does; V9's `AssertionError` message begins with "not"; V5 passes `ttl_seconds=600.0`.
+  - A4: 7.11 imports httpx's `ASGITransport` and `AsyncClient` under a leading underscore; `AssignmentService` is a ProbOS class; `runtime._data_dir` (`runtime.py:640`), `runtime.data_dir` (`commands_wake_word.py:65`), `runtime.assignment_service` (`routers/assignments.py:28`), `runtime.procedure_store` (`routers/procedures.py:154`), `runtime.intent_bus` and `runtime.federation_peer_registry` exist in `src`; `check_subscribe` is defined by 7.8 and is a candidate until built; `_Chamber`, `_Procedure`, `_TeachingStore`, `_OnDuty`, `_Roster` and `_CountingList` are defined in the contract; the only float parameters given constants are `clock=lambda: 1000.0` and `ttl_seconds=600.0`.
 - **Import cycle:** `visiting_officers.py` imports the standard library and, at load, `probos.config_models.crew` (A2), which loads the `probos.config_models` package; nothing in that package imports from outside it (AV15), so no cycle can pass through it. `config_models/crew.py` imports nothing from `probos` (`tests/test_ad1270e2g_crew_models.py:680-690`). `parse_did` and `is_sovereign_identity_key` are imported at call time.
 - **CRLF:** match the working copy's line endings; never anchor a grep with `$`.
 - **The deletion check** before each commit: `git diff --cached --stat`.
@@ -3248,28 +3668,38 @@ AV22 CLAIM: no test drives approve_pairing through a store that lacks get_pendin
 - **A1, not run here:** any test, the precheck, ruff and the apply of A1's pairs. Not confirmed: that `IntentBus.broadcast` serves a plain coroutine subscriber with no pre-intent authorizer configured (BF-875's tests subscribe agent methods the same way, `test_bf875:115-116`); that `SlackAdapter.receive` reads only `pairing_service` and `emit_event` from its runtime before `handle_message` (BF-804's `_Runtime` holds only those, `test_bf804:390-395`).
 - **A1 prior art:** none sought. The amendment is ProbOS-specific plumbing; the JSON-RPC code follows BF-875's refusal (`mcp_server.py:469-472`), and the reference projects were reviewed above on the same date.
 - **A3, not run here:** any test, the precheck, ruff and the apply of A3's pairs. Not confirmed: that Rich's escape leaves `[/red]tool.use` printed literally at 80 columns (the name holds no space, so it does not wrap); that no M2 or M3 test uses a four-part DID with a non-UUID agent part as a visitor (the BF-903 tests use real certificates; `test_bf903_ward_room_scope.py:278` only raises the refusal). Prior art: none sought; the repair is ProbOS plumbing.
+- **A4, not run here:** any test, the precheck, ruff, the swallow probe and the apply of A4's pairs. Not confirmed:
+  - that `create_app` with `_api_runtime` writes nothing else under the working directory (W7's emptiness rests on the M2 reviewer's interception, which saw only the two model `mkdir` calls);
+  - that the httpx ASGI client serves the assignment and teaching routes on the test's loop with the rig's aiosqlite connections (7.19 drives `build_mcp_app` the same way);
+  - that a fresh `IntentBus` with no pre-intent hooks delivers `direct_message` to a coroutine subscriber (the M3 reviewer's probe did, with a real bus);
+  - that the M2 reviewer's probes and the M3 reviewer's ordering mutant reproduce on these tests.
+
+  Prior art: none sought. The repair is check-before-side-effect ordering in ProbOS plumbing; BF-771's per-recipient refusal was weighed and rejected (section 19).
 
 ## 14. Diff Reviewer: properties to verify
 
 1. A crew, Captain or system id causes no certificate lookup and no database query at any guarded entry.
-2. Each of the eleven facade methods calls the guard before it delegates, with the capability in ENTRIES.
+2. Each of the eleven facade methods calls the guard before it delegates, with the capability in ENTRIES. (A4) `check_subscribe` makes `subscribe`'s check, with the same capability and surface, and nothing else.
 3. A visiting DID is refused when the registry is unattached, the session is missing, the session has expired (`clock >= expires_at`) or the capability is absent, each with the matching code.
 4. `VisitorScopeRefused` is not a `ValueError`, so the routers' `except ValueError` cannot turn it into a 400; the app handler returns 403.
-5. `register`, `request_pairing` (a repeat from a sender with a pending row included), an approve override, a pending row's stored names and config parse refuse an undeclared name before any certificate, row or consume; a refused approve leaves the pending row in place (A3).
+5. `register`, `request_pairing` (a repeat from a sender with a pending row included), an approve override, an unexpired pending row's stored names and config parse refuse an undeclared name before any certificate, row or consume; a refused approve leaves the pending row in place (A3). An expired pending row is consumed and answers "expired", whatever names it holds; the pre-read's guard is the complement of the post-consume check's `<` (A4).
 6. `visiting_officers.py` imports at load only the standard library and `probos.config_models.crew`; `config_models/crew.py` imports nothing from `probos`, at any depth (A2).
 7. `config/system.yaml` is unchanged; no `EventType` is added; `admission/` is untouched.
 8. `has_capability` keeps its truth table (`test_ad701:180-193`).
 9. A slot id, "captain" and "system" cause no certificate lookup; a did:probos agent DID whose agent part is a lower-case UUID, or a lower-case UUID, causes exactly one `get_by_uuid`, and any other DID causes none (A3); either form of a visiting certificate is checked and refused under its DID.
-10. Once `paired_did` is set, `handle_message` runs no slash command and no `process_natural_language`; an `@callsign` DM reaches `_handle_callsign_resolved` only after `require_session_capability(..., CAP_DM_SEND, ...)` returns.
+10. Once `paired_did` is set, `handle_message` runs no slash command and no `process_natural_language`; an `@callsign` DM reaches `_handle_callsign_resolved` only after `require_session_capability(..., CAP_DM_SEND, ...)` returns. (A4) P2 and P3 run with a bound agent and a real `IntentBus`: one delivery when served, none when refused.
 11. A `resolve_did` failure raises `PairingLookupError` (a `PairingNotificationError`) whose text names the channel only; no message proceeds.
 12. `_handle_tools_call` calls `visitor_argument_refusal` after validating `arguments` and `name` and before the app-tool and intent branches; a refusal dispatches nothing, registers no peer and emits one `MCP_BRIDGE_FAILED`.
-13. The walk is iterative and reads at most `MAX_ARGUMENT_VALUES` values; past that it refuses.
+13. The walk is iterative and counts a container's keys and values or items from its length before it reads or queues any of them, so it reads, queues and looks up at most `MAX_ARGUMENT_VALUES` values and refuses past that; 10,000 counted values dispatch and 10,001 refuse; when a call is both past the bound and names a visitor, the reason is the one the walk meets first (A4).
 14. `federation/mcp_server.py` imports `probos.visiting_officers` at module level, which loads no ProbOS module outside `probos.config_models` (property 6).
 15. (A3) `probos pairing approve` prints a refusal's names literally (no Rich markup or emoji code is interpreted) and returns 1.
+16. (A4) An assignment create or member add that names a visiting officer without `ward_room.read` answers 403 with the envelope and writes nothing: no assignment row, member row, channel, subscription or deferred subscription; a visitor holding it joins and is subscribed; a crew-only request behaves as before.
+17. (A4) `POST /api/procedures/teach` answers 403 for a refused target and opens no channel; its other failures keep their 200 answer.
+18. (A4) No `src/` path other than the assignment service and the teaching route turns a facade refusal into a client-visible success (AV23, AV24, AV28).
 
 ## 15. Acceptance criteria
 
-- Sections 7.1-7.19 are applied (7.13 and 7.14 on the text 7.1 and 7.7 build), all of sections 6 and 10 pass and are killed, and the focused gates in section 4 are green.
+- Sections 7.1-7.19, with 7.12b and 7.12c (A4), are applied (7.13 and 7.14 on the text 7.1 and 7.7 build), all of sections 6 and 10 pass and are killed, and the focused gates in section 4 are green.
 - The tracker pairs and the ledger are regenerated and pass `--check`.
 - One broad gate after M3, with a receipt.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -3311,3 +3741,42 @@ AV22 CLAIM: no test drives approve_pairing through a store that lacks get_pendin
 - **Trackers.** 8b's final DECISIONS line changes. Section 8's interim lines, which 8b replaces in M3's commit of the same PR, are left as they are so 8b's SEARCH keeps matching. 8b's PROGRESS text ("before a certificate, a pending row or a consumed code") is now accurate.
 - **A1 and A2 anchors.** 7.1's sixth SEARCH, 7.13's first SEARCH, 7.14's SEARCH blocks, 7.15-7.19 and every SEARCH in 8 and 8b are unchanged. 7.13's second SEARCH follows M1's new text; 7.13's REPLACE gains two lines.
 - **Envelope.** A3 moves a destructive step after its checks and closes three refusal gaps; no control weakens; no "Still requires the Captain" condition applies.
+
+## 19. Amendment A4 (2026-10-22): the M1 review (round 2) and the M2 and M3 reviews (round 1)
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22, on `gpt-6.1-sol`'s NOT READY reviews of `6911e258` (M1 r2, one finding), `0a2a6026` (M2 r1, three) and the M3 r1 candidate (four), all confirmed by execution, read on scratch `58900dee`.
+
+- **M1-1 (P2, injected-only, a regression A3 introduced): fixed (7.3, V10, A37).**
+  - Approve's pre-read checks the stored names only while the row is unexpired: `stored.expires_at >= self._clock()`, the complement of the post-consume check's `<` and of the sweep's.
+  - An expired row therefore goes on to `consume_pending` and answers `UnknownPairingCode(... expired)` whatever names it holds, as round 1 did. An unexpired row with an undeclared name is still refused and kept.
+  - A row that expires between the read and the consume is consumed and answers expired (round 1).
+  - The two checks read the clock separately. If the clock steps back between them, the backstop refuses an expired-at-read row by name after the consume: round 1's outcome, with no row kept.
+  - A3's disclosure that an expired row "is refused by name too, and stays" is withdrawn.
+- **M2-1 (P2, ordinary, regression): fixed with option (A) (7.8, 7.12b, W9, W10, B24-B26).**
+  - `WardRoomService.check_subscribe(agent_id)` makes `subscribe`'s check and nothing else, so it gives the same 403 body and the same event.
+  - `create_assignment` checks every member before the channel, any subscription, any deferred subscription or any row. `add_member` checks the member before its row. Both check only where a subscription would follow.
+  - Rejected:
+    - (B) subscribe the authorised members and report the refused ones: an API shape change, and an assignment whose members differ from the request. BF-771's per-recipient refusal fits a fan-out whose other recipients were already served; here nothing has happened yet.
+    - (C) re-raise after the side effects: leaves partial state, and a retry meets the existing channel.
+    - (D) refuse visitors as members: over-refuses a visitor holding `ward_room.read`.
+  - The facade now has 48 public signatures, 19 actor-like, 12 guarded and 7 exempt. No test enumerates it (AV26).
+  - Admission is decided at entry: a session that lapses between the check and its subscription is refused there and logged by the existing handler (R11).
+- **M2-2 (P2, ordinary, regression): fixed (7.12c, W11, B27).** The teaching route re-raises `VisitorScopeRefused` before its generic handler.
+- **M2-3 (P3, test isolation): fixed (7.11).** `_api_runtime` sets `_data_dir` and `data_dir` to None. W7 builds the app in an empty working directory and asserts it stays empty. No mutation row: the assertion is the guard.
+- **M3-1 (P2, ordinary, regression): fixed (7.16, Q4, C11, C19, C20).**
+  - The walk adds a container's width (`2 * len` for an object, `len` for an array) before any child is read or queued, and refuses when the count passes the budget.
+  - The count is the old one for a complete walk, so the threshold is unchanged.
+  - The docstring and the constant's comment now say what is bounded.
+- **M3-2 and M3-3 (P2 and P3, coverage): fixed (7.19, C21, C22).**
+  - The rig binds a live Counselor (a roster stand-in; the bus and receiver are real). P2 asserts one delivery; P3 asserts none, with a non-null resolved id.
+  - Q1 asserts the peer registry stays empty; Q2's one peer is the control.
+  - C21 (delivery before the guard) and C22 (a peer registered before the refusal) are the reviewers' mutants as single-line rows.
+- **M3-4 (P2, injected-only, not a regression): recorded (R10).** It needs a direct Python caller passing a `str` subclass; JSON decoding yields plain strings, and `AgentID = str`.
+- **Absence.** AV23-AV28. The client-facing consumers that turned a refusal into success were the assignment service and the teaching route. The shell's `procedure teach` reports a refusal as a failure. The rest act as internal actors and log and degrade.
+- **Tests and rows.** M1 has 10 functions and 16 cases, M2 11 and 38, M3 9 and 23. A37, B24-B27 and C19-C22 are added and C11 is rewritten: 86 rows. M2's focused gate gains the assignment, birth-chamber and teaching-route tests.
+- **Trackers.** 8b's DECISIONS line and the repository's `DECISIONS.md` change, in M3's commit; regenerate the ledger there. Section 8's interim lines stay as they are, so 8b's SEARCH keeps matching.
+- **A1, A2 and A3 anchors.**
+  - Changed: 7.3's fourth REPLACE (A3's pre-read line), 7.7's text between V5 and V9 (A3's; V10 is inserted), 7.8's subscribe REPLACE (appended), 7.11, 7.16's REPLACE, 7.19 and 8b's DECISIONS REPLACE line.
+  - Unchanged: every SEARCH a Builder applies (7.1-7.19, 8 and 8b) and the A1-A3 SEARCHes. 7.14 anchors on the import block and on V7 and V8, which A4 does not touch.
+- **Not run in this consult:** any test, the precheck, ruff, the swallow probe and the apply of A4's pairs.
+- **Envelope.** A4 restores round 1's expired-row outcome, moves two consumers' refusal ahead of their first side effect, and lets a refusal reach the 403. No control weakens and no authority widens; no "Still requires the Captain" condition applies.
