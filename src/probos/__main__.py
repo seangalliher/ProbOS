@@ -3649,7 +3649,7 @@ def main() -> None:
         help="Delete the listed directories (refuses while a vessel owns the data dir)",
     )
     backup_reclaim_parser.add_argument(
-        "--data-dir", type=Path, default=None,
+        "--data-dir", type=Path, default=argparse.SUPPRESS,  # BF-916: a --data-dir before the command is kept
         help="Data directory checked for a running vessel; only used with --force",
     )
 
@@ -3658,11 +3658,12 @@ def main() -> None:
         "rebuild-episodic",
         help="Reconstruct ChromaDB episodic memory from surviving ward room (AD-819)",
     )
+    # BF-916, SUPPRESS as for doctor: a --data-dir or --config before `rebuild-episodic` (the root parser's) is kept.
     rebuild_parser.add_argument(
-        "--data-dir", type=Path, default=None, help="Data directory (default: platform path)"
+        "--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory (default: platform path)"
     )
     rebuild_parser.add_argument(
-        "--config", "-c", type=Path, default=None, help="Path to config YAML"
+        "--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML",
     )
     rebuild_parser.add_argument(
         "--dry-run", action="store_true",
@@ -3691,12 +3692,10 @@ def main() -> None:
 
     # --- probos serve ---
     serve_parser = subparsers.add_parser("serve", help="Start HTTP + WebSocket API server")
-    serve_parser.add_argument(
-        "--config", "-c", type=Path, default=None,
-        help="Path to config YAML",
-    )
-    serve_parser.add_argument("--fresh", action="store_true", help="Cold start")
-    serve_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+    # BF-916, SUPPRESS as for doctor: a --config, --fresh or --data-dir before `serve` (the root parser's) is kept.
+    serve_parser.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    serve_parser.add_argument("--fresh", action="store_true", default=argparse.SUPPRESS, help="Cold start")
+    serve_parser.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
     serve_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
