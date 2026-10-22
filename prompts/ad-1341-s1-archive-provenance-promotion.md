@@ -4,11 +4,13 @@
 
 **Status:** M1, M2 and M3 are build-ready. Amendment A1 (2026-10-22, `claude-architect`, from the orchestrator's dry run at `0f13771c`) writes M3 as §7.9 to §7.14 and adds §7.6b and §7.6c to M2 (the config facade baseline and its pinned counts); M4 is §8. Amendment A2 (2026-10-22, `claude-architect`, from M1's round-1 review at `6190fd69` and the whole-contract phantom precheck) serialises the store's writes and its close on its one connection (D16, F1), makes an id beyond SQLite's rowid range no entry (D17, F2), and rewrites one line group each in §7.9 and §7.14 that the precheck flagged (no behaviour change). Slice 1 of 6 of #1569; it does not close the issue. **Tier HIGH** (the archive, an erasure, data integrity). No new AD or BF number. **Base:** `origin/main` `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`. BF-903 merges first; it touches only `__main__.py`'s pairing CLI and the trackers, so M3 and §8 re-anchor on text. **Source:** the Architect's consults `98e0fdbf` (2026-10-18) and this one.
 
-**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 16 functions, 34 cases. Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 15 functions, 24 cases; updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (6 call sites), `tests/test_proactive.py` (2), `tests/test_identity_deterministic.py` (3).
+**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 18 functions, 37 cases (A3 adds P16 and P16b and rewrites P8). Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 15 functions, 24 cases; updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (6 call sites), `tests/test_proactive.py` (2), `tests/test_identity_deterministic.py` (3).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
-**Mechanical repair by the orchestrator (2026-10-22), no decision changed:** section 8's two tracker pairs are re-anchored on BF-903's head line and its *Reversal* bullet, because BF-903 (merge `80456da2`) landed after this contract was written against `0e122174`, as section 8 itself anticipated.
+**Mechanical repairs by the orchestrator (2026-10-22), no decision changed:** (1) section 8's two tracker pairs are re-anchored on BF-903's head line and its *Reversal* bullet, because BF-903 (merge `80456da2`) landed after this contract was written against `0e122174`, as section 8 itself anticipated; (2) the A3 row of section 12 spelled the precheck's pattern B with a capitalised placeholder call inside backticks, which the precheck reads as a constructor call (`[<Class>(...)] class:ClassName`); the phrase is reworded without the call, and the precheck is clean on the built tree.
+
+**Amendment A3 (2026-10-22, `claude-architect`, from M2's round-1 review at `73ebbba3`):** F1 (P2, ordinary reach): the records producers accept a blank topic, `PromotionRecord` refuses a blank title, and the service kept a truthy blank topic as the title, so one document stopped the whole promotion and with it every tier 2 reset. The title now falls back from the topic to the file name to the records path (D8, `_title_for`); no other document-derived field can fail the record (Absence A3-AV1). P8 now injects a real database failure mid-run. F2 (Ship's Records' listing skips a file it cannot decode, so it is neither promoted nor reported) is recorded as register RA3-1, and the module docstring says so. Only M2's two files change; M1' and M3 are unaffected (A3-AV3).
 
 ---
 
@@ -92,7 +94,7 @@ At `--full`, everything the crew published in Ship's Records is lost.
   - any other `reports/` document with status `published` is a published report;
   - `notebooks/` with a non-empty `claim_id` (AD-1140's governed route into the commons) or status `published` is a notebook finding.
 
-  Everything else is never promoted: manuals, duty logs, bills, consultations, creative work, drafts and working notes. The service reads as the anonymous reader (`ARCHIVE_READER = ""`, BF-679). It withholds anything the read refuses, anything whose classification is not `ship`/`fleet` (C1), and any document with an empty body; withheld paths are reported. No model call.
+  Everything else is never promoted: manuals, duty logs, bills, consultations, creative work, drafts and working notes. The service reads as the anonymous reader (`ARCHIVE_READER = ""`, BF-679). It withholds anything the read refuses, anything whose classification is not `ship`/`fleet` (C1), and any document with an empty body; withheld paths are reported. No model call. (A3, F1) The title is the topic, else the file name, else the records path: a title is a label, so a blank topic (which the producers accept) never withholds a document or stops the run. A file Ship's Records' listing cannot decode is neither promoted nor reported (register RA3-1).
 - **D9 (generations).** Each close at tier 2 or above writes one `generations` row: the timeline, tier, outcome (`promoted` or `skipped`), counts and reason. A skip requires the Captain's reason; a promotion requires a timeline. This is the audit for `--skip-promotion` (M3) and the generation order S2 will label.
 - **D10 (one resolver).** `config.resolve_records_repo_path(records, data_dir)` sits beside `resolve_archive_db_path`. Startup's default branch calls it (behaviour unchanged); M3's reset reads the same path.
 - **D11 (store registry).**
@@ -264,7 +266,7 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | P5 | `test_a_second_run_archives_nothing_new[same-timeline, next-timeline]` | D3 at the service | fails |
 | P6 | `test_an_absent_records_directory_promotes_nothing` | empty report; nothing created | fails |
 | P7 | `test_a_source_the_captain_erased_is_reported_and_not_archived_again` | ERASED reported | fails |
-| P8 | `test_a_failed_write_propagates` | no swallow | fails |
+| P8 | `test_a_failed_write_propagates` | (A3) a real database failure mid-run (a trigger refuses the last planned insert) reaches the caller as `sqlite3.DatabaseError`; the earlier entries stay; a re-run reports them PRESENT and creates the last | fails (passes on M2: A3 strengthens a test that reached only the uninitialised-store guard) |
 | P8b | `test_records_to_promote_need_a_timeline` | ValueError | fails |
 | P9 | `test_planning_reads_ship_records_and_writes_nothing` | the dry-run basis | fails |
 | P10 | `test_a_document_without_mapping_frontmatter_is_never_a_source[3 ids]` | robust to bad frontmatter | fails |
@@ -273,6 +275,8 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | P13 | `test_startup_reads_the_records_path_through_the_shared_resolver` | structural: one call, no second literal | fails |
 | P14 | `test_the_service_imports_only_the_knowledge_layer` | layer | fails |
 | P15 | `test_only_the_promotion_service_writes_the_archive` | census of `promote_entry` in `src` | fails |
+| P16 | `test_a_blank_topic_takes_the_file_name_and_the_run_goes_on[spaces, tab-newline]` | (A3, F1) a blank topic takes the file name, a blank file name the records path; both CREATED beside every other source, titles read back with `sqlite3`; withheld unchanged | fails on M2 (`ValueError: AD-1341: title must be a non-empty string`; nothing archived) |
+| P16b | `test_a_dry_run_plan_titles_a_blank_topic` | (A3, F1) the plan `--dry-run` lists carries both, with those titles | fails on M2 (the plan raises) |
 | R1 | `test_a_tier2_reset_archives_under_the_ship_it_closes_then_deletes_its_instance_id` | entries and a `promoted` row under the planted instance id; then tier 2 ran; the pidfile released | fails (no archive; returns None) |
 | R2 | `test_a_full_reset_archives_before_ship_records_are_wiped` | archived at tier 3 though Ship's Records are gone after | fails |
 | R3 | `test_a_failed_promotion_refuses_the_reset_and_deletes_nothing` | an archive at version 7: exit 1; every file and the instance id kept | fails (deletes) |
@@ -1777,8 +1781,9 @@ narrower than ``ship`` or has nothing to archive, and promotes the rest with the
 
 - Episodes are never a source: they are memory, governed by AD-1340.
 - No model call: every criterion is a fixed rule on the document's path and frontmatter.
-- No failure is swallowed. What a failure means is the caller's decision: ``probos reset`` refuses to wipe
-  anything.
+- No failure is swallowed here. What a failure means is the caller's decision: ``probos reset`` refuses to wipe
+  anything. One limit sits below this service: Ship's Records' listing (``list_entries``) skips a file it cannot
+  decode, so such a file is neither promoted nor reported (AD-1341 S1 register RA3-1).
 - Ship's Records carry no source-episode ids, so a records-sourced entry carries none (the lessons slice
   adds them).
 """
@@ -1835,6 +1840,20 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
     return None
 
 
+def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
+    """The archive entry's title: the document's topic, else its file name, else its records path (A3, F1).
+
+    The producers accept a blank topic (``write_entry(topic="   ")``, ``write_notebook(topic_slug=" ")``) and the
+    promotion record refuses a blank title. A title is a label, so it never withholds a document or stops a run.
+    The records path is never blank: only a path under a source's directory is a source.
+    """
+    topic = frontmatter.get("topic")
+    for candidate in (str(topic) if topic else "", path.rsplit("/", 1)[-1].removesuffix(".md")):
+        if candidate.strip():
+            return candidate
+    return path
+
+
 @dataclass(frozen=True)
 class PromotionPlan:
     """What a run would promote, and what met its criterion but may not be archived. Building it writes nothing."""
@@ -1858,7 +1877,8 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
 
     ``probos reset --dry-run`` lists this plan. A document is withheld when the anonymous read refuses it, when
     its body is empty, or when it is narrower than ``ship`` (C1: a later crew reads every archived entry). An
-    empty ``timeline_id`` raises as soon as there is anything to promote.
+    empty ``timeline_id`` raises as soon as there is anything to promote. A blank topic withholds nothing: the title
+    falls back to the file name, then the records path (A3, F1).
     """
     selected: list[PromotionRecord] = []
     withheld: list[str] = []
@@ -1885,7 +1905,7 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
                 timeline_id=timeline_id,
                 source_kind=kind,
                 source_ref=path,
-                title=str(frontmatter.get("topic") or path.rsplit("/", 1)[-1].removesuffix(".md")),
+                title=_title_for(path, frontmatter),
                 content=content,
                 classification=classification,
                 author_callsign=str(frontmatter.get("author") or ""),
@@ -2079,6 +2099,31 @@ async def _promote(tmp_path: Path, repo: Path, timeline_id: str = "timeline-one"
         await archive.close()
 
 
+def _execute(path: Path, sql: str) -> None:
+    """One committed statement on the archive file through a second connection: how a test injects a failure."""
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.execute(sql)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+async def _write_blank_topics(repo: Path, topic: str) -> tuple[str, str]:
+    """A3 (F1): two sources the producers accept with a blank topic: one named by its file, one whose file name is
+    blank too (``write_notebook`` makes the slug both the topic and the file name)."""
+    writer = _records(repo)
+    named = await writer.write_entry(
+        author="LaForge", path="reports/engineering/coolant-trend.md", content="Coolant trend: steady.",
+        message="trend", classification="ship", status="published", topic=topic,
+    )
+    nameless = await writer.write_notebook(
+        callsign="Chapel", topic_slug=" ", content="Claim: the coolant trend is steady.", classification="ship",
+        extra_frontmatter=dict(_CLAIM),
+    )
+    return named, nameless
+
+
 # --- P1: premise 2 --------------------------------------------------------------------------------------------
 
 
@@ -2188,10 +2233,32 @@ async def test_a_source_the_captain_erased_is_reported_and_not_archived_again(tm
 
 
 async def test_a_failed_write_propagates(tmp_path: Path) -> None:
+    """A database failure mid-run reaches the caller; what was promoted before it stays, and a re-run reports that
+    present and creates the rest. A3: a real failure in the store; this test once reached only the
+    uninitialised-store guard, which a handler of ``sqlite3.DatabaseError`` alone would have passed."""
     repo = tmp_path / "ship-records"
     await _write_corpus(repo)
-    with pytest.raises(RuntimeError, match="not initialized"):
-        await promote_ship_records(_records(repo), _archive(tmp_path), timeline_id="timeline-one")
+    plan = await plan_promotion(_records(repo), timeline_id="timeline-one")
+    order = [record.source_ref for record in plan.records]
+    assert len(order) == len(_PROMOTED)  # premise: the failure comes after four successful writes
+    path = tmp_path / "archive.db"
+    archive = _archive(tmp_path)
+    await archive.initialize()
+    try:
+        _execute(
+            path,
+            "CREATE TRIGGER refuse_last BEFORE INSERT ON archive "
+            f"WHEN new.source_ref = '{order[-1]}' BEGIN SELECT RAISE (ABORT, 'AD-1341 A3: injected failure'); END",
+        )
+        with pytest.raises(sqlite3.DatabaseError, match="injected failure"):
+            await promote_ship_records(_records(repo), archive, timeline_id="timeline-one")
+    finally:
+        await archive.close()
+    assert sorted(row[0] for row in _rows(path, "SELECT source_ref FROM archive")) == sorted(order[:-1])
+    _execute(path, "DROP TRIGGER refuse_last")
+    rerun = await _promote(tmp_path, repo, timeline_id="timeline-two")
+    assert sorted(rerun.present) == sorted(order[:-1])
+    assert rerun.created == (order[-1],)
 
 
 async def test_records_to_promote_need_a_timeline(tmp_path: Path) -> None:
@@ -2218,6 +2285,41 @@ def test_a_document_without_mapping_frontmatter_is_never_a_source(frontmatter: A
         SourceKind.CONVERGENCE_REPORT
     )  # premise: the same path with mapping frontmatter is a source
     assert source_kind_for("reports/convergence/convergence-x.md", frontmatter) is None
+
+
+# --- P16: a blank topic (A3, F1) ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("topic", ["   ", "\t\n"], ids=["spaces", "tab-newline"])
+async def test_a_blank_topic_takes_the_file_name_and_the_run_goes_on(tmp_path: Path, topic: str) -> None:
+    """A3 (F1): the producers accept a blank topic and the record refuses a blank title. The title falls back to the
+    file name, then the records path; nothing is withheld for it, and every other source is still promoted."""
+    repo = tmp_path / "ship-records"
+    paths = await _write_corpus(repo)
+    named, nameless = await _write_blank_topics(repo, topic)
+    reader = _records(repo)
+    for path in (named, nameless):
+        document = await reader.read_entry(path, "captain")
+        assert document is not None and not document["frontmatter"]["topic"].strip()  # premise: the topic is blank
+    report = await _promote(tmp_path, repo)
+    assert sorted(report.created) == sorted([named, nameless, *(paths[name] for name in _PROMOTED)])
+    assert sorted(report.withheld) == sorted(paths[name] for name in _WITHHELD)
+    titles = _rows(
+        tmp_path / "archive.db", "SELECT source_ref, title FROM archive WHERE source_ref IN (?, ?)", (named, nameless),
+    )
+    assert sorted(titles) == sorted([(named, "coolant-trend"), (nameless, nameless)])
+
+
+async def test_a_dry_run_plan_titles_a_blank_topic(tmp_path: Path) -> None:
+    """A3 (F1): ``probos reset --dry-run`` lists this plan, so planning must not raise on a blank topic either."""
+    repo = tmp_path / "ship-records"
+    paths = await _write_corpus(repo)
+    named, nameless = await _write_blank_topics(repo, "   ")
+    plan = await plan_promotion(_records(repo), timeline_id="timeline-one")
+    titles = {record.source_ref: record.title for record in plan.records}
+    assert sorted(titles) == sorted([named, nameless, *(paths[name] for name in _PROMOTED)])
+    assert (titles[named], titles[nameless]) == ("coolant-trend", nameless)
+    assert sorted(plan.withheld) == sorted(paths[name] for name in _WITHHELD)
 
 
 # --- P11: the chain -------------------------------------------------------------------------------------------
@@ -3665,7 +3767,7 @@ REPLACE:
 - *D3 (the key).* `(source_kind, source_ref, content_sha256)`, without the timeline. Ship's Records survive a tier 2 reset, so a key with the timeline would archive every surviving record again under each new timeline: false provenance, duplicates, and an erasure undone. A changed document is a new entry under the timeline that changed it.
 - *D4-D6 (the store).* `promote_entry` is the one write (`append` is removed; `promote` was already a method name on two other classes); the erasure check and the insert are one statement. The contract types live in the store module and validate on construction with exact types; nothing narrower than `ship` can be built (C1). The migration is additive and idempotent, and `user_version` is written last; any other version is refused; `secure_delete` is verified. (A2) The writes and the close hold one store lock through their commit or rollback (AD-1340 R3's pattern): on the shared connection, one call's rollback undid another's work, which still reported success. An id above SQLite's largest rowid is no entry, not an error.
 - *D7 (erasure).* The marker holds the entry id, timeline, source kind and ref, the reason and the time; never the title, content, metadata or hash. It blocks re-promotion of that source with any content, because the source still exists in Ship's Records.
-- *D8 (criteria).* Convergence reports by `system`, the Captain's log by `captain`, other reports when `published`, notebooks with a `claim_id` (AD-1140) or `published`. Read as the anonymous reader; anything narrower than ship, or with an empty body, is withheld and reported. No model call; records carry no episode ids.
+- *D8 (criteria).* Convergence reports by `system`, the Captain's log by `captain`, other reports when `published`, notebooks with a `claim_id` (AD-1140) or `published`. Read as the anonymous reader; anything narrower than ship, or with an empty body, is withheld and reported. (A3) A blank topic takes the file name, then the records path, so one document's label never stops a reset; a records file the store cannot decode is skipped unreported (register). No model call; records carry no episode ids.
 - *D11 (store registry).* The baseline row is updated, not declared: the archive lives outside `data_dir`, so its declaration is AD-1265's second-root question.
 - *D12-D13 (the reset).* At tier 2 and above `probos reset` promotes before deleting and refuses on any failure (exit 1); without an instance id, records to promote also refuse. `--skip-promotion REASON` writes a `generations` row; a blank, over-long or tier 1 reason exits 2. Every executing reset holds the AD-816 pidfile, so it refuses beside a vessel started with `probos serve` (the interactive shell takes no pidfile: register). With the archive disabled the reset proceeds with a notice and `probos archive erase` exits 2.
 - *C1.* Promoting at `ship` classification or above only stands; the Captain can overrule it.
@@ -3693,7 +3795,7 @@ REPLACE:
 - (M3) The tier loop's behaviour and its two git launches, `_show_dry_run`, `_show_confirmation_prompt` and every other subcommand.
 - Federation sharing of the archive; trust scoring (the just-culture note goes to its next owner).
 
-## 10. Mutation rows (46 rows: 36 for M1 and M2, 10 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (50 rows: 40 for M1 and M2, 10 for M3; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s1_archive_store.py` (rows K) or `tests/test_ad1341_s1_promotion.py` (rows P, C, S) on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. Rows M-R run against `tests/test_ad1341_s1_reset_and_erase.py` on the tree with §7.9 to §7.14 applied.
 
@@ -3732,6 +3834,10 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | P-R6 | `src/probos/knowledge/archive_promotion.py` | `if kind is None or not content.strip():` | `if kind is None:` | P4 `[empty-body]` (ValueError from the record; every corpus test also fails) |
 | P-R7 | `src/probos/knowledge/archive_promotion.py` | `if type(classification) is not str or classification not in PROMOTABLE_CLASSIFICATIONS:` | `if False:` | P4 `[department-without-field]` (the run raises instead of withholding; every corpus test also fails). This replaces "read as captain" |
 | P-R8 | `src/probos/knowledge/archive_promotion.py` | `outcome = await archive.promote_entry(record)` | `outcome = PromotionOutcome.PRESENT` | P2 |
+| P-R9 | `src/probos/knowledge/archive_promotion.py` | `if candidate.strip():` | `if candidate:` | P16 `[spaces]` (`ValueError` from the record; the run raises). A3, F1: "a truthy blank topic as the title" |
+| P-R10 | `src/probos/knowledge/archive_promotion.py` | `for candidate in (str(topic) if topic else "", path.rsplit("/", 1)[-1].removesuffix(".md")):` | `for candidate in (str(topic) if topic else "",):` | P16 `[spaces]` (the title read back is the records path, not `coolant-trend`). A3: "no file-name fallback" |
+| P-R11 | `src/probos/knowledge/archive_promotion.py` | `return path` | `return ""` | P16 `[spaces]` (the nameless finding's blank title raises). A3: "blank when the file name is blank too" |
+| P-R12 | `src/probos/knowledge/archive_promotion.py` | `title=_title_for(path, frontmatter),` | `title=str(frontmatter.get("topic") or path.rsplit("/", 1)[-1].removesuffix(".md")),` | P16 `[spaces]` (`ValueError`). A3: "the M2 line restored" |
 | C-R1 | `src/probos/config.py` | `return Path(data_dir) / "ship-records"` | `return Path(data_dir) / "records"` | P12 `[default]` |
 | C-R2 | `src/probos/config.py` | `if records.repo_path:` | `if False:` | P12 `[override]` |
 | S-R1 | `src/probos/startup/cognitive_services.py` | `rcfg = rcfg.model_copy(update={"repo_path": str(resolve_records_repo_path(rcfg, data_dir))})` | `rcfg = rcfg.model_copy(update={"repo_path": str(data_dir / "ship-records")})` | P13 |
@@ -3750,7 +3856,8 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 - `ARCHIVE_READER = ""` → `"captain"`, and `read_entry`'s reader argument: **equivalent**. Every record the captain could read beyond the anonymous reader is narrower than ship, and P-R7's gate withholds it. Reading as anonymous is defence in depth (the orchestrator's "read as captain").
 - `if not row or int(row[0]) != 1:`: equivalent while `secure_delete` is available.
 - `if type(record) is not PromotionRecord:`: A6c kills it only through the database error; not distinct.
-- The title and metadata lines in `plan_promotion`: no behaviour reads them in S1.
+- The metadata lines in `plan_promotion`: no behaviour reads them in S1. (A3) The title has rows P-R9 to P-R12.
+- (A3) A swallowed failure in `promote_ship_records` is an inserted handler, not a one-line replacement, so it has no row. P8 kills it: a handler of `sqlite3.DatabaseError` around `promote_entry` that logs and goes on, or that stops the loop quietly, fails P8's `pytest.raises`. Before A3, P8 reached only the uninitialised-store guard (`RuntimeError`), which such a handler let through. P-R8 covers a run that never writes.
 - The `_valid_reason` call site, the logging lines, and the rest of the `entry_by_id` body: any change breaks A8, or they have no behaviour.
 - (A2) `_write_lock`'s construction: K20 to K23 remove each holder. The three `if not self._db:` checks inside the lock are identical lines (no unique row), and a close landing while a write waits for the lock is not stageable without a hook. `_SQLITE_MAX_ROWID`: raised, A16 `[above-sqlite]` fails; lowered, it is equivalent for every id a row can have.
 - `_rollback_quietly` and `_close_quietly`: their failure paths are not stageable deterministically.
@@ -3857,6 +3964,26 @@ tests/fixtures/ad1343_seam_census.py:25-39; tests/fixtures/ad1343_seam_registry.
 scripts/phantom-api-precheck.ps1:113-128 (only python fences kept, SEARCH blocks included), 217, 228; scripts/phantom_api_ast_helper.py:271-274 pattern B
 ```
 
+**A3 additions (2026-10-22; the M2 review tree `73ebbba3`, M1', M2 and M3 as built).** Each A3 SEARCH's distinctive line was grepped in this contract with no `$` anchor and found once.
+
+```text
+src/probos/knowledge/archive_promotion.py (M2 as built): 86-130 plan_promotion; 118 title=str(frontmatter.get("topic") or ...removesuffix(".md"))
+src/probos/knowledge/archive_store.py (M1' as built): 102-104 _required_text (str, non-blank after strip); 127-146 PromotionRecord.__post_init__
+  (exact SourceKind; timeline_id, source_ref, title, content non-blank; classification in PROMOTABLE_CLASSIFICATIONS; author_* str;
+  episode ids a tuple; metadata a dict that json.dumps); 384-389 promote_entry binds title, content, author_callsign, source_ref as text
+  and json.dumps(metadata); 390-403 the write lock, rollback and re-raise
+src/probos/knowledge/records_store.py: 211-226 write_entry(..., topic: str = ""); 300-301 if topic: frontmatter["topic"] = topic (no blank check);
+  316 yaml.dump (no allow_unicode); 321, 430, 441, 543, 1043, 1158 write_text(..., encoding="utf-8"); 489 path = f"notebooks/{callsign}/{topic_slug}.md";
+  504 topic=topic_slug; 944 read_entry: read_text strict utf-8; 977-987 list_entries: rglob("*.md"), read_text and _parse_document under
+  except Exception: continue; 1190-1200 _parse_document (YAMLError -> {})
+src/probos/__main__.py (M3 as built): 2659 tier 3 dirs ["ship-records", "scout_reports"]; 2690 --full or --wipe-records -> tier 3;
+  3183-3210 _promote_before_reset (any exception -> False, printed); 3213-3255 _promote_into_archive (counts only); 3258-3290 _show_promotion_plan (paths only)
+tests/test_ad1341_s1_promotion.py (M2 as built): 254 test_a_failed_write_propagates (RuntimeError "not initialized" on an uninitialised store)
+tests/test_ad1341_s1_reset_and_erase.py (M3 as built): 72 the only topic-bearing write (topic_slug="private-coolant-c0ffee02", withheld)
+this contract §7.4: 1542-1552 _refuse_generations (A15's trigger: RAISE (ABORT, ...) through a second sqlite3 connection)
+tests/fixtures/ad1343_seam_census.py:25-39 STOP_CALLEES, GUARD_CALLEES, AGENT_WORK_METHODS, RECORDED
+```
+
 ## Absence Verified (2026-10-22)
 
 ```text
@@ -3958,6 +4085,33 @@ FOUND: 0
 HOLDS: yes: A14, A14b and A15 are new
 ```
 
+**A3 additions:**
+
+```text
+CLAIM: of PromotionRecord's fields, only the title can fail validation on a document the producers accept      (A3-AV1)
+RUN:   Read archive_store.py:102-146 (each check) against archive_promotion.py:86-130 (each argument); records_store.py:300-301, 489, 504
+FOUND: timeline_id: the caller's (P8b raises on purpose); source_kind: None skipped before construction; source_ref: a listed path
+       under reports/, captains-log/ or notebooks/, never blank; content: blank withheld first (P4 [empty-body]); classification: the
+       record's own predicate, applied first; author_callsign and metadata values: str(...), and json.dumps escapes any character;
+       author_agent_type, author_did, source_episode_ids: defaults; title: a truthy topic kept as is, so "   " reached the record
+HOLDS: yes: only the title (F1). A lone surrogate is a write failure at the bind, not a validation failure (register RA3-2)
+
+CLAIM: no test pins a line A3 changes                                                                        (A3-AV2)
+RUN:   Grep 'No failure is swallowed|title=str\(|test_a_failed_write_propagates' tests
+FOUND: tests/test_ad1341_s1_promotion.py:254 (the test A3 rewrites)
+HOLDS: yes
+
+CLAIM: no M3 code or test depends on a title or on planning raising                                         (A3-AV3)
+RUN:   Grep 'topic' tests/test_ad1341_s1_reset_and_erase.py; Grep 'plan_promotion|promote_ship_records|withheld|except Exception' src/probos/__main__.py
+FOUND: test line 72 (a private notebook, withheld before any title); __main__.py 3204, 3222-3255, 3265-3290 (counts and paths; any exception caught)
+HOLDS: yes: M1' and M3 unchanged; every title for a non-blank topic is byte-identical
+
+CLAIM: no new src name is an AD-1343 census callee                                                          (A3-AV4)
+RUN:   Read tests/fixtures/ad1343_seam_census.py:25-39; Grep 'title|"strict|withhold' tests/fixtures/ad1343_seam_registry.py
+FOUND: _title_for is the only new src name; in none of the four sets; 0 hits in the registry
+HOLDS: yes
+```
+
 ## 12. Deterministic gate checks, resolved up front
 
 | Check | Result |
@@ -3983,6 +4137,7 @@ HOLDS: yes: A14, A14b and A15 are new
 | Lock (A2) | the lock comes from `asyncio`; `src` annotates `asyncio.Lock` (`http_fetch.py:782`), so the precheck resolves it, and it binds to the running loop only when first contended (BF-891, `procedure_store.py:157-159`). No new name in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`; no new public method (A7 unchanged) |
 | Phantom precheck (A2) | 20 candidates on the A1 text, 0 after A2: 7.14's `_config` binds `section` (no method is called on it anywhere), so no line begins `archive=`; the reset's `finally` calls `unlink()` and passes on `FileNotFoundError`. A15's trigger spells `RAISE (` with a space |
 | Size (M3) | `__main__.py` grows by about 250 lines; the new test is about 330 lines |
+| Precheck, census and size (A3) | The one new `src` name, `_title_for`, is lower case and in no census set (A3-AV4). The new test lines call only lower-case helpers (`_execute`, `_write_blank_topics`, `_records`, `_archive`, `_promote`, `plan_promotion`); no new line assigns a class call to a name (the precheck's pattern B). The trigger spells `RAISE (` with a space and `new.source_ref` in lower case, so neither reads as `Name(` or `Name.attr`. The docstrings name `list_entries`, `write_entry(` and `write_notebook(` in lower case and the record without a call. `archive_promotion.py` grows by about 17 lines; the test by about 80 |
 
 ## 13. Prior Art and Blind Spots
 
@@ -4028,15 +4183,20 @@ HOLDS: yes: A14, A14b and A15 are new
 15. (A2) An id above SQLite's INTEGER range raised instead of meaning "no entry", and the CLI reaches it with the Captain's input. Fixed by D17.
 16. (A2) A read during a write sees the write in flight (one connection). Accepted: no S1 process reads and writes one store at once. Register RA2-1.
 17. (A2) Two concurrent `initialize` calls each open a connection (AD-524's shape, unchanged). Register RA2-2.
+18. (A3) A blank topic, which the producers accept, made the record refuse its title, so one document stopped every tier 2 reset. Fixed: the title falls back to the file name, then the records path.
+19. (A3) A records file whose bytes are not UTF-8 is skipped by Ship's Records' listing, so it is neither promoted nor reported, and a tier 3 reset deletes it with `ship-records`. Register RA3-1.
+20. (A3) A lone surrogate escaped in a frontmatter string (`\uD800` in a topic) passes the record and fails the archive's text bind, so the run raises and the reset refuses (fail-closed). Register RA3-2.
 
 **A1 prior art.** AD-816's `acquire_pidfile` is reused, not reimplemented. `verify-snapshot`'s pidfile-free read path is followed for `--dry-run`. BF-903 A3's `rich.markup.escape` is adopted. External search was skipped: this is ProbOS CLI plumbing with no outside analogue worth the search.
 
 **A2 prior art.** AD-1340 R3's `_write_lock` (`episode_archive.py:451-455`) is followed: created in `__init__`, held by every mutation and the close, never by reads; `procedure_store.py:159` (BF-891) and `episodic.py:1466` create theirs the same way. AD-1340's `stop()` swaps the handle out and swallows a failed close; this store keeps its own close, which keeps `_db` after a failure for shutdown's last resort (`test_issue1419_failed_start_rollback.py:2254`). External search was skipped: the defect is this store sharing its own connection, and the repo's pattern fixes it; the reference-projects review does not apply to a bug-fix amendment.
 
+**A3 prior art.** D8's rule that the run goes on past one document (P4) is extended to the title, and A15's trigger injection (`_refuse_generations`) is reused for P8. External search was skipped: this is a review repair to a fallback chain and a test, with no outside analogue worth the search.
+
 ## 14. Diff Reviewer: properties to verify
 
 1. No production path writes the archive except `promote_entry`, and `src` names `promote_entry` only in `knowledge/archive_promotion.py` (P15). `append` is gone.
-2. A record narrower than `ship`, with a non-`SourceKind` kind, or with blank required text cannot be built. The service withholds such records rather than failing the run. No `SourceKind` member names an episode.
+2. A record narrower than `ship`, with a non-`SourceKind` kind, or with blank required text cannot be built. The service withholds such records rather than failing the run. (A3) No document-derived value can fail the record on a document the producers accept: `_title_for` falls back from the topic to the file name to the records path and never returns blank text, and no `ValueError` from the record is caught (an empty timeline still raises). No `SourceKind` member names an episode.
 3. The idempotence key is `(source_kind, source_ref, content_sha256)` in both the index and the conflict target (one constant). A second run, under any timeline, writes nothing.
 4. The erasure check and the insert are one statement. An erased source (kind and ref) is never written again, with any content.
 5. `erase_entry` writes the marker and deletes the row in one transaction; the marker has exactly the 7 columns in A8 and no title, content, metadata or hash. A missing id, including one above SQLite's largest rowid (D17), writes nothing and returns False; `entry_by_id` returns None for it. A failure rolls back.
@@ -4044,7 +4204,7 @@ HOLDS: yes: A14, A14b and A15 are new
 6. `initialize` sets and verifies `secure_delete` before any schema work, refuses any version but 0 or 1 unopened, adds only absent columns, creates the partial unique index, and writes `user_version` last. A failed open closes the connection.
 7. v0 rows survive with their content; `search`, `get_recent` and the Oracle return them.
 8. Startup's records path is byte-identical to before; the resolver has no other effect.
-9. The service makes no model call, swallows nothing, reads as `""`, and writes nothing while planning.
+9. The service makes no model call, swallows nothing, reads as `""`, and writes nothing while planning. (A3) P8 injects a real database failure mid-run: it reaches the caller, the entries before it stay, and a re-run reports them present. The module docstring says that Ship's Records' listing skips a file it cannot decode (register RA3-1); the service claims nothing more.
 10. The store-baseline row lists exactly the tables the module creates, sorted.
 11. Each updated test changes only where it pinned `append`, with an inline `AD-1341 S1 (#1569)` reason; none is deleted.
 12. (M3) At tier 2 and above nothing is deleted before `_promote_before_reset` returns True. Any exception, a refused archive version, or records with no instance id exit 1 with every file in place. Tier 1 never reads `config.archive`.
@@ -4062,7 +4222,7 @@ HOLDS: yes: A14, A14b and A15 are new
 3. The Captain's erasure: the row gone, the bytes overwritten, a content-free marker, no re-promotion, and an id beyond SQLite is no entry (A8–A11, A16; K9–K15, K24, K25).
 4. Generations recorded with validation (A12; K18).
 4b. (A2) One transaction at a time on the store's one connection: overlapping writes, a failed write and a close never undo or end another call's work (D16; A14, A14b, A15; K20–K23).
-5. Records-only promotion with fixed criteria, the anonymous reader, C1 withholding, offline reads, no swallowed failure, and the chain to a later crew's Oracle (P1–P11; P-R1–P-R8).
+5. Records-only promotion with fixed criteria, the anonymous reader, C1 withholding, offline reads, no swallowed failure, a blank topic that never stops the run, and the chain to a later crew's Oracle (P1–P11, P16, P16b; P-R1–P-R12).
 6. One records-path resolver (P12, P13; C-R1, C-R2, S-R1); layer and census (P14, P15); the config facade baseline and its pins name it (7.6b, 7.6c; `check_config_facade.py --check`).
 7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive (R1–R13; M-R1–M-R10).
 8. Every change has a test that fails on today's tree (§6), and every mutation row is killed by the named test. One broad gate and one PR for M1–M4; a cross-family GPT-6.1 Sol review per milestone (tier HIGH).
