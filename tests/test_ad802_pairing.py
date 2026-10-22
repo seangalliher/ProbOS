@@ -195,12 +195,13 @@ async def test_resolve_did_returns_did_for_paired_sender(service):
 @pytest.mark.asyncio
 async def test_capabilities_override_on_approve(service):
     code = await service.request_pairing("telegram", "tg-33", capabilities=["dm.send"])
+    # BF-903 (#1581): "tool.use" was AD-802's example override, but no checking path reads it, so it is
+    # refused now (tests/test_bf903_visitor_scope.py). The override still replaces the requested set.
     paired = await service.approve_pairing(
         "telegram", code,
-        capabilities_override=["dm.send", "tool.use", "ward_room.post"],
+        capabilities_override=["dm.send", "ward_room.post"],
     )
-    assert "tool.use" in paired.capabilities
-    assert "ward_room.post" in paired.capabilities
+    assert set(paired.capabilities) == {"dm.send", "ward_room.post"}
 
 
 @pytest.mark.asyncio

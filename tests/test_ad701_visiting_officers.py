@@ -136,14 +136,15 @@ async def test_register_records_session_with_capabilities() -> None:
 async def test_register_emits_event() -> None:
     reg, _identity, emit_log, _clock = _make_registry()
 
-    await reg.register(callsign="x", capabilities=["c"], origin="o")
+    # BF-903 (#1581): a capability is a declared name now; "c" is refused at register.
+    await reg.register(callsign="x", capabilities=["ward_room.read"], origin="o")
 
     names = [name for name, _ in emit_log]
     assert "VISITING_OFFICER_REGISTERED" in names
     payload = next(p for n, p in emit_log if n == "VISITING_OFFICER_REGISTERED")
     assert payload["callsign"] == "x"
     assert payload["origin"] == "o"
-    assert payload["capabilities"] == ["c"]
+    assert payload["capabilities"] == ["ward_room.read"]
     assert "expires_at" in payload
     assert "did" in payload
 
@@ -152,8 +153,11 @@ async def test_register_emits_event() -> None:
 async def test_register_rejects_empty_callsign_or_caps() -> None:
     reg, _identity, _emit, _clock = _make_registry()
 
+    # BF-903 (#1581): a declared capability, so the empty callsign is what raises. The next two
+    # cases keep their text: each raises on its own earlier check (no capability, a ttl of zero)
+    # before the capability check runs, so they stay ValueError cases for the reason they name.
     with pytest.raises(ValueError):
-        await reg.register(callsign="", capabilities=["c"])
+        await reg.register(callsign="", capabilities=["ward_room.read"])
     with pytest.raises(ValueError):
         await reg.register(callsign="x", capabilities=[])
     with pytest.raises(ValueError):
@@ -163,7 +167,7 @@ async def test_register_rejects_empty_callsign_or_caps() -> None:
 @pytest.mark.asyncio
 async def test_deregister_removes_session_and_emits() -> None:
     reg, _identity, emit_log, _clock = _make_registry()
-    session = await reg.register(callsign="x", capabilities=["c"])
+    session = await reg.register(callsign="x", capabilities=["ward_room.read"])  # BF-903: a declared name
 
     assert reg.deregister(session.did) is True
     assert reg.get(session.did) is None
@@ -197,7 +201,7 @@ async def test_has_capability_enforces_scope_and_expiry() -> None:
 async def test_sweep_loop_deregisters_expired() -> None:
     clock = _FakeClock(t=1000.0)
     reg, _identity, emit_log, _ = _make_registry(clock=clock, session_ttl=10.0)
-    session = await reg.register(callsign="x", capabilities=["c"])
+    session = await reg.register(callsign="x", capabilities=["ward_room.read"])  # BF-903: a declared name
     assert reg.get(session.did) is not None
 
     # Advance past expiry and trigger one sweep cycle.
@@ -215,9 +219,9 @@ async def test_sweep_loop_deregisters_expired() -> None:
 async def test_active_excludes_expired() -> None:
     clock = _FakeClock(t=1000.0)
     reg, _identity, _emit, _ = _make_registry(clock=clock, session_ttl=10.0)
-    s1 = await reg.register(callsign="alive", capabilities=["c"])
+    s1 = await reg.register(callsign="alive", capabilities=["ward_room.read"])  # BF-903: a declared name
     s2 = await reg.register(
-        callsign="dying", capabilities=["c"], session_ttl_seconds=5.0
+        callsign="dying", capabilities=["ward_room.read"], session_ttl_seconds=5.0
     )
     # Advance clock past s2 expiry (1005) but before s1 (1010)
     clock.t = 1006.0
@@ -265,5 +269,5 @@ async def test_emit_event_failure_does_not_break_register() -> None:
         baseline_version="0.0.1",
         emit_event=bad_emit,
     )
-    session = await reg.register(callsign="x", capabilities=["c"])
+    session = await reg.register(callsign="x", capabilities=["ward_room.read"])  # BF-903: a declared name
     assert session.did.startswith("did:probos:")

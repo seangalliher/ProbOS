@@ -14,6 +14,7 @@ from probos.security.pairing.types import (
     PendingPairing,
     UnknownPairingCode,
 )
+from probos.visiting_officers import CAP_DM_RECEIVE, CAP_DM_SEND, require_known_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ DEFAULT_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 32 chars
 DEFAULT_CODE_LENGTH = 6
 DEFAULT_PENDING_TTL_SECONDS = 86400.0      # 24 h
 DEFAULT_SESSION_TTL_SECONDS = 604800.0     # 7 d (vs the 1 h AD-701 VO default)
-DEFAULT_CAPABILITIES = ("dm.send", "dm.receive")
+DEFAULT_CAPABILITIES = (CAP_DM_SEND, CAP_DM_RECEIVE)  # BF-903: AD-802's defaults, named by the vocabulary's owner
 
 
 class PairingService:
@@ -94,11 +95,12 @@ class PairingService:
 
         Returns the 6-character pairing code.
         """
+        caps = tuple(capabilities or DEFAULT_CAPABILITIES)
+        require_known_capabilities(caps)  # BF-903: refused before a pending row is minted
         existing = self._registry.get_pending_by_raw_id(channel, raw_id)
         if existing is not None and existing.expires_at > self._clock():
             return existing.code
 
-        caps = tuple(capabilities or DEFAULT_CAPABILITIES)
         code = self._generate_code()
         try:
             pending = self._registry.mint_pending(
@@ -150,6 +152,12 @@ class PairingService:
         Raises ``UnknownPairingCode`` if the code doesn't match an
         active pending row.
         """
+        if capabilities_override:
+            require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed
+        else:
+            stored = self._registry.get_pending(channel, code)  # BF-903 (A3): read, not consumed, so a refused row is kept
+            if stored is not None and stored.expires_at >= self._clock():  # BF-903 (A4): an expired row goes on to the consume and answers "expired"
+                require_known_capabilities(stored.capabilities or DEFAULT_CAPABILITIES)  # BF-903 (A3): a row minted before BF-903 may hold any string
         pending = self._registry.consume_pending(channel, code)
         if pending is None:
             raise UnknownPairingCode(f"No pending pairing for channel={channel!r} code={code!r}")
@@ -162,6 +170,7 @@ class PairingService:
         caps = tuple(capabilities_override) if capabilities_override else pending.capabilities
         if not caps:
             caps = DEFAULT_CAPABILITIES
+        require_known_capabilities(caps)  # BF-903: a row minted before BF-903 may hold any string
         ttl = session_ttl_seconds if session_ttl_seconds is not None else self._session_ttl
 
         # Compose a callsign that's stable across re-pairings — channel

@@ -14,8 +14,17 @@ through a sovereign DID issued under the visiting tier. Each session is:
 
 Design decisions
 ----------------
-- **Capabilities are strings, not enums** (Open/Closed): new caps land
-  via configuration, not code edits.
+- **Capabilities are strings, not enums**: sessions, pairing rows and
+  events carry them as strings. BF-903 (#1581) closes the set: a
+  capability means something only where a checking path reads it, and
+  that path is code, so a new capability lands in ``VISITOR_CAPABILITIES``
+  with its check, in one change. Configuration and the Captain's
+  ``--cap`` choose among the declared names; an undeclared one is refused
+  by name, so a typo can neither grant nor deny in silence.
+- **One guard** (BF-903): every path that acts for an actor id calls
+  ``require_visitor_capability`` before acting. A crew member's id is
+  never looked up; a visiting officer's DID must hold the capability in a
+  live session, read at use.
 - **Registry storage is in-memory** for v1. Persistence is a follow-up
   AD-701b once the cap surface stabilizes.
 - **DID issuance delegates to AgentIdentityRegistry** — we never invent
@@ -28,13 +37,72 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
+
+# BF-903 (#1581): the visiting-officer capability vocabulary. It is defined once, in
+# ``probos.config_models.crew`` (Amendment A2): that module imports nothing from ``probos``, so the
+# config default and validator read the names without an import, and this module re-exports them,
+# as ``cognitive/dreaming.py`` imports AD-1326's bound from ``config_models/cognition.py``. The
+# registry, the pairing defaults and every checking path import the names from here.
+from probos.config_models.crew import (  # re-exported: the CAP_* names are imported from this module
+    CAP_DM_RECEIVE,
+    CAP_DM_SEND,
+    CAP_WARD_ROOM_POST,
+    CAP_WARD_ROOM_READ,
+    VISITOR_CAPABILITIES,
+    undeclared_capabilities,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION_TTL_SECONDS: float = 3600.0
 DEFAULT_SWEEP_INTERVAL_SECONDS: float = 60.0
 VISITING_AGENT_TYPE: str = "visiting"
+
+# BF-903: why a visiting officer was refused (AD-1316's stable-code syntax). The refusal event
+# and ``VisitorScopeRefused.reason`` carry one of these.
+REFUSED_NO_SESSION: str = "visitor_session_unknown"
+REFUSED_EXPIRED: str = "visitor_session_expired"
+REFUSED_CAPABILITY: str = "visitor_capability_missing"
+REFUSED_REGISTRY_OFF: str = "visitor_registry_off"
+
+
+class UnknownCapabilityError(ValueError):
+    """BF-903: a capability name the vocabulary does not declare."""
+
+    def __init__(self, unknown: Iterable[str]) -> None:
+        self.unknown: tuple[str, ...] = tuple(unknown)
+        super().__init__(
+            f"undeclared visiting-officer capabilities {list(self.unknown)!r}; "
+            f"declared: {sorted(VISITOR_CAPABILITIES)!r} (BF-903)"
+        )
+
+
+class VisitorScopeRefused(PermissionError):
+    """BF-903: a visiting officer's request that its session does not allow.
+
+    ``reason`` is one of the ``REFUSED_*`` codes. The API answers it with 403, as it answers
+    BF-771's denial (``api.py``).
+    """
+
+    def __init__(self, did: str, capability: str, reason: str, surface: str) -> None:
+        self.did = did
+        self.capability = capability
+        self.reason = reason
+        self.surface = surface
+        super().__init__(
+            f"BF-903: visiting officer {did} may not use {capability!r} at {surface}: {reason}"
+        )
+
+
+def require_known_capabilities(capabilities: Iterable[str]) -> None:
+    """BF-903: raise ``UnknownCapabilityError`` naming every capability the vocabulary lacks.
+
+    A bare string is iterated as its characters and so refused, never read as one name.
+    """
+    unknown = undeclared_capabilities(capabilities)
+    if unknown:
+        raise UnknownCapabilityError(unknown)
 
 
 @dataclass(frozen=True)
@@ -57,11 +125,15 @@ class VisitingOfficerRegistry:
       - deregister(did) -> bool
       - get(did) -> VisitingOfficerSession | None
       - has_capability(did, capability) -> bool
+      - refusal(did, capability) -> str | None   (BF-903)
+      - check(did, capability, *, surface) -> None   (BF-903; raises on refusal)
       - active() -> tuple[VisitingOfficerSession, ...]
       - async start() / async stop()
 
-    Consumers SHOULD call ``has_capability(did, "ward_room.post")`` before
-    relaying a Ward Room post on behalf of a visiting officer (D4).
+    BF-903: consumers call the module's ``require_visitor_capability``,
+    which recognises a visiting officer and then calls ``check``. ``get``,
+    ``refusal`` and ``check`` read expiry at use, so an expired session is
+    refused before the sweep removes it.
     """
 
     def __init__(
@@ -117,6 +189,7 @@ class VisitingOfficerRegistry:
         ttl = session_ttl_seconds if session_ttl_seconds is not None else self._session_ttl
         if ttl <= 0:
             raise ValueError("session_ttl_seconds must be positive")
+        require_known_capabilities(capabilities)  # BF-903 (#1581): refused before a certificate is issued
         cert = await self._identity.issue_birth_certificate(
             agent_type=VISITING_AGENT_TYPE,
             callsign=callsign,
@@ -160,15 +233,43 @@ class VisitingOfficerRegistry:
         return True
 
     def get(self, did: str) -> VisitingOfficerSession | None:
-        return self._sessions.get(did)
+        session = self._sessions.get(did)
+        if session is None or self._clock() >= session.expires_at:  # BF-903: an expired session is gone at use
+            return None
+        return session
 
-    def has_capability(self, did: str, capability: str) -> bool:
+    def refusal(self, did: str, capability: str) -> str | None:
+        """BF-903: why ``did`` may not use ``capability`` now, or None when it may.
+
+        Read at each use: a deregistered session is refused at once and an expired one before
+        the sweep removes it.
+        """
         session = self._sessions.get(did)
         if session is None:
-            return False
+            return REFUSED_NO_SESSION
         if self._clock() >= session.expires_at:
-            return False
-        return capability in session.capabilities
+            return REFUSED_EXPIRED
+        if capability not in session.capabilities:
+            return REFUSED_CAPABILITY
+        return None
+
+    def has_capability(self, did: str, capability: str) -> bool:
+        return self.refusal(did, capability) is None
+
+    def check(self, did: str, capability: str, *, surface: str) -> None:
+        """BF-903: return when ``did`` may use ``capability``; otherwise record the refusal and raise.
+
+        The record is a ``VISITING_OFFICER_REFUSED`` event through this registry's emitter, the
+        sink its registration and deregistration events use, and a warning.
+        """
+        reason = self.refusal(did, capability)
+        if reason is None:
+            return
+        self._emit("VISITING_OFFICER_REFUSED", {
+            "did": did, "capability": capability, "reason": reason, "surface": surface,
+        })
+        logger.warning("BF-903: refused visiting officer %s %r at %s: %s", did, capability, surface, reason)
+        raise VisitorScopeRefused(did, capability, reason, surface)
 
     def active(self) -> tuple[VisitingOfficerSession, ...]:
         now = self._clock()
@@ -203,3 +304,55 @@ class VisitingOfficerRegistry:
             logger.warning(
                 "AD-701: emit_event '%s' failed; continuing", event_name, exc_info=True
             )
+
+
+def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
+    """BF-903: whether ``actor_id`` is the DID of a visiting officer's birth certificate.
+
+    Only a did:probos agent DID is looked up, in the identity registry's in-memory certificate
+    cache (``get_by_uuid``, which never raises), so a slot id, a callsign, "captain" or "system"
+    costs no lookup and is never refused here. The certificate outlives its session, so an
+    expired or deregistered visitor is still recognised and refused. BF-907's
+    ``resolve_slot_id`` and AD-1346's ``IdentityService.resolve`` return None for a visitor,
+    which holds no slot, so they cannot classify one; this reads the agent type AD-701 sets.
+    """
+    if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
+        return False
+    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
+
+    parsed = parse_did(actor_id)
+    if parsed is None or parsed.get("type") != "agent":
+        return False
+    if not is_sovereign_identity_key(parsed["agent_uuid"]):  # BF-903 (A3): a malformed agent part costs no lookup
+        return False
+    cert = identity_registry.get_by_uuid(parsed["agent_uuid"])
+    return cert is not None and cert.agent_type == VISITING_AGENT_TYPE
+
+
+def require_visitor_capability(
+    actor_id: str,
+    capability: str,
+    *,
+    surface: str,
+    identity_registry: Any,
+    visiting_officers: VisitingOfficerRegistry | None,
+) -> None:
+    """BF-903 (#1581): the one check every path that acts for an actor id calls before it acts.
+
+    A crew member, the Captain or the system passes without a lookup. A visiting officer must
+    hold ``capability`` in a live session; with AD-701's registry off it holds none and is
+    refused. ``surface`` names the entry in the refusal and its record. An undeclared
+    ``capability`` raises ``UnknownCapabilityError`` whoever acts, so a typo in a checking
+    path fails on its first call.
+    """
+    if capability not in VISITOR_CAPABILITIES:
+        raise UnknownCapabilityError([capability])
+    if not is_visiting_identity(identity_registry, actor_id):
+        return
+    if visiting_officers is None:
+        logger.warning(
+            "BF-903: refused visiting officer %s %r at %s: AD-701's registry is off, so no session exists",
+            actor_id, capability, surface,
+        )
+        raise VisitorScopeRefused(actor_id, capability, REFUSED_REGISTRY_OFF, surface)
+    visiting_officers.check(actor_id, capability, surface=surface)
