@@ -4,7 +4,7 @@
 
 **Status:** build-ready on the merged main. **Closes #1575** (slice S3 of S1 to S3). **Tier HIGH** (a field added to the doctor's public `CheckResult`, and the runner's rendering of every check; it is also the evidence #1575 closes on). It changes no code a cost-aware budget runs (AD-1208, AD-1323 to AD-1325). **Base:** `origin/main` after the BF-900 / BF-901 S1 / BF-901 S2 batch merges (drafted on its delivery tree, HEAD `96c0c730`, tree `305993682393802571dd9f83dc31923508bcac9a`). **Source:** the Architect's read-only consult of 2026-10-21.
 
-**Tests:** one new file, `tests/test_bf901_s3_token_accounting_view.py`: **13 test cases in 11 test functions** (section 6). No existing test changes.
+**Tests:** one new file, `tests/test_bf901_s3_token_accounting_view.py`: **18 test cases in 14 test functions** (section 6; Amendment A1 added five cases and three functions, section 16). No existing test changes.
 
 **Line endings:** every edited file's working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are written with LF; match and write with the file's own line endings.
 
@@ -44,11 +44,11 @@ Live use, at the Captain's next restart: `probos doctor` prints, under `token_ac
 |---|---|---|
 | D1 | **Surface:** a doctor check, plus `CheckResult.detail` (defaulted, last; the positional order is unchanged) printed under every outcome | One line only: cannot show the breakdown. A route on a new `CognitiveJournal` method: needs the running vessel and is not a one-line check at restart (considered, deferred; the reader can serve it later). A SIF check: SIF checks are synchronous invariants over in-memory structures (`sif.py:207-472`), not a place for a disk scan |
 | D2 | **Read:** a new read-only reader on the caller's connection; the doctor opens it with `read_only=True` (SQLite `mode=ro`, `sqlite_factory.py:36`). The journal runs in rollback mode (`journal.py:204` sets only `foreign_keys`), so the read creates no side file and each statement holds a shared lock only while it runs. The doctor sets a 2 s busy timeout, as BF-906 does | Reuse `get_token_usage_by`: needs a started journal (it migrates and creates) and has no day or source. Copy the file first: up to 152 MB per run (`storage_declarations.py:82`); the read-only open is BF-906's precedent and the consult's read-only requirement |
-| D3 | **Outcomes:** OK, or WARN when the journal cannot be read (`sqlite3.Error`) or when a row recorded at or after the earliest row that carries a token source names no model. Never FAIL. A missing file, no `journal` table, an empty table or a journal from before S2 all give OK | WARN on a share of `''` rows: a bypassed chain step records `''` with `unknown` on a healthy vessel (`sub_task.py:658-680`). WARN on estimated-only days: permanent on the proxy, which reports zeros (BF-680). FAIL: this is an account, not a component that breaks; FAIL would change `probos doctor`'s exit code |
+| D3 | **Outcomes:** OK, or WARN when the journal cannot be read (`sqlite3.Error`), when it holds a stored value the reader cannot convert (OverflowError, TypeError or ValueError raised by the reader, for example a timestamp stored as text; A1), or when a row recorded at or after the earliest row that carries a token source names no model. Never FAIL, and nothing raises out of `run`. A missing file, a zero-byte file (SQLite reads it as an empty database; A1), no `journal` table, an empty table or a journal from before S2 all give OK. A timestamp no calendar date can name is shown as `(unknown day)`, and an empty day key from SQLite reads the same; the warning boundary still compares raw timestamps (A1) | WARN on a share of `''` rows: a bypassed chain step records `''` with `unknown` on a healthy vessel (`sub_task.py:658-680`). WARN on estimated-only days: permanent on the proxy, which reports zeros (BF-680). FAIL: this is an account, not a component that breaks; FAIL would change `probos doctor`'s exit code. WARN on a zero-byte file: a healthy first start passes through it before `start()` creates the schema, so it would false-alarm (A1). A blanket handler around `run`: it would turn a defect in the check into a WARN instead of the runner's FAIL (A1) |
 | D4 | **Buckets**, tested in order: `replayed` (`cached <> 0`), `mock` (`model = 'mock'`), `measured`, `estimated`, `uncharged` (`token_source = ''`), `other`. Spend = measured + estimated | Count mock rows as measured: they are the mock client's fixed 32-token rows (#1575's evidence) and would distort a real vessel's measured share. Fold unknown labels into `uncharged`: a new label would vanish |
 | D5 | **Dimensions:** `tier`, `intent`, UTC day via `strftime('%Y-%m-%d', timestamp, 'unixepoch')` (`timestamp` is Unix epoch REAL, `journal.py:24`). Three one-dimensional groupings from one scan; exact integer sums, thousands separators, no rounding; every tier, the top 8 intents by spend, the newest 7 days, with a count of the rest | A tier x intent x day cube: unreadable on a terminal. Local time: the day boundary moves with the host |
 | D6 | **The journal's `''` is not `crew_execution_usage`'s vocabulary.** Nothing in S3 passes a journal label to its validators (`crew_execution_usage.py:27-35`, which raise on `''`) | Map `''` to `mixed` or `estimated`: it means neither |
-| D7 | **#1575's budget bullet (reclassification R-A):** met for AD-1208 by S1's test; the AD-1323 approval card's missing provenance is filed as its own follow-up issue before #1575 closes, and linked in the closing comment | R-B (fix the card in S3): a governance-path change through the AD-1322 hook (`economic_judgment_organ.py:146`, `:869-876`), the loop's calls (`agentic_loop.py:1833`, `:1947`), `CostedCase` and the card, outside the doctor view. R-C (keep #1575 open): the view waits on a wording change. R-A weakens no control: the card behaves exactly as today |
+| D7 | **#1575's budget bullet (reclassification R-A):** met for AD-1208 by S1's test; the AD-1323 approval card's missing provenance is recorded as an issue-ready item in the follow-up register on #1523 (severity Medium; to be fixed before any of the four flags `continue_extension_armed` checks, `costed_continue_ask.py:71-78`, defaults to true or is enabled on the live vessel), and that register comment is linked in #1575's closing comment and the S3 PR body | R-B (fix the card in S3): a governance-path change through the AD-1322 hook (`economic_judgment_organ.py:146`, `:869-876`), the loop's calls (`agentic_loop.py:1833`, `:1947`), `CostedCase` and the card, outside the doctor view. R-C (keep #1575 open): the view waits on a wording change. R-A weakens no control: the card behaves exactly as today |
 | D8 | **Coverage stated in the view:** "journaled calls only (one-shot decisions and sub-task chain steps); the agentic loop writes no journal row" | Silent: the Captain would read the total as all spend. Journaling the loop: S2 section 9 and the consult's decision 4 keep it out; register item |
 
 **#1575's acceptance, settled.**
@@ -71,7 +71,7 @@ Live use, at the Captain's next restart: `probos doctor` prints, under `token_ac
 | M4 (about 6 calls) | Section 8: `PROGRESS.md`, `DECISIONS.md`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` | `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check`; `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1184_ad_ledger.py -n 0 -q` |
 | M5 (about 4 calls) | Section audit; stage by explicit path: `src/probos/doctor/protocol.py`, `src/probos/doctor/runner.py`, `src/probos/cognitive/journal_token_report.py`, `src/probos/doctor/checks/token_accounting_check.py`, `src/probos/doctor/checks/__init__.py`, `tests/test_bf901_s3_token_accounting_view.py`, `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json` (never `git add -A`) | `git diff --cached --stat` |
 
-Then the orchestrator: the scratch-tree dry run, the mutation rows (section 10), review, the local commit, the receipted broad gate, and the AD-1323 follow-up issue (D7) before #1575 is closed.
+Then the orchestrator: the scratch-tree dry run, the mutation rows (section 10), review, the local commit, the receipted broad gate, and, before #1575 is closed, the AD-1323 card's item in the follow-up register on #1523 (D7), linked from #1575's closing comment and the S3 PR body.
 
 ## 5. Consumers of every value this changes
 
@@ -90,7 +90,7 @@ Greps: `Grep "CheckResult|\.remediation\b|run_doctor|iter_checks" src/probos/`; 
 
 ## 6. Tests
 
-All in `tests/test_bf901_s3_token_accounting_view.py`: **13 test cases in 11 test functions**. Every journal test writes rows through a real `CognitiveJournal.record` on `tmp_path` and reads them through the real check or the real reader over the real read-only open. T9 and T10 drive the real `run_doctor`.
+All in `tests/test_bf901_s3_token_accounting_view.py`: **18 test cases in 14 test functions** (A1: T6[zero_byte], T12 to T14). Every journal test writes rows through a real `CognitiveJournal.record` on `tmp_path` and reads them through the real check or the real reader over the real read-only open. T9 and T10 drive the real `run_doctor`.
 
 | ID | Test | What it proves |
 |---|---|---|
@@ -99,12 +99,15 @@ All in `tests/test_bf901_s3_token_accounting_view.py`: **13 test cases in 11 tes
 | T3 | `test_a_row_without_a_model_after_token_sources_began_warns` | A row with an empty model recorded after the earliest labelled row (labelled rows in two groups) gives WARN, the exact message, the remediation and the no-model line |
 | T4 | `test_rows_without_a_model_from_before_token_sources_are_reported_not_warned` | Rows with an empty model recorded before the first labelled row: OK, counted, split by chain step, with their last day |
 | T5 | `test_a_journal_from_before_bf901_is_read_as_it_is_without_a_fail` | A journal without `token_source` (S2's pre-migration shape, built with raw `aiosqlite`): OK, every row uncharged or mock, the summary says it predates BF-901, the no-model line says none can be dated; the file is unchanged and still has no `token_source` |
-| T6 | `test_a_missing_or_empty_journal_is_ok_and_left_as_it_was[missing|no_journal_table|empty_journal]` (3) | OK with the exact message, no detail, and the read-only open creates no file |
+| T6 | `test_a_missing_or_empty_journal_is_ok_and_left_as_it_was[missing|zero_byte|no_journal_table|empty_journal]` (4) | OK with the exact message, no detail, and the read-only open creates no file; a zero-byte file (SQLite's empty database, which a healthy first start passes through) stays zero bytes (A1, F2) |
 | T7 | `test_an_unreadable_journal_warns_and_does_not_fail` | A file that is not a database gives WARN with the BF-906 remediation, not FAIL, and nothing raises |
 | T8 | `test_the_check_opens_the_journal_read_only` | Through a recording factory (BF-906's recorder, `test_bf906_doctor_check.py:442-462`): one open, `read_only=True` |
-| T9 | `test_detail_shows_on_every_outcome_and_remediation_only_on_warn_or_fail` | `run_doctor` with three stub checks: an OK's detail lines are printed and its remediation is not; a WARN's remediation, then its detail; a result without detail prints nothing more |
+| T9 | `test_detail_shows_on_every_outcome_and_remediation_only_on_warn_or_fail` | `run_doctor` with four stub checks: an OK's detail lines are printed and its remediation is not; a WARN's remediation, then its detail; a FAIL's remediation, then its detail, the exit code 1 and the closing line `1 issue(s) found.` (A1, F4); a result without detail prints nothing more |
 | T10 | `test_the_real_check_renders_its_breakdown_through_run_doctor` | The full chain: `record` -> file -> the check -> the runner -> the console shows the summary and the breakdown lines |
 | T11 | `test_the_check_is_registered_once_after_crew_enrollment` | A fresh interpreter: registered once, as `_TokenAccountingCheck`, directly after `crew_enrollment`; `extras` is still followed by `verifier_independence` |
+| T12 | `test_a_timestamp_no_calendar_day_can_name_warns_through_run_doctor_without_raising[1e+30|-1e+30]` (2) | A1, F1: a labelled row and a row naming no model at either extreme, written through the real journal and read through the real `run_doctor`: exit 0, no "check raised", the WARN message and the no-model line read `(unknown day)`, closing line `No check failed; 1 warning(s) above.` |
+| T13 | `test_days_no_calendar_date_can_name_read_as_unknown_in_the_summary` | A1, F1: one labelled row at `1e30`: OK, the summary reads `(unknown day) to (unknown day) UTC` |
+| T14 | `test_a_stored_value_the_reader_cannot_convert_warns_and_does_not_raise` | A1, F1: a labelled row whose timestamp is stored as text: WARN with its own message and remediation, no detail, nothing raises |
 
 Consumer tests run unchanged (M1 to M3): `test_ad801_doctor.py`, `test_ad1137_doctor.py`, `test_ad484_ux_adoption.py`, `test_bf906_doctor_check.py`, `test_ad1328_s2a_startup_and_doctor.py`, `test_ad1327_verifier_independence.py`, `test_bf908_crew_scope_token.py`, `test_layer_boundaries.py`, `test_bf901_s2_journal_token_provenance.py`, `test_cognitive_journal.py`, `test_ad1343_seam_registry.py`.
 
@@ -413,9 +416,9 @@ rollback mode (the journal's ``start`` sets no journal mode), so each read state
 while it runs; the vessel's writer waits for it under its connection's default busy timeout.
 
 The outcome is OK or WARN, never FAIL: this is an account, not a component that can be broken. WARN means the
-journal could not be read, or a row recorded since the first row with a token source names no model (BF-901
-requires the answering model or ``unknown``). The breakdown is the result's ``detail``, shown on every
-outcome.
+journal could not be read or holds a value the reader cannot convert, or a row recorded since the first row
+with a token source names no model (BF-901 requires the answering model or ``unknown``). The breakdown is the
+result's ``detail``, shown on every outcome; a day no calendar date can name reads ``(unknown day)``.
 """
 
 from __future__ import annotations
@@ -453,6 +456,8 @@ _LEGEND = (
 _COVERAGE = (
     "Journaled calls only (one-shot decisions and sub-task chain steps); the agentic loop writes no journal row."
 )
+#: Shown for a day no calendar date names: a timestamp out of range for SQLite's date functions or Python's.
+UNKNOWN_DAY = "(unknown day)"
 
 
 def _plural(count: int, noun: str) -> str:
@@ -462,7 +467,15 @@ def _plural(count: int, noun: str) -> str:
 def _utc_day(timestamp: float | None) -> str:
     if timestamp is None:
         return ""
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d")
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return UNKNOWN_DAY
+
+
+def _shown_day(day: str) -> str:
+    """A reader's day key, or the unknown-day label when SQLite could not name the day (an empty key)."""
+    return day or UNKNOWN_DAY
 
 
 def _amount(group: GroupUsage, bucket: str) -> str:
@@ -483,7 +496,7 @@ def _summary(report: JournalTokenReport) -> str:
     text = (
         f"Token accounting: {total.spend_tokens:,} tokens spent over {_plural(total.spend_calls, 'call')} "
         f"({total.tokens[BUCKET_MEASURED]:,} measured, {total.tokens[BUCKET_ESTIMATED]:,} estimated), "
-        f"{report.first_day} to {report.last_day} UTC"
+        f"{_shown_day(report.first_day)} to {_shown_day(report.last_day)} UTC"
     )
     if not report.has_token_source:
         text += (
@@ -498,7 +511,7 @@ def _no_model_line(report: JournalTokenReport) -> str:
         return "Rows naming no model: none."
     head = (
         f"Rows naming no model: {report.no_model_rows:,} ({_plural(report.no_model_chain_steps, 'chain step')}), "
-        f"the last on {report.no_model_last_day}"
+        f"the last on {_shown_day(report.no_model_last_day)}"
     )
     if report.labelled_since is None:
         return head + "; no row carries a token source yet, so none can be dated after BF-901."
@@ -548,6 +561,13 @@ class _TokenAccountingCheck:
                 CheckOutcome.WARN,
                 f"Token accounting: could not read {JOURNAL_FILE}: {exc}",
                 "The running vessel may be writing to it; rerun `probos doctor`.",
+            )
+        except (OverflowError, TypeError, ValueError) as exc:
+            return CheckResult(
+                CheckOutcome.WARN,
+                f"Token accounting: {JOURNAL_FILE} holds a value this view cannot read: {exc}",
+                "A journal row's timestamp or token count is not a number in range. Find it on a copy of "
+                "cognitive_journal.db.",
             )
         if report is None or not report.rows:
             return CheckResult(CheckOutcome.OK, "Token accounting: no model calls recorded yet")
@@ -879,10 +899,12 @@ async def test_a_journal_from_before_bf901_is_read_as_it_is_without_a_fail(tmp_p
     assert (report.total.calls[BUCKET_UNCHARGED], report.total.calls[BUCKET_MOCK]) == (2, 1)
 
 
-@pytest.mark.parametrize("state", ["missing", "no_journal_table", "empty_journal"])
+@pytest.mark.parametrize("state", ["missing", "zero_byte", "no_journal_table", "empty_journal"])
 async def test_a_missing_or_empty_journal_is_ok_and_left_as_it_was(tmp_path: Path, state: str) -> None:
     path = tmp_path / "cognitive_journal.db"
-    if state == "no_journal_table":
+    if state == "zero_byte":  # SQLite's empty database; a healthy first start passes through it (A1, F2)
+        path.write_bytes(b"")
+    elif state == "no_journal_table":
         async with aiosqlite.connect(str(path)) as db:
             await db.execute("CREATE TABLE unrelated (x INTEGER)")
             await db.commit()
@@ -897,6 +919,7 @@ async def test_a_missing_or_empty_journal_is_ok_and_left_as_it_was(tmp_path: Pat
     assert result.message == f"Token accounting: {expected}"
     assert result.detail == ""
     assert _listing(tmp_path) == before  # the read-only open creates nothing
+    assert state != "zero_byte" or path.read_bytes() == b""  # nothing created the schema
 
 
 async def test_an_unreadable_journal_warns_and_does_not_fail(tmp_path: Path) -> None:
@@ -920,6 +943,64 @@ async def test_the_check_opens_the_journal_read_only(tmp_path: Path, monkeypatch
     assert recorder.read_only == [True]
 
 
+@pytest.mark.parametrize("timestamp", [1e30, -1e30])
+async def test_a_timestamp_no_calendar_day_can_name_warns_through_run_doctor_without_raising(
+    fresh_registry: None, tmp_path: Path, timestamp: float,
+) -> None:
+    await _journal(tmp_path, [
+        {"timestamp": timestamp, "intent": "proactive_think", "model": "m1", "total_tokens": 10,
+         "token_source": "measured"},
+        {"timestamp": timestamp, "intent": "proactive_think", "model": ""},
+    ])
+    register_check(_check())
+
+    code, lines = await _doctor_lines(_ctx(tmp_path))
+
+    assert code == 0  # a WARN, not a check that raised (the runner counts that as FAIL)
+    assert not any("check raised" in line for line in lines)
+    assert any(line.endswith(
+        "Token accounting: 1 journal row with no model since token sources began on (unknown day)"
+    ) for line in lines)
+    assert (
+        "    Rows naming no model: 1 (0 chain steps), the last on (unknown day); "
+        "1 since token sources began on (unknown day)."
+    ) in lines
+    assert lines[-1] == "No check failed; 1 warning(s) above."
+
+
+async def test_days_no_calendar_date_can_name_read_as_unknown_in_the_summary(tmp_path: Path) -> None:
+    await _journal(tmp_path, [
+        {"timestamp": 1e30, "intent": "proactive_think", "model": "m1", "total_tokens": 10,
+         "token_source": "measured"},
+    ])
+
+    result = await _check().run(_ctx(tmp_path))
+
+    assert result.outcome is CheckOutcome.OK
+    assert result.message == (
+        "Token accounting: 10 tokens spent over 1 call (10 measured, 0 estimated), "
+        "(unknown day) to (unknown day) UTC"
+    )
+    assert result.detail.splitlines()[-1] == "Rows naming no model: none."
+
+
+async def test_a_stored_value_the_reader_cannot_convert_warns_and_does_not_raise(tmp_path: Path) -> None:
+    await _journal(tmp_path, [  # the REAL column keeps a non-numeric text value as text
+        {"timestamp": "not a time", "intent": "proactive_think", "model": "m1", "total_tokens": 10,
+         "token_source": "measured"},
+    ])
+
+    result = await _check().run(_ctx(tmp_path))
+
+    assert result.outcome is CheckOutcome.WARN
+    assert result.message.startswith("Token accounting: cognitive_journal.db holds a value this view cannot read: ")
+    assert result.remediation == (
+        "A journal row's timestamp or token count is not a number in range. Find it on a copy of "
+        "cognitive_journal.db."
+    )
+    assert result.detail == ""
+
+
 # ---------------------------------------------------------------------------
 # 4. The runner and the registration (T9, T10, T11)
 # ---------------------------------------------------------------------------
@@ -932,18 +1013,22 @@ async def test_detail_shows_on_every_outcome_and_remediation_only_on_warn_or_fai
         CheckOutcome.OK, "ok-summary", "ok-hidden-remediation", "ok-detail-1\nok-detail-2",
     )))
     register_check(_Stub("warn_stub", CheckResult(CheckOutcome.WARN, "warn-summary", "warn-remediation", "warn-detail")))
+    register_check(_Stub("fail_stub", CheckResult(CheckOutcome.FAIL, "fail-summary", "fail-remediation", "fail-detail")))
     register_check(_Stub("plain_stub", CheckResult(CheckOutcome.OK, "plain-summary")))
 
     code, lines = await _doctor_lines(_ctx(tmp_path))
 
-    assert code == 0  # WARN does not count (runner.py's contract, unchanged)
+    assert code == 1  # the FAIL counts and the WARN does not (runner.py's contract, unchanged)
     ok = next(i for i, line in enumerate(lines) if "ok-summary" in line)
     assert lines[ok + 1 : ok + 3] == ["    ok-detail-1", "    ok-detail-2"]
     assert not any("ok-hidden-remediation" in line for line in lines)
     warn = next(i for i, line in enumerate(lines) if "warn-summary" in line)
     assert lines[warn + 1 : warn + 3] == ["    warn-remediation", "    warn-detail"]
+    fail = next(i for i, line in enumerate(lines) if "fail-summary" in line)
+    assert lines[fail + 1 : fail + 3] == ["    fail-remediation", "    fail-detail"]
     plain = next(i for i, line in enumerate(lines) if "plain-summary" in line)
     assert lines[plain + 1] == ""  # no detail, nothing rendered: the runner's closing blank line follows
+    assert lines[-1] == "1 issue(s) found."
 
 
 async def test_the_real_check_renders_its_breakdown_through_run_doctor(
@@ -1019,9 +1104,9 @@ REPLACE:
 - *Scope.* `cognitive/journal_token_report.py` (new, the read-only reader), `doctor/checks/token_accounting_check.py` (new), `doctor/protocol.py` (`CheckResult` gains `detail`), `doctor/runner.py` (prints it), `doctor/checks/__init__.py` (registration) and tests. Contract: `prompts/bf-901-s3-doctor-token-accounting-view.md`.
 - *D1 (surface).* A doctor check, plus a defaulted `detail` field on `CheckResult` (last, so every existing construction stands) that the runner prints under every outcome, after any remediation; an OK result still shows no remediation. A one-line check could not show the breakdown on a healthy vessel; a route needs the vessel running (considered, deferred); SIF checks are in-memory invariants.
 - *D2 (read).* A new reader on a connection opened with the ConnectionFactory's `read_only` open (BF-906's pattern): it never creates, writes or migrates, so a journal from before BF-901 is read with an empty source. The journal's own readers need a started journal, whose `start()` migrates and creates tables, and they have no day or source grouping.
-- *D3 (outcomes).* OK or WARN, never FAIL. WARN when the journal cannot be read, or when a row recorded since the earliest row with a token source names no model (BF-901 requires a model or `unknown`, so only a regression writes one). No WARN on `''` rows (a bypassed step records `''` legitimately) or on estimated-only spend (permanent on the proxy).
+- *D3 (outcomes).* OK or WARN, never FAIL, and nothing raises out of the check. WARN when the journal cannot be read or holds a stored value the reader cannot convert (a timestamp stored as text, say), or when a row recorded since the earliest row with a token source names no model (BF-901 requires a model or `unknown`, so only a regression writes one). No WARN on `''` rows (a bypassed step records `''` legitimately) or on estimated-only spend (permanent on the proxy). A zero-byte file is an empty database and gives OK: a healthy first start passes through it before the schema exists. A timestamp no calendar date can name reads `(unknown day)`; the warning boundary still compares raw timestamps (Amendment A1).
 - *D4-D6 (aggregation).* Buckets in order: replayed (`cached`), mock (`model = 'mock'`), measured, estimated, uncharged (`''`), other; spend is measured plus estimated. Per tier, per intent and per UTC day from one grouped scan; exact integer sums; every tier, the top 8 intents, the newest 7 days. The journal's `''` is never passed to `crew_execution_usage`, whose validators reject it.
-- *D7 (#1575's budget bullet, reclassification R-A).* None of the cost-aware features reads the journal; all read the agentic loop's charge, whose estimator S1 made the single owner. AD-1208's stop says "(usage estimated, not measured)" on an estimate, proven on a real loop and a real `TurnCostBudget` by S1's `test_an_estimated_loop_outcome_reaches_the_cost_stop_wording`; AD-1325 stores the source on every spend record; AD-1324 reads a pre-call prompt estimate, not spend. The AD-1323 approval card's rationale and its costed case carry no source (the turn's reply, which carries AD-1208's statement, does): filed as its own follow-up issue, linked in #1575's closing comment. Rejected: fixing the card in S3 (a governance-path change through the AD-1322 hook and the loop's calls), and keeping #1575 open for it. No control is weakened: the card behaves as before.
+- *D7 (#1575's budget bullet, reclassification R-A).* None of the cost-aware features reads the journal; all read the agentic loop's charge, whose estimator S1 made the single owner. AD-1208's stop says "(usage estimated, not measured)" on an estimate, proven on a real loop and a real `TurnCostBudget` by S1's `test_an_estimated_loop_outcome_reaches_the_cost_stop_wording`; AD-1325 stores the source on every spend record; AD-1324 reads a pre-call prompt estimate, not spend. The AD-1323 approval card's rationale and its costed case carry no source (the turn's reply, which carries AD-1208's statement, does): an issue-ready item in the follow-up register on #1523, severity Medium, to be fixed before any of the four flags `continue_extension_armed` checks defaults to true or is enabled on the live vessel; #1575's closing comment and the S3 PR body link the register comment. Rejected: fixing the card in S3 (a governance-path change through the AD-1322 hook and the loop's calls), and keeping #1575 open for it. No control is weakened: the card behaves as before.
 - *D8 (coverage).* The view says it covers journaled calls only; the agentic loop and the other calls that write no journal row are not in it (S2, consult decision 4).
 - *Recorded, not repaired.* Each read statement holds a shared lock on the rollback-mode journal while it runs; the vessel's writer waits under its default busy timeout. A hot rollback journal left by a crash makes the read-only open fail until the vessel starts, which the check reports as WARN.
 - *Reversal.* Revert the BF-901 S3 commit. Nothing persisted changes; the doctor loses the check and the `detail` field, which no other check sets.
@@ -1043,7 +1128,7 @@ REPLACE:
 - The doctor's exit code contract (WARN never counts), the other 23 checks, `build_context`, `__main__._cmd_doctor`.
 - SIF.
 
-## 10. Mutation rows (28 rows; whole stripped lines; each occurs once in its file after section 7)
+## 10. Mutation rows (38 rows; whole stripped lines; each occurs once in its file after section 7 and Amendment A1)
 
 Tier HIGH: every changed source file has rows. Run against `tests/test_bf901_s3_token_accounting_view.py` on the contract-applied tree, after an unmutated baseline run of that file that passes. The runner mutates each file in place and restores it before the next row.
 
@@ -1073,12 +1158,24 @@ Tier HIGH: every changed source file has rows. Run against `tests/test_bf901_s3_
 | K8 | same | `if not report.has_token_source:` | `if False:` | T5: `assert result.message == ...` (the "predates BF-901" clause) |
 | K9 | same | `lines.extend(f"  {_describe(group)}" for group in report.by_tier)` | `pass` | T1: the tier lines; T10: `assert "    " + STANDARD_TIER in lines` |
 | K10 | same | `register_check(_TokenAccountingCheck())` | `pass` | T11: `assert [kind for name, kind in registered if name == "token_accounting"] == ["_TokenAccountingCheck"]` |
+| K11 | same | `UNKNOWN_DAY = "(unknown day)"` | `UNKNOWN_DAY = ""` | T12: the `line.endswith(... "began on (unknown day)")` assertion (T13 also fails) |
+| K12 | same | `except (OverflowError, OSError, ValueError):` | `except ZeroDivisionError:` | T12: `assert code == 0` (the check raises OverflowError; the runner counts a FAIL) |
+| K13 | same | `return UNKNOWN_DAY` | `return ""` | T12: the `line.endswith(... "began on (unknown day)")` assertion |
+| K14 | same | `return day or UNKNOWN_DAY` | `return day` | T12: the no-model line `in lines` ("the last on ;"); T13 also fails |
+| K15 | same | `f"{_shown_day(report.first_day)} to {_shown_day(report.last_day)} UTC"` | `f"{report.first_day} to {report.last_day} UTC"` | T13: `assert result.message == (...)` |
+| K16 | same | `f"the last on {_shown_day(report.no_model_last_day)}"` | `f"the last on {report.no_model_last_day}"` | T12: the no-model line `in lines` |
+| K17 | same | `except (OverflowError, TypeError, ValueError) as exc:` | `except ZeroDivisionError as exc:` | T14: the run raises ValueError |
+| K18 | same | `f"Token accounting: {JOURNAL_FILE} holds a value this view cannot read: {exc}",` | `f"Token accounting: {exc}",` | T14: `assert result.message.startswith(...)` |
+| K19 | same | `"A journal row's timestamp or token count is not a number in range. Find it on a copy of "` | `"Find it on a copy of "` | T14: `assert result.remediation == (...)` |
 | N1 | `src/probos/doctor/runner.py` | `if outcome is not CheckOutcome.OK:` | `if True:` | T9: `assert not any("ok-hidden-remediation" in line for line in lines)` |
 | N2 | same | `for line in detail.splitlines():` | `for line in []:` | T9: `assert lines[ok + 1 : ok + 3] == [...]`; T10 |
 | N3 | same | `_render(console, check.name, result.outcome, result.message, result.remediation, result.detail)` | `_render(console, check.name, result.outcome, result.message, result.remediation)` | T9; T10 |
+| N4 | same | `if outcome is not CheckOutcome.OK:` | `if outcome is CheckOutcome.WARN:` | T9: `assert lines[fail + 1 : fail + 3] == ["    fail-remediation", "    fail-detail"]` (only the FAIL stub kills it; this is N1's line, mutated a second way) |
 | I1 | `src/probos/doctor/checks/__init__.py` | `token_accounting_check,` | `# removed` | T11 (the fresh interpreter imports only the package) |
 
 No row for `detail: str = ""` in `protocol.py`: it is a field declaration, and removing it makes every four-argument construction raise `TypeError`. No row for `no_model_last_day = max(no_model_last_day, day_key)`: replacing `max` with the last group's day is observable only if SQLite returns the groups out of day order, which the tests do not control. It is presentation, and T3 to T5 pin the value on single-day sets.
+
+A1 gives no row to `try:`, `def _shown_day`, its docstring, the new branch's `return CheckResult(`, `CheckOutcome.WARN,` and closing parenthesis (structural, or not unique in the file), or to the remediation's second literal (`"cognitive_journal.db.",`, pinned by K19's assertion). The TypeError and OSError members of the two tuples have no row of their own: TypeError is reached only when SQLite returns a numeric labelled group before a text one, and OSError only where the platform's `gmtime` rejects the value (Windows, negative timestamps); the tests control neither. No whole-line mutant drops `detail` for FAIL alone, because the detail loop runs on every outcome; N4 is the FAIL-only mutant T9's FAIL stub kills.
 
 Campaign of record: name the base tree and the sha256 of each mutated file and of the new test file; a later run whose hashes match does not repeat it.
 
@@ -1185,13 +1282,14 @@ HOLDS: yes -- the D7 follow-up
 | Phantom-API field check (`phantom_api_ast_helper.py:883-950`) | It indexes the tree it runs on, where `CheckResult` has no `detail`. Every construction that passes a detail does so **positionally** (sections 7.4 and 7.6), so no `detail=` keyword appears. Prose never writes the class name followed by `.detail`; `result.detail` reads go through an unresolved local. `GroupUsage` and `JournalTokenReport` are not in the index (unknown classes are skipped, `:931-933`) |
 | Layer import | `doctor` -> `cognitive` at module scope has a precedent (`llm_check.py:34`, `verifier_check.py:17`); `cognitive/journal_token_report.py` imports `cognitive.token_accounting` and `crew_execution_usage`, as `token_accounting.py:22` does. Run `tests/test_layer_boundaries.py` (M2) |
 | db-connect | No raw `connect` in `src/`: the check uses the approved factory's `read_only` open (BF-906). The tests use `aiosqlite.connect` on `tmp_path`, as `test_ad658a_chain_trace_token_split.py:129` does |
-| srp-size | New classes are small (the reader module about 170 lines, the check about 160); `_render` gains 5 lines; no class near 500 lines |
+| srp-size | New classes are small (the reader module about 170 lines, unchanged by A1; the check about 180 after A1); `_render` gains 5 lines; the test file about 470 lines; no class or module near a cap |
 | unowned-task | None |
 | config reference and facade | No config field; `config/system.yaml` untouched |
 | store registry | No store added; the journal's declaration (`cognitive/storage_declarations.py:68-91`) lists no readers |
 | AD-1343 seam census | No `.complete(` call added; run `tests/test_ad1343_seam_registry.py` (M3) |
 | Hidden pins | The registry order tests (section 5); `test_ad801_doctor.py`'s runner semantics (exit code, WARN does not count), which T9 re-asserts |
 | Ledger | M4 |
+| Amendment A1 | The only capitalised calls A1 adds are ProbOS's `CheckResult` and the test's own `_Stub`; the exception names appear only in `except` clauses, which are not calls; the FAIL stub's detail is positional (the field check reads keywords). The phantom-API precheck must still exit 0 on the amended contract |
 
 ## 13. What I could not verify here, and Prior Art
 
@@ -1205,22 +1303,60 @@ HOLDS: yes -- the D7 follow-up
 ## 14. Diff Reviewer: properties to verify
 
 1. Nothing in the change can write to, create or migrate `cognitive_journal.db`: the only open is `default_factory.connect(..., read_only=True)`, and every statement the reader runs is a `SELECT` or a read-only `PRAGMA`.
-2. A missing file, a database with no `journal` table, an empty `journal`, and a `journal` without `token_source` each give OK; an unreadable file gives WARN; no path gives FAIL or raises out of `run`.
+2. A missing file, a zero-byte file, a database with no `journal` table, an empty `journal`, and a `journal` without `token_source` each give OK; a file that is not a database, and a journal holding a stored value the reader cannot convert, give WARN; no path gives FAIL or raises out of `run`.
 3. Each row is counted in exactly one bucket, in the stated order (replayed, mock, measured, estimated, uncharged, other); spend is measured plus estimated only.
 4. WARN for a missing model fires only for rows with `model = ''` recorded at or after the earliest timestamp of a row with a non-empty `token_source`, across all groups.
 5. `CheckResult.detail` is the last field and defaulted; every existing construction (positional and keyword) is unaffected; the runner prints `detail` on every outcome and remediation only on WARN or FAIL, as before.
 6. `run_doctor`'s return value and closing line are unchanged in meaning (WARN never counts).
 7. The check is registered once, after `crew_enrollment`, and the `extras` -> `verifier_independence` adjacency holds.
 8. No journal label is passed to `crew_execution_usage`; no cost-aware feature's code is touched.
-9. The tracker texts describe the reclassification (D7) and the coverage limit (D8) and do not claim the view shows all spend.
+9. The tracker texts describe the reclassification (D7: the AD-1323 card's missing source is an issue-ready item in the follow-up register on #1523, severity Medium, fixed before any of the four flags `continue_extension_armed` checks is enabled; no text says it was filed as its own issue) and the coverage limit (D8), and do not claim the view shows all spend.
+10. (A1, F1) A timestamp outside the range `datetime` accepts, at either extreme and on any row, gives OK or WARN through the real `run_doctor`, never a check that raised. The day reads `(unknown day)` in the warning message, the "since" date, the "last on" date and the summary's first and last day. The warning boundary is unchanged: `labelled_since` and the count compare raw timestamps. `_utc_day` was the only formatter a journal value reached that could raise; integers are formatted only as `int`, and day keys are SQLite strings or empty.
+11. (A1, F1) A stored value the reader cannot convert (a timestamp stored as text, so `float` raises ValueError or a comparison raises TypeError; an infinite token sum, if the SQLite build returns one, so `int` raises OverflowError) gives WARN with its own message and remediation, not the "could not read" text. There is no blanket handler: a defect elsewhere in the check still reaches the runner's FAIL.
+12. (A1, F2) A zero-byte `cognitive_journal.db` gives OK "no model calls recorded yet", stays zero bytes, and no file is created. This is the design (D3), not a gap.
+13. (A1, F4) T9 exercises OK, WARN and FAIL: a FAIL's remediation and then its detail, the exit code 1 and the closing line `1 issue(s) found.`.
+14. (A1, F3, recorded and not repaired) An overflow in SQLite's `SUM` gives WARN `could not read cognitive_journal.db: integer overflow` and loses the breakdown; it is a register item, not an S3 defect.
 
 ## 15. Acceptance criteria
 
 1. The doctor shows tokens per tier, per intent and per UTC day, with measured and estimated reported separately and replayed, mock and uncharged rows apart (T1, T2, T10; Q1 to Q5, Q11, Q12, K6, K7, K9).
-2. The read is read-only and degrades without a FAIL on a missing, empty, unreadable or pre-BF-901 journal (T5 to T8; Q6, Q7, K1 to K4, K8).
+2. The read is read-only and degrades without a FAIL on a missing, zero-byte, empty, unreadable or pre-BF-901 journal, on a timestamp no calendar date can name, and on a stored value the reader cannot convert (T5 to T8, T12 to T14; Q6, Q7, K1 to K4, K8, K11 to K19).
 3. A row recorded since token sources began that names no model warns; earlier ones are counted with their chain-step split and last day (T3, T4; Q8 to Q10, Q13, Q14, K5).
-4. The runner prints `detail` under every outcome without showing an OK result's remediation (T9; N1 to N3).
+4. The runner prints `detail` under every outcome without showing an OK result's remediation, and a FAIL shows its remediation and then its detail (T9; N1 to N4).
 5. The check is registered once, in order (T11; K10, I1).
-6. #1575's acceptance is settled bullet by bullet in DECISIONS.md, with the AD-1323 card's missing source filed as a linked follow-up issue before #1575 is closed (D7).
+6. #1575's acceptance is settled bullet by bullet in DECISIONS.md, with the AD-1323 card's missing source recorded as an issue-ready item in the follow-up register on #1523 (severity Medium; fixed before any of the four flags `continue_extension_armed` checks is enabled), linked from #1575's closing comment and the S3 PR body (D7).
 7. Every mutation row in section 10 is killed by the named assertion.
 8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (2026-10-22): review round 1 repairs
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22
+
+**Source.** Diff Reviewer round 1 on candidate r1 (`4bee22f4`, tree `bec3943abd2c4d62ffe305ad405b8a7be6a8c3a1`): NOT READY, two P2 and two P3. Also the Architect's read-only consult of 2026-10-22, and the Architect's filing decision B (D7). S3 is rebuilt from this amended contract on `origin/main` `ad5f820c`.
+
+| Finding | Decision | Change |
+|---|---|---|
+| F1 (P2): a timestamp out of `datetime`'s range raised OverflowError out of `run` (FAIL, exit 1) | Repaired | `_utc_day` returns `UNKNOWN_DAY` on OverflowError, OSError or ValueError; empty day keys print through `_shown_day`; a stored value the reader cannot convert gets its own WARN branch. T12, T13, T14; K11 to K19 |
+| F2 (P2): a zero-byte file gives OK | Design confirmed: OK | SQLite's empty database, which a healthy first start passes through; documented in D3 and property 2, pinned by T6[zero_byte]. No code change |
+| F3 (P3): `SUM` integer overflow gives WARN and loses the breakdown | Recorded, not repaired | Follow-up register on #1523 (Low, injected only) |
+| F4 (P3): T9 had no FAIL stub | Repaired | FAIL stub, exit code 1, closing line; N4 |
+| Decision B (D7) | Text | The AD-1323 card gap is an item in the follow-up register on #1523, not its own issue: D7 row, section 4, DECISIONS D7, property 9, acceptance 6 |
+
+**Why two targeted guards rather than one around `run`.** The runner already turns an unexpected exception into a FAIL with a traceback (`runner.py:187-200`), which is the right signal for a defect in the check. A blanket handler would turn that defect into a WARN. After A1, everything the reader returns formats without raising: integers, strings, and one float (`labelled_since`) that `_utc_day` now handles.
+
+**What reaches a formatter (census, this tree).**
+- `labelled_since`: reaches `_utc_day` at `token_accounting_check.py:101` and `:153`, both outside the read handler. It could raise; A1 repairs it.
+- Day keys: come from SQL `strftime` (`journal_token_report.py:58`) as TEXT, or NULL out of range or for a non-numeric value, which becomes `""`. They cannot raise; empty keys now print as `(unknown day)`.
+- `int(calls)` and `int(tokens)` (`:158-159`): format as `int`. `int` of an infinite float raises inside the reader and is caught by the A1 branch.
+- `float(first_labelled)` and the `<` comparison (`:165-166`): raise on a text or blob timestamp inside the reader; caught by the A1 branch.
+- No `datetime` arithmetic exists in either file.
+
+**Unchanged:** the reader (section 7.3), the buckets, the dimensions, the registration, the runner and its `detail` behaviour, the journal. In "By UTC day", a day SQLite cannot name stays under the reader's `(none)` key, as an empty tier or intent does.
+
+**Counts:** 18 test cases in 14 test functions; 38 mutation rows.
+
+**Campaign:** the check file and the test file change. Rerun all 38 rows on the rebuilt tree and record that run as the campaign of record.
+
+**Verified for A1 (2026-10-22, tree `bec3943a`):** `_utc_day` `token_accounting_check.py:56-59`, its calls `:101`, `:153`; first and last day `:80`; last-on `:96`; the read handler `:138-145`; `detail` built outside it `:148`. The reader's conversions `journal_token_report.py:158-159`, `:165-166`; the day expression `:58`; `SUM` `:59`. `timestamp REAL NOT NULL`, not STRICT (`journal.py:22-47`); `record` binds `timestamp` unconverted (`:379`, `:417`). The runner's raised-check branch `runner.py:184-200` and closing lines `:207-213`. The four flags `continue_extension_armed` checks: `costed_continue_ask.py:71`, `:73`, `:76`, `:78`.
+
+**Not run here (read-only consult):** the tests, the precheck, the mutation rows. Also not run: SQLite keeping a non-numeric text value as text in a REAL column, `strftime` returning NULL out of range, and Windows raising OSError on a negative timestamp; these are documented behaviour. The pytest ids `1e+30` / `-1e+30` are assumed.
