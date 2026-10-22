@@ -2788,6 +2788,78 @@ def _fix_loop_changed(path: Path, before: bytes | None) -> bool:
         return True  # cannot be read back, so it cannot be shown unchanged
 
 
+class _SyntaxReadRefused(Exception):
+    """BF-904b A3 (#1585): the final syntax read will not read a path; the message says why."""
+
+
+def _syntax_read_opener(name: str, flags: int) -> int:
+    """BF-904b A3: the one open of the final syntax read, as BF-904a's hooks read opens (``_HOOK_OPEN_FLAGS``).
+
+    Never a final link, never blocking on a pipe; *flags*, the text layer's, are not used.
+    """
+    return os.open(name, _HOOK_OPEN_FLAGS)
+
+
+def _work_tree_text(root: Path, path: Path) -> str:
+    """BF-904b A3 (#1585): the text of *path*, read only if it is a regular file inside the work tree *root*.
+
+    ``realpath`` follows every symbolic link, junction and other name-surrogate reparse point on the way, the
+    last name included, so an alias the tests left is followed to where it leads; that must lie inside *root*'s
+    own resolved form (by ``normcase``), or the path is refused unread. An alias that stays inside the tree is
+    read, as the write before it followed it (F-124 owns aliases). A path that is gone or not a regular file by
+    ``lstat`` is refused before any open. The one open neither follows a final link nor blocks on a pipe, and its
+    handle must be that same regular file (``samestat``). Strict UTF-8 with universal newlines, as ``read_text``.
+    """
+    real = os.path.realpath(path)
+    if not Path(os.path.normcase(real)).is_relative_to(os.path.normcase(os.path.realpath(root))):
+        raise _SyntaxReadRefused("resolves outside the work tree")
+    try:
+        info = os.lstat(real)
+    except (FileNotFoundError, NotADirectoryError):
+        raise _SyntaxReadRefused("is no longer a regular file") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise _SyntaxReadRefused("is no longer a regular file")
+    with open(real, encoding="utf-8", opener=_syntax_read_opener) as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, info):
+            raise _SyntaxReadRefused("changed while it was read")
+        return stream.read()
+
+
+def _python_syntax_error(path: Path, text: str) -> str | None:
+    """BF-904b A3 (#1585): *text*, read from *path*, parsed as ``_validate_python`` parses; the error line, or None."""
+    try:
+        ast.parse(text, filename=str(path))
+        return None
+    except SyntaxError as exc:
+        return f"{path}: line {exc.lineno}: {exc.msg}"
+
+
+def _syntax_errors(root: Path, paths: list[Path]) -> list[str]:
+    """BF-904b (#1585): the syntax state of *paths* as they are now, one line per file that fails.
+
+    Read at the commit decision, after any repair and after the tests, which run model-written code and can
+    leave any filesystem state. A3: each Python file is read through ``_work_tree_text``, so one that resolves
+    outside the work tree *root*, is gone, is not a regular file or changed while it was read is refused unread;
+    one that cannot be read or decoded, or does not parse, blocks the commit. Every examination is inside the
+    ``try``: ``OSError`` and ``ValueError`` become a line; anything else (``RecursionError``, ``MemoryError``)
+    reaches the executor's ``except``. Only ``.py`` files are judged, as in ``_validate_python``.
+    """
+    errors: list[str] = []
+    for path in paths:
+        if path.suffix != ".py":
+            continue
+        try:
+            message = _python_syntax_error(path, _work_tree_text(root, path))
+        except _SyntaxReadRefused as exc:
+            message = f"{path}: {exc}; refused"
+        except (OSError, ValueError) as exc:
+            message = f"{path}: could not be read for the syntax check ({type(exc).__name__}); refused"
+        if message is not None:
+            errors.append(message)
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Test & fix helpers (AD-314)
 # ---------------------------------------------------------------------------
@@ -3290,7 +3362,11 @@ async def execute_approved_build(
 
     written: list[str] = []
     modified_files: list[str] = []
+    # BF-904b (#1585): refusals only, and permanent: no later step can lift one.
     validation_errors: list[str] = []
+    # BF-904b (#1585): every path a write validated, in order. Syntax is state: it is read again on the files as
+    # they are at the commit decision (5.5), so an error a repair fixed no longer blocks the commit.
+    syntax_checked: dict[Path, None] = {}
     # BF-904a (#1585): the bytes of every file that existed before this build, saved before its
     # first write (setdefault keeps that first copy); a build that does not commit writes them back.
     originals: dict[str, bytes] = {}
@@ -3399,10 +3475,8 @@ async def execute_approved_build(
                         "BuilderAgent: no changes applied to %s", change["path"],
                     )
 
-                # Validate Python files after modify
-                err = _validate_python(path)
-                if err:
-                    validation_errors.append(err)
+                # Validate Python files after modify (BF-904b: read at 5.5, on the file as it is then)
+                syntax_checked[path] = None  # BF-904b: a main-loop modify, read again at 5.5
 
                 continue
 
@@ -3423,10 +3497,8 @@ async def execute_approved_build(
                 written.append(change["path"])
                 logger.info("BuilderAgent: wrote %s", change["path"])
 
-            # Validate Python files after create
-            err = _validate_python(path)
-            if err:
-                validation_errors.append(err)
+            # Validate Python files after create (BF-904b: read at 5.5, on the file as it is then)
+            syntax_checked[path] = None  # BF-904b: a main-loop create, read again at 5.5
 
         result.files_written = written
         result.files_modified = modified_files
@@ -3442,8 +3514,8 @@ async def execute_approved_build(
                     len(unexpected), ", ".join(sorted(unexpected)),
                 )
 
-        # 4c. Code review (AD-341)
-        if llm_client and (written or modified_files):
+        # 4c. Code review (AD-341). BF-904b (#1585): not after a refusal, which nothing later can lift.
+        if llm_client and (written or modified_files) and not validation_errors:
             from probos.cognitive.code_reviewer import CodeReviewAgent
             reviewer = CodeReviewAgent(
                 agent_id="code_reviewer",
@@ -3467,8 +3539,9 @@ async def execute_approved_build(
             except Exception as exc:
                 logger.warning("CodeReviewAgent: review error: %s", exc)
 
-        # 5. Run tests with fix loop (AD-314, AD-344)
-        if run_tests and (written or modified_files):
+        # 5. Run tests with fix loop (AD-314, AD-344). BF-904b (#1585): a build that already holds a refusal
+        # cannot commit, so it runs no model-written code and asks for no repair (#1523 F-153 item 18).
+        if run_tests and (written or modified_files) and not validation_errors:
             # BF-904a (#1585): what git would run on its own, read before any model code runs.
             git_baseline = await _git_safety_snapshot(work_dir, pinned_git_dir is not None)
             tests_ran = True
@@ -3476,10 +3549,11 @@ async def execute_approved_build(
             # 5.4b finds it unchanged; an error or a cancellation before then runs no git in `finally`.
             git_unsafe = True  # BF-904a A1: model code may run from here; only a clean comparison clears it
             all_changes = list(file_changes)  # track for fix prompt
-            all_changed_files = written + modified_files
             fix_loop_files: list[str] = []  # BF-898: the paths the fix loop changed
 
             for attempt in range(1 + max_fix_attempts):
+                # BF-904b (#1585): read at the start of each attempt, so a file an earlier repair created is targeted.
+                all_changed_files = written + modified_files
                 # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
                 passed, test_output, _targeted_files = await _run_targeted_tests(
                     work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,
@@ -3609,9 +3683,7 @@ async def execute_approved_build(
                                         modified_files.append(change["path"])
                                 elif change["path"] not in written:
                                     written.append(change["path"])
-                            err = _validate_python(path)
-                            if err:
-                                validation_errors.append(err)
+                            syntax_checked[path] = None  # BF-904b: a repair's file, read again at 5.5
                         finally:
                             # Settled however the block ends: a write or the validation can raise
                             # after the file has changed, and the change must still be disclosed.
@@ -3662,7 +3734,10 @@ async def execute_approved_build(
                     git_tampered,
                 )
 
-        # 5.5. Block commit if validation errors (syntax errors) exist
+        # 5.5. Block commit if validation errors (syntax errors) exist. BF-904b (#1585): the refusals stand;
+        # syntax is read now, on the files as the build and its tests left them.
+        # BF-904b A3: only inside the work tree; an alias the tests left that leads out of it is refused unread.
+        syntax_errors = _syntax_errors(Path(work_dir), list(syntax_checked))
         if identity_lost:
             result.error = (
                 "Repository identity changed during the build; refused before commit"
@@ -3676,8 +3751,9 @@ async def execute_approved_build(
                 "hooks before running git there."
             )
             result.success = False
-        elif validation_errors:
-            result.error = "Syntax errors:\n" + "\n".join(validation_errors)
+        elif validation_errors or syntax_errors:
+            # BF-904b: the lead is unchanged (the resolve route and the tests read it); refusals first.
+            result.error = "Syntax errors:\n" + "\n".join(validation_errors + syntax_errors)
             result.success = False
         # 6. Commit — only if tests passed OR tests were not run
         elif written or modified_files:

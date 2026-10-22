@@ -636,17 +636,20 @@ async def test_an_error_raised_by_the_validation_after_a_write_keeps_the_disclos
     assert fix_loop_write_refusal(_FOO) is None, "premise: the rule admits the path, so the error is the validation's"
     calls: list[Path] = []
 
-    def validate_then_raise(path: Path) -> str | None:
+    def parse_then_raise(path: Path, text: str) -> str | None:
         calls.append(path)
-        if len(calls) == 1:
-            return real_validate(path)  # the approved write's validation
+        # RecursionError is not an OSError or a ValueError, so the syntax read does not turn it into a line.
         raise RecursionError("maximum recursion depth exceeded during compilation")
 
-    monkeypatch.setattr(builder_module, "_validate_python", validate_then_raise)
+    # BF-904b A3: the read after the loop reads the file inside the work tree and hands its text to this parse.
+    monkeypatch.setattr(builder_module, "_python_syntax_error", parse_then_raise)
 
-    result = await _gated_build(build_tree, llm, max_fix_attempts=2)
+    # BF-904b (#1585): syntax is no longer checked after each write; it is read once, after the loop, on the
+    # files as they are (5.5). So the validation that raises is that read, after the repair wrote foo.py, and
+    # one repair attempt keeps fix_attempts and the repair prompts at one, as before.
+    result = await _gated_build(build_tree, llm, max_fix_attempts=1)
 
-    assert len(calls) == 2, "premise: the second validation is the repair's, and it raised"
+    assert len(calls) == 1, "premise: the one validation is the read after the loop, and it raised"
     assert result.success is False
     assert "recursion" in result.error.lower()
     assert result.fix_attempts == 1
