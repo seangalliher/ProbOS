@@ -49,6 +49,13 @@ from probos.crew_execution_usage import (
     TOKEN_SOURCE_MIXED,
     merge_token_sources as _token_source_label,
 )
+# BF-901 (#1575): the estimator's one owner. Imported BY NAME at module scope and called unqualified below,
+# so ``monkeypatch.setattr(agentic_loop, "_estimate_call_tokens", ...)`` still replaces what the loop calls.
+from probos.cognitive.token_accounting import (
+    _completion_is_non_empty,
+    _estimate_call_tokens,
+    _estimate_context_tokens,
+)
 from probos.cognitive.swe_harness.loop_tier_steps import (
     GuardVerdict,
     LoopTierSteps,
@@ -923,45 +930,6 @@ def _charge_discarded_response(
     return charged, source
 
 
-def _estimate_context_tokens(messages: list[dict]) -> int:
-    """AD-1142 / DD-3: approximate the tokens currently OCCUPYING the context.
-
-    Same ``len(text) // 4`` approximation as
-    ``session_compactor.estimate_tokens`` — AD-547b still owns the exact
-    tokenizer and this AD does NOT discharge its forcing function (the first
-    compaction false-trip whose len/4 estimate diverges >25% from real model
-    context counting) — but this one ALSO counts the serialised ``tool_calls``
-    payload an AD-1146 assistant turn carries. ``estimate_messages_tokens``
-    reads ``content`` only, which undercounts a structured history by the whole
-    tool-call array.
-
-    Deliberately module-local rather than imported from ``session_compactor``:
-    the loop has no dependency on that module today (the compactor arrives
-    injected as ``Any``), and DD-3 keeps it that way.
-
-    Non-dict entries are skipped rather than raising. The compactor is an
-    injected ``Any``, so what comes back from it is a module boundary, and this
-    function is called from the loop's hot path OUTSIDE the ``try`` that
-    absorbs compaction failures — a raise here would escape ``run()``, which
-    promises never to raise.
-    """
-    total = 0
-    for message in messages:
-        if type(message) is not dict:
-            continue
-        text = str(message.get("content", "") or "")
-        tool_calls = message.get("tool_calls")
-        if tool_calls:
-            try:
-                text += json.dumps(
-                    tool_calls, separators=(",", ":"), default=str
-                )
-            except Exception:
-                text += str(tool_calls)
-        total += max(1, len(text) // 4)
-    return total
-
-
 def _largest_group_tokens(messages: list[dict]) -> int:
     """AD-1142 / DD-4: estimated size of the largest single tool-call group.
 
@@ -991,78 +959,6 @@ def resolve_event_correlation_settings(cfg: Any) -> dict[str, bool]:
     if getattr(cfg, "event_correlation_enabled", False) is True:
         return {"event_correlation_enabled": True}
     return {}
-
-
-def _completion_is_non_empty(response: Any) -> bool:
-    """BF-680: did this completion actually produce output?
-
-    ``LLMResponse`` carries no "usage was present" flag, so ``tokens_used``
-    collapses BOTH "the provider reported 0" and "the provider reported
-    nothing" onto the same ``0``. The two are therefore indistinguishable at
-    this boundary, and the disambiguation rule is stated HERE rather than left
-    to fall out of the arithmetic:
-
-        **A zero that accompanies a completion which produced output is an
-        ABSENT measurement, not a measurement of zero.**
-
-    No provider emits text or a tool call for free, so the pairing is only
-    reachable when the field was never populated. The live Copilot proxy at
-    ``127.0.0.1:8080`` is exactly this case: HTTP 200, real content,
-    ``usage.total_tokens == 0``.
-
-    "Produced output" deliberately includes a tool-call-only turn. Those carry
-    no text, but they are the turns the agentic loop exists for, so scoring
-    them as empty would leave the budget inert on precisely the path it is
-    meant to bound.
-
-    A completion with neither text nor tool calls is left alone: its reported
-    zero is plausible, and substituting an estimate there would invent spend
-    for a turn that produced nothing.
-    """
-    blocks = list(response.content_blocks or [])
-    if any(isinstance(b, ToolUseBlock) for b in blocks):
-        return True
-    text = "".join(b.text for b in blocks if isinstance(b, TextBlock))
-    return bool((text or response.content or "").strip())
-
-
-def _estimate_call_tokens(outbound: list[dict], response: Any) -> int:
-    """BF-680: client-side stand-in for one call's ``prompt + completion`` usage.
-
-    Reuses the AD-1142 estimator on both halves rather than taking a tokenizer
-    dependency: ``outbound`` is the history the request was assembled from, and
-    the completion is measured through the same pseudo-message shape so a
-    tool-calling turn's serialised arguments are counted too.
-
-    Summing this per iteration mirrors how a provider bills an uncached
-    multi-turn loop — every turn re-sends the whole history — so the running
-    total stays structurally faithful even though each term is approximate.
-
-    Its inaccuracy (``len(text) // 4``; AD-547b still owns the exact tokenizer,
-    and this does NOT discharge its forcing function) is acceptable for a
-    budget STOP, which only has to fire in the right order of magnitude. It is
-    NOT acceptable as billing, which is why every substitution is labelled.
-    """
-    blocks = list(response.content_blocks or [])
-    text = "\n".join(b.text for b in blocks if isinstance(b, TextBlock))
-    completion = {
-        "content": text or response.content or "",
-        # Plain dicts rather than the AD-1146 wire shape: this is a size
-        # estimate, not a message, and ``_estimate_context_tokens`` already
-        # serialises ``tool_calls`` defensively.
-        "tool_calls": [
-            {
-                "id": b.tool_call.id,
-                "name": b.tool_call.name,
-                "arguments": b.tool_call.arguments,
-            }
-            for b in blocks
-            if isinstance(b, ToolUseBlock)
-        ],
-    }
-    return _estimate_context_tokens(outbound) + _estimate_context_tokens(
-        [completion]
-    )
 
 
 @dataclass

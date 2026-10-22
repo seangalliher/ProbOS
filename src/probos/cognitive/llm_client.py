@@ -2416,6 +2416,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         tokens_used = usage.get("total_tokens", 0)
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
+        # BF-901: whether the reply carried a total at all; the counts above stay as reported.
+        usage_reported = "total_tokens" in usage
 
         return LLMResponse(
             content=content,
@@ -2429,6 +2431,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             content_blocks=content_blocks_list,
             stop_reason=stop_reason_value,
             answered_model=_echoed_model(data),
+            usage_reported=usage_reported,
         )
 
     async def _call_ollama_native(
@@ -2478,6 +2481,9 @@ class OpenAICompatibleClient(BaseLLMClient):
         prompt_tokens = data.get("prompt_eval_count", 0)
         completion_tokens = data.get("eval_count", 0)
         tokens_used = prompt_tokens + completion_tokens
+        # BF-901: reported only when both counts are present (Ollama can omit ``prompt_eval_count``, for
+        # example on a cached prompt prefix); the counts above stay as reported.
+        usage_reported = "prompt_eval_count" in data and "eval_count" in data
 
         return LLMResponse(
             content=content,
@@ -2489,6 +2495,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             cached=False,
             request_id=request.id,
             answered_model=_echoed_model(data),
+            usage_reported=usage_reported,
         )
 
     def tier_info(self) -> dict[str, dict]:

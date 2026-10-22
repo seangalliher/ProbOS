@@ -226,9 +226,11 @@ def test_flag_off_public_observation_matches_required_base_fixture_bytes() -> No
         "request": asdict(request),
         # AD-1327 appended two provenance fields (default None) after this base observation was
         # recorded; the fixture stays the exact base bytes, and test_ad1327_verifier_tier pins the defaults.
+        # BF-901 appended ``usage_reported`` (default None) the same way; test_bf901_s1_token_accounting
+        # pins its default (test_usage_reported_defaults_to_none).
         "response": {
             key: value for key, value in asdict(response).items()
-            if key not in ("answered_tier", "answered_model")
+            if key not in ("answered_tier", "answered_model", "usage_reported")
         },
         "decision": {
             key: candidate_decision[key] for key in expected["decision"]
