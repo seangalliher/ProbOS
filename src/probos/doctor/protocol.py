@@ -26,11 +26,16 @@ class CheckResult:
     `outcome` drives glyph + exit code (FAIL count). `message` is the
     one-line summary always printed. `remediation` is shown on WARN/FAIL
     only; if empty, no remediation line is rendered.
+
+    BF-901 S3: `detail` is printed under the result on every outcome, one
+    line per line and after any remediation; if empty, nothing is rendered.
+    It is the last field and defaulted, so every existing construction stands.
     """
 
     outcome: CheckOutcome
     message: str
     remediation: str = ""
+    detail: str = ""  # BF-901 S3: further lines, shown under the result on every outcome
 
 
 @dataclass(frozen=True)
