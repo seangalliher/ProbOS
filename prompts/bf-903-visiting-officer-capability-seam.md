@@ -4,13 +4,16 @@
 
 **Mechanical repair before the contract was committed (orchestrator, 2026-10-22; no decision changed):** section 7.5's third pair no longer quotes the two lines that end in `session_ttl_seconds=0`. `scripts/phantom-api-precheck.ps1` flags that integer literal against `register`'s float annotation (`type_shape_mismatch`), and the staged contract has to pass the precheck at preflight. The pair now changes only the first `["c"]` case; the other two cases keep their text and still raise `ValueError` on their own earlier checks (no capability, a ttl of zero), which `register` runs before the new capability check. The precheck also lists thirteen candidates for the new `check` and `attach_visiting_officers` methods; they exist only once the code is built, and the check is re-run on the built tree.
 
-**Status:** M1 and M2 are build-ready on `origin/main` `0e122174`. M3 (the channel adapters and the inbound MCP server) is decided in section 3 and follows as Amendment A1 in the same PR; M3 closes #1581. **Tier HIGH.** No new AD or BF number. Both flags stay off: `config/system.yaml:297` and `:933` are not edited. AD-1342 stays paused.
+**Amendment A1:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: M3 (sections 7.13-7.19 and 8b), recognition of a visitor by its DID or its certificate UUID, and three corrections (section 16).
 
-**Tests:** three new files.
-- M1 `tests/test_bf903_visitor_scope.py`: 8 functions, 12 cases.
+**Status:** M1 and M2 are build-ready on `origin/main` `0e122174`. M3 (recognition by either key form, the channel adapters and the inbound MCP server) is sections 7.13-7.19 and 8b, in the same PR; M3 closes #1581. **Tier HIGH.** No new AD or BF number. Both flags stay off: `config/system.yaml:297` and `:933` are not edited. AD-1342 stays paused.
+
+**Tests:** four new files.
+- M1 `tests/test_bf903_visitor_scope.py`: 8 functions, 12 cases (M3 widens V7 and V8 in place, section 7.14).
 - M2 `tests/test_bf903_ward_room_scope.py`: 8 functions, 35 cases.
 - M2 `tests/test_bf903_seam_was_open.py`: 1 case. It is written against names that exist before BF-903, so on today's tree it fails for its premise, not on an import.
-- Updated, each with an inline reason: `tests/test_ad701_visiting_officers.py` (6 call sites) and `tests/test_ad802_pairing.py` (1 test).
+- M3 `tests/test_bf903_channel_and_mcp.py`: 8 functions, 22 cases.
+- Updated, each with an inline reason: `tests/test_ad701_visiting_officers.py` (6 call sites) and `tests/test_ad802_pairing.py` (1 test) in M1; `tests/test_bf804_pairing_notification.py` (2 tests) and `tests/test_ad807_discord_refresh.py` (1 test) in M3.
 
 **Line endings:** every edited working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own line endings. New files are written LF.
 
@@ -22,7 +25,8 @@
 |---|---|---|
 | The seam is enforced on Ward Room and router paths | absent | `has_capability(` has no production caller (Absence Verified 1) |
 | A path that carries a visitor's own DID into the Ward Room | none today | `runtime.pairing_service` is never assigned (AV2); `paired_did` is never read (AV3); MCP dispatches as the handling agent (`mcp_server.py:474-479`) |
-| The HXI routes take actor ids from the request body | present (impersonation) | `routers/wardroom.py:282`, `:352`, `:368`, `:382`, `:396`; `routers/agents.py:3842` |
+| The HXI routes take actor ids from the request body | present (impersonation) | `routers/wardroom.py:282`, `:352`, `:368`, `:382`, `:396` |
+| A sovereign identity is keyed by its DID or by its bare certificate UUID | present (A1) | `identity.py:152-163` (BF-907), `:804-827`; an author's Ward Room episode is stored under the id it posts as (`ward_room/threads.py:564-578`, `cognitive/episodic.py:472-483`) |
 | One owner for the names | absent | `config_models/crew.py:316-318` (read by nothing, AV5) against `security/pairing/service.py:27` |
 | MCP binding | absent | `mcp_server.py:198`, `:331` |
 | Expiry at use | partly met | `has_capability` reads expiry (`visiting_officers.py:169`); `get` does not (`:162-163`) |
@@ -41,13 +45,16 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
   - The Ward Room facade calls the guard at the eleven methods that act for an actor id. The twelve test cases count the DM channel twice, once per participant side.
   - A write needs `dm.send` in a DM channel and `ward_room.post` elsewhere.
   - Finalize attaches the registry, and the API answers a refusal with 403.
-- **M3** (Amendment A1): the channel adapters and MCP; see section 16.
+- **M3** (Amendment A1, sections 7.13-7.19).
+  - A visitor is recognised by its DID or its bare certificate UUID; `require_session_capability` checks a known visitor's session.
+  - A paired channel sender may send an `@callsign` DM, with `dm.send`, and nothing else; an unreadable pairing store refuses the message.
+  - The inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch.
 
 ## 3. Decisions
 
 - **D1 (premise).** No visitor-identity path into the Ward Room exists today; the routers' body-supplied actor ids are the only way a visiting DID arrives. The guard covers every caller of the facade, present and future.
 - **D2 (where; recognition).**
-  - (A) **Chosen:** one guard function, applied at the facade now and at the edge entries in M3. A visitor is recognised by its certificate's agent type.
+  - (A) **Chosen:** one guard function, applied at the facade now and at the edge entries in M3. A visitor is recognised by its certificate's agent type, named by its did:probos agent DID or (A1) its bare certificate UUID.
   - (B) Channel layer only: rejected; it misses the routers and future paths.
   - (C) Recognition by registry membership: rejected; it fails open at expiry.
   - (D) Recognition by DID shape: rejected; real visiting DIDs have the crew shape.
@@ -57,7 +64,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
   - (A) **Chosen:** a closed set in code; configuration chooses among the names.
   - (B) A set configuration can extend: rejected.
   - (C) Warn only: rejected.
-- **D4 (MCP, built in M3).** (A) **Chosen:** refuse arguments that name a visiting DID. (B) A per-visitor token: deferred to AD-1342, which should build it on the MCP authorization spec. (C) Record only: rejected.
+- **D4 (MCP, built in M3).** (A) **Chosen:** refuse arguments that name a visiting officer (any key or string value, at any depth, that is exactly its DID or certificate UUID), and refuse unread arguments of more than 10,000 values. (B) A per-visitor token: deferred to AD-1342, which should build it on the MCP authorization spec. (C) Record only: rejected.
 - **D5 (the record).**
   - `VISITING_OFFICER_REFUSED` through the registry's emitter, plus a warning; with the registry off, the warning alone.
   - Reason codes: `visitor_session_unknown`, `visitor_session_expired`, `visitor_capability_missing`, `visitor_registry_off`.
@@ -66,14 +73,18 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
 - **D7 (M3, coupled).** `_check_pairing`'s `resolve_did` failure fails closed. Slash commands and natural language for a paired sender are refused, because no declared capability grants them. The Captain may overrule.
 - **D8 (tier).** HIGH.
 
-**Disclosed effects (M1 and M2)**
+**Disclosed effects (M1, M2 and M3)**
 1. These now raise `UnknownCapabilityError` (a `ValueError`) for an undeclared name: `register`, `request_pairing`, `approve_pairing`, `probos pairing approve` (prints the reason and returns 1) and `VisitingOfficersConfig`.
    - A `system.yaml` that lists an undeclared name under `visiting_officers.default_capabilities` no longer loads.
    - AD-802's example `--cap tool.use` is refused.
    - A pending row minted before BF-903 that holds an undeclared name is consumed and then refused at approve.
 2. `VisitingOfficerRegistry.get` returns None for an expired session.
 3. A visiting DID at a guarded entry is refused unless a live session holds the capability; with no registry attached, it is always refused. The API answers 403 `{"error": "visitor_scope_refused", "capability", "reason", "surface"}`.
-4. Crew, Captain and system ids behave as before, with no added lookup or query.
+4. Crew, Captain and system ids behave as before. A slot id, "captain" and "system" cost no lookup or query; a crew certificate's DID or bare UUID costs one in-memory certificate lookup (A1).
+5. (M3) A visiting officer's bare certificate UUID is refused wherever its DID is.
+6. (M3) A paired channel sender's slash command or natural language is answered with a refusal naming the reason; its `@callsign` DM needs a live `dm.send` (always refused with no registry).
+7. (M3) A `resolve_did` failure refuses the message with `PairingLookupError`, a `PairingNotificationError`: Gmail leaves the mail unread and retries; Slack, Telegram, Matrix and Discord drop it with a log; Teams answers HTTP 200 with the channel-only text.
+8. (M3) An MCP `tools/call` whose arguments name a visiting officer, or hold more than 10,000 values, is refused with JSON-RPC -32602 and `MCP_BRIDGE_FAILED`, through either door.
 
 ## 4. Milestones
 
@@ -83,10 +94,13 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 |---|---|---|---|
 | **M1** | `visiting_officers.py` (7.1), `config_models/crew.py` (7.2), `security/pairing/service.py` (7.3), `__main__.py` (7.4) | new 7.7; update 7.5, 7.6 | `tests/test_bf903_visitor_scope.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_ad1270e1_config_facade.py tests/test_ad1346_identity_service.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py` |
 | **M2** and trackers | `ward_room/service.py` (7.8), `startup/finalize.py` (7.9), `api.py` (7.10); trackers (section 8) | new 7.11, 7.12 | `tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_bf903_visitor_scope.py tests/test_ward_room.py tests/test_ward_room_dms.py tests/test_ward_room_agents.py tests/test_api_wardroom.py tests/test_ad615_wardroom_db_hardening.py tests/test_ad613_wardroom_performance.py tests/test_ad1229_message_receipts.py tests/test_ad1229_receipt_facts.py tests/test_ad630_leadership_feedback.py tests/test_bf771_intent_authorization.py tests/test_ad1184_ad_ledger.py` |
+| **M3** and trackers | `visiting_officers.py` (7.13, on M1's text), `channels/base.py` (7.15), `federation/mcp_server.py` (7.16); trackers (section 8b) | new 7.19; update 7.14, 7.17, 7.18 | `tests/test_bf903_channel_and_mcp.py tests/test_bf903_visitor_scope.py tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py tests/test_bf803_gmail_ack.py tests/test_ad764_gmail.py tests/test_ad803a_telegram.py tests/test_ad804_slack.py tests/test_ad805_teams.py tests/test_ad806_matrix.py tests/test_ad807_discord_refresh.py tests/test_ad472_channel_adapters.py tests/test_discord_adapter.py tests/test_callsign_routing.py tests/test_bf875_mcp_inbound_auth.py tests/test_ad480_federation_mcp_a2a.py tests/test_ad597_mcp_server_apps.py tests/test_bf884_sidecar_bind_failure.py tests/test_layer_boundaries.py tests/test_ad1184_ad_ledger.py` |
 
 **Hard stops**
 - If a config-facade or layer test fails because `config_models/crew.py` now imports `probos.visiting_officers` inside a function, stop and report. Do not move the import to module level.
 - If an existing test fails because it registered or paired with an undeclared name, update it with an inline `BF-903 (#1581)` reason and never delete it. Stop and report any other failure.
+- (M3) 7.13 and 7.14 edit the text M1 builds; apply them in M3's commit, never by reworking M1's. If a test not named in 7.17 or 7.18 fails because a paired sender no longer reaches natural language or a slash command, or because an unreadable pairing store no longer lets a message through, update it with an inline `BF-903 (#1581)` reason, never delete it, and report it.
+- (M3) If `tests/test_layer_boundaries.py` or an import cycle names `probos.visiting_officers` in `federation/mcp_server.py`, stop and report; do not move the import into the function.
 
 ## 5. Consumers of every value this changes
 
@@ -101,6 +115,11 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 | `VisitorScopeRefused` (`PermissionError`) | the API handler (7.10); the routers catch `ValueError` only (`wardroom.py:289`, `:357`, `:371`, `:385`), so it reaches the handler | 403 |
 | facade guards | every caller of the eleven methods: crew (slot ids), the Captain, the system | unchanged for them |
 | `attach_visiting_officers` | finalize (7.9) | registry attached when AD-701 is on |
+| `visiting_certificate`, either key form (7.13) | `is_visiting_identity` (M2's `_require_visitor_write`; the MCP walk), `require_visitor_capability` (the facade) | a visitor's bare certificate UUID is refused like its DID, under its DID; a crew certificate's UUID costs one in-memory lookup and passes; slot ids, "captain" and "system" cost none |
+| `require_session_capability` (7.13) | `require_visitor_capability`; `_handle_paired` (7.15) | the same refusal codes and record |
+| `PairingLookupError` (7.15) | every `handle_message` caller: Gmail `gmail_adapter.py:156-178` (unacknowledged, retried); Slack `receive` `slack_adapter.py:203-205` (returns ""); Slack poll `:290-297`, Telegram `telegram_adapter.py:197-204`, Matrix `matrix_adapter.py:177-184` (log, move on); Discord `discord_adapter.py:330` (log, post nothing); Teams `teams_adapter.py:141` to `routers/teams_webhook.py:41-47` (HTTP 200 with the fixed text); Webhook (no `channel_name`, never reaches `resolve_did`) | the message is refused; only Gmail retries |
+| the paired-sender replies (7.15) | the same callers send a non-empty reply as they send any reply | the sender is told why |
+| `visitor_argument_refusal` (7.16) | `_handle_tools_call`, reached by door A (`build_mcp_app`) and door B (the HXI bridge, `routers/system.py`; `test_bf875:592-603`) | refused before the app-tool and intent branches; `tools/list` and `resources/read` unchanged |
 
 ## 6. Tests
 
@@ -116,8 +135,8 @@ Every BF-903 test errors on today's tree at its `probos.visiting_officers` impor
 | V4 | `test_pairing_refuses_an_undeclared_capability_before_it_is_stored` | no pending row; the code survives a refused override; the defaults register | fails without 7.3 |
 | V5 | `test_the_cli_names_an_undeclared_capability_and_approves_nothing[undeclared-cap-flag, row-minted-before-bf903]` | returns 1, names the capability, records no pairing | fails without 7.3 and 7.4 |
 | V6 | `test_the_registry_refuses_by_session_capability_and_expiry_at_use` | three reasons, three events, no sweep; `get` and `has_capability` agree | fails without 7.1 |
-| V7 | `test_a_visitor_is_known_by_its_certificate_and_other_ids_are_never_looked_up` | a certificate outlives its session; crew, ship and unknown DIDs and slot ids are not visitors; no lookup for non-DIDs | fails without 7.1 |
-| V8 | `test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allow` | crew pass; held served; missing refused; registry off refused; an undeclared name raises | fails without 7.1 |
+| V7 | `test_a_visitor_is_known_by_its_certificate_and_other_ids_are_never_looked_up` | a visitor is known by its DID and its bare certificate UUID, and a certificate outlives its session; crew, ship and unknown DIDs and UUIDs and slot ids are not visitors; no lookup for an id of neither shape | fails without 7.1; the UUID cases fail without 7.13 |
+| V8 | `test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allow` | crew pass; held served; missing refused; a certificate UUID is checked under its DID; registry off refused; an undeclared name raises, also at `require_session_capability` | fails without 7.1; the UUID and session-check cases fail without 7.13 |
 | W0 | `test_a_visitor_without_ward_room_post_cannot_open_a_thread` (`test_bf903_seam_was_open.py`) | a reader cannot open a thread | **fails today: DID NOT RAISE**, and on the M1-only tree; passes after M2 |
 | W1 | `test_a_visitor_without_the_capability_is_refused_at_each_entry[12 entries]` | each entry refuses the one missing capability, naming it and the entry, with one event | fails on M1-only (DID NOT RAISE) |
 | W2 | `test_a_visitor_with_only_that_capability_is_served_at_each_entry[12 entries]` | exactly that capability is enough | guard (catches over-refusal) |
@@ -127,6 +146,14 @@ Every BF-903 test errors on today's tree at its `probos.visiting_officers` impor
 | W6 | `test_a_crew_did_is_served` | a crew certificate DID is not a visitor | guard |
 | W7 | `test_the_api_answers_a_visitor_refusal_with_403_and_the_reason` | 403 with the body | fails on M1-only (500) |
 | W8 | `test_a_real_boot_scopes_visitors_in_the_ward_room` | finalize attaches the registry: refused for capability, then served | fails on M1-only |
+| P1 | `test_a_paired_sender_is_refused_commands_and_conversation[slash-command, natural-language, unknown-callsign]` | a paired sender's slash command and natural language get a reply naming the reason; no LLM turn, no event | fails without 7.15 |
+| P2 | `test_a_paired_sender_holding_dm_send_reaches_the_crew_member` | a live `dm.send` is enough for an `@callsign` DM | guard (catches over-refusal) |
+| P3 | `test_a_paired_dm_without_a_live_dm_send_is_refused[capability-missing, session-expired, registry-off]` | refused with the code; one event, none with the registry off | fails without 7.15 |
+| P4 | `test_an_unreadable_pairing_store_refuses_the_message_and_its_callers_still_catch_it` | `PairingLookupError`, a `PairingNotificationError` naming only the channel; Slack's webhook returns "" | fails without 7.15 (the message is processed) |
+| P5 | `test_a_sender_the_gate_does_not_pair_is_served_as_before[no-pairing-service, adapter-opted-out]` | golden: unpaired traffic is processed as before | guard |
+| Q1 | `test_a_tools_call_naming_a_visitor_is_refused_before_either_branch[intent-did, intent-certificate-uuid, object-key, list-item, nested-value, deregistered-visitor, app-tool]` | -32602 with the reason; nothing dispatched; one `MCP_BRIDGE_FAILED` | fails without 7.16 |
+| Q2 | `test_crew_ids_and_prose_that_mentions_a_visitor_are_dispatched[crew-did, crew-certificate-uuid, slot-id, prose-with-a-visitor-did]` | only a whole visiting id refuses | guard |
+| Q3 | `test_the_argument_walk_reads_up_to_its_bound_and_refuses_past_it` | 10,000 values dispatch; 10,001 are refused unread | fails without 7.16 |
 
 ## 7. The contract
 
@@ -1563,6 +1590,1086 @@ async def test_a_visitor_without_ward_room_post_cannot_open_a_thread(tmp_path: P
         await identities.stop()
 ```
 
+### 7.13 `src/probos/visiting_officers.py` (M3: a visitor is named by its DID or its certificate UUID; applies to the text 7.1 builds)
+
+SEARCH:
+```python
+- **One guard** (BF-903): every path that acts for an actor id calls
+  ``require_visitor_capability`` before acting. A crew member's id is
+  never looked up; a visiting officer's DID must hold the capability in a
+  live session, read at use.
+```
+REPLACE:
+```python
+- **One guard** (BF-903): every path that acts for an actor id calls
+  ``require_visitor_capability`` before acting. A crew member's slot id is
+  never looked up; a visiting officer, named by its DID or its bare
+  certificate UUID, must hold the capability in a live session, read at
+  use. A path that already knows its sender is a visitor (a paired channel
+  sender) calls ``require_session_capability``.
+```
+
+SEARCH:
+```python
+def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
+    """BF-903: whether ``actor_id`` is the DID of a visiting officer's birth certificate.
+
+    Only a did:probos agent DID is looked up, in the identity registry's in-memory certificate
+    cache (``get_by_uuid``, which never raises), so a slot id, a callsign, "captain" or "system"
+    costs no lookup and is never refused here. The certificate outlives its session, so an
+    expired or deregistered visitor is still recognised and refused. BF-907's
+    ``resolve_slot_id`` and AD-1346's ``IdentityService.resolve`` return None for a visitor,
+    which holds no slot, so they cannot classify one; this reads the agent type AD-701 sets.
+    """
+    if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
+        return False
+    from probos.identity import parse_did  # BF-903: imported at use, so loading this module loads no other ProbOS module
+
+    parsed = parse_did(actor_id)
+    if parsed is None or parsed.get("type") != "agent":
+        return False
+    cert = identity_registry.get_by_uuid(parsed["agent_uuid"])
+    return cert is not None and cert.agent_type == VISITING_AGENT_TYPE
+
+
+def require_visitor_capability(
+    actor_id: str,
+    capability: str,
+    *,
+    surface: str,
+    identity_registry: Any,
+    visiting_officers: VisitingOfficerRegistry | None,
+) -> None:
+    """BF-903 (#1581): the one check every path that acts for an actor id calls before it acts.
+
+    A crew member, the Captain or the system passes without a lookup. A visiting officer must
+    hold ``capability`` in a live session; with AD-701's registry off it holds none and is
+    refused. ``surface`` names the entry in the refusal and its record. An undeclared
+    ``capability`` raises ``UnknownCapabilityError`` whoever acts, so a typo in a checking
+    path fails on its first call.
+    """
+    if capability not in VISITOR_CAPABILITIES:
+        raise UnknownCapabilityError([capability])
+    if not is_visiting_identity(identity_registry, actor_id):
+        return
+    if visiting_officers is None:
+        logger.warning(
+            "BF-903: refused visiting officer %s %r at %s: AD-701's registry is off, so no session exists",
+            actor_id, capability, surface,
+        )
+        raise VisitorScopeRefused(actor_id, capability, REFUSED_REGISTRY_OFF, surface)
+    visiting_officers.check(actor_id, capability, surface=surface)
+```
+REPLACE:
+```python
+def visiting_certificate(identity_registry: Any, actor_id: object) -> Any:
+    """BF-903: the birth certificate of the visiting officer ``actor_id`` names, or None.
+
+    A sovereign identity takes two key shapes (BF-907's ``is_sovereign_identity_key``): a
+    did:probos agent DID and its bare certificate UUID. Both name the visitor, because downstream
+    stores key an identity by whichever id it acts as (an author's Ward Room episode is stored
+    under the id it posts as). Only those two shapes are looked up, in the identity registry's
+    in-memory certificate cache (``get_by_uuid``, which never raises); a slot id, a callsign,
+    "captain", "system" or a 32-hex agent id matches neither and costs no lookup. A crew
+    certificate's DID or UUID is looked up and is not a visitor. The certificate outlives its
+    session, so an expired or deregistered visitor is still recognised and refused. BF-907's
+    ``resolve_slot_id`` and AD-1346's ``IdentityService.resolve`` return None for a visitor, which
+    holds no slot, so they cannot classify one; this reads the agent type AD-701 sets.
+    """
+    if type(actor_id) is not str or identity_registry is None:
+        return None
+    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use, so loading this module loads no other ProbOS module
+
+    if not is_sovereign_identity_key(actor_id):
+        return None
+    agent_uuid = actor_id
+    if actor_id.startswith("did:"):
+        parsed = parse_did(actor_id)
+        if parsed is None or parsed.get("type") != "agent":
+            return None
+        agent_uuid = parsed["agent_uuid"]
+    cert = identity_registry.get_by_uuid(agent_uuid)
+    return cert if cert is not None and cert.agent_type == VISITING_AGENT_TYPE else None
+
+
+def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
+    """BF-903: whether ``actor_id`` names a visiting officer, by its DID or its certificate UUID."""
+    return visiting_certificate(identity_registry, actor_id) is not None
+
+
+def require_session_capability(
+    did: str,
+    capability: str,
+    *,
+    surface: str,
+    visiting_officers: VisitingOfficerRegistry | None,
+) -> None:
+    """BF-903 (#1581): a known visiting officer's DID must hold ``capability`` in a live session.
+
+    For a caller that already knows its sender is a visitor (a paired channel sender, AD-802),
+    and for ``require_visitor_capability`` once it has recognised one. With AD-701's registry off
+    no session exists, so the visitor is refused. An undeclared ``capability`` raises
+    ``UnknownCapabilityError``.
+    """
+    require_known_capabilities((capability,))  # BF-903: a typo in a checking path fails on its first call
+    if visiting_officers is None:
+        logger.warning(
+            "BF-903: refused visiting officer %s %r at %s: AD-701's registry is off, so no session exists",
+            did, capability, surface,
+        )
+        raise VisitorScopeRefused(did, capability, REFUSED_REGISTRY_OFF, surface)
+    visiting_officers.check(did, capability, surface=surface)
+
+
+def require_visitor_capability(
+    actor_id: str,
+    capability: str,
+    *,
+    surface: str,
+    identity_registry: Any,
+    visiting_officers: VisitingOfficerRegistry | None,
+) -> None:
+    """BF-903 (#1581): the one check every path that acts for an actor id calls before it acts.
+
+    A crew member's slot id, the Captain or the system passes without a lookup. A visiting
+    officer, named by its DID or its certificate UUID, must hold ``capability`` in a live
+    session, checked under its DID (the registry's key); with AD-701's registry off it holds
+    none and is refused. ``surface`` names the entry in the refusal and its record. An
+    undeclared ``capability`` raises ``UnknownCapabilityError`` whoever acts, so a typo in a
+    checking path fails on its first call.
+    """
+    if capability not in VISITOR_CAPABILITIES:
+        raise UnknownCapabilityError([capability])
+    cert = visiting_certificate(identity_registry, actor_id)
+    if cert is None:
+        return
+    require_session_capability(cert.did, capability, surface=surface, visiting_officers=visiting_officers)
+```
+
+### 7.14 `tests/test_bf903_visitor_scope.py` (M3: V7 and V8 cover the certificate UUID; applies to the text 7.7 builds)
+
+SEARCH:
+```python
+    is_visiting_identity,
+    require_visitor_capability,
+)
+```
+REPLACE:
+```python
+    is_visiting_identity,
+    require_session_capability,
+    require_visitor_capability,
+)
+```
+
+SEARCH:
+```python
+    """V7: a visiting certificate's DID is a visitor even after its session ends; a crew DID, an unknown DID,
+    the ship's DID and a missing registry are not; ids that are not DIDs are never looked up."""
+    officers = _officers(identities, _Clock(), [])
+    session = await officers.register("visitor", [CAP_WARD_ROOM_READ])
+    crew = await _crew(identities)
+    assert is_visiting_identity(identities, session.did) is True
+    officers.deregister(session.did)
+    assert is_visiting_identity(identities, session.did) is True
+    assert is_visiting_identity(identities, crew.did) is False
+    assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}:{UNKNOWN_UUID}") is False
+    assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}") is False
+    assert is_visiting_identity(None, session.did) is False
+
+    def _no_lookup(_uuid: str) -> None:
+        raise AssertionError("not expected: an id that is not a DID was looked up")
+
+    monkeypatch.setattr(identities, "get_by_uuid", _no_lookup)
+    for actor in (CREW_SLOT, "captain", "system", crew.agent_uuid, "", None):
+        assert is_visiting_identity(identities, actor) is False
+```
+REPLACE:
+```python
+    """V7: a visiting certificate is a visitor by its DID and by its bare certificate UUID, even after its session
+    ends; a crew DID or UUID, an unknown DID or UUID, the ship's DID and a missing registry are not; an id of
+    neither shape is never looked up (BF-903 A1)."""
+    officers = _officers(identities, _Clock(), [])
+    session = await officers.register("visitor", [CAP_WARD_ROOM_READ])
+    crew = await _crew(identities)
+    visitor_uuid = session.did.rsplit(":", 1)[1]
+    assert is_visiting_identity(identities, session.did) is True
+    assert is_visiting_identity(identities, visitor_uuid) is True
+    officers.deregister(session.did)
+    assert is_visiting_identity(identities, session.did) is True
+    assert is_visiting_identity(identities, visitor_uuid) is True
+    assert is_visiting_identity(identities, crew.did) is False
+    assert is_visiting_identity(identities, crew.agent_uuid) is False
+    assert is_visiting_identity(identities, UNKNOWN_UUID) is False
+    assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}:{UNKNOWN_UUID}") is False
+    assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}") is False
+    assert is_visiting_identity(None, session.did) is False
+
+    def _no_lookup(_uuid: str) -> None:
+        raise AssertionError("not expected: an id that is neither a DID nor a certificate UUID was looked up")
+
+    monkeypatch.setattr(identities, "get_by_uuid", _no_lookup)
+    # A slot id, the Captain, the system, a BaseAgent default id (uuid4().hex) and an upper-case UUID match neither shape.
+    for actor in (CREW_SLOT, "captain", "system", "0123456789abcdef0123456789abcdef", visitor_uuid.upper(), "", None):
+        assert is_visiting_identity(identities, actor) is False
+```
+
+SEARCH:
+```python
+    """V8: crew pass with or without the registry; a visitor is served a held capability, refused a missing
+    one and refused outright with the registry off; an undeclared capability raises for anyone."""
+```
+REPLACE:
+```python
+    """V8: crew pass with or without the registry; a visitor is served a held capability, refused a missing
+    one and refused outright with the registry off; its certificate UUID is checked under its DID (A1); an
+    undeclared capability raises for anyone, and at ``require_session_capability`` too."""
+```
+
+SEARCH:
+```python
+    assert missing.value.reason == REFUSED_CAPABILITY
+    with pytest.raises(VisitorScopeRefused) as off:
+```
+REPLACE:
+```python
+    assert missing.value.reason == REFUSED_CAPABILITY
+    visitor_uuid = session.did.rsplit(":", 1)[1]
+    require_visitor_capability(
+        visitor_uuid, CAP_WARD_ROOM_READ, surface="v8", identity_registry=identities, visiting_officers=officers,
+    )
+    with pytest.raises(VisitorScopeRefused) as by_uuid:
+        require_visitor_capability(
+            visitor_uuid, CAP_WARD_ROOM_POST, surface="v8.uuid", identity_registry=identities,
+            visiting_officers=officers,
+        )
+    assert (by_uuid.value.did, by_uuid.value.reason) == (session.did, REFUSED_CAPABILITY)
+    with pytest.raises(UnknownCapabilityError):
+        require_session_capability(session.did, "ward_room.pots", surface="v8", visiting_officers=officers)
+    with pytest.raises(VisitorScopeRefused) as off:
+```
+
+SEARCH:
+```python
+    assert [p["surface"] for p in _refusals(events)] == ["v8.post"]
+```
+REPLACE:
+```python
+    assert [p["surface"] for p in _refusals(events)] == ["v8.post", "v8.uuid"]
+```
+
+### 7.15 `src/probos/channels/base.py` (M3)
+
+SEARCH:
+```python
+    # AD-802a: DID attached by `_check_pairing` for paired senders.
+    # Stays None when the sender is not yet paired, when the adapter has no
+    # `channel_name` and so opts out of pairing, when the runtime has no
+    # pairing service, and on the `resolve_did` fail-open path -- so
+    # `handle_message` can legitimately run with this unset.
+    paired_did: str | None = None
+```
+REPLACE:
+```python
+    # AD-802a: DID attached by `_check_pairing` for paired senders.
+    # Stays None when the sender is not yet paired, when the adapter has no
+    # `channel_name` and so opts out of pairing, or when the runtime has no
+    # pairing service -- so `handle_message` can legitimately run with this
+    # unset. BF-903 (#1581): once set, the sender is a visiting officer and
+    # `handle_message` serves it only an @callsign direct message, with dm.send.
+    paired_did: str | None = None
+```
+
+SEARCH:
+```python
+    `GmailAdapter._poll_loop` already declines to acknowledge when
+    `handle_message` raises, so this leaves the mail UNSEEN and re-fetched on
+    the next poll without any edit to that adapter.
+    """
+
+
+class ChannelAdapter(ABC):
+```
+REPLACE:
+```python
+    `GmailAdapter._poll_loop` already declines to acknowledge when
+    `handle_message` raises, so this leaves the mail UNSEEN and re-fetched on
+    the next poll without any edit to that adapter.
+    """
+
+
+#: BF-903 (#1581): the entire text of a `PairingLookupError`. Like BF-804's
+#: notice it names the channel and nothing else: Teams echoes it into an HTTP
+#: body (`routers/teams_webhook.py`).
+_PAIRING_LOOKUP_FAILED = (
+    "the pairing state could not be read on channel {channel}"
+)
+
+#: BF-903 (#1581): the replies a paired sender -- a visiting officer -- gets for
+#: what its visit does not allow. They name the reason and nothing internal.
+_PAIRED_NO_COMMANDS = (
+    "Slash commands are not available to a paired visitor; send @callsign "
+    "<message> to reach a crew member (BF-903)."
+)
+_PAIRED_NO_CONVERSATION = (
+    "A paired visitor may send @callsign <message> to a crew member and "
+    "nothing else (BF-903)."
+)
+_PAIRED_DM_REFUSED = (
+    "Your message was not delivered: your visit does not allow direct "
+    "messages ({reason}) (BF-903)."
+)
+
+
+class PairingLookupError(PairingNotificationError):
+    """BF-903 (#1581): `resolve_did` failed, so whether the sender is paired is unknown.
+
+    AD-802a let such a message through (fail-open). A paired sender is a
+    visiting officer, so an unclassified one reaching the slash-command and
+    natural-language paths could be granted what pairing refuses. This is a
+    `PairingNotificationError`, so every caller's existing handling applies
+    unchanged: Gmail withholds its acknowledgement and retries on the next
+    poll; Slack's webhook returns "" and its poll, Telegram and Matrix log and
+    move on; Discord logs and posts nothing; Teams answers HTTP 200 with this
+    text. On all but Gmail the sender must send again.
+    """
+
+
+class ChannelAdapter(ABC):
+```
+
+SEARCH:
+```python
+                - returns a DID -> attach to `message.paired_did`, return True.
+                - raises        -> fail open, return True.
+```
+REPLACE:
+```python
+                - returns a DID -> attach to `message.paired_did`, return True.
+                - raises        -> raise `PairingLookupError` (BF-903: fail
+                                   closed; a `PairingNotificationError`).
+```
+
+SEARCH:
+```python
+        try:
+            did = pairing_service.resolve_did(self.channel_name, message.user_id)
+        except Exception:
+            logger.warning(
+                "AD-802a: resolve_did failed for channel=%s user_id=%s; "
+                "allowing message (fail-open)",
+                self.channel_name, message.user_id, exc_info=True,
+            )
+            return True
+```
+REPLACE:
+```python
+        try:
+            did = pairing_service.resolve_did(self.channel_name, message.user_id)
+        except Exception as exc:
+            logger.error(
+                "AD-802a/BF-903: resolve_did failed for channel=%s user_id=%s; "
+                "refusing the message (fail-closed): a sender whose pairing "
+                "cannot be read may be a visiting officer. Raising "
+                "PairingLookupError, which each caller handles as it handles "
+                "PairingNotificationError.",
+                self.channel_name, message.user_id, exc_info=True,
+            )
+            raise PairingLookupError(_PAIRING_LOOKUP_FAILED.format(channel=self.channel_name)) from exc
+```
+
+SEARCH:
+```python
+        an acknowledgement gate (Gmail) leaves the message for the next poll
+        instead of recording it as handled.
+        """
+        from probos.utils.response_formatter import extract_response_text
+```
+REPLACE:
+```python
+        an acknowledgement gate (Gmail) leaves the message for the next poll
+        instead of recording it as handled.
+
+        BF-903 (#1581): a paired sender is a visiting officer; `_handle_paired`
+        serves it an @callsign direct message, with dm.send, and refuses the
+        rest with a reply naming the reason.
+        """
+        from probos.utils.response_formatter import extract_response_text
+```
+
+SEARCH:
+```python
+        text = message.text.strip()
+        if not text:
+            return ""
+
+        if text.startswith("/"):
+            from probos.api import _handle_slash_command
+```
+REPLACE:
+```python
+        text = message.text.strip()
+        if not text:
+            return ""
+
+        if message.paired_did is not None:  # BF-903 (#1581): a paired sender is a visiting officer
+            return await self._handle_paired(message.paired_did, text)
+
+        if text.startswith("/"):
+            from probos.api import _handle_slash_command
+```
+
+SEARCH:
+```python
+        return response_text
+
+    async def _handle_callsign_resolved(self, resolved: dict, callsign: str, message_text: str) -> str:
+```
+REPLACE:
+```python
+        return response_text
+
+    async def _handle_paired(self, did: str, text: str) -> str:
+        """BF-903 (#1581): what a paired sender may do here -- an @callsign direct message, with dm.send.
+
+        Pairing registered the sender as a visiting officer (AD-802), so its
+        session is checked directly, at use, in AD-701's registry; with no
+        registry attached the message is refused. No declared capability grants
+        a slash command or a natural-language turn, so each is refused with a
+        reply naming the reason. The AD that wires pairing declares what more a
+        paired sender may do.
+        """
+        from probos.crew_profile import extract_callsign_mention
+        from probos.visiting_officers import CAP_DM_SEND, VisitorScopeRefused, require_session_capability
+
+        if text.startswith("/"):  # BF-903: no declared capability grants a slash command
+            logger.warning(
+                "BF-903: refused a slash command from paired sender %s on channel %s",
+                did, self.channel_name,
+            )
+            return _PAIRED_NO_COMMANDS
+        mention = extract_callsign_mention(text)
+        resolved = None if mention is None else self.runtime.callsign_registry.resolve(mention[0])
+        if mention is None or resolved is None:
+            logger.warning(
+                "BF-903: refused a natural-language turn from paired sender %s on channel %s",
+                did, self.channel_name,
+            )
+            return _PAIRED_NO_CONVERSATION
+        try:
+            require_session_capability(
+                did, CAP_DM_SEND, surface=f"channel.{self.channel_name}.dm",
+                visiting_officers=getattr(self.runtime, "visiting_officers", None),
+            )
+        except VisitorScopeRefused as refused:
+            return _PAIRED_DM_REFUSED.format(reason=refused.reason)
+        callsign, message_text = mention
+        return await self._handle_callsign_resolved(resolved, callsign, message_text)
+
+    async def _handle_callsign_resolved(self, resolved: dict, callsign: str, message_text: str) -> str:
+```
+
+### 7.16 `src/probos/federation/mcp_server.py` (M3)
+
+SEARCH:
+```python
+from probos.types import IntentDescriptor, IntentMessage
+
+if TYPE_CHECKING:
+```
+REPLACE:
+```python
+from probos.types import IntentDescriptor, IntentMessage
+from probos.visiting_officers import is_visiting_identity
+
+if TYPE_CHECKING:
+```
+
+SEARCH:
+```python
+_BIND_FAILED = "AD-480a: MCP server bind failed (port %d): %s; the MCP server is not listening and ProbOS carries on (BF-884)"
+
+
+def bearer_token_matches(authorization: str, expected: str) -> bool:
+```
+REPLACE:
+```python
+_BIND_FAILED = "AD-480a: MCP server bind failed (port %d): %s; the MCP server is not listening and ProbOS carries on (BF-884)"
+MAX_ARGUMENT_VALUES = 10_000  # BF-903: values the visitor walk reads in one tools/call; cost: a call with more is refused (the HXI games send a handful)
+REFUSED_VISITOR_UNBOUND = "visitor_unbound"
+REFUSED_ARGUMENTS_UNWALKED = "arguments_unwalked"
+_VISITOR_REFUSALS = {
+    REFUSED_VISITOR_UNBOUND: (
+        "Tool {name!r} was refused over MCP (BF-903): its arguments name a visiting officer, and "
+        "this server cannot bind a call to a visiting officer's session (AD-1342 will)"
+    ),
+    REFUSED_ARGUMENTS_UNWALKED: (
+        f"Tool {{name!r}} was refused over MCP (BF-903): its arguments hold more than "
+        f"{MAX_ARGUMENT_VALUES} values, so they could not be checked for a visiting officer"
+    ),
+}
+
+
+def visitor_argument_refusal(arguments: dict[str, Any], identity_registry: Any) -> str | None:
+    """BF-903 (#1581): why a tools/call's arguments may not be dispatched, or None when they may.
+
+    The server dispatches as the handling agent and holds no visitor's session (BF-875's token is
+    a federation peer's), so a call whose arguments name a visiting officer is refused rather than
+    run unscoped. Every key and every string value counts, at any depth in objects and arrays,
+    when the whole string is a visiting officer's DID or certificate UUID
+    (``is_visiting_identity``); text that merely contains one is not an actor id. The walk is
+    iterative, so nesting costs no stack, and reads at most ``MAX_ARGUMENT_VALUES`` values; past
+    that it refuses rather than dispatch what it did not read. With no identity registry no
+    visiting certificate exists.
+    """
+    if identity_registry is None:
+        return None
+    pending: list[Any] = [arguments]
+    read = 0
+    while pending:
+        value = pending.pop()
+        read += 1
+        if read > MAX_ARGUMENT_VALUES:
+            return REFUSED_ARGUMENTS_UNWALKED
+        if isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif is_visiting_identity(identity_registry, value):
+            return REFUSED_VISITOR_UNBOUND
+    return None
+
+
+def bearer_token_matches(authorization: str, expected: str) -> bool:
+```
+
+SEARCH:
+```python
+        if not isinstance(tool_name, str) or not tool_name:  # BF-875: a name is a non-empty string
+            return self._error_envelope(request_id, -32602, "name required")
+
+        peer_id = (
+```
+REPLACE:
+```python
+        if not isinstance(tool_name, str) or not tool_name:  # BF-875: a name is a non-empty string
+            return self._error_envelope(request_id, -32602, "name required")
+        refusal = visitor_argument_refusal(arguments, getattr(self._runtime, "identity_registry", None))
+        if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch
+            logger.warning(
+                "BF-903: refused MCP tools/call %r from session %r: %s",
+                str(tool_name)[:80], str(session_id)[:80], refusal,
+            )
+            self._emit_failed("tools/call", reason=refusal, detail=str(tool_name))
+            return self._error_envelope(
+                request_id, -32602, _VISITOR_REFUSALS[refusal].format(name=str(tool_name)[:80])
+            )
+
+        peer_id = (
+```
+
+### 7.17 `tests/test_bf804_pairing_notification.py` (M3: two controls pinned a paired sender's LLM turn)
+
+SEARCH:
+```python
+from probos.channels.base import (
+    _PAIRING_NOTICE_FAILED,
+    ChannelMessage,
+    PairingNotificationError,
+)
+```
+REPLACE:
+```python
+from probos.channels.base import (
+    _PAIRED_NO_CONVERSATION,
+    _PAIRING_NOTICE_FAILED,
+    ChannelMessage,
+    PairingNotificationError,
+)
+```
+
+SEARCH:
+```python
+    * carol is PAIRED -> processed, answered, UID flagged.
+```
+REPLACE:
+```python
+    * carol is PAIRED -> answered (BF-903: with the refusal of natural
+      language a paired visitor gets), UID flagged.
+```
+
+SEARCH:
+```python
+    assert len(runtime.processed) == 1 and "status" in runtime.processed[0], (
+        "control: the paired sender was processed past the gate"
+    )
+```
+REPLACE:
+```python
+    # BF-903 (#1581): a paired sender is a visiting officer and no declared
+    # capability grants a natural-language turn, so carol's answer is the
+    # refusal, not an LLM reply. Her answer and her acknowledged UID remain
+    # the control that the probe sees a paired sender settle.
+    assert runtime.processed == [], (
+        "control: a paired sender's natural language is refused before any LLM turn"
+    )
+    assert [text for _, text, _ in notifier.answers()] == [_PAIRED_NO_CONVERSATION], (
+        "control: the paired sender was answered past the gate"
+    )
+```
+
+SEARCH:
+```python
+        paired = SlackAdapter(_PairedRuntime(_Paired()), cfg, client=client)
+        answered = await paired.receive(text="hi", channel_id="C1", user_id="U42")
+        assert answered == "acknowledged, Captain", (
+```
+REPLACE:
+```python
+        paired = SlackAdapter(_PairedRuntime(_Paired()), cfg, client=client)
+        answered = await paired.receive(text="hi", channel_id="C1", user_id="U42")
+        # BF-903 (#1581): a paired sender's natural language is refused with a
+        # reply naming the reason -- still a non-empty answer from receive(),
+        # which is all this control needs.
+        assert answered == _PAIRED_NO_CONVERSATION, (
+```
+
+### 7.18 `tests/test_ad807_discord_refresh.py` (M3: the control pinned a paired sender's LLM turn)
+
+SEARCH:
+```python
+    above is a real refusal, not a blind spot.
+    """
+    service = _FakePairingService()
+    service.resolved[("discord", "42")] = "did:probos:ro"
+    runtime = _OnMessageRuntime(
+```
+REPLACE:
+```python
+    above is a real refusal, not a blind spot.
+
+    BF-903 (#1581): this control used a paired sender, but a paired sender is
+    a visiting officer and its natural language is now refused before any LLM
+    turn, so it can no longer reach the failing turn. With no pairing service
+    the gate passes the sender through to processing, the path this control
+    needs.
+    """
+    service = None  # BF-903: no pairing service, so the gate passes the sender through
+    runtime = _OnMessageRuntime(
+```
+
+### 7.19 New file: `tests/test_bf903_channel_and_mcp.py` (M3)
+
+```python
+"""BF-903 (#1581) M3: a paired channel sender and an inbound MCP call are scoped like any visiting officer.
+
+Real objects: a real ``AgentIdentityRegistry`` in ``tmp_path``, the real ``VisitingOfficerRegistry`` with an
+injected clock, the real ``PairingRegistry`` and ``PairingService``, a real ``CallsignRegistry`` loaded from a
+profile in ``tmp_path``, a ``ChannelAdapter`` subclass whose only code is the platform I/O, the real
+``SlackAdapter``, and the real ``FederationMCPServer`` driven through ``build_mcp_app`` over an in-process ASGI
+transport with a real ``IntentBus`` and ``MCPAppRegistry``. The trust network behind ``FederationPeerRegistry`` is
+BF-875's double; it is not under test. Nothing reads the live data directory.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
+from sqlite3 import OperationalError as _OperationalError  # the standard library's, not a ProbOS name
+from typing import Any
+
+import pytest
+from httpx import ASGITransport as _ASGITransport  # httpx's names, not ProbOS's
+from httpx import AsyncClient as _AsyncClient
+from httpx import MockTransport as _MockTransport
+from httpx import Response as _Response
+
+from probos.channels.base import (
+    _PAIRED_DM_REFUSED,
+    _PAIRED_NO_COMMANDS,
+    _PAIRED_NO_CONVERSATION,
+    _PAIRING_LOOKUP_FAILED,
+    ChannelAdapter,
+    ChannelConfig,
+    ChannelMessage,
+    PairingLookupError,
+    PairingNotificationError,
+)
+from probos.channels.slack_adapter import SlackAdapter
+from probos.config import FederationMCPServerConfig, SlackConfig
+from probos.crew_profile import CallsignRegistry
+from probos.events import EventType
+from probos.federation.mcp_server import (
+    _VISITOR_REFUSALS,
+    MAX_ARGUMENT_VALUES,
+    REFUSED_ARGUMENTS_UNWALKED,
+    REFUSED_VISITOR_UNBOUND,
+    FederationMCPServer,
+    build_mcp_app,
+    visitor_argument_refusal,
+)
+from probos.federation.peer import FederationPeerRegistry
+from probos.identity import AgentIdentityRegistry
+from probos.mcp_apps.registry import MCPAppRegistry
+from probos.mesh.intent import IntentBus
+from probos.mesh.signal import SignalManager
+from probos.security.pairing import PairingRegistry, PairingService
+from probos.types import IntentDescriptor, IntentMessage, IntentResult
+from probos.visiting_officers import (
+    CAP_DM_RECEIVE,
+    CAP_DM_SEND,
+    REFUSED_CAPABILITY,
+    REFUSED_EXPIRED,
+    REFUSED_REGISTRY_OFF,
+)
+from tests.test_bf903_visitor_scope import (
+    CREW_SLOT,
+    INSTANCE_ID,
+    VESSEL_NAME,
+    Events,
+    _Clock,
+    _crew,
+    _officers,
+    _refusals,
+)
+
+CHANNEL = "bf903chan"
+SESSION_TTL = 60.0
+DM_TEXT = "@Counselor are you free?"
+STATUS_TEXT = "what is the ship's status?"
+ECHO_INTENT = "bf903_echo"
+MOVE_TOOL = "bf903-move"
+TOKEN = "bf903" * 8  # synthetic: 40 visible characters
+CSP = "default-src 'self'"
+
+
+@pytest.fixture
+async def identities(tmp_path: Path) -> AsyncIterator[AgentIdentityRegistry]:
+    registry = AgentIdentityRegistry(data_dir=tmp_path / "identity")
+    try:
+        await registry.start()
+        await registry.start(instance_id=INSTANCE_ID, vessel_name=VESSEL_NAME, version="1")
+        yield registry
+    finally:
+        await registry.stop()
+
+
+# ---------------------------------------------------------------- channels
+
+
+class _Runtime:
+    """The runtime members ``handle_message`` and ``SlackAdapter.receive`` read, holding the real registries."""
+
+    def __init__(
+        self, pairing_service: Any, visiting_officers: Any, callsign_registry: CallsignRegistry, processed: list[str],
+    ) -> None:
+        self.pairing_service = pairing_service
+        self.visiting_officers = visiting_officers
+        self.callsign_registry = callsign_registry
+        self.processed = processed
+
+    async def process_natural_language(self, text: str, **kwargs: Any) -> dict[str, Any]:
+        self.processed.append(text)
+        return {"response": "all systems nominal"}
+
+    def emit_event(self, event: Any, data: Any = None) -> None:
+        return None
+
+
+class _Adapter(ChannelAdapter):
+    """A pairing adapter whose only code is the platform I/O; ``handle_message`` is the base class's."""
+
+    channel_name = CHANNEL
+
+    def __init__(self, runtime: Any) -> None:
+        super().__init__(runtime, ChannelConfig(enabled=True))
+        self.sent: list[tuple[str, str]] = []
+
+    async def start(self) -> None:
+        self._started = True
+
+    async def stop(self) -> None:
+        self._started = False
+
+    async def send_response(self, channel_id: str, response: str, **kwargs: Any) -> None:
+        self.sent.append((channel_id, response))
+
+
+class _OptedOut(_Adapter):
+    """An adapter with no ``channel_name``: the supported opt-out of pairing (``WebhookAdapter``)."""
+
+    channel_name = ""
+
+
+class _Rig:
+    """The real registries and pairing service behind one ``_Adapter``."""
+
+    def __init__(self, identities: AgentIdentityRegistry, tmp_path: Path) -> None:
+        self.clock = _Clock()
+        self.events: Events = []
+        self.processed: list[str] = []
+        self.officers = _officers(identities, self.clock, self.events)
+        self.store = PairingRegistry(tmp_path / "pairings.db")
+        self.pairing = PairingService(self.store, self.officers)
+        profiles = tmp_path / "profiles"
+        profiles.mkdir()
+        (profiles / "counselor.yaml").write_text("callsign: Counselor\ndepartment: medical\n", encoding="utf-8")
+        callsigns = CallsignRegistry()
+        callsigns.load_from_profiles(str(profiles))
+        self.runtime = _Runtime(self.pairing, self.officers, callsigns, self.processed)
+        self.adapter = _Adapter(self.runtime)
+
+    async def pair(self, user_id: str, capabilities: list[str] | None = None) -> str:
+        """Pair ``user_id`` as the Captain would: a pending code, then approval."""
+        code = await self.pairing.request_pairing(CHANNEL, user_id)
+        paired = await self.pairing.approve_pairing(
+            CHANNEL, code, capabilities_override=capabilities, session_ttl_seconds=SESSION_TTL,
+        )
+        return paired.did
+
+
+@pytest.fixture
+async def rig(identities: AgentIdentityRegistry, tmp_path: Path) -> _Rig:
+    return _Rig(identities, tmp_path)
+
+
+def _message(user_id: str, text: str) -> ChannelMessage:
+    return ChannelMessage(text=text, channel_id="room-1", user_id=user_id)
+
+
+@pytest.mark.parametrize(
+    ("text", "reply"),
+    [
+        ("/status", _PAIRED_NO_COMMANDS),
+        (STATUS_TEXT, _PAIRED_NO_CONVERSATION),
+        ("@Nobody are you there?", _PAIRED_NO_CONVERSATION),
+    ],
+    ids=["slash-command", "natural-language", "unknown-callsign"],
+)
+async def test_a_paired_sender_is_refused_commands_and_conversation(rig: _Rig, text: str, reply: str) -> None:
+    """P1: a paired sender is a visiting officer; no declared capability grants a slash command or a turn with the
+    ship's computer, so each gets a reply naming the reason, and nothing runs."""
+    did = await rig.pair("u-1")
+    message = _message("u-1", text)
+    assert await rig.adapter.handle_message(message) == reply
+    assert message.paired_did == did
+    assert rig.processed == []
+    assert _refusals(rig.events) == []
+
+
+async def test_a_paired_sender_holding_dm_send_reaches_the_crew_member(rig: _Rig) -> None:
+    """P2: AD-802's default capabilities hold dm.send, which is enough for an @callsign direct message. The
+    Counselor's profile is loaded but no agent is bound, so the crew side answers "not currently on duty"."""
+    did = await rig.pair("u-2")
+    session = rig.officers.get(did)
+    assert session is not None and CAP_DM_SEND in session.capabilities
+    assert await rig.adapter.handle_message(_message("u-2", DM_TEXT)) == "Counselor is not currently on duty."
+    assert rig.processed == []
+    assert _refusals(rig.events) == []
+
+
+@pytest.mark.parametrize("lapse", ["capability-missing", "session-expired", "registry-off"])
+async def test_a_paired_dm_without_a_live_dm_send_is_refused(rig: _Rig, lapse: str) -> None:
+    """P3: the DM is checked against the sender's session at use: a session without dm.send, one that has expired
+    (before any sweep) and a registry that is not attached each refuse it with the code; nothing reaches the crew."""
+    expected = {
+        "capability-missing": REFUSED_CAPABILITY, "session-expired": REFUSED_EXPIRED,
+        "registry-off": REFUSED_REGISTRY_OFF,
+    }
+    await rig.pair("u-3", [CAP_DM_RECEIVE] if lapse == "capability-missing" else None)
+    if lapse == "session-expired":
+        rig.clock.now += SESSION_TTL
+    elif lapse == "registry-off":
+        rig.runtime.visiting_officers = None
+    reply = await rig.adapter.handle_message(_message("u-3", DM_TEXT))
+    assert reply == _PAIRED_DM_REFUSED.format(reason=expected[lapse])
+    assert rig.processed == []
+    surfaces = [p["surface"] for p in _refusals(rig.events)]
+    assert surfaces == ([] if lapse == "registry-off" else [f"channel.{CHANNEL}.dm"])
+
+
+async def test_an_unreadable_pairing_store_refuses_the_message_and_its_callers_still_catch_it(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P4: when the pairing store cannot be read the message is refused, not admitted: PairingLookupError is a
+    PairingNotificationError naming only the channel, with the cause chained, so the callers that catch the parent
+    (here Slack's webhook, which returns "") still catch it. Nothing is processed and nothing is sent."""
+    def _unreadable(_channel: str, _raw_id: str) -> None:
+        raise _OperationalError("database is locked")
+
+    monkeypatch.setattr(rig.store, "lookup_by_raw_id", _unreadable)
+    message = _message("u-4", STATUS_TEXT)
+    with pytest.raises(PairingLookupError) as refused:
+        await rig.adapter.handle_message(message)
+    assert isinstance(refused.value, PairingNotificationError)
+    assert str(refused.value) == _PAIRING_LOOKUP_FAILED.format(channel=CHANNEL)
+    assert isinstance(refused.value.__cause__, _OperationalError)
+    assert message.paired_did is None
+    assert rig.adapter.sent == []
+    async with _AsyncClient(transport=_MockTransport(lambda _r: _Response(200, json={"ok": True}))) as client:
+        slack = SlackAdapter(rig.runtime, SlackConfig(enabled=True, bot_token="xoxb-test"), client=client)
+        assert await slack.receive(text="hi", channel_id="C1", user_id="U42") == ""
+    assert rig.processed == []
+
+
+@pytest.mark.parametrize("gate", ["no-pairing-service", "adapter-opted-out"])
+async def test_a_sender_the_gate_does_not_pair_is_served_as_before(rig: _Rig, gate: str) -> None:
+    """P5 golden: with no pairing service, or on an adapter that opts out of pairing, a sender is not paired and its
+    natural language is processed exactly as before BF-903."""
+    if gate == "no-pairing-service":
+        rig.runtime.pairing_service = None
+        adapter: _Adapter = rig.adapter
+    else:
+        adapter = _OptedOut(rig.runtime)
+    message = _message("u-5", STATUS_TEXT)
+    assert await adapter.handle_message(message) == "all systems nominal"
+    assert message.paired_did is None
+    assert rig.processed == [STATUS_TEXT]
+
+
+# ---------------------------------------------------------------- MCP
+
+
+class _Trust:
+    """BF-875's trust-network double: the members ``FederationPeerRegistry`` calls. Not under test."""
+
+    def create_with_prior(self, agent_id: str, alpha: float, beta: float) -> None:
+        return None
+
+    def record_outcome(
+        self, agent_id: str, success: bool, weight: float = 1.0, intent_type: str = "",
+        episode_id: str = "", verifier_id: str = "", source: str = "verification",
+    ) -> float:
+        return 0.5
+
+    def get_score(self, agent_id: str) -> float:
+        return 0.5
+
+
+class _McpRuntime:
+    """The runtime members the MCP server reads: the real bus, peer registry and app registry, and the identities."""
+
+    def __init__(
+        self, identities: AgentIdentityRegistry, apps: MCPAppRegistry, events: list[tuple[Any, dict[str, Any]]],
+    ) -> None:
+        self.identity_registry = identities
+        self.intent_bus = IntentBus(SignalManager())
+        self.federation_peer_registry = FederationPeerRegistry(trust_network=_Trust())
+        self.mcp_app_registry = apps
+        self.recorded = events
+
+    def emit_event(self, event: Any, data: Any = None) -> None:
+        self.recorded.append((event, dict(data or {})))
+
+
+class _Mcp:
+    """The real inbound MCP server with one exposed intent and one app tool, each recording what it is sent."""
+
+    def __init__(self, identities: AgentIdentityRegistry) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.moves: list[dict[str, Any]] = []
+        self.events: list[tuple[Any, dict[str, Any]]] = []
+        apps = MCPAppRegistry(internal_default_csp=CSP, external_default_csp=CSP)
+        apps.register_app_tool(name=MOVE_TOOL, description="", input_schema={}, ui_resource_uri="", handler=self._move)
+        self.runtime = _McpRuntime(identities, apps, self.events)
+        self.runtime.intent_bus.subscribe("bf903-echo", self._echo, intent_names=[ECHO_INTENT])
+        echo = IntentDescriptor(name=ECHO_INTENT, params={"note": "any value"}, description="records its arguments")
+        self.server = FederationMCPServer(
+            runtime=self.runtime,
+            config=FederationMCPServerConfig(auth_token=TOKEN, exposed_intents=[ECHO_INTENT]),
+            collect_intent_descriptors_fn=lambda: [echo],
+        )
+
+    async def _move(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.moves.append(arguments)
+        return {"isError": False, "content": [{"type": "text", "text": "moved"}]}
+
+    async def _echo(self, intent: IntentMessage) -> IntentResult:
+        self.calls.append(dict(intent.params))
+        return IntentResult(intent_id=intent.id, agent_id="bf903-echo", success=True, result={"ok": True}, confidence=0.9)
+
+    async def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """One authenticated tools/call through the app ``start()`` serves (door A)."""
+        app = build_mcp_app(path="/mcp", auth_token=TOKEN, handle_jsonrpc=self.server.handle_jsonrpc)
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
+        async with _AsyncClient(transport=_ASGITransport(app=app), base_url="http://mcp.test") as client:
+            response = await client.post("/mcp", json=request, headers={"Authorization": f"Bearer {TOKEN}"})
+        return response.json()
+
+    def failures(self) -> list[dict[str, Any]]:
+        return [data for event, data in self.events if event == EventType.MCP_BRIDGE_FAILED]
+
+
+_NAMING: dict[str, tuple[str, Any]] = {
+    "intent-did": (ECHO_INTENT, lambda did, uuid: {"note": did}),
+    "intent-certificate-uuid": (ECHO_INTENT, lambda did, uuid: {"note": uuid}),
+    "object-key": (ECHO_INTENT, lambda did, uuid: {"note": {did: "post"}}),
+    "list-item": (ECHO_INTENT, lambda did, uuid: {"note": ["crew", uuid]}),
+    "nested-value": (ECHO_INTENT, lambda did, uuid: {"note": {"on_behalf": {"of": [1, {"actor": did}]}}}),
+    "deregistered-visitor": (ECHO_INTENT, lambda did, uuid: {"note": did}),
+    "app-tool": (MOVE_TOOL, lambda did, uuid: {"player": did}),
+}
+
+
+@pytest.mark.parametrize("shape", list(_NAMING))
+async def test_a_tools_call_naming_a_visitor_is_refused_before_either_branch(
+    identities: AgentIdentityRegistry, shape: str,
+) -> None:
+    """Q1: a visiting officer's DID or certificate UUID anywhere in the arguments, as a value, a key or a list item,
+    at any depth, refuses the call before the intent and app-tool branches; a deregistered visitor is still one."""
+    mcp = _Mcp(identities)
+    officers = _officers(identities, _Clock(), [])
+    session = await officers.register("visitor", [CAP_DM_SEND])
+    if shape == "deregistered-visitor":
+        officers.deregister(session.did)
+    tool, arguments = _NAMING[shape]
+    reply = await mcp.call(tool, arguments(session.did, session.did.rsplit(":", 1)[1]))
+    assert reply["error"] == {
+        "code": -32602, "message": _VISITOR_REFUSALS[REFUSED_VISITOR_UNBOUND].format(name=tool),
+    }
+    assert (mcp.calls, mcp.moves) == ([], [])
+    assert mcp.failures() == [
+        {"side": "server", "method": "tools/call", "reason": REFUSED_VISITOR_UNBOUND, "detail": tool},
+    ]
+
+
+@pytest.mark.parametrize("shape", ["crew-did", "crew-certificate-uuid", "slot-id", "prose-with-a-visitor-did"])
+async def test_crew_ids_and_prose_that_mentions_a_visitor_are_dispatched(
+    identities: AgentIdentityRegistry, shape: str,
+) -> None:
+    """Q2: only a whole value that is a visiting officer's id refuses; a crew DID or certificate UUID (looked up, not
+    a visitor), a slot id (never looked up) and prose that mentions a visitor's DID are dispatched."""
+    mcp = _Mcp(identities)
+    session = await _officers(identities, _Clock(), []).register("visitor", [CAP_DM_SEND])
+    crew = await _crew(identities)
+    note = {
+        "crew-did": crew.did, "crew-certificate-uuid": crew.agent_uuid, "slot-id": CREW_SLOT,
+        "prose-with-a-visitor-did": f"ask {session.did} to stand by",
+    }[shape]
+    reply = await mcp.call(ECHO_INTENT, {"note": note})
+    assert json.loads(reply["result"]["content"][0]["text"]) == {"ok": True}
+    assert mcp.calls == [{"note": note}]
+    assert mcp.failures() == []
+
+
+async def test_the_argument_walk_reads_up_to_its_bound_and_refuses_past_it(identities: AgentIdentityRegistry) -> None:
+    """Q3: the walk counts the object, its key, the list and each item. At the bound the arguments pass; one value
+    past it they are refused unread rather than dispatched with values nobody checked."""
+    at_bound = {"items": list(range(MAX_ARGUMENT_VALUES - 3))}
+    past_bound = {"items": list(range(MAX_ARGUMENT_VALUES - 2))}
+    assert visitor_argument_refusal(at_bound, identities) is None
+    assert visitor_argument_refusal(past_bound, identities) == REFUSED_ARGUMENTS_UNWALKED
+    mcp = _Mcp(identities)
+    reply = await mcp.call(ECHO_INTENT, past_bound)
+    assert reply["error"] == {
+        "code": -32602, "message": _VISITOR_REFUSALS[REFUSED_ARGUMENTS_UNWALKED].format(name=ECHO_INTENT),
+    }
+    assert mcp.calls == []
+    assert [f["reason"] for f in mcp.failures()] == [REFUSED_ARGUMENTS_UNWALKED]
+```
+
 ## 8. Tracking (tracker pairs, in M2's commit; Amendment A1 updates both for M3)
 
 **`PROGRESS.md`**, anchored on the title, the blank line and the bold lead of BF-904b's line 3:
@@ -1615,21 +2722,79 @@ REPLACE:
 
 **`docs/development/roadmap.md`:** no row (`BF-903` count is 0; BF-904b added none).
 
+## 8b. Tracking for M3 (tracker pairs, in M3's commit)
+
+These apply to the text section 8's pairs produce. After them, regenerate the ledger in M3's commit as section 8 says, and verify with `--check` and `tests/test_ad1184_ad_ledger.py`. They also correct the contract's filename, which section 8's text gets wrong.
+
+**`PROGRESS.md`**, the BF-903 line M2 wrote:
+
+SEARCH:
+```markdown
+**BF-903 (2026-10-22), #1581, M1 and M2 of three -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `probos.visiting_officers` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`); `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type and never looks up a crew member's, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning. Both flags stay off. M3 (the channel adapters and the inbound MCP server) follows in the same PR. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`. The contract is `prompts/bf-903-visitor-capability-seam.md`.
+```
+REPLACE:
+```markdown
+**BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `probos.visiting_officers` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`); `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type, named by its DID or its bare certificate UUID, and never looks up a slot id, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. M3: a paired channel sender is a visiting officer, so its slash commands and natural language are refused with a reply naming the reason and an `@callsign` DM needs a live `dm.send`; a pairing store that cannot be read refuses the message (`PairingLookupError`) instead of letting it through; the inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning (MCP: `MCP_BRIDGE_FAILED`, reason `visitor_unbound`). Both flags stay off. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`, `tests/test_bf903_channel_and_mcp.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`, `test_bf804_pairing_notification.py`, `test_ad807_discord_refresh.py`. The contract is `prompts/bf-903-visiting-officer-capability-seam.md`.
+```
+
+**`DECISIONS.md`**, BF-903's entry as M2 wrote it:
+
+SEARCH:
+```markdown
+- *Scope.* M1 and M2 of three, one gate and one PR; M3 (the channel adapters and the inbound MCP server) is Amendment A1. `visiting_officers.py`, `config_models/crew.py`, `security/pairing/service.py`, `__main__.py` (M1); `ward_room/service.py`, `startup/finalize.py`, `api.py` (M2); tests. Contract: `prompts/bf-903-visitor-capability-seam.md`.
+```
+REPLACE:
+```markdown
+- *Scope.* M1, M2 and M3, one gate and one PR. `visiting_officers.py`, `config_models/crew.py`, `security/pairing/service.py`, `__main__.py` (M1); `ward_room/service.py`, `startup/finalize.py`, `api.py` (M2); `visiting_officers.py` (recognition), `channels/base.py`, `federation/mcp_server.py` (M3, Amendment A1); tests. Contract: `prompts/bf-903-visiting-officer-capability-seam.md`.
+```
+
+SEARCH:
+```markdown
+- *D2 (where).* One guard, `require_visitor_capability`, in the registry's module, applied at every Ward Room facade entry that takes an actor id and, in M3, at the channel and MCP entries. A visitor is a did:probos agent DID whose certificate's agent type is `visiting`, read from the identity registry's cache; the certificate outlives the session. Crew ids return before any lookup or query. BF-907's resolver and AD-1346's `IdentityService` return None for a slotless visitor and cannot classify one. Rejected: guarding only the channel layer, recognising a visitor by registry membership (fails open at expiry), and by DID shape (real visiting DIDs have the crew shape).
+```
+REPLACE:
+```markdown
+- *D2 (where).* One guard, `require_visitor_capability`, in the registry's module, applied at every Ward Room facade entry that takes an actor id and, in M3, at the channel and MCP entries. A visitor is a certificate whose agent type is `visiting`, named by its did:probos agent DID or by its bare certificate UUID (the two key shapes BF-907 gives a sovereign identity; an author's Ward Room episode is stored under the id it posts as), read from the identity registry's cache; the certificate outlives the session. A slot id, "captain" and "system" match neither shape and return before any lookup or query; a crew certificate's DID or UUID costs one in-memory lookup. BF-907's resolver and AD-1346's `IdentityService` return None for a slotless visitor and cannot classify one. Rejected: guarding only the channel layer, recognising a visitor by registry membership (fails open at expiry), by DID shape (real visiting DIDs have the crew shape), and by the DID alone (a visitor's UUID would pass as an unknown id).
+```
+
+SEARCH:
+```markdown
+- *D4 (MCP, built in M3).* A tools/call whose arguments name a visiting DID is refused with a reason; the shared token stays BF-875's federation-peer credential. A per-visitor binding is AD-1342's, on the MCP authorization spec.
+```
+REPLACE:
+```markdown
+- *D4 (MCP, built in M3).* A tools/call whose arguments name a visiting officer (any key or string value, at any depth, that is exactly its DID or certificate UUID) is refused with JSON-RPC -32602 and `MCP_BRIDGE_FAILED` reason `visitor_unbound`, before the app-tool and intent branches and through both doors; arguments of more than 10,000 values are refused unread (`arguments_unwalked`). The shared token stays BF-875's federation-peer credential. A per-visitor binding is AD-1342's, on the MCP authorization spec.
+```
+
+SEARCH:
+```markdown
+- *D7 (M3, coupled).* `_check_pairing` fails closed when the pairing store cannot be read. A paired sender's slash commands and natural language are refused: no declared capability grants them. The AD that wires pairing declares what a paired sender may do.
+- *Disclosed effects.* An undeclared capability is refused at `register`, pairing, `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; a pending row minted before BF-903 with one is consumed and refused at approve. `get` hides an expired session. A visiting DID at a guarded entry is refused unless a live session holds the capability (always, with no registry attached); the API answers 403. Crew, Captain and system ids are unchanged.
+- *Reversal.* Revert the BF-903 commits. Nothing persisted changes; the facade stops checking visitors and any capability string is accepted again.
+```
+REPLACE:
+```markdown
+- *D7 (M3, coupled).* `_check_pairing` fails closed when the pairing store cannot be read: it raises `PairingLookupError`, a `PairingNotificationError`, so every adapter's existing handling applies (Gmail leaves the mail unread and retries; the others drop it with a log; Teams answers 200). A paired sender's slash commands and natural language are refused with a reply naming the reason: no declared capability grants them. Its `@callsign` DM needs a live `dm.send`, checked against the paired DID's session directly, since pairing registered it as a visitor. The AD that wires pairing declares what more a paired sender may do.
+- *Disclosed effects.* An undeclared capability is refused at `register`, pairing, `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; a pending row minted before BF-903 with one is consumed and refused at approve. `get` hides an expired session. A visiting officer, named by its DID or its certificate UUID, is refused at a guarded entry unless a live session holds the capability (always, with no registry attached); the API answers 403. A paired channel sender is refused slash commands and natural language, and an unreadable pairing store refuses the message; an MCP tools/call naming a visiting officer, or with more than 10,000 argument values, is refused. Pairing is not wired and MCP is off in production, so no live sender is affected. Crew, Captain and system ids are unchanged; a crew certificate's UUID costs one in-memory lookup.
+- *Reversal.* Revert the BF-903 commits. Nothing persisted changes; the facade stops checking visitors, any capability string is accepted again, a channel admits a sender whose pairing cannot be read and serves paired senders natural language again, and MCP dispatches whatever arguments it is sent.
+```
+
 ## 9. What this does NOT change
 
 - Both flags in `config/system.yaml`. AD-1342 and the visitor-to-crew path.
 - AD-802's pairing flow apart from the name checks: `resolve_did`, `revoke_pairing` and `restore_active_sessions` (register R1).
-- The channel adapters and `federation/mcp_server.py` (M3). The A2A server (register R4).
+- The adapter subclasses: each keeps its own handling of `PairingNotificationError`, which `PairingLookupError` inherits (section 5). `routers/teams_webhook.py`. The MCP server's bearer check, `tools/list`, `resources/read` and dispatch. The A2A server (register R4).
+- What a paired sender's DM carries: it still reaches the crew member as `from: "channel"`, not as the visitor's DID (register R7).
 - These Ward Room entries: `create_channel`, `unsubscribe`, `update_thread`, the reads with no actor id (`get_thread`, `list_threads`, `get_post`, `get_recent_activity`, `get_posts_by_author`), and the subject-id queries (`get_credibility`, `get_agent_comm_stats`, `count_posts_by_author`, `dm_receipt_facts`).
 - `admission/`, `identity_service.py`, `identity.py` and `EventType`.
 - The routers' acceptance of body-supplied actor ids (register R6).
 
 ## 10. Mutation rows
 
-There are 51 rows, as whole stripped lines, each occurring once in its file after section 7.
+There are 73 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1).
 
 Tier HIGH: every changed production file has rows.
-- Run A1-A27 against `tests/test_bf903_visitor_scope.py`, and B1-B23 against `tests/test_bf903_ward_room_scope.py`.
+- Run A1-A32 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
 - Start each group with an unmutated run of its file that passes.
 - Restore the file after each row.
 - "First failing" is in file order. Where another test fails first, run the named test alone against the mutant.
@@ -1649,12 +2814,12 @@ Tier HIGH: every changed production file has rows.
 | A11 | `src/probos/visiting_officers.py` | `"did": did, "capability": capability, "reason": reason, "surface": surface,` | `"did": did,` | V6 (event equality) |
 | A12 | `src/probos/visiting_officers.py` | `raise VisitorScopeRefused(did, capability, reason, surface)` | `return` | V6 |
 | A13 | `src/probos/visiting_officers.py` | `if parsed is None or parsed.get("type") != "agent":` | `if parsed is None:` | V7 (the ship DID raises `KeyError`) |
-| A14 | `src/probos/visiting_officers.py` | `return cert is not None and cert.agent_type == VISITING_AGENT_TYPE` | `return cert is not None` | V7 (crew DID) |
+| A14 | `src/probos/visiting_officers.py` | `return cert if cert is not None and cert.agent_type == VISITING_AGENT_TYPE else None` | `return cert` | V7 (crew DID) |
 | A15 | `src/probos/visiting_officers.py` | `if capability not in VISITOR_CAPABILITIES:` | `if False:` | V8 (undeclared) |
-| A16 | `src/probos/visiting_officers.py` | `if not is_visiting_identity(identity_registry, actor_id):` | `if False:` | V8 (crew refused with no registry) |
+| A16 | `src/probos/visiting_officers.py` | `if cert is None:` | `if False:` | V8 (crew with no registry: `cert.did` on None) |
 | A17 | `src/probos/visiting_officers.py` | `if visiting_officers is None:` | `if False:` | V8 (registry off) |
-| A18 | `src/probos/visiting_officers.py` | `raise VisitorScopeRefused(actor_id, capability, REFUSED_REGISTRY_OFF, surface)` | `return` | V8 |
-| A19 | `src/probos/visiting_officers.py` | `visiting_officers.check(actor_id, capability, surface=surface)` | `pass` | V8 (missing) |
+| A18 | `src/probos/visiting_officers.py` | `raise VisitorScopeRefused(did, capability, REFUSED_REGISTRY_OFF, surface)` | `return` | V8 |
+| A19 | `src/probos/visiting_officers.py` | `visiting_officers.check(did, capability, surface=surface)` | `pass` | V8 (missing) |
 | A20 | `src/probos/config_models/crew.py` | `return [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]` | `return [CAP_WARD_ROOM_POST]` | V1 |
 | A21 | `src/probos/config_models/crew.py` | `require_known_capabilities(value)` | `pass` | V3 |
 | A22 | `src/probos/security/pairing/service.py` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND, CAP_DM_RECEIVE)  # BF-903: AD-802's defaults, named by the vocabulary's owner` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND,)` | V1 |
@@ -1662,7 +2827,12 @@ Tier HIGH: every changed production file has rows.
 | A24 | `src/probos/security/pairing/service.py` | `require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed` | `pass` | V4 (the code-survives assertion) |
 | A25 | `src/probos/security/pairing/service.py` | `require_known_capabilities(caps)  # BF-903: a row minted before BF-903 may hold any string` | `pass` | V5 `[row-minted-before-bf903]`. The real registry refuses in V4 regardless, so only the offline stub kills it. |
 | A26 | `src/probos/__main__.py` | `except (UnknownPairingCode, UnknownCapabilityError) as exc:  # BF-903: an undeclared --cap is refused with its name` | `except UnknownPairingCode as exc:` | V5 `[undeclared-cap-flag]` |
-| A27 | `src/probos/visiting_officers.py` | `if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:` | `if type(actor_id) is not str or not actor_id.startswith("did:"):` | V7 (`None` registry raises `AttributeError`) |
+| A27 | `src/probos/visiting_officers.py` | `if type(actor_id) is not str or identity_registry is None:` | `if type(actor_id) is not str:` | V7 (`None` registry raises `AttributeError`) |
+| A28 | `src/probos/visiting_officers.py` | `if not is_sovereign_identity_key(actor_id):` | `if False:` | V7 (a slot id is looked up) |
+| A29 | `src/probos/visiting_officers.py` | `if actor_id.startswith("did:"):` | `if False:` | V7 (the visitor's DID is not recognised) |
+| A30 | `src/probos/visiting_officers.py` | `return visiting_certificate(identity_registry, actor_id) is not None` | `return False` | V7 |
+| A31 | `src/probos/visiting_officers.py` | `require_session_capability(cert.did, capability, surface=surface, visiting_officers=visiting_officers)` | `require_session_capability(actor_id, capability, surface=surface, visiting_officers=visiting_officers)` | V8 (the certificate UUID is served) |
+| A32 | `src/probos/visiting_officers.py` | `require_known_capabilities((capability,))  # BF-903: a typo in a checking path fails on its first call` | `pass` | V8 (`require_session_capability` with an undeclared name) |
 | B1 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ?"` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ? AND 0"` | W3 `[thread-in-dm-channel]` |
 | B2 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ?"` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ? AND 0"` | W3 `[post-in-dm-thread]` |
 | B3 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ?"` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ? AND 0"` | W3 `[edit-in-dm-thread]` |
@@ -1686,12 +2856,35 @@ Tier HIGH: every changed production file has rows.
 | B21 | `src/probos/startup/finalize.py` | `runtime.ward_room.attach_visiting_officers(runtime.visiting_officers)` | `pass` | W8 (reason is registry off) |
 | B22 | `src/probos/api.py` | `@app.exception_handler(VisitorScopeRefused)` | `@app.exception_handler(LookupError)` | W7 (500) |
 | B23 | `src/probos/api.py` | `"error": "visitor_scope_refused",` | `"error": "intent_denied",` | W7 |
+| C1 | `src/probos/channels/base.py` | `class PairingLookupError(PairingNotificationError):` | `class PairingLookupError(RuntimeError):` | P4 |
+| C2 | `src/probos/channels/base.py` | `raise PairingLookupError(_PAIRING_LOOKUP_FAILED.format(channel=self.channel_name)) from exc` | `return True` | P4 |
+| C3 | `src/probos/channels/base.py` | `if message.paired_did is not None:  # BF-903 (#1581): a paired sender is a visiting officer` | `if False:` | P1 `[slash-command]` |
+| C4 | `src/probos/channels/base.py` | `if text.startswith("/"):  # BF-903: no declared capability grants a slash command` | `if False:` | P1 `[slash-command]` |
+| C5 | `src/probos/channels/base.py` | `if mention is None or resolved is None:` | `if mention is None:` | P1 `[unknown-callsign]` |
+| C6 | `src/probos/channels/base.py` | `did, CAP_DM_SEND, surface=f"channel.{self.channel_name}.dm",` | `did, CAP_DM_RECEIVE, surface=f"channel.{self.channel_name}.dm",` | P3 `[capability-missing]` |
+| C7 | `src/probos/channels/base.py` | `visiting_officers=getattr(self.runtime, "visiting_officers", None),` | `visiting_officers=None,` | P2 |
+| C8 | `src/probos/channels/base.py` | `except VisitorScopeRefused as refused:` | `except LookupError as refused:` | P3 `[capability-missing]` |
+| C9 | `src/probos/channels/base.py` | `return _PAIRED_DM_REFUSED.format(reason=refused.reason)` | `return _PAIRED_DM_REFUSED.format(reason="")` | P3 `[capability-missing]` |
+| C10 | `src/probos/federation/mcp_server.py` | `if identity_registry is None:` | `if True:` | Q1 `[intent-did]` |
+| C11 | `src/probos/federation/mcp_server.py` | `if read > MAX_ARGUMENT_VALUES:` | `if False:` | Q3 |
+| C12 | `src/probos/federation/mcp_server.py` | `return REFUSED_ARGUMENTS_UNWALKED` | `return None` | Q3 |
+| C13 | `src/probos/federation/mcp_server.py` | `pending.extend(value.keys())` | `pass` | Q1 `[object-key]` |
+| C14 | `src/probos/federation/mcp_server.py` | `pending.extend(value.values())` | `pass` | Q1 `[intent-did]` |
+| C15 | `src/probos/federation/mcp_server.py` | `pending.extend(value)` | `pass` | Q1 `[list-item]` |
+| C16 | `src/probos/federation/mcp_server.py` | `elif is_visiting_identity(identity_registry, value):` | `elif False:` | Q1 `[intent-did]` |
+| C17 | `src/probos/federation/mcp_server.py` | `refusal = visitor_argument_refusal(arguments, getattr(self._runtime, "identity_registry", None))` | `refusal = None` | Q1 `[intent-did]` |
+| C18 | `src/probos/federation/mcp_server.py` | `self._emit_failed("tools/call", reason=refusal, detail=str(tool_name))` | `pass` | Q1 `[intent-did]` (the event) |
 
 **Lines without a row**
 - `_require_visitor_write`'s `if not is_visiting_identity(...)`: equivalent, since removing it only adds a query for crew.
 - `identity_registry=self._identity_registry,`: not unique in `service.py`; `start()` has two.
 - `if self._db is not None:`: only the in-memory mode has no database.
-- The `startswith("did:")` half of A27's line: `parse_did` refuses the same keys.
+- `agent_uuid = parsed["agent_uuid"]` and `agent_uuid = actor_id`: removing either breaks the same lookups A29 and A28 kill.
+- `return _PAIRED_NO_COMMANDS` and `return _PAIRED_NO_CONVERSATION`: P1 asserts each reply by equality.
+- `if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch`: equivalent to C17.
+- `read += 1`: the mutant never refuses, which Q3 kills as it kills C11.
+- `MAX_ARGUMENT_VALUES = 10_000`: Q3 pins both sides of the bound.
+- The walk's `if identity_registry is None:` short-circuit with a mutant that removes it: only a runtime with no identity registry, which production never has (`runtime.py:1203`, `:2766`), would then refuse past the bound.
 - `if unknown:`: equivalent to A3.
 - `if runtime.ward_room is not None:`: equivalent to B21.
 - `status_code=403,`: not unique in `api.py`.
@@ -1738,6 +2931,34 @@ pyproject.toml                    181 asyncio_mode = "auto"
 tests/test_bf771_intent_authorization.py 515-538 mock-runtime create_app pattern
 tests/test_ad1346_admission_service.py   92-100 identity registry fixture; 131-137 resolve_or_issue
 tests/test_ad630_leadership_feedback.py  302/321/339 __new__ services call only get_agent_comm_stats (unguarded)
+
+A1 (2026-10-22): production files at 0e122174; visiting_officers.py and the M1 test as M1 builds them (0d3042eb)
+src/probos/routers/agents.py      3842 author_id=agent_id inside _thread_store.append_message (no ward_room call; anchor removed)
+src/probos/visiting_officers.py   24-27 One guard docstring | 304-322 is_visiting_identity | 325-351 require_visitor_capability
+src/probos/identity.py            152-163 is_sovereign_identity_key (_SOVEREIGN_UUID, lower-case hex) | 773-785 get_by_uuid | 804-827 resolve_slot_id
+src/probos/substrate/identity.py  17-27 slot id {type}_{pool}_{index}_{hash8} | substrate/agent.py 42 default id uuid4().hex (no hyphens)
+src/probos/ward_room/threads.py   564-578 author episode under resolve_sovereign_id_from_slot(author_id) | cognitive/episodic.py 472-483 returns the id when no slot
+src/probos/startup/trust_identity.py 55-57 both key shapes are sovereign keys
+src/probos/channels/base.py       32-37 paired_did comment | 40-62 notice text and PairingNotificationError | 104-219 _check_pairing (fail-open 162-170)
+  221-281 handle_message (slash 246-249, mention 251-258, natural language 260-281) | 283-316 _handle_callsign_resolved ("not currently on duty" 289)
+src/probos/channels/gmail_adapter.py 91 channel_name | 156-178 per-message try; an exception leaves the mail unread
+src/probos/channels/slack_adapter.py 50 | 203-205 receive catches PairingNotificationError | 290-297 poll catches Exception
+src/probos/channels/telegram_adapter.py 47 | 197-204 ; matrix_adapter.py 34 | 177-184 ; discord_adapter.py 62 | 321, 330 ; teams_adapter.py 40 | 141
+src/probos/routers/teams_webhook.py 41-47 HTTP 200 {"status": "error", "message": str(exc)}
+src/probos/channels/webhook_adapter.py no channel_name (base default "" at base.py:78)
+src/probos/crew_profile.py        660-667 CallsignRegistry | 669-703 load_from_profiles | 709-732 resolve (agent_id None when unbound) | 851-863 extract_callsign_mention
+src/probos/security/pairing/service.py (M1-built) 43-51 __init__ | 84-103 request_pairing | 137-189 approve_pairing | 274-288 resolve_did
+src/probos/federation/mcp_server.py 25 types import | 39-41 constants | 81-86 _jsonrpc_error | 316-351 handle_jsonrpc | 372-407 tools/list, resources/read
+  409-512 _handle_tools_call (arguments 417-421, name 422-423, app branch 435-455, intent branch 457-512) | 566-582 _emit_failed
+src/probos/mcp_apps/registry.py   139-141 has_tool | 143-164 list_tools | 191-216 read_resource | 244-268 call_tool
+src/probos/mesh/intent.py         40 IntentHandler | 457-464 subscribe | 1293-1302 broadcast
+src/probos/types.py               58-68 IntentMessage (id) | 78-86 IntentResult | 961-971 IntentDescriptor
+src/probos/config_models/integrations.py 17-56 FederationMCPServerConfig
+src/probos/runtime.py             1203 identity_registry declared | finalize.py 4954, 4972 runtime.visiting_officers set
+tests/test_bf875_mcp_inbound_auth.py 84-99 trust double | 115-116 subscribe | 150-152 ASGI client | 592-603 two doors
+tests/test_bf804_pairing_notification.py 36-40 imports | 166 | 184-200 Gmail control | 421-434 Slack control
+tests/test_ad807_discord_refresh.py 193-215 control | tests/test_bf803_gmail_ack.py 1122-1135 ChannelMessage fields
+tests/test_layer_boundaries.py    152-165 a top-level probos module is importable from any layer
 ```
 
 ## Absence Verified (2026-10-22)
@@ -1771,6 +2992,39 @@ AV7 CLAIM: no visitor consumer in the Ward Room or the routers
     RUN:   rg -i 'visiting|visitor' src/probos/ward_room ; rg -i 'visiting_officer|visitor' src/probos/routers
     FOUND: 0 ; 0
     HOLDS: yes
+AV8 CLAIM: only three existing tests drive a paired sender through handle_message
+    RUN:   rg -n 'resolve_did|resolved\[|paired=' tests ; rg -n '_check_pairing\(|handle_message\(|receive\(|on_message\(' tests/test_ad80[3-7]*.py
+    FOUND: paired fakes at test_ad803a_telegram.py:169, test_ad804_slack.py:174, test_ad806_matrix.py:169, test_ad807_discord_refresh.py:44
+           call _check_pairing only (unchanged for a paired sender); test_ad807_discord_refresh.py:205 (on_message, 7.18);
+           test_bf804_pairing_notification.py:184 (Gmail poll) and :421-430 (Slack receive) (7.17);
+           test_channel_base.py:550, test_ad805_teams.py:29 and test_bf804:398 resolve None
+    HOLDS: yes
+AV9 CLAIM: no test pins the resolve_did fail-open
+    RUN:   rg -n -i 'fail.open' tests
+    FOUND: no hit in test_channel_base, test_bf803*, test_bf804*, test_ad764*, test_ad80[2-7]*; the hits are other subsystems
+    HOLDS: yes
+AV10 CLAIM: the MCP server reads no identity registry and no visitor today
+    RUN:   rg -n 'identity_registry|is_visiting|visiting' src/probos/federation/mcp_server.py
+    FOUND: 0
+    HOLDS: yes
+AV11 CLAIM: tools/list and resources/read take no actor id
+    RUN:   read mcp_server.py:333-342, :372-407 ; mcp_apps/registry.py:143-164, :191-216
+    FOUND: tools/list ignores its params; resources/read passes only uri, a resource key, to a lookup or an external read
+    HOLDS: yes
+AV12 CLAIM: no production code passes a bare certificate UUID as a Ward Room actor id today
+    RUN:   rg -n '(author_id|agent_id|voter_id)\s*=\s*[^,)]*(sovereign|agent_uuid|\.did\b)' src/probos
+    FOUND: experience/commands/commands_clearance.py:71, experience/commands/session.py:75, routers/memory_graph.py:213,
+           cognitive/thought_store.py:108; none is a Ward Room call
+    HOLDS: yes; a UUID reaches the Ward Room only as a body-supplied router id (R6) or an MCP argument
+AV13 CLAIM: no adapter overrides _check_pairing; only Discord and Slack's receive name PairingNotificationError
+    RUN:   rg -n 'def _check_pairing|def handle_message' src/probos/channels ; rg -n 'PairingNotificationError|handle_message\(' src/probos
+    FOUND: base.py:104, :221 ; discord_adapter.py:20, :330 ; slack_adapter.py:37, :205 ; callers gmail:157, discord:321,
+           matrix:178, slack:204, :291, teams:141, telegram:198, webhook:80
+    HOLDS: yes
+AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_officers
+    RUN:   read tests/test_layer_boundaries.py:137-165
+    FOUND: a top-level module (parts[1] not in LAYER_MAP) returns None, always allowed (:165)
+    HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -1783,6 +3037,10 @@ AV7 CLAIM: no visitor consumer in the Ward Room or the routers
   - Each `AssertionError(` message begins with "not".
   - The `runtime.X` names used (`ward_room`, `visiting_officers`, `identity_registry`, `start`, `stop`, `callsign_registry`, `registry`, `hebbian_router`, `ontology`) exist in `src`.
   - The SQL uses one-letter aliases only.
+  - A1: `_AsyncClient`, `_ASGITransport`, `_MockTransport`, `_Response` (httpx's) and `_OperationalError` (sqlite3's) are imported under a leading underscore.
+  - A1: `SlackAdapter`, `SlackConfig`, `ChannelConfig`, `CallsignRegistry`, `FederationMCPServer`, `FederationMCPServerConfig`, `FederationPeerRegistry`, `MCPAppRegistry`, `IntentBus`, `SignalManager`, `IntentDescriptor`, `IntentResult` and `PairingLookupError` are ProbOS classes; `EventType.MCP_BRIDGE_FAILED` exists (`mcp_server.py:571`).
+  - A1: the test runtimes keep their recorders as their own attributes (`self.processed`, `self.events`) and the tests read them from the rig, so no `runtime.<name>` outside `src` appears.
+  - A1: the only float parameter given a constant is `session_ttl_seconds=SESSION_TTL` (`60.0`); 7.18's SEARCH stops before the existing `RuntimeError(...)` line.
 - **Import cycle:** `visiting_officers.py` imports only the standard library at load. `parse_did` and the config's imports run at call time.
 - **CRLF:** match the working copy's line endings; never anchor a grep with `$`.
 - **The deletion check** before each commit: `git diff --cached --stat`.
@@ -1799,6 +3057,8 @@ AV7 CLAIM: no visitor consumer in the Ward Room or the routers
   - **Absorbed:** BF-771's `PermissionError`-plus-app-handler pattern for policy refusals (`api.py:147-181`).
   - **Reference projects** (date used 2026-10-22): MCP Apps was overdue (2026-04-08, interval 180 days). Checked: it is now an official extension in the 2026-07-28 spec, with nothing for BF-903. Update the row to `2026-10-22 | checked | BF-903 (#1581) Prior Art`. AG-UI (never reviewed) was considered and deferred: it is a UI protocol and not relevant.
   - **Blind spots folded in:** the restore path's DID mismatch, the DM-name collision and the A2A inbound door (register).
+- **A1, not run here:** any test, the precheck, ruff and the apply of A1's pairs. Not confirmed: that `IntentBus.broadcast` serves a plain coroutine subscriber with no pre-intent authorizer configured (BF-875's tests subscribe agent methods the same way, `test_bf875:115-116`); that `SlackAdapter.receive` reads only `pairing_service` and `emit_event` from its runtime before `handle_message` (BF-804's `_Runtime` holds only those, `test_bf804:390-395`).
+- **A1 prior art:** none sought. The amendment is ProbOS-specific plumbing; the JSON-RPC code follows BF-875's refusal (`mcp_server.py:469-472`), and the reference projects were reviewed above on the same date.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -1810,25 +3070,25 @@ AV7 CLAIM: no visitor consumer in the Ward Room or the routers
 6. `visiting_officers.py` imports no ProbOS module at load.
 7. `config/system.yaml` is unchanged; no `EventType` is added; `admission/` is untouched.
 8. `has_capability` keeps its truth table (`test_ad701:180-193`).
+9. A slot id, "captain" and "system" cause no certificate lookup; a did:probos agent DID or a lower-case UUID causes exactly one `get_by_uuid`; either form of a visiting certificate is checked and refused under its DID.
+10. Once `paired_did` is set, `handle_message` runs no slash command and no `process_natural_language`; an `@callsign` DM reaches `_handle_callsign_resolved` only after `require_session_capability(..., CAP_DM_SEND, ...)` returns.
+11. A `resolve_did` failure raises `PairingLookupError` (a `PairingNotificationError`) whose text names the channel only; no message proceeds.
+12. `_handle_tools_call` calls `visitor_argument_refusal` after validating `arguments` and `name` and before the app-tool and intent branches; a refusal dispatches nothing, registers no peer and emits one `MCP_BRIDGE_FAILED`.
+13. The walk is iterative and reads at most `MAX_ARGUMENT_VALUES` values; past that it refuses.
+14. `federation/mcp_server.py` imports `probos.visiting_officers` at module level, which loads no other ProbOS module (property 6).
 
 ## 15. Acceptance criteria
 
-- Sections 7.1-7.12 are applied, all of sections 6 and 10 pass and are killed, and the focused gates in section 4 are green.
+- Sections 7.1-7.19 are applied (7.13 and 7.14 on the text 7.1 and 7.7 build), all of sections 6 and 10 pass and are killed, and the focused gates in section 4 are green.
 - The tracker pairs and the ledger are regenerated and pass `--check`.
 - One broad gate after M3, with a receipt.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
-## 16. M3, to follow as Amendment A1 (decided; contract on request)
+## 16. Amendment A1 (2026-10-22): M3, recognition by either key form, and three corrections
 
-**Files**
-- `channels/base.py`:
-  - In `handle_message`, once `paired_did` is set, refuse slash commands and natural language with a reply naming the reason.
-  - An `@callsign` DM needs `dm.send`, checked directly with `runtime.visiting_officers.check(paired_did, CAP_DM_SEND, surface=...)`, because pairing alone identifies the sender as a visitor. With no registry, the DM is refused.
-  - A `resolve_did` failure raises a `PairingNotificationError` subclass.
-- `federation/mcp_server.py`: before either dispatch branch, refuse a `tools/call` whose arguments, walked iteratively, contain a string that `is_visiting_identity(runtime.identity_registry, ...)` accepts. The refusal emits `_emit_failed(..., reason="visitor_unbound")`.
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22, on the orchestrator's dry run of `5efd1acf` (scratch state `0d3042eb`).
 
-**Tests** in `tests/test_bf903_channel_and_mcp.py`, on real objects: a real `ChannelAdapter` subclass, a real `PairingService` and `PairingRegistry`, the registries, and `build_mcp_app` driven through its JSON-RPC endpoint.
-
-**Pinned tests to update with reasons:** `test_channel_base.py`, `test_bf804_pairing_notification.py`, `test_ad803a_telegram.py`, `test_ad804_slack.py`, `test_ad806_matrix.py` and `test_ad807_discord_refresh.py`, wherever a paired fake proceeds to natural language or the fail-open branch.
-
-**Trackers:** A1 extends the PROGRESS line and the DECISIONS entry, and closes #1581.
+- **M3** is sections 7.13-7.19 and 8b: `channels/base.py` (7.15), `federation/mcp_server.py` (7.16), the new `tests/test_bf903_channel_and_mcp.py` (7.19) and the pinned-test updates (7.17, 7.18). Of the pinned files section 16 named, only `test_bf804_pairing_notification.py` and `test_ad807_discord_refresh.py` drive a paired sender past the gate (AV8); no test pins the fail-open (AV9). M3 closes #1581.
+- **Recognition (option B).** A visiting officer is recognised by its DID or by its bare certificate UUID, the two key shapes BF-907 gives a sovereign identity (`identity.py:152-163`). A DID-only guard let a visitor's UUID pass as an unknown id at every facade entry and in every MCP argument, and the Ward Room stores an author's episode under the id it posts as (`ward_room/threads.py:564-578`). 7.13 changes M1's functions on M1's text (`visiting_certificate`, `require_session_capability`); 7.14 widens V7 and V8. Slot ids, "captain" and "system" match neither shape and still cost no lookup; a crew certificate's UUID costs one in-memory lookup. Rejected: (A) DID only, which leaves the alias; (C) resolving ids through `resolve_slot_id` or `IdentityService.resolve`, which return None for a slotless visitor; (D) callsigns, which are not actor ids at the facade.
+- **Corrections.** Section 0 cited `routers/agents.py:3842`, a thread-store write (`author_id=agent_id` inside `_thread_store.append_message`), not a Ward Room call; removed. Section 10 said 51 rows and held 50; it now holds 73. Section 8's tracker text names the contract `prompts/bf-903-visitor-capability-seam.md`; the file is `prompts/bf-903-visiting-officer-capability-seam.md`, and 8b rewrites both entries with that name.
+- **Envelope.** M3 strengthens two controls (a paired sender gets only what a declared capability grants; an unreadable pairing store refuses instead of admitting) on paths no production sender reaches: `runtime.pairing_service` is never assigned (AV2) and the MCP server is off (`config/system.yaml:297`) with no exposed intents by default. No "Still requires the Captain" condition applies; D7 records that the Captain may overrule.
