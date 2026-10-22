@@ -25,6 +25,10 @@ _VALID_TRANSITIONS: dict[str, set[str]] = {
     "reviewing": {"merged", "failed"},
 }
 
+# BF-904b (#1585): the statuses in which a build holds its file footprint, from dispatch until it is merged or
+# failed. A build in review counts, or a second build on the same files would be generated against the same base.
+_FOOTPRINT_HOLDING_STATUSES = ("dispatched", "building", "reviewing")
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -148,10 +152,10 @@ class BuildQueue:
     # -- conflict detection --------------------------------------------------
 
     def has_footprint_conflict(self, footprint: list[str]) -> bool:
-        """Check if any active build has overlapping file footprint."""
+        """Check if any build that holds its files has an overlapping file footprint (BF-904b: review included)."""
         fp_set = set(footprint)
         for b in self._builds:
-            if b.status in ("dispatched", "building"):
+            if b.status in _FOOTPRINT_HOLDING_STATUSES:
                 if fp_set & set(b.file_footprint):
                     return True
         return False

@@ -2366,6 +2366,10 @@ Rules for MODIFY blocks:
         total_size = sum(len(c) for c in all_files.values())
         logger.info("Builder perceive: %d files, %d total chars", len(all_files), total_size)
 
+        # BF-904b (#1585): the whole files, kept for the visiting builder. Only the native prompt context below
+        # (and the Transporter's size estimate) uses the localized excerpts.
+        full_files = dict(all_files)
+
         # Step 2: If files are large, use localization to select relevant sections
         if total_size > self._LOCALIZE_THRESHOLD:
             logger.info("Builder perceive: total %d > threshold %d, running localization", total_size, self._LOCALIZE_THRESHOLD)
@@ -2429,7 +2433,9 @@ Rules for MODIFY blocks:
                 # Copy existing target files into temp dir (preserving structure).
                 # BF-896: the helper the dispatcher uses; a key naming a path outside
                 # the temp dir (an absolute target) is skipped, not written there.
-                seed_session_directory(tmp_dir, all_files)
+                # BF-904b (#1585): whole files, and the adapter is given what was seeded (as the
+                # dispatcher does), because its scan takes each change's "base" from that mapping.
+                seeded = seed_session_directory(tmp_dir, full_files)
 
                 model = params.get("model", "")
                 adapter = CopilotBuilderAdapter(
@@ -2440,7 +2446,7 @@ Rules for MODIFY blocks:
                 )
                 await adapter.start()
                 try:
-                    copilot_result = await adapter.execute(spec, all_files)
+                    copilot_result = await adapter.execute(spec, seeded)
                 finally:
                     try:
                         await adapter.stop()
@@ -2649,7 +2655,9 @@ Rules for MODIFY blocks:
 
         # Transporter Pattern result — blocks already parsed
         if decision.get("action") == "transporter_complete":
-            file_changes = decision.get("file_changes", [])
+            # BF-904b (#1585): project-relative paths, as the single-pass route below gives them; a
+            # CodebaseIndex-relative path would otherwise be refused at the write boundary.
+            file_changes = _normalize_change_paths(decision.get("file_changes", []))
             result_dict: dict[str, Any] = {
                 "file_changes": file_changes,
                 "llm_output": decision.get("llm_output", ""),
