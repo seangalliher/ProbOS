@@ -8,10 +8,12 @@
 
 **Amendment A2:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: the capability vocabulary is defined in `config_models/crew.py` and re-exported by `probos.visiting_officers`, because `crew.py` may import nothing from `probos`; W8 enables the Ward Room (section 17).
 
+**Amendment A3:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: the M1 review's six findings (round 1). Approve checks a pending row's names before it consumes the row, a repeated request is checked before its idempotent return, the CLI prints a refused name as text, and a malformed agent DID costs no lookup; the offline issuer and the restore path are recorded for the AD that wires pairing (section 18).
+
 **Status:** M1 and M2 are build-ready on `origin/main` `0e122174`. M3 (recognition by either key form, the channel adapters and the inbound MCP server) is sections 7.13-7.19 and 8b, in the same PR; M3 closes #1581. **Tier HIGH.** No new AD or BF number. Both flags stay off: `config/system.yaml:297` and `:933` are not edited. AD-1342 stays paused.
 
 **Tests:** four new files.
-- M1 `tests/test_bf903_visitor_scope.py`: 8 functions, 12 cases (M3 widens V7 and V8 in place, section 7.14).
+- M1 `tests/test_bf903_visitor_scope.py`: 9 functions, 14 cases (A3 adds V9 and a third V5 case; M3 widens V7 and V8 in place, section 7.14).
 - M2 `tests/test_bf903_ward_room_scope.py`: 8 functions, 35 cases.
 - M2 `tests/test_bf903_seam_was_open.py`: 1 case. It is written against names that exist before BF-903, so on today's tree it fails for its premise, not on an import.
 - M3 `tests/test_bf903_channel_and_mcp.py`: 8 functions, 22 cases.
@@ -80,7 +82,9 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
 1. These now raise `UnknownCapabilityError` (a `ValueError`) for an undeclared name: `register`, `request_pairing`, `approve_pairing`, `probos pairing approve` (prints the reason and returns 1) and `VisitingOfficersConfig`.
    - A `system.yaml` that lists an undeclared name under `visiting_officers.default_capabilities` no longer loads.
    - AD-802's example `--cap tool.use` is refused.
-   - A pending row minted before BF-903 that holds an undeclared name is consumed and then refused at approve.
+   - A pending row minted before BF-903 that holds an undeclared name is refused at approve before it is consumed, and kept: a declared `--cap` approves it (A3). Without `--cap` an expired one is refused by name too, and stays until `sweep_expired_pending` runs (no production caller, AV21).
+   - A repeated `request_pairing` that names an undeclared capability is refused even when the sender holds an unexpired pending row (A3).
+   - `probos pairing approve` prints a refusal as text: Rich markup and emoji codes in a name are not interpreted (A3).
 2. `VisitingOfficerRegistry.get` returns None for an expired session.
 3. A visiting DID at a guarded entry is refused unless a live session holds the capability; with no registry attached, it is always refused. The API answers 403 `{"error": "visitor_scope_refused", "capability", "reason", "surface"}`.
 4. Crew, Captain and system ids behave as before. A slot id, "captain" and "system" cost no lookup or query; a crew certificate's DID or bare UUID costs one in-memory certificate lookup (A1).
@@ -114,7 +118,7 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 | `get` hiding expired sessions | no production caller; `test_ad701` `:127`, `:169`, `:201`, `:207` | their assertions hold |
 | `has_capability` delegating to `refusal` | no production caller; `test_ad701:180-193` | same truth table |
 | `DEFAULT_CAPABILITIES` | `security/pairing/__init__.py` re-export; `request_pairing`; `approve_pairing`; `test_ad802` | same value |
-| `UnknownCapabilityError` | the CLI approve branch (7.4) | prints the reason and returns 1 |
+| `UnknownCapabilityError` | the CLI approve branch (7.4) | prints the reason as text (escaped, A3) and returns 1; the pending row is kept (A3) |
 | `VisitorScopeRefused` (`PermissionError`) | the API handler (7.10); the routers catch `ValueError` only (`wardroom.py:289`, `:357`, `:371`, `:385`), so it reaches the handler | 403 |
 | facade guards | every caller of the eleven methods: crew (slot ids), the Captain, the system | unchanged for them |
 | `attach_visiting_officers` | finalize (7.9) | registry attached when AD-701 is on |
@@ -135,11 +139,12 @@ Every BF-903 test errors on today's tree at its `probos.visiting_officers` impor
 | V1 | `test_one_vocabulary_names_every_visitor_capability` | registry, pairing and config share one set of names | guard |
 | V2 | `test_register_refuses_an_undeclared_capability_before_a_certificate[typo, undeclared, one-of-two, a-bare-string]` | refused by name; no certificate, session or event | fails without 7.1 |
 | V3 | `test_the_config_refuses_an_undeclared_default_capability` | refused at parse | fails without 7.2 |
-| V4 | `test_pairing_refuses_an_undeclared_capability_before_it_is_stored` | no pending row; the code survives a refused override; the defaults register | fails without 7.3 |
-| V5 | `test_the_cli_names_an_undeclared_capability_and_approves_nothing[undeclared-cap-flag, row-minted-before-bf903]` | returns 1, names the capability, records no pairing | fails without 7.3 and 7.4 |
+| V4 | `test_pairing_refuses_an_undeclared_capability_before_it_is_stored` | no pending row; a repeat from a sender with a pending row is refused too (A3); the code survives a refused override; the defaults register | fails without 7.3; the repeat fails on `bfc8c98a` |
+| V5 | `test_the_cli_names_an_undeclared_capability_and_keeps_the_code[undeclared-cap-flag, row-minted-before-bf903, markup-in-a-name]` | returns 1, prints the name as text, records no pairing and keeps the pending row; a retry with a declared `--cap` approves it (A3) | fails without 7.3 and 7.4; `[row-minted-before-bf903]` (the row is consumed) and `[markup-in-a-name]` (`MarkupError`) fail on `bfc8c98a` |
 | V6 | `test_the_registry_refuses_by_session_capability_and_expiry_at_use` | three reasons, three events, no sweep; `get` and `has_capability` agree | fails without 7.1 |
 | V7 | `test_a_visitor_is_known_by_its_certificate_and_other_ids_are_never_looked_up` | a visitor is known by its DID and its bare certificate UUID, and a certificate outlives its session; crew, ship and unknown DIDs and UUIDs and slot ids are not visitors; no lookup for an id of neither shape | fails without 7.1; the UUID cases fail without 7.13 |
 | V8 | `test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allow` | crew pass; held served; missing refused; a certificate UUID is checked under its DID; registry off refused; an undeclared name raises, also at `require_session_capability` | fails without 7.1; the UUID and session-check cases fail without 7.13 |
+| V9 | `test_a_malformed_agent_did_is_never_looked_up` | a did:probos DID whose agent part is not a lower-case certificate UUID (invalid, empty, upper-case, NUL-bearing) is not a visitor, passes the guard and costs no lookup (A3) | fails on `bfc8c98a` (looked up); the M3 form fails without A3's 7.13 line |
 | W0 | `test_a_visitor_without_ward_room_post_cannot_open_a_thread` (`test_bf903_seam_was_open.py`) | a reader cannot open a thread | **fails today: DID NOT RAISE**, and on the M1-only tree; passes after M2 |
 | W1 | `test_a_visitor_without_the_capability_is_refused_at_each_entry[12 entries]` | each entry refuses the one missing capability, naming it and the entry, with one event | fails on M1-only (DID NOT RAISE) |
 | W2 | `test_a_visitor_with_only_that_capability_is_served_at_each_entry[12 entries]` | exactly that capability is enough | guard (catches over-refusal) |
@@ -383,10 +388,12 @@ def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
     """
     if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
         return False
-    from probos.identity import parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
+    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
     parsed = parse_did(actor_id)
     if parsed is None or parsed.get("type") != "agent":
+        return False
+    if not is_sovereign_identity_key(parsed["agent_uuid"]):  # BF-903 (A3): a malformed agent part costs no lookup
         return False
     cert = identity_registry.get_by_uuid(parsed["agent_uuid"])
     return cert is not None and cert.agent_type == VISITING_AGENT_TYPE
@@ -531,6 +538,10 @@ DEFAULT_CAPABILITIES = (CAP_DM_SEND, CAP_DM_RECEIVE)  # BF-903: AD-802's default
 
 SEARCH:
 ```python
+        existing = self._registry.get_pending_by_raw_id(channel, raw_id)
+        if existing is not None and existing.expires_at > self._clock():
+            return existing.code
+
         caps = tuple(capabilities or DEFAULT_CAPABILITIES)
         code = self._generate_code()
 ```
@@ -538,6 +549,10 @@ REPLACE:
 ```python
         caps = tuple(capabilities or DEFAULT_CAPABILITIES)
         require_known_capabilities(caps)  # BF-903: refused before a pending row is minted
+        existing = self._registry.get_pending_by_raw_id(channel, raw_id)
+        if existing is not None and existing.expires_at > self._clock():
+            return existing.code
+
         code = self._generate_code()
 ```
 
@@ -551,6 +566,10 @@ REPLACE:
 ```python
         if capabilities_override:
             require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed
+        else:
+            stored = self._registry.get_pending(channel, code)  # BF-903 (A3): read, not consumed, so a refused row is kept
+            if stored is not None:
+                require_known_capabilities(stored.capabilities or DEFAULT_CAPABILITIES)  # BF-903 (A3): a row minted before BF-903 may hold any string
         pending = self._registry.consume_pending(channel, code)
         if pending is None:
             raise UnknownPairingCode(f"No pending pairing for channel={channel!r} code={code!r}")
@@ -588,6 +607,7 @@ REPLACE:
         UnknownPairingCode,
     )
     from probos.visiting_officers import UnknownCapabilityError
+    from rich.markup import escape  # BF-903 (A3): a refused name prints as text, never as markup
 ```
 
 SEARCH:
@@ -598,7 +618,7 @@ SEARCH:
 REPLACE:
 ```python
         except (UnknownPairingCode, UnknownCapabilityError) as exc:  # BF-903: an undeclared --cap is refused with its name
-            console.print(f"[red]Approve failed:[/red] {exc}")
+            console.print(f"[red]Approve failed:[/red] {escape(str(exc))}", emoji=False)  # BF-903 (A3): a refused name prints as text
 ```
 
 ### 7.5 `tests/test_ad701_visiting_officers.py` (M1: "c" was any string; it is an undeclared name now)
@@ -860,6 +880,9 @@ async def test_pairing_refuses_an_undeclared_capability_before_it_is_stored(
         await service.request_pairing("telegram", "tg-1", capabilities=["tool.use"])
     assert store.list_pending() == []
     code = await service.request_pairing("telegram", "tg-1")
+    with pytest.raises(UnknownCapabilityError):  # A3: a repeat from a sender with a pending row is checked too
+        await service.request_pairing("telegram", "tg-1", capabilities=["tool.use"])
+    assert await service.request_pairing("telegram", "tg-1") == code
     with pytest.raises(UnknownCapabilityError):
         await service.approve_pairing("telegram", code, capabilities_override=[CAP_DM_SEND, "tool.use"])
     assert store.get_pending("telegram", code) is not None
@@ -871,16 +894,21 @@ async def test_pairing_refuses_an_undeclared_capability_before_it_is_stored(
 
 
 @pytest.mark.parametrize(
-    ("stored", "cap"),
-    [([CAP_DM_SEND], "dm.send,tool.use"), (["tool.use"], None)],
-    ids=["undeclared-cap-flag", "row-minted-before-bf903"],
+    ("stored", "cap", "named"),
+    [
+        ([CAP_DM_SEND], "dm.send,tool.use", "tool.use"),
+        (["tool.use"], None, "tool.use"),
+        ([CAP_DM_SEND], "dm.send,[/red]tool.use", "[/red]tool.use"),
+    ],
+    ids=["undeclared-cap-flag", "row-minted-before-bf903", "markup-in-a-name"],
 )
-def test_the_cli_names_an_undeclared_capability_and_approves_nothing(
+def test_the_cli_names_an_undeclared_capability_and_keeps_the_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-    stored: list[str], cap: str | None,
+    stored: list[str], cap: str | None, named: str,
 ) -> None:
-    """V5: `probos pairing approve` names the undeclared capability, returns 1 and records no pairing;
-    a refused --cap leaves the code pending (the offline approve has no registry to refuse it)."""
+    """V5: `probos pairing approve` prints the undeclared name as text, returns 1 and records no pairing; the
+    pending row is kept, whether the name came from --cap or from a row minted before BF-903, so a retry with a
+    declared --cap approves it (A3)."""
     data = tmp_path / "data"
     monkeypatch.setattr(probos_main, "_default_data_dir", lambda: data)
     store = PairingRegistry(data / "pairings.db")
@@ -889,9 +917,35 @@ def test_the_cli_names_an_undeclared_capability_and_approves_nothing(
         _Namespace(pairing_cmd="approve", channel="telegram", code="ABCDEF", cap=cap, ttl_days=None),
     )
     assert status == 1
-    assert "tool.use" in capsys.readouterr().out
+    assert named in capsys.readouterr().out
     assert store.list_paired() == []
-    assert (store.get_pending("telegram", "ABCDEF") is not None) is (cap is not None)
+    assert store.get_pending("telegram", "ABCDEF") is not None
+    retried = probos_main._cmd_pairing(
+        _Namespace(pairing_cmd="approve", channel="telegram", code="ABCDEF", cap=CAP_DM_SEND, ttl_days=None),
+    )
+    assert retried == 0
+    assert [p.capabilities for p in store.list_paired()] == [(CAP_DM_SEND,)]
+    assert store.get_pending("telegram", "ABCDEF") is None
+
+
+async def test_a_malformed_agent_did_is_never_looked_up(
+    identities: AgentIdentityRegistry, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V9 (A3): a did:probos DID whose agent part is not a lower-case certificate UUID is not a visitor, passes
+    the guard and costs no certificate lookup: an invalid, empty, upper-case or NUL-bearing agent part."""
+    officers = _officers(identities, _Clock(), [])
+    session = await officers.register("visitor", [CAP_WARD_ROOM_READ])
+    prefix, visitor_uuid = session.did.rsplit(":", 1)
+
+    def _no_lookup(_uuid: str) -> None:
+        raise AssertionError("not expected: a malformed agent DID was looked up")
+
+    monkeypatch.setattr(identities, "get_by_uuid", _no_lookup)
+    for actor in (f"{prefix}:not-a-uuid", f"{prefix}:", f"{prefix}:{visitor_uuid.upper()}", f"{prefix}:{visitor_uuid}\x00"):
+        assert is_visiting_identity(identities, actor) is False
+        require_visitor_capability(
+            actor, CAP_WARD_ROOM_POST, surface="v9", identity_registry=identities, visiting_officers=officers,
+        )
 
 
 async def test_the_registry_refuses_by_session_capability_and_expiry_at_use(identities: AgentIdentityRegistry) -> None:
@@ -1673,10 +1727,12 @@ def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
     """
     if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
         return False
-    from probos.identity import parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
+    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
     parsed = parse_did(actor_id)
     if parsed is None or parsed.get("type") != "agent":
+        return False
+    if not is_sovereign_identity_key(parsed["agent_uuid"]):  # BF-903 (A3): a malformed agent part costs no lookup
         return False
     cert = identity_registry.get_by_uuid(parsed["agent_uuid"])
     return cert is not None and cert.agent_type == VISITING_AGENT_TYPE
@@ -1738,6 +1794,8 @@ def visiting_certificate(identity_registry: Any, actor_id: object) -> Any:
         if parsed is None or parsed.get("type") != "agent":
             return None
         agent_uuid = parsed["agent_uuid"]
+        if not is_sovereign_identity_key(agent_uuid):  # BF-903 (A3): a malformed agent part costs no lookup
+            return None
     cert = identity_registry.get_by_uuid(agent_uuid)
     return cert if cert is not None and cert.agent_type == VISITING_AGENT_TYPE else None
 
@@ -2825,14 +2883,14 @@ SEARCH:
 REPLACE:
 ```markdown
 - *D7 (M3, coupled).* `_check_pairing` fails closed when the pairing store cannot be read: it raises `PairingLookupError`, a `PairingNotificationError`, so every adapter's existing handling applies (Gmail leaves the mail unread and retries; the others drop it with a log; Teams answers 200). A paired sender's slash commands and natural language are refused with a reply naming the reason: no declared capability grants them. Its `@callsign` DM needs a live `dm.send`, checked against the paired DID's session directly, since pairing registered it as a visitor. The AD that wires pairing declares what more a paired sender may do.
-- *Disclosed effects.* An undeclared capability is refused at `register`, pairing, `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; a pending row minted before BF-903 with one is consumed and refused at approve. `get` hides an expired session. A visiting officer, named by its DID or its certificate UUID, is refused at a guarded entry unless a live session holds the capability (always, with no registry attached); the API answers 403. A paired channel sender is refused slash commands and natural language, and an unreadable pairing store refuses the message; an MCP tools/call naming a visiting officer, or with more than 10,000 argument values, is refused. Pairing is not wired and MCP is off in production, so no live sender is affected. Crew, Captain and system ids are unchanged; a crew certificate's UUID costs one in-memory lookup.
+- *Disclosed effects.* An undeclared capability is refused at `register`, pairing (a repeated request included), `probos pairing approve` and config parse; a `system.yaml` naming one no longer loads; a pending row minted before BF-903 with one is refused at approve before it is consumed and kept, so a declared `--cap` approves it; the CLI prints a refused name as text. `get` hides an expired session. A visiting officer, named by its DID or its certificate UUID, is refused at a guarded entry unless a live session holds the capability (always, with no registry attached); the API answers 403; a did:probos DID whose agent part is not a certificate UUID costs no lookup. A paired channel sender is refused slash commands and natural language, and an unreadable pairing store refuses the message; an MCP tools/call naming a visiting officer, or with more than 10,000 argument values, is refused. Pairing is not wired and MCP is off in production, so no live sender is affected. Crew, Captain and system ids are unchanged; a crew certificate's UUID costs one in-memory lookup.
 - *Reversal.* Revert the BF-903 commits. Nothing persisted changes; the facade stops checking visitors, any capability string is accepted again, a channel admits a sender whose pairing cannot be read and serves paired senders natural language again, and MCP dispatches whatever arguments it is sent.
 ```
 
 ## 9. What this does NOT change
 
 - Both flags in `config/system.yaml`. AD-1342 and the visitor-to-crew path.
-- AD-802's pairing flow apart from the name checks: `resolve_did`, `revoke_pairing` and `restore_active_sessions` (register R1).
+- AD-802's pairing flow apart from the name checks and, in approve, a read of the pending row before its consume (A3): `resolve_did`, `revoke_pairing`, `restore_active_sessions` (register R1), the CLI's offline issuer (R2, R5), `consume_pending` (R8) and the other pairing CLI output (R9).
 - The adapter subclasses: each keeps its own handling of `PairingNotificationError`, which `PairingLookupError` inherits (section 5). `routers/teams_webhook.py`. The MCP server's bearer check, `tools/list`, `resources/read` and dispatch. The A2A server (register R4).
 - What a paired sender's DM carries: it still reaches the crew member as `from: "channel"`, not as the visitor's DID (register R7).
 - These Ward Room entries: `create_channel`, `unsubscribe`, `update_thread`, the reads with no actor id (`get_thread`, `list_threads`, `get_post`, `get_recent_activity`, `get_posts_by_author`), and the subject-id queries (`get_credibility`, `get_agent_comm_stats`, `count_posts_by_author`, `dm_receipt_facts`).
@@ -2841,10 +2899,10 @@ REPLACE:
 
 ## 10. Mutation rows
 
-There are 74 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1; A2 moved A1 and A2 to `config_models/crew.py`, rewrote A21 and added A33).
+There are 77 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1; A2 moved A1 and A2 to `config_models/crew.py`, rewrote A21 and added A33; A3 rewrote A25 and added A34-A36).
 
 Tier HIGH: every changed production file has rows.
-- Run A1-A33 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
+- Run A1-A36 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
 - Start each group with an unmutated run of its file that passes.
 - Restore the file after each row.
 - "First failing" is in file order. Where another test fails first, run the named test alone against the mutant.
@@ -2875,7 +2933,7 @@ Tier HIGH: every changed production file has rows.
 | A22 | `src/probos/security/pairing/service.py` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND, CAP_DM_RECEIVE)  # BF-903: AD-802's defaults, named by the vocabulary's owner` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND,)` | V1 |
 | A23 | `src/probos/security/pairing/service.py` | `require_known_capabilities(caps)  # BF-903: refused before a pending row is minted` | `pass` | V4 |
 | A24 | `src/probos/security/pairing/service.py` | `require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed` | `pass` | V4 (the code-survives assertion) |
-| A25 | `src/probos/security/pairing/service.py` | `require_known_capabilities(caps)  # BF-903: a row minted before BF-903 may hold any string` | `pass` | V5 `[row-minted-before-bf903]`. The real registry refuses in V4 regardless, so only the offline stub kills it. |
+| A25 | `src/probos/security/pairing/service.py` | `require_known_capabilities(stored.capabilities or DEFAULT_CAPABILITIES)  # BF-903 (A3): a row minted before BF-903 may hold any string` | `pass` | V5 `[row-minted-before-bf903]`: the backstop then refuses after the consume, so the row is gone. A3 moved this row from the post-consume check, now a backstop with no row. |
 | A26 | `src/probos/__main__.py` | `except (UnknownPairingCode, UnknownCapabilityError) as exc:  # BF-903: an undeclared --cap is refused with its name` | `except UnknownPairingCode as exc:` | V5 `[undeclared-cap-flag]` |
 | A27 | `src/probos/visiting_officers.py` | `if type(actor_id) is not str or identity_registry is None:` | `if type(actor_id) is not str:` | V7 (`None` registry raises `AttributeError`) |
 | A28 | `src/probos/visiting_officers.py` | `if not is_sovereign_identity_key(actor_id):` | `if False:` | V7 (a slot id is looked up) |
@@ -2884,6 +2942,9 @@ Tier HIGH: every changed production file has rows.
 | A31 | `src/probos/visiting_officers.py` | `require_session_capability(cert.did, capability, surface=surface, visiting_officers=visiting_officers)` | `require_session_capability(actor_id, capability, surface=surface, visiting_officers=visiting_officers)` | V8 (the certificate UUID is served) |
 | A32 | `src/probos/visiting_officers.py` | `require_known_capabilities((capability,))  # BF-903: a typo in a checking path fails on its first call` | `pass` | V8 (`require_session_capability` with an undeclared name) |
 | A33 | `src/probos/visiting_officers.py` | `unknown = undeclared_capabilities(capabilities)` | `unknown = []` | V2 `[typo]` |
+| A34 | `src/probos/security/pairing/service.py` | `stored = self._registry.get_pending(channel, code)  # BF-903 (A3): read, not consumed, so a refused row is kept` | `stored = None` | V5 `[row-minted-before-bf903]` (the backstop refuses after the consume; the kept-row assertion fails) |
+| A35 | `src/probos/__main__.py` | `console.print(f"[red]Approve failed:[/red] {escape(str(exc))}", emoji=False)  # BF-903 (A3): a refused name prints as text` | `console.print(f"[red]Approve failed:[/red] {exc}")` | V5 `[markup-in-a-name]` (`MarkupError`) |
+| A36 | `src/probos/visiting_officers.py` | `if not is_sovereign_identity_key(agent_uuid):  # BF-903 (A3): a malformed agent part costs no lookup` | `if False:` | V9 (the malformed DID is looked up) |
 | B1 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ?"` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ? AND 0"` | W3 `[thread-in-dm-channel]` |
 | B2 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ?"` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ? AND 0"` | W3 `[post-in-dm-thread]` |
 | B3 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ?"` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ? AND 0"` | W3 `[edit-in-dm-thread]` |
@@ -2939,6 +3000,9 @@ Tier HIGH: every changed production file has rows.
 - `if unknown:` (in `visiting_officers.py` and in `crew.py`'s validator) and the validator's `raise ValueError(`: equivalent to A3 and A21.
 - `if runtime.ward_room is not None:`: equivalent to B21.
 - `status_code=403,`: not unique in `api.py`.
+- A3: `require_known_capabilities(caps)  # BF-903: a row minted before BF-903 may hold any string` is a backstop. It matters only when a request re-mints the same code between approve's read and its consume, and that row holds declared names (AV19); `register` checks again on the runtime path. Equivalent to A25 otherwise.
+- A3: `if stored is not None:`. Removing it makes an unknown code raise `AttributeError`, which `test_ad802_pairing.py:174` catches outside the campaign's file. `from rich.markup import escape`: removing it raises `NameError` at A35's line, the same kill.
+- A3: M1's `if not is_sovereign_identity_key(parsed["agent_uuid"]):` is replaced by 7.13 and is not in the final tree; A36 is its M3 form. The reorder in `request_pairing` is not a single-line mutant; V4's repeat fails on `bfc8c98a`.
 - Log lines and docstrings.
 
 ## 11. Verified Against Codebase (2026-10-22, HEAD `0e122174`)
@@ -3026,6 +3090,17 @@ src/probos/cognitive/codebase_index.py 725-727 the config schema reads class def
 src/probos/ward_room/service.py   12 from probos.config import format_trust
 src/probos/federation/mcp_server.py 20-26 module-level imports
 src/probos/visiting_officers.py   42-57 imports and vocabulary | 95-102 require_known_capabilities | 300-316 _emit's warning, is_visiting_identity (M1-built)
+
+A3 (2026-10-22): M1 as built (bfc8c98a); M3's visiting_officers.py and channels/base.py as built (0b961ac0). Uniqueness: each SEARCH was checked against the contract's grep counts (`def is_visiting_identity` 374, 1664, 1745; `from probos.identity import parse_did` 386, 1676; `request_pairing("telegram", "tg-1")` 862 only; `"ABCDEF"` 887-894 only) and against whole-file reads of service.py and M1's test file.
+src/probos/security/pairing/service.py  98-100 idempotent return before the check at 103 | 155-169 approve (consume 157, stored names 169) | 243-272 restore_active_sessions (register at 260 mints a new DID) | 274-288 resolve_did returns the stored DID
+src/probos/security/pairing/store.py    159-177 get_pending (one SELECT) | 206-220 consume_pending (get_pending, then DELETE on a second connection) | 222 sweep_expired_pending
+src/probos/security/pairing/types.py    18, 35 capabilities: tuple[str, ...]
+src/probos/__main__.py                  320, 1299 and 13 more: from rich.markup import escape at use | 1908-1913 pairing imports | 1953-1957 offline service | 1975-1976 refusal print | 1996-2029 _OfflinePairingVOStub (did:probos:visiting:<hex16>, no certificate)
+src/probos/identity.py                  117 generate_agent_uuid = str(uuid.uuid4()) | 142-148 parse_did returns parts[3] unchecked | 154 _SOVEREIGN_UUID | 157-163 is_sovereign_identity_key
+src/probos/visiting_officers.py         192 register checks names before issuing (M1) | 309-327 is_visiting_identity (M1-built) | 311-338 visiting_certificate, 346-367 require_session_capability (M3-built)
+src/probos/channels/base.py             198 pairing_service read by getattr | 220-223 request_pairing with the defaults | 343-365 a paired DM checks the session by DID (M3)
+tests/test_ad802_pairing.py             62-84 real PairingRegistry fixture | 174 unknown code
+tests/test_bf903_visitor_scope.py       136-155 V4 | 158-179 V5 (179 pinned the consumed row) | 214 V7 | 238 V8 (M1-built)
 ```
 
 ## Absence Verified (2026-10-22)
@@ -3112,6 +3187,31 @@ AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the sh
            test_ad1346_identity_service:475 (IdentityRef calls), test_ad680:110 (runtime private access),
            test_ad1195_eventlog_pair_freeze:331 (EventLog.log sites; the contract adds none). No signature pin; no patch of the vocabulary.
     HOLDS: yes, by reading; not run in A2's consult
+AV17 CLAIM: runtime.pairing_service is still never assigned (AV2, re-run on 0b961ac0)
+    RUN:   rg -n 'pairing_service\s*=[^=]' src ; rg -n "\"pairing_service\"|'pairing_service'" src
+    FOUND: channels/base.py:198 (a local variable read through getattr), both searches
+    HOLDS: yes
+AV18 CLAIM: restore_active_sessions has no production caller (AV4, re-run on 0b961ac0)
+    RUN:   rg -n 'restore_active_sessions\(' src
+    FOUND: security/pairing/service.py:243 (def)
+    HOLDS: yes
+AV19 CLAIM: the only writer of pending rows is request_pairing, which refuses undeclared names before it mints
+    RUN:   rg -n 'mint_pending\(' src
+    FOUND: security/pairing/store.py:101 (def); security/pairing/service.py:106 (request_pairing)
+    HOLDS: yes; a row minted between approve's read and its consume holds declared names
+AV20 CLAIM: the CLI's offline stub is constructed only by _cmd_pairing
+    RUN:   rg -n '_OfflinePairingVOStub\(' src
+    FOUND: __main__.py:1953
+    HOLDS: yes
+AV21 CLAIM: nothing sweeps expired pending rows in production
+    RUN:   rg -n 'sweep_expired_pending\(' src
+    FOUND: security/pairing/store.py:222 (def)
+    HOLDS: yes
+AV22 CLAIM: no test drives approve_pairing through a store that lacks get_pending
+    RUN:   rg -n 'approve_pairing\(|PairingService\(' tests
+    FOUND: test_ad802_pairing.py:79, :218 (real PairingRegistry, :62-64); test_bf903_visitor_scope.py:144; test_bf903_channel_and_mcp.py:151;
+           the rest are _FakePairingService doubles (test_ad803a, test_ad804, test_ad806, test_ad807, test_bf804), which never reach the service
+    HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -3128,6 +3228,7 @@ AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the sh
   - A1: `SlackAdapter`, `SlackConfig`, `ChannelConfig`, `CallsignRegistry`, `FederationMCPServer`, `FederationMCPServerConfig`, `FederationPeerRegistry`, `MCPAppRegistry`, `IntentBus`, `SignalManager`, `IntentDescriptor`, `IntentResult` and `PairingLookupError` are ProbOS classes; `EventType.MCP_BRIDGE_FAILED` exists (`mcp_server.py:571`).
   - A1: the test runtimes keep their recorders as their own attributes (`self.processed`, `self.events`) and the tests read them from the rig, so no `runtime.<name>` outside `src` appears.
   - A1: the only float parameter given a constant is `session_ttl_seconds=SESSION_TTL` (`60.0`); 7.18's SEARCH stops before the existing `RuntimeError(...)` line.
+  - A3: `escape` is rich.markup's lower-case function, imported as `__main__.py` already does; V9's `AssertionError` message begins with "not"; V5 passes `ttl_seconds=600.0`.
 - **Import cycle:** `visiting_officers.py` imports the standard library and, at load, `probos.config_models.crew` (A2), which loads the `probos.config_models` package; nothing in that package imports from outside it (AV15), so no cycle can pass through it. `config_models/crew.py` imports nothing from `probos` (`tests/test_ad1270e2g_crew_models.py:680-690`). `parse_did` and `is_sovereign_identity_key` are imported at call time.
 - **CRLF:** match the working copy's line endings; never anchor a grep with `$`.
 - **The deletion check** before each commit: `git diff --cached --stat`.
@@ -3146,6 +3247,7 @@ AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the sh
   - **Blind spots folded in:** the restore path's DID mismatch, the DM-name collision and the A2A inbound door (register).
 - **A1, not run here:** any test, the precheck, ruff and the apply of A1's pairs. Not confirmed: that `IntentBus.broadcast` serves a plain coroutine subscriber with no pre-intent authorizer configured (BF-875's tests subscribe agent methods the same way, `test_bf875:115-116`); that `SlackAdapter.receive` reads only `pairing_service` and `emit_event` from its runtime before `handle_message` (BF-804's `_Runtime` holds only those, `test_bf804:390-395`).
 - **A1 prior art:** none sought. The amendment is ProbOS-specific plumbing; the JSON-RPC code follows BF-875's refusal (`mcp_server.py:469-472`), and the reference projects were reviewed above on the same date.
+- **A3, not run here:** any test, the precheck, ruff and the apply of A3's pairs. Not confirmed: that Rich's escape leaves `[/red]tool.use` printed literally at 80 columns (the name holds no space, so it does not wrap); that no M2 or M3 test uses a four-part DID with a non-UUID agent part as a visitor (the BF-903 tests use real certificates; `test_bf903_ward_room_scope.py:278` only raises the refusal). Prior art: none sought; the repair is ProbOS plumbing.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -3153,16 +3255,17 @@ AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the sh
 2. Each of the eleven facade methods calls the guard before it delegates, with the capability in ENTRIES.
 3. A visiting DID is refused when the registry is unattached, the session is missing, the session has expired (`clock >= expires_at`) or the capability is absent, each with the matching code.
 4. `VisitorScopeRefused` is not a `ValueError`, so the routers' `except ValueError` cannot turn it into a 400; the app handler returns 403.
-5. `register`, `request_pairing`, an approve override and config parse refuse an undeclared name before any certificate, row or consume.
+5. `register`, `request_pairing` (a repeat from a sender with a pending row included), an approve override, a pending row's stored names and config parse refuse an undeclared name before any certificate, row or consume; a refused approve leaves the pending row in place (A3).
 6. `visiting_officers.py` imports at load only the standard library and `probos.config_models.crew`; `config_models/crew.py` imports nothing from `probos`, at any depth (A2).
 7. `config/system.yaml` is unchanged; no `EventType` is added; `admission/` is untouched.
 8. `has_capability` keeps its truth table (`test_ad701:180-193`).
-9. A slot id, "captain" and "system" cause no certificate lookup; a did:probos agent DID or a lower-case UUID causes exactly one `get_by_uuid`; either form of a visiting certificate is checked and refused under its DID.
+9. A slot id, "captain" and "system" cause no certificate lookup; a did:probos agent DID whose agent part is a lower-case UUID, or a lower-case UUID, causes exactly one `get_by_uuid`, and any other DID causes none (A3); either form of a visiting certificate is checked and refused under its DID.
 10. Once `paired_did` is set, `handle_message` runs no slash command and no `process_natural_language`; an `@callsign` DM reaches `_handle_callsign_resolved` only after `require_session_capability(..., CAP_DM_SEND, ...)` returns.
 11. A `resolve_did` failure raises `PairingLookupError` (a `PairingNotificationError`) whose text names the channel only; no message proceeds.
 12. `_handle_tools_call` calls `visitor_argument_refusal` after validating `arguments` and `name` and before the app-tool and intent branches; a refusal dispatches nothing, registers no peer and emits one `MCP_BRIDGE_FAILED`.
 13. The walk is iterative and reads at most `MAX_ARGUMENT_VALUES` values; past that it refuses.
 14. `federation/mcp_server.py` imports `probos.visiting_officers` at module level, which loads no ProbOS module outside `probos.config_models` (property 6).
+15. (A3) `probos pairing approve` prints a refusal's names literally (no Rich markup or emoji code is interpreted) and returns 1.
 
 ## 15. Acceptance criteria
 
@@ -3194,3 +3297,17 @@ AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the sh
 - **A1 anchors.** 7.13's second SEARCH changes only in its `parse_did` comment, the edit 7.1 receives; 7.13's first SEARCH, 7.14's SEARCH blocks (A2 edits the head of the test's import block and V1 only), 7.17-7.19 and 8b's SEARCH blocks are unchanged.
 - **Not run in this consult:** any test, the precheck, ruff and the apply of A2's pairs.
 - **Envelope.** A2 moves where four constants are defined and keeps every check; no "Still requires the Captain" condition applies.
+
+## 18. Amendment A3 (2026-10-22): the M1 review, round 1
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22, on `gpt-6.1-sol`'s NOT READY review of `bfc8c98a` (six findings, all executed).
+
+- **Finding 1 (P2, regression): fixed.** With no override, approve reads the row with `get_pending` (`store.py:159`, a SELECT), checks its names, then consumes it. A row minted before BF-903 with an undeclared name is refused and kept. A declared `--cap` approves it, since an override replaces the stored names. The post-consume check stays as a backstop with no row. Rejected: a check-and-delete store method (new API for a row no supported writer makes, AV19); refusing and deleting (the defect). If a concurrent approve consumes between the read and the consume, this one gets `UnknownPairingCode`. Two approvals that both pass `consume_pending`'s read-then-delete (two connections) are older than BF-903 and recorded (R8). V5 pinned the defect; it now requires the kept row and a retry that succeeds.
+- **Finding 4 (P2): fixed.** `request_pairing` checks before its idempotent return; A23's line is unchanged.
+- **Finding 5 (P3): fixed.** The refusal prints through `escape` (the file's pattern) with `emoji=False`. The other pairing CLI output is older and recorded (R9).
+- **Finding 6 (P3): fixed in M1 (7.1) and M3 (7.13).** A DID's agent part must pass `is_sovereign_identity_key`, which a colon-free string passes only as a lower-case UUID; certificate UUIDs are `str(uuid4())` (`identity.py:117`).
+- **Findings 2 and 3 (P2, not regressions): recorded** as R2/R5 and R1, with the requirement on the AD that wires pairing. Neither file is changed by this PR. No production path carries either DID to a guard (AV17, AV18), and M3's paired path checks the session by DID, so it refuses an unrestored DID. #1581's Do Not Build list keeps AD-802's flow out of this PR.
+- **Tests and rows.** V4 gains the repeat; V5 has three cases; V9 is new, placed after V5 so 7.14's anchors hold: 9 functions, 14 cases. A25 is rewritten, A34-A36 added: 77 rows.
+- **Trackers.** 8b's final DECISIONS line changes. Section 8's interim lines, which 8b replaces in M3's commit of the same PR, are left as they are so 8b's SEARCH keeps matching. 8b's PROGRESS text ("before a certificate, a pending row or a consumed code") is now accurate.
+- **A1 and A2 anchors.** 7.1's sixth SEARCH, 7.13's first SEARCH, 7.14's SEARCH blocks, 7.15-7.19 and every SEARCH in 8 and 8b are unchanged. 7.13's second SEARCH follows M1's new text; 7.13's REPLACE gains two lines.
+- **Envelope.** A3 moves a destructive step after its checks and closes three refusal gaps; no control weakens; no "Still requires the Captain" condition applies.
