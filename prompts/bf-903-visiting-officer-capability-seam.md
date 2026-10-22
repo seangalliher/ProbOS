@@ -6,6 +6,8 @@
 
 **Amendment A1:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: M3 (sections 7.13-7.19 and 8b), recognition of a visitor by its DID or its certificate UUID, and three corrections (section 16).
 
+**Amendment A2:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22: the capability vocabulary is defined in `config_models/crew.py` and re-exported by `probos.visiting_officers`, because `crew.py` may import nothing from `probos`; W8 enables the Ward Room (section 17).
+
 **Status:** M1 and M2 are build-ready on `origin/main` `0e122174`. M3 (recognition by either key form, the channel adapters and the inbound MCP server) is sections 7.13-7.19 and 8b, in the same PR; M3 closes #1581. **Tier HIGH.** No new AD or BF number. Both flags stay off: `config/system.yaml:297` and `:933` are not edited. AD-1342 stays paused.
 
 **Tests:** four new files.
@@ -38,7 +40,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
 ## 2. Solution overview
 
 - **M1.**
-  - `probos.visiting_officers` owns the four names and refuses any other at `register`, at pairing request and approve, in `probos pairing approve` and at config parse.
+  - The four names are defined once, in `config_models/crew.py`, and re-exported by `probos.visiting_officers` (A2); any other name is refused at `register`, at pairing request and approve, in `probos pairing approve` and at config parse.
   - The registry gains `refusal` and `check`; `get` hides an expired session.
   - The module gains `is_visiting_identity` (by certificate) and the one guard, `require_visitor_capability`.
 - **M2.**
@@ -62,6 +64,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
   - `create_channel`, `unsubscribe` and the queries that take a subject id stay unguarded (section 9; register).
 - **D3 (names).**
   - (A) **Chosen:** a closed set in code; configuration chooses among the names.
+  - (A2) **Where:** `config_models/crew.py` defines the four names, `VISITOR_CAPABILITIES` and the one membership test `undeclared_capabilities`. It imports nothing from `probos` (`tests/test_ad1270e2g_crew_models.py:680-690`), so the config default and validator need no import; `probos.visiting_officers` re-exports them, as `cognitive/dreaming.py:47` reads AD-1326's bound from `config_models/cognition.py:15`. Rejected: relaxing that pin (a config model would depend on a runtime module), validating only at the facade or at the consumer (the facade needs the same import; nothing consumes the list, AV5), and two copies pinned equal (two owners).
   - (B) A set configuration can extend: rejected.
   - (C) Warn only: rejected.
 - **D4 (MCP, built in M3).** (A) **Chosen:** refuse arguments that name a visiting officer (any key or string value, at any depth, that is exactly its DID or certificate UUID), and refuse unread arguments of more than 10,000 values. (B) A per-visitor token: deferred to AD-1342, which should build it on the MCP authorization spec. (C) Record only: rejected.
@@ -92,12 +95,12 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 
 | Milestone | Production files | Tests | Focused gate |
 |---|---|---|---|
-| **M1** | `visiting_officers.py` (7.1), `config_models/crew.py` (7.2), `security/pairing/service.py` (7.3), `__main__.py` (7.4) | new 7.7; update 7.5, 7.6 | `tests/test_bf903_visitor_scope.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_ad1270e1_config_facade.py tests/test_ad1346_identity_service.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py` |
+| **M1** | `visiting_officers.py` (7.1), `config_models/crew.py` (7.2), `security/pairing/service.py` (7.3), `__main__.py` (7.4) | new 7.7; update 7.5, 7.6 | `tests/test_bf903_visitor_scope.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2g_crew_models.py tests/test_ad1346_identity_service.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py` |
 | **M2** and trackers | `ward_room/service.py` (7.8), `startup/finalize.py` (7.9), `api.py` (7.10); trackers (section 8) | new 7.11, 7.12 | `tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_bf903_visitor_scope.py tests/test_ward_room.py tests/test_ward_room_dms.py tests/test_ward_room_agents.py tests/test_api_wardroom.py tests/test_ad615_wardroom_db_hardening.py tests/test_ad613_wardroom_performance.py tests/test_ad1229_message_receipts.py tests/test_ad1229_receipt_facts.py tests/test_ad630_leadership_feedback.py tests/test_bf771_intent_authorization.py tests/test_ad1184_ad_ledger.py` |
 | **M3** and trackers | `visiting_officers.py` (7.13, on M1's text), `channels/base.py` (7.15), `federation/mcp_server.py` (7.16); trackers (section 8b) | new 7.19; update 7.14, 7.17, 7.18 | `tests/test_bf903_channel_and_mcp.py tests/test_bf903_visitor_scope.py tests/test_bf903_ward_room_scope.py tests/test_bf903_seam_was_open.py tests/test_ad701_visiting_officers.py tests/test_ad802_pairing.py tests/test_channel_base.py tests/test_bf804_pairing_notification.py tests/test_bf803_gmail_ack.py tests/test_ad764_gmail.py tests/test_ad803a_telegram.py tests/test_ad804_slack.py tests/test_ad805_teams.py tests/test_ad806_matrix.py tests/test_ad807_discord_refresh.py tests/test_ad472_channel_adapters.py tests/test_discord_adapter.py tests/test_callsign_routing.py tests/test_bf875_mcp_inbound_auth.py tests/test_ad480_federation_mcp_a2a.py tests/test_ad597_mcp_server_apps.py tests/test_bf884_sidecar_bind_failure.py tests/test_layer_boundaries.py tests/test_ad1184_ad_ledger.py` |
 
 **Hard stops**
-- If a config-facade or layer test fails because `config_models/crew.py` now imports `probos.visiting_officers` inside a function, stop and report. Do not move the import to module level.
+- `config_models/crew.py` imports nothing from `probos`, at any depth (A2; `tests/test_ad1270e2g_crew_models.py:680-690`). If a config-facade, config-model or layer test fails because `probos.visiting_officers` now imports `probos.config_models.crew` at load, stop and report; do not move the names back or import them inside a function.
 - If an existing test fails because it registered or paired with an undeclared name, update it with an inline `BF-903 (#1581)` reason and never delete it. Stop and report any other failure.
 - (M3) 7.13 and 7.14 edit the text M1 builds; apply them in M3's commit, never by reworking M1's. If a test not named in 7.17 or 7.18 fails because a paired sender no longer reaches natural language or a slash command, or because an unreadable pairing store no longer lets a message through, update it with an inline `BF-903 (#1581)` reason, never delete it, and report it.
 - (M3) If `tests/test_layer_boundaries.py` or an import cycle names `probos.visiting_officers` in `federation/mcp_server.py`, stop and report; do not move the import into the function.
@@ -106,7 +109,7 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 
 | Value | Consumers | Effect |
 |---|---|---|
-| `VISITOR_CAPABILITIES` and `CAP_*` | `register`; `require_known_capabilities`; the pairing defaults; the config default and validator; the Ward Room facade; M3 | one set of names |
+| `VISITOR_CAPABILITIES`, `CAP_*` and `undeclared_capabilities` (defined in `config_models/crew.py`, re-exported by `visiting_officers`; A2) | `register`; `require_known_capabilities`; the pairing defaults; the config default and validator; the Ward Room facade; M3. Every importer of `visiting_officers` now also loads `probos.config_models` (`api.py` and `ward_room/service.py` already did, through `probos.config`) | one set of names; no cycle (AV15) |
 | `register` refusing undeclared names | `PairingService.approve_pairing` (`:171`) and `restore_active_sessions` (`:255`, no caller, AV4) | restore catches `Exception` and logs (`:262-266`) |
 | `get` hiding expired sessions | no production caller; `test_ad701` `:127`, `:169`, `:201`, `:207` | their assertions hold |
 | `has_capability` delegating to `refusal` | no production caller; `test_ad701:180-193` | same truth table |
@@ -195,20 +198,25 @@ REPLACE:
 ```python
 from typing import Any, Callable, Iterable
 
+# BF-903 (#1581): the visiting-officer capability vocabulary. It is defined once, in
+# ``probos.config_models.crew`` (Amendment A2): that module imports nothing from ``probos``, so the
+# config default and validator read the names without an import, and this module re-exports them,
+# as ``cognitive/dreaming.py`` imports AD-1326's bound from ``config_models/cognition.py``. The
+# registry, the pairing defaults and every checking path import the names from here.
+from probos.config_models.crew import (  # re-exported: the CAP_* names are imported from this module
+    CAP_DM_RECEIVE,
+    CAP_DM_SEND,
+    CAP_WARD_ROOM_POST,
+    CAP_WARD_ROOM_READ,
+    VISITOR_CAPABILITIES,
+    undeclared_capabilities,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION_TTL_SECONDS: float = 3600.0
 DEFAULT_SWEEP_INTERVAL_SECONDS: float = 60.0
 VISITING_AGENT_TYPE: str = "visiting"
-
-# BF-903 (#1581): the visiting-officer capability vocabulary, its one owner. The registry, the
-# pairing defaults, the config default and every checking path use these names. AD-701 declared
-# the two Ward Room capabilities and AD-802 the two DM ones; nothing else is a capability.
-CAP_WARD_ROOM_POST: str = "ward_room.post"
-CAP_WARD_ROOM_READ: str = "ward_room.read"
-CAP_DM_SEND: str = "dm.send"
-CAP_DM_RECEIVE: str = "dm.receive"
-VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE})
 
 # BF-903: why a visiting officer was refused (AD-1316's stable-code syntax). The refusal event
 # and ``VisitorScopeRefused.reason`` carry one of these.
@@ -251,7 +259,7 @@ def require_known_capabilities(capabilities: Iterable[str]) -> None:
 
     A bare string is iterated as its characters and so refused, never read as one name.
     """
-    unknown = [c for c in dict.fromkeys(capabilities) if c not in VISITOR_CAPABILITIES]
+    unknown = undeclared_capabilities(capabilities)
     if unknown:
         raise UnknownCapabilityError(unknown)
 ```
@@ -375,7 +383,7 @@ def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
     """
     if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
         return False
-    from probos.identity import parse_did  # BF-903: imported at use, so loading this module loads no other ProbOS module
+    from probos.identity import parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
     parsed = parse_did(actor_id)
     if parsed is None or parsed.get("type") != "agent":
@@ -417,18 +425,50 @@ def require_visitor_capability(
 
 SEARCH:
 ```python
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+```
+REPLACE:
+```python
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from pydantic import BaseModel, Field, field_validator
+```
+
+SEARCH:
+```python
 class VisitingOfficersConfig(BaseModel):
     """AD-701: Visiting officer registry tunables.
 ```
 REPLACE:
 ```python
-def _default_visitor_capabilities() -> list[str]:
-    """BF-903 (#1581): the default comes from the vocabulary's one owner.
+# BF-903 (#1581): the visiting-officer capability vocabulary, its one owner (Amendment A2). It is
+# defined in this module, which imports nothing from ``probos``, so the default and the validator
+# below read it without an import; ``probos.visiting_officers`` re-exports it, and the registry, the
+# pairing defaults and every checking path import it from there. AD-701 declared the two Ward Room
+# capabilities and AD-802 the two DM ones; nothing else is a capability.
+CAP_WARD_ROOM_POST: str = "ward_room.post"
+CAP_WARD_ROOM_READ: str = "ward_room.read"
+CAP_DM_SEND: str = "dm.send"
+CAP_DM_RECEIVE: str = "dm.receive"
+VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE})
 
-    Imported at call time, so loading the config models loads no other ProbOS package.
+
+def undeclared_capabilities(capabilities: Iterable[str]) -> list[str]:
+    """BF-903: the names in ``capabilities`` that ``VISITOR_CAPABILITIES`` lacks, once each, in order.
+
+    The one membership test: the validator below and ``probos.visiting_officers``'s
+    ``require_known_capabilities`` both call it. Iterating a bare string yields its characters,
+    each of which is undeclared.
     """
-    from probos.visiting_officers import CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ
+    return [c for c in dict.fromkeys(capabilities) if c not in VISITOR_CAPABILITIES]
 
+
+def _default_visitor_capabilities() -> list[str]:
+    """BF-903 (#1581): the default is two declared names, a new list per instance."""
     return [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]
 
 
@@ -449,10 +489,16 @@ REPLACE:
     @field_validator("default_capabilities")
     @classmethod
     def _declared_capabilities_only(cls, value: list[str]) -> list[str]:
-        """BF-903: an undeclared capability is refused when the configuration is parsed."""
-        from probos.visiting_officers import require_known_capabilities
+        """BF-903: an undeclared capability is refused when the configuration is parsed.
 
-        require_known_capabilities(value)
+        The text matches ``UnknownCapabilityError``'s; pydantic wraps either as a validation error.
+        """
+        unknown = undeclared_capabilities(value)
+        if unknown:
+            raise ValueError(
+                f"undeclared visiting-officer capabilities {unknown!r}; "
+                f"declared: {sorted(VISITOR_CAPABILITIES)!r} (BF-903)"
+            )
         return value
 ```
 
@@ -686,6 +732,7 @@ import pytest
 from pydantic import ValidationError
 
 import probos.__main__ as probos_main
+import probos.config_models.crew as config_crew  # A2: the vocabulary's owner, imported as test_ad1270e2g_crew_models does
 from probos.config import SystemConfig, VisitingOfficersConfig
 from probos.identity import AgentIdentityRegistry
 from probos.security.pairing import DEFAULT_CAPABILITIES, PairingRegistry, PairingService
@@ -757,11 +804,13 @@ def _refusals(events: Events) -> list[dict[str, Any]]:
 
 
 def test_one_vocabulary_names_every_visitor_capability() -> None:
-    """V1: the registry, the pairing defaults and the config default use one set of four names."""
+    """V1: the registry, the pairing defaults and the config default use one set of four names, defined once in
+    ``config_models/crew.py`` and re-exported by ``probos.visiting_officers`` (A2)."""
     assert (CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE) == (
         "ward_room.post", "ward_room.read", "dm.send", "dm.receive",
     )
     assert VISITOR_CAPABILITIES == frozenset({"ward_room.post", "ward_room.read", "dm.send", "dm.receive"})
+    assert VISITOR_CAPABILITIES is config_crew.VISITOR_CAPABILITIES  # one owner: the re-export is the same object
     assert DEFAULT_CAPABILITIES == (CAP_DM_SEND, CAP_DM_RECEIVE)
     assert VisitingOfficersConfig().default_capabilities == [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]
     assert SystemConfig().visiting_officers.default_capabilities == [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]
@@ -1536,6 +1585,7 @@ async def test_a_real_boot_scopes_visitors_in_the_ward_room(tmp_path: Path) -> N
     config.proactive_cognitive.enabled = False
     config.qa.enabled = False
     config.visiting_officers.enabled = True
+    config.ward_room.enabled = True  # WardRoomConfig.enabled is off by default, so runtime.ward_room is None without it
     runtime = ProbOSRuntime(config=config, data_dir=tmp_path / "data", llm_client=MockLLMClient())
     await runtime.start()
     try:
@@ -1623,7 +1673,7 @@ def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
     """
     if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
         return False
-    from probos.identity import parse_did  # BF-903: imported at use, so loading this module loads no other ProbOS module
+    from probos.identity import parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
     parsed = parse_did(actor_id)
     if parsed is None or parsed.get("type") != "agent":
@@ -1678,7 +1728,7 @@ def visiting_certificate(identity_registry: Any, actor_id: object) -> Any:
     """
     if type(actor_id) is not str or identity_registry is None:
         return None
-    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use, so loading this module loads no other ProbOS module
+    from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
     if not is_sovereign_identity_key(actor_id):
         return None
@@ -2706,7 +2756,7 @@ REPLACE:
 - *Scope.* M1 and M2 of three, one gate and one PR; M3 (the channel adapters and the inbound MCP server) is Amendment A1. `visiting_officers.py`, `config_models/crew.py`, `security/pairing/service.py`, `__main__.py` (M1); `ward_room/service.py`, `startup/finalize.py`, `api.py` (M2); tests. Contract: `prompts/bf-903-visitor-capability-seam.md`.
 - *D1 (premise).* No path carries a visitor's own identity into the Ward Room today: `runtime.pairing_service` is never assigned, so `paired_did` is never set, and nothing reads it; the MCP server dispatches as the handling agent. The HXI routes take actor ids from the request body, so a body naming a visiting DID reached the Ward Room unchecked.
 - *D2 (where).* One guard, `require_visitor_capability`, in the registry's module, applied at every Ward Room facade entry that takes an actor id and, in M3, at the channel and MCP entries. A visitor is a did:probos agent DID whose certificate's agent type is `visiting`, read from the identity registry's cache; the certificate outlives the session. Crew ids return before any lookup or query. BF-907's resolver and AD-1346's `IdentityService` return None for a slotless visitor and cannot classify one. Rejected: guarding only the channel layer, recognising a visitor by registry membership (fails open at expiry), and by DID shape (real visiting DIDs have the crew shape).
-- *D3 (names).* A closed set in code, chosen among by configuration and `--cap`. AD-701's "new caps via configuration" is narrowed: a capability without a checking path grants nothing, and that path is code.
+- *D3 (names).* A closed set in code, chosen among by configuration and `--cap`. AD-701's "new caps via configuration" is narrowed: a capability without a checking path grants nothing, and that path is code. The names are defined in `config_models/crew.py`, which imports nothing from ProbOS, so the config validator needs no import; `probos.visiting_officers` re-exports them.
 - *D4 (MCP, built in M3).* A tools/call whose arguments name a visiting DID is refused with a reason; the shared token stays BF-875's federation-peer credential. A per-visitor binding is AD-1342's, on the MCP authorization spec.
 - *D5 (record).* `VISITING_OFFICER_REFUSED` through the registry's emitter and a warning (with the registry off, the warning alone); reason codes in AD-1316's syntax. No `EventType` member and no admission record (#1604 owns admission).
 - *D7 (M3, coupled).* `_check_pairing` fails closed when the pairing store cannot be read. A paired sender's slash commands and natural language are refused: no declared capability grants them. The AD that wires pairing declares what a paired sender may do.
@@ -2734,7 +2784,7 @@ SEARCH:
 ```
 REPLACE:
 ```markdown
-**BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `probos.visiting_officers` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`); `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type, named by its DID or its bare certificate UUID, and never looks up a slot id, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. M3: a paired channel sender is a visiting officer, so its slash commands and natural language are refused with a reply naming the reason and an `@callsign` DM needs a live `dm.send`; a pairing store that cannot be read refuses the message (`PairingLookupError`) instead of letting it through; the inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning (MCP: `MCP_BRIDGE_FAILED`, reason `visitor_unbound`). Both flags stay off. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`, `tests/test_bf903_channel_and_mcp.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`, `test_bf804_pairing_notification.py`, `test_ad807_discord_refresh.py`. The contract is `prompts/bf-903-visiting-officer-capability-seam.md`.
+**BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `config_models/crew.py` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`), re-exported by `probos.visiting_officers`; `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type, named by its DID or its bare certificate UUID, and never looks up a slot id, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. M3: a paired channel sender is a visiting officer, so its slash commands and natural language are refused with a reply naming the reason and an `@callsign` DM needs a live `dm.send`; a pairing store that cannot be read refuses the message (`PairingLookupError`) instead of letting it through; the inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning (MCP: `MCP_BRIDGE_FAILED`, reason `visitor_unbound`). Both flags stay off. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`, `tests/test_bf903_channel_and_mcp.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`, `test_bf804_pairing_notification.py`, `test_ad807_discord_refresh.py`. The contract is `prompts/bf-903-visiting-officer-capability-seam.md`.
 ```
 
 **`DECISIONS.md`**, BF-903's entry as M2 wrote it:
@@ -2791,18 +2841,18 @@ REPLACE:
 
 ## 10. Mutation rows
 
-There are 73 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1).
+There are 74 rows, as whole stripped lines, each occurring once in its file after section 7 (A1 corrected the count: the table held 50 before A1; A2 moved A1 and A2 to `config_models/crew.py`, rewrote A21 and added A33).
 
 Tier HIGH: every changed production file has rows.
-- Run A1-A32 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
+- Run A1-A33 against `tests/test_bf903_visitor_scope.py`, B1-B23 against `tests/test_bf903_ward_room_scope.py`, and C1-C18 against `tests/test_bf903_channel_and_mcp.py`.
 - Start each group with an unmutated run of its file that passes.
 - Restore the file after each row.
 - "First failing" is in file order. Where another test fails first, run the named test alone against the mutant.
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
-| A1 | `src/probos/visiting_officers.py` | `VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE})` | `VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND})` | V1 |
-| A2 | `src/probos/visiting_officers.py` | `unknown = [c for c in dict.fromkeys(capabilities) if c not in VISITOR_CAPABILITIES]` | `unknown = []` | V2 `[typo]` |
+| A1 | `src/probos/config_models/crew.py` | `VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE})` | `VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND})` | V1 (the re-export is the same object) |
+| A2 | `src/probos/config_models/crew.py` | `return [c for c in dict.fromkeys(capabilities) if c not in VISITOR_CAPABILITIES]` | `return []` | V2 `[typo]` |
 | A3 | `src/probos/visiting_officers.py` | `raise UnknownCapabilityError(unknown)` | `pass` | V2 `[typo]` |
 | A4 | `src/probos/visiting_officers.py` | `require_known_capabilities(capabilities)  # BF-903 (#1581): refused before a certificate is issued` | `pass` | V2 `[typo]` |
 | A5 | `src/probos/visiting_officers.py` | `if session is None or self._clock() >= session.expires_at:  # BF-903: an expired session is gone at use` | `if session is None:` | V6 (`get` after expiry) |
@@ -2821,7 +2871,7 @@ Tier HIGH: every changed production file has rows.
 | A18 | `src/probos/visiting_officers.py` | `raise VisitorScopeRefused(did, capability, REFUSED_REGISTRY_OFF, surface)` | `return` | V8 |
 | A19 | `src/probos/visiting_officers.py` | `visiting_officers.check(did, capability, surface=surface)` | `pass` | V8 (missing) |
 | A20 | `src/probos/config_models/crew.py` | `return [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]` | `return [CAP_WARD_ROOM_POST]` | V1 |
-| A21 | `src/probos/config_models/crew.py` | `require_known_capabilities(value)` | `pass` | V3 |
+| A21 | `src/probos/config_models/crew.py` | `unknown = undeclared_capabilities(value)` | `unknown = []` | V3 |
 | A22 | `src/probos/security/pairing/service.py` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND, CAP_DM_RECEIVE)  # BF-903: AD-802's defaults, named by the vocabulary's owner` | `DEFAULT_CAPABILITIES = (CAP_DM_SEND,)` | V1 |
 | A23 | `src/probos/security/pairing/service.py` | `require_known_capabilities(caps)  # BF-903: refused before a pending row is minted` | `pass` | V4 |
 | A24 | `src/probos/security/pairing/service.py` | `require_known_capabilities(capabilities_override)  # BF-903: refused before the code is consumed` | `pass` | V4 (the code-survives assertion) |
@@ -2833,6 +2883,7 @@ Tier HIGH: every changed production file has rows.
 | A30 | `src/probos/visiting_officers.py` | `return visiting_certificate(identity_registry, actor_id) is not None` | `return False` | V7 |
 | A31 | `src/probos/visiting_officers.py` | `require_session_capability(cert.did, capability, surface=surface, visiting_officers=visiting_officers)` | `require_session_capability(actor_id, capability, surface=surface, visiting_officers=visiting_officers)` | V8 (the certificate UUID is served) |
 | A32 | `src/probos/visiting_officers.py` | `require_known_capabilities((capability,))  # BF-903: a typo in a checking path fails on its first call` | `pass` | V8 (`require_session_capability` with an undeclared name) |
+| A33 | `src/probos/visiting_officers.py` | `unknown = undeclared_capabilities(capabilities)` | `unknown = []` | V2 `[typo]` |
 | B1 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ?"` | `_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ? AND 0"` | W3 `[thread-in-dm-channel]` |
 | B2 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ?"` | `_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ? AND 0"` | W3 `[post-in-dm-thread]` |
 | B3 | `src/probos/ward_room/service.py` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ?"` | `_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ? AND 0"` | W3 `[edit-in-dm-thread]` |
@@ -2885,7 +2936,7 @@ Tier HIGH: every changed production file has rows.
 - `read += 1`: the mutant never refuses, which Q3 kills as it kills C11.
 - `MAX_ARGUMENT_VALUES = 10_000`: Q3 pins both sides of the bound.
 - The walk's `if identity_registry is None:` short-circuit with a mutant that removes it: only a runtime with no identity registry, which production never has (`runtime.py:1203`, `:2766`), would then refuse past the bound.
-- `if unknown:`: equivalent to A3.
+- `if unknown:` (in `visiting_officers.py` and in `crew.py`'s validator) and the validator's `raise ValueError(`: equivalent to A3 and A21.
 - `if runtime.ward_room is not None:`: equivalent to B21.
 - `status_code=403,`: not unique in `api.py`.
 - Log lines and docstrings.
@@ -2959,6 +3010,22 @@ tests/test_bf875_mcp_inbound_auth.py 84-99 trust double | 115-116 subscribe | 15
 tests/test_bf804_pairing_notification.py 36-40 imports | 166 | 184-200 Gmail control | 421-434 Slack control
 tests/test_ad807_discord_refresh.py 193-215 control | tests/test_bf803_gmail_ack.py 1122-1135 ChannelMessage fields
 tests/test_layer_boundaries.py    152-165 a top-level probos module is importable from any layer
+
+A2 (2026-10-22): production files at 0e122174; crew.py, visiting_officers.py and the M1 test as M1 builds them (c78264fa)
+tests/test_ad1270e2g_crew_models.py 54 imports probos.config_models.crew | 680-690 no probos import at any depth in crew.py
+tests/test_ad1270e2_config_models.py 295-306 the core module's narrower pin (no probos.config import), option B's form
+src/probos/config_models/crew.py  1-5 "self-contained" docstring | 8-10 imports | 276 WardRoomConfig.enabled False | 303-335 as M1 builds them
+src/probos/config_models/cognition.py 15 PROCEDURE_EVOLUTION_EPISODE_LIMIT | 179 its field bound ; cognitive/dreaming.py 47 imports it
+src/probos/config_models/agentic.py 18 valid_github_repository | 901 its validator ; fault_issue_filings.py 14 imports it
+src/probos/config_models/__init__.py 3-4 "Import from there" | 9-179 sibling imports only
+src/probos/config.py              129 names imported from config_models.crew one by one (the facade gains no constant)
+scripts/check_config_facade.py    1015-1041 the surface is the public names of probos.config
+docs/development/architecture-baseline.yaml 12-17 ranks substrate, mesh, consensus, cognitive, experience only
+scripts/check_architecture_principles.py 521-523, 586-605 layer-import needs both ends ranked
+src/probos/cognitive/codebase_index.py 725-727 the config schema reads class definitions only
+src/probos/ward_room/service.py   12 from probos.config import format_trust
+src/probos/federation/mcp_server.py 20-26 module-level imports
+src/probos/visiting_officers.py   42-57 imports and vocabulary | 95-102 require_known_capabilities | 300-316 _emit's warning, is_visiting_identity (M1-built)
 ```
 
 ## Absence Verified (2026-10-22)
@@ -3025,6 +3092,26 @@ AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_offi
     RUN:   read tests/test_layer_boundaries.py:137-165
     FOUND: a top-level module (parts[1] not in LAYER_MAP) returns None, always allowed (:165)
     HOLDS: yes
+AV15 CLAIM: probos.config_models imports nothing outside itself once A2 removes crew.py's two imports, so
+            visiting_officers -> config_models.crew cannot form a cycle
+    RUN:   rg -n '^\s*(from|import) probos' src/probos/config_models
+    FOUND: __init__.py:9,26,36,54,74,98,123,150,179 (siblings); crew.py:308,332 (probos.visiting_officers, removed by A2)
+    HOLDS: yes
+AV16 CLAIM: no test other than test_ad1270e2g_crew_models.py:680-690 pins the shape of an edited file in a way the contract breaks
+    RUN:   rg -n '(visiting_officers|pairing.service|__main__|ward_room.service|finalize|api|channels.base|mcp_server|crew)\.py' tests ;
+           rg -n 'getsource\((api_module|api|finalize|...)' tests ; rg -n 'signature\((VisitingOfficer|PairingService|WardRoomService|...)' tests ;
+           rg -l 'rglob\("\*\.py' tests (45 files; read those that scan an edited file or a pattern the contract adds) ;
+           rg -n 'setattr\([^)]*(VISITOR_CAPABILITIES|visiting_officers)|patch\([^)]*visiting_officers'
+    FOUND: crew.py: test_ad1270e2g:680-690 (A2 satisfies it; :290 bound count, :434 ClassDef schema, EXPECTED_DUMPS unchanged).
+           ward_room/service.py: test_ad615:58,68; test_bf164:47 (get_unread_dms keeps exchange_limit). __main__.py: test_bf781:376,
+           test_ad1340_s1:325, test_bf207:301,309 (timeouts, EpisodicMemory calls). finalize.py: test_ad1130:1568, test_ad1198:583,
+           test_bf753:121,155, test_bf875:611, test_bf876:765, test_counselor_therapeutic:559,569, test_bf106:86,
+           test_ad1248_slice_a_gaps:231,387, test_ad1273:584, test_ad1278:792,1519, test_ad541d:530, test_bf745:597 (each pins
+           other text). api.py: test_bf771:567 (presence), test_ad1203:526, test_self_mod:1044. Tree scans:
+           test_ad1346_admission_service:504 (the string admission_service; no contract code holds it),
+           test_ad1346_identity_service:475 (IdentityRef calls), test_ad680:110 (runtime private access),
+           test_ad1195_eventlog_pair_freeze:331 (EventLog.log sites; the contract adds none). No signature pin; no patch of the vocabulary.
+    HOLDS: yes, by reading; not run in A2's consult
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -3041,7 +3128,7 @@ AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_offi
   - A1: `SlackAdapter`, `SlackConfig`, `ChannelConfig`, `CallsignRegistry`, `FederationMCPServer`, `FederationMCPServerConfig`, `FederationPeerRegistry`, `MCPAppRegistry`, `IntentBus`, `SignalManager`, `IntentDescriptor`, `IntentResult` and `PairingLookupError` are ProbOS classes; `EventType.MCP_BRIDGE_FAILED` exists (`mcp_server.py:571`).
   - A1: the test runtimes keep their recorders as their own attributes (`self.processed`, `self.events`) and the tests read them from the rig, so no `runtime.<name>` outside `src` appears.
   - A1: the only float parameter given a constant is `session_ttl_seconds=SESSION_TTL` (`60.0`); 7.18's SEARCH stops before the existing `RuntimeError(...)` line.
-- **Import cycle:** `visiting_officers.py` imports only the standard library at load. `parse_did` and the config's imports run at call time.
+- **Import cycle:** `visiting_officers.py` imports the standard library and, at load, `probos.config_models.crew` (A2), which loads the `probos.config_models` package; nothing in that package imports from outside it (AV15), so no cycle can pass through it. `config_models/crew.py` imports nothing from `probos` (`tests/test_ad1270e2g_crew_models.py:680-690`). `parse_did` and `is_sovereign_identity_key` are imported at call time.
 - **CRLF:** match the working copy's line endings; never anchor a grep with `$`.
 - **The deletion check** before each commit: `git diff --cached --stat`.
 
@@ -3067,7 +3154,7 @@ AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_offi
 3. A visiting DID is refused when the registry is unattached, the session is missing, the session has expired (`clock >= expires_at`) or the capability is absent, each with the matching code.
 4. `VisitorScopeRefused` is not a `ValueError`, so the routers' `except ValueError` cannot turn it into a 400; the app handler returns 403.
 5. `register`, `request_pairing`, an approve override and config parse refuse an undeclared name before any certificate, row or consume.
-6. `visiting_officers.py` imports no ProbOS module at load.
+6. `visiting_officers.py` imports at load only the standard library and `probos.config_models.crew`; `config_models/crew.py` imports nothing from `probos`, at any depth (A2).
 7. `config/system.yaml` is unchanged; no `EventType` is added; `admission/` is untouched.
 8. `has_capability` keeps its truth table (`test_ad701:180-193`).
 9. A slot id, "captain" and "system" cause no certificate lookup; a did:probos agent DID or a lower-case UUID causes exactly one `get_by_uuid`; either form of a visiting certificate is checked and refused under its DID.
@@ -3075,7 +3162,7 @@ AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_offi
 11. A `resolve_did` failure raises `PairingLookupError` (a `PairingNotificationError`) whose text names the channel only; no message proceeds.
 12. `_handle_tools_call` calls `visitor_argument_refusal` after validating `arguments` and `name` and before the app-tool and intent branches; a refusal dispatches nothing, registers no peer and emits one `MCP_BRIDGE_FAILED`.
 13. The walk is iterative and reads at most `MAX_ARGUMENT_VALUES` values; past that it refuses.
-14. `federation/mcp_server.py` imports `probos.visiting_officers` at module level, which loads no other ProbOS module (property 6).
+14. `federation/mcp_server.py` imports `probos.visiting_officers` at module level, which loads no ProbOS module outside `probos.config_models` (property 6).
 
 ## 15. Acceptance criteria
 
@@ -3092,3 +3179,18 @@ AV14 CLAIM: no layer rule forbids federation from importing probos.visiting_offi
 - **Recognition (option B).** A visiting officer is recognised by its DID or by its bare certificate UUID, the two key shapes BF-907 gives a sovereign identity (`identity.py:152-163`). A DID-only guard let a visitor's UUID pass as an unknown id at every facade entry and in every MCP argument, and the Ward Room stores an author's episode under the id it posts as (`ward_room/threads.py:564-578`). 7.13 changes M1's functions on M1's text (`visiting_certificate`, `require_session_capability`); 7.14 widens V7 and V8. Slot ids, "captain" and "system" match neither shape and still cost no lookup; a crew certificate's UUID costs one in-memory lookup. Rejected: (A) DID only, which leaves the alias; (C) resolving ids through `resolve_slot_id` or `IdentityService.resolve`, which return None for a slotless visitor; (D) callsigns, which are not actor ids at the facade.
 - **Corrections.** Section 0 cited `routers/agents.py:3842`, a thread-store write (`author_id=agent_id` inside `_thread_store.append_message`), not a Ward Room call; removed. Section 10 said 51 rows and held 50; it now holds 73. Section 8's tracker text names the contract `prompts/bf-903-visitor-capability-seam.md`; the file is `prompts/bf-903-visiting-officer-capability-seam.md`, and 8b rewrites both entries with that name.
 - **Envelope.** M3 strengthens two controls (a paired sender gets only what a declared capability grants; an unreadable pairing store refuses instead of admitting) on paths no production sender reaches: `runtime.pairing_service` is never assigned (AV2) and the MCP server is off (`config/system.yaml:297`) with no exposed intents by default. No "Still requires the Captain" condition applies; D7 records that the Captain may overrule.
+
+## 17. Amendment A2 (2026-10-22): the vocabulary moves to the config leaf, and W8 enables the Ward Room
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22, on the M1 Builder's hard stop (a) and the orchestrator's dry run of `8862dccf`.
+
+- **Defect 1.** `tests/test_ad1270e2g_crew_models.py:680-690` walks all of `config_models/crew.py` and refuses a `probos` import at any depth; 7.2's two function-level imports of `probos.visiting_officers` failed it. `check_architecture_principles.py` cannot see that edge: neither `config_models` nor `visiting_officers` is a ranked layer (`architecture-baseline.yaml:12-17`), so the test is its only guard.
+- **Decision (option A).** `config_models/crew.py` defines the four names, `VISITOR_CAPABILITIES` and the one membership test `undeclared_capabilities`; `probos.visiting_officers` imports and re-exports them, so every `from probos.visiting_officers import CAP_...` in M2, M3 and the tests is unchanged. Precedent: AD-1326's bound (`config_models/cognition.py:15`, read by `cognitive/dreaming.py:47`) and `valid_github_repository` (`config_models/agentic.py:18`, used by its validator at `:901` and by `fault_issue_filings.py:14`). `UnknownCapabilityError` and `require_known_capabilities` stay in `visiting_officers.py`; the validator raises a `ValueError` with the same text, since pydantic wraps either as a validation error. Rejected: (B) relaxing the pin to the core module's form (`test_ad1270e2_config_models.py:295-306`), which leaves a config model depending on a runtime module against `crew.py`'s "self-contained" docstring; (C) dropping the validator, which loses refusal at parse because nothing reads the list (AV5), or moving it to the facade, which needs the same inverted import; (D) two copies pinned equal, two owners.
+- **Load and cycles.** `visiting_officers.py` now loads `probos.config_models`, whose modules import nothing from outside the package (AV15), so no cycle can pass through it. `api.py` and `ward_room/service.py` already loaded it through `probos.config`; `security/pairing/service.py` and (M3) `federation/mcp_server.py` now load it through `visiting_officers`. Section 12 and properties 6 and 14 say so, and the `parse_did` comments in 7.1 and 7.13 no longer claim the module loads no other ProbOS module.
+- **Defect 2.** W8 booted with `WardRoomConfig.enabled` at its default `False` (`config_models/crew.py:276`), so `runtime.ward_room` was None. 7.11 enables it; the orchestrator ran the repaired test on `e87f7009` (passes). No mutation row: B21 already removes the attach W8 proves, and the repair makes B21's kill real. A mutant that loses the Ward Room is boot configuration, not BF-903's surface.
+- **Rows.** A1 and A2 move to `crew.py`; A21 is the validator's call to the shared test; A33 is `require_known_capabilities`'s. 74 rows.
+- **Other shape pins.** None found beyond defect 1 (AV16). M1's focused gate gains `tests/test_ad1270e2g_crew_models.py`.
+- **Trackers.** Section 8's D3 bullet and 8b's final PROGRESS line name the owner. Section 8's interim PROGRESS line, which 8b replaces in M3's commit of the same PR, is left as is so 8b's SEARCH keeps matching.
+- **A1 anchors.** 7.13's second SEARCH changes only in its `parse_did` comment, the edit 7.1 receives; 7.13's first SEARCH, 7.14's SEARCH blocks (A2 edits the head of the test's import block and V1 only), 7.17-7.19 and 8b's SEARCH blocks are unchanged.
+- **Not run in this consult:** any test, the precheck, ruff and the apply of A2's pairs.
+- **Envelope.** A2 moves where four constants are defined and keeps every check; no "Still requires the Captain" condition applies.
