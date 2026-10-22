@@ -16,6 +16,7 @@ from probos.doctor.checks import (  # noqa: F401
     nats_check,
     chroma_check,
     crew_enrollment_check,
+    token_accounting_check,
     security_check,
     crew_scope_check,
     disk_check,

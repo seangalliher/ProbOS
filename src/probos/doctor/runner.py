@@ -135,21 +135,26 @@ def _secrets(node: Any, under_secret_key: bool = False) -> list[str]:
     return sorted(found, key=lambda secret: (-len(secret), secret))
 
 
-def _render(console: Console, name: str, outcome: CheckOutcome, message: str, remediation: str) -> None:
+def _render(
+    console: Console, name: str, outcome: CheckOutcome, message: str, remediation: str, detail: str = "",
+) -> None:
     """Render a single check's result with the appropriate glyph + style.
 
     AD-1137: check text is printed literally (a provider's or a path's "[" is not Rich markup),
     and each line of a multi-line remediation is indented under the result.
+    BF-901 S3: each line of ``detail`` follows, on every outcome; an OK result still shows no remediation.
     """
     if outcome is CheckOutcome.OK:
         console.print(f"  [green]\u2713[/green] {escape(message)}")
-        return
-    if outcome is CheckOutcome.WARN:
+    elif outcome is CheckOutcome.WARN:
         console.print(f"  [yellow]\u26a0[/yellow] {escape(message)}")
     else:  # FAIL
         console.print(f"  [red]\u2717[/red] {escape(message)}")
-    for line in remediation.splitlines():
-        console.print(f"    [dim]{escape(line)}[/dim]")
+    if outcome is not CheckOutcome.OK:
+        for line in remediation.splitlines():
+            console.print(f"    [dim]{escape(line)}[/dim]")
+    for line in detail.splitlines():
+        console.print(f"    {escape(line)}")
 
 
 async def run_doctor(
@@ -193,7 +198,7 @@ async def run_doctor(
             )
             fail_count += 1
             continue
-        _render(console, check.name, result.outcome, result.message, result.remediation)
+        _render(console, check.name, result.outcome, result.message, result.remediation, result.detail)
         if result.outcome is CheckOutcome.FAIL:
             fail_count += 1
         elif result.outcome is CheckOutcome.WARN:
