@@ -173,6 +173,12 @@ class AssignmentService(EventEmitterMixin):
             if row and row[0] > 0:
                 raise ValueError(f"Active assignment '{name}' already exists")
 
+        if self._ward_room:
+            # BF-903 (#1581, A4): the subscription loop below swallows a refusal, so every member is checked before
+            # the channel, any subscription or any row exists; a refusal reaches the API's 403 with nothing written.
+            for agent_id in members:
+                self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): every member is checked before the channel or any row exists
+
         now = time.time()
         assignment_id = str(uuid.uuid4())
         ward_room_channel_id = ""
@@ -312,6 +318,8 @@ class AssignmentService(EventEmitterMixin):
             raise ValueError("Cannot modify inactive assignment")
         if agent_id in assignment.members:
             raise ValueError(f"Agent {agent_id} is already a member")
+        if self._ward_room and assignment.ward_room_channel_id:
+            self._ward_room.check_subscribe(agent_id)  # BF-903 (A4): checked before the member row is written
 
         now = time.time()
         await self._db.execute(
