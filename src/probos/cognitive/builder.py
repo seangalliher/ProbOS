@@ -2366,6 +2366,10 @@ Rules for MODIFY blocks:
         total_size = sum(len(c) for c in all_files.values())
         logger.info("Builder perceive: %d files, %d total chars", len(all_files), total_size)
 
+        # BF-904b (#1585): the whole files, kept for the visiting builder. Only the native prompt context below
+        # (and the Transporter's size estimate) uses the localized excerpts.
+        full_files = dict(all_files)
+
         # Step 2: If files are large, use localization to select relevant sections
         if total_size > self._LOCALIZE_THRESHOLD:
             logger.info("Builder perceive: total %d > threshold %d, running localization", total_size, self._LOCALIZE_THRESHOLD)
@@ -2429,7 +2433,9 @@ Rules for MODIFY blocks:
                 # Copy existing target files into temp dir (preserving structure).
                 # BF-896: the helper the dispatcher uses; a key naming a path outside
                 # the temp dir (an absolute target) is skipped, not written there.
-                seed_session_directory(tmp_dir, all_files)
+                # BF-904b (#1585): whole files, and the adapter is given what was seeded (as the
+                # dispatcher does), because its scan takes each change's "base" from that mapping.
+                seeded = seed_session_directory(tmp_dir, full_files)
 
                 model = params.get("model", "")
                 adapter = CopilotBuilderAdapter(
@@ -2440,7 +2446,7 @@ Rules for MODIFY blocks:
                 )
                 await adapter.start()
                 try:
-                    copilot_result = await adapter.execute(spec, all_files)
+                    copilot_result = await adapter.execute(spec, seeded)
                 finally:
                     try:
                         await adapter.stop()
@@ -2649,7 +2655,9 @@ Rules for MODIFY blocks:
 
         # Transporter Pattern result — blocks already parsed
         if decision.get("action") == "transporter_complete":
-            file_changes = decision.get("file_changes", [])
+            # BF-904b (#1585): project-relative paths, as the single-pass route below gives them; a
+            # CodebaseIndex-relative path would otherwise be refused at the write boundary.
+            file_changes = _normalize_change_paths(decision.get("file_changes", []))
             result_dict: dict[str, Any] = {
                 "file_changes": file_changes,
                 "llm_output": decision.get("llm_output", ""),
@@ -2786,6 +2794,78 @@ def _fix_loop_changed(path: Path, before: bytes | None) -> bool:
         return path.is_file() and path.read_bytes() != before
     except OSError:
         return True  # cannot be read back, so it cannot be shown unchanged
+
+
+class _SyntaxReadRefused(Exception):
+    """BF-904b A3 (#1585): the final syntax read will not read a path; the message says why."""
+
+
+def _syntax_read_opener(name: str, flags: int) -> int:
+    """BF-904b A3: the one open of the final syntax read, as BF-904a's hooks read opens (``_HOOK_OPEN_FLAGS``).
+
+    Never a final link, never blocking on a pipe; *flags*, the text layer's, are not used.
+    """
+    return os.open(name, _HOOK_OPEN_FLAGS)
+
+
+def _work_tree_text(root: Path, path: Path) -> str:
+    """BF-904b A3 (#1585): the text of *path*, read only if it is a regular file inside the work tree *root*.
+
+    ``realpath`` follows every symbolic link, junction and other name-surrogate reparse point on the way, the
+    last name included, so an alias the tests left is followed to where it leads; that must lie inside *root*'s
+    own resolved form (by ``normcase``), or the path is refused unread. An alias that stays inside the tree is
+    read, as the write before it followed it (F-124 owns aliases). A path that is gone or not a regular file by
+    ``lstat`` is refused before any open. The one open neither follows a final link nor blocks on a pipe, and its
+    handle must be that same regular file (``samestat``). Strict UTF-8 with universal newlines, as ``read_text``.
+    """
+    real = os.path.realpath(path)
+    if not Path(os.path.normcase(real)).is_relative_to(os.path.normcase(os.path.realpath(root))):
+        raise _SyntaxReadRefused("resolves outside the work tree")
+    try:
+        info = os.lstat(real)
+    except (FileNotFoundError, NotADirectoryError):
+        raise _SyntaxReadRefused("is no longer a regular file") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise _SyntaxReadRefused("is no longer a regular file")
+    with open(real, encoding="utf-8", opener=_syntax_read_opener) as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, info):
+            raise _SyntaxReadRefused("changed while it was read")
+        return stream.read()
+
+
+def _python_syntax_error(path: Path, text: str) -> str | None:
+    """BF-904b A3 (#1585): *text*, read from *path*, parsed as ``_validate_python`` parses; the error line, or None."""
+    try:
+        ast.parse(text, filename=str(path))
+        return None
+    except SyntaxError as exc:
+        return f"{path}: line {exc.lineno}: {exc.msg}"
+
+
+def _syntax_errors(root: Path, paths: list[Path]) -> list[str]:
+    """BF-904b (#1585): the syntax state of *paths* as they are now, one line per file that fails.
+
+    Read at the commit decision, after any repair and after the tests, which run model-written code and can
+    leave any filesystem state. A3: each Python file is read through ``_work_tree_text``, so one that resolves
+    outside the work tree *root*, is gone, is not a regular file or changed while it was read is refused unread;
+    one that cannot be read or decoded, or does not parse, blocks the commit. Every examination is inside the
+    ``try``: ``OSError`` and ``ValueError`` become a line; anything else (``RecursionError``, ``MemoryError``)
+    reaches the executor's ``except``. Only ``.py`` files are judged, as in ``_validate_python``.
+    """
+    errors: list[str] = []
+    for path in paths:
+        if path.suffix != ".py":
+            continue
+        try:
+            message = _python_syntax_error(path, _work_tree_text(root, path))
+        except _SyntaxReadRefused as exc:
+            message = f"{path}: {exc}; refused"
+        except (OSError, ValueError) as exc:
+            message = f"{path}: could not be read for the syntax check ({type(exc).__name__}); refused"
+        if message is not None:
+            errors.append(message)
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -3082,33 +3162,76 @@ def _unapplied_blocks(changes: list[dict[str, Any]], work_dir: str) -> list[str]
     return refusals
 
 
-def _check_sealed_path(target_path: "Path", runtime: "ProbOSRuntime | None") -> None:
-    """AD-481f: warn-only sealed-core pre-write check.
+#: BF-904b (#1585): the sealed-core policy this ProbOS runs under. Never the work tree's copy (a build writes
+#: the work tree, config/ included, so it could rewrite its own policy) and never a path relative to the
+#: process's working directory, which is not the repository.
+_SEALED_POLICY = _PROJECT_ROOT / "config" / "sealed_modules.yaml"
 
-    Reads `runtime.config.extensions.enforce_sealed_core` (default False).
-    When True, emits `logger.warning(...)` — never raises in v1. Hard-block
-    ships at AD-481l after AD-482 RedTeam baseline establishes false-
-    positive rate. Per-BuildSpec override (`core_modification` flag) is
-    intentionally NOT introduced in v1 — that knob lands with AD-481l when
-    the warn becomes a raise.
 
-    `runtime.config.extensions` is guaranteed by
-    `SystemConfig.extensions = Field(default_factory=ExtensionsConfig)`.
+def sealed_core_enforced(runtime: Any) -> bool:
+    """BF-904b (#1585): whether *runtime*'s config turns the sealed-core observation (AD-481f) on.
+
+    True only when ``runtime.config.extensions.enforce_sealed_core`` is the boolean True; False for None,
+    for an object without that chain (a test double) and for any other value, as the AttributeError branch
+    of the check this replaces did. The /api/build routes call it on their runtime: they pass no runtime to
+    the executor, which would switch on the pre-flight runner and Hebbian recording for them.
     """
-    if runtime is None:
-        return
     try:
-        if not runtime.config.extensions.enforce_sealed_core:
-            return
+        return runtime.config.extensions.enforce_sealed_core is True
     except AttributeError:
-        return
-    from probos.extensions.sealed_core import is_sealed_path
-    if is_sealed_path(target_path):
+        return False
+
+
+def _sealed_globs() -> tuple[str, ...]:
+    """BF-904b (#1585): the globs of this ProbOS's sealed-core policy; empty when it is missing or cannot be read.
+
+    The loader degrades a missing file, a YAML error and an OS error in the read itself. Whatever else it raises
+    on this file is caught here, of any class: an OS error from its existence check, a file that is not UTF-8,
+    and what PyYAML's constructors and composer raise on corrupt content (an impossible date, a sexagesimal float
+    too large, an unknown ``!!bool``, an empty ``!!int``, nesting past the recursion limit). That set is open:
+    each constructor raises what its own code raises, and a later PyYAML can add a class. So the boundary is this
+    one call, not a list (Amendment A4); the code after it handles ``str`` values only and is not guarded. One
+    warning names the file and the exception class, and the observation never changes a build's outcome (D5). A
+    ``MemoryError`` still propagates: the process, not the policy, has failed. Nothing is cached when the loader
+    raises, so each flagged build reads the file again.
+    """
+    from probos.extensions.sealed_core import load_sealed_globs
+
+    try:
+        return load_sealed_globs(str(_SEALED_POLICY))
+    except MemoryError:
+        raise  # BF-904b A4: the process is out of memory, not the policy unreadable; the build fails as before
+    except Exception as exc:  # BF-904b A4: third-party parsing of an external file; its failure set is open
         logger.warning(
-            "AD-481f: Builder writing to sealed-core path %s "
+            "BF-904b: the sealed policy %s cannot be read (%s); this build observes nothing",
+            _SEALED_POLICY, type(exc).__name__,
+        )
+        return ()  # BF-904b A2: no globs, so nothing is observed and the build goes on
+
+
+def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
+    """AD-481f: warn-only sealed-core pre-write check. BF-904b (#1585): it can fire.
+
+    *sealed_globs* is what ``execute_approved_build`` loaded at entry: the policy's globs when
+    ``enforce_sealed_core`` is on, otherwise empty, and then nothing is matched or logged. *change_path* is
+    the block's repository-relative path, which BF-894's write boundary has admitted. It is matched with ``/``
+    separators, ``.`` and doubled separators removed, and case folded on both sides, so a spelling the host's
+    filesystem resolves to a sealed file is observed on every host. A path naming nothing inside the
+    repository (absolute, or escaping with ``..``) matches no repository-relative glob; the boundary refuses
+    it before this runs. One ``logger.warning`` per write; never raises. The hard block is AD-481l, after
+    the AD-482 RedTeam baseline; the per-BuildSpec ``core_modification`` override lands with it.
+    """
+    if not sealed_globs:
+        return
+    rel = os.path.normpath(change_path.replace("\\", "/")).replace("\\", "/").casefold()
+    from probos.extensions.sealed_core import is_sealed_path
+
+    if is_sealed_path(rel, tuple(glob.casefold() for glob in sealed_globs)):
+        logger.warning(
+            "AD-481f: Builder writing to sealed-core path %r "
             "(enforce_sealed_core=True); v1 is observation-only — "
             "hard-block ships at AD-481l",
-            target_path,
+            change_path,
         )
 
 
@@ -3130,6 +3253,7 @@ async def execute_approved_build(
     runtime: ProbOSRuntime | None = None,
     specialty: str = "general",
     expected_git_dir: str | None = None,
+    enforce_sealed_core: bool | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -3145,6 +3269,10 @@ async def execute_approved_build(
             returned before generation began. When given, the build is refused
             at entry (before any git command or write) and again before the
             commit if *work_dir* no longer names that repository.
+        enforce_sealed_core: BF-904b (#1585). Whether writes to sealed-core paths
+            are observed (AD-481f: a warning per write, never a refusal). None
+            reads ``runtime``'s config (``BuildPipeline``); the /api/build routes
+            and the dispatcher pass the flag, because they pass no runtime.
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
@@ -3154,6 +3282,10 @@ async def execute_approved_build(
     git_tampered: str | None = None
     git_baseline: _GitSafetySnapshot | None = None
     tests_ran = False
+    # BF-904b (#1585): the sealed-core observation (AD-481f). The caller's flag, else the runtime's config;
+    # the policy is read only when it is on, before any git command or write.
+    observe_sealed = enforce_sealed_core if enforce_sealed_core is not None else sealed_core_enforced(runtime)
+    sealed_globs = _sealed_globs() if observe_sealed is True else ()
 
     # 0a. BF-897 (#1559): refuse the checkout the runtime started from (a location
     # check, see operator_checkout_refusal). Before any git command or write; no
@@ -3238,7 +3370,11 @@ async def execute_approved_build(
 
     written: list[str] = []
     modified_files: list[str] = []
+    # BF-904b (#1585): refusals only, and permanent: no later step can lift one.
     validation_errors: list[str] = []
+    # BF-904b (#1585): every path a write validated, in order. Syntax is state: it is read again on the files as
+    # they are at the commit decision (5.5), so an error a repair fixed no longer blocks the commit.
+    syntax_checked: dict[Path, None] = {}
     # BF-904a (#1585): the bytes of every file that existed before this build, saved before its
     # first write (setdefault keeps that first copy); a build that does not commit writes them back.
     originals: dict[str, bytes] = {}
@@ -3333,7 +3469,7 @@ async def execute_approved_build(
                     continue  # BF-904a: a file with an unmatched block is not written at all
 
                 if modified != original:
-                    _check_sealed_path(path, runtime)
+                    _check_sealed_path(change["path"], sealed_globs)  # BF-904b: the main loop's modify
                     if change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file
                         originals.setdefault(change["path"], path.read_bytes())  # BF-904a: saved before the first write
                     path.write_text(modified, encoding="utf-8")
@@ -3347,15 +3483,13 @@ async def execute_approved_build(
                         "BuilderAgent: no changes applied to %s", change["path"],
                     )
 
-                # Validate Python files after modify
-                err = _validate_python(path)
-                if err:
-                    validation_errors.append(err)
+                # Validate Python files after modify (BF-904b: read at 5.5, on the file as it is then)
+                syntax_checked[path] = None  # BF-904b: a main-loop modify, read again at 5.5
 
                 continue
 
             path.parent.mkdir(parents=True, exist_ok=True)
-            _check_sealed_path(path, runtime)
+            _check_sealed_path(change["path"], sealed_globs)  # BF-904b: the main loop's create
             pre_existing = path.exists() and change["path"] not in written
             if pre_existing and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file, a create over it too
                 originals.setdefault(change["path"], path.read_bytes())  # BF-904a: a create over an existing file saves it first
@@ -3371,10 +3505,8 @@ async def execute_approved_build(
                 written.append(change["path"])
                 logger.info("BuilderAgent: wrote %s", change["path"])
 
-            # Validate Python files after create
-            err = _validate_python(path)
-            if err:
-                validation_errors.append(err)
+            # Validate Python files after create (BF-904b: read at 5.5, on the file as it is then)
+            syntax_checked[path] = None  # BF-904b: a main-loop create, read again at 5.5
 
         result.files_written = written
         result.files_modified = modified_files
@@ -3390,8 +3522,8 @@ async def execute_approved_build(
                     len(unexpected), ", ".join(sorted(unexpected)),
                 )
 
-        # 4c. Code review (AD-341)
-        if llm_client and (written or modified_files):
+        # 4c. Code review (AD-341). BF-904b (#1585): not after a refusal, which nothing later can lift.
+        if llm_client and (written or modified_files) and not validation_errors:
             from probos.cognitive.code_reviewer import CodeReviewAgent
             reviewer = CodeReviewAgent(
                 agent_id="code_reviewer",
@@ -3415,8 +3547,9 @@ async def execute_approved_build(
             except Exception as exc:
                 logger.warning("CodeReviewAgent: review error: %s", exc)
 
-        # 5. Run tests with fix loop (AD-314, AD-344)
-        if run_tests and (written or modified_files):
+        # 5. Run tests with fix loop (AD-314, AD-344). BF-904b (#1585): a build that already holds a refusal
+        # cannot commit, so it runs no model-written code and asks for no repair (#1523 F-153 item 18).
+        if run_tests and (written or modified_files) and not validation_errors:
             # BF-904a (#1585): what git would run on its own, read before any model code runs.
             git_baseline = await _git_safety_snapshot(work_dir, pinned_git_dir is not None)
             tests_ran = True
@@ -3424,10 +3557,11 @@ async def execute_approved_build(
             # 5.4b finds it unchanged; an error or a cancellation before then runs no git in `finally`.
             git_unsafe = True  # BF-904a A1: model code may run from here; only a clean comparison clears it
             all_changes = list(file_changes)  # track for fix prompt
-            all_changed_files = written + modified_files
             fix_loop_files: list[str] = []  # BF-898: the paths the fix loop changed
 
             for attempt in range(1 + max_fix_attempts):
+                # BF-904b (#1585): read at the start of each attempt, so a file an earlier repair created is targeted.
+                all_changed_files = written + modified_files
                 # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
                 passed, test_output, _targeted_files = await _run_targeted_tests(
                     work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,
@@ -3540,13 +3674,13 @@ async def execute_approved_build(
                                     late_refused = True
                                     break
                                 if mod != original:
-                                    _check_sealed_path(path, runtime)
+                                    _check_sealed_path(change["path"], sealed_globs)  # BF-904b: a repair's modify
                                     path.write_text(mod, encoding="utf-8")
                                     if change["path"] not in modified_files:
                                         modified_files.append(change["path"])
                             else:
                                 path.parent.mkdir(parents=True, exist_ok=True)
-                                _check_sealed_path(path, runtime)
+                                _check_sealed_path(change["path"], sealed_globs)  # BF-904b: a repair's create
                                 pre_existing = path.exists() and change["path"] not in written
                                 path.write_text(
                                     change["content"], encoding="utf-8",
@@ -3557,9 +3691,7 @@ async def execute_approved_build(
                                         modified_files.append(change["path"])
                                 elif change["path"] not in written:
                                     written.append(change["path"])
-                            err = _validate_python(path)
-                            if err:
-                                validation_errors.append(err)
+                            syntax_checked[path] = None  # BF-904b: a repair's file, read again at 5.5
                         finally:
                             # Settled however the block ends: a write or the validation can raise
                             # after the file has changed, and the change must still be disclosed.
@@ -3610,7 +3742,10 @@ async def execute_approved_build(
                     git_tampered,
                 )
 
-        # 5.5. Block commit if validation errors (syntax errors) exist
+        # 5.5. Block commit if validation errors (syntax errors) exist. BF-904b (#1585): the refusals stand;
+        # syntax is read now, on the files as the build and its tests left them.
+        # BF-904b A3: only inside the work tree; an alias the tests left that leads out of it is refused unread.
+        syntax_errors = _syntax_errors(Path(work_dir), list(syntax_checked))
         if identity_lost:
             result.error = (
                 "Repository identity changed during the build; refused before commit"
@@ -3624,8 +3759,9 @@ async def execute_approved_build(
                 "hooks before running git there."
             )
             result.success = False
-        elif validation_errors:
-            result.error = "Syntax errors:\n" + "\n".join(validation_errors)
+        elif validation_errors or syntax_errors:
+            # BF-904b: the lead is unchanged (the resolve route and the tests read it); refusals first.
+            result.error = "Syntax errors:\n" + "\n".join(validation_errors + syntax_errors)
             result.success = False
         # 6. Commit — only if tests passed OR tests were not run
         elif written or modified_files:

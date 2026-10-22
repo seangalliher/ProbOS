@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -184,30 +183,20 @@ class TestSealedCore:
         assert first is second
 
     def test_check_sealed_path_warns_when_enforce_true(self, caplog) -> None:
-        from probos.cognitive.builder import _check_sealed_path
-        runtime = SimpleNamespace(
-            config=SimpleNamespace(
-                extensions=SimpleNamespace(enforce_sealed_core=True)
-            )
-        )
-        # Force a sealed glob that matches our test path — patch the helper to
-        # bypass the project sealed_modules.yaml lookup by providing the glob
-        # via the underlying is_sealed_path. We use the real function with a
-        # path we know is in the default sealed list.
+        from probos.cognitive.builder import _check_sealed_path, _sealed_globs
+        # BF-904b (#1585): the check now takes the change's repository-relative path and the globs its caller
+        # loaded because enforce_sealed_core is on. It used to take the runtime, and production handed it an
+        # absolute path that no glob matched, so this test passed while the check never fired.
         load_sealed_globs.cache_clear()
         with caplog.at_level(logging.WARNING):
-            _check_sealed_path(Path("src/probos/substrate/agent.py"), runtime)
+            _check_sealed_path("src/probos/substrate/agent.py", _sealed_globs())
         assert any("sealed-core" in r.message for r in caplog.records)
 
     def test_check_sealed_path_silent_when_enforce_false(self, caplog) -> None:
         from probos.cognitive.builder import _check_sealed_path
-        runtime = SimpleNamespace(
-            config=SimpleNamespace(
-                extensions=SimpleNamespace(enforce_sealed_core=False)
-            )
-        )
+        # BF-904b (#1585): with enforce_sealed_core off the caller loads no globs, so the check is given none.
         with caplog.at_level(logging.WARNING):
-            _check_sealed_path(Path("src/probos/substrate/agent.py"), runtime)
+            _check_sealed_path("src/probos/substrate/agent.py", ())
         assert not any("sealed-core" in r.message for r in caplog.records)
 
 

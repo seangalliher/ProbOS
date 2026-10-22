@@ -426,7 +426,7 @@ async def _execute_build(
 
     BF-904a (#1585): *run_tests* is False only for the Captain's ``commit_override``.
     """
-    from probos.cognitive.builder import execute_approved_build
+    from probos.cognitive.builder import execute_approved_build, sealed_core_enforced
 
     try:
         rt.emit_event(EventType.BUILD_PROGRESS, {
@@ -445,6 +445,7 @@ async def _execute_build(
             run_tests=run_tests,  # BF-904a: False only for the Captain's commit_override
             llm_client=getattr(rt, "llm_client", None),
             escalation_hook=None,
+            enforce_sealed_core=sealed_core_enforced(rt),  # BF-904b (#1585): the runtime's flag; no runtime is passed
         )
 
         if result.success:

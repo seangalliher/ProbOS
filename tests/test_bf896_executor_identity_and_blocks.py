@@ -698,10 +698,20 @@ async def _pinned_worktree(root: Path) -> tuple[Path, Path, Path, str]:
     return base, victim, wt, pin
 
 
-def test_expected_git_dir_is_an_optional_last_parameter() -> None:
+def test_expected_git_dir_keeps_its_position_and_only_optional_parameters_follow_it() -> None:
+    # BF-904b (#1585): this test asserted that expected_git_dir is the last parameter, and BF-904b adds
+    # enforce_sealed_core after it. It now asserts the property it named: every parameter the signature had keeps
+    # its name, index and kind, so no existing positional call changes meaning, and the new flag follows them.
     parameters = list(inspect.signature(execute_approved_build).parameters.values())
-    assert parameters[-1].name == "expected_git_dir", "last, so no existing positional call changes meaning"
-    assert parameters[-1].default is None
+    before = [
+        "file_changes", "spec", "work_dir", "run_tests", "max_fix_attempts", "llm_client",
+        "escalation_hook", "builder_source", "runtime", "specialty", "expected_git_dir",
+    ]
+    kept = parameters[: len(before)]
+    assert [p.name for p in kept] == before, "no existing positional call changes meaning"
+    assert all(p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for p in kept), "each can still be passed by position"
+    assert kept[-1].default is None
+    assert "enforce_sealed_core" in [p.name for p in parameters[len(before) :]], "BF-904b's flag follows expected_git_dir"
     assert all(p.default is not inspect.Parameter.empty for p in parameters[3:]), "everything after work_dir is optional"
 
 
@@ -1053,6 +1063,8 @@ async def test_native_visiting_path_does_not_seed_outside_its_temp_dir(
     original = "".join(f"value_{i:04d} = {i}  # padding that makes this file large enough to be localized\n" for i in range(800))
     target = tmp_path / "big_target.py"
     target.write_bytes(original.encode("utf-8"))
+    # BF-904b (#1585): an old modification time, so a rewrite with the same bytes is visible too (below).
+    os.utime(target, ns=(1_000_000_000, 1_000_000_000))
     reference = "pyproject.toml"
     assert (builder_module._PROJECT_ROOT / reference).is_file(), "premise: a project-relative reference exists"
     assert len(original) > BuilderAgent._LOCALIZE_THRESHOLD, "premise: perceive will localize this target"
@@ -1079,9 +1091,12 @@ async def test_native_visiting_path_does_not_seed_outside_its_temp_dir(
     # control, first: a project-relative key IS seeded under the session directory, with the text the adapter was handed
     assert reference in adapter.files and reference in adapter.seeded, "control: seeding ran and wrote a relative key inside"
     assert adapter.seeded[reference].decode("utf-8").replace("\r\n", "\n") == adapter.files[reference]
-    # premise: the absolute key reached the adapter carrying an excerpt, not the file
+    # BF-904b (#1585): this premise used to be that the absolute key reached the adapter carrying an excerpt. The
+    # adapter now gets the mapping the seed returns (whole files, session-relative keys), so the absolute key is
+    # dropped before the adapter as well as from the disk, and a rewrite would write the same bytes: the test
+    # also pins the file's modification time, set to an old value above.
     key = str(target)
-    assert os.path.isabs(key) and key in adapter.files
-    assert adapter.files[key] != original and len(adapter.files[key]) < len(original), "premise: the target was localized"
+    assert os.path.isabs(key) and key not in adapter.files, "the absolute key is not handed to the adapter"
 
     assert target.read_bytes() == original.encode("utf-8"), "the original file outside the temp dir was rewritten"
+    assert target.stat().st_mtime_ns == 1_000_000_000, "the original file outside the temp dir was written again"

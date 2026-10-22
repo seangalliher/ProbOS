@@ -127,6 +127,7 @@ async def init_structural_services(
         queue=build_queue,
         worktree_mgr=_worktree_mgr,
         on_build_complete=on_build_complete_fn,
+        enforce_sealed_core=config.extensions.enforce_sealed_core,  # BF-904b (#1585): AD-481f's observation, off by default
     )
     await build_dispatcher.start()
     logger.info("build-dispatcher started")
