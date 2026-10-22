@@ -23,6 +23,7 @@ from probos.integrations.mcp_bridge.client import (
     MCP_PROTOCOL_VERSION,
 )
 from probos.types import IntentDescriptor, IntentMessage
+from probos.visiting_officers import is_visiting_identity
 
 if TYPE_CHECKING:
     from probos.config import FederationMCPServerConfig
@@ -39,6 +40,59 @@ _NOT_JSON_RPC_2_0 = 'Invalid Request: a JSON-RPC 2.0 request carries "jsonrpc": 
 MAX_REQUEST_BYTES = 1_048_576  # BF-875: one JSON-RPC request; cost: a larger request is refused with 413 (the HXI games send a few hundred bytes)
 _TOO_LARGE = f"Invalid Request: the request body exceeds {MAX_REQUEST_BYTES} bytes"
 _BIND_FAILED = "AD-480a: MCP server bind failed (port %d): %s; the MCP server is not listening and ProbOS carries on (BF-884)"
+MAX_ARGUMENT_VALUES = 10_000  # BF-903: values the visitor walk counts, queues and reads in one tools/call, a container counted from its length before its children are read (A4); cost: a call with more is refused (the HXI games send a handful)
+REFUSED_VISITOR_UNBOUND = "visitor_unbound"
+REFUSED_ARGUMENTS_UNWALKED = "arguments_unwalked"
+_VISITOR_REFUSALS = {
+    REFUSED_VISITOR_UNBOUND: (
+        "Tool {name!r} was refused over MCP (BF-903): its arguments name a visiting officer, and "
+        "this server cannot bind a call to a visiting officer's session (AD-1342 will)"
+    ),
+    REFUSED_ARGUMENTS_UNWALKED: (
+        f"Tool {{name!r}} was refused over MCP (BF-903): its arguments hold more than "
+        f"{MAX_ARGUMENT_VALUES} values, so they could not be checked for a visiting officer"
+    ),
+}
+
+
+def visitor_argument_refusal(arguments: dict[str, Any], identity_registry: Any) -> str | None:
+    """BF-903 (#1581): why a tools/call's arguments may not be dispatched, or None when they may.
+
+    The server dispatches as the handling agent and holds no visitor's session (BF-875's token is
+    a federation peer's), so a call whose arguments name a visiting officer is refused rather than
+    run unscoped. Every key and every string value counts, at any depth in objects and arrays,
+    when the whole string is a visiting officer's DID or certificate UUID
+    (``is_visiting_identity``); text that merely contains one is not an actor id. The walk is
+    iterative, so nesting costs no stack. It counts an object's keys and values, or an array's
+    items, from its length before it reads or queues any of them, so it reads, queues and looks up
+    at most ``MAX_ARGUMENT_VALUES`` values (A4); a call holding more is refused rather than
+    dispatched with values nobody read. A call that both holds more and names a visiting officer is
+    refused for whichever the walk meets first; either way it is refused. With no identity registry
+    no visiting certificate exists.
+    """
+    if identity_registry is None:
+        return None
+    pending: list[Any] = [arguments]
+    counted = 1  # the arguments object itself
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            width = 2 * len(value)  # BF-903 (A4): a key and a value per entry, counted before either is read
+        elif isinstance(value, list):
+            width = len(value)
+        elif is_visiting_identity(identity_registry, value):
+            return REFUSED_VISITOR_UNBOUND
+        else:
+            continue
+        counted += width
+        if counted > MAX_ARGUMENT_VALUES:  # BF-903 (A4): refused before a container's children are read or queued
+            return REFUSED_ARGUMENTS_UNWALKED
+        if isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        else:
+            pending.extend(value)
+    return None
 
 
 def bearer_token_matches(authorization: str, expected: str) -> bool:
@@ -421,6 +475,16 @@ class FederationMCPServer:
             )
         if not isinstance(tool_name, str) or not tool_name:  # BF-875: a name is a non-empty string
             return self._error_envelope(request_id, -32602, "name required")
+        refusal = visitor_argument_refusal(arguments, getattr(self._runtime, "identity_registry", None))
+        if refusal is not None:  # BF-903 (#1581): checked before either dispatch branch
+            logger.warning(
+                "BF-903: refused MCP tools/call %r from session %r: %s",
+                str(tool_name)[:80], str(session_id)[:80], refusal,
+            )
+            self._emit_failed("tools/call", reason=refusal, detail=str(tool_name))
+            return self._error_envelope(
+                request_id, -32602, _VISITOR_REFUSALS[refusal].format(name=str(tool_name)[:80])
+            )
 
         peer_id = (
             f"mcp-session:{session_id}"

@@ -35,6 +35,7 @@ from probos.visiting_officers import (
     VisitingOfficerRegistry,
     VisitorScopeRefused,
     is_visiting_identity,
+    require_session_capability,
     require_visitor_capability,
 )
 
@@ -274,24 +275,31 @@ async def test_the_registry_refuses_by_session_capability_and_expiry_at_use(iden
 async def test_a_visitor_is_known_by_its_certificate_and_other_ids_are_never_looked_up(
     identities: AgentIdentityRegistry, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """V7: a visiting certificate's DID is a visitor even after its session ends; a crew DID, an unknown DID,
-    the ship's DID and a missing registry are not; ids that are not DIDs are never looked up."""
+    """V7: a visiting certificate is a visitor by its DID and by its bare certificate UUID, even after its session
+    ends; a crew DID or UUID, an unknown DID or UUID, the ship's DID and a missing registry are not; an id of
+    neither shape is never looked up (BF-903 A1)."""
     officers = _officers(identities, _Clock(), [])
     session = await officers.register("visitor", [CAP_WARD_ROOM_READ])
     crew = await _crew(identities)
+    visitor_uuid = session.did.rsplit(":", 1)[1]
     assert is_visiting_identity(identities, session.did) is True
+    assert is_visiting_identity(identities, visitor_uuid) is True
     officers.deregister(session.did)
     assert is_visiting_identity(identities, session.did) is True
+    assert is_visiting_identity(identities, visitor_uuid) is True
     assert is_visiting_identity(identities, crew.did) is False
+    assert is_visiting_identity(identities, crew.agent_uuid) is False
+    assert is_visiting_identity(identities, UNKNOWN_UUID) is False
     assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}:{UNKNOWN_UUID}") is False
     assert is_visiting_identity(identities, f"did:probos:{INSTANCE_ID}") is False
     assert is_visiting_identity(None, session.did) is False
 
     def _no_lookup(_uuid: str) -> None:
-        raise AssertionError("not expected: an id that is not a DID was looked up")
+        raise AssertionError("not expected: an id that is neither a DID nor a certificate UUID was looked up")
 
     monkeypatch.setattr(identities, "get_by_uuid", _no_lookup)
-    for actor in (CREW_SLOT, "captain", "system", crew.agent_uuid, "", None):
+    # A slot id, the Captain, the system, a BaseAgent default id (uuid4().hex) and an upper-case UUID match neither shape.
+    for actor in (CREW_SLOT, "captain", "system", "0123456789abcdef0123456789abcdef", visitor_uuid.upper(), "", None):
         assert is_visiting_identity(identities, actor) is False
 
 
@@ -299,7 +307,8 @@ async def test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allo
     identities: AgentIdentityRegistry,
 ) -> None:
     """V8: crew pass with or without the registry; a visitor is served a held capability, refused a missing
-    one and refused outright with the registry off; an undeclared capability raises for anyone."""
+    one and refused outright with the registry off; its certificate UUID is checked under its DID (A1); an
+    undeclared capability raises for anyone, and at ``require_session_capability`` too."""
     events: Events = []
     officers = _officers(identities, _Clock(), events)
     session = await officers.register("visitor", [CAP_WARD_ROOM_READ])
@@ -316,6 +325,18 @@ async def test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allo
             visiting_officers=officers,
         )
     assert missing.value.reason == REFUSED_CAPABILITY
+    visitor_uuid = session.did.rsplit(":", 1)[1]
+    require_visitor_capability(
+        visitor_uuid, CAP_WARD_ROOM_READ, surface="v8", identity_registry=identities, visiting_officers=officers,
+    )
+    with pytest.raises(VisitorScopeRefused) as by_uuid:
+        require_visitor_capability(
+            visitor_uuid, CAP_WARD_ROOM_POST, surface="v8.uuid", identity_registry=identities,
+            visiting_officers=officers,
+        )
+    assert (by_uuid.value.did, by_uuid.value.reason) == (session.did, REFUSED_CAPABILITY)
+    with pytest.raises(UnknownCapabilityError):
+        require_session_capability(session.did, "ward_room.pots", surface="v8", visiting_officers=officers)
     with pytest.raises(VisitorScopeRefused) as off:
         require_visitor_capability(
             session.did, CAP_WARD_ROOM_READ, surface="v8.off", identity_registry=identities, visiting_officers=None,
@@ -325,4 +346,4 @@ async def test_the_one_guard_passes_crew_and_refuses_what_the_seam_does_not_allo
         require_visitor_capability(
             CREW_SLOT, "ward_room.pots", surface="v8", identity_registry=identities, visiting_officers=officers,
         )
-    assert [p["surface"] for p in _refusals(events)] == ["v8.post"]
+    assert [p["surface"] for p in _refusals(events)] == ["v8.post", "v8.uuid"]

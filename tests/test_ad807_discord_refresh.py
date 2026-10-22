@@ -200,9 +200,14 @@ async def test_discord_still_reports_other_processing_failures(
     processing blows up still gets the broad handler's report, which proves
     the probe can observe a channel post at all -- so the empty `posted` list
     above is a real refusal, not a blind spot.
+
+    BF-903 (#1581): this control used a paired sender, but a paired sender is
+    a visiting officer and its natural language is now refused before any LLM
+    turn, so it can no longer reach the failing turn. With no pairing service
+    the gate passes the sender through to processing, the path this control
+    needs.
     """
-    service = _FakePairingService()
-    service.resolved[("discord", "42")] = "did:probos:ro"
+    service = None  # BF-903: no pairing service, so the gate passes the sender through
     runtime = _OnMessageRuntime(
         pairing_service=service, process_error=RuntimeError("the LLM turn blew up")
     )

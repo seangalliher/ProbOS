@@ -31,9 +31,10 @@ class ChannelMessage:
     reply_to_message_id: str | None = None
     # AD-802a: DID attached by `_check_pairing` for paired senders.
     # Stays None when the sender is not yet paired, when the adapter has no
-    # `channel_name` and so opts out of pairing, when the runtime has no
-    # pairing service, and on the `resolve_did` fail-open path -- so
-    # `handle_message` can legitimately run with this unset.
+    # `channel_name` and so opts out of pairing, or when the runtime has no
+    # pairing service -- so `handle_message` can legitimately run with this
+    # unset. BF-903 (#1581): once set, the sender is a visiting officer and
+    # `handle_message` serves it only an @callsign direct message, with dm.send.
     paired_did: str | None = None
 
 
@@ -59,6 +60,43 @@ class PairingNotificationError(RuntimeError):
     `GmailAdapter._poll_loop` already declines to acknowledge when
     `handle_message` raises, so this leaves the mail UNSEEN and re-fetched on
     the next poll without any edit to that adapter.
+    """
+
+
+#: BF-903 (#1581): the entire text of a `PairingLookupError`. Like BF-804's
+#: notice it names the channel and nothing else: Teams echoes it into an HTTP
+#: body (`routers/teams_webhook.py`).
+_PAIRING_LOOKUP_FAILED = (
+    "the pairing state could not be read on channel {channel}"
+)
+
+#: BF-903 (#1581): the replies a paired sender -- a visiting officer -- gets for
+#: what its visit does not allow. They name the reason and nothing internal.
+_PAIRED_NO_COMMANDS = (
+    "Slash commands are not available to a paired visitor; send @callsign "
+    "<message> to reach a crew member (BF-903)."
+)
+_PAIRED_NO_CONVERSATION = (
+    "A paired visitor may send @callsign <message> to a crew member and "
+    "nothing else (BF-903)."
+)
+_PAIRED_DM_REFUSED = (
+    "Your message was not delivered: your visit does not allow direct "
+    "messages ({reason}) (BF-903)."
+)
+
+
+class PairingLookupError(PairingNotificationError):
+    """BF-903 (#1581): `resolve_did` failed, so whether the sender is paired is unknown.
+
+    AD-802a let such a message through (fail-open). A paired sender is a
+    visiting officer, so an unclassified one reaching the slash-command and
+    natural-language paths could be granted what pairing refuses. This is a
+    `PairingNotificationError`, so every caller's existing handling applies
+    unchanged: Gmail withholds its acknowledgement and retries on the next
+    poll; Slack's webhook returns "" and its poll, Telegram and Matrix log and
+    move on; Discord logs and posts nothing; Teams answers HTTP 200 with this
+    text. On all but Gmail the sender must send again.
     """
 
 
@@ -133,7 +171,8 @@ class ChannelAdapter(ABC):
               opt in).
             * `pairing_service.resolve_did(channel_name, user_id)`:
                 - returns a DID -> attach to `message.paired_did`, return True.
-                - raises        -> fail open, return True.
+                - raises        -> raise `PairingLookupError` (BF-903: fail
+                                   closed; a `PairingNotificationError`).
                 - returns None  -> mint pending pairing, send instructions
                                    reply, return False -- or raise
                                    `PairingNotificationError` if either step
@@ -161,13 +200,16 @@ class ChannelAdapter(ABC):
             return True
         try:
             did = pairing_service.resolve_did(self.channel_name, message.user_id)
-        except Exception:
-            logger.warning(
-                "AD-802a: resolve_did failed for channel=%s user_id=%s; "
-                "allowing message (fail-open)",
+        except Exception as exc:
+            logger.error(
+                "AD-802a/BF-903: resolve_did failed for channel=%s user_id=%s; "
+                "refusing the message (fail-closed): a sender whose pairing "
+                "cannot be read may be a visiting officer. Raising "
+                "PairingLookupError, which each caller handles as it handles "
+                "PairingNotificationError.",
                 self.channel_name, message.user_id, exc_info=True,
             )
-            return True
+            raise PairingLookupError(_PAIRING_LOOKUP_FAILED.format(channel=self.channel_name)) from exc
 
         if did is not None:
             message.paired_did = did
@@ -232,6 +274,10 @@ class ChannelAdapter(ABC):
         `PairingNotificationError` rather than returning "", so a caller with
         an acknowledgement gate (Gmail) leaves the message for the next poll
         instead of recording it as handled.
+
+        BF-903 (#1581): a paired sender is a visiting officer; `_handle_paired`
+        serves it an @callsign direct message, with dm.send, and refuses the
+        rest with a reply naming the reason.
         """
         from probos.utils.response_formatter import extract_response_text
 
@@ -242,6 +288,9 @@ class ChannelAdapter(ABC):
         text = message.text.strip()
         if not text:
             return ""
+
+        if message.paired_did is not None:  # BF-903 (#1581): a paired sender is a visiting officer
+            return await self._handle_paired(message.paired_did, text)
 
         if text.startswith("/"):
             from probos.api import _handle_slash_command
@@ -279,6 +328,43 @@ class ChannelAdapter(ABC):
             self._conversation_histories[message.channel_id] = hist[-(self._max_history * 2):]
 
         return response_text
+
+    async def _handle_paired(self, did: str, text: str) -> str:
+        """BF-903 (#1581): what a paired sender may do here -- an @callsign direct message, with dm.send.
+
+        Pairing registered the sender as a visiting officer (AD-802), so its
+        session is checked directly, at use, in AD-701's registry; with no
+        registry attached the message is refused. No declared capability grants
+        a slash command or a natural-language turn, so each is refused with a
+        reply naming the reason. The AD that wires pairing declares what more a
+        paired sender may do.
+        """
+        from probos.crew_profile import extract_callsign_mention
+        from probos.visiting_officers import CAP_DM_SEND, VisitorScopeRefused, require_session_capability
+
+        if text.startswith("/"):  # BF-903: no declared capability grants a slash command
+            logger.warning(
+                "BF-903: refused a slash command from paired sender %s on channel %s",
+                did, self.channel_name,
+            )
+            return _PAIRED_NO_COMMANDS
+        mention = extract_callsign_mention(text)
+        resolved = None if mention is None else self.runtime.callsign_registry.resolve(mention[0])
+        if mention is None or resolved is None:
+            logger.warning(
+                "BF-903: refused a natural-language turn from paired sender %s on channel %s",
+                did, self.channel_name,
+            )
+            return _PAIRED_NO_CONVERSATION
+        try:
+            require_session_capability(
+                did, CAP_DM_SEND, surface=f"channel.{self.channel_name}.dm",
+                visiting_officers=getattr(self.runtime, "visiting_officers", None),
+            )
+        except VisitorScopeRefused as refused:
+            return _PAIRED_DM_REFUSED.format(reason=refused.reason)
+        callsign, message_text = mention
+        return await self._handle_callsign_resolved(resolved, callsign, message_text)
 
     async def _handle_callsign_resolved(self, resolved: dict, callsign: str, message_text: str) -> str:
         """Route to a resolved crew member (AD-397, BF-009). One-shot, no session."""

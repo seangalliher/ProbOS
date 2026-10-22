@@ -22,9 +22,11 @@ Design decisions
   ``--cap`` choose among the declared names; an undeclared one is refused
   by name, so a typo can neither grant nor deny in silence.
 - **One guard** (BF-903): every path that acts for an actor id calls
-  ``require_visitor_capability`` before acting. A crew member's id is
-  never looked up; a visiting officer's DID must hold the capability in a
-  live session, read at use.
+  ``require_visitor_capability`` before acting. A crew member's slot id is
+  never looked up; a visiting officer, named by its DID or its bare
+  certificate UUID, must hold the capability in a live session, read at
+  use. A path that already knows its sender is a visitor (a paired channel
+  sender) calls ``require_session_capability``.
 - **Registry storage is in-memory** for v1. Persistence is a follow-up
   AD-701b once the cap surface stabilizes.
 - **DID issuance delegates to AgentIdentityRegistry** — we never invent
@@ -306,27 +308,65 @@ class VisitingOfficerRegistry:
             )
 
 
-def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
-    """BF-903: whether ``actor_id`` is the DID of a visiting officer's birth certificate.
+def visiting_certificate(identity_registry: Any, actor_id: object) -> Any:
+    """BF-903: the birth certificate of the visiting officer ``actor_id`` names, or None.
 
-    Only a did:probos agent DID is looked up, in the identity registry's in-memory certificate
-    cache (``get_by_uuid``, which never raises), so a slot id, a callsign, "captain" or "system"
-    costs no lookup and is never refused here. The certificate outlives its session, so an
-    expired or deregistered visitor is still recognised and refused. BF-907's
-    ``resolve_slot_id`` and AD-1346's ``IdentityService.resolve`` return None for a visitor,
-    which holds no slot, so they cannot classify one; this reads the agent type AD-701 sets.
+    A sovereign identity takes two key shapes (BF-907's ``is_sovereign_identity_key``): a
+    did:probos agent DID and its bare certificate UUID. Both name the visitor, because downstream
+    stores key an identity by whichever id it acts as (an author's Ward Room episode is stored
+    under the id it posts as). Only those two shapes are looked up, in the identity registry's
+    in-memory certificate cache (``get_by_uuid``, which never raises); a slot id, a callsign,
+    "captain", "system" or a 32-hex agent id matches neither and costs no lookup. A crew
+    certificate's DID or UUID is looked up and is not a visitor. The certificate outlives its
+    session, so an expired or deregistered visitor is still recognised and refused. BF-907's
+    ``resolve_slot_id`` and AD-1346's ``IdentityService.resolve`` return None for a visitor, which
+    holds no slot, so they cannot classify one; this reads the agent type AD-701 sets.
     """
-    if type(actor_id) is not str or not actor_id.startswith("did:") or identity_registry is None:
-        return False
+    if type(actor_id) is not str or identity_registry is None:
+        return None
     from probos.identity import is_sovereign_identity_key, parse_did  # BF-903: imported at use; at load this module reads only probos.config_models (A2)
 
-    parsed = parse_did(actor_id)
-    if parsed is None or parsed.get("type") != "agent":
-        return False
-    if not is_sovereign_identity_key(parsed["agent_uuid"]):  # BF-903 (A3): a malformed agent part costs no lookup
-        return False
-    cert = identity_registry.get_by_uuid(parsed["agent_uuid"])
-    return cert is not None and cert.agent_type == VISITING_AGENT_TYPE
+    if not is_sovereign_identity_key(actor_id):
+        return None
+    agent_uuid = actor_id
+    if actor_id.startswith("did:"):
+        parsed = parse_did(actor_id)
+        if parsed is None or parsed.get("type") != "agent":
+            return None
+        agent_uuid = parsed["agent_uuid"]
+        if not is_sovereign_identity_key(agent_uuid):  # BF-903 (A3): a malformed agent part costs no lookup
+            return None
+    cert = identity_registry.get_by_uuid(agent_uuid)
+    return cert if cert is not None and cert.agent_type == VISITING_AGENT_TYPE else None
+
+
+def is_visiting_identity(identity_registry: Any, actor_id: object) -> bool:
+    """BF-903: whether ``actor_id`` names a visiting officer, by its DID or its certificate UUID."""
+    return visiting_certificate(identity_registry, actor_id) is not None
+
+
+def require_session_capability(
+    did: str,
+    capability: str,
+    *,
+    surface: str,
+    visiting_officers: VisitingOfficerRegistry | None,
+) -> None:
+    """BF-903 (#1581): a known visiting officer's DID must hold ``capability`` in a live session.
+
+    For a caller that already knows its sender is a visitor (a paired channel sender, AD-802),
+    and for ``require_visitor_capability`` once it has recognised one. With AD-701's registry off
+    no session exists, so the visitor is refused. An undeclared ``capability`` raises
+    ``UnknownCapabilityError``.
+    """
+    require_known_capabilities((capability,))  # BF-903: a typo in a checking path fails on its first call
+    if visiting_officers is None:
+        logger.warning(
+            "BF-903: refused visiting officer %s %r at %s: AD-701's registry is off, so no session exists",
+            did, capability, surface,
+        )
+        raise VisitorScopeRefused(did, capability, REFUSED_REGISTRY_OFF, surface)
+    visiting_officers.check(did, capability, surface=surface)
 
 
 def require_visitor_capability(
@@ -339,20 +379,16 @@ def require_visitor_capability(
 ) -> None:
     """BF-903 (#1581): the one check every path that acts for an actor id calls before it acts.
 
-    A crew member, the Captain or the system passes without a lookup. A visiting officer must
-    hold ``capability`` in a live session; with AD-701's registry off it holds none and is
-    refused. ``surface`` names the entry in the refusal and its record. An undeclared
-    ``capability`` raises ``UnknownCapabilityError`` whoever acts, so a typo in a checking
-    path fails on its first call.
+    A crew member's slot id, the Captain or the system passes without a lookup. A visiting
+    officer, named by its DID or its certificate UUID, must hold ``capability`` in a live
+    session, checked under its DID (the registry's key); with AD-701's registry off it holds
+    none and is refused. ``surface`` names the entry in the refusal and its record. An
+    undeclared ``capability`` raises ``UnknownCapabilityError`` whoever acts, so a typo in a
+    checking path fails on its first call.
     """
     if capability not in VISITOR_CAPABILITIES:
         raise UnknownCapabilityError([capability])
-    if not is_visiting_identity(identity_registry, actor_id):
+    cert = visiting_certificate(identity_registry, actor_id)
+    if cert is None:
         return
-    if visiting_officers is None:
-        logger.warning(
-            "BF-903: refused visiting officer %s %r at %s: AD-701's registry is off, so no session exists",
-            actor_id, capability, surface,
-        )
-        raise VisitorScopeRefused(actor_id, capability, REFUSED_REGISTRY_OFF, surface)
-    visiting_officers.check(actor_id, capability, surface=surface)
+    require_session_capability(cert.did, capability, surface=surface, visiting_officers=visiting_officers)
