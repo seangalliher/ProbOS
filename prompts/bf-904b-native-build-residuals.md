@@ -1,10 +1,11 @@
 # BF-904b: the sealed-core observation can fire, refusals and syntax state are kept apart, a build in review holds its files, and the visiting builder works from whole files
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, §16)
 
 **Status:** build-ready on the merged main (after BF-901 S3). **Closes #1585** (BF-904b: items 2, 4, 6 and 7; BF-904a did 1, 3 and 5). **Tier HIGH** (the build pipeline; item 2 is a governance control; M2 changes when model-written code runs). No new AD or BF number. **Base:** drafted on HEAD `90a9e040`, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061` (`origin/main` `ad5f820c` plus BF-901 S3, which touches nothing in the build pipeline). **Source:** the Architect's read-only consult of 2026-10-21.
 
-**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 9 functions, 21 cases. M2 `tests/test_bf904b_fix_loop_state.py`: 6 functions, 10 cases. M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **42 cases in 20 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2), `tests/test_bf896_executor_identity_and_blocks.py` (1, M3).
+**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 9 functions, 21 cases. M2 `tests/test_bf904b_fix_loop_state.py`: 6 functions, 10 cases. M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **42 cases in 20 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2), `tests/test_bf896_executor_identity_and_blocks.py` (2: the signature pin in M1, 7.5b, added by Amendment A1; the seed test in M3, 7.12).
 
 **Line endings:** every edited file's working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are written with LF; match and write with the file's own line endings. The new test files are written LF and checked in as git normalises them.
 
@@ -71,7 +72,7 @@ Each milestone is one Builder delegation and one local commit, built in this ord
 
 | Milestone | Production files | Tests | Focused gate |
 |---|---|---|---|
-| **M1** item 2 | `cognitive/builder.py` (7.1), `routers/build.py` (7.2), `build_dispatcher.py` (7.3), `startup/structural_services.py` (7.4) | new 7.6; update 7.5 | `tests/test_bf904b_sealed_core_observation.py tests/test_ad481_extensions.py tests/test_build_dispatcher.py tests/test_bf896_dispatcher_confinement_seam.py tests/test_bf904a_failed_build_restore.py tests/test_builder_api.py tests/test_layer_boundaries.py` |
+| **M1** item 2 | `cognitive/builder.py` (7.1), `routers/build.py` (7.2), `build_dispatcher.py` (7.3), `startup/structural_services.py` (7.4) | new 7.6; update 7.5, 7.5b | `tests/test_bf904b_sealed_core_observation.py tests/test_ad481_extensions.py tests/test_bf896_executor_identity_and_blocks.py tests/test_build_dispatcher.py tests/test_bf896_dispatcher_confinement_seam.py tests/test_bf904a_failed_build_restore.py tests/test_builder_api.py tests/test_layer_boundaries.py` |
 | **M2** item 4 and F-153 item 18 | `cognitive/builder.py` (7.7) | new 7.9; update 7.8 | `tests/test_bf904b_fix_loop_state.py tests/test_bf898_fix_loop_grader_protection.py tests/test_bf904a_failed_build_restore.py tests/test_bf904a_git_hardening.py tests/test_bf904a_unapplied_blocks.py tests/test_bf896_executor_identity_and_blocks.py tests/test_builder_guardrails.py tests/test_bf897_build_pipeline_scale_and_checkout.py tests/test_builder_agent.py tests/test_ad1344_constitution_write_refusal.py tests/test_ad1343_seam_registry.py tests/test_bf904b_sealed_core_observation.py` |
 | **M3** items 6 and 7, trackers | `build_queue.py` (7.10), `cognitive/builder.py` (7.11); trackers (§8) | new 7.13; update 7.12 | `tests/test_bf904b_dispatch_and_visiting.py tests/test_build_queue.py tests/test_build_dispatcher.py tests/test_bf896_executor_identity_and_blocks.py tests/test_builder_agent.py tests/test_copilot_adapter.py tests/test_bf904b_sealed_core_observation.py tests/test_bf904b_fix_loop_state.py tests/test_ad1184_ad_ledger.py` |
 
@@ -81,7 +82,7 @@ If an existing test outside §7 fails only because it asserted that the tests or
 
 | Value | Consumers | Effect |
 |---|---|---|
-| `execute_approved_build(enforce_sealed_core=...)` | `routers/build.py` `_execute_build` (passes it); `BuildDispatcher._execute_build` (passes it); `BuildPipeline.execute_approved_build` (does not; its runtime is read); every test that calls the executor (default `None` keeps their behaviour) | keyword with a default; positional order unchanged |
+| `execute_approved_build(enforce_sealed_core=...)` | `routers/build.py` `_execute_build` (passes it); `BuildDispatcher._execute_build` (passes it); `BuildPipeline.execute_approved_build` (does not; its runtime is read); every test that calls the executor (default `None` keeps their behaviour); the signature pin `tests/test_bf896_executor_identity_and_blocks.py:701-705` (updated, 7.5b) | keyword with a default, added after `expected_git_dir`: every earlier parameter keeps its name, index and kind, so no existing positional call changes meaning; `enforce_sealed_core` is now the last parameter |
 | `_check_sealed_path(change_path, sealed_globs)` | the four write sites; `tests/test_ad481_extensions.py` (updated, 7.5) | new signature |
 | `sealed_core_enforced(runtime)` | the executor (no flag given); the resolve route | True only for the boolean True |
 | `BuildDispatcher(enforce_sealed_core=False)` and its read-only property | `startup/structural_services.py`; `tests/test_build_dispatcher.py` and `tests/test_bf896_dispatcher_confinement_seam.py` (keyword-only default; their patched executors take `**kwargs`) | none |
@@ -117,6 +118,8 @@ All tests run on real objects: real git in `tmp_path` repositories, the real `is
 | V1 | `test_the_visiting_builder_is_seeded_with_whole_files` | the adapter mapping and the session disk hold the whole file; the native context is still an excerpt | fails |
 | V2 | `test_a_whole_file_change_from_the_visiting_builder_applies` | perceive, decide, act and execute: the visiting builder's whole-file change commits | fails (base refused) |
 | V3 | `test_transporter_changes_get_project_relative_paths[transporter, visiting]` | act gives `src/probos/pkg/mod.py` for `pkg/mod.py`, and the executor applies it | fails (missing target refused) |
+
+Updated pins, not new cases: 7.5 (the two `_check_sealed_path` tests, M1), 7.5b (the executor's signature pin, M1; Amendment A1), 7.8 (M2), 7.12 (M3).
 
 ## 7. The contract
 
@@ -490,6 +493,37 @@ REPLACE:
         with caplog.at_level(logging.WARNING):
             _check_sealed_path("src/probos/substrate/agent.py", ())
         assert not any("sealed-core" in r.message for r in caplog.records)
+```
+
+### 7.5b `tests/test_bf896_executor_identity_and_blocks.py` (M1: the test pinned expected_git_dir as the last parameter)
+
+7.1 adds `enforce_sealed_core` after `expected_git_dir`. The test's purpose (no existing positional call changes meaning) still holds and is now asserted directly; only its "last" clause was obsolete. Amendment A1 (§16).
+
+SEARCH:
+```python
+def test_expected_git_dir_is_an_optional_last_parameter() -> None:
+    parameters = list(inspect.signature(execute_approved_build).parameters.values())
+    assert parameters[-1].name == "expected_git_dir", "last, so no existing positional call changes meaning"
+    assert parameters[-1].default is None
+    assert all(p.default is not inspect.Parameter.empty for p in parameters[3:]), "everything after work_dir is optional"
+```
+REPLACE:
+```python
+def test_expected_git_dir_keeps_its_position_and_only_optional_parameters_follow_it() -> None:
+    # BF-904b (#1585): this test asserted that expected_git_dir is the last parameter, and BF-904b adds
+    # enforce_sealed_core after it. It now asserts the property it named: every parameter the signature had keeps
+    # its name, index and kind, so no existing positional call changes meaning, and the new flag follows them.
+    parameters = list(inspect.signature(execute_approved_build).parameters.values())
+    before = [
+        "file_changes", "spec", "work_dir", "run_tests", "max_fix_attempts", "llm_client",
+        "escalation_hook", "builder_source", "runtime", "specialty", "expected_git_dir",
+    ]
+    kept = parameters[: len(before)]
+    assert [p.name for p in kept] == before, "no existing positional call changes meaning"
+    assert all(p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for p in kept), "each can still be passed by position"
+    assert kept[-1].default is None
+    assert "enforce_sealed_core" in [p.name for p in parameters[len(before) :]], "BF-904b's flag follows expected_git_dir"
+    assert all(p.default is not inspect.Parameter.empty for p in parameters[3:]), "everything after work_dir is optional"
 ```
 
 ### 7.6 New file: `tests/test_bf904b_sealed_core_observation.py` (M1)
@@ -1740,9 +1774,9 @@ REPLACE:
 - `BuildPipeline`, `CopilotBuilderAdapter`, `seed_session_directory`, `_localize_context`, `_should_use_transporter`, `transporter_build`.
 - `BuildQueue.active_count`, its transitions, `BuildDispatcher` concurrency, `WorktreeManager`.
 
-## 10. Mutation rows (36 rows; whole stripped lines; each occurs once in its file after §7)
+## 10. Mutation rows (37 rows; whole stripped lines; each occurs once in its file after §7)
 
-Tier HIGH: every changed production file has rows. Run each row against the three new test files on the contract-applied tree, after an unmutated baseline run of those files that passes. Restore each file before the next row. "First failing" is in file order (S, then F, then D/V); where another test fails first, run the named one alone against the mutant.
+Tier HIGH: every changed production file has rows. Run each row against the three new test files on the contract-applied tree, after an unmutated baseline run of those files that passes. A18's killer is the updated pin in `tests/test_bf896_executor_identity_and_blocks.py` (7.5b), not a new file: run that test alone against the mutant, after an unmutated run of it that passes. Restore each file before the next row. "First failing" is in file order (S, then F, then D/V); where another test fails first, run the named one alone against the mutant.
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -1763,6 +1797,7 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | A15 | `src/probos/build_dispatcher.py` | `self._enforce_sealed_core = enforce_sealed_core` | `self._enforce_sealed_core = False` | S6 `[on]` |
 | A16 | `src/probos/build_dispatcher.py` | `return self._enforce_sealed_core` | `return False` | S6 `[on]` (the property assertion; also S7) |
 | A17 | `src/probos/startup/structural_services.py` | `enforce_sealed_core=config.extensions.enforce_sealed_core,  # BF-904b (#1585): AD-481f's observation, off by default` | `enforce_sealed_core=False,` | S7 |
+| A18 | `src/probos/cognitive/builder.py` | `specialty: str = "general",` | `*, specialty: str = "general",` | 7.5b `test_expected_git_dir_keeps_its_position_and_only_optional_parameters_follow_it` in `tests/test_bf896_executor_identity_and_blocks.py` (the kind assertion: a positional call would no longer reach `specialty` or `expected_git_dir`); run it alone |
 | B1 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a main-loop modify, read again at 5.5` | `pass` | F5 `[main-modify]` |
 | B2 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a main-loop create, read again at 5.5` | `pass` | F5 `[main-create]` |
 | B3 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a repair's file, read again at 5.5` | `pass` | F5 `[repair]` |
@@ -1783,7 +1818,7 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | C5 | `src/probos/cognitive/builder.py` | `copilot_result = await adapter.execute(spec, seeded)` | `copilot_result = await adapter.execute(spec, all_files)` | V1 |
 | C6 | `src/probos/cognitive/builder.py` | `file_changes = _normalize_change_paths(decision.get("file_changes", []))` | `file_changes = decision.get("file_changes", [])` | V3 `[transporter]` |
 
-Lines without a row: the docstrings and comments; `errors: list[str] = []` and `return errors` (any change breaks every F test); the dispatcher's signature line (S6 covers the keyword).
+Lines without a row: the docstrings and comments; `errors: list[str] = []` and `return errors` (any change breaks every F test); the dispatcher's signature line (S6 covers the keyword); the executor's `expected_git_dir` and `enforce_sealed_core` parameter lines (each contains a `|`, which a table cell cannot hold as one string; A18 mutates the `specialty` line instead, removing the flag's default is a syntax error, and by §6's premises S3 `[unset-without-runtime]` and S8 cover a changed default).
 
 ## 11. Verified Against Codebase (2026-10-21, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061`, HEAD `90a9e040`)
 
@@ -1839,7 +1874,10 @@ src/probos/worktree_manager.py: 21-28 WorktreeInfo(path, branch, build_id, creat
 src/probos/cognitive/llm_client.py: 2675 class MockLLMClient
 tests/test_ad481_extensions.py: 20-25 imports (22 SimpleNamespace, used only at 188-206); 186-211 the two _check_sealed_path tests
 tests/test_bf898_fix_loop_grader_protection.py: 451-471 helpers; 626-657 the validation-raise test
-tests/test_bf896_executor_identity_and_blocks.py: 1016-1045 _SeedProbe*; 1047-1087 the seed test (1085 the excerpt premise)
+tests/test_bf896_executor_identity_and_blocks.py: 1016-1045 _SeedProbe*; 1047-1087 the seed test (1085 the excerpt premise);
+  28 import inspect; 701-705 the signature pin (703 parameters[-1].name == "expected_git_dir") (A1)
+tests/test_ad476_specialized_builders.py: 173-176, 183-185 read `specialty` by name and default only (unaffected) (A1)
+A1 dry-run tree e7fcbbe9: builder.py 3183 specialty: str = "general", 3184 expected_git_dir, 3185 enforce_sealed_core (last)
 tests/test_bf904a_failed_build_restore.py: 95-170 helpers copied here; 237-246 _FakeModel; 265-270 _route_modules
 tests/test_bf907_trust_identity.py: 1466-1481 boot config and _boot
 DECISIONS.md: 170 BF-904a D31; 534-545 BF-901 S3 entry, 545 its Reversal; 547 next heading
@@ -1874,6 +1912,20 @@ FOUND: test_ad481_extensions.py:186-211 (updated, 7.5); test_bf896_executor_iden
        test_build_queue.py:99-111 (dispatched only; unaffected); test_builder_agent.py:2079-2093 (_validate_python unit; unaffected)
 HOLDS: yes
 
+CLAIM: (A1) no test, script or doc other than test_bf896:701-705 pins the parameter order, a default or the last parameter
+       of execute_approved_build, BuildDispatcher, _check_sealed_path, seed_session_directory or BuildQueue
+RUN:   Grep "inspect\.signature|getfullargspec|co_varnames|co_argcount|__defaults__|__kwdefaults__|parameters\[-1\]|\.parameters\b"
+       (repository, .claude excluded; 89 files); Grep "(signature|getfullargspec|getargspec)\([^)]*(execute_approved_build|
+       BuildDispatcher|_check_sealed_path|seed_session_directory|BuildQueue|has_footprint_conflict|_execute_build|_syntax_errors|
+       _normalize_change_paths|perceive|\bact\b)"; Grep "(autospec|create_autospec|spec=|wraps=)" with those names in tests/;
+       Grep "last parameter|optional last|last positional|positional call|positional order|parameter order|argument order";
+       Grep "expected_git_dir"; Grep the five names outside src/, tests/, prompts/ (no pattern ends in $)
+FOUND: test_bf896_executor_identity_and_blocks.py:701-705 (updated, 7.5b); test_ad476_specialized_builders.py:173-176, :183-185
+       (by name; unaffected); test_build_dispatcher.py:144 (reads the expected_git_dir keyword; unaffected);
+       prompts/archive/ad-476-specialized-builders-v1.md:971, :981 (archived); scripts/: none; docs/: prose and the
+       enforce_sealed_core config field (unchanged); ui/: BuildQueueItem types
+HOLDS: yes
+
 CLAIM: no roadmap row for BF-904
 RUN:   Grep "BF-904" docs/development/roadmap.md (count)
 FOUND: 0
@@ -1894,7 +1946,7 @@ HOLDS: yes
 | db-connect, unowned-task, store registry | none |
 | config | No new field; `config/system.yaml` untouched; reads `config.extensions.enforce_sealed_core` |
 | srp-size | `builder.py` grows about 60 lines; new helpers 10 to 20 lines each; test files about 330, 230 and 260 lines |
-| Hidden pins | 19 `startswith("Syntax errors")` assertions (lead kept); `test_build_dispatcher.py` constructor calls (keyword default); `tests/test_bf896_dispatcher_confinement_seam.py` executor wrappers take `**kwargs` |
+| Hidden pins | `tests/test_bf896_executor_identity_and_blocks.py:701-705`, the executor's signature pin (updated, 7.5b; found by the dry run, Amendment A1); 19 `startswith("Syntax errors")` assertions (lead kept); `test_build_dispatcher.py` constructor calls (keyword default); `tests/test_bf896_dispatcher_confinement_seam.py` executor wrappers take `**kwargs` |
 | Ledger | M3 (§8) |
 
 ## 13. What I could not verify here, and Prior Art
@@ -1920,12 +1972,27 @@ HOLDS: yes
 12. `act` normalises every `transporter_complete` change; a project-relative path is unchanged.
 13. No change to `builder_write_refusal`, `fix_loop_write_refusal`, the native harness route, the worktree start point or `config/system.yaml`.
 14. Each updated test changes only where it pinned the old behaviour, with an inline `BF-904b (#1585)` reason; none is deleted or weakened elsewhere.
+15. `execute_approved_build`'s eleven earlier parameters keep their names, order and positional-or-keyword kind; `enforce_sealed_core` follows `expected_git_dir` with default `None`. 7.5b renames its test only because the old name said "last". It still asserts `expected_git_dir`'s index and `None` default and that everything after `work_dir` is optional; it drops only the "nothing follows" clause.
 
 ## 15. Acceptance criteria
 
-1. (2) Both production callers give the executor the flag; `is_sealed_path` receives the repository-relative, normalised, case-folded path; a write to a sealed glob is observed with the flag on and nothing is read or logged with it off (S1 to S8; A1 to A17).
+1. (2) Both production callers give the executor the flag; `is_sealed_path` receives the repository-relative, normalised, case-folded path; a write to a sealed glob is observed with the flag on and nothing is read or logged with it off (S1 to S8; A1 to A18). Every parameter the executor had keeps its name, index and kind, and the updated pin asserts it (7.5b).
 2. (4) Refusals are permanent; syntax is read on the current files after the loop; `all_changed_files` is recomputed at each attempt; a build with a refusal runs no review, tests or repair (F1 to F6; B1 to B13).
 3. (6) `has_footprint_conflict` includes `reviewing`; the force-delete clause is recorded as met by BF-904a D31 (D1, D2; C1, C2).
 4. (7) The visiting builder receives whole files, the excerpts serve only the native prompt context, and `transporter_complete` changes go through `_normalize_change_paths` (V1 to V3; C3 to C6).
 5. Each item has a test that fails today (§6). Every mutation row is killed by the named test. One broad gate and one PR for the three milestones; the security-relevant M1 gets the cross-family Diff Reviewer, as do M2 and M3 under tier HIGH.
 6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (2026-10-21): the executor's signature pin
+
+**Found by:** the orchestrator's whole-contract dry run (tree `e7fcbbe9824c460126a6430faac45fc846dfc834`, M1 to M3 applied by tool; 40 test files on the M3 state: 2,442 passed, 14 skipped, 1 failed). The failure was `tests/test_bf896_executor_identity_and_blocks.py::test_expected_git_dir_is_an_optional_last_parameter` (`:701-705`), which asserted that `expected_git_dir` is the last parameter; 7.1 adds `enforce_sealed_core` after it. §5 said "positional order unchanged". That was true of the test's purpose, not of its assertion. The absence searches covered behaviour pins and not signature pins.
+
+**Decision.** (A) **chosen:** assert the property the test named: the eleven earlier parameters keep name, index and kind; `expected_git_dir` keeps its `None` default; the flag follows; everything after `work_dir` is optional. The test is renamed, not deleted. (B) Make the flag keyword-only: rejected; it is still last in signature order, so the old assertion still fails. (C) Put the flag before `expected_git_dir`: rejected; it changes the meaning of a positional call that passes `expected_git_dir`, which is what the pin forbids. (D) Delete or skip the pin: rejected (§14 item 14).
+
+**Milestone.** M1, which introduces the parameter; the file joins M1's focused gate. 7.5b edits `:701-705` and 7.12 (M3) edits `:1054-1055` and `:1082-1086`: disjoint, and neither replacement contains the other's search text.
+
+**Mutation.** A18 (`specialty` made keyword-only) is the one-line, importable signature mutant that only the pin's kind assertion kills. Rows: 36 to 37. New cases unchanged (42 in 20 functions); updated test functions 4 to 5.
+
+**Other pins.** None that the dry run's file list would not have run (Absence Verified, A1).
+
+**Unchanged:** D1 to D11 and every production pair; only §5's "positional order unchanged" is corrected.
