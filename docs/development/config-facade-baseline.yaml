@@ -51,8 +51,8 @@ surface_counts:
   field_definitions: 1869
   incidental: 13
   own_models: 227
-  owned: 294
-  public_names: 307
+  owned: 295
+  public_names: 308
 canonical_dump_sha256: 3a54bc4117dd58b8dae7371254f7ef4cde296052a2630ec049726d4a2fff579e
 non_instantiable:
 - A2APeerConfig
@@ -445,6 +445,7 @@ names:
   model_validator: {kind: function, removable_in: e3, tier: incidental}
   os: {kind: module, removable_in: e3, tier: incidental}
   resolve_archive_db_path: {kind: function, tier: owned}
+  resolve_records_repo_path: {kind: function, tier: owned}
   urllib: {kind: module, removable_in: e3, tier: incidental}
   yaml: {kind: module, removable_in: e3, tier: incidental}
 models:
