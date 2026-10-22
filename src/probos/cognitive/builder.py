@@ -3082,33 +3082,76 @@ def _unapplied_blocks(changes: list[dict[str, Any]], work_dir: str) -> list[str]
     return refusals
 
 
-def _check_sealed_path(target_path: "Path", runtime: "ProbOSRuntime | None") -> None:
-    """AD-481f: warn-only sealed-core pre-write check.
+#: BF-904b (#1585): the sealed-core policy this ProbOS runs under. Never the work tree's copy (a build writes
+#: the work tree, config/ included, so it could rewrite its own policy) and never a path relative to the
+#: process's working directory, which is not the repository.
+_SEALED_POLICY = _PROJECT_ROOT / "config" / "sealed_modules.yaml"
 
-    Reads `runtime.config.extensions.enforce_sealed_core` (default False).
-    When True, emits `logger.warning(...)` — never raises in v1. Hard-block
-    ships at AD-481l after AD-482 RedTeam baseline establishes false-
-    positive rate. Per-BuildSpec override (`core_modification` flag) is
-    intentionally NOT introduced in v1 — that knob lands with AD-481l when
-    the warn becomes a raise.
 
-    `runtime.config.extensions` is guaranteed by
-    `SystemConfig.extensions = Field(default_factory=ExtensionsConfig)`.
+def sealed_core_enforced(runtime: Any) -> bool:
+    """BF-904b (#1585): whether *runtime*'s config turns the sealed-core observation (AD-481f) on.
+
+    True only when ``runtime.config.extensions.enforce_sealed_core`` is the boolean True; False for None,
+    for an object without that chain (a test double) and for any other value, as the AttributeError branch
+    of the check this replaces did. The /api/build routes call it on their runtime: they pass no runtime to
+    the executor, which would switch on the pre-flight runner and Hebbian recording for them.
     """
-    if runtime is None:
-        return
     try:
-        if not runtime.config.extensions.enforce_sealed_core:
-            return
+        return runtime.config.extensions.enforce_sealed_core is True
     except AttributeError:
-        return
-    from probos.extensions.sealed_core import is_sealed_path
-    if is_sealed_path(target_path):
+        return False
+
+
+def _sealed_globs() -> tuple[str, ...]:
+    """BF-904b (#1585): the globs of this ProbOS's sealed-core policy; empty when it is missing or cannot be read.
+
+    The loader degrades a missing file, a YAML error and an OS error in the read itself. Whatever else it raises
+    on this file is caught here, of any class: an OS error from its existence check, a file that is not UTF-8,
+    and what PyYAML's constructors and composer raise on corrupt content (an impossible date, a sexagesimal float
+    too large, an unknown ``!!bool``, an empty ``!!int``, nesting past the recursion limit). That set is open:
+    each constructor raises what its own code raises, and a later PyYAML can add a class. So the boundary is this
+    one call, not a list (Amendment A4); the code after it handles ``str`` values only and is not guarded. One
+    warning names the file and the exception class, and the observation never changes a build's outcome (D5). A
+    ``MemoryError`` still propagates: the process, not the policy, has failed. Nothing is cached when the loader
+    raises, so each flagged build reads the file again.
+    """
+    from probos.extensions.sealed_core import load_sealed_globs
+
+    try:
+        return load_sealed_globs(str(_SEALED_POLICY))
+    except MemoryError:
+        raise  # BF-904b A4: the process is out of memory, not the policy unreadable; the build fails as before
+    except Exception as exc:  # BF-904b A4: third-party parsing of an external file; its failure set is open
         logger.warning(
-            "AD-481f: Builder writing to sealed-core path %s "
+            "BF-904b: the sealed policy %s cannot be read (%s); this build observes nothing",
+            _SEALED_POLICY, type(exc).__name__,
+        )
+        return ()  # BF-904b A2: no globs, so nothing is observed and the build goes on
+
+
+def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
+    """AD-481f: warn-only sealed-core pre-write check. BF-904b (#1585): it can fire.
+
+    *sealed_globs* is what ``execute_approved_build`` loaded at entry: the policy's globs when
+    ``enforce_sealed_core`` is on, otherwise empty, and then nothing is matched or logged. *change_path* is
+    the block's repository-relative path, which BF-894's write boundary has admitted. It is matched with ``/``
+    separators, ``.`` and doubled separators removed, and case folded on both sides, so a spelling the host's
+    filesystem resolves to a sealed file is observed on every host. A path naming nothing inside the
+    repository (absolute, or escaping with ``..``) matches no repository-relative glob; the boundary refuses
+    it before this runs. One ``logger.warning`` per write; never raises. The hard block is AD-481l, after
+    the AD-482 RedTeam baseline; the per-BuildSpec ``core_modification`` override lands with it.
+    """
+    if not sealed_globs:
+        return
+    rel = os.path.normpath(change_path.replace("\\", "/")).replace("\\", "/").casefold()
+    from probos.extensions.sealed_core import is_sealed_path
+
+    if is_sealed_path(rel, tuple(glob.casefold() for glob in sealed_globs)):
+        logger.warning(
+            "AD-481f: Builder writing to sealed-core path %r "
             "(enforce_sealed_core=True); v1 is observation-only — "
             "hard-block ships at AD-481l",
-            target_path,
+            change_path,
         )
 
 
@@ -3130,6 +3173,7 @@ async def execute_approved_build(
     runtime: ProbOSRuntime | None = None,
     specialty: str = "general",
     expected_git_dir: str | None = None,
+    enforce_sealed_core: bool | None = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -3145,6 +3189,10 @@ async def execute_approved_build(
             returned before generation began. When given, the build is refused
             at entry (before any git command or write) and again before the
             commit if *work_dir* no longer names that repository.
+        enforce_sealed_core: BF-904b (#1585). Whether writes to sealed-core paths
+            are observed (AD-481f: a warning per write, never a refusal). None
+            reads ``runtime``'s config (``BuildPipeline``); the /api/build routes
+            and the dispatcher pass the flag, because they pass no runtime.
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
@@ -3154,6 +3202,10 @@ async def execute_approved_build(
     git_tampered: str | None = None
     git_baseline: _GitSafetySnapshot | None = None
     tests_ran = False
+    # BF-904b (#1585): the sealed-core observation (AD-481f). The caller's flag, else the runtime's config;
+    # the policy is read only when it is on, before any git command or write.
+    observe_sealed = enforce_sealed_core if enforce_sealed_core is not None else sealed_core_enforced(runtime)
+    sealed_globs = _sealed_globs() if observe_sealed is True else ()
 
     # 0a. BF-897 (#1559): refuse the checkout the runtime started from (a location
     # check, see operator_checkout_refusal). Before any git command or write; no
@@ -3333,7 +3385,7 @@ async def execute_approved_build(
                     continue  # BF-904a: a file with an unmatched block is not written at all
 
                 if modified != original:
-                    _check_sealed_path(path, runtime)
+                    _check_sealed_path(change["path"], sealed_globs)  # BF-904b: the main loop's modify
                     if change["path"] not in written and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file
                         originals.setdefault(change["path"], path.read_bytes())  # BF-904a: saved before the first write
                     path.write_text(modified, encoding="utf-8")
@@ -3355,7 +3407,7 @@ async def execute_approved_build(
                 continue
 
             path.parent.mkdir(parents=True, exist_ok=True)
-            _check_sealed_path(path, runtime)
+            _check_sealed_path(change["path"], sealed_globs)  # BF-904b: the main loop's create
             pre_existing = path.exists() and change["path"] not in written
             if pre_existing and _first_found(work_dir, change["path"], found_keys):  # BF-904a A4 (D32): once per file, a create over it too
                 originals.setdefault(change["path"], path.read_bytes())  # BF-904a: a create over an existing file saves it first
@@ -3540,13 +3592,13 @@ async def execute_approved_build(
                                     late_refused = True
                                     break
                                 if mod != original:
-                                    _check_sealed_path(path, runtime)
+                                    _check_sealed_path(change["path"], sealed_globs)  # BF-904b: a repair's modify
                                     path.write_text(mod, encoding="utf-8")
                                     if change["path"] not in modified_files:
                                         modified_files.append(change["path"])
                             else:
                                 path.parent.mkdir(parents=True, exist_ok=True)
-                                _check_sealed_path(path, runtime)
+                                _check_sealed_path(change["path"], sealed_globs)  # BF-904b: a repair's create
                                 pre_existing = path.exists() and change["path"] not in written
                                 path.write_text(
                                     change["content"], encoding="utf-8",

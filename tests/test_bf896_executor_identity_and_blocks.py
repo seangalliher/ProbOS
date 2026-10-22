@@ -698,10 +698,20 @@ async def _pinned_worktree(root: Path) -> tuple[Path, Path, Path, str]:
     return base, victim, wt, pin
 
 
-def test_expected_git_dir_is_an_optional_last_parameter() -> None:
+def test_expected_git_dir_keeps_its_position_and_only_optional_parameters_follow_it() -> None:
+    # BF-904b (#1585): this test asserted that expected_git_dir is the last parameter, and BF-904b adds
+    # enforce_sealed_core after it. It now asserts the property it named: every parameter the signature had keeps
+    # its name, index and kind, so no existing positional call changes meaning, and the new flag follows them.
     parameters = list(inspect.signature(execute_approved_build).parameters.values())
-    assert parameters[-1].name == "expected_git_dir", "last, so no existing positional call changes meaning"
-    assert parameters[-1].default is None
+    before = [
+        "file_changes", "spec", "work_dir", "run_tests", "max_fix_attempts", "llm_client",
+        "escalation_hook", "builder_source", "runtime", "specialty", "expected_git_dir",
+    ]
+    kept = parameters[: len(before)]
+    assert [p.name for p in kept] == before, "no existing positional call changes meaning"
+    assert all(p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for p in kept), "each can still be passed by position"
+    assert kept[-1].default is None
+    assert "enforce_sealed_core" in [p.name for p in parameters[len(before) :]], "BF-904b's flag follows expected_git_dir"
     assert all(p.default is not inspect.Parameter.empty for p in parameters[3:]), "everything after work_dir is optional"
 
 

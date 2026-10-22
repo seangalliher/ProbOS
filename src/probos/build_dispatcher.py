@@ -48,6 +48,7 @@ class BuildDispatcher:
         builder_timeout: float = 300.0,
         run_tests: bool = True,
         on_build_complete: Callable[[QueuedBuild], Awaitable[None]] | None = None,
+        enforce_sealed_core: bool = False,
     ) -> None:
         self._queue = queue
         self._worktree_mgr = worktree_mgr
@@ -57,6 +58,9 @@ class BuildDispatcher:
         self._builder_timeout = builder_timeout
         self._run_tests = run_tests
         self._on_build_complete = on_build_complete
+        # BF-904b (#1585): AD-481f's sealed-core observation for the builds this dispatcher runs, given at
+        # construction from config.extensions.enforce_sealed_core (startup/structural_services.py).
+        self._enforce_sealed_core = enforce_sealed_core
         self._task: asyncio.Task[None] | None = None
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
         self._running: bool = False
@@ -71,6 +75,11 @@ class BuildDispatcher:
     def active_builds(self) -> list[str]:
         """Build IDs currently being executed."""
         return list(self._active_tasks.keys())
+
+    @property
+    def enforce_sealed_core(self) -> bool:
+        """BF-904b (#1585): whether the builds this dispatcher runs observe writes to sealed-core paths."""
+        return self._enforce_sealed_core
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -219,6 +228,7 @@ class BuildDispatcher:
                 run_tests=self._run_tests,
                 builder_source="visiting",
                 expected_git_dir=expected_git_dir,
+                enforce_sealed_core=self._enforce_sealed_core,  # BF-904b (#1585): AD-481f's observation
             )
             executor_branch = build_result.branch_name
 
