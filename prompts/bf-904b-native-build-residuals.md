@@ -2,10 +2,11 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, §16; Amendment A2, §17)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22 (Amendment A3, §18)
 
 **Status:** build-ready on the merged main (after BF-901 S3). **Closes #1585** (BF-904b: items 2, 4, 6 and 7; BF-904a did 1, 3 and 5). **Tier HIGH** (the build pipeline; item 2 is a governance control; M2 changes when model-written code runs). No new AD or BF number. **Base:** drafted on HEAD `90a9e040`, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061` (`origin/main` `ad5f820c` plus BF-901 S3, which touches nothing in the build pipeline). **Source:** the Architect's read-only consult of 2026-10-21.
 
-**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 10 functions, 24 cases (S9 added by Amendment A2). M2 `tests/test_bf904b_fix_loop_state.py`: 6 functions, 10 cases. M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **45 cases in 21 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2), `tests/test_bf896_executor_identity_and_blocks.py` (2: the signature pin in M1, 7.5b, added by Amendment A1; the seed test in M3, 7.12).
+**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 10 functions, 24 cases (S9 added by Amendment A2). M2 `tests/test_bf904b_fix_loop_state.py`: 8 functions, 15 cases (F6 `[directory]`, F7 and F8 added by Amendment A3). M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **50 cases in 23 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2; its injection point moved by Amendment A3), `tests/test_bf896_executor_identity_and_blocks.py` (2: the signature pin in M1, 7.5b, added by Amendment A1; the seed test in M3, 7.12).
 
 **Line endings:** every edited file's working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are written with LF; match and write with the file's own line endings. The new test files are written LF and checked in as git normalises them.
 
@@ -57,6 +58,7 @@ The one `branch -D` left (`builder.py:3728`) deletes `build_branch`, which `_git
 - **D9 (item 6).** `_FOOTPRINT_HOLDING_STATUSES = ("dispatched", "building", "reviewing")`. `queued` holds nothing (not generated yet); `merged` and `failed` are terminal. `approved` and `retrying` are not statuses of this queue (Absence Verified). `active_count` (worker concurrency) is unchanged. No race opens: `_try_dispatch` finds and marks a build with no await between (`build_dispatcher.py:123-130`), and `building` goes straight to `reviewing` (`:270-273`).
 - **D10 (item 7).** (A) **chosen:** whole files to the seed and the adapter, the adapter given the mapping the seed returns (as the dispatcher does, `build_dispatcher.py:191`, `:203`); the excerpts stay the native prompt context and the Transporter's size estimate; every `transporter_complete` change normalised (for a project-relative path, including the native harness's, the normaliser returns it unchanged). (B) Skip localisation on the visiting route: rejected; the route is decided after the context is built, and the native fallback needs the excerpt. (C) Whole files on disk but excerpts in the mapping: rejected; the scan compares against, and takes `base` from, the mapping (`copilot_adapter.py:819`, `:838-848`).
 - **D11 (tier).** HIGH.
+- **D12 (the final syntax read, Amendment A3).** The 5.5 read runs after model-written tests, which can leave any filesystem state, so it reads only inside the work tree. (A) **chosen:** resolve, confine, then one checked open. `realpath` of the path must lie inside `realpath(work_dir)` (by `normcase`). An `lstat` must show a regular file. One open with BF-904a's `_HOOK_OPEN_FLAGS` (no final link, no blocking on a pipe), whose `fstat` must be that same regular file (`samestat`). This is the builder's existing rule: `_write_target_key` (D32) unifies spellings with `realpath`, and the write boundary follows aliases (`builder_paths.py:12`). So an alias that stays inside the tree is read, and one that leads out is refused unread, as one `Syntax errors:` line naming the path. (B) Refuse every link, junction or reparse point between the root and the leaf: rejected. It is stricter than the writes, and a new failure for an in-tree link that M1 accepts. (C) A no-follow open of the leaf with `fstat` alone: rejected. An `lstat` of the leaf follows an ancestor junction (`S_ISREG` True, measured on CPython 3.12.13), and Windows has no `O_NOFOLLOW`. (D) `security/file_access.py`'s `read_verified_file` / `pin_directory`: rejected. They pin the whole absolute chain and refuse an alias above the work tree too (`:851`, `:873`), a new failure for a work tree under a junction or `/var`, and they need read-authority roots this executor does not hold. The helpers are private to `builder.py`; the root reaches `_syntax_errors(root, paths)` from its single call. Not closed: a process the tests left running that swaps an ancestor of the resolved path into an alias after the `realpath` and before the `lstat` (F-124 on #1523).
 
 **Disclosed effects.**
 1. With `enforce_sealed_core` on, writes to sealed paths now log. The default is off (`config_models/agentic.py:135`).
@@ -65,6 +67,7 @@ The one `branch -D` left (`builder.py:3728`) deletes `build_branch`, which `_git
 4. The visiting prompt carries whole files.
 5. Syntax errors are listed once per file, after the refusals.
 6. A Python file the tests deleted, replaced with a non-regular file, or left undecodable now fails the build as syntax state, before `git add`.
+7. (Amendment A3) A Python file that resolves outside the work tree at 5.5 (a link or junction the tests left above it or in its place) fails the build unread. One that resolves inside it is read. A build whose own write already went through a link out of the tree now fails there too (this repository tracks no symbolic link: `git ls-files -s` has no mode 120000).
 
 ## 4. Milestones
 
@@ -113,7 +116,9 @@ All tests run on real objects: real git in `tmp_path` repositories, the real `is
 | F3 | `test_a_refusal_blocks_the_commit_whatever_the_syntax_state` | a refusal blocks although every file parses | passes (guard) |
 | F4 | `test_a_build_with_a_refusal_runs_no_tests_review_or_repair` | no targeted test, review or repair after a refusal | fails |
 | F5 | `test_a_syntax_error_still_there_after_the_loop_blocks_the_commit[main-create, main-modify, repair]` | a syntax error still present blocks, naming the file, although the tests passed | passes (guard) |
-| F6 | `test_the_syntax_state_is_read_from_the_files_the_tests_left[broken, deleted, undecodable]` | what the tests left is judged | fails |
+| F6 | `test_the_syntax_state_is_read_from_the_files_the_tests_left[broken, deleted, undecodable, directory]` | what the tests left is judged | fails (`[directory]` passes on M2: a guard, Amendment A3) |
+| F7 | `test_an_alias_the_tests_leave_is_refused_and_its_target_never_parsed[ancestor, leaf]` | a directory link or junction the tests leave above the created file, or a link in its place, is refused and named, and the valid text outside the work tree is never parsed | fails (the round-1 M2 candidate parses the outside text and commits); `[leaf]` skips where no file link can be made (Windows without the privilege) (Amendment A3) |
+| F8 | `test_a_file_that_cannot_be_examined_after_the_tests_is_one_syntax_line[stat-fails, swapped-before-open]` | a failing examination after the tests, and a different file opened than the one examined, are each one line under `Syntax errors:` | fails (round-1 M2: the stat raises before the `try`; nothing checks the opened file) (Amendment A3) |
 | D1 | `test_a_build_in_review_holds_its_files` | an overlapping build waits while one is in review; a disjoint one goes; rejection releases it | fails |
 | D2 | `test_which_statuses_hold_a_builds_files[queued, dispatched, building, reviewing, merged, failed]` | the holding set is exactly dispatched, building, reviewing | fails `[reviewing]` |
 | V1 | `test_the_visiting_builder_is_seeded_with_whole_files` | the adapter mapping and the session disk hold the whole file; the native context is still an excerpt | fails |
@@ -952,20 +957,71 @@ def _fix_loop_changed(path: Path, before: bytes | None) -> bool:
         return True  # cannot be read back, so it cannot be shown unchanged
 
 
-def _syntax_errors(paths: list[Path]) -> list[str]:
+class _SyntaxReadRefused(Exception):
+    """BF-904b A3 (#1585): the final syntax read will not read a path; the message says why."""
+
+
+def _syntax_read_opener(name: str, flags: int) -> int:
+    """BF-904b A3: the one open of the final syntax read, as BF-904a's hooks read opens (``_HOOK_OPEN_FLAGS``).
+
+    Never a final link, never blocking on a pipe; *flags*, the text layer's, are not used.
+    """
+    return os.open(name, _HOOK_OPEN_FLAGS)
+
+
+def _work_tree_text(root: Path, path: Path) -> str:
+    """BF-904b A3 (#1585): the text of *path*, read only if it is a regular file inside the work tree *root*.
+
+    ``realpath`` follows every symbolic link, junction and other name-surrogate reparse point on the way, the
+    last name included, so an alias the tests left is followed to where it leads; that must lie inside *root*'s
+    own resolved form (by ``normcase``), or the path is refused unread. An alias that stays inside the tree is
+    read, as the write before it followed it (F-124 owns aliases). A path that is gone or not a regular file by
+    ``lstat`` is refused before any open. The one open neither follows a final link nor blocks on a pipe, and its
+    handle must be that same regular file (``samestat``). Strict UTF-8 with universal newlines, as ``read_text``.
+    """
+    real = os.path.realpath(path)
+    if not Path(os.path.normcase(real)).is_relative_to(os.path.normcase(os.path.realpath(root))):
+        raise _SyntaxReadRefused("resolves outside the work tree")
+    try:
+        info = os.lstat(real)
+    except (FileNotFoundError, NotADirectoryError):
+        raise _SyntaxReadRefused("is no longer a regular file") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise _SyntaxReadRefused("is no longer a regular file")
+    with open(real, encoding="utf-8", opener=_syntax_read_opener) as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, info):
+            raise _SyntaxReadRefused("changed while it was read")
+        return stream.read()
+
+
+def _python_syntax_error(path: Path, text: str) -> str | None:
+    """BF-904b A3 (#1585): *text*, read from *path*, parsed as ``_validate_python`` parses; the error line, or None."""
+    try:
+        ast.parse(text, filename=str(path))
+        return None
+    except SyntaxError as exc:
+        return f"{path}: line {exc.lineno}: {exc.msg}"
+
+
+def _syntax_errors(root: Path, paths: list[Path]) -> list[str]:
     """BF-904b (#1585): the syntax state of *paths* as they are now, one line per file that fails.
 
-    Read at the commit decision, after any repair and after the tests, which run model-written code. A Python
-    file that no longer parses, that is gone or no longer a regular file (a FIFO is never opened), or that
-    cannot be read or decoded blocks the commit. Only ``.py`` files are judged, as in ``_validate_python``.
+    Read at the commit decision, after any repair and after the tests, which run model-written code and can
+    leave any filesystem state. A3: each Python file is read through ``_work_tree_text``, so one that resolves
+    outside the work tree *root*, is gone, is not a regular file or changed while it was read is refused unread;
+    one that cannot be read or decoded, or does not parse, blocks the commit. Every examination is inside the
+    ``try``: ``OSError`` and ``ValueError`` become a line; anything else (``RecursionError``, ``MemoryError``)
+    reaches the executor's ``except``. Only ``.py`` files are judged, as in ``_validate_python``.
     """
     errors: list[str] = []
     for path in paths:
-        if path.suffix == ".py" and not path.is_file():
-            errors.append(f"{path}: is no longer a regular file; refused")
+        if path.suffix != ".py":
             continue
         try:
-            message = _validate_python(path)
+            message = _python_syntax_error(path, _work_tree_text(root, path))
+        except _SyntaxReadRefused as exc:
+            message = f"{path}: {exc}; refused"
         except (OSError, ValueError) as exc:
             message = f"{path}: could not be read for the syntax check ({type(exc).__name__}); refused"
         if message is not None:
@@ -1083,7 +1139,8 @@ REPLACE:
 ```python
         # 5.5. Block commit if validation errors (syntax errors) exist. BF-904b (#1585): the refusals stand;
         # syntax is read now, on the files as the build and its tests left them.
-        syntax_errors = _syntax_errors(list(syntax_checked))
+        # BF-904b A3: only inside the work tree; an alias the tests left that leads out of it is refused unread.
+        syntax_errors = _syntax_errors(Path(work_dir), list(syntax_checked))
         if identity_lost:
 ```
 
@@ -1103,7 +1160,7 @@ REPLACE:
 
 ### 7.8 `tests/test_bf898_fix_loop_grader_protection.py` (M2: the test pinned "syntax is checked after each write")
 
-`RecursionError` is not one of the two classes `_syntax_errors` catches, so the build still ends with that error.
+`RecursionError` is not one of the two classes `_syntax_errors` catches, so the build still ends with that error. Amendment A3: the read is `_work_tree_text` and the parse `_python_syntax_error(path, text)`, so the test raises from the parse; `_validate_python` keeps its premise use.
 
 SEARCH:
 ```python
@@ -1125,12 +1182,13 @@ REPLACE:
 ```python
     calls: list[Path] = []
 
-    def validate_then_raise(path: Path) -> str | None:
+    def parse_then_raise(path: Path, text: str) -> str | None:
         calls.append(path)
         # RecursionError is not an OSError or a ValueError, so the syntax read does not turn it into a line.
         raise RecursionError("maximum recursion depth exceeded during compilation")
 
-    monkeypatch.setattr(builder_module, "_validate_python", validate_then_raise)
+    # BF-904b A3: the read after the loop reads the file inside the work tree and hands its text to this parse.
+    monkeypatch.setattr(builder_module, "_python_syntax_error", parse_then_raise)
 
     # BF-904b (#1585): syntax is no longer checked after each write; it is read once, after the loop, on the
     # files as they are (5.5). So the validation that raises is that read, after the repair wrote foo.py, and
@@ -1183,6 +1241,8 @@ BAD = "src/probos/bad.py"
 SEED = {TARGET: "x = 1\n", OTHER: "y = 1\n"}
 BROKEN = "def broken(:\n"
 REFUSED = "../outside.py"
+OUTSIDE_TEXT = "external = 1\n"  # A3: valid Python outside the work tree, which the final read must never parse
+_Denied = PermissionError  # A3: the injected examination failure's class, aliased like the doubles' names
 _REAL_RUN = subprocess.run
 
 
@@ -1343,7 +1403,7 @@ async def test_a_syntax_error_still_there_after_the_loop_blocks_the_commit(
 
 
 # F6
-@pytest.mark.parametrize("left", ["broken", "deleted", "undecodable"])
+@pytest.mark.parametrize("left", ["broken", "deleted", "undecodable", "directory"])
 async def test_the_syntax_state_is_read_from_the_files_the_tests_left(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, left: str,
 ) -> None:
@@ -1355,8 +1415,11 @@ async def test_the_syntax_state_is_read_from_the_files_the_tests_left(
             created.write_bytes(BROKEN.encode("utf-8"))
         elif left == "deleted":
             created.unlink()
-        else:
+        elif left == "undecodable":
             created.write_bytes(b"\xff\xfe = 1\n")
+        else:  # BF-904b A3: a directory where the file was
+            created.unlink()
+            created.mkdir()
         return True, "1 passed", ["tests/test_fresh.py"]
 
     monkeypatch.setattr(builder_module, "_run_targeted_tests", tests_that_change_the_file)
@@ -1365,10 +1428,123 @@ async def test_the_syntax_state_is_read_from_the_files_the_tests_left(
         "broken": "line 1",
         "deleted": "is no longer a regular file",
         "undecodable": "could not be read for the syntax check (UnicodeDecodeError)",
+        "directory": "is no longer a regular file",
     }[left]
     assert result.tests_passed is True, "premise: the tests passed"
     assert result.success is False and not result.commit_hash, result.error
     assert result.error.startswith("Syntax errors") and str(created) in result.error and expected in result.error, result.error
+    if left != "directory":  # BF-904b A3: a directory the tests left is reported by the cleanup, not removed
+        assert not created.exists(), "the failed build deletes the file it created"
+
+
+def _alias(link: Path, target: Path) -> bool:
+    """Make *link* an alias of *target*: a symbolic link, else on Windows a junction to a directory; False if neither."""
+    try:
+        os.symlink(target, link, target_is_directory=target.is_dir())
+        return True
+    except (OSError, NotImplementedError):
+        pass
+    if os.name != "nt" or not target.is_dir():
+        return False
+    made = _REAL_RUN(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, timeout=60,
+    )
+    return made.returncode == 0 and os.path.isjunction(link)
+
+
+# F7
+@pytest.mark.parametrize("where", ["ancestor", "leaf"])
+async def test_an_alias_the_tests_leave_is_refused_and_its_target_never_parsed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    repo = _init_repo(tmp_path / "repo", SEED)
+    created = repo / NEW
+    outside = tmp_path / "outside" / "newpkg"
+    outside.mkdir(parents=True)
+    (outside / "fresh.py").write_bytes(OUTSIDE_TEXT.encode("utf-8"))
+    link, target = (created.parent, outside) if where == "ancestor" else (created, outside / "fresh.py")
+    if not _alias(tmp_path / "probe", target):
+        pytest.skip("this host can make neither a symbolic link nor a junction for this alias")
+    made: list[bool] = []
+
+    async def tests_that_leave_an_alias(work_dir: str, changed_files: list[str], timeout: int = 60) -> tuple[bool, str, list[str]]:
+        created.unlink()
+        if where == "ancestor":
+            created.parent.rmdir()
+        made.append(_alias(link, target))
+        return True, "1 passed", ["tests/test_fresh.py"]
+
+    real_parse = builder_module.ast.parse
+    parsed: list[Any] = []
+
+    def parse_and_record(source: Any, *args: Any, **kwargs: Any) -> Any:
+        parsed.append(source)
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(builder_module, "_run_targeted_tests", tests_that_leave_an_alias)
+    monkeypatch.setattr(builder_module.ast, "parse", parse_and_record)
+    result = await _build(repo, [_create(NEW, "ok = 1\n")], run_tests=True)
+    assert made == [True] and result.tests_passed is True, "premise: the tests passed and left the alias"
+    assert OUTSIDE_TEXT not in parsed, "the text outside the work tree is never parsed"
+    assert result.success is False and not result.commit_hash, result.error
+    assert result.error.startswith("Syntax errors") and f"{created}: resolves outside the work tree; refused" in result.error, result.error
+    # Not asserted: that the outside file outlives the build. The failed build's cleanup deletes the created path
+    # through an ancestor alias (_restore_pre_build_files); that is F-124 on #1523, not the syntax read.
+
+
+# F8
+@pytest.mark.parametrize("fault", ["stat-fails", "swapped-before-open"])
+async def test_a_file_that_cannot_be_examined_after_the_tests_is_one_syntax_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    repo = _init_repo(tmp_path / "repo", SEED)
+    created = repo / NEW
+    names = {os.path.normcase(os.path.abspath(name)) for name in (created, os.path.join(os.path.realpath(repo), NEW))}
+    armed: list[bool] = []
+    faults: list[str] = []
+
+    def failing(real_call: Any) -> Any:
+        def call(target: Any, *args: Any, **kwargs: Any) -> Any:
+            if armed and not isinstance(target, int) and os.path.normcase(os.path.abspath(os.fspath(target))) in names:
+                faults.append(os.fspath(target))
+                raise _Denied(13, "injected stat failure", os.fspath(target))
+            return real_call(target, *args, **kwargs)
+
+        return call
+
+    def swapped_open(name: str, flags: int) -> int:
+        return os.open(repo / OTHER, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+
+    async def tests_then_arm(work_dir: str, changed_files: list[str], timeout: int = 60) -> tuple[bool, str, list[str]]:
+        armed.append(True)
+        return True, "1 passed", ["tests/test_fresh.py"]
+
+    real_syntax_errors = builder_module._syntax_errors
+
+    def syntax_then_disarm(*args: Any) -> list[str]:
+        try:
+            return real_syntax_errors(*args)
+        finally:
+            armed.clear()  # the cleanup's own examination of the file runs unfaulted
+
+    if fault == "stat-fails":
+        monkeypatch.setattr(os, "stat", failing(os.stat))
+        monkeypatch.setattr(os, "lstat", failing(os.lstat))
+    else:
+        # raising=False: before A3 there is no opener to replace, and the build must then fail the assertions below.
+        monkeypatch.setattr(builder_module, "_syntax_read_opener", swapped_open, raising=False)
+    monkeypatch.setattr(builder_module, "_run_targeted_tests", tests_then_arm)
+    monkeypatch.setattr(builder_module, "_syntax_errors", syntax_then_disarm)
+    result = await _build(repo, [_create(NEW, "ok = 1\n")], run_tests=True)
+    expected = {
+        "stat-fails": "could not be read for the syntax check (PermissionError)",
+        "swapped-before-open": "changed while it was read",
+    }[fault]
+    assert result.tests_passed is True, "premise: the tests passed"
+    assert fault != "stat-fails" or faults, "premise: the injected failure fired after the tests"
+    assert result.success is False and not result.commit_hash, result.error
+    assert result.error.startswith("Syntax errors") and f"{created}: {expected}; refused" in result.error, result.error
     assert not created.exists(), "the failed build deletes the file it created"
 ```
 
@@ -1829,7 +2005,7 @@ REPLACE:
 - `BuildPipeline`, `CopilotBuilderAdapter`, `seed_session_directory`, `_localize_context`, `_should_use_transporter`, `transporter_build`.
 - `BuildQueue.active_count`, its transitions, `BuildDispatcher` concurrency, `WorktreeManager`.
 
-## 10. Mutation rows (42 rows; whole stripped lines; each occurs once in its file after §7)
+## 10. Mutation rows (51 rows; whole stripped lines; each occurs once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against the three new test files on the contract-applied tree, after an unmutated baseline run of those files that passes. A18's killer is the updated pin in `tests/test_bf896_executor_identity_and_blocks.py` (7.5b), not a new file: run that test alone against the mutant, after an unmutated run of it that passes. Restore each file before the next row. "First failing" is in file order (S, then F, then D/V); where another test fails first, run the named one alone against the mutant.
 
@@ -1862,15 +2038,24 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | B2 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a main-loop create, read again at 5.5` | `pass` | F5 `[main-create]` |
 | B3 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a repair's file, read again at 5.5` | `pass` | F5 `[repair]` |
 | B4 | `src/probos/cognitive/builder.py` | `all_changed_files = written + modified_files` | `all_changed_files = all_changed_files if attempt else written + modified_files` | F2 |
-| B5 | `src/probos/cognitive/builder.py` | `syntax_errors = _syntax_errors(list(syntax_checked))` | `syntax_errors = []` | F5 `[main-create]` |
+| B5 | `src/probos/cognitive/builder.py` | `syntax_errors = _syntax_errors(Path(work_dir), list(syntax_checked))` | `syntax_errors = []` | F5 `[main-create]` (line updated by Amendment A3) |
 | B6 | `src/probos/cognitive/builder.py` | `elif validation_errors or syntax_errors:` | `elif syntax_errors:` | F3 |
 | B7 | `src/probos/cognitive/builder.py` | `elif validation_errors or syntax_errors:` | `elif validation_errors:` | F5 `[main-create]` |
 | B8 | `src/probos/cognitive/builder.py` | `result.error = "Syntax errors:\n" + "\n".join(validation_errors + syntax_errors)` | `result.error = "Syntax errors:\n" + "\n".join(validation_errors)` | F5 `[main-create]` (the file is not named) |
 | B9 | `src/probos/cognitive/builder.py` | `if llm_client and (written or modified_files) and not validation_errors:` | `if llm_client and (written or modified_files):` | F4 (the model is called) |
 | B10 | `src/probos/cognitive/builder.py` | `if run_tests and (written or modified_files) and not validation_errors:` | `if run_tests and (written or modified_files):` | F4 (the targeted tests run) |
-| B11 | `src/probos/cognitive/builder.py` | `if path.suffix == ".py" and not path.is_file():` | `if False:` | F6 `[deleted]` |
+| B11 | `src/probos/cognitive/builder.py` | `if not stat.S_ISREG(info.st_mode):` | `if False:` | F6 `[directory]` (the open of a directory is a "could not be read" line, not "is no longer a regular file") (Amendment A3) |
 | B12 | `src/probos/cognitive/builder.py` | `except (OSError, ValueError) as exc:` | `except OSError as exc:` | F6 `[undecodable]` |
 | B13 | `src/probos/cognitive/builder.py` | `if message is not None:` | `if False:` | F5 `[main-create]` |
+| B14 | `src/probos/cognitive/builder.py` | `real = os.path.realpath(path)` | `real = os.path.abspath(path)` | F7 `[ancestor]` (the outside-text assertion: the `lstat` and the open follow the ancestor alias) (Amendment A3) |
+| B15 | `src/probos/cognitive/builder.py` | `if not Path(os.path.normcase(real)).is_relative_to(os.path.normcase(os.path.realpath(root))):` | `if False:` | F7 `[ancestor]` (the outside-text assertion) (Amendment A3) |
+| B16 | `src/probos/cognitive/builder.py` | `raise _SyntaxReadRefused("resolves outside the work tree")` | `pass` | F7 `[ancestor]` (the outside-text assertion) (Amendment A3) |
+| B17 | `src/probos/cognitive/builder.py` | `raise _SyntaxReadRefused("is no longer a regular file") from None` | `pass` | F6 `[deleted]` (an unbound `info` raises, which is not a line) (Amendment A3) |
+| B18 | `src/probos/cognitive/builder.py` | `raise _SyntaxReadRefused("changed while it was read")` | `pass` | F8 `[swapped-before-open]` (Amendment A3) |
+| B19 | `src/probos/cognitive/builder.py` | `if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, info):` | `if not stat.S_ISREG(opened.st_mode):` | F8 `[swapped-before-open]` (Amendment A3) |
+| B20 | `src/probos/cognitive/builder.py` | `message = f"{path}: {exc}; refused"` | `message = None` | F7 `[ancestor]` (the line assertion) (Amendment A3) |
+| B21 | `src/probos/cognitive/builder.py` | `message = _python_syntax_error(path, _work_tree_text(root, path))` | `message = None` | F5 `[main-create]` (Amendment A3) |
+| B22 | `src/probos/cognitive/builder.py` | `with open(real, encoding="utf-8", opener=_syntax_read_opener) as stream:` | `with open(real, encoding="utf-8") as stream:` | F8 `[swapped-before-open]` (the open no longer goes through the opener) (Amendment A3) |
 | C1 | `src/probos/build_queue.py` | `_FOOTPRINT_HOLDING_STATUSES = ("dispatched", "building", "reviewing")` | `_FOOTPRINT_HOLDING_STATUSES = ("dispatched", "building")` | D1 |
 | C2 | `src/probos/build_queue.py` | `if b.status in _FOOTPRINT_HOLDING_STATUSES:` | `if b.status in ("dispatched", "building"):` | D1 |
 | C3 | `src/probos/cognitive/builder.py` | `full_files = dict(all_files)` | `full_files = {}` | V1 |
@@ -1879,6 +2064,8 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | C6 | `src/probos/cognitive/builder.py` | `file_changes = _normalize_change_paths(decision.get("file_changes", []))` | `file_changes = decision.get("file_changes", [])` | V3 `[transporter]` |
 
 Lines without a row: the docstrings and comments; `errors: list[str] = []` and `return errors` (any change breaks every F test); the dispatcher's signature line (S6 covers the keyword); the executor's `expected_git_dir` and `enforce_sealed_core` parameter lines (each contains a `|`, which a table cell cannot hold as one string; A18 mutates the `specialty` line instead, removing the flag's default is a syntax error, and by §6's premises S3 `[unset-without-runtime]` and S8 cover a changed default). In `_sealed_globs` (Amendment A2): `try:` (removing or rewriting it is a syntax error); `logger.warning(` and its closing `)` (not unique in the file; A21 and A22 mutate the arguments); the message line (its wording is not a behaviour; S9 selects the record by `sealed policy`, so a change there fails S9's count).
+
+Amendment A3, lines without a row: `if path.suffix != ".py":` (it occurs twice, in `_validate_python` too; every F test writes only `.py` files); `return os.open(name, _HOOK_OPEN_FLAGS)` (the flags matter only in a race between the `lstat` and the open, which no deterministic test stages; B19 and B22 cover the check behind them); `info = os.lstat(real)`, `opened = os.fstat(stream.fileno())` and `return stream.read()` (any change breaks every F test that reads a file); the `_python_syntax_error` body (F5 and F6 `[broken]` kill a change to the parse; its `return f"{path}: line ...` line occurs twice); the `class _SyntaxReadRefused` line.
 
 ## 11. Verified Against Codebase (2026-10-21, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061`, HEAD `90a9e040`)
 
@@ -1943,6 +2130,13 @@ tests/test_bf904a_failed_build_restore.py: 95-170 helpers copied here; 237-246 _
 tests/test_bf907_trust_identity.py: 1466-1481 boot config and _boot
 DECISIONS.md: 170 BF-904a D31; 534-545 BF-901 S3 entry, 545 its Reversal; 547 next heading
 PROGRESS.md: line 1 "# ProbOS Progress"; line 3 begins with S3's bold lead
+A3, tree 9009b0bd (M1 after A2, then M2): builder.py 12-17 imports ast, os, stat; 1792 _write_target_key (realpath);
+  1842 _HOOK_OPEN_FLAGS; 1935-1941 the hooks read (lstat S_ISREG, one open, fstat S_ISREG); 1747-1781 _restore_pre_build_files
+  (1760 write_bytes, 1766-1768 exists/unlink: follow aliases, F-124); 2772-2780 _validate_python (2777 read by name);
+  2791-2809 _syntax_errors (2800 is_file before the try at 2803); 3682 the 5.5 call (no root); 3766 except Exception; 3788 _git_return_to
+builder_paths.py: 12 "does not follow a hard link, junction or symlink"; 197-247 builder_write_refusal (213 "..", 215 absolute, 220 ":")
+security/file_access.py: 505-513 is_reparse_point; 847-876 pin_directory / read_verified_file (whole absolute chain; resolved != candidate refused)
+tests: _validate_python called at test_builder_agent.py 2079-2093 and test_bf898 633-644 only; _syntax_errors called nowhere in tests/
 ```
 
 ## Absence Verified (2026-10-21)
@@ -2010,6 +2204,7 @@ HOLDS: yes
 | Hidden pins | `tests/test_bf896_executor_identity_and_blocks.py:701-705`, the executor's signature pin (updated, 7.5b; found by the dry run, Amendment A1); 19 `startswith("Syntax errors")` assertions (lead kept); `test_build_dispatcher.py` constructor calls (keyword default); `tests/test_bf896_dispatcher_confinement_seam.py` executor wrappers take `**kwargs` |
 | Ledger | M3 (§8) |
 | Amendment A2 | 7.1's `_sealed_globs` names `OSError`, `ValueError` and `RecursionError` only in an `except` tuple, never called. S9 calls underscore helpers, `sys.getrecursionlimit` and no capitalised name; `EventType.BUILD_SUCCESS` and `EventType.BUILD_FAILURE` exist (`routers/build.py:452`, `:482`). `builder.py` grows by 14 more lines; no new module-scope import in `builder.py`; the test file gains `import sys` |
+| Amendment A3 | 7.7's capitalised calls are `Path(` (skipped) and `_SyntaxReadRefused(` (underscore); `Exception`, `FileNotFoundError`, `NotADirectoryError`, `SyntaxError`, `OSError`, `ValueError` appear only as a base class or in `except`. 7.9 aliases `PermissionError` as `_Denied`; `NotImplementedError` only in `except`; 7.8's `RecursionError(` is unchanged. `builder.py` grows about 45 lines, no new import. No write call (AD-1344 census) and no `.complete(` (AD-1343) |
 
 ## 13. What I could not verify here, and Prior Art
 
@@ -2028,7 +2223,7 @@ HOLDS: yes
 6. Every refusal recorded anywhere still blocks the commit. Syntax is read at 5.5 for every path a write validated before (main modify, main create, repair) and for no other. No `_validate_python` call remains at write time. The error's `Syntax errors:` lead is unchanged.
 7. A build holding a refusal before 4c runs no review, no targeted tests and no repair. `git_unsafe` stays False, so the cleanup runs git exactly as for any untested failed build.
 8. `all_changed_files` on the first attempt equals today's list; later attempts include files the repairs created.
-9. `_syntax_errors` never opens a `.py` path that is not a regular file. It turns `OSError` and `ValueError` into lines; anything else still reaches the executor's `except Exception`.
+9. (Amendment A3) `_syntax_errors(root, paths)` reads a `.py` path only through `_work_tree_text`. Its `realpath` must lie inside `realpath(root)` (by `normcase`), else one line naming the path and `resolves outside the work tree`, and nothing is opened. A path gone or not a regular file by `lstat` is a line and is never opened. The one open uses `_HOOK_OPEN_FLAGS`, and the handle must be a regular file with the `lstat`'s identity. Every examination (`realpath`, `lstat`, open, `fstat`, read, decode, parse) is inside the `try`: `OSError` and `ValueError` become lines; `RecursionError`, `MemoryError` and anything else still reach the executor's `except Exception`.
 10. `has_footprint_conflict` counts `reviewing`; `active_count` and the transitions are unchanged; `_find_dispatchable` and the dispatch mark have no await between them.
 11. `perceive`'s native context and `_should_use_transporter` still read the excerpts. The seed gets whole files, and the adapter gets the mapping the seed returns.
 12. `act` normalises every `transporter_complete` change; a project-relative path is unchanged.
@@ -2037,10 +2232,12 @@ HOLDS: yes
 15. `execute_approved_build`'s eleven earlier parameters keep their names, order and positional-or-keyword kind; `enforce_sealed_core` follows `expected_git_dir` with default `None`. 7.5b renames its test only because the old name said "last". It still asserts `expected_git_dir`'s index and `None` default and that everything after `work_dir` is optional; it drops only the "nothing follows" clause.
 16. With the flag on, a policy that cannot be read never changes a build's outcome. `_sealed_globs` returns `()` for every exception the loader lets out on an unreadable or corrupt file (`OSError`, `ValueError` including `UnicodeDecodeError`, `RecursionError`) and logs one warning naming the file and the exception class. Nothing after it in the observation can raise on the `str` path and `str` globs it handles (§17's enumeration). `MemoryError` and `BaseException` still propagate. With the flag off the policy is still not read (property 1).
 
+17. (Amendment A3) Refusals still come first; an alias refusal is one more syntax-state line after them, under the unchanged `Syntax errors:` lead. An alias that resolves inside the work tree is read: no rule stricter than the write boundary, which follows aliases. `_validate_python`, the cleanup and the return checkout are unchanged (their alias-following is F-124).
+
 ## 15. Acceptance criteria
 
 1. (2) Both production callers give the executor the flag; `is_sealed_path` receives the repository-relative, normalised, case-folded path; a write to a sealed glob is observed with the flag on and nothing is read or logged with it off; a policy that cannot be read observes nothing, with one warning, and the build still commits (S1 to S9; A1 to A23). Every parameter the executor had keeps its name, index and kind, and the updated pin asserts it (7.5b).
-2. (4) Refusals are permanent; syntax is read on the current files after the loop; `all_changed_files` is recomputed at each attempt; a build with a refusal runs no review, tests or repair (F1 to F6; B1 to B13).
+2. (4) Refusals are permanent; syntax is read on the current files after the loop; `all_changed_files` is recomputed at each attempt; a build with a refusal runs no review, tests or repair; the final read refuses, unread, a path that resolves outside the work tree, and every failed examination is one `Syntax errors:` line (F1 to F8; B1 to B22; Amendment A3).
 3. (6) `has_footprint_conflict` includes `reviewing`; the force-delete clause is recorded as met by BF-904a D31 (D1, D2; C1, C2).
 4. (7) The visiting builder receives whole files, the excerpts serve only the native prompt context, and `transporter_complete` changes go through `_normalize_change_paths` (V1 to V3; C3 to C6).
 5. Each item has a test that fails today (§6). Every mutation row is killed by the named test. One broad gate and one PR for the three milestones; the security-relevant M1 gets the cross-family Diff Reviewer, as do M2 and M3 under tier HIGH.
@@ -2085,3 +2282,52 @@ HOLDS: yes
 **Absence verified (2026-10-21).** Callers of `load_sealed_globs` in `src/`: `builder.py:3109` and `extensions/__init__.py:34` only. Tests that pin a raise from `_sealed_globs` or the loader: none (`tests/test_ad481_extensions.py:128-192` and the 7.6 file only).
 
 **Unchanged:** D1 to D4, D6 to D11, every other pair; D5 gains its last sentence.
+
+## 18. Amendment A3 (2026-10-22): the final syntax read stays inside the work tree
+
+**Found by:** the M2 Diff Reviewer, round 1 (`gpt-6.1-sol`, M2 on the round-1 M1): NOT READY, two P2 findings, both regressions against M1. (1) Ordinary reach: `_syntax_errors` (`builder.py:2791`, tree `9009b0bd`) judged a path with `is_file()` (`:2800`), which follows links and junctions, then read it by name through `_validate_python` (`:2804`, `:2777`), with no root. A real targeted-test run that left a directory junction above the created file made the executor parse the outside file and commit (`resolved_outside: true`, `success: true`); M1, which validated each file as it was written, read the inside one. (2) Injected-only: an `OSError` from `is_file()` is raised before the `try` (`:2803-2806`), so it left `_syntax_errors` without the `Syntax errors:` lead; the executor's `except Exception` (`:3766`) still failed the build. Both hold on this tree.
+
+**Decision.** Fix both in M2 (D12): a regression is fixed, and (1) has ordinary reach. Measured on CPython 3.12.13, Windows: `is_file()` through an ancestor junction is True; `is_symlink()` on the junction is False; `lstat` of the leaf below it is `S_ISREG`; `realpath` returns the outside path; `os.symlink` for a directory needs a privilege (WinError 1314) while `mklink /J` does not.
+
+**How the final read can leave the work tree.**
+
+| Route | Covered | How |
+|---|---|---|
+| link in place of the file | yes | `realpath` follows it; outside is refused (F7 `[leaf]`), inside is read |
+| ancestor symbolic link | yes | `realpath` (F7 `[ancestor]` on POSIX) |
+| ancestor junction | yes | `realpath` follows junctions (measured) (F7 `[ancestor]` on Windows) |
+| junction or reparse point as the leaf | yes | a junction resolves to a directory: outside is refused, inside fails `lstat` as not regular (F6 `[directory]`); a non-link reparse file (dedup, cloud placeholder) is a regular file to `lstat` and is read |
+| hard link | not an escape here | its bytes are the bytes git commits at that path, so judging them is right; the cleanup's restore writes through it (F-124) |
+| `..`, absolute, drive-relative, UNC, stream, 8.3 short name | yes, twice | the write boundary refuses them (`builder_paths.py:213`, `:215`, `:220`, `_SHORT_NAME`); `realpath` plus confinement would refuse an escape anyway |
+| case variant; a work tree under an alias (`/var`, a junctioned folder, SUBST) | yes | both sides resolved and `normcase`d; no false refusal |
+| a `\\?\` long-path form | no false refusal | `realpath` keeps the prefix only when the unprefixed path cannot be opened, in which case the write before it failed too |
+| swap between the check and the open | partly | `samestat` refuses another file opened than `lstat` saw; an ancestor swapped into an alias after `realpath` and before `lstat` is not caught: it needs a process the tests left running (F-124) |
+
+**What the read can raise.**
+
+| Step | Raises | Handling |
+|---|---|---|
+| `os.path.realpath` (non-strict, both sides) | an `OSError` 3.12 does not absorb; `ValueError` (NUL) | a line |
+| `normcase`, `is_relative_to` | nothing on a `str` | none |
+| `os.lstat` | `FileNotFoundError`, `NotADirectoryError` | "is no longer a regular file" |
+| `os.lstat` | any other `OSError` (`PermissionError`), `ValueError` | "could not be read ..." (F8 `[stat-fails]`) |
+| `open` through the opener | `OSError` (`ELOOP` for a swapped final link, `IsADirectoryError`, `EACCES`) | a line |
+| `os.fstat` | `OSError` | a line |
+| `read` | `OSError`; `UnicodeDecodeError` (a `ValueError`); `MemoryError` | a line; a line; propagates |
+| `ast.parse` | `SyntaxError` and subclasses (NUL bytes too on 3.12) | the `line N` line |
+| `ast.parse` | `ValueError` | a line |
+| `ast.parse` | `RecursionError`, `MemoryError` | propagate (7.8 pins `RecursionError`) |
+| any | `_SyntaxReadRefused` | its line |
+| any | `BaseException` (cancellation, interrupt) | propagates |
+
+**Tests and rows.** F6 gains `[directory]` (a guard on M2; kills B11). F7 `[ancestor, leaf]`: the outside file is valid Python, so on M2 the build commits; an `ast.parse` spy shows the outside text is never parsed. It does not assert that the outside file survives: the failed build's cleanup deletes it through the junction, on M1 and M2 alike (F-124). F8 `[stat-fails, swapped-before-open]`: the failure is injected on `os.stat` and `os.lstat` for the created path only, armed after the tests and disarmed after the read; on M2 it fails because the stat raises before the `try`. F7 and F8 (4 cases) fail on the round-1 M2 candidate. 7.8 now injects into `_python_syntax_error`. M2: 8 functions, 15 cases; total 50 cases in 23 functions. Rows: B5 and B11 rewritten, B14 to B22 added; 42 to 51.
+
+**Milestone and anchors.** M2 only. A3 edits the `_syntax_errors` block of 7.7's first REPLACE (now four helpers and `_syntax_errors`), 7.7's 5.5 REPLACE, 7.8's lead and REPLACE, 7.9's file block, and the prose (header, §3, §6, §10, §11, §12, §14, §15, this section). No 7.7 SEARCH text changes. No anchor heading, no §8 tracker pair and no SEARCH or REPLACE text of 7.1 to 7.6 or 7.10 to 7.13 is touched. `_validate_python` is unchanged: no production caller remains, and its tests call it.
+
+**Absence verified (2026-10-22).** Callers of `_syntax_errors` and `_validate_python` (Grep over `*.py`): `builder.py:2772`, `:2791`, `:2804`, `:3682`; `tests/test_bf898_fix_loop_grader_protection.py:633`, `:644`; `tests/test_builder_agent.py:40`, `:2079-2093`. No test calls `_syntax_errors`, and A1's signature-pin search already covered it. Tests that patch `os.path.realpath`: `test_bf896_executor_identity_and_blocks.py:917` and `test_bf904a_unapplied_blocks.py:859`, both scoped to calls that are not the executor's (unaffected). Tracked symbolic links: none (`git ls-files -s`, mode 120000).
+
+**For the register (not fixed here).** F-124 (#1523), new evidence: a test-left junction leads `_restore_pre_build_files` (`builder.py:1766-1768`) and the return checkout to delete the outside file, on M1, M2 and A3 alike; no regression. The tests already run arbitrary code as the user, so this grants no new capability, but it is an accidental write outside the tree. In-tree aliases are read at their target, and git commits the link itself (P3). The ancestor swap race above (P3, injected-only). `_validate_python`'s four parse lines duplicate `_python_syntax_error` (P4: fold them when a 7.7 pair can be widened). §8's disclosed effects do not mention the alias refusal (P4, M3's tracker text).
+
+**Prior art.** Kernel and library primitives exist for root-confined opens: Linux `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (https://man7.org/linux/man-pages/man2/openat2.2.html) and Go's `os.Root` (https://pkg.go.dev/os#Root). Neither has a Python standard-library binding or a Windows equivalent here: considered and deferred to F-124. Not fetched (a repair amendment).
+
+**Unchanged:** D1 to D11; D5's A2 sentence; every pair not named above.
