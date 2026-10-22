@@ -35,7 +35,7 @@ Derived from all four authorities. A tree scan sees only the numbers that reache
 
 | Authority | Availability | Captured | Extent |
 |---|---|---|---|
-| `git log` commit subjects | pinned snapshot | 2026-10-22T00:26:01+00:00 at `4a3ea5eb` | 3141 subjects, 1023 numbers |
+| `git log` commit subjects | pinned snapshot | 2026-10-22T00:54:33+00:00 at `d963d7a6` | 3142 subjects, 1023 numbers |
 | `DECISIONS.md, decisions-era-1-genesis.md, decisions-era-2-emergence.md, decisions-era-3-product.md, decisions-era-4-evolution.md, decisions-era-5-unification.md` | live, every run | at check time | AD/BF entry headings |
 | `PROGRESS.md, progress-era-1-genesis.md, progress-era-2-emergence.md, progress-era-3-product.md, progress-era-4-evolution.md, progress-era-5-unification.md` | live, every run | at check time | AD/BF status head lines |
 | `gh issue list --state all` | pinned snapshot (network) | 2026-10-12T09:12:39+00:00 | 1410 issues, 971 numbers |

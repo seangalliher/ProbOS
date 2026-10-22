@@ -1149,3 +1149,16 @@ HOLDS: yes
 | The claim reads `blocked` and logs | `cognitive_agent.py:2302-2306` on candidate r1 |
 
 **What A1 changes.** The comment and the INFO line say what the claim read and did ("was blocked when read; the claim does not move it") and name no request. The new test T7 creates the item `blocked` with no request and pins the INFO text exactly. Mutation row B5 restores the old text. Section 9 item 1, the DECISIONS entry and the PROGRESS line list the routes by which a `blocked` item reaches the claim, one of them with no request behind it. **Scope:** wording, one test and one mutation row. No router, driver, transition-table or other source change, and no new file. Nothing S1 or S2 anchors on moves (S1 anchors on the head of BF-900's PROGRESS line and on its DECISIONS *Reversal* line; S2 on S1's entries).
+
+## Orchestrator verification and validation of record (2026-10-22, base `8c8bc441`)
+
+Run on scratch worktrees; the evidence files are outside the repository. The three contracts of the batch (this one, BF-901 S1 and BF-901 S2) were dry-run together, each on the tree the previous one left.
+
+| Check | Result |
+|---|---|
+| The three contracts applied in order to a clean `8c8bc441` scratch tree (`apply_search_replace_blocks.py`) | every SEARCH occurs once, 0 failures. `phantom-api-precheck.ps1` first failed on five documentation tokens in the three contracts (a standard-library namespace class, a call on a policy class that is not a ProbOS method, and a table cell); wording changes in the contracts, no code, brought it to exit 0, and it stays clean after each amendment |
+| The Builder's output (`claude-sonnet-5.5`, checked in the usage records) | the seven non-generated files blob-identical (clean-filter hashes, the method asserted first) to the dry-run tree; the two ledger files pass `gen_ad_ledger.py --check` |
+| Amendment A1 (review round 1, F1) | the amended contract applied to a clean `8c8bc441` tree: its 10 SEARCH pairs each occur once; candidate r1 plus A1's six delta pairs is blob-identical to it; the repair Builder's output (`reasoning_effort: high`) is blob-identical to it too |
+| Focused checks | the BF-900 file passes (8 tests) and with its consumer sets 255 passed; round 1's focused check 7,111 passed; the batch's consolidated focused check on the final tree (scratch commit `96c0c730`, tree `305993682393802571dd9f83dc31923508bcac9a`; 367 test files, scrubbed environment, `-n 8`): 14,987 passed, 15 skipped, 0 failed in 20 min 5 s (the skips are the live-proxy tests); the three new test files and four consumer files (AD-839, AD-856, AD-1328 S2c, AD-1325 boundaries) again unscrubbed at `-n 0`: 132 passed |
+| Mutation table (section 10, 5 rows) | 5 of 5 killed by the tests the table names, on the batch's final tree; the campaign of record is in the `DECISIONS.md` entry |
+| Review (`gpt-6.1-sol`, passed explicitly and checked in the usage records each round) | round 1 NOT READY: one P3, ordinary reach, a regression in the new text (the INFO line implied that a blocked item waits on a request); A1 repaired it (new wording, test T7, row B5, corrected limit text); round 2 READY |
