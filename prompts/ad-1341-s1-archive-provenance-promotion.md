@@ -4,13 +4,15 @@
 
 **Status:** M1, M2 and M3 are build-ready. Amendment A1 (2026-10-22, `claude-architect`, from the orchestrator's dry run at `0f13771c`) writes M3 as §7.9 to §7.14 and adds §7.6b and §7.6c to M2 (the config facade baseline and its pinned counts); M4 is §8. Amendment A2 (2026-10-22, `claude-architect`, from M1's round-1 review at `6190fd69` and the whole-contract phantom precheck) serialises the store's writes and its close on its one connection (D16, F1), makes an id beyond SQLite's rowid range no entry (D17, F2), and rewrites one line group each in §7.9 and §7.14 that the precheck flagged (no behaviour change). Slice 1 of 6 of #1569; it does not close the issue. **Tier HIGH** (the archive, an erasure, data integrity). No new AD or BF number. **Base:** `origin/main` `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`. BF-903 merges first; it touches only `__main__.py`'s pairing CLI and the trackers, so M3 and §8 re-anchor on text. **Source:** the Architect's consults `98e0fdbf` (2026-10-18) and this one.
 
-**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 18 functions, 37 cases (A3 adds P16 and P16b and rewrites P8). Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 15 functions, 24 cases; updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (6 call sites), `tests/test_proactive.py` (2), `tests/test_identity_deterministic.py` (3).
+**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 18 functions, 37 cases (A3 adds P16 and P16b and rewrites P8). Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 20 functions, 39 cases (A4 adds R4c and R14 to R17); updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (7 call sites; A4 adds the tier 1 test), `tests/test_proactive.py` (4; A4 adds the two tier 1 tests), `tests/test_identity_deterministic.py` (3).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
 **Mechanical repairs by the orchestrator (2026-10-22), no decision changed:** (1) section 8's two tracker pairs are re-anchored on BF-903's head line and its *Reversal* bullet, because BF-903 (merge `80456da2`) landed after this contract was written against `0e122174`, as section 8 itself anticipated; (2) the A3 row of section 12 spelled the precheck's pattern B with a capitalised placeholder call inside backticks, which the precheck reads as a constructor call (`[<Class>(...)] class:ClassName`); the phrase is reworded without the call, and the precheck is clean on the built tree.
 
 **Amendment A3 (2026-10-22, `claude-architect`, from M2's round-1 review at `73ebbba3`):** F1 (P2, ordinary reach): the records producers accept a blank topic, `PromotionRecord` refuses a blank title, and the service kept a truthy blank topic as the title, so one document stopped the whole promotion and with it every tier 2 reset. The title now falls back from the topic to the file name to the records path (D8, `_title_for`); no other document-derived field can fail the record (Absence A3-AV1). P8 now injects a real database failure mid-run. F2 (Ship's Records' listing skips a file it cannot decode, so it is neither promoted nor reported) is recorded as register RA3-1, and the module docstring says so. Only M2's two files change; M1' and M3 are unaffected (A3-AV3).
+
+**Amendment A4 (2026-10-22, `claude-architect`, from M3's round-1 review at `73ebbba3`):** F1 (P1): a subcommand's `default=None` replaced the root parser's `--config` and `--data-dir`, so `probos --config X archive erase` erased from the fallback configuration's archive and `probos --data-dir D reset` reset the platform data directory; `reset` and `archive erase` now use `default=argparse.SUPPRESS` (D19). F2 (P1): two acquirers of a stale AD-816 pidfile could both hold it; the acquire now runs whole under an OS lock on `probos.pid.lock` (D12, §7.9b). F3 (P1): an archive configured inside a reset target was promoted into, then deleted; every reset now refuses first (D18). F4 (P3): `--skip-promotion` is checked before the configuration loads. M3 gains §7.9b (`pidfile_guard.py`) and three tier 1 fake updates (7.11, 7.12); M1' and M2' are unaffected. The other subparsers with the F1 defect are register RA4-1.
 
 ---
 
@@ -104,7 +106,8 @@ At `--full`, everything the crew published in Ship's Records is lost.
   - **(A) chosen:** every executing `probos reset` (`--soft` included) acquires the AD-816 pidfile after confirmation and releases it when done; a live owner means refuse, exit 1, nothing touched. It protects against a promotion reading records mid-write, deletions racing a live writer (a locked file on Windows leaves a partial reset), and a vessel booting mid-reset and creating a new instance id. `--dry-run` takes no pidfile, following `verify-snapshot`. Only `probos serve` takes the pidfile (`__main__.py:745-751`); the interactive `probos` shell takes none, so a vessel started that way is not seen (register RA1-1). While a reset holds it, `serve` refuses to boot (exit 2) and the `rebuild-episodic` and `backup-reclaim --force` probes refuse.
   - (B) `assert_no_other_instance`: rejected. It only probes, so a vessel could start right after the check.
   - (C) warn: rejected. The command deletes.
-- **D13 (archive disabled, M3).** With `archive.enabled` False there is nowhere to promote to. The reset prints a notice and proceeds; this is configuration, not a failure. `probos archive erase` refuses with exit code 2.
+  - **(A4, F2)** `acquire_pidfile` runs whole under `_takeover_lock`, an OS lock (`fcntl.flock`, or `msvcrt.locking` on Windows) on `{data_dir}/probos.pid.lock`, a file never removed: the OS releases the lock when its holder exits, so a crash leaves no stale lock. Two acquirers of a stale pidfile therefore take turns, and the second finds the first's live PID and refuses; before A4 the second could remove the first's fresh file by name and create its own. Release stays by path: no acquirer replaces a live holder's file any more, so a holder's file is its own. Rejected: an owner-verified release alone (the acquire race stays on the first destructive consumer); an `O_EXCL` takeover file (a stale takeover file repeats the race); an OS lock held for the vessel's lifetime as the guard itself (new guard semantics and every consumer changes).
+- **D13 (archive disabled, M3).** With `archive.enabled` False there is nowhere to promote to. The reset prints a notice and proceeds; this is configuration, not a failure. `probos archive erase` refuses with exit code 2. (A4) With the archive disabled, D18's preflight does nothing either.
 - **D14 (tier).** HIGH.
 - **D15 (the Captain).** Nothing in S1 requires the Captain; C1 is applied as decided.
 - **D16 (one transaction at a time; Amendment A2, F1).** The store's one connection serves every call, and a `ROLLBACK` (`_rollback_quietly`) or a `COMMIT` ends whatever that connection has open. Two overlapping calls could therefore undo each other's work and still report success (M1 round 1, reproduced: two concurrent erasures, one of an existing entry and one of a missing id, returned `[True, False]` with the row kept and no marker).
@@ -113,6 +116,12 @@ At `--full`, everything the crew published in Ship's Records is lost.
   - (C) record and ship: rejected. Today every `src` call is awaited alone (Absence A2-AV2), but S2 to S6 add writers inside the running vessel, where an erasure would report success and not happen.
   - (D) a connection per call: rejected; it changes the store's lifecycle and the shutdown handover for no gain over (A).
 - **D17 (ids beyond SQLite; Amendment A2, F2).** `erase_entry` returns False, writing nothing, and `entry_by_id` returns None, for an id above `2**63 - 1`, SQLite's largest INTEGER and so its largest rowid; binding a larger int raised `OverflowError`. `entry_by_id` also returns None below 1. M3's CLI reaches `entry_by_id` first with the Captain's id (`argparse` `type=int`; only `<= 0` refused), so an over-large id now prints "No Ship's Archive entry has id …" (exit 1) instead of "The erasure failed: OverflowError: …" (exit 1).
+- **D18 (the archive is never a reset target; Amendment A4, F3).**
+  - **(A) chosen:** `_archive_reset_overlap` runs at every tier once the configuration, data directory and knowledge repo are known, before the AD-418 read, the dry run, the confirmation and the pidfile. With the archive enabled it resolves the archive path (`resolve_archive_db_path`) and every target of tiers 1 to N (each listed file; each listed directory, `ship-records/` at tier 3 included; ChromaDB's UUID-named directories; the knowledge subdirectories, conservatively, though only their `.json` and `.py` files go; `ontology/instance_id`), following symlinks and `..`, and compares with `os.path.normcase`. An archive equal to or inside a target refuses: exit 1, nothing touched, a dry run included.
+  - (B) tier 2 and above only: rejected; `--soft` deletes `checkpoints/` contents too.
+  - (C) skip the archive inside the tier loop: rejected; it changes the loop (BF-892's site, §14.17) and leaves a target half cleared.
+  - (D) warn: rejected; the command deletes.
+- **D19 (the Captain's options reach the command; Amendment A4, F1).** `reset`'s `--config` and `--data-dir` and `archive erase`'s `--config` use `default=argparse.SUPPRESS`, as `doctor`, `crew-token` and `setup` do (`__main__.py:1246, 3409, 3413, 3507`). argparse copies every subparser default over the root parser's value, so a leading `--config` or `--data-dir` was lost. With neither parser given the option, the root default `None` stands and both commands fall back as before. `serve`, `rebuild-episodic` and `backup-reclaim` have the same defect and are outside S1 (register RA4-1).
 
 **Disclosed effects.**
 1. The live archive migrates to v1 on the first boot after merge (0 rows, additive).
@@ -125,6 +134,9 @@ At `--full`, everything the crew published in Ship's Records is lost.
 8. (M3) With no instance id, records to promote refuse the reset. Two resets with no boot between therefore refuse the second time unless `--skip-promotion REASON` is given, even when everything is already archived (register RA1-2). A data directory with no instance id and nothing to promote resets with no generation row.
 9. (M3) `probos reset` creates a missing data directory (the pidfile's directory); `probos archive erase` creates an empty v1 archive when there is none (register RA1-3).
 10. (M3) Only `probos serve` holds the pidfile, so the reset does not see a vessel started as the interactive shell (register RA1-1).
+11. (A4) Every data directory gains a permanent empty `probos.pid.lock`. An acquire waits up to 10 seconds for another acquire to finish, then refuses as a live owner does; a filesystem without file locks refuses every acquire (register RA4-2).
+12. (A4) `probos reset` refuses (exit 1, a dry run included) when the configured archive is, or lies inside, something the reset deletes.
+13. (A4) `probos --config X reset`, `probos --data-dir D reset` and `probos --config X archive erase` now use X and D, as the same options after the subcommand always did.
 
 ## 4. Milestones
 
@@ -134,7 +146,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 |---|---|---|
 | **M1** store | 7.1 `knowledge/archive_store.py`; 7.2 `tests/test_ad524_ships_archive.py`; 7.3 `docs/development/store-baseline.yaml`; 7.4 new test | `tests/test_ad1341_s1_archive_store.py tests/test_ad524_ships_archive.py tests/test_issue1419_failed_start_rollback.py tests/test_ad1256_store_registry.py tests/test_ad1265_backup_coverage.py tests/test_layer_boundaries.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`, then `d:/ProbOS/.venv/Scripts/python.exe scripts/check_store_registry.py --check` |
 | **M2** service | 7.5 `config.py`; 7.6 `startup/cognitive_services.py`; 7.6b `docs/development/config-facade-baseline.yaml`; 7.6c `tests/test_ad1270e1_config_facade.py`; 7.7 new `knowledge/archive_promotion.py`; 7.8 new test | `tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_records_store.py tests/test_bf679_oracle_records_reader_identity.py tests/test_bf084_truncation_and_manuals.py tests/test_ad1270e1_config_facade.py tests/test_layer_boundaries.py tests/test_ad1265_backup_coverage.py tests/test_ad1256_store_registry.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_config_facade.py --check` |
-| **M3** CLI and reset | 7.9 `__main__.py`; 7.10 `tests/test_reset_integration.py`; 7.11 `tests/test_distribution.py`; 7.12 `tests/test_proactive.py`; 7.13 `tests/test_identity_deterministic.py`; 7.14 new test | `tests/test_ad1341_s1_reset_and_erase.py tests/test_reset_integration.py tests/test_distribution.py tests/test_proactive.py tests/test_identity_deterministic.py tests/test_ad1340_s1_restore_reset.py tests/test_bf902_fts_reconciliation.py tests/test_bf892_spawn_env_guard.py tests/test_quality_hardening.py tests/test_dotenv.py tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_ad1265_backup_coverage.py tests/test_layer_boundaries.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py` |
+| **M3** CLI and reset | 7.9 `__main__.py`; 7.9b `pidfile_guard.py` (A4); 7.10 `tests/test_reset_integration.py`; 7.11 `tests/test_distribution.py`; 7.12 `tests/test_proactive.py`; 7.13 `tests/test_identity_deterministic.py`; 7.14 new test | `tests/test_ad1341_s1_reset_and_erase.py tests/test_reset_integration.py tests/test_distribution.py tests/test_proactive.py tests/test_identity_deterministic.py tests/test_ad1340_s1_restore_reset.py tests/test_bf902_fts_reconciliation.py tests/test_bf892_spawn_env_guard.py tests/test_quality_hardening.py tests/test_dotenv.py tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_ad1265_backup_coverage.py tests/test_layer_boundaries.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad816_pidfile_guard.py tests/test_ad1296_working_dir_ownership.py` |
 | **M4** trackers | §8 | `tests/test_ad1184_ad_ledger.py`; `scripts/gen_ad_ledger.py --check` |
 
 If a test outside §7 fails only because it called `ArchiveStore.append`, update it to `promote_entry` with an inline `AD-1341 S1 (#1569)` reason; never delete it. Stop and report any other failure.
@@ -231,6 +243,9 @@ If a test outside §7 fails only because it called `ArchiveStore.append`, update
 | `config-facade-baseline.yaml` names and counts | `scripts/check_config_facade.py --check`; `tests/test_ad1270e1_config_facade.py` (four pins, 7.6c); the `tests/test_ad1270e2*.py` files that read the baseline | 308 names, 295 owned |
 | `_cmd_reset` returns its exit code | `main` (`sys.exit`); no test reads it (Absence A1-AV2); `_run_reset` now asserts 0 | a refusal exits 1, a bad `--skip-promotion` 2 |
 | `{data_dir}/probos.pid` held during a reset | `_serve` (refuses to boot, exit 2); the `rebuild-episodic` and `backup-reclaim --force` probes | no vessel boots into a reset |
+| (A4) `acquire_pidfile` runs whole under `_takeover_lock` | `_serve` (`__main__.py:752`), the reset (`:2965`); `tests/test_ad816_pidfile_guard.py` | a second acquirer of a stale pidfile waits (at most 10 s) and refuses the first's live PID; a permanent empty `probos.pid.lock`; the API, the pidfile's content and the probes are unchanged |
+| (A4) `reset`'s `--config` and `--data-dir`, `archive erase`'s `--config`: `default=argparse.SUPPRESS` | `main`; `_cmd_reset` and `_cmd_archive` read them with `getattr`; R13 | the root parser's value survives; with neither given, the root default `None` |
+| (A4) `_archive_reset_overlap` | `_cmd_reset` | exit 1 before the AD-418 read, the dry run, the confirmation and the pidfile |
 | `--skip-promotion REASON`, `probos archive erase` | the Captain; `generations` and `archive_erasures` rows | new |
 
 ## 6. Tests
@@ -292,6 +307,11 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | R11 | `test_only_the_cli_erases_an_entry_or_closes_a_generation` | census: `erase_entry`, `record_generation` named in `src` only by `__main__.py` | fails (named nowhere) |
 | R12 | `test_a_later_crews_oracle_reads_what_the_reset_archived_under_the_old_timeline` | reset → archive → a later crew's real Oracle | fails |
 | R13 | `test_main_parses_the_new_arguments_and_exits_with_the_command_code[reset, archive-erase]` | the parser and `sys.exit(_cmd_*(args))` | fails (argparse exit 2) |
+| R4c | `test_a_bad_skip_reason_exits_2_before_the_configuration_is_read` | (A4, F4) exit 2 with a loader that fails the test if called | fails on M3 (the loader runs first) |
+| R14 | `test_erase_uses_the_configuration_the_captain_named_in_either_position[config-first, config-last]` | (A4, F1) the real `main` and the real loader on a named YAML file; the entry is erased from that archive; the fallback is never loaded | `[config-first]` fails on M3 (the fallback configuration was selected) |
+| R15 | `test_reset_uses_the_configuration_and_data_directory_the_captain_named_in_either_position[options-first, options-last]` | (A4, F1) the named configuration and data directory; promoted into the named archive; the platform data directory never selected | `[options-first]` fails on M3 |
+| R16 | `test_two_acquirers_of_a_stale_pidfile_never_both_hold_it` | (A4, F2) two real processes on a stale pidfile, the first judging it dead slowly: exactly one acquires, the other refuses, and the pidfile names the PID the winner itself reports, whichever wins (A5). Premise (A5): both children import the probos under test | fails on M3 (both acquire) |
+| R17 | `test_an_archive_inside_what_the_reset_deletes_refuses_the_reset[semantic, dotdot, ship-records-full, dry-run, checkpoints-soft, target-file, ship-records-default, outside, disabled]` | (A4, F3) a real archive inside a target: exit 1, nothing deleted, no pidfile, no row; the three controls proceed (and promote when enabled) | the six refusals fail on M3 (exit 0, the archive deleted); the controls pass |
 
 Updated pins, not new cases: 7.2 (M1); 7.6c (M2); 7.10 to 7.13 (M3).
 
@@ -2392,7 +2412,7 @@ def test_only_the_promotion_service_writes_the_archive() -> None:
 
 ### 7.9 `src/probos/__main__.py` (M3: the reset promotes first, under the AD-816 pidfile; `probos archive erase`)
 
-Eight pairs, in file order. Pair 5 re-indents the tier loop and the git commit by four spaces inside the pidfile's `try`. Their text is otherwise byte-identical, and they stay in `_cmd_reset`'s scope (the BF-892 site key). No block includes `__main__.py:2887` (the existing `console = Console()`).
+Nine pairs, in file order (A4 moves pair 3 above the configuration load, adds pair 3b, the archive preflight, where pair 3 was, adds `_archive_reset_overlap` to pair 6, and widens pair 7 to `reset`'s `--config`). Pair 5 re-indents the tier loop and the git commit by four spaces inside the pidfile's `try`. Their text is otherwise byte-identical, and they stay in `_cmd_reset`'s scope (the BF-892 site key). No block includes `__main__.py:2887` (the existing `console = Console()`).
 
 Pair 1 (the annotation-only imports):
 
@@ -2435,13 +2455,45 @@ REPLACE:
 def _cmd_reset(args: argparse.Namespace) -> int:
     """Handle ``probos reset`` — tiered reset system (BF-070). Returns the exit code (AD-1341 S1).
 
-    0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, or the
-    Ship's Archive promotion of a tier 2 or 3 reset failed); 2 a ``--skip-promotion`` without a usable reason.
+    0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, the Ship's
+    Archive lies inside what the reset deletes, or the promotion of a tier 2 or 3 reset failed); 2 a
+    ``--skip-promotion`` without a usable reason.
     At tier 2 and above what the crew published is promoted into the Ship's Archive before the tier loop.
     """
 ```
 
-Pair 3 (`--skip-promotion`, checked first):
+Pair 3 (`--skip-promotion`, checked first; A4, F4: before the configuration is loaded, so the tier is resolved here):
+
+SEARCH:
+```python
+    # Deprecated flag notice
+    if getattr(args, 'wipe_records', False):
+        console.print("[yellow]⚠ --wipe-records is deprecated, use --full[/yellow]")
+
+    # Load config to find knowledge repo_path
+```
+REPLACE:
+```python
+    # Deprecated flag notice
+    if getattr(args, 'wipe_records', False):
+        console.print("[yellow]⚠ --wipe-records is deprecated, use --full[/yellow]")
+
+    # Resolve the effective tier (from the flags alone; it needs no configuration)
+    tier = _resolve_tier(args)
+
+    # AD-1341 S1: --skip-promotion REASON is checked before anything is read, locked or deleted, and (A4, F4)
+    # before the configuration is loaded, so a malformed configuration cannot turn exit 2 into a traceback.
+    skip_reason = getattr(args, 'skip_promotion', None)
+    if skip_reason is not None:
+        problem = _skip_promotion_problem(skip_reason, tier)
+        if problem:
+            console.print(f"[red]✗[/red] {problem}")
+            return 2
+
+    # Load config to find knowledge repo_path
+```
+
+Pair 3b (A4, F3: the archive is never something the reset deletes; every tier, before the dry run, the confirmation and the pidfile):
 
 SEARCH:
 ```python
@@ -2452,16 +2504,16 @@ SEARCH:
 ```
 REPLACE:
 ```python
-    # Resolve the effective tier
-    tier = _resolve_tier(args)
-
-    # AD-1341 S1: --skip-promotion REASON is checked before anything is read, locked or deleted.
-    skip_reason = getattr(args, 'skip_promotion', None)
-    if skip_reason is not None:
-        problem = _skip_promotion_problem(skip_reason, tier)
-        if problem:
-            console.print(f"[red]✗[/red] {problem}")
-            return 2
+    # AD-1341 S1 A4 (F3): refuse a reset that would delete the Ship's Archive. Every tier and a dry run too, before
+    # the scheduled-task read, the confirmation and the pidfile; nothing is opened or touched.
+    overlap = _archive_reset_overlap(config, tier, data_dir, repo_path)
+    if overlap:
+        console.print("[red]✗[/red] probos reset refused: the Ship's Archive is inside what this reset deletes.")
+        console.print(
+            f"  archive.db_path is inside {overlap}; move it out of what a reset deletes. Nothing was changed.",
+            markup=False,
+        )
+        return 1
 
     # AD-418: Check for active scheduled tasks that survive reset
 ```
@@ -2823,6 +2875,37 @@ def _configured_archive_store(config: SystemConfig) -> ArchiveStore:
     return ArchiveStore(str(archive_path), connection_factory=default_factory)
 
 
+def _archive_reset_overlap(config: SystemConfig, tier: int, data_dir: Path, repo_path: Path) -> str:
+    """What a reset of ``tier`` deletes that is, or holds, the Ship's Archive; ``""`` when nothing (A4, F3).
+
+    The targets are what the tier loop removes for tiers 1 to ``tier``: each listed file; each listed directory,
+    whose contents go; ChromaDB's UUID-named directories; the knowledge store's subdirectories (only their ``.json``
+    and ``.py`` files go, but an archive there is refused too); and the instance id file. Both sides are resolved
+    (symlinks, ``..``) and compared with the platform's case rule. It reads paths only and opens nothing.
+    """
+    from probos.config import resolve_archive_db_path
+
+    if not config.archive.enabled:  # D13: the reset neither opens nor protects a disabled archive
+        return ""
+    archive = os.path.normcase(str(resolve_archive_db_path(config.archive).resolve()))
+    targets: list[Path] = []
+    for level in range(1, tier + 1):
+        tier_def = RESET_TIERS[level]
+        specials = tier_def.get("special", [])
+        targets += [data_dir / name for name in [*tier_def.get("files", []), *tier_def.get("dirs", [])]]
+        if "chromadb_uuid_dirs" in specials:
+            targets += _find_chromadb_uuid_dirs(data_dir)
+        if "knowledge_subdirs" in specials:
+            targets += [repo_path / sub for sub in _RESET_SUBDIRS]
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        if archive == resolved or archive.startswith(resolved.rstrip(os.sep) + os.sep):
+            return str(target)
+    return ""
+
+
 def _promote_before_reset(
     config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, console: Console,
 ) -> bool:
@@ -2995,17 +3078,19 @@ async def _erase_archive_entry(config: SystemConfig, entry_id: int, reason: str,
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
 ```
 
-Pair 7 (the parser):
+Pair 7 (the parser; A4, F1: `reset`'s `--config` and `--data-dir` and `archive erase`'s `--config` use `default=argparse.SUPPRESS`, as `doctor` does, so a value given to the root parser survives the subcommand):
 
 SEARCH:
 ```python
+    reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
     reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
 
     args = parser.parse_args()
 ```
 REPLACE:
 ```python
-    reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+    reset_parser.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    reset_parser.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
     reset_parser.add_argument(
         "--skip-promotion", type=str, default=None, metavar="REASON",
         help="AD-1341: reset without promoting Ship's Records into the Ship's Archive first; "
@@ -3024,7 +3109,7 @@ REPLACE:
         help="Why, in 1-500 characters; it is recorded. Do not restate the entry's content.",
     )
     archive_erase.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
-    archive_erase.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
+    archive_erase.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
 
     args = parser.parse_args()
 ```
@@ -3050,6 +3135,135 @@ REPLACE:
         sys.exit(_cmd_archive(args))
 
     if args.command == "serve":
+```
+
+### 7.9b `src/probos/pidfile_guard.py` (M3, A4: two acquirers of a stale pidfile take turns)
+
+AD-816's acquire decides exactly as before; A4 runs it whole under an OS lock on `{data_dir}/probos.pid.lock`, a file that is never removed (D12, A4). The API, the pidfile's content, `assert_no_other_instance` and `is_pid_alive` are unchanged, and so are `_serve` and the reset's release by path. Two pairs; no block includes the module's three by-name removals of the pidfile.
+
+SEARCH:
+```python
+import logging
+import os
+import sys
+from pathlib import Path
+```
+REPLACE:
+```python
+import logging
+import os
+import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+```
+
+SEARCH:
+```python
+    try:
+        os.write(fd, str(pid).encode("utf-8"))
+    finally:
+        os.close(fd)
+    return True
+
+
+def acquire_pidfile(data_dir: Path) -> Path:
+    """Atomically acquire the per-data-dir pidfile.
+
+    Returns the acquired path on success. Raises
+    :class:`AnotherInstanceRunning` if another live runtime holds it.
+    Removes + retries once when the existing pidfile is stale.
+    """
+    pidfile = Path(data_dir) / "probos.pid"
+    own_pid = os.getpid()
+```
+REPLACE:
+```python
+    try:
+        os.write(fd, str(pid).encode("utf-8"))
+    finally:
+        os.close(fd)
+    return True
+
+
+#: AD-1341 S1 A4 (F2): how long an acquirer waits for another to finish inspecting or replacing the pidfile.
+_TAKEOVER_WAIT_S = 10.0
+
+
+def _try_lock(fd: int) -> bool:
+    """One non-blocking attempt at the OS lock on byte 0 of ``fd``: True when this process now holds it."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:  # another process holds it, or the platform refuses: wait, then refuse (fail closed)
+        return False
+    return True
+
+
+def _unlock(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _takeover_lock(data_dir: Path) -> Iterator[None]:
+    """One process at a time creates, inspects or replaces ``probos.pid`` (AD-1341 S1 A4, F2).
+
+    Without it, two acquirers that both read a stale PID could interleave: one replaced the stale file, the other
+    then removed that fresh file by name and created its own, and both held the guard. The lock is the OS's, on
+    ``probos.pid.lock``, which is never removed: the OS releases it when its holder exits, so a crash leaves no
+    stale lock to break. It is held only for the acquire, never while a vessel or a reset runs. Waiting longer
+    than ``_TAKEOVER_WAIT_S`` refuses, as a live owner does.
+    """
+    lock_path = Path(data_dir) / "probos.pid.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        deadline = time.monotonic() + _TAKEOVER_WAIT_S
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                raise AnotherInstanceRunning(pid=-1, data_dir=Path(data_dir), pidfile=lock_path)
+            time.sleep(0.02)
+        try:
+            yield
+        finally:
+            _unlock(fd)
+    finally:
+        os.close(fd)
+
+
+def acquire_pidfile(data_dir: Path) -> Path:
+    """Atomically acquire the per-data-dir pidfile.
+
+    Returns the acquired path on success. Raises
+    :class:`AnotherInstanceRunning` if another live runtime holds it.
+    Removes + retries once when the existing pidfile is stale. The whole
+    sequence runs under ``_takeover_lock`` (AD-1341 S1 A4), so a second
+    acquirer of a stale pidfile finds the first's live PID and refuses.
+    """
+    with _takeover_lock(data_dir):
+        return _acquire_unlocked(data_dir)
+
+
+def _acquire_unlocked(data_dir: Path) -> Path:
+    """``acquire_pidfile``'s sequence; the caller holds ``_takeover_lock``."""
+    pidfile = Path(data_dir) / "probos.pid"
+    own_pid = os.getpid()
 ```
 
 ### 7.10 `tests/test_reset_integration.py` (M3: the shared helper's fake disables the archive)
@@ -3080,9 +3294,9 @@ REPLACE:
             assert _cmd_reset(args) == 0  # AD-1341 S1: _cmd_reset returns its exit code
 ```
 
-### 7.11 `tests/test_distribution.py` (M3: six tier 2+ call sites disable the archive)
+### 7.11 `tests/test_distribution.py` (M3: all seven reset call sites disable the archive)
 
-The tier 1 test (`test_tier1_soft_only_clears_transients`) is unchanged: tier 1 never reads `config.archive`.
+(A4) The tier 1 test (`test_tier1_soft_only_clears_transients`) also disables it: every tier now reads `config.archive` for D18's preflight, and that fake has no `archive` attribute. Its pair is the last below.
 
 SEARCH:
 ```python
@@ -3210,7 +3424,26 @@ REPLACE:
             _cmd_reset(args)  # Should not raise
 ```
 
-### 7.12 `tests/test_proactive.py` (M3: the two tier 2+ tests disable the archive)
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        # Tier 1 files cleared
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569) A4: every reset reads config.archive for its preflight; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        # Tier 1 files cleared
+```
+
+### 7.12 `tests/test_proactive.py` (M3: the four reset tests disable the archive; A4 adds the two tier 1 tests)
 
 SEARCH:
 ```python
@@ -3246,6 +3479,42 @@ REPLACE:
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
         mock_config.archive.enabled = False  # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive
+```
+
+SEARCH:
+```python
+        args = self._reset_args(data_dir, soft=True)  # Tier 1 includes checkpoints
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+```
+REPLACE:
+```python
+        args = self._reset_args(data_dir, soft=True)  # Tier 1 includes checkpoints
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569) A4: every reset reads config.archive
+```
+
+SEARCH:
+```python
+        args = self._reset_args(data_dir, soft=True)
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+```
+REPLACE:
+```python
+        args = self._reset_args(data_dir, soft=True)
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569) A4: every reset reads config.archive
 ```
 
 ### 7.13 `tests/test_identity_deterministic.py` (M3: three tier 2 tests disable the archive)
@@ -3330,6 +3599,7 @@ real ``SystemConfig`` whose archive is ``tmp_path / "archive.db"`` and whose kno
 directory, so no test touches ``~/.probos``; Ship's Records written by the store's own producers; the real
 ``ArchiveStore``, AD-816 pidfile and ``OracleService``. The config loader is the one stand-in: it returns that
 ``SystemConfig`` instead of reading YAML (``main``'s dispatch test also replaces the command it dispatches to).
+A4's parser tests read a named YAML file with the real loader, and its guard test runs two real processes.
 The tests are synchronous because ``_cmd_reset`` runs its own event loop, as the CLI does.
 """
 
@@ -3339,8 +3609,11 @@ import ast
 import asyncio
 import os
 import sqlite3
+import sys
+import time
 from argparse import Namespace as _Namespace
 from pathlib import Path
+from subprocess import Popen as _Popen
 from typing import Any
 
 import pytest
@@ -3359,12 +3632,57 @@ _SHIP = "ship-did-alpha-0001"
 _NEXT_SHIP = "ship-did-beta-0002"
 _CONVERGENCE = "reports/convergence/convergence-20261022-000000.md"
 _CLAIM = {"claim_id": "c0ffee02c0ffee02", "contest_state": "uncontested"}
+_real_loader = cli._load_config_with_fallback  # A4: kept before any test replaces it
+
+# A4 (F2): one acquirer of the AD-816 pidfile, as a separate process. "slow" judges the stale PID dead a second
+# late, as a loaded machine might; each process waits for the test's signal files, and a holder stays alive.
+_ACQUIRER = '''
+import os
+import sys
+import time
+from pathlib import Path
+
+from probos import pidfile_guard
+
+data_dir, name, signals = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 
 
-def _config(tmp_path: Path, *, archive_enabled: bool = True) -> SystemConfig:
+def _wait_for(flag):
+    deadline = time.monotonic() + 30
+    while not (signals / flag).exists():
+        if time.monotonic() > deadline:
+            sys.exit(9)
+        time.sleep(0.01)
+
+
+if name == "slow":
+    judge = pidfile_guard.is_pid_alive
+
+    def _slowly(pid):
+        time.sleep(1.0)
+        return judge(pid)
+
+    pidfile_guard.is_pid_alive = _slowly
+(signals / f"ready-{name}").write_text("", encoding="utf-8")
+_wait_for(f"go-{name}")
+try:
+    pidfile_guard.acquire_pidfile(data_dir)
+    outcome = "acquired"
+except pidfile_guard.AnotherInstanceRunning:
+    outcome = "refused"
+# A5: the outcome, this process's own PID (what acquire_pidfile writes; the pid the test holds may be that of a
+# venv launcher) and the guard module it ran, space-separated with the path last
+report = " ".join([outcome, str(os.getpid()), pidfile_guard.__file__])
+(signals / f"{name}.part").write_text(report, encoding="utf-8")
+os.replace(signals / f"{name}.part", signals / f"outcome-{name}")
+_wait_for("release")
+'''
+
+
+def _config(tmp_path: Path, *, archive_enabled: bool = True, archive_path: Path | None = None) -> SystemConfig:
     knowledge = tmp_path / "knowledge"
     knowledge.mkdir(exist_ok=True)
-    section = ArchiveConfig(enabled=archive_enabled, db_path=str(tmp_path / "archive.db"))
+    section = ArchiveConfig(enabled=archive_enabled, db_path=str(archive_path or tmp_path / "archive.db"))
     return SystemConfig(knowledge=KnowledgeConfig(repo_path=str(knowledge)), archive=section)
 
 
@@ -3440,6 +3758,77 @@ async def _oracle_query(tmp_path: Path, text: str) -> list[Any]:
         return await OracleService(archive_store=later).query(text, tiers=["archive"])
     finally:
         await later.close()
+
+
+def _archive_store_at(path: Path) -> ArchiveStore:
+    return ArchiveStore(str(path), connection_factory=default_factory)
+
+
+async def _create_archive(path: Path) -> None:
+    """A4 (F3): a real, initialised, empty Ship's Archive at ``path``: history a reset must not destroy."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        path.unlink()  # the archive is configured to be one of the reset's own files
+    store = _archive_store_at(path)
+    await store.initialize()
+    await store.close()
+
+
+def _named_config_file(tmp_path: Path) -> Path:
+    """A4 (F1): the YAML a Captain names with ``--config``: this test's archive and knowledge repo."""
+    (tmp_path / "knowledge").mkdir(exist_ok=True)
+    named = tmp_path / "named-config.yaml"
+    named.write_text(
+        f"archive:\n  enabled: true\n  db_path: '{(tmp_path / 'archive.db').as_posix()}'\n"
+        f"knowledge:\n  repo_path: '{(tmp_path / 'knowledge').as_posix()}'\n",
+        encoding="utf-8",
+    )
+    return named
+
+
+def _only_what_the_captain_named(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The real loader for a named file. Selecting the fallback configuration or the platform data directory fails
+    the test instead of reaching ``~/.probos`` or a real vessel. Returns the paths the command asked to load."""
+    asked: list[Any] = []
+
+    def _load(path: Any) -> Any:
+        asked.append(path)
+        assert path is not None, "the fallback configuration was selected"
+        return _real_loader(path)
+
+    def _no_default() -> Path:
+        pytest.fail("the platform data directory was selected")  # A5: Failed, which no except Exception swallows
+
+    monkeypatch.setattr(cli, "_load_config_with_fallback", _load)
+    monkeypatch.setattr(cli, "_default_data_dir", _no_default)
+    return asked
+
+
+def _main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> Any:
+    """The real ``main`` with ``argv``; returns its exit code."""
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)  # no repository .env into the worker
+    monkeypatch.setattr(asyncio, "set_event_loop_policy", lambda policy: None)  # main sets one on Windows
+    monkeypatch.setattr("sys.argv", ["probos", *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    return exited.value.code
+
+
+def _dead_process() -> _Popen[bytes]:
+    """A process that has exited; its PID is what a vessel that died uncleanly leaves in its pidfile. The caller
+    keeps the object until the test ends: its open handle stops Windows reusing the PID meanwhile (A5)."""
+    finished = _Popen([sys.executable, "-c", "pass"])
+    finished.wait(timeout=60)
+    return finished
+
+
+def _await_signal(path: Path) -> str:
+    deadline = time.monotonic() + 30
+    while not path.exists():
+        assert time.monotonic() < deadline, f"no {path.name} within 30 seconds"
+        time.sleep(0.01)
+    return path.read_text(encoding="utf-8")
 
 
 # --- R1, R2: the reset promotes before it deletes ----------------------------------------------------------------
@@ -3726,6 +4115,154 @@ def test_main_parses_the_new_arguments_and_exits_with_the_command_code(
 
     assert exited.value.code == 3
     assert [getattr(args, attribute) for args in seen] == [value]
+
+
+# --- R4c, R14 to R17 (Amendment A4) ----------------------------------------------------------------------------
+
+
+def test_a_bad_skip_reason_exits_2_before_the_configuration_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4: the reason is checked before the configuration loads, so a malformed configuration cannot turn exit 2
+    into a traceback."""
+    data_dir = _data_dir(tmp_path)
+
+    def _unreadable(_path: Any) -> Any:
+        pytest.fail("the configuration was read before --skip-promotion was checked")  # A5: not swallowable
+
+    monkeypatch.setattr(cli, "_load_config_with_fallback", _unreadable)
+    args = _Namespace(
+        yes=True, soft=False, full=False, dry_run=False, wipe_records=False, config=None, data_dir=data_dir,
+        skip_promotion="   ",
+    )
+
+    assert cli._cmd_reset(args) == 2
+
+    assert _nothing_deleted(data_dir)
+
+
+@pytest.mark.parametrize("leading", [True, False], ids=["config-first", "config-last"])
+def test_erase_uses_the_configuration_the_captain_named_in_either_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leading: bool,
+) -> None:
+    """F1: a ``--config`` before ``archive erase`` was replaced by the subcommand's own default, so the erasure ran
+    on the fallback configuration's archive."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    assert _reset(monkeypatch, _config(tmp_path), data_dir) == 0
+    archive = tmp_path / "archive.db"
+    (entry_id,) = _rows(archive, "SELECT id FROM archive WHERE source_ref = ?", (_CONVERGENCE,))[0]
+    named = _named_config_file(tmp_path)
+    asked = _only_what_the_captain_named(monkeypatch)
+    erase = ["archive", "erase", str(entry_id), "--reason", "superseded", "--yes"]
+
+    code = _main(monkeypatch, ["--config", str(named), *erase] if leading else [*erase, "--config", str(named)])
+
+    assert (code, asked) == (0, [named])
+    assert _rows(archive, "SELECT id FROM archive WHERE id = ?", (entry_id,)) == []
+
+
+@pytest.mark.parametrize("leading", [True, False], ids=["options-first", "options-last"])
+def test_reset_uses_the_configuration_and_data_directory_the_captain_named_in_either_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leading: bool,
+) -> None:
+    """F1: ``--config`` and ``--data-dir`` before ``reset`` were replaced by the subcommand's defaults, so the
+    reset read the fallback configuration and reset the platform data directory."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    named = _named_config_file(tmp_path)
+    asked = _only_what_the_captain_named(monkeypatch)
+    options = ["--config", str(named), "--data-dir", str(data_dir)]
+
+    code = _main(monkeypatch, [*options, "reset", "--yes"] if leading else ["reset", "--yes", *options])
+
+    assert (code, asked) == (0, [named])
+    assert not (data_dir / "trust.db").exists()
+    assert _rows(tmp_path / "archive.db", "SELECT timeline_id FROM generations") == [(_SHIP,)]
+
+
+def test_two_acquirers_of_a_stale_pidfile_never_both_hold_it(tmp_path: Path) -> None:
+    """F2: two real processes find the same stale pidfile, and the first takes a second to judge it dead. Before A4
+    the second replaced the stale file meanwhile, the first then removed that fresh file by name and created its
+    own, and both held the guard. Now the second waits for the takeover lock, finds the first alive, and refuses."""
+    data_dir = tmp_path / "data"
+    signals = tmp_path / "signals"
+    data_dir.mkdir()
+    signals.mkdir()
+    script = tmp_path / "acquirer.py"
+    script.write_text(_ACQUIRER, encoding="utf-8")
+    stale = _dead_process()  # held to the end of the test (A5)
+    (data_dir / "probos.pid").write_text(str(stale.pid), encoding="utf-8")  # a vessel that died uncleanly
+    env = {**os.environ, "PYTHONPATH": str(_SRC.parent)}  # A5: the children import the probos under test
+    acquirers = {
+        name: _Popen([sys.executable, str(script), str(data_dir), name, str(signals)], env=env)
+        for name in ("slow", "fast")
+    }
+    try:
+        for name in acquirers:
+            _await_signal(signals / f"ready-{name}")
+        (signals / "go-slow").write_text("", encoding="utf-8")
+        time.sleep(0.3)  # the slow acquirer is judging the stale PID
+        (signals / "go-fast").write_text("", encoding="utf-8")
+        reports = {name: _await_signal(signals / f"outcome-{name}").split(" ", 2) for name in acquirers}
+        holder = (data_dir / "probos.pid").read_text(encoding="utf-8")
+    finally:
+        (signals / "release").write_text("", encoding="utf-8")
+        for process in acquirers.values():
+            process.wait(timeout=60)
+
+    # A5: premise first (the AD-1137 precedent): both children ran this tree's guard, not another install's.
+    assert {Path(module).resolve() for _outcome, _pid, module in reports.values()} == {_SRC / "pidfile_guard.py"}
+    # The stagger makes the pre-A4 race show (both acquire). Which acquirer wins is the scheduler's, so the test
+    # asserts that exactly one does and that the pidfile names it, by the PID the winner itself reported: on a
+    # Windows venv the pid the test's handle reports is the launcher's, not the interpreter's.
+    assert sorted(outcome for outcome, _pid, _module in reports.values()) == ["acquired", "refused"]
+    (winner,) = [pid for outcome, pid, _module in reports.values() if outcome == "acquired"]
+    assert holder == winner
+
+
+@pytest.mark.parametrize(
+    ("place", "flags", "enabled", "code"),
+    [
+        (("semantic", "archive.db"), {}, True, 1),
+        (("ontology", "..", "semantic", "archive.db"), {}, True, 1),
+        (("ship-records", "archive.db"), {"full": True}, True, 1),
+        (("semantic", "archive.db"), {"dry_run": True}, True, 1),
+        (("checkpoints", "archive.db"), {"soft": True}, True, 1),
+        (("trust.db",), {}, True, 1),
+        (("ship-records", "archive.db"), {}, True, 0),
+        ((), {}, True, 0),
+        (("semantic", "archive.db"), {}, False, 0),
+    ],
+    ids=[
+        "semantic", "dotdot", "ship-records-full", "dry-run", "checkpoints-soft", "target-file",
+        "ship-records-default", "outside", "disabled",
+    ],
+)
+def test_an_archive_inside_what_the_reset_deletes_refuses_the_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    place: tuple[str, ...], flags: dict[str, Any], enabled: bool, code: int,
+) -> None:
+    """F3: with ``archive.db_path`` inside a reset target, the reset promoted into the archive, then deleted it with
+    its tier. It now refuses first, at every tier and in a dry run, with nothing touched. A target of a higher tier,
+    a path outside the data directory and a disabled archive (D13) do not refuse."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    history = data_dir.joinpath(*place) if place else tmp_path / "archive.db"
+    asyncio.run(_create_archive(history))
+    config = _config(tmp_path, archive_enabled=enabled, archive_path=history)
+
+    assert _reset(monkeypatch, config, data_dir, **flags) == code
+
+    if code == 1:
+        assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out
+        assert _nothing_deleted(data_dir) and history.is_file()
+        assert _rows(history, "SELECT id FROM archive") == []  # refused before the promotion
+        assert not (data_dir / "probos.pid").exists()  # and before the pidfile
+    else:
+        assert not (data_dir / "trust.db").exists()  # premise: the reset ran
+        if enabled:
+            assert len(_rows(history, "SELECT id FROM archive")) == 2  # promoted, and kept
 ```
 
 ## 8. Tracking (tracker pairs; in M4's commit)
@@ -3769,7 +4306,7 @@ REPLACE:
 - *D7 (erasure).* The marker holds the entry id, timeline, source kind and ref, the reason and the time; never the title, content, metadata or hash. It blocks re-promotion of that source with any content, because the source still exists in Ship's Records.
 - *D8 (criteria).* Convergence reports by `system`, the Captain's log by `captain`, other reports when `published`, notebooks with a `claim_id` (AD-1140) or `published`. Read as the anonymous reader; anything narrower than ship, or with an empty body, is withheld and reported. (A3) A blank topic takes the file name, then the records path, so one document's label never stops a reset; a records file the store cannot decode is skipped unreported (register). No model call; records carry no episode ids.
 - *D11 (store registry).* The baseline row is updated, not declared: the archive lives outside `data_dir`, so its declaration is AD-1265's second-root question.
-- *D12-D13 (the reset).* At tier 2 and above `probos reset` promotes before deleting and refuses on any failure (exit 1); without an instance id, records to promote also refuse. `--skip-promotion REASON` writes a `generations` row; a blank, over-long or tier 1 reason exits 2. Every executing reset holds the AD-816 pidfile, so it refuses beside a vessel started with `probos serve` (the interactive shell takes no pidfile: register). With the archive disabled the reset proceeds with a notice and `probos archive erase` exits 2.
+- *D12-D13 (the reset).* At tier 2 and above `probos reset` promotes before deleting and refuses on any failure (exit 1); without an instance id, records to promote also refuse. `--skip-promotion REASON` writes a `generations` row; a blank, over-long or tier 1 reason exits 2, before the configuration is read. Every executing reset holds the AD-816 pidfile, so it refuses beside a vessel started with `probos serve` (the interactive shell takes no pidfile: register); (A4) the acquire runs under an OS lock on `probos.pid.lock`, so two acquirers of a stale pidfile cannot both hold it. (A4) Every reset, a dry run included, refuses when the configured archive is or lies inside something it deletes, and `--config` and `--data-dir` count before or after the subcommand. With the archive disabled the reset proceeds with a notice and `probos archive erase` exits 2.
 - *C1.* Promoting at `ship` classification or above only stands; the Captain can overrule it.
 - *Disclosed effects.* The live archive migrates to v1 on its next boot; an archive at another version is refused (the Oracle's archive tier off). `probos reset` can now refuse and exit 1, including `--soft` beside a running vessel. Erased bytes stay in earlier snapshots until they age out. A record first eligible in a later generation is attributed to that generation.
 - *Reversal.* Revert the S1 commits. The archive file stays at v1: AD-524's code reads and writes it unchanged, since its statements name only v0 columns and the partial index excludes rows with no hash. Promoted rows, generations and markers stay until the Captain removes them. `probos reset` stops promoting and stops refusing beside a running vessel.
@@ -3791,11 +4328,11 @@ REPLACE:
 - `RecordsStore` itself; `record_is_readable`; `publish_finding`; the AD-551 step.
 - The AD-1265 backup roots and the AD-1266 restore; the store declarations (only the baseline row changes).
 - `doctor/runner.py`'s `_default_data_dir` (register).
-- (M3) `pidfile_guard.py` and `_serve`'s use of it; the interactive shell still takes no pidfile (register RA1-1); the `rebuild-episodic` and `backup-reclaim` probes.
+- (M3) `_serve`'s use of the pidfile, its release by path included (A4 changes only the acquire's serialisation in `pidfile_guard.py`); `assert_no_other_instance` and `is_pid_alive`; the interactive shell still takes no pidfile (register RA1-1); the `rebuild-episodic` and `backup-reclaim` probes; the `serve`, `rebuild-episodic` and `backup-reclaim` parsers (register RA4-1).
 - (M3) The tier loop's behaviour and its two git launches, `_show_dry_run`, `_show_confirmation_prompt` and every other subcommand.
 - Federation sharing of the archive; trust scoring (the just-culture note goes to its next owner).
 
-## 10. Mutation rows (50 rows: 40 for M1 and M2, 10 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (60 rows: 40 for M1 and M2, 20 for M3; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s1_archive_store.py` (rows K) or `tests/test_ad1341_s1_promotion.py` (rows P, C, S) on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. Rows M-R run against `tests/test_ad1341_s1_reset_and_erase.py` on the tree with §7.9 to §7.14 applied.
 
@@ -3851,6 +4388,16 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | M-R8 | `src/probos/__main__.py` | `return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted` | `return 0` | R3 (exit 0). "A refusal that exits 0" |
 | M-R9 | `src/probos/__main__.py` | `if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id` | `if False:` | R9 `[with-records]` (exit 0; deletes) |
 | M-R10 | `src/probos/__main__.py` | `if not confirmed and input("  Erase it? [y/N]: ").strip().lower() != "y":` | `if False:` | R10b `[declined]` (the entry is erased) |
+| M-R11 | `src/probos/__main__.py` | `archive_erase.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")` | `archive_erase.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")` | R14 `[config-first]` (the fallback configuration is selected). A4, F1 |
+| M-R12 | `src/probos/__main__.py` | `reset_parser.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")` | `reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")` | R15 `[options-first]` (the fallback configuration is selected). A4, F1 |
+| M-R13 | `src/probos/__main__.py` | `reset_parser.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")` | `reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")` | R15 `[options-first]` (the platform data directory is selected). A4, F1 |
+| M-R14 | `src/probos/pidfile_guard.py` | `with _takeover_lock(data_dir):` | `if True:` | R16 (both acquire). A4, F2: "the acquire unserialised" |
+| M-R15 | `src/probos/pidfile_guard.py` | `while not _try_lock(fd):` | `while False:` | R16 (both acquire on POSIX; on Windows the unlock of an unheld lock raises and the slow child writes no outcome within 30 s). A4, F2 |
+| M-R16 | `src/probos/__main__.py` | `overlap = _archive_reset_overlap(config, tier, data_dir, repo_path)` | `overlap = ""` | R17 `[semantic]` (exit 0; the archive deleted). A4, F3: "no preflight" |
+| M-R17 | `src/probos/__main__.py` | `if archive == resolved or archive.startswith(resolved.rstrip(os.sep) + os.sep):` | `if archive == resolved:` | R17 `[semantic]` (an archive inside a directory is not refused). A4, F3 |
+| M-R18 | `src/probos/__main__.py` | `archive = os.path.normcase(str(resolve_archive_db_path(config.archive).resolve()))` | `archive = os.path.normcase(str(resolve_archive_db_path(config.archive)))` | R17 `[dotdot]` (an unresolved `..` path is not refused). A4, F3 |
+| M-R19 | `src/probos/__main__.py` | `for level in range(1, tier + 1):` | `for level in range(1, 4):` | R17 `[ship-records-default]` (tier 2 refused for a tier 3 target). A4, F3: "targets of tiers the reset does not run" |
+| M-R20 | `src/probos/__main__.py` | `if not config.archive.enabled:  # D13: the reset neither opens nor protects a disabled archive` | `if False:` | R17 `[disabled]` (exit 1). A4, D13 |
 
 **Lines without a row, and why:**
 - `ARCHIVE_READER = ""` → `"captain"`, and `read_entry`'s reader argument: **equivalent**. Every record the captain could read beyond the anonymous reader is narrower than ship, and P-R7's gate withholds it. Reading as anonymous is defence in depth (the orchestrator's "read as captain").
@@ -3865,6 +4412,8 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 - (M3) `_configured_archive_store`'s `mkdir` for the computed default: the tests set `db_path`, and reaching the platform default would write outside `tmp_path`.
 - (M3) The pidfile `unlink` in `finally` and its `FileNotFoundError` and `OSError` branches: R1 and R3 assert the file is gone; the failure branch is not stageable deterministically.
 - (M3) The notice and summary `console.print` lines: output only.
+- (A4) F4's move of the `--skip-promotion` check before the configuration load is an order, not a line: R4c holds it with a loader that fails if called.
+- (A4) `_takeover_lock`'s 10-second refusal and `_unlock`: the refusal needs a third holder and is not stageable deterministically; M-R14 and M-R15 remove the lock itself. `os.path.normcase`: equivalent where `resolve()` already returns the on-disk case (an existing path on Windows); it is defence for a tail that does not exist yet. The ChromaDB, knowledge-subdirectory and instance-id targets share the comparison M-R17 and M-R18 cover.
 
 ## 11. Verified Against Codebase (2026-10-22, HEAD `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`)
 
@@ -3982,6 +4531,27 @@ tests/test_ad1341_s1_promotion.py (M2 as built): 254 test_a_failed_write_propaga
 tests/test_ad1341_s1_reset_and_erase.py (M3 as built): 72 the only topic-bearing write (topic_slug="private-coolant-c0ffee02", withheld)
 this contract §7.4: 1542-1552 _refuse_generations (A15's trigger: RAISE (ABORT, ...) through a second sqlite3 connection)
 tests/fixtures/ad1343_seam_census.py:25-39 STOP_CALLEES, GUARD_CALLEES, AGENT_WORK_METHODS, RECORDED
+```
+
+**A4 additions (2026-10-22; the M3 review tree `73ebbba3`, read in the consult tree `8b181bac`).** Each A4 SEARCH's distinctive line was grepped in this contract with no `$` anchor and found once.
+
+```text
+src/probos/__main__.py (M3 as built): 496-513 _resolve_config_path and _load_config_with_fallback (an explicit path is used as given);
+  749-755 _serve acquires; 778, 805, 959 _serve releases by path; 2091, 2146 is_pid_alive in the backup sweep; 2107-2114 backup-reclaim
+  --force probe; 2200-2212 rebuild-episodic probe; 2621 _RESET_SUBDIRS; 2626-2662 RESET_TIERS (tier 1: scheduled_tasks.db, events.db,
+  checkpoints; tier 2: the listed files, semantic, the three specials; tier 3: ward_room.db, workforce.db, ship-records, scout_reports);
+  2686-2693 _resolve_tier reads flags only; 2765-2776 _find_chromadb_uuid_dirs; 2898-2911 notice, config, repo_path, data_dir;
+  2914-2922 tier and the skip check after the config (F4); 3022-3061 the tier loop (listed dirs: children; knowledge_subdirs: .json and
+  .py children); 3081-3090 the release by path; 3168-3180 _configured_archive_store; 3367-3389 the root parser (--config, --fresh,
+  --data-dir default None or False); 1246, 3409, 3413, 3507 SUPPRESS; 3589, 3599, 3602, 3632, 3635, 3636 default None or store_true;
+  3659-3660 reset; 3679 archive erase; 3747-3763 serve and the shell read args.config and args.data_dir directly
+src/probos/pidfile_guard.py (184 lines, read whole): 14-19 imports; 94-106 _try_atomic_create (mkdir, O_EXCL); 109-165 acquire_pidfile
+  (stale: read, liveness, removal by name, create; nothing serialises two acquirers); 168-183 assert_no_other_instance (read-only)
+src/probos/config.py: 2631-2655 resolve_archive_db_path (db_path as given, else a platform default outside data_dir); 4114-4124 load_config
+src/probos/security/file_access.py:579, 623, 663 and src/probos/cognitive/swe_harness/tools.py:126: msvcrt imported inside a function
+tests/test_ad816_pidfile_guard.py:22-60 the acquire tests (behaviour only); tests/test_ad1296_working_dir_ownership.py:1009-1050 the probes
+tests/test_proactive.py:762-813 two tier 1 tests (a MagicMock config); tests/test_distribution.py:1109-1123 the tier 1 test (no archive attribute)
+tests/test_reset_integration.py:44-60 _run_reset disables the archive at every tier
 ```
 
 ## Absence Verified (2026-10-22)
@@ -4112,6 +4682,40 @@ FOUND: _title_for is the only new src name; in none of the four sets; 0 hits in 
 HOLDS: yes
 ```
 
+**A4 additions:**
+
+```text
+CLAIM: the subparsers whose default replaces a root option are exactly these                                       (A4-AV1)
+RUN:   Grep '"--config"|"--data-dir"|"--fresh"' src/probos/__main__.py
+FOUND: root 3374, 3380, 3385; SUPPRESS 1246, 3409, 3413, 3507; default None or store_true 3589 (backup-reclaim), 3599, 3602
+       (rebuild-episodic), 3632, 3635, 3636 (serve), 3659, 3660 (reset), 3679 (archive erase)
+HOLDS: yes: reset and archive erase are fixed (D19); the rest are register RA4-1
+
+CLAIM: nothing reads reset's or archive erase's config or data_dir as a bare attribute                              (A4-AV2)
+RUN:   Grep 'args\.config|args\.data_dir' src/probos
+FOUND: __main__.py:3747, 3749 (serve), 3763 (the shell); _cmd_reset (2903, 2905) and _cmd_archive read them with getattr
+HOLDS: yes: with SUPPRESS the root default None reaches them
+
+CLAIM: every caller and test of the guard is listed, and none lists the data directory's files exactly                  (A4-AV3)
+RUN:   Grep 'acquire_pidfile|probos\.pid' src/probos; Grep 'pidfile_guard|probos\.pid' tests
+FOUND: src: __main__.py 752 (_serve), 2965 (reset), 2114, 2212 (probes), 2146 (is_pid_alive); pidfile_guard.py.
+       tests: test_ad816_pidfile_guard.py (9), test_ad1296_working_dir_ownership.py (5), test_ad1341_s1_reset_and_erase.py (8), two
+       fixture strings (documentation text)
+HOLDS: yes: no test names probos.pid.lock or asserts a data directory's exact contents
+
+CLAIM: every _cmd_reset caller whose config has no usable archive section is updated                                   (A4-AV4)
+RUN:   Grep '_cmd_reset\(' tests
+FOUND: test_distribution.py 1123 (tier 1, no archive attribute: 7.11's A4 pair), 1156-1301 (tier 2+, disabled);
+       test_proactive.py 785, 811 (tier 1, MagicMock: 7.12's A4 pairs), 723, 757 (disabled); test_identity_deterministic.py 142, 166, 187
+       (disabled); test_reset_integration.py:60 (_run_reset, disabled for every tier); test_ad1341_s1_reset_and_erase.py:98 (a real config)
+HOLDS: yes
+
+CLAIM: no new name is an AD-1343 census callee                                                                         (A4-AV5)
+RUN:   Read tests/fixtures/ad1343_seam_census.py:25-39; Grep 'overlap|_acquire_unlocked|_try_lock|_unlock|lock|takeover' tests/fixtures
+FOUND: none of _archive_reset_overlap, _takeover_lock, _try_lock, _unlock, _acquire_unlocked in the four sets; 0 hits in the registry
+HOLDS: yes
+```
+
 ## 12. Deterministic gate checks, resolved up front
 
 | Check | Result |
@@ -4137,7 +4741,9 @@ HOLDS: yes
 | Lock (A2) | the lock comes from `asyncio`; `src` annotates `asyncio.Lock` (`http_fetch.py:782`), so the precheck resolves it, and it binds to the running loop only when first contended (BF-891, `procedure_store.py:157-159`). No new name in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`; no new public method (A7 unchanged) |
 | Phantom precheck (A2) | 20 candidates on the A1 text, 0 after A2: 7.14's `_config` binds `section` (no method is called on it anywhere), so no line begins `archive=`; the reset's `finally` calls `unlink()` and passes on `FileNotFoundError`. A15's trigger spells `RAISE (` with a space |
 | Size (M3) | `__main__.py` grows by about 250 lines; the new test is about 330 lines |
+| Precheck, census and size (A4) | The only new capitalised calls are ProbOS classes (`AnotherInstanceRunning`, `ArchiveStore`, `ArchiveConfig`, `SystemConfig`) and `Path`; the test aliases `subprocess.Popen` as `_Popen`. `argparse.SUPPRESS`, `msvcrt.locking`, `fcntl.flock` and `os.path.normcase` have lower-case receivers. No new line binds a name to a class call: the new bindings come from lower-case helpers or the underscore aliases. `_create_archive` calls `unlink` with no arguments. The acquirer script is a string constant. The new `src` names are in no census set (A4-AV5). No new subprocess in `src` (BF-892 unchanged); no `.db` literal. Size: `__main__.py` grows by about 45 lines, `pidfile_guard.py` by about 60, the new test by about 210 |
 | Precheck, census and size (A3) | The one new `src` name, `_title_for`, is lower case and in no census set (A3-AV4). The new test lines call only lower-case helpers (`_execute`, `_write_blank_topics`, `_records`, `_archive`, `_promote`, `plan_promotion`); no new line assigns a class call to a name (the precheck's pattern B). The trigger spells `RAISE (` with a space and `new.source_ref` in lower case, so neither reads as `Name(` or `Name.attr`. The docstrings name `list_entries`, `write_entry(` and `write_notebook(` in lower case and the record without a call. `archive_promotion.py` grows by about 17 lines; the test by about 80 |
+| Precheck, census and size (A5) | A4's row missed two `raise AssertionError` lines in 7.14, the one candidate the precheck reported on the built A4 text; A5 replaces both with `pytest.fail`, whose receiver the precheck skips. The new names (`_dead_process`, `stale`, `env`, `reports`, `winner`, `report`) are lower case and in no census set. `env` is a dict literal and `stale` comes from a lower-case helper, so no line binds a name to a class call. No `src` change. The test grows by about 8 lines |
 
 ## 13. Prior Art and Blind Spots
 
@@ -4186,12 +4792,18 @@ HOLDS: yes
 18. (A3) A blank topic, which the producers accept, made the record refuse its title, so one document stopped every tier 2 reset. Fixed: the title falls back to the file name, then the records path.
 19. (A3) A records file whose bytes are not UTF-8 is skipped by Ship's Records' listing, so it is neither promoted nor reported, and a tier 3 reset deletes it with `ship-records`. Register RA3-1.
 20. (A3) A lone surrogate escaped in a frontmatter string (`\uD800` in a topic) passes the record and fails the archive's text bind, so the run raises and the reset refuses (fail-closed). Register RA3-2.
+21. (A4) argparse copies a subparser's default over the root parser's value, so a leading `--config` or `--data-dir` was lost for `reset` and `archive erase`. Fixed by D19; `serve`, `rebuild-episodic` and `backup-reclaim` are register RA4-1.
+22. (A4) Two acquirers of a stale pidfile could both hold it, and the reset is the guard's first destructive consumer. Fixed by D12's takeover lock.
+23. (A4) An archive configured inside a reset target, at any tier, was promoted into and then deleted. Fixed by D18.
+24. (A4) A ProbOS without A4 takes no takeover lock, and a filesystem without file locks refuses every acquire. Register RA4-2 and RA4-3.
 
 **A1 prior art.** AD-816's `acquire_pidfile` is reused, not reimplemented. `verify-snapshot`'s pidfile-free read path is followed for `--dry-run`. BF-903 A3's `rich.markup.escape` is adopted. External search was skipped: this is ProbOS CLI plumbing with no outside analogue worth the search.
 
 **A2 prior art.** AD-1340 R3's `_write_lock` (`episode_archive.py:451-455`) is followed: created in `__init__`, held by every mutation and the close, never by reads; `procedure_store.py:159` (BF-891) and `episodic.py:1466` create theirs the same way. AD-1340's `stop()` swaps the handle out and swallows a failed close; this store keeps its own close, which keeps `_db` after a failure for shutdown's last resort (`test_issue1419_failed_start_rollback.py:2254`). External search was skipped: the defect is this store sharing its own connection, and the repo's pattern fixes it; the reference-projects review does not apply to a bug-fix amendment.
 
 **A3 prior art.** D8's rule that the run goes on past one document (P4) is extended to the title, and A15's trigger injection (`_refuse_generations`) is reused for P8. External search was skipped: this is a review repair to a fallback chain and a test, with no outside analogue worth the search.
+
+**A4 prior art.** py-filelock locks a dedicated lock file with `fcntl.flock(LOCK_EX | LOCK_NB)` on POSIX and `msvcrt.locking(LK_NBLCK, 1)` on Windows; its POSIX backend leaves the file on release. Adopted on both platforms, never removing the file, because a removed lock file reopens the race the lock closes (<https://py-filelock.readthedocs.io/en/stable/_modules/filelock/_unix.html>, <https://py-filelock.readthedocs.io/en/latest/_modules/filelock/_windows.html>). CPython's fix that let parent-namespace values survive subparser defaults (bpo-45235, GH-28420) was reverted for compatibility (GH-29525), so `default=argparse.SUPPRESS` on duplicated options is the stable remedy, already used here by `doctor`, `crew-token` and `setup` (<https://android.googlesource.com/platform/external/python/cpython3/+/807f839bbf>).
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -4207,13 +4819,17 @@ HOLDS: yes
 9. The service makes no model call, swallows nothing, reads as `""`, and writes nothing while planning. (A3) P8 injects a real database failure mid-run: it reaches the caller, the entries before it stay, and a re-run reports them present. The module docstring says that Ship's Records' listing skips a file it cannot decode (register RA3-1); the service claims nothing more.
 10. The store-baseline row lists exactly the tables the module creates, sorted.
 11. Each updated test changes only where it pinned `append`, with an inline `AD-1341 S1 (#1569)` reason; none is deleted.
-12. (M3) At tier 2 and above nothing is deleted before `_promote_before_reset` returns True. Any exception, a refused archive version, or records with no instance id exit 1 with every file in place. Tier 1 never reads `config.archive`.
-13. (M3) Every executing reset (`--soft` included) holds `{data_dir}/probos.pid` from after the confirmation through the tier loop and the git commit, and releases it on every exit. A live owner exits 1 and its pidfile is untouched. `--dry-run` takes no pidfile and opens no archive.
-14. (M3) A blank, over-long or tier 1 `--skip-promotion` exits 2 before anything is read, locked or deleted. A valid one writes exactly one `skipped` row and promotes nothing.
+12. (M3) At tier 2 and above nothing is deleted before `_promote_before_reset` returns True. Any exception, a refused archive version, or records with no instance id exit 1 with every file in place. Tier 1 never opens the archive; (A4) every tier reads `archive.enabled` and `archive.db_path` for D18's preflight (19).
+13. (M3) Every executing reset (`--soft` included) holds `{data_dir}/probos.pid` from after the confirmation through the tier loop and the git commit, and releases it on every exit. A live owner exits 1 and its pidfile is untouched. `--dry-run` takes no pidfile and opens no archive. (A4) `acquire_pidfile` runs whole under `_takeover_lock` (an OS lock on `probos.pid.lock`, never removed, waited for at most 10 s); of two acquirers of a stale pidfile exactly one holds it (R16). The release stays by path: under the serialised acquire no process replaces a live holder's file. A ProbOS without A4 takes no lock (register RA4-3).
+14. (M3) A blank, over-long or tier 1 `--skip-promotion` exits 2 before anything is read, locked or deleted, and (A4, F4) before the configuration is loaded (R4c). A valid one writes exactly one `skipped` row and promotes nothing.
 15. (M3) The instance id is read before the tier loop, and the `promoted` row names it.
 16. (M3) `probos archive erase` shows the entry and asks unless `--yes`. It exits 2 with the archive disabled or a bad id or reason, 1 for no such entry, and 0 when erased or declined. `src` names `erase_entry` and `record_generation` only in `__main__.py` (R11).
 17. (M3) The tier loop and git commit are byte-identical apart from four spaces of indentation. `RESET_TIERS`, both launches and their `trusted_command_env()` are unchanged.
 18. (M2, M3) The fakes disable the archive with an inline `AD-1341 S1 (#1569)` reason, and none is deleted. The facade counts move only by the one owned name.
+19. (A4, F3) `_archive_reset_overlap` runs after the configuration, the data directory and the knowledge repo are known and before the AD-418 read, the dry run, the confirmation and the pidfile, at every tier. It resolves both sides (symlinks, `..`), applies `os.path.normcase`, and refuses an archive equal to or inside any target of tiers 1 to N: exit 1, nothing touched. With the archive disabled it does nothing. It reads paths only and opens no archive.
+20. (A4, F1) `reset`'s `--config` and `--data-dir` and `archive erase`'s `--config` use `default=argparse.SUPPRESS`; given before or after the subcommand, the command receives the option (R14, R15). No other subparser changes (register RA4-1).
+21. (A4) The two tier 1 fakes in `test_proactive.py` and the one in `test_distribution.py` disable the archive with an inline reason; no test is deleted.
+22. (A5) R16 does not depend on how Python is installed. Each acquirer runs with `PYTHONPATH` naming this tree's `src`, and the test asserts first that both imported this tree's `pidfile_guard.py`. Each reports its own `os.getpid()` (what `acquire_pidfile` writes, `pidfile_guard.py:188`), never the launcher's. The test asserts exactly one `acquired` and one `refused` and that the pidfile names the winner, whichever it is. The stale PID's process object is held for the whole test, so Windows cannot reuse the PID. The two fakes that must stop a test call `pytest.fail`, which an `except Exception` in the code under test cannot swallow.
 
 ## 15. Acceptance criteria
 
@@ -4224,6 +4840,6 @@ HOLDS: yes
 4b. (A2) One transaction at a time on the store's one connection: overlapping writes, a failed write and a close never undo or end another call's work (D16; A14, A14b, A15; K20–K23).
 5. Records-only promotion with fixed criteria, the anonymous reader, C1 withholding, offline reads, no swallowed failure, a blank topic that never stops the run, and the chain to a later crew's Oracle (P1–P11, P16, P16b; P-R1–P-R12).
 6. One records-path resolver (P12, P13; C-R1, C-R2, S-R1); layer and census (P14, P15); the config facade baseline and its pins name it (7.6b, 7.6c; `check_config_facade.py --check`).
-7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive (R1–R13; M-R1–M-R10).
+7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive. (A4) Every reset refuses before anything when the archive lies inside what it deletes; `--config` and `--data-dir` reach `reset` and `archive erase` before or after the subcommand; of two acquirers of a stale pidfile only one proceeds; a bad `--skip-promotion` exits 2 before the configuration is read (R1–R17, R4c; M-R1–M-R20).
 8. Every change has a test that fails on today's tree (§6), and every mutation row is killed by the named test. One broad gate and one PR for M1–M4; a cross-family GPT-6.1 Sol review per milestone (tier HIGH).
 9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
