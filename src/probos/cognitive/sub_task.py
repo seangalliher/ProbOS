@@ -95,6 +95,9 @@ class SubTaskResult:
     tier_used: str = ""                 # Actual LLM tier used
     prompt_tokens: int = 0              # AD-658a: prompt-side token count
     completion_tokens: int = 0          # AD-658a: completion-side token count
+    model: str = ""                     # BF-901: the model that answered ("" = none named; the row says "unknown")
+    token_source: str = ""              # BF-901: "measured", "estimated" or "" (nothing accounted for)
+    cached: bool = False                # BF-901: a client cache replay (the step row records it; spend excludes it)
 
 
 @dataclass
@@ -589,6 +592,7 @@ class SubTaskExecutor:
                             agent_id=agent_id,
                             agent_type=agent_type,
                             tier=spec.tier,
+                            model="unknown",  # BF-901: an abandoned attempt names no answering model
                             total_tokens=0,
                             latency_ms=spec.timeout_ms,
                             intent=intent,
@@ -660,12 +664,19 @@ class SubTaskExecutor:
                     agent_id=agent_id,
                     agent_type=agent_type,
                     tier=result.tier_used or spec.tier,
+                    # BF-901: the handler's charge and the model that answered, read with getattr as the
+                    # trace below reads the split (AD-658a).
+                    model=getattr(result, "model", "") or "unknown",
+                    prompt_tokens=getattr(result, "prompt_tokens", 0),
+                    completion_tokens=getattr(result, "completion_tokens", 0),
                     total_tokens=result.tokens_used,
                     latency_ms=result.duration_ms,
                     intent=intent,
                     intent_id=intent_id,
                     success=result.success,
                     dag_node_id=dag_node_id,
+                    cached=getattr(result, "cached", False) is True,  # BF-901: a replay stays out of spend
+                    token_source=getattr(result, "token_source", ""),  # BF-901: as the handler charged it
                 )
             except Exception:
                 logger.debug(
@@ -696,6 +707,7 @@ class SubTaskExecutor:
                     # by older external fixtures that pre-date the field add.
                     prompt_tokens=getattr(result, "prompt_tokens", 0),
                     completion_tokens=getattr(result, "completion_tokens", 0),
+                    token_source=getattr(result, "token_source", ""),  # BF-901: the step row's source
                     success=result.success,
                     error_truncated=(result.error or "")[:200],
                     context_keys_declared=len(spec.context_keys),

@@ -3702,6 +3702,7 @@ class CognitiveAgent(BaseAgent):
                             agent_type=self.agent_type,
                             intent=observation.get("intent", ""),
                             intent_id=observation.get("intent_id", ""),
+                            model="unknown",  # BF-901: a decision-cache hit makes no model call
                             cached=True,
                             correlation_id=observation.get("correlation_id", ""),
                         )
@@ -3739,6 +3740,7 @@ class CognitiveAgent(BaseAgent):
                         agent_type=self.agent_type,
                         intent=observation.get("intent", ""),
                         intent_id=observation.get("intent_id", ""),
+                        model="unknown",  # BF-901: a procedural replay makes no model call
                         cached=True,
                         total_tokens=0,
                         procedure_id=procedural_result.get("procedure_id", ""),
@@ -4514,21 +4516,32 @@ class CognitiveAgent(BaseAgent):
         if self._cognitive_journal:
             try:
                 _prompt_hash = hashlib.md5(user_message[:500].encode()).hexdigest()[:12]
+                # BF-901 (#1575): the call's charge (measured, or estimated where the provider reported
+                # no usable count), the model that answered, and a client cache replay recorded as one,
+                # so the readers' ``cached = 0`` filter keeps it out of spend.
+                from probos.cognitive.token_accounting import (
+                    answered_model_name,
+                    charge_completion,
+                    request_messages,
+                )
+
+                _charge = charge_completion(request_messages(request), response)
                 await self._cognitive_journal.record(
                     entry_id=request.id,
                     timestamp=time.time(),
                     agent_id=self.id,
                     agent_type=self.agent_type,
                     tier=response.tier,
-                    model=response.model,
-                    prompt_tokens=response.prompt_tokens,
-                    completion_tokens=response.completion_tokens,
-                    total_tokens=response.tokens_used,
+                    model=answered_model_name(response),
+                    prompt_tokens=_charge.prompt_tokens,
+                    completion_tokens=_charge.completion_tokens,
+                    total_tokens=_charge.total_tokens,
                     latency_ms=_latency_ms,
                     intent=observation.get("intent", ""),
                     success=response.error is None,
-                    cached=False,
+                    cached=response.cached is True,
                     request_id=request.id,
+                    token_source=_charge.source,
                     prompt_hash=_prompt_hash,
                     response_length=len(response.content),
                     intent_id=observation.get("intent_id", ""),

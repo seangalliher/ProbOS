@@ -35,6 +35,7 @@ class ChainExecutionTrace:
     tokens_used: int = 0                # AD-658: prompt + completion (sum)
     prompt_tokens: int = 0              # AD-658a: prompt-side token count
     completion_tokens: int = 0          # AD-658a: completion-side token count
+    token_source: str = ""              # BF-901: "measured", "estimated" or "" (nothing accounted for)
     success: bool = True
     error_truncated: str = ""
 

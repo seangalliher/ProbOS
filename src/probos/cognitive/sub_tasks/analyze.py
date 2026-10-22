@@ -622,6 +622,18 @@ class AnalyzeHandler:
                 error=f"LLM error: {response.error}",
             )
 
+        # BF-901 (#1575): what this call is charged (measured, or estimated where the provider reported no
+        # usable count) and the model that answered; both results below carry them.
+        from probos.cognitive.token_accounting import (
+            answered_model_name,
+            charge_completion,
+            request_messages,
+        )
+
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
         # Parse structured JSON from response
         try:
             analysis = extract_json(response.content)
@@ -652,13 +664,16 @@ class AnalyzeHandler:
                 sub_task_type=SubTaskType.ANALYZE,
                 name=spec.name,
                 result={},
-                tokens_used=response.tokens_used,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
+                tokens_used=charge.total_tokens,
+                prompt_tokens=charge.prompt_tokens,
+                completion_tokens=charge.completion_tokens,
                 duration_ms=duration,
                 success=False,
                 error=error_msg,
                 tier_used=response.tier,
+                model=answered,
+                token_source=charge.source,
+                cached=replayed,  # BF-901: a replay whose reply did not parse is still a replay
             )
 
         duration = (time.monotonic() - start) * 1000
@@ -666,10 +681,13 @@ class AnalyzeHandler:
             sub_task_type=SubTaskType.ANALYZE,
             name=spec.name,
             result=analysis,
-            tokens_used=response.tokens_used,
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
+            tokens_used=charge.total_tokens,
+            prompt_tokens=charge.prompt_tokens,
+            completion_tokens=charge.completion_tokens,
             duration_ms=duration,
             success=True,
             tier_used=response.tier,
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
         )
