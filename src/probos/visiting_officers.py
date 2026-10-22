@@ -127,14 +127,14 @@ class VisitingOfficerRegistry:
       - deregister(did) -> bool
       - get(did) -> VisitingOfficerSession | None
       - has_capability(did, capability) -> bool
-      - refusal(did, capability) -> str | None   (BF-903)
+      - capability_refusal(did, capability) -> str | None   (BF-903)
       - check(did, capability, *, surface) -> None   (BF-903; raises on refusal)
       - active() -> tuple[VisitingOfficerSession, ...]
       - async start() / async stop()
 
     BF-903: consumers call the module's ``require_visitor_capability``,
     which recognises a visiting officer and then calls ``check``. ``get``,
-    ``refusal`` and ``check`` read expiry at use, so an expired session is
+    ``capability_refusal`` and ``check`` read expiry at use, so an expired session is
     refused before the sweep removes it.
     """
 
@@ -240,7 +240,7 @@ class VisitingOfficerRegistry:
             return None
         return session
 
-    def refusal(self, did: str, capability: str) -> str | None:
+    def capability_refusal(self, did: str, capability: str) -> str | None:  # BF-903 A5: AD-1343's census reads any call named "refusal" as a stop check
         """BF-903: why ``did`` may not use ``capability`` now, or None when it may.
 
         Read at each use: a deregistered session is refused at once and an expired one before
@@ -256,7 +256,7 @@ class VisitingOfficerRegistry:
         return None
 
     def has_capability(self, did: str, capability: str) -> bool:
-        return self.refusal(did, capability) is None
+        return self.capability_refusal(did, capability) is None
 
     def check(self, did: str, capability: str, *, surface: str) -> None:
         """BF-903: return when ``did`` may use ``capability``; otherwise record the refusal and raise.
@@ -264,7 +264,7 @@ class VisitingOfficerRegistry:
         The record is a ``VISITING_OFFICER_REFUSED`` event through this registry's emitter, the
         sink its registration and deregistration events use, and a warning.
         """
-        reason = self.refusal(did, capability)
+        reason = self.capability_refusal(did, capability)
         if reason is None:
             return
         self._emit("VISITING_OFFICER_REFUSED", {
