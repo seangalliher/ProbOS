@@ -4,7 +4,7 @@
 
 **Status:** M1, M2 and M3 are build-ready. Amendment A1 (2026-10-22, `claude-architect`, from the orchestrator's dry run at `0f13771c`) writes M3 as §7.9 to §7.14 and adds §7.6b and §7.6c to M2 (the config facade baseline and its pinned counts); M4 is §8. Amendment A2 (2026-10-22, `claude-architect`, from M1's round-1 review at `6190fd69` and the whole-contract phantom precheck) serialises the store's writes and its close on its one connection (D16, F1), makes an id beyond SQLite's rowid range no entry (D17, F2), and rewrites one line group each in §7.9 and §7.14 that the precheck flagged (no behaviour change). Slice 1 of 6 of #1569; it does not close the issue. **Tier HIGH** (the archive, an erasure, data integrity). No new AD or BF number. **Base:** `origin/main` `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`. BF-903 merges first; it touches only `__main__.py`'s pairing CLI and the trackers, so M3 and §8 re-anchor on text. **Source:** the Architect's consults `98e0fdbf` (2026-10-18) and this one.
 
-**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 18 functions, 37 cases (A3 adds P16 and P16b and rewrites P8). Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 26 functions, 59 cases (A4 adds R4c and R14 to R17; A6 adds R18 to R21; A7 adds R22 and R23); updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (7 call sites; A4 adds the tier 1 test), `tests/test_proactive.py` (4; A4 adds the two tier 1 tests), `tests/test_identity_deterministic.py` (3).
+**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 18 functions, 37 cases (A3 adds P16 and P16b and rewrites P8). Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 28 functions, 64 cases (A4 adds R4c and R14 to R17; A6 adds R18 to R21; A7 adds R22 and R23; A8 adds two R22 cases, R24 and R25, the last POSIX-only); updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (7 call sites; A4 adds the tier 1 test), `tests/test_proactive.py` (4; A4 adds the two tier 1 tests), `tests/test_identity_deterministic.py` (3).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -16,7 +16,7 @@
 
 **Amendment A6 (2026-10-22, `claude-architect`, from M3's round-2 whole-candidate review):** F1 (P1, ordinary reach, pre-existing): `_serve` removed its pidfile before its adapters and runtime stopped, so for up to about 15 s the guard reported the data directory free beside open SQLite writers, and a reset run at once after Ctrl+C deleted part of it. The pidfile now goes only after `runtime.stop()` has returned, immediately before the process ends, and stays when the stop times out, fails or is interrupted (D12; §7.9 pairs 1b to 1d; R18, R19). F2 (P3, a regression, injected reach): every lock error counted as contention, so a filesystem without file locks waited 10 s and reported a "PID -1" instance with its cause lost. Only EACCES, EAGAIN and EWOULDBLOCK are contention now; any other error raises `PidfileLockUnavailable` at once, which `serve` (exit 2) and `reset` (exit 1) report with the lock file and the error (D12; §7.9b; R20, R21). M3 only: M1', M2' and the updated fakes are unaffected. `pidfile_guard.py` and `_serve` are shared contracts, so round 3 reviews the whole candidate.
 
-**Amendment A7 (2026-10-22, `claude-architect`, from M3's round-3 whole-candidate review at `f8aee548`):** F3 (P3, injected reach; a regression for `reset`, which M3 makes a consumer of AD-816's parser): `_read_pid_from` caught only `OSError`, so a pidfile that is not UTF-8, or holds a digit `isdigit` accepts and `int` refuses, raised from `acquire_pidfile` and `assert_no_other_instance` on every retry while the marker stayed. The reader is now total over the file's content: anything but an ASCII decimal PID up to `_MAX_PID` (`2**31 - 1`) is garbage, which the acquire replaces and the probe ignores, as AD-816 already did for ASCII garbage (§7.9b pair 3; R22). F4 (P3, ordinary reach, pre-existing): `_serve` printed the guard's refusal as Rich markup, so a directory such as `C:\Users\x\[blue]data` was reported as another path. The same print in `backup-reclaim --force` and `rebuild-episodic` is fixed with it, and all five guard refusals (the reset's two included) print through `escape` with `emoji=False` (§7.9 pairs 1b, 1e, 1f and 5; R23). M3 only, the same seven files: M1', M2' and the four updated fakes are unaffected. Round 4 reviews the delta (§14 properties 25 and 26).
+**Amendment A7 (2026-10-22, `claude-architect`, from M3's round-3 whole-candidate review at `f8aee548`):** F3 (P3, injected reach; a regression for `reset`, which M3 makes a consumer of AD-816's parser): `_read_pid_from` caught only `OSError`, so a pidfile that is not UTF-8, or holds a digit `isdigit` accepts and `int` refuses, raised from `acquire_pidfile` and `assert_no_other_instance` on every retry while the marker stayed. The reader is now total over the file's content: anything but an ASCII decimal PID up to `_MAX_PID` (`2**31 - 1`) is garbage, which the acquire replaces and the probe ignores, as AD-816 already did for ASCII garbage (§7.9b pair 3; R22). Amendment A8 (round four's residual F3: P3, injected reach, the same regression for `reset`): a run of ASCII digits longer than CPython's integer-string limit (4,300) still raised from `int`, and the file was read whole. The reader now opens only a regular file, reads at most 65 bytes, treats more than 64 as garbage, never decodes, and converts only an ASCII digit run, so `int` can neither raise nor see a long input; a FIFO is garbage (R22, R24, R25). F4 (P3, ordinary reach, pre-existing): `_serve` printed the guard's refusal as Rich markup, so a directory such as `C:\Users\x\[blue]data` was reported as another path. The same print in `backup-reclaim --force` and `rebuild-episodic` is fixed with it, and all five guard refusals (the reset's two included) print through `escape` with `emoji=False` (§7.9 pairs 1b, 1e, 1f and 5; R23). M3 only, the same seven files: M1', M2' and the four updated fakes are unaffected. Round 4 reviews the delta (§14 properties 25 and 26).
 
 ---
 
@@ -255,7 +255,7 @@ If a test outside §7 fails only because it called `ArchiveStore.append`, update
 | (A4) `_archive_reset_overlap` | `_cmd_reset` | exit 1 before the AD-418 read, the dry run, the confirmation and the pidfile |
 | (A6) `_serve` removes its pidfile only after `runtime.stop()` has returned, immediately before the process ends; a stop that timed out, failed or was interrupted leaves it | the reset, a second `serve`, the `rebuild-episodic` and `backup-reclaim --force` probes; `scripts/kill-stale-pytest.ps1` reads it only to protect its PID; nothing waits for it to disappear (Absence A6-AV1) | a stopping vessel counts as live; a stale pidfile after a failed stop is recovered by the next acquirer |
 | (A6) `PidfileLockUnavailable` from `acquire_pidfile` when the lock call fails other than by contention | `_serve` (exit 2) and `_cmd_reset` (exit 1), its only two callers (Absence A6-AV2) | a refusal at once, naming the lock file and the error, instead of "PID -1" after 10 s |
-| (A7, F3) `_read_pid_from` returns None for any content but an ASCII decimal PID up to `_MAX_PID` | `_acquire_unlocked` (twice) for `serve` and `reset`; `assert_no_other_instance` for `backup-reclaim --force` and `rebuild-episodic`; nothing else (Absence A7-AV1) | a malformed marker is replaced by the acquire and ignored by the probe, as ASCII garbage was, instead of raising on every retry; a live PID still refuses |
+| (A7, A8, F3) `_read_pid_from` returns None for anything but a regular file of at most 64 bytes holding, between ASCII whitespace, an ASCII decimal PID up to `_MAX_PID` (leading zeros allowed); it reads at most 65 bytes and never decodes | `_acquire_unlocked` (twice) for `serve` and `reset`; `assert_no_other_instance` for `backup-reclaim --force` and `rebuild-episodic`; nothing else (Absence A7-AV1) | a malformed marker is replaced by the acquire and ignored by the probe, as ASCII garbage was, instead of raising on every retry; a live PID still refuses |
 | (A7, F4) the five guard refusals print through `escape` with `emoji=False` | the Captain's terminal; no test pins those lines (Absence A7-AV3) | the path prints as it is on disk; exit codes and the follow-up lines are unchanged |
 | `--skip-promotion REASON`, `probos archive erase` | the Captain; `generations` and `archive_erasures` rows | new |
 
@@ -327,8 +327,10 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | R19 | `test_a_vessel_whose_runtime_fails_to_stop_leaves_its_pidfile_for_the_stale_pid_recovery` | (A6, F1) a `stop()` that raises: the vessel still exits 0, and its pidfile, naming its own PID, stays | fails on M3 (removed before the stop) |
 | R20 | `test_the_takeover_lock_tells_contention_from_a_filesystem_that_cannot_lock[EACCES, EAGAIN, EWOULDBLOCK, ENOSYS, ENOLCK, EOPNOTSUPP, EINVAL]` | (A6, F2) the platform lock call fails with each errno (the reviewer's injection; the bound 0.2 s). Contention takes more than one attempt and raises `AnotherInstanceRunning`. Any other error raises `PidfileLockUnavailable` after one attempt, with the lock file and the error as its cause. No pidfile | fails on M3 (no `PidfileLockUnavailable`; every errno waited and became PID -1) |
 | R21 | `test_a_filesystem_that_cannot_lock_refuses_serve_and_reset_with_its_cause[serve, reset]` | (A6, F2) ENOSYS: the real `_serve` exits 2 and the real reset exits 1, printing the lock file and the error, never "PID -1" or "stop the vessel first"; nothing touched, no pidfile | fails on M3 |
-| R22 | `test_a_malformed_pidfile_is_garbage_every_guarded_command_recovers[not-utf8, superscript-two, beyond-any-pid, ascii-garbage, empty]` | (A7, F3) the real reader, probe, acquire and tier 1 reset on a pidfile holding each content; a plain PID in another file is still read (control). The reader returns None, the probe neither refuses nor raises, the acquire writes this process's PID, and the reset exits 0 and releases | `[not-utf8]` and `[superscript-two]` raise on M3; `[beyond-any-pid]` returns the number on M3; `[ascii-garbage]` and `[empty]` are controls that pass |
+| R22 | `test_a_malformed_pidfile_is_garbage_every_guarded_command_recovers[not-utf8, superscript-two, beyond-any-pid, over-int-limit, over-bound-leading-zeros, ascii-garbage, empty]` | (A7, F3) the real reader, probe, acquire and tier 1 reset on a pidfile holding each content; a plain PID in another file is still read (control). The reader returns None, the probe neither refuses nor raises, the acquire writes this process's PID, and the reset exits 0 and releases | `[not-utf8]` and `[superscript-two]` raise on M3; `[beyond-any-pid]` returns the number on M3; `[ascii-garbage]` and `[empty]` are controls that pass; (A8) `[over-int-limit]` (4,301 nines) and `[over-bound-leading-zeros]` (5,000 zeros, then 1) raise `ValueError` on M3 |
 | R23 | `test_a_refusal_prints_the_data_directory_as_it_is_on_disk[serve, backup-reclaim, rebuild-episodic, reset]` | (A7, F4) a live owner (`os.getppid()`, asserted) of a data directory named `[blue]data` (on POSIX `[blue]:smile:data`): each real command refuses with its exit code, prints the pidfile's path exactly, and touches nothing | `[serve]`, `[backup-reclaim]` and `[rebuild-episodic]` fail on M3 on every platform; `[reset]` is the control |
+| R24 | `test_a_marker_is_read_up_to_its_bound_and_is_garbage_beyond_it[at-bound, beyond-bound]` | (A8, F3) a live owner (`os.getppid()`, asserted) whose PID is zero-padded to 64 bytes: the real reader returns it, and the probe and the acquire refuse with its PID and leave the marker; padded to 65 bytes, the reader returns None, the probe ignores it and the acquire writes this process's PID | `[beyond-bound]` fails on M3 (read as the owner; the probe refuses); `[at-bound]` is the control |
+| R25 | `test_a_pidfile_that_is_a_fifo_is_garbage_and_nothing_blocks_on_it` (POSIX; skipped on Windows) | (A8, F3) a FIFO named `probos.pid`: on a thread bounded at 10 s, the real reader returns None, the probe returns, and the acquire replaces it with a regular file holding this PID | blocks on M3 (the open waits for a writer); the bound makes it a failure |
 
 Updated pins, not new cases: 7.2 (M1); 7.6c (M2); 7.10 to 7.13 (M3).
 
@@ -3445,7 +3447,7 @@ def _acquire_unlocked(data_dir: Path) -> Path:
     own_pid = os.getpid()
 ```
 
-Pair 3 (A7, F3: a malformed marker is garbage, never an exception):
+Pair 3 (A7 and A8, F3: a malformed marker is garbage, never an exception or a block; A8 reads only a regular file, at most 65 bytes, and converts only a short ASCII digit run):
 
 SEARCH:
 ```python
@@ -3464,22 +3466,35 @@ REPLACE:
 #: ``pid_max`` is at most 2**22), and ``is_pid_alive``'s platform calls take a C int.
 _MAX_PID = 2**31 - 1
 
+#: AD-1341 S1 A8 (F3): the longest marker ``_read_pid_from`` accepts, in bytes. The writer stores at most ten ASCII
+#: digits; anything longer is garbage, so the read is bounded and ``int`` never sees more than this many digits
+#: (CPython refuses to convert more than ``sys.get_int_max_str_digits()``, 4,300 by default).
+_MAX_MARKER_BYTES = 64
+
 
 def _read_pid_from(pidfile: Path) -> int | None:
     """The PID ``pidfile`` names, or None when it cannot be read or is not a PID (AD-816's garbage).
 
-    AD-1341 S1 A7 (F3): total over the file's content, so the acquire replaces a malformed marker and the probe
-    ignores it, instead of raising on every retry: bytes that are not UTF-8, digits outside ASCII (``isdigit``
-    accepts a superscript two, which ``int`` refuses) and a number above ``_MAX_PID`` are garbage, as ASCII garbage
-    always was.
+    AD-1341 S1 A7 and A8 (F3): total over what the path holds, so the acquire replaces a malformed marker and the
+    probe ignores it, instead of raising or blocking on every retry. Only a regular file is opened (opening a FIFO
+    blocks until a writer appears), and at most one byte beyond ``_MAX_MARKER_BYTES`` is read; a longer file is
+    garbage. The bytes are never decoded: once ASCII whitespace is stripped they must be ASCII digits (leading zeros
+    allowed; ``bytes.isdigit`` is ASCII-only, so a superscript two, a sign or an underscore is garbage), so ``int``
+    cannot raise, and the number must not exceed ``_MAX_PID``.
     """
+    if not os.path.isfile(pidfile):  # A8 (F3): a FIFO would block the open; a directory or a device holds no marker
+        return None
     try:
-        raw = pidfile.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):  # A7 (F3): a ValueError here is a UnicodeDecodeError, content that is not UTF-8
+        with pidfile.open("rb") as marker:
+            data = marker.read(_MAX_MARKER_BYTES + 1)
+    except OSError:
         return None
-    if not (raw.isascii() and raw.isdigit()):
+    if len(data) > _MAX_MARKER_BYTES:  # A8 (F3): longer than any marker the writer makes
         return None
-    pid = int(raw)
+    digits = data.strip()
+    if not digits.isdigit():
+        return None
+    pid = int(digits)
     return pid if pid <= _MAX_PID else None
 ```
 
@@ -3834,6 +3849,7 @@ import time
 from argparse import Namespace as _Namespace
 from pathlib import Path
 from subprocess import Popen as _Popen
+from threading import Thread as _Thread
 from typing import Any
 
 import pytest
@@ -4709,8 +4725,24 @@ def test_a_filesystem_that_cannot_lock_refuses_serve_and_reset_with_its_cause(
 
 @pytest.mark.parametrize(
     "content",
-    [b"\xff\xfe\xfa", "\u00b2".encode("utf-8"), b"99999999999999999999", b"not-a-pid", b""],
-    ids=["not-utf8", "superscript-two", "beyond-any-pid", "ascii-garbage", "empty"],
+    [
+        b"\xff\xfe\xfa",
+        "\u00b2".encode("utf-8"),
+        b"99999999999999999999",
+        b"9" * 4301,
+        b"0" * 5000 + b"1",
+        b"not-a-pid",
+        b"",
+    ],
+    ids=[
+        "not-utf8",
+        "superscript-two",
+        "beyond-any-pid",
+        "over-int-limit",
+        "over-bound-leading-zeros",
+        "ascii-garbage",
+        "empty",
+    ],
 )
 def test_a_malformed_pidfile_is_garbage_every_guarded_command_recovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: bytes,
@@ -4718,8 +4750,10 @@ def test_a_malformed_pidfile_is_garbage_every_guarded_command_recovers(
     """A7 (F3): AD-816 recovered only from ASCII garbage. Content that is not UTF-8 raised a decoding error, a
     superscript two passed ``isdigit`` and failed ``int``, and a number beyond any PID went to ``is_pid_alive``, so
     the acquire (``serve``, ``reset``) and the probe (``backup-reclaim --force``, ``rebuild-episodic``) failed on
-    every retry while the marker stayed. Each is garbage now, as ASCII garbage and an empty file (the controls)
-    already were: the probe ignores it, the acquire replaces it, and a tier 1 reset runs and releases."""
+    every retry while the marker stayed. A8 (F3): a digit run longer than CPython's integer-string limit (4,300)
+    still raised from ``int``, with or without leading zeros. Each is garbage now, as ASCII garbage and an empty
+    file (the controls) already were: the probe ignores it, the acquire replaces it, and a tier 1 reset runs and
+    releases."""
     data_dir = _data_dir(tmp_path)
     pidfile = data_dir / "probos.pid"
     plain = tmp_path / "plain.pid"
@@ -4773,6 +4807,65 @@ def test_a_refusal_prints_the_data_directory_as_it_is_on_disk(
     assert code == expected and "Another ProbOS instance" in out  # premise: the guard refused
     assert str(pidfile) in out  # the pidfile's path exactly as it is on disk
     assert pidfile.read_text(encoding="utf-8") == str(owner) and _nothing_deleted(data_dir)
+
+
+# --- R24, R25 (Amendment A8) -----------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("width", [64, 65], ids=["at-bound", "beyond-bound"])
+def test_a_marker_is_read_up_to_its_bound_and_is_garbage_beyond_it(tmp_path: Path, width: int) -> None:
+    """A8 (F3): the reader reads at most ``_MAX_MARKER_BYTES`` (64) of a marker and converts only that, so ``int``
+    never meets CPython's 4,300-digit limit. A live owner's PID zero-padded to exactly 64 bytes still keeps the probe
+    and the acquire out (leading zeros are allowed); one byte more is garbage, which the probe ignores and the acquire
+    replaces. On M3 the 65-byte marker is read as the owner."""
+    data_dir = _data_dir(tmp_path)
+    pidfile = data_dir / "probos.pid"
+    owner = os.getppid()
+    assert owner != os.getpid() and is_pid_alive(owner)  # premise: a live process that is not this one
+    marker = str(owner).encode("ascii").rjust(width, b"0")
+    assert len(marker) == width and marker.startswith(b"0")  # premise: zero-padded to the width
+    pidfile.write_bytes(marker)
+
+    if width == 64:
+        assert _read_pid_from(pidfile) == owner
+        with pytest.raises(AnotherInstanceRunning) as probed:
+            assert_no_other_instance(data_dir)
+        with pytest.raises(AnotherInstanceRunning) as acquired:
+            acquire_pidfile(data_dir)
+        assert probed.value.pid == owner and acquired.value.pid == owner
+        assert pidfile.read_bytes() == marker  # the owner's marker is left as it was
+    else:
+        assert _read_pid_from(pidfile) is None
+        assert_no_other_instance(data_dir)  # the probe ignores it
+        assert acquire_pidfile(data_dir) == pidfile  # the acquire replaces it
+        assert pidfile.read_text(encoding="utf-8") == str(os.getpid())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a FIFO is POSIX-only")
+def test_a_pidfile_that_is_a_fifo_is_garbage_and_nothing_blocks_on_it(tmp_path: Path) -> None:
+    """A8 (F3): opening a FIFO for reading blocks until a writer appears, so on M3 a FIFO named ``probos.pid`` hung
+    the reader, and with it the probe and the acquire of every guarded command. Only a regular file is read now: the
+    FIFO is garbage, the probe ignores it and the acquire replaces it. The calls run on a thread with a bound, so a
+    regression fails instead of hanging the suite."""
+    data_dir = _data_dir(tmp_path)
+    pidfile = data_dir / "probos.pid"
+    os.mkfifo(pidfile)
+    results: dict[str, Any] = {}
+
+    def _guarded() -> None:
+        results["read"] = _read_pid_from(pidfile)
+        assert_no_other_instance(data_dir)
+        results["acquired"] = acquire_pidfile(data_dir)
+
+    worker = _Thread(target=_guarded, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    if worker.is_alive():
+        os.close(os.open(pidfile, os.O_WRONLY | os.O_NONBLOCK))  # a writer releases the blocked open
+        worker.join(timeout=10)
+        pytest.fail("the guard blocked on a FIFO pidfile")
+    assert results == {"read": None, "acquired": pidfile}
+    assert pidfile.is_file() and pidfile.read_text(encoding="utf-8") == str(os.getpid())
 ```
 
 ## 8. Tracking (tracker pairs; in M4's commit)
@@ -4842,7 +4935,7 @@ REPLACE:
 - (M3) The tier loop's behaviour and its two git launches, `_show_dry_run`, `_show_confirmation_prompt` and every other subcommand.
 - Federation sharing of the archive; trust scoring (the just-culture note goes to its next owner).
 
-## 10. Mutation rows (74 rows: 40 for M1 and M2, 34 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (77 rows: 40 for M1 and M2, 37 for M3; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s1_archive_store.py` (rows K) or `tests/test_ad1341_s1_promotion.py` (rows P, C, S) on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. Rows M-R run against `tests/test_ad1341_s1_reset_and_erase.py` on the tree with §7.9 to §7.14 applied.
 
@@ -4916,12 +5009,15 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | M-R26 | `src/probos/pidfile_guard.py` | `raise PidfileLockUnavailable(Path(data_dir), lock_path, exc) from exc` | `raise` | R20 `[ENOSYS]` (a bare `OSError`: no lock file, no refusal type). A6, F2 |
 | M-R27 | `src/probos/__main__.py` | `except PidfileLockUnavailable as exc:  # A6 (F2): no vessel to stop; this filesystem cannot lock` | `except LookupError as exc:` | R21 `[reset]` (it escapes `_cmd_reset`). A6, F2 |
 | M-R28 | `src/probos/__main__.py` | `except (AnotherInstanceRunning, PidfileLockUnavailable) as exc:` | `except AnotherInstanceRunning as exc:` | R21 `[serve]` (it escapes `_serve`: a traceback, not exit 2). A6, F2 |
-| M-R29 | `src/probos/pidfile_guard.py` | `except (OSError, ValueError):  # A7 (F3): a ValueError here is a UnicodeDecodeError, content that is not UTF-8` | `except OSError:` | R22 `[not-utf8]` (the decoding error escapes the reader). A7, F3 |
-| M-R30 | `src/probos/pidfile_guard.py` | `if not (raw.isascii() and raw.isdigit()):` | `if not raw.isdigit():` | R22 `[superscript-two]` (`int` raises on it). A7, F3 |
+| M-R29 | `src/probos/pidfile_guard.py` | `if len(data) > _MAX_MARKER_BYTES:  # A8 (F3): longer than any marker the writer makes` | `if False:` | R24 `[beyond-bound]` (the owner's 65-byte marker is read, and the probe refuses); R22 `[over-bound-leading-zeros]` (returns 0). A8, F3 (A7's row sat on the decoding handler A8 removes) |
+| M-R30 | `src/probos/pidfile_guard.py` | `if not digits.isdigit():` | `if False:` | R22 `[ascii-garbage]`, `[empty]`, `[superscript-two]` and `[not-utf8]` (`int` raises). A8, F3 (A7's row sat on the line A8 replaces) |
 | M-R31 | `src/probos/pidfile_guard.py` | `return pid if pid <= _MAX_PID else None` | `return pid` | R22 `[beyond-any-pid]` (the reader returns the number). A7, F3 |
 | M-R32 | `src/probos/__main__.py` | `console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): serve's refusal` | `console.print(f"[red]✗[/red] {exc}", emoji=False)  # A7 (F4): serve's refusal` | R23 `[serve]` (the path printed as markup). A7, F4 |
 | M-R33 | `src/probos/__main__.py` | `console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): backup-reclaim's refusal` | `console.print(f"[red]✗[/red] {exc}", emoji=False)  # A7 (F4): backup-reclaim's refusal` | R23 `[backup-reclaim]`. A7, F4 |
 | M-R34 | `src/probos/__main__.py` | `console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): rebuild-episodic's refusal` | `console.print(f"[red]✗[/red] {exc}", emoji=False)  # A7 (F4): rebuild-episodic's refusal` | R23 `[rebuild-episodic]`. A7, F4 |
+| M-R35 | `src/probos/pidfile_guard.py` | `digits = data.strip()` | `digits = data` | R22, every case (the control `12345` and a newline reads None). A8, F3 |
+| M-R36 | `src/probos/pidfile_guard.py` | `_MAX_MARKER_BYTES = 64` | `_MAX_MARKER_BYTES = 63` | R24 `[at-bound]` (the owner's 64-byte marker is garbage; neither the probe nor the acquire refuses). A8, F3 |
+| M-R37 | `src/probos/pidfile_guard.py` | `data = marker.read(_MAX_MARKER_BYTES + 1)` | `data = marker.read(_MAX_MARKER_BYTES)` | R24 `[beyond-bound]` (the first 64 bytes are read as a number); R22 `[over-bound-leading-zeros]` (returns 0). A8, F3 |
 
 **Lines without a row, and why:**
 - `ARCHIVE_READER = ""` → `"captain"`, and `read_entry`'s reader argument: **equivalent**. Every record the captain could read beyond the anonymous reader is narrower than ship, and P-R7's gate withholds it. Reading as anonymous is defence in depth (the orchestrator's "read as captain").
@@ -4939,7 +5035,8 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 - (A4) F4's move of the `--skip-promotion` check before the configuration load is an order, not a line: R4c holds it with a loader that fails if called.
 - (A4) `_takeover_lock`'s 10-second refusal and `_unlock`: the refusal needs a third holder and is not stageable deterministically; M-R14 and M-R15 remove the lock itself. `os.path.normcase`: equivalent where `resolve()` already returns the on-disk case (an existing path on Windows); it is defence for a tail that does not exist yet. The ChromaDB, knowledge-subdirectory and instance-id targets share the comparison M-R17 and M-R18 cover.
 - (A6) The contention refusal is now reached by R20 `[EACCES]`, `[EAGAIN]` and `[EWOULDBLOCK]` with a 0.2 s bound; `_TAKEOVER_WAIT_S`'s value has no row. `_try_lock`'s bare `raise` mutated to `return False` is M-R24 by another route (R20 `[ENOSYS]`). The late release's `except OSError: pass` is not stageable deterministically; a failure leaves a stale pidfile the guard recovers. The timeout and interrupt branches share `runtime_closed` with the failure R19 stages (a 10 s timeout is not staged). `PidfileLockUnavailable`'s wording: R21 asserts the lock file and the error; the rest is output.
-- (A7) `_MAX_PID`'s value: any bound from the largest real PID up to `10**20 - 2` behaves identically for R22 and for every real PID. The five `emoji=False` arguments: only R23 on POSIX (where a name can hold `:`) kills their removal, and the campaign runs on Windows. The reset's two refusal prints are identical lines (no unique row); R23 `[reset]` holds them. The three `escape` imports: removed, the print raises a NameError that R23 reports. `pid = int(raw)`: guarded by M-R30's line.
+- (A7) `_MAX_PID`'s value: any bound from the largest real PID up to `10**20 - 2` behaves identically for R22 and for every real PID. The five `emoji=False` arguments: only R23 on POSIX (where a name can hold `:`) kills their removal, and the campaign runs on Windows. The reset's two refusal prints are identical lines (no unique row); R23 `[reset]` holds them. The three `escape` imports: removed, the print raises a NameError that R23 reports. A8 replaces the `pid = int(raw)` line.
+- (A8) `if not os.path.isfile(pidfile):` to `if False:`: only R25 kills it, on POSIX. Windows has no FIFO, and there a directory already fails in the open, which `except OSError` maps to None. The campaign runs on Windows; CI's Linux run holds R25 unmutated. `marker.read()` unbounded: equivalent in every result, since the length check rejects anything longer, and it differs only in memory. `_MAX_MARKER_BYTES` raised to 65 or more: R24 `[beyond-bound]` fails, and at 4,301 or more R22 `[over-int-limit]` raises as well. The reader's `except OSError:` is unchanged: a read-denied file, or a file removed between the type check and the open; not a one-line row. `pid = int(digits)`: guarded by M-R30's line.
 
 ## 11. Verified Against Codebase (2026-10-22, HEAD `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`)
 
@@ -5311,6 +5408,24 @@ CLAIM: no new name is an AD-1343 census callee                                  
 RUN:   Read tests/fixtures/ad1343_seam_census.py:25-40
 FOUND: neither _MAX_PID nor escape is in STOP_CALLEES, GUARD_CALLEES, GENERIC_AGENT_METHODS or RECORDED
 HOLDS: yes
+
+CLAIM: _read_pid_from's callers are unchanged: three, all in pidfile_guard.py (at 239b2a5d)                           (A8-AV1)
+RUN:   Grep '_read_pid_from|read_text\(' src --glob '*pid*'
+FOUND: pidfile_guard.py:238 and :278 (_acquire_unlocked), :293 (assert_no_other_instance); :102 is the reader's own
+       read_text, which A8 replaces
+HOLDS: yes
+
+CLAIM: no test that patches Path.read_text or Path.open reaches the guard                                                (A8-AV2)
+RUN:   Grep 'setattr\((Path|pathlib\.Path)[^)]*(read_text|open|is_file)|pidfile_guard\.(os|Path)' tests;
+       Grep 'pidfile|acquire_pidfile|assert_no_other_instance|_serve\(' in the five files it lists
+FOUND: test_ad1240 (5), test_bf880, test_bf908 (Path.open), test_bf910, test_codebase_index; none of the five
+       names the guard (0 matches each; the same glob returns 57 read_text hits, so it is live)
+HOLDS: yes
+
+CLAIM: the only writer of probos.pid writes str(pid) in ASCII                                                         (A8-AV3)
+RUN:   Read src/probos/pidfile_guard.py:111-123
+FOUND: _try_atomic_create: os.write(fd, str(pid).encode("utf-8")), at most ten digits for pid <= _MAX_PID
+HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -5401,6 +5516,8 @@ HOLDS: yes
 29. (A7) `_read_pid_from` raised on a pidfile that was not UTF-8 or held a non-ASCII digit, and passed a number beyond any PID to `is_pid_alive`, so `serve` and `reset` failed on every retry while the marker stayed. Fixed by A7 (F3): such content is garbage.
 30. (A7) The guard refusals of `serve`, `backup-reclaim --force` and `rebuild-episodic` were printed as Rich markup with emoji codes, so a directory name with a bracket after a separator was reported as another path. Fixed by A7 (F4). Other unescaped path prints in `__main__.py` outside the guard (for example `--backup-root is not a directory` and `ward_room.db not found`) are register RA7-2.
 31. (A7, not fixed) `assert_no_other_instance` reads without the takeover lock, so a probe in the instant between a vessel's exclusive create of `probos.pid` and its PID write reads an empty file, which is garbage, and proceeds. Pre-existing (AD-816); A7 does not change the empty case. Register RA7-1.
+32. (A8) `_read_pid_from` still raised on a run of ASCII digits longer than CPython's integer-string limit (4,300), with or without leading zeros, read a marker of any size whole, and blocked on a FIFO, so `serve`, `reset`, `backup-reclaim --force` and `rebuild-episodic` raised or hung on every retry while the marker stayed. Fixed by A8 (F3): only a regular file is read, at most 65 bytes; more than 64 is garbage; `int` gets at most 64 ASCII digits.
+33. (A8) A narrowing: a marker longer than 64 bytes (for example, a PID behind thousands of leading zeros), and digits surrounded by non-ASCII whitespace, which `str.strip` used to accept, are now garbage. The writer produces neither (A8-AV3). The swap of a regular pidfile for a FIFO between the type check and the open is register RA8-1; a filesystem whose reads hang is RA8-2.
 
 **A7 prior art.** BF-903 A3's refusal print (`escape` with `emoji=False`, `__main__.py:1990`) is followed at all five guard prints; Rich's `escape` doubles a backslash before a tag (installed `rich/markup.py:50-66`), which covers a Windows separator before a bracket, and leaves emoji codes alone. External search was skipped: this is a review repair to one parser and five prints, with no outside analogue worth the search.
 
@@ -5441,7 +5558,7 @@ HOLDS: yes
 22. (A5) R16 does not depend on how Python is installed. Each acquirer runs with `PYTHONPATH` naming this tree's `src`, and the test asserts first that both imported this tree's `pidfile_guard.py`. Each reports its own `os.getpid()` (what `acquire_pidfile` writes, `pidfile_guard.py:188`), never the launcher's. The test asserts exactly one `acquired` and one `refused` and that the pidfile names the winner, whichever it is. The stale PID's process object is held for the whole test, so Windows cannot reuse the PID. The two fakes that must stop a test call `pytest.fail`, which an `except Exception` in the code under test cannot swallow.
 23. (A6, F1) `_serve` removes `probos.pid` only when `runtime.stop()` has returned normally, as the last statement before the process ends; a stop that timed out, raised, was interrupted or was cancelled leaves it. No release remains before the adapters and the runtime stop; the two pre-boot releases are unchanged. `runtime.stop(), timeout=10` and `adapter.stop(), timeout=5` are byte-identical (BF-207's pins). R18 and R19 run the real `_serve` in a child that imports this tree (asserted), compare the PID the child itself reports, and run the real reset in the test process.
 24. (A6, F2) `_try_lock` returns False only for EACCES, EAGAIN or EWOULDBLOCK and re-raises any other `OSError`; `_takeover_lock` turns it at once into `PidfileLockUnavailable`, a `RuntimeError` that is not an `AnotherInstanceRunning`, carrying the data directory, the lock file and the original error as its cause. Contention still waits at most `_TAKEOVER_WAIT_S` and refuses as before (R16 checks the real contention errno on each platform). `_serve` exits 2 and the reset exits 1 on it, naming the lock file and the error, never "PID -1" or "stop the vessel first"; no pidfile is created and nothing is touched.
-25. (A7, F3) `_read_pid_from` never raises on what the file holds. It returns an `int` only for an ASCII decimal string (after `strip`) of at most `_MAX_PID`, and None for anything else and for any `OSError`, which is exactly what AD-816's garbage branch expects. Its callers are `_acquire_unlocked` (twice) and `assert_no_other_instance`; nothing else in them changes: a live PID still refuses (R7, R16, R18), a stale one is still replaced, and the write side writes the same ASCII PID. Trace the four commands that reach it: `serve` and `reset` (acquire), `backup-reclaim --force` and `rebuild-episodic` (probe). R22 runs the reader, the probe, the acquire and a tier 1 reset on each malformed content and on two ASCII controls.
+25. (A7, F3) `_read_pid_from` never raises on what the file holds. It returns an `int` only for an ASCII decimal string (after `strip`) of at most `_MAX_PID`, and None for anything else and for any `OSError`, which is exactly what AD-816's garbage branch expects. Its callers are `_acquire_unlocked` (twice) and `assert_no_other_instance`; nothing else in them changes: a live PID still refuses (R7, R16, R18), a stale one is still replaced, and the write side writes the same ASCII PID. Trace the four commands that reach it: `serve` and `reset` (acquire), `backup-reclaim --force` and `rebuild-episodic` (probe). R22 runs the reader, the probe, the acquire and a tier 1 reset on each malformed content and on two ASCII controls. (A8) Trace `_read_pid_from` again. It opens only a regular file, reads at most 65 bytes, never decodes, and passes `int` at most 64 ASCII digits. List anything the path can hold that still raises or blocks. R24 holds the 64-byte bound with a live owner's zero-padded marker at the bound and one byte beyond it; R25 (POSIX) holds a FIFO.
 26. (A7, F4) Every print of a guard exception (`_serve`, `backup-reclaim --force`, `rebuild-episodic` and the reset's two) passes the text through `escape` with `emoji=False`, so a path prints as it is on disk. Exit codes (2, 2, 2, 1, 1) and the yellow follow-up lines are unchanged, and no other line in those handlers changes. R23 names the directory `[blue]data` (on POSIX `[blue]:smile:data`) and asserts the pidfile's exact path for all four commands.
 
 ## 15. Acceptance criteria
@@ -5453,6 +5570,6 @@ HOLDS: yes
 4b. (A2) One transaction at a time on the store's one connection: overlapping writes, a failed write and a close never undo or end another call's work (D16; A14, A14b, A15; K20–K23).
 5. Records-only promotion with fixed criteria, the anonymous reader, C1 withholding, offline reads, no swallowed failure, a blank topic that never stops the run, and the chain to a later crew's Oracle (P1–P11, P16, P16b; P-R1–P-R12).
 6. One records-path resolver (P12, P13; C-R1, C-R2, S-R1); layer and census (P14, P15); the config facade baseline and its pins name it (7.6b, 7.6c; `check_config_facade.py --check`).
-7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive. (A4) Every reset refuses before anything when the archive lies inside what it deletes; `--config` and `--data-dir` reach `reset` and `archive erase` before or after the subcommand; of two acquirers of a stale pidfile only one proceeds; a bad `--skip-promotion` exits 2 before the configuration is read (R1–R17, R4c; M-R1–M-R20). (A6) A stopping vessel keeps its pidfile until its runtime has stopped, and keeps it when the stop fails; a filesystem that cannot lock is refused at once with its cause (R18–R21; M-R21–M-R28). (A7) A malformed pidfile is garbage that every guarded command recovers from, and every guard refusal prints its path as it is on disk (R22, R23; M-R29–M-R34).
+7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive. (A4) Every reset refuses before anything when the archive lies inside what it deletes; `--config` and `--data-dir` reach `reset` and `archive erase` before or after the subcommand; of two acquirers of a stale pidfile only one proceeds; a bad `--skip-promotion` exits 2 before the configuration is read (R1–R17, R4c; M-R1–M-R20). (A6) A stopping vessel keeps its pidfile until its runtime has stopped, and keeps it when the stop fails; a filesystem that cannot lock is refused at once with its cause (R18–R21; M-R21–M-R28). (A7) A malformed pidfile is garbage that every guarded command recovers from, and every guard refusal prints its path as it is on disk (R22, R23; M-R29–M-R34). (A8) A marker longer than 64 bytes, or a path that is not a regular file, is garbage too, and `int` never sees more than 64 digits (R22, R24, R25; M-R29, M-R30, M-R35–M-R37).
 8. Every change has a test that fails on today's tree (§6), and every mutation row is killed by the named test. One broad gate and one PR for M1–M4; a cross-family GPT-6.1 Sol review per milestone (tier HIGH).
 9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
