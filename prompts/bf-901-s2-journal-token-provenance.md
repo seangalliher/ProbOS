@@ -1,10 +1,11 @@
 # BF-901 S2: the journal records what each call cost, where the count came from, and the model that answered
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, after review round 1 of candidate r1; section 16)
 
 **Status:** build-ready. **Part of #1575** (slice S2 of S1 to S3; S3, the doctor view, closes #1575 and is drafted later on the merged tree, because it reads this slice's schema). **Tier HIGH** (a schema change on `journal` and `chain_traces`, and the record sites of every one-shot and chain-step model call). **Base:** `origin/main` `8c8bc4415e6279a22ffe2151cbd6cbc81b993691` **plus BF-900 and BF-901 S1 applied**, in that order (`prompts/bf-900-dispatch-claim-keeps-the-park.md`, `prompts/bf-901-s1-shared-estimator-and-usage-presence.md`). **Batch:** item 3 of 3, one broad gate for the batch. **Source:** the Architect's consult of 2026-10-21 (13:58Z), re-verified (section 11).
 
-**Tests:** the one statement of the count is section 6: 19 new test cases (10 test functions) in one new file; no existing test changes.
+**Tests:** the count is stated once, in section 6 (one new file; no existing test changes).
 
 **Line endings:** every edited file's working copy is CRLF (`git ls-files --eol`: `i/lf w/crlf`). The SEARCH blocks are written with LF; match and write with the file's own line endings.
 
@@ -40,8 +41,8 @@ The 1,272 empty-model rows fit the chain-step sites: 2,076 chain steps against 1
 ## 2. Solution overview
 
 - **Schema.** `token_source TEXT NOT NULL DEFAULT ''` on `journal` and `chain_traces`: in the `CREATE TABLE` for a new database, and an idempotent `ALTER TABLE` for an existing one (the AD-432 list for `journal`, `journal.py:201-211`; a BF-901 tuple and loop for `chain_traces`, beside AD-658a's, `:122-125`, `:227-232`). `''` means nothing was accounted for (an attempt, a cache hit, a replay, an error) or the row predates BF-901; no code labels it measured.
-- **Records.** `record()` and `record_chain_trace()` write the column. `SubTaskResult` gains `model` and `token_source`; `ChainExecutionTrace` gains `token_source`.
-- **Sites.** The four sub-task handlers charge each completed call with S1's `charge_completion` and set `model` from `answered_model_name`. `sub_task.py:657` passes the handler's charge, split and source, with `model` or `"unknown"`; `:586` records `"unknown"`; the trace passes the source. `cognitive_agent.py:4487` records the charge, the answering model and `cached=response.cached is True`; `:3668` and `:3705` record `"unknown"`.
+- **Records.** `record()` and `record_chain_trace()` write the column. `SubTaskResult` gains `model`, `token_source` and `cached` (A1); `ChainExecutionTrace` gains `token_source`.
+- **Sites.** The four sub-task handlers charge each completed call with S1's `charge_completion` and set `model` from `answered_model_name`. `sub_task.py:657` passes the handler's charge, split and source, with `model` or `"unknown"`, and the result's `cached` (A1, section 7.10a); `:586` records `"unknown"`; the trace passes the source. `cognitive_agent.py:4487` records the charge, the answering model and `cached=response.cached is True`; `:3668` and `:3705` record `"unknown"`.
 
 Where this contract departs from the consult, and why:
 
@@ -49,6 +50,7 @@ Where this contract departs from the consult, and why:
 2. **`cached=response.cached is True`**, not `bool(response.cached)`: `LLMResponse.cached` is a `bool`, so the two agree on it; a `MagicMock` response double (for example `test_ad632a_sub_task_foundation.py:625-634`) makes `bool(...)` true and would mark the double's row cached.
 3. **The chain-step journal row also gains the prompt/completion split** (`prompt_tokens`, `completion_tokens` from the handler's charge). #1575's acceptance asks every real call to record all three counts; the trace already carried the split, the row did not.
 4. **The analyze handler's parse-failure result is charged too** (`analyze.py:651-662`): the model answered and the call was spent; only the reply's shape failed.
+5. **(A1) A chain step that replays the client cache is recorded `cached`.** Review round 1 (F1) found the one-shot rule (D4) applied to one path only: the chain-step result carried no flag, so the step row took `record()`'s default `False`, and a replay of a zero-count proxy answer, which S1 charges as an estimate, entered every reader's sum and the AD-617b cap. A1 carries the flag (D9, section 7.10a).
 
 ## 3. Decisions
 
@@ -62,6 +64,7 @@ Where this contract departs from the consult, and why:
 | D6 | Handlers charge at every result built from a completed call, so the chain-step row carries measured or estimated counts and the answering model | Charging at `sub_task.py:657`: the executor has no request and no response, only the handler's result |
 | D7 | Call-site imports of `token_accounting` | A module-scope import (section 0) |
 | D8 | The chain-step row and the trace read the new `SubTaskResult` fields with `getattr`, as the trace already reads the split (`sub_task.py:694-698`, AD-658a) | Direct attributes: a handler registered by a test that returns a result object without the fields would lose its row (the `except` at `:670-674` logs at debug) |
+| D9 (A1) | Each of the six results built from a completed call (the analyze parse-failure and evaluate default-verdict results included) carries `cached=getattr(response, "cached", False) is True`; the step row records `getattr(result, "cached", False) is True` (D8); the charge and its source stay on the row, as on the one-shot row (D4), and the readers' `cached = 0` filter keeps it out of spend | Zeroing a replay's charge: the row would no longer say what the replayed answer cost, and the one-shot row keeps it. `bool(...)`: D4. A `cached` column on `chain_traces`: a schema change, and no reader sums trace tokens as spend (section 5) |
 
 ## 4. Milestones (about 50 Builder tool calls in all)
 
@@ -69,7 +72,7 @@ Where this contract departs from the consult, and why:
 |---|---|---|
 | M1 (about 10 calls) | Sections 7.1 (`journal.py`) and 7.2 (`chain_trace.py`) | `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_cognitive_journal.py tests/test_ad658a_chain_trace_token_split.py tests/test_ad658_chain_harness_metrics.py tests/test_ad700b_journal_level_tag.py tests/test_ad492_cognitive_correlation_ids.py tests/test_replay_dispatch.py tests/test_ad617b_per_agent_token_budget.py tests/test_ad469_eps.py -n 0 -q` |
 | M2 (about 8 calls) | Sections 7.3 to 7.5 (`sub_task.py`) and 7.6 (`cognitive_agent.py`) | M1's command, then `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad632a_sub_task_foundation.py tests/test_bf864_decision_cache_key.py tests/test_cognitive_agent.py tests/test_ad643a_intent_routing.py tests/test_ad1248_slice_a_crossing.py -n 0 -q` |
-| M3 (about 10 calls) | Sections 7.7 to 7.10 (the four handlers) | `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad632c_analyze_handler.py tests/test_ad632d_compose_handler.py tests/test_ad632e_evaluate_reflect.py tests/test_ad639_chain_tuning.py tests/test_bf184_evaluate_social_bypass.py tests/test_bf185_reflect_social_bypass.py tests/test_bf186_compose_standing_orders.py tests/test_bf187_bf188_dm_captain_delivery.py tests/test_bf190_bf191_route_evaluate.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py tests/test_ad645b_evaluate_brief_alignment.py tests/test_bf288_log_hygiene.py tests/test_ad632b_query_handler.py -n 0 -q` |
+| M3 (about 13 calls) | Sections 7.7 to 7.10 (the four handlers), then 7.10a (A1: the replay flag in `sub_task.py` and the handlers) | `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_bf183_subtask_retry.py tests/test_ad632h_parallel_dispatch.py tests/test_ad632a_sub_task_foundation.py tests/test_ad632c_analyze_handler.py tests/test_ad632d_compose_handler.py tests/test_ad632e_evaluate_reflect.py tests/test_ad639_chain_tuning.py tests/test_bf184_evaluate_social_bypass.py tests/test_bf185_reflect_social_bypass.py tests/test_bf186_compose_standing_orders.py tests/test_bf187_bf188_dm_captain_delivery.py tests/test_bf190_bf191_route_evaluate.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py tests/test_ad645b_evaluate_brief_alignment.py tests/test_bf288_log_hygiene.py tests/test_ad632b_query_handler.py -n 0 -q` |
 | M4 (about 12 calls) | Section 7.11 (the new test file) | `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_bf901_s2_journal_token_provenance.py tests/test_bf901_s1_token_accounting.py -n 0 -q`, then M1 to M3 again, then `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1343_seam_registry.py tests/test_layer_boundaries.py tests/test_ad661_diagnostic_context.py -n 0 -q` |
 | M5 (about 6 calls) | Section 8: `PROGRESS.md`, `DECISIONS.md`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` | `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check`; `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1184_ad_ledger.py -n 0 -q` |
 | M6 (about 4 calls) | Section audit; stage by explicit path: `src/probos/cognitive/journal.py`, `src/probos/cognitive/chain_trace.py`, `src/probos/cognitive/sub_task.py`, `src/probos/cognitive/cognitive_agent.py`, `src/probos/cognitive/sub_tasks/analyze.py`, `src/probos/cognitive/sub_tasks/compose.py`, `src/probos/cognitive/sub_tasks/evaluate.py`, `src/probos/cognitive/sub_tasks/reflect.py`, `tests/test_bf901_s2_journal_token_provenance.py`, `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json` (never `git add -A`) | `git diff --cached --stat` |
@@ -79,6 +82,8 @@ Then the orchestrator: the scratch-tree dry run (on the tree with BF-900 and S1 
 ## 5. Consumers of every value this changes
 
 Greps: `Grep "journal\.record\(|\.record_chain_trace\(" src/probos/`; `Grep "INTO journal|INTO chain_traces|FROM journal|FROM chain_traces" src/probos/`; `Grep "\.(get_reasoning_chain|recent_for_agent|get_decision_points|get_recent_chain_traces|get_token_usage_by|get_token_usage_since|get_token_usage)\(" src/probos/`; `Grep "\.tokens_used\b" src/probos/cognitive/`; `Grep "ChainExecutionTrace" src/probos/`; `Grep "SUB_TASK_CHAIN_COMPLETED|sub_task_chain_completed" src/probos/ ui/src/`; `Grep "api/journal|chain-traces|/reasoning" ui/src/`.
+
+**Scope (A1, review round 1 F4).** This section lists the writers, the direct readers of the two tables and of the changed values, and each reader's first caller; it is not a census of every transitive consumer. Round 1 found further ones, all compatible (they forward rows or read named keys; none reads a token field or the key set): `query_agent_chain_traces` (`clinical_telemetry.py:149`) forwards `get_recent_chain_traces` rows to `routers/clinical.py:97`, to the CLI panel `render_clinical_traces_panel` (`experience/panels.py:1360`, which reads `ts`, `chain_id`, `outcome` and steps) and to the proactive self-monitoring summary (`proactive.py:2425-2436`: count, `ts`, `outcome`); `routers/diagnostic_context.py:47` serialises the diagnostic bundle (`bundle.to_dict()`), whose chain rows carry the new key.
 
 **Writers.** The five `journal.record` sites and one `record_chain_trace` site above are the only writers (`cognitive_agent.py:3668`, `:3705`, `:4487`; `sub_task.py:586`, `:657`, `:715`); every SQL statement on the two tables is in `journal.py`.
 
@@ -93,6 +98,10 @@ Greps: `Grep "journal\.record\(|\.record_chain_trace\(" src/probos/`; `Grep "INT
 | | `get_recent_chain_traces` (`:486`) -> `chain_optimizer.py:264`, `clinical_telemetry.py:196`, `optimization_counselor.py:194`, `routers/chain_traces.py:33-38`, `diagnostic_context.py:257` | The first three read no token field (`Grep "tokens" ` in each finds none relevant); the route passes rows through; `diagnostic_context._row_tokens` (`:431-433`) estimates a row's size from its serialised values, so each chain row costs a few more characters (`"estimated"` is 9) against its 8,000-token default budget (`:108`) | Added |
 | `SubTaskResult.tokens_used` now the charge | `sub_task.py:385` (sum into the `SUB_TASK_CHAIN_COMPLETED` event): no listener subscribes (`Grep` finds the emitter, `events.py:436`, `:1117` and the persistence list `event_persistence.py:411` only); `chain_nats_bridge.py:192` (the NATS step payload, observability) | Non-zero where the proxy reported zeros | Added |
 | `SubTaskResult.model`, `.token_source` (new, defaulted) | `sub_task.py:657` row and the trace | Section 7.4, 7.5 | Added |
+| `SubTaskResult.cached` (new, defaulted `False`; A1) | The step row (`sub_task.py:657`), then the four readers' `cached = 0` filter and the AD-617b cap (`proactive.py:824`) | A replayed step is excluded from spend, as a one-shot replay is (U11) | Added |
+| | AD-633's speculative budget: `_sum_tokens` (`predictive_branching/executor.py:195-199`) -> `record_consumption` (`:102-105`) | Sums every result's `tokens_used`, a replay's included; reads no `cached`. Off by default (`config_models/knowledge.py:422`; `config/system.yaml:1986`). Recorded, not repaired (a reader change; section 16) | Base behaviour; S1's estimate widens it |
+| | `chain_nats_bridge.py:183-194` (the NATS step payload) | Reads named fields, `cached` not among them | Unchanged |
+| A replayed step's `chain_traces` row (no `cached` column) | The trace readers above | They read no token field; S3 takes spend from `journal` (section 13) | Unchanged |
 | `ChainExecutionTrace.token_source` (new) | `record_chain_trace` | Section 7.1 | Added |
 | `record(token_source=...)` (new keyword, defaulted `""`) | The five sites | Two pass it (`:4487`, `:657`), three keep `''` | Added |
 | Schema pins in tests | `test_ad492_cognitive_correlation_ids.py:166-168`, `test_ad658a_chain_trace_token_split.py:139-142`, `:173-176`, `test_ad700b_journal_level_tag.py:113-116`, `:124-128`, `test_replay_dispatch.py:159-161` | Each asserts a named column is present (or present once); none asserts the full column set | Unchanged |
@@ -101,7 +110,7 @@ Pre-existing on the base and recorded, not repaired here: a warm-boot `ALTER` th
 
 ## 6. Tests
 
-All in `tests/test_bf901_s2_journal_token_provenance.py`, through a real `CognitiveJournal` on `tmp_path`.
+All in `tests/test_bf901_s2_journal_token_provenance.py`: **26 test cases in 12 test functions**. Every test but U9 and U12 goes through a real `CognitiveJournal` on `tmp_path`; U9 and U12 test the handlers' returned results, and U11 carries a replayed step from the handler through the journal to the usage readers and the AD-617b gate.
 
 | ID | Test | What it proves |
 |---|---|---|
@@ -113,8 +122,10 @@ All in `tests/test_bf901_s2_journal_token_provenance.py`, through a real `Cognit
 | U6 | `test_a_procedural_replay_row_names_unknown` | `:3705` |
 | U7 | `test_a_chain_step_records_the_handler_charge_and_model` | `SubTaskExecutor` + the real `ComposeHandler` + the real journal: the step row has the split, the estimate, the source and the answering model; the trace row has the same source and total |
 | U8 | `test_a_timed_out_attempt_and_its_retry_name_unknown` | `:586` (the attempt row) and `:657` with a result that names no model: both rows say `"unknown"` |
-| U9 | `test_each_handler_charges_its_call[analyze|compose|evaluate|reflect]-[estimated|measured]` (8) | Each handler's success result carries the charge, the source and the answering model |
+| U9 | `test_each_handler_charges_its_call[analyze|compose|evaluate|reflect]-[estimated|measured]` (8) | Each handler's success result carries the charge, the source and the answering model, and a fresh call's result is not marked `cached` (A1) |
 | U10 | `test_a_warm_boot_adds_the_columns_once_and_old_rows_read_empty` | On a database with the pre-BF-901 schema: `start()` adds `token_source` to both tables once, old rows read `''`, new rows write the source, and a second start changes nothing |
+| U11 | `test_a_replayed_chain_step_is_journaled_cached_and_adds_nothing_to_spend` | (A1, F1) A client cache replay of a zero-count answer, built as `llm_client.py`'s replay paths build it, through the real `ComposeHandler`, `SubTaskExecutor` and journal: the row is estimated, non-zero and `cached=1`; `get_token_usage`, `get_token_usage_by(group_by="model")`, `get_token_usage_since` and the real AD-617b gate (`_is_over_token_budget`, a 1-token cap) leave it out; a fresh step that follows is counted by all four. On r1 it fails at `assert replay_row["cached"] == 1` |
+| U12 | `test_each_completed_result_carries_the_replay_flag[analyze-parsed|analyze-parse-failure|compose|evaluate-verdict|evaluate-default|reflect]` (6) | (A1) Every result built from a completed call, the parse-failure and default-verdict results included, carries a replay's `cached` beside its estimated charge and the answering model; a premise pins the branch each case names |
 
 Consumer tests run unchanged (M1 to M4): the journal suites (`test_cognitive_journal.py`, including test 9's `cached is False` and test 10's cache-hit row), `test_ad658a_chain_trace_token_split.py`, `test_ad658_chain_harness_metrics.py`, `test_ad700b_journal_level_tag.py`, `test_ad492_cognitive_correlation_ids.py`, `test_replay_dispatch.py`, `test_ad617b_per_agent_token_budget.py`, `test_ad469_eps.py`, `test_ad661_diagnostic_context.py`; the handler suites (M3; their LLM doubles report counts, which a not-stated presence keeps as measured, S1 D3; their `tokens_used == 0` assertions are on bypass paths that make no call); `test_ad632a_sub_task_foundation.py`, `test_bf864_decision_cache_key.py`, `test_cognitive_agent.py`, `test_ad643a_intent_routing.py`, `test_ad1248_slice_a_crossing.py` (source scans of `decide`/`_decide_via_llm` whose strings this contract keeps), `test_bf288_log_hygiene.py` (pins three strings in `AnalyzeHandler.__call__`, kept), `test_ad1343_seam_registry.py`, `test_layer_boundaries.py`.
 
@@ -755,6 +766,236 @@ REPLACE:
 
 **Handler doubles.** The handlers' tests hand them `LLMResponse` objects with counts, `MagicMock` responses (`test_ad632d_compose_handler.py:58-62`) and `AsyncMock` clients. S1's `charge_completion` reads all of them without raising and keeps a reported count (an `int` `tokens_used` with presence not stated) as measured (S1 D3, D6, its C1 `mock_double` and `unstated_counts` rows), so `result.tokens_used` assertions such as `test_ad632d...:342` (`== 123`) and `test_ad632e...:288` (`== 42`) hold.
 
+### 7.10a The replay flag (Amendment A1): `sub_task.py` and the four handlers
+
+Apply after 7.1 to 7.10: each SEARCH below is the text those sections leave and occurs once in its file. Review round 1 (F1): a chain step's result carried no flag, so the step row took `record()`'s default `cached=False`, and a client cache replay (`llm_client.py:1526-1530`, `:2001-2010`) of a zero-count proxy answer, which S1 charges as an estimate, entered the readers' sums and the AD-617b cap. Each of the six results built from a completed call now carries `cached` (D9) and the step row records it. The kwargs are added in blocks that begin mid-call, after 7.7 to 7.10, so the evaluate and reflect blocks stay unique.
+
+`src/probos/cognitive/sub_task.py`, `SubTaskResult` (appended last; every field is defaulted):
+
+SEARCH:
+```python
+    model: str = ""                     # BF-901: the model that answered ("" = none named; the row says "unknown")
+    token_source: str = ""              # BF-901: "measured", "estimated" or "" (nothing accounted for)
+```
+REPLACE:
+```python
+    model: str = ""                     # BF-901: the model that answered ("" = none named; the row says "unknown")
+    token_source: str = ""              # BF-901: "measured", "estimated" or "" (nothing accounted for)
+    cached: bool = False                # BF-901: a client cache replay (the step row records it; spend excludes it)
+```
+
+`src/probos/cognitive/sub_task.py`, the step row:
+
+SEARCH:
+```python
+                    dag_node_id=dag_node_id,
+                    token_source=getattr(result, "token_source", ""),  # BF-901: as the handler charged it
+```
+REPLACE:
+```python
+                    dag_node_id=dag_node_id,
+                    cached=getattr(result, "cached", False) is True,  # BF-901: a replay stays out of spend
+                    token_source=getattr(result, "token_source", ""),  # BF-901: as the handler charged it
+```
+
+`src/probos/cognitive/sub_tasks/analyze.py`:
+
+SEARCH:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+
+        # Parse structured JSON from response
+```
+REPLACE:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
+        # Parse structured JSON from response
+```
+
+SEARCH:
+```python
+                error=error_msg,
+                tier_used=response.tier,
+                model=answered,
+                token_source=charge.source,
+            )
+```
+REPLACE:
+```python
+                error=error_msg,
+                tier_used=response.tier,
+                model=answered,
+                token_source=charge.source,
+                cached=replayed,  # BF-901: a replay whose reply did not parse is still a replay
+            )
+```
+
+SEARCH:
+```python
+            success=True,
+            tier_used=response.tier,
+            model=answered,
+            token_source=charge.source,
+        )
+```
+REPLACE:
+```python
+            success=True,
+            tier_used=response.tier,
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
+        )
+```
+
+`src/probos/cognitive/sub_tasks/compose.py`:
+
+SEARCH:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+
+        # Return composed output
+```
+REPLACE:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
+        # Return composed output
+```
+
+SEARCH:
+```python
+            tier_used=response.tier,
+            model=answered,
+            token_source=charge.source,
+        )
+```
+REPLACE:
+```python
+            tier_used=response.tier,
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
+        )
+```
+
+`src/probos/cognitive/sub_tasks/evaluate.py`:
+
+SEARCH:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+
+        # Parse structured verdict
+```
+REPLACE:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
+        # Parse structured verdict
+```
+
+SEARCH:
+```python
+                result=dict(_PASS_BY_DEFAULT),
+                tokens_used=charge.total_tokens,
+                prompt_tokens=charge.prompt_tokens,
+                completion_tokens=charge.completion_tokens,
+                duration_ms=duration,
+                success=True,
+                tier_used=getattr(response, "tier", ""),
+                model=answered,
+                token_source=charge.source,
+            )
+```
+REPLACE:
+```python
+                result=dict(_PASS_BY_DEFAULT),
+                tokens_used=charge.total_tokens,
+                prompt_tokens=charge.prompt_tokens,
+                completion_tokens=charge.completion_tokens,
+                duration_ms=duration,
+                success=True,
+                tier_used=getattr(response, "tier", ""),
+                model=answered,
+                token_source=charge.source,
+                cached=replayed,  # BF-901: a replay whose verdict did not parse is still a replay
+            )
+```
+
+SEARCH:
+```python
+            result=result,
+            tokens_used=charge.total_tokens,
+            prompt_tokens=charge.prompt_tokens,
+            completion_tokens=charge.completion_tokens,
+            duration_ms=duration,
+            success=True,
+            tier_used=getattr(response, "tier", ""),
+            model=answered,
+            token_source=charge.source,
+        )
+```
+REPLACE:
+```python
+            result=result,
+            tokens_used=charge.total_tokens,
+            prompt_tokens=charge.prompt_tokens,
+            completion_tokens=charge.completion_tokens,
+            duration_ms=duration,
+            success=True,
+            tier_used=getattr(response, "tier", ""),
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
+        )
+```
+
+`src/probos/cognitive/sub_tasks/reflect.py`:
+
+SEARCH:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+
+        # Parse response
+```
+REPLACE:
+```python
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
+        # Parse response
+```
+
+SEARCH:
+```python
+            tier_used=getattr(response, "tier", ""),
+            model=answered,
+            token_source=charge.source,
+        )
+```
+REPLACE:
+```python
+            tier_used=getattr(response, "tier", ""),
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
+        )
+```
+
+**Not changed, and why.** `analyze.py`'s error-response result (`response.error` set: a replay carries no error, and S1 charges an error nothing); the `except` arms (no response); the timed-out attempt row and the optional-step failure result (no response); the decision-cache-hit and procedural-replay rows (already `cached=True`, section 7.6); `ChainExecutionTrace` and `chain_traces` (no column, D9).
+
 ### 7.11 New file
 
 #### `tests/test_bf901_s2_journal_token_provenance.py`
@@ -762,16 +1003,19 @@ REPLACE:
 ```python
 """BF-901 S2 (#1575): the journal records what each call cost, where the count came from, and the model that answered.
 
-The contract is ``prompts/bf-901-s2-journal-token-provenance.md``. Every test writes through a real ``CognitiveJournal``
-on ``tmp_path`` and reads the rows back through its own readers (``get_reasoning_chain``, ``get_recent_chain_traces``,
-``get_token_usage``). The one-shot rows come from the real ``CognitiveAgent.decide`` -> ``_decide_via_llm`` (the agent
+The contract is ``prompts/bf-901-s2-journal-token-provenance.md``. Every test but U9 and U12 writes through a real
+``CognitiveJournal`` on ``tmp_path`` and reads the rows back through its own readers (``get_reasoning_chain``,
+``get_recent_chain_traces``, ``get_token_usage``; U11 also ``get_token_usage_by``, ``get_token_usage_since`` and the
+AD-617b hourly gate). U9 and U12 test the handlers' returned results, with no journal; U11 carries a replayed step
+from a handler's result into the journal (review round 1, F1). The one-shot rows come from the real
+``CognitiveAgent.decide`` -> ``_decide_via_llm`` (the agent
 built as tests/test_cognitive_journal.py builds it, over a spec'd runtime mock); the chain rows from the real
 ``SubTaskExecutor`` and the real sub-task handlers. Stand-ins, named: the model client (``_OneShotClient``, a
 ``MockLLMClient`` that answers one scripted ``LLMResponse``), the procedural-memory lookup in U6, and in U8 a handler
 whose first call never returns plus a no-wait ``asyncio.sleep`` (BF-183's 2 s back-off).
 
 Mutants (the contract's section 10): J1, J2 U10; J3, C3, C4 U1; J4, S3 U7; C1 U3; C2 U4; C5 U5; C6 U6; S1, S2 U8;
-H1-H8 U9.
+H1-H8 U9; S4 U11; R1-R10 U12 (R4 and R5 also fail U11).
 """
 
 from __future__ import annotations
@@ -798,8 +1042,9 @@ from probos.cognitive.sub_tasks.analyze import AnalyzeHandler
 from probos.cognitive.sub_tasks.compose import ComposeHandler
 from probos.cognitive.sub_tasks.evaluate import EvaluateHandler
 from probos.cognitive.sub_tasks.reflect import ReflectHandler
-from probos.config import CognitiveConfig
+from probos.config import CognitiveConfig, LLMRateConfig
 from probos.crew_execution_usage import TOKEN_SOURCE_ESTIMATED, TOKEN_SOURCE_MEASURED
+from probos.proactive import ProactiveCognitiveLoop
 from probos.runtime import ProbOSRuntime
 from probos.types import IntentDescriptor, LLMRequest, LLMResponse
 
@@ -1089,6 +1334,61 @@ async def test_a_timed_out_attempt_and_its_retry_name_unknown(
     assert (attempts[0]["token_source"], steps[0]["token_source"]) == ("", "")
 
 
+async def test_a_replayed_chain_step_is_journaled_cached_and_adds_nothing_to_spend(journal: CognitiveJournal) -> None:
+    """U11 (A1, review round 1 F1): the chain path of U4, from the handler to the spend readers. A client cache replay
+    of a zero-count answer, built as llm_client.py's two replay paths build it (the original's content, models and
+    ``tokens_used``, ``cached=True``, usage presence not stated), goes through the real compose handler, the real
+    executor and the real journal. S1 charges it as an estimate, as it charges a one-shot replay; the step row is
+    ``cached=1``, so ``get_token_usage``, ``get_token_usage_by``, ``get_token_usage_since`` and the real AD-617b gate
+    (called as tests/test_ad617b_per_agent_token_budget.py calls it, with a 1-token cap) leave it out. A fresh step
+    that follows is counted by all four: the filter is not vacuous."""
+    loop = ProactiveCognitiveLoop()
+    loop.set_runtime(
+        SimpleNamespace(
+            config=SimpleNamespace(llm_rate=LLMRateConfig(per_agent_hourly_token_cap=1)), cognitive_journal=journal,
+        ),
+    )
+    since = time.time() - 3600.0
+
+    async def _step(response: LLMResponse) -> None:
+        executor = SubTaskExecutor()
+        executor.register_handler(SubTaskType.COMPOSE, ComposeHandler(llm_client=_OneReply(response), runtime=None))
+        chain = SubTaskChain(
+            steps=[SubTaskSpec(sub_task_type=SubTaskType.COMPOSE, name="compose", tier="standard")], source="test",
+        )
+        await executor.execute(
+            chain, dict(_CONTEXT), agent_id="agent-3", agent_type="science_officer",
+            intent="ward_room_notification", intent_id="int-3", journal=journal,
+        )
+
+    replay = LLMResponse(
+        content="A reply to the thread.", model=SENT, answered_model=ANSWERED, tokens_used=0, cached=True,
+    )
+    await _step(replay)
+
+    (replay_row,) = await _rows(journal, "agent-3")
+    assert replay_row["token_source"] == TOKEN_SOURCE_ESTIMATED  # premise: S1 charges the zero-count replay
+    assert replay_row["total_tokens"] > 0  # premise: so only ``cached`` keeps it out of spend
+    assert replay_row["cached"] == 1
+    usage = await journal.get_token_usage("agent-3")
+    assert (usage["total_tokens"], usage["total_calls"]) == (0, 0)
+    assert await journal.get_token_usage_by(group_by="model", agent_id="agent-3") == []
+    assert await journal.get_token_usage_since("agent-3", since) == 0
+    assert await loop._is_over_token_budget("agent-3") is False
+
+    await _step(LLMResponse(content="A fresh reply.", model=SENT, answered_model=ANSWERED, usage_reported=True))
+
+    (fresh,) = [row for row in await _rows(journal, "agent-3") if row["cached"] == 0]
+    spent = fresh["total_tokens"]
+    assert spent > 0  # premise: the control is charged
+    usage = await journal.get_token_usage("agent-3")
+    assert (usage["total_tokens"], usage["total_calls"]) == (spent, 1)
+    by_model = await journal.get_token_usage_by(group_by="model", agent_id="agent-3")
+    assert [(g["model"], g["total_calls"], g["total_tokens"]) for g in by_model] == [(ANSWERED, 1, spent)]
+    assert await journal.get_token_usage_since("agent-3", since) == spent
+    assert await loop._is_over_token_budget("agent-3") is True
+
+
 # ---------------------------------------------------------------------------
 # 4. The four handlers' success results
 # ---------------------------------------------------------------------------
@@ -1124,6 +1424,7 @@ async def test_each_handler_charges_its_call(kind: str, mode: str) -> None:
     assert len(llm.requests) == 1  # premise: the handler reached its model call
     assert result.success is True
     assert result.model == ANSWERED
+    assert result.cached is False  # BF-901 (A1): a fresh call is not a replay
     if mode == "estimated":
         assert result.token_source == TOKEN_SOURCE_ESTIMATED
         assert result.prompt_tokens > 0
@@ -1132,6 +1433,37 @@ async def test_each_handler_charges_its_call(kind: str, mode: str) -> None:
     else:
         assert result.token_source == TOKEN_SOURCE_MEASURED
         assert (result.prompt_tokens, result.completion_tokens, result.tokens_used) == (100, 50, 150)
+
+
+_NOT_JSON = "No JSON in this reply."
+_REPLAY_CASES = {
+    # case id: (handler, reply, the result's success, a result key, its value); the last three pin the branch
+    "analyze-parsed": ("analyze", _HANDLERS["analyze"][2], True, "contribution_assessment", "RESPOND"),
+    "analyze-parse-failure": ("analyze", _NOT_JSON, False, "contribution_assessment", None),
+    "compose": ("compose", _HANDLERS["compose"][2], True, "output", "A reply to the thread."),
+    "evaluate-verdict": ("evaluate", _HANDLERS["evaluate"][2], True, "score", 0.9),
+    "evaluate-default": ("evaluate", _NOT_JSON, True, "score", 1.0),
+    "reflect": ("reflect", _HANDLERS["reflect"][2], True, "output", "A reply to the thread."),
+}
+
+
+@pytest.mark.parametrize("case", list(_REPLAY_CASES))
+async def test_each_completed_result_carries_the_replay_flag(case: str) -> None:
+    """U12 (A1, review round 1 F1): every result built from a completed call, the analyze parse-failure and the
+    evaluate default-verdict results included, carries a client cache replay's ``cached`` beside the charge S1 makes
+    for it (a zero-count replay: an estimate) and the answering model. U11 carries one such result into the journal."""
+    kind, reply, success, key, value = _REPLAY_CASES[case]
+    handler_cls, step_type, _ = _HANDLERS[kind]
+    llm = _OneReply(LLMResponse(content=reply, model=SENT, answered_model=ANSWERED, cached=True))
+    handler = handler_cls(llm_client=llm, runtime=None)
+
+    result = await handler(SubTaskSpec(sub_task_type=step_type, name=kind, tier="standard"), dict(_CONTEXT), [])
+
+    assert len(llm.requests) == 1  # premise: the handler reached its model call
+    assert (result.success, result.result.get(key)) == (success, value)  # premise: the branch the case names
+    assert result.cached is True
+    assert result.token_source == TOKEN_SOURCE_ESTIMATED
+    assert result.model == ANSWERED
 
 
 # ---------------------------------------------------------------------------
@@ -1262,7 +1594,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-901 S2 (2026-10-21), part of #1575 -- the journal records what each call cost, where the count came from, and the model that answered.** `journal` and `chain_traces` gain `token_source TEXT NOT NULL DEFAULT ''` (in the schema for a new database, an idempotent `ALTER` for an existing one; `''` means nothing accounted for or recorded before BF-901, never measured). The four sub-task handlers charge each completed call with S1's `charge_completion` and carry the answering model on `SubTaskResult` (new `model`, `token_source`); the chain-step journal row records the charge with its prompt/completion split, the source and the model (or `unknown`), and the trace records the source. The one-shot record in `CognitiveAgent._decide_via_llm` records the charge, the model that answered (it recorded the id sent) and `cached` from the response, so a client cache replay is no longer counted as spend. The timed-out attempt, decision-cache-hit and procedural-replay rows, which make no model call, record `unknown`. No reader's shape changes; the token sums become non-zero where the proxy reported zeros, the AD-617b cap that reads them stays off by default, and rows written before BF-901 keep `''`. New: `tests/test_bf901_s2_journal_token_provenance.py` (a real `CognitiveJournal`, the real `decide`, `SubTaskExecutor` and handlers, and a warm boot on the old schema). S3 (the doctor view, closes #1575) reads these columns. The decisions are in DECISIONS.md (BF-901 S2); the contract is `prompts/bf-901-s2-journal-token-provenance.md`.
+**BF-901 S2 (2026-10-21), part of #1575 -- the journal records what each call cost, where the count came from, and the model that answered.** `journal` and `chain_traces` gain `token_source TEXT NOT NULL DEFAULT ''` (in the schema for a new database, an idempotent `ALTER` for an existing one; `''` means nothing accounted for or recorded before BF-901, never measured). The four sub-task handlers charge each completed call with S1's `charge_completion` and carry the answering model on `SubTaskResult` (new `model`, `token_source`, `cached`); the chain-step journal row records the charge with its prompt/completion split, the source, the model (or `unknown`) and whether the step replayed the client cache, and the trace records the source. The one-shot record in `CognitiveAgent._decide_via_llm` records the charge, the model that answered (it recorded the id sent) and `cached` from the response. On both paths a client cache replay keeps its charge, labelled, and is recorded `cached`, so the readers' `cached = 0` filter keeps it out of spend and out of the AD-617b cap. The timed-out attempt, decision-cache-hit and procedural-replay rows, which make no model call, record `unknown`. The aggregate readers' shapes are unchanged (`get_token_usage`, `get_token_usage_since`, `get_token_usage_by`); the full-row readers (`SELECT *`: `get_reasoning_chain`, `get_decision_points`, `get_recent_chain_traces`) and the routes and diagnostic context that serialize them gain a `token_source` key. The token sums become non-zero where the proxy reported zeros, the AD-617b cap that reads them stays off by default, and rows written before BF-901 keep `''`. New: `tests/test_bf901_s2_journal_token_provenance.py` (the real `decide`, `SubTaskExecutor` and handlers; the journal tests through a real `CognitiveJournal`, the handler tests on the handlers' results; a replayed chain step through the journal, its usage readers and the hourly cap; a warm boot on the old schema). S3 (the doctor view, closes #1575) reads these columns. The decisions are in DECISIONS.md (BF-901 S2); the contract is `prompts/bf-901-s2-journal-token-provenance.md`.
 
 **BF-901 S1 (2026-10-21), part of #1575 -- one owner for the token estimator, and usage presence at the transport.**
 ```
@@ -1286,9 +1618,10 @@ REPLACE:
 - *D1-D2.* `token_source TEXT NOT NULL DEFAULT ''` on both tables, added in the schema and by an idempotent `ALTER` (additive, no schema breaks, so not a Captain condition). `''` means nothing accounted for or recorded before BF-901; only `charge_completion`'s measured branch writes `measured`.
 - *D3-D5.* The one-shot row names `answered_model_name(response)`; `cached` is the response's (`is True`, so a mock double is not read as a replay), which the readers' `cached = 0` filter then keeps out of spend; rows that make no model call record `unknown`.
 - *D6-D8.* The handlers charge at each result built from a completed call (the executor has no request or response); the chain-step row also gains the prompt/completion split; the executor reads the new result fields with `getattr`, as it already reads the split; `token_accounting` is imported at the call sites.
+- *D9 (Amendment A1, review round 1 F1).* A chain step's result carries `cached` (`getattr(response, "cached", False) is True` at each of the six results built from a completed call, the parse-failure and default-verdict results included), and the step row records it, as the one-shot row does (D4). The charge and its source stay on the row, labelled; the readers' `cached = 0` filter keeps it out of spend. Without it, a replay of a zero-count proxy answer, which S1 charges as an estimate, entered the sums and the AD-617b cap. `chain_traces` has no `cached` column and gets none: nothing sums trace tokens as spend, and S3 takes spend from `journal`.
 - *Departures from the consult.* `ChainExecutionTrace` gains `token_source` only: `chain_traces` has no model column and the journal is the trace's only reader, so a `model` field would be written nowhere; the step's journal row names the model.
-- *Recorded, not repaired.* A warm-boot `ALTER` that fails for a reason other than a duplicate column is swallowed, as the earlier migrations' are; the readers' sums now include estimates, labelled per row, and S3 shows measured, estimated and `''` apart.
-- *Reversal.* Revert the BF-901 S2 commit. The added columns stay in any database that started under it (SQLite keeps them; nothing reads them after the revert) and are harmless.
+- *Recorded, not repaired.* A warm-boot `ALTER` that fails for a reason other than a duplicate column is swallowed, as the earlier migrations' are; the readers' sums now include estimates, labelled per row, and S3 shows measured, estimated and `''` apart. AD-633's speculative budget (`predictive_branching/executor.py:102-105`, `:195-199`) sums its chain results' `tokens_used`, a replay's included; it is off by default (`predictive_branching.enabled: false`), and skipping results marked `cached` there is a one-line follow-up.
+- *Reversal.* Revert the BF-901 S2 commit. The added columns stay in any database that started under it (SQLite keeps them) and are harmless, though not invisible: the reverted code's named `INSERT`s leave them at their default `''`, and its `SELECT *` readers still return them, so the routes and the diagnostic context still serialize `token_source` on rows written while S2 ran. The aggregate readers do not read it.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1301,13 +1634,14 @@ REPLACE:
 
 ## 9. What this does NOT change
 
-- The readers' queries and shapes (`get_token_usage`, `get_token_usage_since`, `get_token_usage_by` and its allowlist, `journal.py:891`), the routes, the AD-617b cap and its default, the EPS report's logic, the chain optimizer, the clinical telemetry, the optimization counselor; S3 adds the source split and the doctor view.
+- The readers' queries, and the aggregate readers' shapes (`get_token_usage`, `get_token_usage_since`, `get_token_usage_by` and its allowlist, `journal.py:891`; the full-row `SELECT *` readers' rows gain the `token_source` key, section 5), the routes, the AD-617b cap and its default, the EPS report's logic, the chain optimizer, the clinical telemetry, the optimization counselor; S3 adds the source split and the doctor view.
 - The agentic loop and dispatch (they write no journal row; BF-680 labels their outcomes), `TurnCostBudget`, AD-1208 and AD-1323 to AD-1325.
 - The model calls that write no journal row (about 48 files, consult decision 4), `MockLLMClient`, the transport (S1), the Copilot proxy, price tables, configuration (no field; `config/system.yaml` untouched).
 - Rows already in a vessel's journal: they keep their values and read `''` for the source (no back-fill).
+- `chain_traces`: A1 adds no `cached` column (D9); spend is the journal's sum.
 - The error-response results of the handlers (`analyze.py:610-623` and the `except` arms): they record the transport's zeros and `unknown`.
 
-## 10. Mutation rows (whole stripped lines; each occurs once in its file after section 7)
+## 10. Mutation rows (32 rows; whole stripped lines; each occurs once in its file after section 7, 7.10a included)
 
 Run against `tests/test_bf901_s2_journal_token_provenance.py` on the contract-applied tree (BF-900 and S1 applied), after an unmutated baseline run of that file that passes. The runner mutates each file in place and restores it before the next row.
 
@@ -1334,6 +1668,19 @@ Run against `tests/test_bf901_s2_journal_token_provenance.py` on the contract-ap
 | H6 | same | `answered = answered_model_name(response)` | `answered = response.model` | U9[evaluate-*] |
 | H7 | `src/probos/cognitive/sub_tasks/reflect.py` | `charge = charge_completion(request_messages(request), response)` | `charge = charge_completion([], response)` | U9[reflect-estimated] |
 | H8 | same | `answered = answered_model_name(response)` | `answered = response.model` | U9[reflect-*] |
+| S4 | `src/probos/cognitive/sub_task.py` | `cached=getattr(result, "cached", False) is True,  # BF-901: a replay stays out of spend` | `cached=False,` | U11: `assert replay_row["cached"] == 1` |
+| R1 | `src/probos/cognitive/sub_tasks/analyze.py` | `replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay` | `replayed = False` | U12[analyze-parsed], U12[analyze-parse-failure]: `assert result.cached is True` |
+| R2 | same | `cached=replayed,  # BF-901: a replay whose reply did not parse is still a replay` | `cached=False,` | U12[analyze-parse-failure]: `assert result.cached is True` |
+| R3 | same | `cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend` | `cached=False,` | U12[analyze-parsed]: `assert result.cached is True` |
+| R4 | `src/probos/cognitive/sub_tasks/compose.py` | `replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay` | `replayed = False` | Pinned by U12[compose]: `assert result.cached is True` (U11 also fails: `assert replay_row["cached"] == 1`) |
+| R5 | same | `cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend` | `cached=False,` | Pinned by U12[compose] (U11 also fails) |
+| R6 | `src/probos/cognitive/sub_tasks/evaluate.py` | `replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay` | `replayed = False` | U12[evaluate-verdict], U12[evaluate-default]: `assert result.cached is True` |
+| R7 | same | `cached=replayed,  # BF-901: a replay whose verdict did not parse is still a replay` | `cached=False,` | U12[evaluate-default]: `assert result.cached is True` |
+| R8 | same | `cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend` | `cached=False,` | U12[evaluate-verdict]: `assert result.cached is True` |
+| R9 | `src/probos/cognitive/sub_tasks/reflect.py` | `replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay` | `replayed = False` | U12[reflect]: `assert result.cached is True` |
+| R10 | same | `cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend` | `cached=False,` | U12[reflect]: `assert result.cached is True` |
+
+The `SubTaskResult.cached` declaration has no row: it is a field, not a propagation line, and removing it makes every handler raise `TypeError`. A `replayed = True` mutant is killed by U9's `assert result.cached is False`.
 
 Campaign of record: name the base tree and the sha256 of each mutated file and the new test file; a later run whose hashes match does not repeat it.
 
@@ -1362,6 +1709,26 @@ Campaign of record: name the base tree and the sha256 of each mutated file and t
 | Executor API | TRUE | `sub_task.py:285-295` (`execute(chain, context, *, agent_id, agent_type, intent, intent_id, journal)`), `:232` `register_handler`, `:101-106` `SubTaskChain` (`chain_timeout_ms` default 240000), `:575-614` (BF-183 retry: needs `remaining_ms >= timeout + 2000`, sleeps `backoff_ms / 1000`) |
 | Handler constructors | TRUE | `AnalyzeHandler.__init__(self, *, llm_client, runtime)` `analyze.py:538`; `ComposeHandler` `compose.py:594`; `EvaluateHandler(*, llm_client=None, runtime=None)` `evaluate.py:369`; `ReflectHandler` `reflect.py:371` |
 | Tracker anchors (after S1) | per S1 section 8 | `PROGRESS.md` line 1, blank, S1's entry; `DECISIONS.md` S1's *Reversal* line, blank, `### Explicit delegation models, ...` |
+
+### 11.1 A1 re-verification (2026-10-21, candidate r1, tree `8112781c`)
+
+The claims above stand (tree `8c8bc441`). A1's anchors on the candidate:
+
+| A1 anchor | Evidence |
+|---|---|
+| `SubTaskResult` has no `cached` | `sub_task.py:85-99` (`token_source` last, `:99`); `Grep "\bcached\b" src/probos/cognitive/sub_task.py` finds nothing |
+| The step row passes no `cached`; `record` defaults it `False` | `sub_task.py:660-678`; `journal.py:390` (`cached: bool = False`), `:420` |
+| The six completed-call results | `analyze.py:662-675` (parse failure), `:678-690`; `compose.py:690-702`; `evaluate.py:687-699` (default verdict), `:741-753`; `reflect.py:592-604` |
+| Results that need no flag | `analyze.py:613-623` (error response); the `except` arms `analyze.py:599`, `compose.py:668`, `evaluate.py:653`, `reflect.py:532`; the attempt row `sub_task.py:588-601`; the optional-step result `:647-654`; the cache-hit and procedural-replay rows, `cached=True` at `cognitive_agent.py:3705`, `:3743` |
+| The replay paths | `llm_client.py:1526-1530`, `:2001-2010`: `tokens_used=cached.tokens_used`, `cached=True`, no `usage_reported` (default `None`, `types.py:366`) |
+| S1 charges a zero-count replay as an estimate | `token_accounting.py:188-204` |
+| `LLMResponse.cached` is a `bool` | `types.py:344` |
+| The readers' filter (moved by section 7.1) | `journal.py:849`, `:859`, `:890`, `:913` |
+| The AD-617b gate | `proactive.py:794` (`_is_over_token_budget`), `:809-811`, `:824-826`; `set_runtime` `:775-777`; the constructor's keyword-only defaults `:620-626` |
+| The usage readers' shapes | `get_token_usage` `journal.py:835-873` (`total_calls`, `total_tokens`); `get_token_usage_since` `:875-897`; `get_token_usage_by` `:899-941` (the group key, `total_calls`, `total_tokens`) |
+| `LLMRateConfig(per_agent_hourly_token_cap=...)` | `tests/test_ad617b_per_agent_token_budget.py:14`, `:114` |
+| `_PASS_BY_DEFAULT` (the default-verdict premise) | `evaluate.py:354-359` (`score` 1.0, `criteria` `{}`) |
+| `extract_json` raises on a reply with no object | `utils/json_extract.py:79` |
 
 ## Absence Verified (2026-10-21)
 
@@ -1421,6 +1788,37 @@ CLAIM: the AD-617b cap is off by default
 RUN:   Grep "per_agent_hourly_token_cap" src/probos/config_models/knowledge.py config/system.yaml src/probos/proactive.py
 FOUND: knowledge.py:253 (= 0), system.yaml:2067 (0), proactive.py:809
 HOLDS: yes
+
+CLAIM (A1): the six results in 11.1 are every result built from a completed chain call
+RUN:   Grep "\.complete\(" src/probos/cognitive/sub_tasks/
+FOUND: analyze.py:593, compose.py:662, evaluate.py:643, reflect.py:521 (one call per handler; query.py makes none)
+RUN:   Grep "token_source=charge\.source" src/probos/cognitive/sub_tasks/
+FOUND: analyze.py:674, :689; compose.py:701; evaluate.py:698, :752; reflect.py:603
+HOLDS: yes -- the other results after a call are analyze.py:613 (error response) and the except arms
+
+CLAIM (A1): no code reads a SubTaskResult by its field set
+RUN:   Grep "SubTaskResult" src/probos/
+FOUND: sub_task.py, sub_tasks/{analyze,compose,evaluate,reflect,query}.py, predictive_branching/executor.py, chain_nats_bridge.py
+RUN:   Grep "asdict\(.*result|fields\(SubTaskResult|SubTaskResult\.__dataclass_fields__|vars\(result\)" src/probos/
+FOUND: crew_executor.py:2287, :2375; routers/ard.py:522, :536; routers/work.py:89; ward_room/_helpers.py:95; social_verification.py:427, :615 -- none in a file that names SubTaskResult
+HOLDS: yes
+
+CLAIM (A1): outside the journal, AD-633 is the only budget that sums chain results' tokens
+RUN:   Grep "\.tokens_used\b" src/probos/ (sub_tasks/ excluded)
+FOUND: sub_task.py:387 (the event, no listener), :671, :702; chain_nats_bridge.py:192 (observability); the rest in files that do not name SubTaskResult
+RUN:   Grep "SubTaskResult|\.cached|tokens_used" src/probos/cognitive/predictive_branching/executor.py
+FOUND: :114, :195, :199 (getattr(r, "tokens_used", 0)); no cached
+HOLDS: yes -- AD-633 recorded in section 5, off by default
+
+CLAIM (A1): no test pins the step row's keyword set
+RUN:   Grep "record\.(call_args|assert_called)" tests/
+FOUND: named-key reads only (test_bf183_subtask_retry.py:363-366, :396-398; test_ad632h_parallel_dispatch.py:651, :674; test_ad632c_analyze_handler.py:532-535; test_ad632a_sub_task_foundation.py:435-438, :452-453; the journal and replay suites' one-shot reads)
+HOLDS: yes
+
+CLAIM (A1): the handlers' new local name is free
+RUN:   Grep "\breplayed\b|\bcached\b" src/probos/cognitive/sub_tasks/
+FOUND: nothing
+HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -1429,6 +1827,7 @@ HOLDS: yes
 |---|---|
 | srp-size | `CognitiveJournal` (baseline `lines`, `methods`, `architecture-baseline.yaml:562-567`) gains about 15 lines, no method. `SubTaskExecutor` (baseline `lines`, `:641-646`) gains about 8 lines, no method. `CognitiveAgent` (baseline `lines`, `methods`) gains about 12 lines, no method. The handler classes start at `analyze.py:531`, `compose.py:586`, `evaluate.py:366`, `reflect.py:368` and end with their files (676, 691, 740, 593 lines on the base), so each stays well under 500 lines after about 15 added; none gains a method |
 | layer-import | No module-scope import added (call-site imports only) |
+| A1 (srp-size, layer-import, precheck) | `SubTaskExecutor` (baselined by trigger, `architecture-baseline.yaml:641-648`) gains 1 line, `SubTaskResult` 1 field, no method; the handler classes gain 2 or 3 lines each (about 164, 119, 391 and 239 lines), none near 500 and none gaining a method. No import in `src/`; the test file imports `probos.proactive` and `LLMRateConfig`, as `tests/test_ad617b_per_agent_token_budget.py:14-15` does. The new kwargs sit in mid-call blocks (7.10a), so the precheck's field check (`phantom_api_ast_helper.py:873-875`, `:925-950`), which reads the tree it runs on, sees no `SubTaskResult(...)` call naming `cached` before the build |
 | db-connect | No `connect` in `src/` (the test uses `aiosqlite.connect` on `tmp_path`, as `test_ad658a_chain_trace_token_split.py:129` does) |
 | unowned-task | None |
 | config reference and facade | No config field; `config/system.yaml` untouched |
@@ -1442,7 +1841,7 @@ HOLDS: yes
 
 - **The 1,272 count** needs, on a **copy** of the vessel's `cognitive_journal.db`: `SELECT dag_node_id LIKE 'st:%', cached, procedure_id<>'', COUNT(*) FROM journal WHERE model='' GROUP BY 1,2,3`. Reading the live data directory is access to the live system: the Captain's, at the next restart (with the consult's other two: one real plain and one real tool-call call through the proxy, capturing the raw `usage` block; and after S2 is deployed, the S3 doctor check).
 - **Prior art:** OpenTelemetry's GenAI conventions record the served model (`gen_ai.response.model`) beside the requested one (S1 section 13); adopted as the answered-model row value. No outside analogue for the source column; it is ProbOS's BF-680 provenance.
-- **Blind spots named:** a chain step's estimate does not include the per-tier system suffix the transport appends (S1, `request_messages`); a warm boot whose `ALTER` fails for another reason loses that table's inserts silently (pre-existing, section 5); the column's position differs between a fresh and a migrated `journal` (read by name everywhere, section 7.1).
+- **Blind spots named:** a chain step's estimate does not include the per-tier system suffix the transport appends (S1, `request_messages`); a warm boot whose `ALTER` fails for another reason loses that table's inserts silently (pre-existing, section 5); the column's position differs between a fresh and a migrated `journal` (read by name everywhere, section 7.1). A1: a replayed chain step's trace row carries its charge and no `cached` (the table has no such column); spend is the journal's `cached = 0` sum, so S3 must take spend from `journal`, not by summing `chain_traces`.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -1455,6 +1854,11 @@ HOLDS: yes
 7. `''` is written only where nothing was accounted for; `"measured"` reaches a row only from `charge_completion`'s measured branch.
 8. No module-scope import was added to `cognitive_agent.py` or the handlers.
 9. `decision` returned by `_decide_via_llm` is unchanged by the journal block.
+10. (F1) At each of the six results built from a completed call (analyze parse failure and success, compose, evaluate default verdict and verdict, reflect), `cached` is `getattr(response, "cached", False) is True` for the response that call returned, and the step row's `cached` is `getattr(result, "cached", False) is True`. The row keeps the charge's counts and source. A replayed step adds nothing to `get_token_usage`, `get_token_usage_by`, `get_token_usage_since` or the AD-617b gate, and a fresh step that follows is counted (U11).
+11. (F2) No tracker text says that no reader's shape changes: the aggregate readers' shapes are unchanged, the `SELECT *` readers and what serializes them gain `token_source`, and after a revert the retained columns stay visible through `SELECT *` and serialization.
+12. (F3) The new test file's docstring claims a real journal only for the tests that use one (not U9 or U12).
+13. (F4) Section 5 states its scope and names the transitive consumers found in round 1.
+14. (F5, unchanged) The swallowed non-duplicate migration failure is recorded (sections 5, 13, 16), not repaired; A1 does not touch `journal.py`.
 
 ## 15. Acceptance criteria
 
@@ -1464,4 +1868,23 @@ HOLDS: yes
 4. A replay row is `cached=1` and adds nothing to `get_token_usage` (U4, C2).
 5. Every reader of `journal` and `chain_traces` rows is listed with what it does with the new key and values (section 5), and the schema pins hold (M1).
 6. Every mutation row in section 10 is killed by the named assertion.
-7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+7. A chain step that replays the client cache is recorded `cached=1` with its charge, and adds nothing to the usage readers or the AD-617b cap (U11, U12; S4, R1 to R10).
+8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (2026-10-21, review round 1 of candidate r1)
+
+Candidate r1 (commit `d10776bc`, tree `8112781c`) was byte-identical to this contract before A1. The Diff Reviewer (`gpt-6.1-sol`) verified section 14's nine properties and returned five findings. S2 is rebuilt from the amended contract on S1's commit: sections 7.1 to 7.10, then 7.10a, then 7.11 as amended.
+
+| F | Severity | Finding | Disposition | Sections |
+|---|---|---|---|---|
+| F1 | P2 | A chain step that replayed the client cache was journaled `cached=0`, so a zero-count replay, charged as an estimate, entered spend and the AD-617b cap | Fixed: `SubTaskResult.cached`, carried at the six completed-call results and recorded by the step row (D9); U11, U12 and U9's new assertion; rows S4, R1 to R10 | 2, 3, 4, 5, 6, 7.10a, 7.11, 8, 10, 14, 15 |
+| F2 | P3 | The trackers said no reader's shape changes, and that nothing reads the columns after a revert | Fixed | 8, 9 |
+| F3 | P3 | The test docstring claimed a real journal for U9 | Fixed | 6, 7.11 |
+| F4 | doc | Section 5 read as a full census | Scope stated; the transitive consumers named; AD-633 added | 5 |
+| F5 | recorded | A non-duplicate migration failure is swallowed (`journal.py:217-220`, `:243-247` on the candidate) | Pre-existing (AD-432, AD-658a), injection-only; recorded, not repaired | 5, 13 |
+
+**What A1 does not change.** No schema change (`journal.cached` exists, `journal.py:35`), no reader change, no new column, file or module-scope import. Sections 7.1, 7.2, 7.4 and 7.6 are unchanged, as are the section 0 anchors and the tracker SEARCH anchors (S1's PROGRESS head and S1's DECISIONS *Reversal* line). S3 reads the same schema.
+
+**Section 11 and Absence Verified.** Their claims on `8c8bc441` stand; A1 adds no writer, so the five `journal.record` sites and one trace site are still the only writers. A1 adds 11.1, re-verified on the candidate, and five Absence claims.
+
+**Considered, deferred.** AD-633's speculative budget counts a replayed result's tokens (section 5). It is off by default. A follow-up can skip results marked `cached`, which needs this field.
