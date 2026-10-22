@@ -541,6 +541,17 @@ class ReflectHandler:
 
         duration = int((time.monotonic() - start) * 1000)
 
+        # BF-901 (#1575): what this call is charged and the model that answered.
+        from probos.cognitive.token_accounting import (
+            answered_model_name,
+            charge_completion,
+            request_messages,
+        )
+
+        charge = charge_completion(request_messages(request), response)
+        answered = answered_model_name(response)
+        replayed = getattr(response, "cached", False) is True  # BF-901: a client cache replay
+
         # Parse response
         content = getattr(response, "content", "") or ""
         try:
@@ -583,10 +594,13 @@ class ReflectHandler:
             sub_task_type=SubTaskType.REFLECT,
             name=spec.name,
             result=result,
-            tokens_used=getattr(response, "tokens_used", 0),
-            prompt_tokens=getattr(response, "prompt_tokens", 0),
-            completion_tokens=getattr(response, "completion_tokens", 0),
+            tokens_used=charge.total_tokens,
+            prompt_tokens=charge.prompt_tokens,
+            completion_tokens=charge.completion_tokens,
             duration_ms=duration,
             success=True,
             tier_used=getattr(response, "tier", ""),
+            model=answered,
+            token_source=charge.source,
+            cached=replayed,  # BF-901: the step row records it, so the readers leave it out of spend
         )

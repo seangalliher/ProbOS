@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS journal (
     procedure_id     TEXT NOT NULL DEFAULT '',
     correlation_id   TEXT NOT NULL DEFAULT '',
     level            TEXT NOT NULL DEFAULT '',
-    level_rank       INTEGER NOT NULL DEFAULT 0
+    level_rank       INTEGER NOT NULL DEFAULT 0,
+    token_source     TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_agent ON journal(agent_id);
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS chain_traces (
     tokens_used         INTEGER NOT NULL DEFAULT 0,
     prompt_tokens       INTEGER NOT NULL DEFAULT 0,
     completion_tokens   INTEGER NOT NULL DEFAULT 0,
+    token_source        TEXT NOT NULL DEFAULT '',
     success             INTEGER NOT NULL DEFAULT 1,
     error_truncated     TEXT NOT NULL DEFAULT '',
     context_keys_declared INTEGER NOT NULL DEFAULT 0,
@@ -122,6 +124,12 @@ _MIGRATIONS_CAUSAL_TEMPLATES_AD660B = (
 _MIGRATIONS_CHAIN_TRACES_AD658A = (
     "ALTER TABLE chain_traces ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE chain_traces ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0",
+)
+
+# BF-901: idempotent migration for warm-boot DBs created before BF-901. ``''`` means nothing was accounted
+# for (an attempt, a cache hit, a replay, an error) or the row predates BF-901; it is never read as measured.
+_MIGRATIONS_CHAIN_TRACES_BF901 = (
+    "ALTER TABLE chain_traces ADD COLUMN token_source TEXT NOT NULL DEFAULT ''",
 )
 
 # AD-659b: ChainOptimizer proposal persistence (net-new table; no warm-boot migration).
@@ -204,6 +212,7 @@ class CognitiveJournal:
             ("response_hash", "TEXT NOT NULL DEFAULT ''"),
             ("procedure_id", "TEXT NOT NULL DEFAULT ''"),  # AD-534: procedure replay tracking
             ("correlation_id", "TEXT NOT NULL DEFAULT ''"),  # AD-492: cognitive correlation ID
+            ("token_source", "TEXT NOT NULL DEFAULT ''"),  # BF-901: measured, estimated or '' (none)
         ]:
             try:
                 await self._db.execute(f"ALTER TABLE journal ADD COLUMN {col} {typedef}")
@@ -230,6 +239,12 @@ class CognitiveJournal:
                 await self._db.execute(stmt)
             except Exception:
                 pass
+        # BF-901: the token source column, for warm-boot DBs that pre-date BF-901.
+        for stmt in _MIGRATIONS_CHAIN_TRACES_BF901:
+            try:
+                await self._db.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # Column already exists — migration idempotency
         # AD-659b: ChainOptimizer proposal persistence (idempotent CREATE).
         await self._db.executescript(_SCHEMA_OPTIMIZATION_PROPOSALS)
         # AD-659c: OptimizationCounselor watchdog decisions (idempotent CREATE).
@@ -383,6 +398,7 @@ class CognitiveJournal:
         correlation_id: str = "",  # AD-492: cognitive cycle correlation ID
         level: str = "",  # AD-700b: diagnostic level tag ("L1".."L5"), empty for non-diagnostic intents
         level_rank: int = 0,  # AD-700b: ordinal 1..5; 0 for non-diagnostic intents
+        token_source: str = "",  # BF-901: "measured", "estimated" or "" (nothing accounted for)
     ) -> None:
         """Append a journal entry. Fire-and-forget — never raises."""
         if not self._db:
@@ -395,8 +411,8 @@ class CognitiveJournal:
                     latency_ms, intent, success, cached, request_id,
                     prompt_hash, response_length,
                     intent_id, dag_node_id, response_hash, procedure_id,
-                    correlation_id, level, level_rank)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    correlation_id, level, level_rank, token_source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry_id, timestamp, agent_id, agent_type, tier, model,
                     prompt_tokens, completion_tokens, total_tokens,
@@ -404,7 +420,7 @@ class CognitiveJournal:
                     1 if cached else 0, request_id,
                     prompt_hash, response_length,
                     intent_id, dag_node_id, response_hash, procedure_id,
-                    correlation_id, level, level_rank,
+                    correlation_id, level, level_rank, token_source,
                 ),
             )
             await self._db.commit()
@@ -426,12 +442,12 @@ class CognitiveJournal:
                    (chain_id, step_index, step_name, sub_task_type, tier,
                     chain_source, agent_id, agent_type, intent, intent_id,
                     started_at, duration_ms, tokens_used,
-                    prompt_tokens, completion_tokens,
+                    prompt_tokens, completion_tokens, token_source,
                     success, error_truncated,
                     context_keys_declared, context_keys_passed, context_filter_applied,
                     communication_context, chain_trust_band, trust_score,
                     boot_camp_active, from_captain, is_dm)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     trace.chain_id, trace.step_index, trace.step_name,
                     trace.sub_task_type, trace.tier, trace.chain_source,
@@ -441,6 +457,8 @@ class CognitiveJournal:
                     # produced by external test fixtures or stub journals.
                     getattr(trace, "prompt_tokens", 0),
                     getattr(trace, "completion_tokens", 0),
+                    # BF-901: the same tolerance for objects that pre-date the source field.
+                    getattr(trace, "token_source", ""),
                     1 if trace.success else 0, trace.error_truncated,
                     trace.context_keys_declared, trace.context_keys_passed,
                     1 if trace.context_filter_applied else 0,

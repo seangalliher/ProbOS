@@ -2276,6 +2276,8 @@ class CognitiveAgent(BaseAgent):
             # unassigned, so the displayed assignee reflects who is actually
             # doing the work; an item the Captain or crew orchestrator already
             # assigned is left untouched. Tier-2 log-and-degrade.
+            # BF-900 (#1573): ``current`` stays None when this read raises or finds no item.
+            current = None
             try:
                 current = await store.get_work_item(work_item_id)
                 if current is not None and not current.assigned_to:
@@ -2286,16 +2288,44 @@ class CognitiveAgent(BaseAgent):
                     "it remains unassigned",
                     work_item_id, self.id, exc_info=True,
                 )
-            try:
-                await store.transition_work_item(
-                    work_item_id, "in_progress", source=self.id,
-                )
-            except Exception:
+            # BF-900 (#1573): the claim moves the item only from the status read above; the store
+            # checks it inside its write transaction (``expected_status``). So a park made earlier in
+            # this run (``on_capability_gap`` in ``_run_agentic_dispatch``), or a move another writer
+            # made after the read, is not undone. A blocked item is not moved: the claim reads its
+            # status only, so it does not know what holds the item (a request, or a status set at
+            # creation).
+            read_status = current.status if current is not None else None
+            if read_status is None:
                 logger.warning(
-                    "AD-839: failed to transition work_item %s to in_progress; "
-                    "it remains in its prior status",
-                    work_item_id, exc_info=True,
+                    "BF-900: work_item %s could not be read before the claim; it is not moved "
+                    "to in_progress and remains in its prior status",
+                    work_item_id,
                 )
+            elif read_status == "blocked":
+                logger.info(
+                    "BF-900: work_item %s was blocked when read; the claim does not move it",
+                    work_item_id,
+                )
+            else:
+                try:
+                    claimed = await store.transition_work_item(
+                        work_item_id, "in_progress", source=self.id,
+                        expected_status=read_status,
+                    )
+                except Exception:
+                    logger.warning(
+                        "AD-839: failed to transition work_item %s to in_progress; "
+                        "it remains in its prior status",
+                        work_item_id, exc_info=True,
+                    )
+                else:
+                    if claimed is None:
+                        logger.warning(
+                            "BF-900: work_item %s was not moved to in_progress: it was %r when "
+                            "read, and the store refused the move (its status changed since the "
+                            "read, the move is not allowed from that status, or the item is gone)",
+                            work_item_id, read_status,
+                        )
             # AD-1328 S2c (#1530): park the item on the escalated command it waits for,
             # so the Captain's approval resumes it (AD-855). Never raises; inert without
             # a command policy.
@@ -3672,6 +3702,7 @@ class CognitiveAgent(BaseAgent):
                             agent_type=self.agent_type,
                             intent=observation.get("intent", ""),
                             intent_id=observation.get("intent_id", ""),
+                            model="unknown",  # BF-901: a decision-cache hit makes no model call
                             cached=True,
                             correlation_id=observation.get("correlation_id", ""),
                         )
@@ -3709,6 +3740,7 @@ class CognitiveAgent(BaseAgent):
                         agent_type=self.agent_type,
                         intent=observation.get("intent", ""),
                         intent_id=observation.get("intent_id", ""),
+                        model="unknown",  # BF-901: a procedural replay makes no model call
                         cached=True,
                         total_tokens=0,
                         procedure_id=procedural_result.get("procedure_id", ""),
@@ -4484,21 +4516,32 @@ class CognitiveAgent(BaseAgent):
         if self._cognitive_journal:
             try:
                 _prompt_hash = hashlib.md5(user_message[:500].encode()).hexdigest()[:12]
+                # BF-901 (#1575): the call's charge (measured, or estimated where the provider reported
+                # no usable count), the model that answered, and a client cache replay recorded as one,
+                # so the readers' ``cached = 0`` filter keeps it out of spend.
+                from probos.cognitive.token_accounting import (
+                    answered_model_name,
+                    charge_completion,
+                    request_messages,
+                )
+
+                _charge = charge_completion(request_messages(request), response)
                 await self._cognitive_journal.record(
                     entry_id=request.id,
                     timestamp=time.time(),
                     agent_id=self.id,
                     agent_type=self.agent_type,
                     tier=response.tier,
-                    model=response.model,
-                    prompt_tokens=response.prompt_tokens,
-                    completion_tokens=response.completion_tokens,
-                    total_tokens=response.tokens_used,
+                    model=answered_model_name(response),
+                    prompt_tokens=_charge.prompt_tokens,
+                    completion_tokens=_charge.completion_tokens,
+                    total_tokens=_charge.total_tokens,
                     latency_ms=_latency_ms,
                     intent=observation.get("intent", ""),
                     success=response.error is None,
-                    cached=False,
+                    cached=response.cached is True,
                     request_id=request.id,
+                    token_source=_charge.source,
                     prompt_hash=_prompt_hash,
                     response_length=len(response.content),
                     intent_id=observation.get("intent_id", ""),

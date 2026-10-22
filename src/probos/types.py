@@ -359,6 +359,13 @@ class LLMResponse:
     # when the reply named none usable. None = not reported (test doubles, the mock client, errors).
     answered_tier: str | None = None
     answered_model: str | None = None
+    # BF-901: whether the transport found the provider's usage keys; the counts above stay as parsed.
+    # True: OpenAI format, ``usage`` has a ``total_tokens`` key (the other two may be absent and read 0);
+    # Ollama native, both ``prompt_eval_count`` and ``eval_count`` are present. False: that test failed,
+    # which does not make the counts zero (``eval_count`` alone keeps its value beside False). None: not
+    # stated (test doubles, the mock client, cache replays, errors). The counts are never rewritten; only
+    # ``probos.cognitive.token_accounting.charge_completion`` reads this (the agentic loop does not).
+    usage_reported: bool | None = None
 
 
 class EscalationTier(Enum):
