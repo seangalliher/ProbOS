@@ -2,9 +2,9 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22
 
-**Status:** M1 and M2 are build-ready. M3 (the CLI and reset integration) follows as Amendment A1, specified in §4; M4 is §8. Slice 1 of 6 of #1569; it does not close the issue. **Tier HIGH** (the archive, an erasure, data integrity). No new AD or BF number. **Base:** `origin/main` `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`. BF-903 merges first; it touches only `__main__.py`'s pairing CLI and the trackers, so M3 and §8 re-anchor on text. **Source:** the Architect's consults `98e0fdbf` (2026-10-18) and this one.
+**Status:** M1, M2 and M3 are build-ready. Amendment A1 (2026-10-22, `claude-architect`, from the orchestrator's dry run at `0f13771c`) writes M3 as §7.9 to §7.14 and adds §7.6b and §7.6c to M2 (the config facade baseline and its pinned counts); M4 is §8. Amendment A2 (2026-10-22, `claude-architect`, from M1's round-1 review at `6190fd69` and the whole-contract phantom precheck) serialises the store's writes and its close on its one connection (D16, F1), makes an id beyond SQLite's rowid range no entry (D17, F2), and rewrites one line group each in §7.9 and §7.14 that the precheck flagged (no behaviour change). Slice 1 of 6 of #1569; it does not close the issue. **Tier HIGH** (the archive, an erasure, data integrity). No new AD or BF number. **Base:** `origin/main` `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`. BF-903 merges first; it touches only `__main__.py`'s pairing CLI and the trackers, so M3 and §8 re-anchor on text. **Source:** the Architect's consults `98e0fdbf` (2026-10-18) and this one.
 
-**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 16 functions, 40 cases. M2 `tests/test_ad1341_s1_promotion.py`: 16 functions, 34 cases. Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M3's tests are in Amendment A1.
+**Tests:** M1 `tests/test_ad1341_s1_archive_store.py`: 20 functions, 48 cases (A2 adds A14, A14b, A15, A16). M2 `tests/test_ad1341_s1_promotion.py`: 16 functions, 34 cases. Updated where they pinned the old write: `tests/test_ad524_ships_archive.py` (3 tests and its helper, M1). M2 also updates the four pinned facade counts in `tests/test_ad1270e1_config_facade.py` (7.6c). M3 `tests/test_ad1341_s1_reset_and_erase.py`: 15 functions, 24 cases; updated fakes: `tests/test_reset_integration.py` (its helper), `tests/test_distribution.py` (6 call sites), `tests/test_proactive.py` (2), `tests/test_identity_deterministic.py` (3).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -24,6 +24,10 @@
 | `_cmd_reset` has no running-vessel guard; AD-816's guard exists | present | `__main__.py:2883-3077`; `pidfile_guard.py:109`, `:168` |
 | `archive_store` is a baselined undeclared store with `[archive]` | present | `docs/development/store-baseline.yaml:121-123`; `check_store_registry.py:1084-1092` (rule 11) |
 | The live archive has 0 rows at `user_version` 0 (orchestrator's probe, 2026-10-22) | taken as given | not run here |
+| Only `probos serve` holds the AD-816 pidfile; the interactive shell takes none | present | `__main__.py:745-751`; Absence A1-AV1 |
+| Two async tests call `_cmd_reset` inside a running event loop | present | `test_bf902_fts_reconciliation.py:242` (tier 2), `:259` (tier 1), through `test_reset_integration.py:44-57` |
+| No caller reads `_cmd_reset`'s return value | present | `__main__.py:3446-3448`; Absence A1-AV2 |
+| The config facade pins 307 public names and 294 owned, in its baseline and in four test lines | present | `config-facade-baseline.yaml:54-55, 447`; `test_ad1270e1_config_facade.py:1521, 1522, 1555, 1791`; Absence A1-AV8 |
 
 ## 1. Problem
 
@@ -95,12 +99,18 @@ At `--full`, everything the crew published in Ship's Records is lost.
   - **(A) chosen:** update the baselined row to `[archive, archive_erasures, generations]` in M1's commit.
   - (B) declare the store now: rejected for this slice. Its file lives outside `data_dir` (AD-1265's second backup root), and what a declaration means there is a separate decision (register).
 - **D12 (running vessel, M3).**
-  - **(A) chosen:** every executing `probos reset` (`--soft` included) acquires the AD-816 pidfile after confirmation and releases it when done; a live owner means refuse, exit 1, nothing touched. It protects against a promotion reading records mid-write, deletions racing a live writer (a locked file on Windows leaves a partial reset), and a vessel booting mid-reset and creating a new instance id. `--dry-run` takes no pidfile, following `verify-snapshot`.
+  - **(A) chosen:** every executing `probos reset` (`--soft` included) acquires the AD-816 pidfile after confirmation and releases it when done; a live owner means refuse, exit 1, nothing touched. It protects against a promotion reading records mid-write, deletions racing a live writer (a locked file on Windows leaves a partial reset), and a vessel booting mid-reset and creating a new instance id. `--dry-run` takes no pidfile, following `verify-snapshot`. Only `probos serve` takes the pidfile (`__main__.py:745-751`); the interactive `probos` shell takes none, so a vessel started that way is not seen (register RA1-1). While a reset holds it, `serve` refuses to boot (exit 2) and the `rebuild-episodic` and `backup-reclaim --force` probes refuse.
   - (B) `assert_no_other_instance`: rejected. It only probes, so a vessel could start right after the check.
   - (C) warn: rejected. The command deletes.
 - **D13 (archive disabled, M3).** With `archive.enabled` False there is nowhere to promote to. The reset prints a notice and proceeds; this is configuration, not a failure. `probos archive erase` refuses with exit code 2.
 - **D14 (tier).** HIGH.
 - **D15 (the Captain).** Nothing in S1 requires the Captain; C1 is applied as decided.
+- **D16 (one transaction at a time; Amendment A2, F1).** The store's one connection serves every call, and a `ROLLBACK` (`_rollback_quietly`) or a `COMMIT` ends whatever that connection has open. Two overlapping calls could therefore undo each other's work and still report success (M1 round 1, reproduced: two concurrent erasures, one of an existing entry and one of a missing id, returned `[True, False]` with the row kept and no marker).
+  - **(A) chosen:** a store-owned `asyncio.Lock`, `_write_lock`, created in `__init__` (AD-1340 R3's pattern, `episode_archive.py:451-455`). `promote_entry`, `record_generation`, `erase_entry` and `close` hold it from the `_db` check through the commit or rollback. `async with` releases it on every exit, cancellation included, and a rollback is queued on the connection before the release, so it runs before any other call's statements. Reads and `initialize` take no lock (AD-1340's rule): a read issues no commit or rollback; it sees the connection's state, a write in flight included (register RA2-1). No store method calls another, so the non-re-entrant lock cannot deadlock (Absence A2-AV1). `close` waits for a write in flight and, as before, clears `_db` only after a successful close, which shutdown's last resort relies on (`test_issue1419_failed_start_rollback.py:2254`).
+  - (B) a second connection for writes: rejected. Two writers on the write connection have the same defect, so it would still need (A). It changes nothing in the store registry, backup coverage, the `.db` literals or the census (same file, same tables); it only adds a second `secure_delete` check and a second handle for shutdown.
+  - (C) record and ship: rejected. Today every `src` call is awaited alone (Absence A2-AV2), but S2 to S6 add writers inside the running vessel, where an erasure would report success and not happen.
+  - (D) a connection per call: rejected; it changes the store's lifecycle and the shutdown handover for no gain over (A).
+- **D17 (ids beyond SQLite; Amendment A2, F2).** `erase_entry` returns False, writing nothing, and `entry_by_id` returns None, for an id above `2**63 - 1`, SQLite's largest INTEGER and so its largest rowid; binding a larger int raised `OverflowError`. `entry_by_id` also returns None below 1. M3's CLI reaches `entry_by_id` first with the Captain's id (`argparse` `type=int`; only `<= 0` refused), so an over-large id now prints "No Ship's Archive entry has id …" (exit 1) instead of "The erasure failed: OverflowError: …" (exit 1).
 
 **Disclosed effects.**
 1. The live archive migrates to v1 on the first boot after merge (0 rows, additive).
@@ -110,6 +120,9 @@ At `--full`, everything the crew published in Ship's Records is lost.
 5. Erased bytes stay in earlier AD-1265 snapshots until they age out (as in AD-1340).
 6. A record written in one generation but first eligible in a later one is attributed to the later timeline.
 7. Two ships sharing the default archive path keep one entry for identical content at the same records path, under whichever ship promoted it first.
+8. (M3) With no instance id, records to promote refuse the reset. Two resets with no boot between therefore refuse the second time unless `--skip-promotion REASON` is given, even when everything is already archived (register RA1-2). A data directory with no instance id and nothing to promote resets with no generation row.
+9. (M3) `probos reset` creates a missing data directory (the pidfile's directory); `probos archive erase` creates an empty v1 archive when there is none (register RA1-3).
+10. (M3) Only `probos serve` holds the pidfile, so the reset does not see a vessel started as the interactive shell (register RA1-1).
 
 ## 4. Milestones
 
@@ -118,13 +131,24 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 | Milestone | Files (§7) | Focused gate |
 |---|---|---|
 | **M1** store | 7.1 `knowledge/archive_store.py`; 7.2 `tests/test_ad524_ships_archive.py`; 7.3 `docs/development/store-baseline.yaml`; 7.4 new test | `tests/test_ad1341_s1_archive_store.py tests/test_ad524_ships_archive.py tests/test_issue1419_failed_start_rollback.py tests/test_ad1256_store_registry.py tests/test_ad1265_backup_coverage.py tests/test_layer_boundaries.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`, then `d:/ProbOS/.venv/Scripts/python.exe scripts/check_store_registry.py --check` |
-| **M2** service | 7.5 `config.py`; 7.6 `startup/cognitive_services.py`; 7.7 new `knowledge/archive_promotion.py`; 7.8 new test | `tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_records_store.py tests/test_bf679_oracle_records_reader_identity.py tests/test_bf084_truncation_and_manuals.py tests/test_ad1270e1_config_facade.py tests/test_layer_boundaries.py tests/test_ad1265_backup_coverage.py tests/test_ad1256_store_registry.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py` |
-| **M3** CLI and reset | Amendment A1 (spec below) | see below |
+| **M2** service | 7.5 `config.py`; 7.6 `startup/cognitive_services.py`; 7.6b `docs/development/config-facade-baseline.yaml`; 7.6c `tests/test_ad1270e1_config_facade.py`; 7.7 new `knowledge/archive_promotion.py`; 7.8 new test | `tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_records_store.py tests/test_bf679_oracle_records_reader_identity.py tests/test_bf084_truncation_and_manuals.py tests/test_ad1270e1_config_facade.py tests/test_layer_boundaries.py tests/test_ad1265_backup_coverage.py tests/test_ad1256_store_registry.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_config_facade.py --check` |
+| **M3** CLI and reset | 7.9 `__main__.py`; 7.10 `tests/test_reset_integration.py`; 7.11 `tests/test_distribution.py`; 7.12 `tests/test_proactive.py`; 7.13 `tests/test_identity_deterministic.py`; 7.14 new test | `tests/test_ad1341_s1_reset_and_erase.py tests/test_reset_integration.py tests/test_distribution.py tests/test_proactive.py tests/test_identity_deterministic.py tests/test_ad1340_s1_restore_reset.py tests/test_bf902_fts_reconciliation.py tests/test_bf892_spawn_env_guard.py tests/test_quality_hardening.py tests/test_dotenv.py tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_archive_store.py tests/test_ad1265_backup_coverage.py tests/test_layer_boundaries.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py` |
 | **M4** trackers | §8 | `tests/test_ad1184_ad_ledger.py`; `scripts/gen_ad_ledger.py --check` |
 
 If a test outside §7 fails only because it called `ArchiveStore.append`, update it to `promote_entry` with an inline `AD-1341 S1 (#1569)` reason; never delete it. Stop and report any other failure.
 
-### M3 specification (to be written as Amendment A1, pairs `### 7.9` onward, inserted before §8)
+### M3 specification (written as Amendment A1: §7.9 to §7.14)
+
+**§7.9 to §7.14 are binding. Where they differ from this specification:**
+1. `--skip-promotion` is checked in `_cmd_reset` right after the tier, before anything is read, locked or deleted. It exits 2 for a blank or over-long reason and at tier 1.
+2. A declined confirmation returns 0.
+3. The archive-disabled check comes before the one `asyncio.run`, because `test_bf902_fts_reconciliation.py:242` and `:259` call `_cmd_reset` inside a running loop.
+4. With no instance id, the plan is read first and nothing is opened: anything to promote refuses; nothing to promote proceeds with no generation row.
+5. The tier loop is re-indented inside the pidfile's `try`, not extracted, so the BF-892 site key `("src/probos/__main__.py", "_cmd_reset")` keeps both git launches.
+6. `_cmd_archive` writes with plain `print`, so a title or reason is never markup. It also exits 2 for an id below 1 or a reason outside 1 to 500 characters, and 0 when the Captain declines.
+7. The `test_distribution.py` and `test_identity_deterministic.py` fakes gain `.archive` by assignment before the call. Their constructor lines are left out of every block, because the precheck flags the `SimpleNamespace` call. `_run_reset` asserts exit 0.
+8. The new test file adds R4b, R10b and R13 (15 functions, 24 cases).
+9. There are ten mutation rows, M-R1 to M-R10.
 
 **`src/probos/__main__.py`:**
 
@@ -196,10 +220,16 @@ If a test outside §7 fails only because it called `ArchiveStore.append`, update
 | `ArchiveEntry` gains 6 fields, all defaulted | `OracleService._query_archive` (reads only the old fields); `tests/test_ad524_ships_archive.py` `_FakeArchiveStore` (keyword arguments) | none |
 | `search`, `get_recent` and `entry_by_id` select 15 columns | the Oracle; the tests; M3's erase prompt | the new fields are filled |
 | `promote_entry`, `record_generation`, `erase_entry`, `entry_by_id` | M2's service (`promote_entry`); M3's CLI (the other three) | new |
+| (A2, D16) the three writes and `close` hold `_write_lock` through their commit or rollback | M2's `promote_ship_records` and M3's reset and erase, each awaiting one call at a time (Absence A2-AV2); shutdown's close of `_archive_store` (`test_issue1419_failed_start_rollback.py:2254`) | none: no caller overlaps calls on one store, and `close` still clears `_db` only after a successful close |
+| (A2, D17) `erase_entry` False and `entry_by_id` None for an id outside 1 to `2**63 - 1` | M3's `probos archive erase` | an over-large id prints "No Ship's Archive entry has id …" instead of "The erasure failed: OverflowError: …"; exit 1 either way |
 | `archive.db` schema v1 | the AD-1265 backup root (online backup copies every table); AD-524 code after a revert (its statements name only v0 columns; NULL hashes sit outside the partial index) | additive |
 | `store-baseline.yaml` row | `scripts/check_store_registry.py --check`; `tests/test_ad1256_store_registry.py` | row matches the tree |
 | `resolve_records_repo_path` | startup's records branch (7.6); M3's reset | the startup branch behaves identically |
 | `plan_promotion`, `promote_ship_records`, `source_kind_for`, `ARCHIVE_READER` | M3 | new |
+| `config-facade-baseline.yaml` names and counts | `scripts/check_config_facade.py --check`; `tests/test_ad1270e1_config_facade.py` (four pins, 7.6c); the `tests/test_ad1270e2*.py` files that read the baseline | 308 names, 295 owned |
+| `_cmd_reset` returns its exit code | `main` (`sys.exit`); no test reads it (Absence A1-AV2); `_run_reset` now asserts 0 | a refusal exits 1, a bad `--skip-promotion` 2 |
+| `{data_dir}/probos.pid` held during a reset | `_serve` (refuses to boot, exit 2); the `rebuild-episodic` and `backup-reclaim --force` probes | no vessel boots into a reset |
+| `--skip-promotion REASON`, `probos archive erase` | the Captain; `generations` and `archive_erasures` rows | new |
 
 ## 6. Tests
 
@@ -223,6 +253,10 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | A12 | `test_a_generation_close_is_recorded` | both outcomes' rows | fails |
 | A12b | `test_an_invalid_generation_close_is_refused[6 ids]` | ValueError | fails |
 | A13 | `test_the_oracle_reads_a_promoted_entry_across_the_seam` | the real Oracle returns it with its timeline | fails |
+| A14 | `test_overlapping_writes_never_report_a_success_another_write_undid[erase-and-missing-erase, missing-erase-and-promote, missing-erase-and-generation]` | D16: what each overlapping call reports is on disk, read back with `sqlite3` | fails on M1 `6190fd69` (the row kept with no marker; no second row; no generation row) |
+| A14b | `test_close_waits_for_a_write_in_progress` | D16: `close` never ends a write's transaction | fails on M1 (the erasure raises once its connection is closed under it) |
+| A15 | `test_a_failed_write_leaves_an_overlapping_erasure_intact` | D16: a failed write rolls back only itself, and its error reaches its caller | fails on M1 (the erasure is undone and still reports True) |
+| A16 | `test_an_id_no_row_can_have_is_no_entry[largest-rowid, above-sqlite, far-above]` | D17: None, then False; nothing written | `[above-sqlite]` and `[far-above]` fail on M1 (`OverflowError`); `[largest-rowid]` is the control and passes |
 | P1 | `test_ship_records_read_offline_without_initialize` | premise 2; no `.git` created | fails (import) |
 | P2 | `test_each_source_is_promoted_with_its_provenance[5 ids]` | kind, ref, classification, author, content, hash, no episode ids | fails |
 | P3 | `test_what_fails_its_criterion_is_not_promoted[8 ids]` | not archived, not withheld | fails |
@@ -239,8 +273,23 @@ The build order: §7.1 opens M1, §7.5 opens M2, Amendment A1's §7.9 opens M3, 
 | P13 | `test_startup_reads_the_records_path_through_the_shared_resolver` | structural: one call, no second literal | fails |
 | P14 | `test_the_service_imports_only_the_knowledge_layer` | layer | fails |
 | P15 | `test_only_the_promotion_service_writes_the_archive` | census of `promote_entry` in `src` | fails |
+| R1 | `test_a_tier2_reset_archives_under_the_ship_it_closes_then_deletes_its_instance_id` | entries and a `promoted` row under the planted instance id; then tier 2 ran; the pidfile released | fails (no archive; returns None) |
+| R2 | `test_a_full_reset_archives_before_ship_records_are_wiped` | archived at tier 3 though Ship's Records are gone after | fails |
+| R3 | `test_a_failed_promotion_refuses_the_reset_and_deletes_nothing` | an archive at version 7: exit 1; every file and the instance id kept | fails (deletes) |
+| R4 | `test_skip_promotion_records_the_generation_and_archives_nothing` | one `skipped` row with the stripped reason | fails |
+| R4b | `test_a_skip_without_a_usable_reason_exits_2_and_touches_nothing[blank, too-long, soft]` | exit 2 before anything is touched | fails |
+| R5 | `test_a_soft_reset_never_opens_the_archive` | tier 1 creates no archive file | fails (returns None) |
+| R6 | `test_a_dry_run_lists_the_plan_and_writes_nothing` | plan printed; no archive file; a live pidfile is ignored | fails |
+| R7 | `test_a_live_vessel_refuses_every_executing_reset[soft, default, full]` | exit 1; nothing deleted; the owner's pidfile kept | fails (deletes) |
+| R8 | `test_with_the_archive_disabled_the_reset_proceeds_and_erase_exits_2` | D13 | fails (no `_cmd_archive`) |
+| R9 | `test_without_an_instance_id_records_to_promote_refuse_the_reset[with-records, nothing-to-promote]` | refuse; or proceed with nothing opened | fails |
+| R10 | `test_the_captain_erases_an_entry_and_the_next_reset_does_not_bring_it_back` | the chain erase → next generation's reset: ERASED, not re-archived | fails |
+| R10b | `test_an_erasure_that_cannot_or_should_not_happen_erases_nothing[no-such-entry, zero-id, blank-reason, declined]` | exit 1, 2, 2, 0; nothing erased | fails |
+| R11 | `test_only_the_cli_erases_an_entry_or_closes_a_generation` | census: `erase_entry`, `record_generation` named in `src` only by `__main__.py` | fails (named nowhere) |
+| R12 | `test_a_later_crews_oracle_reads_what_the_reset_archived_under_the_old_timeline` | reset → archive → a later crew's real Oracle | fails |
+| R13 | `test_main_parses_the_new_arguments_and_exits_with_the_command_code[reset, archive-erase]` | the parser and `sys.exit(_cmd_*(args))` | fails (argparse exit 2) |
 
-Updated pins, not new cases: 7.2.
+Updated pins, not new cases: 7.2 (M1); 7.6c (M2); 7.10 to 7.13 (M3).
 
 ## 7. The contract
 
@@ -301,6 +350,7 @@ Default archive_dir: platform-specific ProbOS home / archive/.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -551,6 +601,10 @@ _GENERATION_SQL = (
     "withheld_count, reason, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
+# AD-1341 A2 (F2): SQLite's largest INTEGER, so its largest rowid. No row can have a larger id, and binding
+# one raises OverflowError, so the lookup and the erasure treat it as a missing id.
+_SQLITE_MAX_ROWID = 2**63 - 1
+
 
 def _valid_reason(reason: object) -> str:
     if type(reason) is not str or not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
@@ -574,7 +628,7 @@ async def _close_quietly(db: Any) -> None:
         logger.debug("AD-1341: closing the archive after a failed open also failed", exc_info=True)
 ```
 
-Pair 4 of 8: the class docstring and `initialize`.
+Pair 4 of 8: the class docstring, `__init__`'s write lock, `initialize`, and `close` under the lock (Amendment A2, D16).
 
 SEARCH:
 ```python
@@ -595,6 +649,12 @@ class ArchiveStore:
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
         logger.info("AD-524: ArchiveStore initialized at %s", self._db_path)
+
+    async def close(self) -> None:
+        """Close database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
 ```
 REPLACE:
 ```python
@@ -604,12 +664,20 @@ class ArchiveStore:
     Agents and services never update or delete an entry: ``promote_entry`` is the one write and
     ``erase_entry`` the one removal (Captain-only, through ``probos archive erase``). Uses the
     ConnectionFactory protocol for cloud-ready storage.
+
+    AD-1341 A2 (F1): one connection serves every call, and a ROLLBACK or COMMIT ends whatever that connection
+    has open. So the three writes and ``close`` hold ``_write_lock`` from their first statement through the
+    commit or rollback that ends it, and no call can undo, or land, another call's work (AD-1340 R3's pattern,
+    ``episode_archive.py``). Reads and ``initialize`` take no lock: a read issues no commit or rollback, and it
+    sees the connection's state, a write in flight included. No method holding the lock calls another store
+    method (the lock is not re-entrant).
     """
 
     def __init__(self, db_path: str, *, connection_factory: ConnectionFactory) -> None:
         self._db_path = db_path
         self._connection_factory = connection_factory
         self._db: Any = None
+        self._write_lock = asyncio.Lock()  # AD-1341 A2 (F1): one transaction at a time on the one connection
 
     async def initialize(self) -> None:
         """Open the database, enable and verify ``secure_delete``, and bring the schema to v1 (AD-1341).
@@ -650,6 +718,13 @@ class ArchiveStore:
             raise
         self._db = db
         logger.info("AD-524: ArchiveStore initialized at %s (schema v%d)", self._db_path, ARCHIVE_SCHEMA_VERSION)
+
+    async def close(self) -> None:
+        """Close the connection once no write is in flight (AD-1341 A2, F1). A failed close keeps ``_db``."""
+        async with self._write_lock:  # AD-1341 F1: never close inside another call's transaction
+            if self._db:
+                await self._db.close()
+                self._db = None
 ```
 
 Pair 5 of 8: `append` is replaced by the one write, the generation record, the erasure and a lookup by id.
@@ -708,8 +783,6 @@ REPLACE:
         """
         if type(record) is not PromotionRecord:
             raise TypeError("AD-1341: promote_entry takes a PromotionRecord")
-        if not self._db:
-            raise RuntimeError("ArchiveStore not initialized")
         kind = record.source_kind.value
         params = (
             record.timeline_id, kind, record.title, record.content, record.author_agent_type,
@@ -717,17 +790,20 @@ REPLACE:
             record.content_sha256, record.classification, record.author_did,
             json.dumps(list(record.source_episode_ids)), kind, record.source_ref,
         )
-        try:
-            cursor = await self._db.execute(_PROMOTE_SQL, params)
-            created = cursor.rowcount == 1
-            erased = False
-            if not created:
-                cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, record.source_ref))
-                erased = await cursor.fetchone() is not None
-            await self._db.commit()
-        except BaseException:
-            await _rollback_quietly(self._db)
-            raise
+        async with self._write_lock:  # AD-1341 F1: the insert and its erasure check commit or roll back alone
+            if not self._db:
+                raise RuntimeError("ArchiveStore not initialized")
+            try:
+                cursor = await self._db.execute(_PROMOTE_SQL, params)
+                created = cursor.rowcount == 1
+                erased = False
+                if not created:
+                    cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, record.source_ref))
+                    erased = await cursor.fetchone() is not None
+                await self._db.commit()
+            except BaseException:
+                await _rollback_quietly(self._db)
+                raise
         if created:
             return PromotionOutcome.CREATED
         return PromotionOutcome.ERASED if erased else PromotionOutcome.PRESENT
@@ -736,18 +812,19 @@ REPLACE:
         """AD-1341: record a crew generation's close (a promotion run, or a skip and its reason). Returns its id."""
         if type(closure) is not GenerationRecord:
             raise TypeError("AD-1341: record_generation takes a GenerationRecord")
-        if not self._db:
-            raise RuntimeError("ArchiveStore not initialized")
         params = (
             closure.timeline_id, closure.reset_tier, closure.outcome.value, closure.created, closure.present,
             closure.erased, closure.withheld, closure.reason.strip(), time.time(),
         )
-        try:
-            cursor = await self._db.execute(_GENERATION_SQL, params)
-            await self._db.commit()
-        except BaseException:
-            await _rollback_quietly(self._db)
-            raise
+        async with self._write_lock:  # AD-1341 F1: the generation row commits or rolls back alone
+            if not self._db:
+                raise RuntimeError("ArchiveStore not initialized")
+            try:
+                cursor = await self._db.execute(_GENERATION_SQL, params)
+                await self._db.commit()
+            except BaseException:
+                await _rollback_quietly(self._db)
+                raise
         return cursor.lastrowid
 
     async def erase_entry(self, entry_id: int, reason: str) -> bool:
@@ -756,29 +833,36 @@ REPLACE:
         One transaction: a marker in ``archive_erasures`` (the entry's id, timeline, source kind and source ref,
         the reason and the time; never its title, content, metadata or hash), then the row's delete.
         ``secure_delete`` overwrites the freed bytes. The marker also keeps the source from being promoted
-        again. Returns False, writing nothing, when no entry has this id.
+        again. Returns False, writing nothing, when no entry has this id, including an id above SQLite's largest
+        rowid (A2, F2). The marker, the delete and the commit or rollback hold ``_write_lock`` (A2, F1).
         """
         if type(entry_id) is not int or entry_id <= 0:
             raise ValueError("AD-1341: an archive entry id is a positive integer")
         text = _valid_reason(reason)
-        if not self._db:
-            raise RuntimeError("ArchiveStore not initialized")
-        try:
-            cursor = await self._db.execute(_ERASURE_MARKER_SQL, (text, time.time(), entry_id))
-            if cursor.rowcount != 1:
-                await _rollback_quietly(self._db)
+        async with self._write_lock:  # AD-1341 F1: the marker and the delete commit or roll back alone
+            if not self._db:
+                raise RuntimeError("ArchiveStore not initialized")
+            if entry_id > _SQLITE_MAX_ROWID:  # AD-1341 F2: no row has it, and SQLite cannot bind it
                 return False
-            await self._db.execute("DELETE FROM archive WHERE id = ?", (entry_id,))
-            await self._db.commit()
-        except BaseException:
-            await _rollback_quietly(self._db)
-            raise
+            try:
+                cursor = await self._db.execute(_ERASURE_MARKER_SQL, (text, time.time(), entry_id))
+                if cursor.rowcount != 1:
+                    await _rollback_quietly(self._db)
+                    return False
+                await self._db.execute("DELETE FROM archive WHERE id = ?", (entry_id,))
+                await self._db.commit()
+            except BaseException:
+                await _rollback_quietly(self._db)
+                raise
         logger.warning("AD-1341: the Captain erased Ship's Archive entry %d", entry_id)
         return True
 
     async def entry_by_id(self, entry_id: int) -> ArchiveEntry | None:
-        """AD-1341: one entry, so the erasure can show the Captain what it is about to remove."""
-        if not self._db:
+        """AD-1341: one entry, so the erasure can show the Captain what it is about to remove.
+
+        None for an id no row can have: below 1, or above SQLite's largest rowid, which cannot be bound (A2, F2).
+        """
+        if not self._db or not 0 < entry_id <= _SQLITE_MAX_ROWID:  # AD-1341 F2: ids are positive rowids
             return None
         cursor = await self._db.execute(f"SELECT {_ENTRY_COLUMNS} FROM archive WHERE id = ?", (entry_id,))
         row = await cursor.fetchone()
@@ -1034,6 +1118,7 @@ reads the file back with ``sqlite3``, so what is asserted is what is on disk.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import sqlite3
 import uuid
@@ -1436,6 +1521,126 @@ async def test_the_oracle_reads_a_promoted_entry_across_the_seam(tmp_path: Path)
     assert record.title in results[0].content
     assert results[0].metadata["timeline_id"] == "timeline-one"
     assert results[0].metadata["category"] == "convergence_report"
+
+
+# --- A14 to A16 (Amendment A2): one transaction at a time (F1); ids beyond SQLite (F2) ------------------------
+
+_SECOND_REF = "reports/convergence/convergence-20261023-000000.md"
+
+
+def _closure() -> GenerationRecord:
+    return GenerationRecord(
+        timeline_id="timeline-one", reset_tier=2, outcome=GenerationOutcome.PROMOTED, created=1,
+    )
+
+
+async def _promoted_entry_id(store: ArchiveStore) -> int:
+    assert await store.promote_entry(_record()) is PromotionOutcome.CREATED
+    return (await store.get_recent())[0].id
+
+
+def _refuse_generations(path: Path) -> None:
+    """Make every ``generations`` insert fail inside the store: a database failure the store cannot prevent."""
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.execute(
+            "CREATE TRIGGER refuse_generations BEFORE INSERT ON generations "
+            "BEGIN SELECT RAISE (ABORT, 'AD-1341 A2: injected failure'); END"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "pair", ["erase-and-missing-erase", "missing-erase-and-promote", "missing-erase-and-generation"],
+)
+async def test_overlapping_writes_never_report_a_success_another_write_undid(tmp_path: Path, pair: str) -> None:
+    """F1: what each overlapping call reports is what the file holds, read back with ``sqlite3``."""
+    reason = "Captain's order"
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        entry_id = await _promoted_entry_id(store)
+        missing_id = entry_id + 1000
+        if pair == "erase-and-missing-erase":
+            results = await asyncio.gather(
+                store.erase_entry(entry_id, reason), store.erase_entry(missing_id, reason),
+            )
+        elif pair == "missing-erase-and-promote":
+            results = await asyncio.gather(
+                store.erase_entry(missing_id, reason), store.promote_entry(_record(source_ref=_SECOND_REF)),
+            )
+        else:
+            results = await asyncio.gather(store.erase_entry(missing_id, reason), store.record_generation(_closure()))
+    finally:
+        await store.close()
+    path = tmp_path / "archive.db"
+    if pair == "erase-and-missing-erase":
+        assert results == [True, False]
+        assert _rows(path, "SELECT id FROM archive") == []  # the erasure it reported is on disk
+        assert _rows(path, "SELECT entry_id FROM archive_erasures") == [(entry_id,)]
+    elif pair == "missing-erase-and-promote":
+        assert results == [False, PromotionOutcome.CREATED]
+        assert _rows(path, "SELECT source_ref FROM archive ORDER BY id") == [(_record().source_ref,), (_SECOND_REF,)]
+        assert _rows(path, "SELECT id FROM archive_erasures") == []
+    else:
+        assert results[0] is False
+        assert _rows(path, "SELECT id FROM generations") == [(results[1],)]
+
+
+async def test_close_waits_for_a_write_in_progress(tmp_path: Path) -> None:
+    """F1: ``close`` never ends a write's transaction; it waits for the commit."""
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        entry_id = await _promoted_entry_id(store)
+        results = await asyncio.wait_for(
+            asyncio.gather(store.erase_entry(entry_id, "Captain's order"), store.close(), return_exceptions=True),
+            timeout=30,
+        )
+    finally:
+        await store.close()  # nothing left to close once the gathered close ran
+    assert results == [True, None]
+    path = tmp_path / "archive.db"
+    assert _rows(path, "SELECT id FROM archive") == []
+    assert _rows(path, "SELECT entry_id FROM archive_erasures") == [(entry_id,)]
+
+
+async def test_a_failed_write_leaves_an_overlapping_erasure_intact(tmp_path: Path) -> None:
+    """F1: a write that fails rolls back only itself, and its error still reaches its caller."""
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        entry_id = await _promoted_entry_id(store)
+        _refuse_generations(tmp_path / "archive.db")
+        erased, failed = await asyncio.gather(
+            store.erase_entry(entry_id, "Captain's order"), store.record_generation(_closure()),
+            return_exceptions=True,
+        )
+    finally:
+        await store.close()
+    assert erased is True
+    assert isinstance(failed, sqlite3.DatabaseError)  # premise: the injected failure reached the store
+    path = tmp_path / "archive.db"
+    assert _rows(path, "SELECT id FROM archive") == []
+    assert _rows(path, "SELECT entry_id FROM archive_erasures") == [(entry_id,)]
+    assert _rows(path, "SELECT id FROM generations") == []
+
+
+@pytest.mark.parametrize("entry_id", [2**63 - 1, 2**63, 2**64], ids=["largest-rowid", "above-sqlite", "far-above"])
+async def test_an_id_no_row_can_have_is_no_entry(tmp_path: Path, entry_id: int) -> None:
+    """F2: an id above SQLite's largest rowid is a missing id (None, then False), not an ``OverflowError``."""
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        await _promoted_entry_id(store)
+        assert await store.entry_by_id(entry_id) is None
+        assert await store.erase_entry(entry_id, "Captain's order") is False
+        assert await store.count() == 1
+    finally:
+        await store.close()
+    assert _rows(tmp_path / "archive.db", "SELECT id FROM archive_erasures") == []
 ```
 
 ### 7.5 `src/probos/config.py` (M2)
@@ -1487,6 +1692,77 @@ REPLACE:
             if not rcfg.repo_path:
                 rcfg = rcfg.model_copy(update={"repo_path": str(resolve_records_repo_path(rcfg, data_dir))})
             records_store = RecordsStore(rcfg, ontology=None)
+```
+
+### 7.6b `docs/development/config-facade-baseline.yaml` (M2: the resolver is a new owned public name)
+
+`resolve_records_repo_path` is a new public name of `probos.config`, owned as `resolve_archive_db_path` is (AD-1265's precedent). These two pairs are exactly what `python -P scripts/check_config_facade.py --update-baseline` writes on the M2 tree (orchestrator's dry run, 2026-10-22). Apply the pairs; do not regenerate the file to make a different failure go away. Then run `--check`.
+
+SEARCH:
+```yaml
+  own_models: 227
+  owned: 294
+  public_names: 307
+```
+REPLACE:
+```yaml
+  own_models: 227
+  owned: 295
+  public_names: 308
+```
+
+SEARCH:
+```yaml
+  os: {kind: module, removable_in: e3, tier: incidental}
+  resolve_archive_db_path: {kind: function, tier: owned}
+  urllib: {kind: module, removable_in: e3, tier: incidental}
+```
+REPLACE:
+```yaml
+  os: {kind: module, removable_in: e3, tier: incidental}
+  resolve_archive_db_path: {kind: function, tier: owned}
+  resolve_records_repo_path: {kind: function, tier: owned}
+  urllib: {kind: module, removable_in: e3, tier: incidental}
+```
+
+### 7.6c `tests/test_ad1270e1_config_facade.py` (M2: the four pinned counts)
+
+Each SEARCH line occurs once in the file.
+
+SEARCH:
+```python
+    assert counts["public_names"] == 307
+```
+REPLACE:
+```python
+    assert counts["public_names"] == 308  # AD-1341 S1 (#1569) adds resolve_records_repo_path (307 -> 308)
+```
+
+SEARCH:
+```python
+    assert counts["owned"] == 294
+```
+REPLACE:
+```python
+    assert counts["owned"] == 295  # AD-1341 S1 (#1569): resolve_records_repo_path is owned (294 -> 295)
+```
+
+SEARCH:
+```python
+    assert len(baseline["names"]) == 307
+```
+REPLACE:
+```python
+    assert len(baseline["names"]) == 308  # AD-1341 S1 (#1569): resolve_records_repo_path
+```
+
+SEARCH:
+```python
+    assert "names=307" in proc.stdout
+```
+REPLACE:
+```python
+    assert "names=308" in proc.stdout  # AD-1341 S1 (#1569): resolve_records_repo_path
 ```
 
 ### 7.7 New file: `src/probos/knowledge/archive_promotion.py` (M2)
@@ -2012,6 +2288,1344 @@ def test_only_the_promotion_service_writes_the_archive() -> None:
     assert naming == {"knowledge/archive_promotion.py"}
 ```
 
+### 7.9 `src/probos/__main__.py` (M3: the reset promotes first, under the AD-816 pidfile; `probos archive erase`)
+
+Eight pairs, in file order. Pair 5 re-indents the tier loop and the git commit by four spaces inside the pidfile's `try`. Their text is otherwise byte-identical, and they stay in `_cmd_reset`'s scope (the BF-892 site key). No block includes `__main__.py:2887` (the existing `console = Console()`).
+
+Pair 1 (the annotation-only imports):
+
+SEARCH:
+```python
+if TYPE_CHECKING:
+    import httpx
+
+
+def _default_data_dir() -> Path:
+```
+REPLACE:
+```python
+if TYPE_CHECKING:
+    import httpx
+
+    from probos.config import SystemConfig
+    from probos.knowledge.archive_store import ArchiveStore
+    from probos.knowledge.records_store import RecordsStore
+
+
+def _default_data_dir() -> Path:
+```
+
+Pair 2 (the signature and docstring):
+
+SEARCH:
+```python
+    console.print("\n  [dim][DRY RUN] No changes made.[/dim]")
+
+
+def _cmd_reset(args: argparse.Namespace) -> None:
+    """Handle ``probos reset`` — tiered reset system (BF-070)."""
+```
+REPLACE:
+```python
+    console.print("\n  [dim][DRY RUN] No changes made.[/dim]")
+
+
+def _cmd_reset(args: argparse.Namespace) -> int:
+    """Handle ``probos reset`` — tiered reset system (BF-070). Returns the exit code (AD-1341 S1).
+
+    0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, or the
+    Ship's Archive promotion of a tier 2 or 3 reset failed); 2 a ``--skip-promotion`` without a usable reason.
+    At tier 2 and above what the crew published is promoted into the Ship's Archive before the tier loop.
+    """
+```
+
+Pair 3 (`--skip-promotion`, checked first):
+
+SEARCH:
+```python
+    # Resolve the effective tier
+    tier = _resolve_tier(args)
+
+    # AD-418: Check for active scheduled tasks that survive reset
+```
+REPLACE:
+```python
+    # Resolve the effective tier
+    tier = _resolve_tier(args)
+
+    # AD-1341 S1: --skip-promotion REASON is checked before anything is read, locked or deleted.
+    skip_reason = getattr(args, 'skip_promotion', None)
+    if skip_reason is not None:
+        problem = _skip_promotion_problem(skip_reason, tier)
+        if problem:
+            console.print(f"[red]✗[/red] {problem}")
+            return 2
+
+    # AD-418: Check for active scheduled tasks that survive reset
+```
+
+Pair 4 (the dry run lists the plan; no pidfile, no archive):
+
+SEARCH:
+```python
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console)
+        return
+```
+REPLACE:
+```python
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console)
+        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
+            return _show_promotion_plan(config, data_dir, skip_reason, console)
+        return 0
+```
+
+Pair 5 (the pidfile, the promotion, the tier loop re-indented, the release):
+
+SEARCH:
+```python
+    # Confirmation prompt (skipped with -y)
+    if not getattr(args, 'yes', False):
+        if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
+            console.print("[dim]Aborted.[/dim]")
+            return
+
+    # ── Execute reset ──
+    tier_counts: dict[int, int] = {}
+    total_freed: int = 0
+    archive_path: Path | None = None
+
+    for t in range(1, tier + 1):
+        tier_def = RESET_TIERS[t]
+        count = 0
+
+        # Archive files first (ward_room.db at Tier 4)
+        for fname in tier_def.get("archive_first", []):
+            fpath = data_dir / fname
+            if fpath.is_file():
+                archive_dir = data_dir / "archives"
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
+                shutil.copy2(str(fpath), str(archive_path))
+
+        # AD-541f: Record reset eviction before deleting files
+        if t >= 2:
+            _audit_db = data_dir / "eviction_audit.db"
+            if _audit_db.is_file():
+                try:
+                    import sqlite3 as _sqlite3
+                    import time as _time
+                    import uuid as _uuid
+                    _aconn = _sqlite3.connect(str(_audit_db))
+                    _aconn.execute(
+                        "INSERT INTO eviction_audit "
+                        "(id, episode_id, agent_id, timestamp, reason, process, "
+                        "details, content_hash, episode_timestamp) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (_uuid.uuid4().hex, "*", "*", _time.time(),
+                         "reset", "probos_reset",
+                         f"Tier {tier} reset — total episodic memory wipe",
+                         "", 0.0),
+                    )
+                    _aconn.commit()
+                    _aconn.close()
+                except Exception:
+                    pass  # Best-effort — reset must proceed
+
+        # Delete files
+        for fname in tier_def.get("files", []):
+            fpath = data_dir / fname
+            if fpath.is_file():
+                total_freed += fpath.stat().st_size
+                fpath.unlink()
+                count += 1
+
+        # Delete directories
+        for dname in tier_def.get("dirs", []):
+            dpath = data_dir / dname
+            if dpath.is_dir():
+                for fp in dpath.glob("*"):
+                    if fp.is_file():
+                        total_freed += fp.stat().st_size
+                        fp.unlink()
+                    elif fp.is_dir():
+                        shutil.rmtree(fp, onerror=_force_remove_readonly)
+                count += 1
+
+        # Special cleanup
+        for special in tier_def.get("special", []):
+            if special == "chromadb_uuid_dirs":
+                for uuid_dir in _find_chromadb_uuid_dirs(data_dir):
+                    shutil.rmtree(uuid_dir, onerror=_force_remove_readonly)
+                    count += 1
+            elif special == "knowledge_subdirs":
+                # Clear KnowledgeStore subdirectories (json/py files)
+                for sub in _RESET_SUBDIRS:
+                    sub_dir = repo_path / sub
+                    if not sub_dir.is_dir():
+                        continue
+                    for fp in sub_dir.glob("*"):
+                        if fp.is_file() and fp.suffix in (".json", ".py"):
+                            fp.unlink()
+                    count += 1
+            elif special == "ontology_instance_id":
+                instance_id_file = data_dir / "ontology" / "instance_id"
+                if instance_id_file.is_file():
+                    instance_id_file.unlink()
+                    count += 1
+
+        tier_counts[t] = count
+
+    # Git commit if repo is git-initialized
+    if (repo_path / ".git").is_dir():
+        try:
+            subprocess.run(
+                ["git", "-C", str(repo_path), "add", "-A"],
+                env=trusted_command_env(),
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(repo_path), "commit", "-m",
+                 f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
+                env=trusted_command_env(),
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            )
+        except Exception:
+            pass  # Best-effort git commit during reset
+
+    # ── Summary output ──
+```
+REPLACE:
+```python
+    # Confirmation prompt (skipped with -y)
+    if not getattr(args, 'yes', False):
+        if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
+            console.print("[dim]Aborted.[/dim]")
+            return 0
+
+    # AD-1341 S1 (D12): every executing reset holds the AD-816 pidfile `probos serve` takes for this data directory,
+    # so no vessel writes beside the reset or boots into it half done. A live owner refuses it.
+    from rich.markup import escape
+
+    from probos.pidfile_guard import AnotherInstanceRunning, acquire_pidfile
+
+    try:
+        reset_pidfile = acquire_pidfile(data_dir)
+    except AnotherInstanceRunning as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}")
+        console.print("[yellow]probos reset refused: stop the vessel first. Nothing was changed.[/yellow]")
+        return 1
+    try:
+        # AD-1341 S1: what the crew published is promoted before anything is deleted; any failure refuses.
+        promote_first = tier >= 2  # AD-1341 S1: tier 1 keeps the crew, so it has nothing to promote
+        if promote_first and not _promote_before_reset(config, tier, data_dir, skip_reason, console):
+            console.print("[red]✗[/red] probos reset refused before deleting anything.")
+            return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted
+
+        # ── Execute reset ──
+        tier_counts: dict[int, int] = {}
+        total_freed: int = 0
+        archive_path: Path | None = None
+
+        for t in range(1, tier + 1):
+            tier_def = RESET_TIERS[t]
+            count = 0
+
+            # Archive files first (ward_room.db at Tier 4)
+            for fname in tier_def.get("archive_first", []):
+                fpath = data_dir / fname
+                if fpath.is_file():
+                    archive_dir = data_dir / "archives"
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                    archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
+                    shutil.copy2(str(fpath), str(archive_path))
+
+            # AD-541f: Record reset eviction before deleting files
+            if t >= 2:
+                _audit_db = data_dir / "eviction_audit.db"
+                if _audit_db.is_file():
+                    try:
+                        import sqlite3 as _sqlite3
+                        import time as _time
+                        import uuid as _uuid
+                        _aconn = _sqlite3.connect(str(_audit_db))
+                        _aconn.execute(
+                            "INSERT INTO eviction_audit "
+                            "(id, episode_id, agent_id, timestamp, reason, process, "
+                            "details, content_hash, episode_timestamp) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (_uuid.uuid4().hex, "*", "*", _time.time(),
+                             "reset", "probos_reset",
+                             f"Tier {tier} reset — total episodic memory wipe",
+                             "", 0.0),
+                        )
+                        _aconn.commit()
+                        _aconn.close()
+                    except Exception:
+                        pass  # Best-effort — reset must proceed
+
+            # Delete files
+            for fname in tier_def.get("files", []):
+                fpath = data_dir / fname
+                if fpath.is_file():
+                    total_freed += fpath.stat().st_size
+                    fpath.unlink()
+                    count += 1
+
+            # Delete directories
+            for dname in tier_def.get("dirs", []):
+                dpath = data_dir / dname
+                if dpath.is_dir():
+                    for fp in dpath.glob("*"):
+                        if fp.is_file():
+                            total_freed += fp.stat().st_size
+                            fp.unlink()
+                        elif fp.is_dir():
+                            shutil.rmtree(fp, onerror=_force_remove_readonly)
+                    count += 1
+
+            # Special cleanup
+            for special in tier_def.get("special", []):
+                if special == "chromadb_uuid_dirs":
+                    for uuid_dir in _find_chromadb_uuid_dirs(data_dir):
+                        shutil.rmtree(uuid_dir, onerror=_force_remove_readonly)
+                        count += 1
+                elif special == "knowledge_subdirs":
+                    # Clear KnowledgeStore subdirectories (json/py files)
+                    for sub in _RESET_SUBDIRS:
+                        sub_dir = repo_path / sub
+                        if not sub_dir.is_dir():
+                            continue
+                        for fp in sub_dir.glob("*"):
+                            if fp.is_file() and fp.suffix in (".json", ".py"):
+                                fp.unlink()
+                        count += 1
+                elif special == "ontology_instance_id":
+                    instance_id_file = data_dir / "ontology" / "instance_id"
+                    if instance_id_file.is_file():
+                        instance_id_file.unlink()
+                        count += 1
+
+            tier_counts[t] = count
+
+        # Git commit if repo is git-initialized
+        if (repo_path / ".git").is_dir():
+            try:
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "add", "-A"],
+                    env=trusted_command_env(),
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "commit", "-m",
+                     f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
+                    env=trusted_command_env(),
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+                )
+            except Exception:
+                pass  # Best-effort git commit during reset
+    finally:
+        # AD-1341 S1: released on every exit. Left behind, it names a finished PID, which the next acquire removes.
+        try:
+            reset_pidfile.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            console.print(
+                f"[yellow]⚠ The pidfile {escape(str(reset_pidfile))} was not removed: {escape(str(exc))}[/yellow]"
+            )
+
+    # ── Summary output ──
+```
+
+Pair 6 (the exit code, and the helpers before `_force_remove_readonly`):
+
+SEARCH:
+```python
+    if active_task_count > 0:
+        console.print(
+            f"\n  [yellow]⚠ {active_task_count} scheduled task(s) active — "
+            "routing may be degraded until Hebbian weights rebuild.[/yellow]"
+        )
+
+
+def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
+```
+REPLACE:
+```python
+    if active_task_count > 0:
+        console.print(
+            f"\n  [yellow]⚠ {active_task_count} scheduled task(s) active — "
+            "routing may be degraded until Hebbian weights rebuild.[/yellow]"
+        )
+    return 0
+
+
+# ── AD-1341 S1: the Ship's Archive before a reset, and the Captain's erasure ──
+
+#: Shown, never written: what a plan is attributed to when the ship has no instance id. A promotion needs one.
+_UNATTRIBUTED_TIMELINE = "(no instance id)"
+
+
+def _skip_promotion_problem(reason: str, tier: int) -> str:
+    """Why ``--skip-promotion REASON`` cannot be used, or ``""``. Checked before anything is read or locked."""
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    if tier < 2:
+        return "--skip-promotion applies to a reset of tier 2 or above; --soft promotes nothing."
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        return f"--skip-promotion needs a reason of 1 to {ARCHIVE_REASON_MAX_CHARS} characters."
+    return ""
+
+
+def _read_instance_id(data_dir: Path) -> str:
+    """The ship's instance id (``ontology/instance_id``, stripped), or ``""`` when there is none.
+
+    The generation a reset closes is attributed to it, and tier 2 deletes the file, so a reset reads it before
+    the tier loop. It is the file the ontology loader writes on a vessel's first boot.
+    """
+    id_file = data_dir / "ontology" / "instance_id"
+    if not id_file.is_file():
+        return ""
+    return id_file.read_text(encoding="utf-8").strip()
+
+
+def _reset_records_store(config: SystemConfig, data_dir: Path) -> RecordsStore:
+    """Ship's Records at the path this vessel writes (D10's resolver), never initialised: reading needs no git."""
+    from probos.config import resolve_records_repo_path
+    from probos.knowledge.records_store import RecordsStore
+
+    records_path = resolve_records_repo_path(config.records, data_dir)
+    return RecordsStore(config.records.model_copy(update={"repo_path": str(records_path)}), ontology=None)
+
+
+def _configured_archive_store(config: SystemConfig) -> ArchiveStore:
+    """The Ship's Archive at the path startup opens (AD-1265's resolver), not yet initialised.
+
+    Only the computed default's directory is created, as startup does; an operator's path is used as given.
+    """
+    from probos.config import resolve_archive_db_path
+    from probos.knowledge.archive_store import ArchiveStore
+    from probos.storage.sqlite_factory import default_factory
+
+    archive_path = resolve_archive_db_path(config.archive)
+    if not config.archive.db_path:
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+    return ArchiveStore(str(archive_path), connection_factory=default_factory)
+
+
+def _promote_before_reset(
+    config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, console: Console,
+) -> bool:
+    """Promote what the crew published into the Ship's Archive before a reset of tier 2 or above.
+
+    True when the reset may go on; False, having said why, when it must not, with nothing deleted. With the
+    archive disabled there is nowhere to promote to: a notice, and True (D13). That check comes before the one
+    ``asyncio.run``, so a caller already inside an event loop with the archive disabled
+    (``tests/test_bf902_fts_reconciliation.py``) never starts a second loop.
+    """
+    from rich.markup import escape
+
+    if not config.archive.enabled:
+        console.print(
+            "[yellow]⚠ The Ship's Archive is disabled (archive.enabled): "
+            "nothing is promoted before this reset.[/yellow]"
+        )
+        return True
+    try:
+        timeline_id = _read_instance_id(data_dir)  # before the tier loop deletes it
+        proceed, message = asyncio.run(_promote_into_archive(config, tier, data_dir, timeline_id, skip_reason))
+    except Exception as exc:  # any failure refuses the reset, and the Captain sees why
+        console.print(
+            f"[red]✗[/red] Ship's Archive promotion failed: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return False  # AD-1341 S1: a failed promotion refuses the reset
+    console.print(f"  {escape(message)}" if proceed else f"[red]✗[/red] {escape(message)}")
+    return proceed
+
+
+async def _promote_into_archive(
+    config: SystemConfig, tier: int, data_dir: Path, timeline_id: str, skip_reason: str | None,
+) -> tuple[bool, str]:
+    """The promotion run, or the recorded skip: (the reset may go on, what to tell the Captain).
+
+    Raises on any failure, and closes the archive on every exit. Without an instance id nothing can be
+    attributed (D9): anything to promote refuses, and a directory with nothing to promote has no generation to
+    record, so nothing is opened.
+    """
+    from probos.knowledge.archive_promotion import plan_promotion, promote_ship_records
+    from probos.knowledge.archive_store import GenerationOutcome, GenerationRecord
+
+    records = _reset_records_store(config, data_dir)
+    if skip_reason is None and not timeline_id:
+        plan = await plan_promotion(records, timeline_id=_UNATTRIBUTED_TIMELINE)
+        if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id
+            return False, (
+                f"No instance id: {len(plan.records)} record(s) cannot be attributed to a timeline. "
+                "Pass --skip-promotion REASON to reset without promoting them."
+            )
+        return True, "No instance id and nothing to promote: no generation is recorded."
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        if skip_reason is not None:
+            skipped = GenerationRecord(
+                timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.SKIPPED, reason=skip_reason,
+            )
+            await archive.record_generation(skipped)
+            return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}"
+        promoted = await promote_ship_records(records, archive, timeline_id=timeline_id)
+        closed = GenerationRecord(
+            timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.PROMOTED,
+            created=len(promoted.created), present=len(promoted.present), erased=len(promoted.erased),
+            withheld=len(promoted.withheld),
+        )
+        await archive.record_generation(closed)
+    finally:
+        await archive.close()
+    return True, (
+        f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
+        f"{len(promoted.erased)} erased by the Captain, {len(promoted.withheld)} withheld (timeline {timeline_id})."
+    )
+
+
+def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console) -> int:
+    """``--dry-run`` at tier 2 or above: what the reset would promote. Reads Ship's Records; opens no archive.
+
+    0 when the plan was shown (a reset that would refuse says so); 1 when Ship's Records could not be read.
+    """
+    from rich.markup import escape
+
+    from probos.knowledge.archive_promotion import plan_promotion
+
+    if not config.archive.enabled:
+        console.print("\n  [dim]The Ship's Archive is disabled (archive.enabled): nothing would be promoted.[/dim]")
+        return 0
+    if skip_reason is not None:
+        console.print(f"\n  Ship's Archive promotion would be skipped, recording: {escape(skip_reason.strip())}")
+        return 0
+    try:
+        timeline_id = _read_instance_id(data_dir)
+        plan = asyncio.run(
+            plan_promotion(_reset_records_store(config, data_dir), timeline_id=timeline_id or _UNATTRIBUTED_TIMELINE)
+        )
+    except Exception as exc:  # the dry run reports it; nothing is touched either way
+        console.print(
+            f"[red]✗[/red] The promotion plan could not be read: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return 1
+    console.print(f"\n  Ship's Archive plan for timeline {escape(timeline_id or _UNATTRIBUTED_TIMELINE)}:")
+    console.print(f"    {len(plan.records)} to promote, {len(plan.withheld)} withheld")
+    for record in plan.records:
+        console.print(f"    + {escape(record.source_ref)}")
+    for path in plan.withheld:
+        console.print(f"    - withheld: {escape(path)}")
+    if plan.records and not timeline_id:
+        console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
+    return 0
+
+
+def _cmd_archive(args: argparse.Namespace) -> int:
+    """Handle ``probos archive erase ENTRY_ID --reason TEXT`` (AD-1341 S1): the Captain's erasure.
+
+    The row is deleted and its bytes overwritten (``secure_delete``). A marker keeps the entry's id, timeline,
+    source kind and ref, the reason and the time, never its title or content, and keeps that source from being
+    promoted again. 0 erased or declined; 1 no such entry, or the erasure failed; 2 the archive disabled, or a
+    bad id or reason. Plain ``print``: the entry's title and the reason are shown as text, never as markup.
+    """
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    if getattr(args, "archive_cmd", None) != "erase":
+        print("usage: probos archive erase ENTRY_ID --reason TEXT [--yes] [--config PATH]")
+        return 2
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:
+        print("The Ship's Archive is disabled (archive.enabled): there is nothing to erase.")
+        return 2
+    entry_id, reason = args.entry_id, args.reason
+    if entry_id <= 0:
+        print("An archive entry id is a positive integer.")
+        return 2
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        print(f"--reason needs 1 to {ARCHIVE_REASON_MAX_CHARS} characters. Do not restate the entry's content.")
+        return 2
+    try:
+        return asyncio.run(_erase_archive_entry(config, entry_id, reason, bool(getattr(args, "yes", False))))
+    except Exception as exc:  # one transaction, so nothing is half-erased; the Captain sees why
+        print(f"The erasure failed: {type(exc).__name__}: {exc}")
+        return 1
+
+
+async def _erase_archive_entry(config: SystemConfig, entry_id: int, reason: str, confirmed: bool) -> int:
+    """Show the entry, ask unless ``--yes``, then erase it. The archive is closed on every exit."""
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        entry = await archive.entry_by_id(entry_id)
+        if entry is None:
+            print(f"No Ship's Archive entry has id {entry_id}.")
+            return 1
+        print(f"Ship's Archive entry {entry.id}: {entry.title}")
+        print(f"  source: {entry.source_kind or '(no provenance: an AD-524 entry)'} {entry.source_ref}")
+        print(f"  timeline: {entry.timeline_id}")
+        if not confirmed and input("  Erase it? [y/N]: ").strip().lower() != "y":
+            print("Aborted. Nothing was erased.")
+            return 0
+        if not await archive.erase_entry(entry_id, reason):
+            print(f"No Ship's Archive entry has id {entry_id}.")
+            return 1
+    finally:
+        await archive.close()
+    print(
+        f"Erased Ship's Archive entry {entry_id}. A marker records the erasure: if its source is still in Ship's "
+        "Records, it will not be promoted again."
+    )
+    return 0
+
+
+def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
+```
+
+Pair 7 (the parser):
+
+SEARCH:
+```python
+    reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+
+    args = parser.parse_args()
+```
+REPLACE:
+```python
+    reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+    reset_parser.add_argument(
+        "--skip-promotion", type=str, default=None, metavar="REASON",
+        help="AD-1341: reset without promoting Ship's Records into the Ship's Archive first; "
+             "the reason (1-500 characters) is recorded",
+    )
+
+    # --- probos archive (AD-1341 S1): the Captain's erasure ---
+    archive_parser = subparsers.add_parser("archive", help="The Ship's Archive: the Captain's erasure (AD-1341)")
+    archive_sub = archive_parser.add_subparsers(dest="archive_cmd", required=True)
+    archive_erase = archive_sub.add_parser(
+        "erase", help="Erase one Ship's Archive entry; its source is never promoted again",
+    )
+    archive_erase.add_argument("entry_id", type=int, help="The entry's id")
+    archive_erase.add_argument(
+        "--reason", type=str, required=True,
+        help="Why, in 1-500 characters; it is recorded. Do not restate the entry's content.",
+    )
+    archive_erase.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+    archive_erase.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
+
+    args = parser.parse_args()
+```
+
+Pair 8 (the dispatch):
+
+SEARCH:
+```python
+    if args.command == "reset":
+        _cmd_reset(args)
+        return
+
+    if args.command == "serve":
+```
+REPLACE:
+```python
+    if args.command == "reset":
+        import sys
+        sys.exit(_cmd_reset(args))  # AD-1341 S1: 1 refused, 2 a bad --skip-promotion
+
+    if args.command == "archive":  # AD-1341 S1: the Captain's erasure
+        import sys
+        sys.exit(_cmd_archive(args))
+
+    if args.command == "serve":
+```
+
+### 7.10 `tests/test_reset_integration.py` (M3: the shared helper's fake disables the archive)
+
+`tests/test_ad1340_s1_restore_reset.py` and `tests/test_bf902_fts_reconciliation.py` import this helper. Two of bf902's callers are async, so the disabled archive is what keeps `_cmd_reset` from starting an event loop.
+
+SEARCH:
+```python
+    args = _reset_args(data_dir, **flag_overrides)
+    mock_config = MagicMock()
+    mock_config.knowledge.repo_path = str(knowledge_dir)
+
+    with patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+        with patch("probos.__main__._default_data_dir", return_value=data_dir):
+            _cmd_reset(args)
+```
+REPLACE:
+```python
+    args = _reset_args(data_dir, **flag_overrides)
+    mock_config = MagicMock()
+    mock_config.knowledge.repo_path = str(knowledge_dir)
+    # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive, and a MagicMock's `enabled` reads as True. These
+    # tests exercise the tier loop; the promotion is tests/test_ad1341_s1_reset_and_erase.py's.
+    mock_config.archive.enabled = False
+
+    with patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
+        with patch("probos.__main__._default_data_dir", return_value=data_dir):
+            assert _cmd_reset(args) == 0  # AD-1341 S1: _cmd_reset returns its exit code
+```
+
+### 7.11 `tests/test_distribution.py` (M3: six tier 2+ call sites disable the archive)
+
+The tier 1 test (`test_tier1_soft_only_clears_transients`) is unchanged: tier 1 never reads `config.archive`.
+
+SEARCH:
+```python
+import tempfile
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+```
+REPLACE:
+```python
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace as _SimpleNamespace  # AD-1341 S1: the reset fakes' archive
+from typing import Any
+from unittest.mock import patch
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        # Tier 1+2 files cleared
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        # Tier 1+2 files cleared
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        # All tiers cleared
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        # All tiers cleared
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        # Same as Tier 4 — everything cleared
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        # Same as Tier 4 — everything cleared
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        # Everything should still exist
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a dry run of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        # Everything should still exist
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        assert not uuid_dir.exists()
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        assert not uuid_dir.exists()
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)  # Should not raise
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)  # Should not raise
+```
+
+### 7.12 `tests/test_proactive.py` (M3: the two tier 2+ tests disable the archive)
+
+SEARCH:
+```python
+        args = self._reset_args(data_dir, full=True)
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+```
+REPLACE:
+```python
+        args = self._reset_args(data_dir, full=True)
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive
+```
+
+SEARCH:
+```python
+        args = self._reset_args(data_dir)  # default = Tier 2
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+```
+REPLACE:
+```python
+        args = self._reset_args(data_dir)  # default = Tier 2
+
+        from unittest.mock import patch as mock_patch
+        mock_config = MagicMock()
+        mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive
+```
+
+### 7.13 `tests/test_identity_deterministic.py` (M3: three tier 2 tests disable the archive)
+
+SEARCH:
+```python
+import argparse
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+```
+REPLACE:
+```python
+import argparse
+from pathlib import Path
+from types import SimpleNamespace
+from types import SimpleNamespace as _SimpleNamespace  # AD-1341 S1: the reset fakes' archive (contract §12)
+from unittest.mock import MagicMock, patch
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        assert not identity_db.exists(), "identity.db should be deleted after reset"
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        assert not identity_db.exists(), "identity.db should be deleted after reset"
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)
+
+        assert not instance_id_file.exists(), "instance_id should be deleted after reset"
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)
+
+        assert not instance_id_file.exists(), "instance_id should be deleted after reset"
+```
+
+SEARCH:
+```python
+                None,
+            )
+            _cmd_reset(args)  # Should not raise
+```
+REPLACE:
+```python
+                None,
+            )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
+            _cmd_reset(args)  # Should not raise
+```
+
+### 7.14 New file: `tests/test_ad1341_s1_reset_and_erase.py` (M3)
+
+```python
+"""AD-1341 S1 M3 (#1569): ``probos reset`` promotes what the crew published before it deletes anything, and
+``probos archive erase`` is the Captain's erasure.
+
+Real objects throughout: the real ``_cmd_reset``, ``_cmd_archive`` and ``main`` on a temporary data directory; a
+real ``SystemConfig`` whose archive is ``tmp_path / "archive.db"`` and whose knowledge repo is a temporary
+directory, so no test touches ``~/.probos``; Ship's Records written by the store's own producers; the real
+``ArchiveStore``, AD-816 pidfile and ``OracleService``. The config loader is the one stand-in: it returns that
+``SystemConfig`` instead of reading YAML (``main``'s dispatch test also replaces the command it dispatches to).
+The tests are synchronous because ``_cmd_reset`` runs its own event loop, as the CLI does.
+"""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import os
+import sqlite3
+from argparse import Namespace as _Namespace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import probos
+from probos import __main__ as cli
+from probos.cognitive.oracle_service import OracleService
+from probos.config import ArchiveConfig, KnowledgeConfig, RecordsConfig, SystemConfig
+from probos.knowledge.archive_store import ArchiveStore
+from probos.knowledge.records_store import RecordsStore
+from probos.pidfile_guard import is_pid_alive
+from probos.storage.sqlite_factory import default_factory
+
+_SRC = Path(probos.__file__).resolve().parent
+_SHIP = "ship-did-alpha-0001"
+_NEXT_SHIP = "ship-did-beta-0002"
+_CONVERGENCE = "reports/convergence/convergence-20261022-000000.md"
+_CLAIM = {"claim_id": "c0ffee02c0ffee02", "contest_state": "uncontested"}
+
+
+def _config(tmp_path: Path, *, archive_enabled: bool = True) -> SystemConfig:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir(exist_ok=True)
+    section = ArchiveConfig(enabled=archive_enabled, db_path=str(tmp_path / "archive.db"))
+    return SystemConfig(knowledge=KnowledgeConfig(repo_path=str(knowledge)), archive=section)
+
+
+def _data_dir(tmp_path: Path, *, instance_id: str = _SHIP) -> Path:
+    """A stopped vessel's data directory: one file of each tier and, unless empty, the ship's instance id."""
+    data_dir = tmp_path / "data"
+    (data_dir / "ontology").mkdir(parents=True)
+    if instance_id:
+        (data_dir / "ontology" / "instance_id").write_text(f"{instance_id}\n", encoding="utf-8")
+    for name in ("events.db", "trust.db", "ward_room.db"):  # tiers 1, 2 and 3
+        (data_dir / name).write_text(name, encoding="utf-8")
+    return data_dir
+
+
+def _records(data_dir: Path) -> RecordsStore:
+    return RecordsStore(RecordsConfig(repo_path=str(data_dir / "ship-records"), auto_commit=False))
+
+
+async def _write_records(data_dir: Path) -> None:
+    """Two sources the reset promotes and one the read rule withholds, written as the vessel writes them."""
+    writer = _records(data_dir)
+    await writer.write_entry(
+        author="system", path=_CONVERGENCE,
+        content="## Convergence Report\n\nThree officers independently traced the coolant drift.",
+        message="AD-551: Convergence report (coolant)", classification="ship", tags=["convergence", "ad-551"],
+    )
+    await writer.append_captains_log("Set course for the Briar Patch; coolant drift logged.")
+    await writer.write_notebook(
+        callsign="Chapel", topic_slug="private-coolant-c0ffee02", content="Claim: a private coolant note.",
+        classification="private", extra_frontmatter=dict(_CLAIM),
+    )
+
+
+def _archive_store(tmp_path: Path) -> ArchiveStore:
+    return ArchiveStore(str(tmp_path / "archive.db"), connection_factory=default_factory)
+
+
+def _rows(path: Path, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+    connection = sqlite3.connect(str(path))
+    try:
+        return connection.execute(sql, params).fetchall()
+    finally:
+        connection.close()
+
+
+def _reset(monkeypatch: pytest.MonkeyPatch, config: SystemConfig, data_dir: Path, **flags: Any) -> Any:
+    """The real ``_cmd_reset`` with the loader returning ``config``; returns what it returns."""
+    monkeypatch.setenv("COLUMNS", "200")  # Rich wraps at 80 columns off a terminal; the assertions read lines
+    monkeypatch.setattr(cli, "_load_config_with_fallback", lambda _path: (config, None))
+    values: dict[str, Any] = {
+        "yes": True, "soft": False, "full": False, "dry_run": False, "wipe_records": False, "config": None,
+        "data_dir": data_dir, "skip_promotion": None,
+    }
+    values.update(flags)
+    return cli._cmd_reset(_Namespace(**values))
+
+
+def _erase(
+    monkeypatch: pytest.MonkeyPatch, config: SystemConfig, entry_id: int, reason: str, *, yes: bool = True,
+) -> Any:
+    monkeypatch.setattr(cli, "_load_config_with_fallback", lambda _path: (config, None))
+    return cli._cmd_archive(_Namespace(archive_cmd="erase", entry_id=entry_id, reason=reason, yes=yes, config=None))
+
+
+def _nothing_deleted(data_dir: Path) -> bool:
+    return all((data_dir / name).is_file() for name in ("events.db", "trust.db", "ward_room.db"))
+
+
+async def _oracle_query(tmp_path: Path, text: str) -> list[Any]:
+    later = _archive_store(tmp_path)  # the next generation's boot opens the same file
+    await later.initialize()
+    try:
+        return await OracleService(archive_store=later).query(text, tiers=["archive"])
+    finally:
+        await later.close()
+
+
+# --- R1, R2: the reset promotes before it deletes ----------------------------------------------------------------
+
+
+def test_a_tier2_reset_archives_under_the_ship_it_closes_then_deletes_its_instance_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir) == 0
+
+    archive = tmp_path / "archive.db"
+    assert set(_rows(archive, "SELECT timeline_id, source_kind FROM archive")) == {
+        (_SHIP, "convergence_report"), (_SHIP, "captains_log"),
+    }
+    assert _rows(archive, "SELECT COUNT(*) FROM archive WHERE source_ref = ?", (_CONVERGENCE,)) == [(1,)]
+    assert _rows(
+        archive, "SELECT timeline_id, reset_tier, outcome, created_count, withheld_count FROM generations",
+    ) == [(_SHIP, 2, "promoted", 2, 1)]
+    assert not (data_dir / "ontology" / "instance_id").exists()  # then the tier loop ran
+    assert not (data_dir / "trust.db").exists()
+    assert (data_dir / "ship-records" / _CONVERGENCE).is_file()  # tier 2 keeps Ship's Records
+    assert not (data_dir / "probos.pid").exists()  # the reset released its pidfile
+
+
+def test_a_full_reset_archives_before_ship_records_are_wiped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    assert (data_dir / "ship-records" / _CONVERGENCE).is_file()  # premise
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 0
+
+    assert not list((data_dir / "ship-records").rglob("*.md"))  # tier 3 wiped Ship's Records ...
+    archive = tmp_path / "archive.db"
+    assert _rows(archive, "SELECT timeline_id FROM archive WHERE source_ref = ?", (_CONVERGENCE,)) == [(_SHIP,)]
+    assert _rows(archive, "SELECT reset_tier, outcome FROM generations") == [(3, "promoted")]  # ... after promoting
+
+
+# --- R3, R4, R4b: failure, the audited skip, and a skip without a reason ---------------------------------------
+
+
+def test_a_failed_promotion_refuses_the_reset_and_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    connection = sqlite3.connect(str(tmp_path / "archive.db"))
+    connection.execute("PRAGMA user_version = 7")  # an archive this ProbOS does not read: initialize refuses it
+    connection.commit()
+    connection.close()
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir) == 1
+
+    assert "RuntimeError" in capsys.readouterr().out
+    assert _rows(tmp_path / "archive.db", "PRAGMA user_version") == [(7,)]
+    assert _nothing_deleted(data_dir)
+    assert (data_dir / "ontology" / "instance_id").read_text(encoding="utf-8").strip() == _SHIP
+    assert not (data_dir / "probos.pid").exists()  # released on the refusal too
+
+
+def test_skip_promotion_records_the_generation_and_archives_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, skip_promotion="  drill: nothing to keep ") == 0
+
+    archive = tmp_path / "archive.db"
+    assert _rows(archive, "SELECT COUNT(*) FROM archive") == [(0,)]
+    assert _rows(archive, "SELECT timeline_id, reset_tier, outcome, reason FROM generations") == [
+        (_SHIP, 2, "skipped", "drill: nothing to keep"),
+    ]
+    assert not (data_dir / "trust.db").exists()
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"skip_promotion": "   "}, {"skip_promotion": "x" * 501}, {"skip_promotion": "drill", "soft": True}],
+    ids=["blank", "too-long", "soft"],
+)
+def test_a_skip_without_a_usable_reason_exits_2_and_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: dict[str, Any],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, **flags) == 2
+
+    assert _nothing_deleted(data_dir)
+    assert not (tmp_path / "archive.db").exists()
+    assert not (data_dir / "probos.pid").exists()  # refused before the pidfile
+
+
+# --- R5, R6: tier 1 and the dry run never write the archive ----------------------------------------------------
+
+
+def test_a_soft_reset_never_opens_the_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, soft=True) == 0
+
+    assert not (data_dir / "events.db").exists()  # premise: the soft reset ran
+    assert not (tmp_path / "archive.db").exists()
+    assert (data_dir / "ontology" / "instance_id").is_file()
+
+
+def test_a_dry_run_lists_the_plan_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    owner = str(os.getppid())
+    (data_dir / "probos.pid").write_text(owner, encoding="utf-8")  # a live vessel: a dry run takes no pidfile
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    assert "2 to promote, 1 withheld" in out
+    assert "+ captains-log/" in out
+    assert not (tmp_path / "archive.db").exists()
+    assert _nothing_deleted(data_dir) and (data_dir / "ontology" / "instance_id").is_file()
+    assert (data_dir / "probos.pid").read_text(encoding="utf-8") == owner
+
+
+# --- R7, R8, R9: a live vessel, the archive disabled, no instance id -------------------------------------------
+
+
+@pytest.mark.parametrize("flags", [{"soft": True}, {}, {"full": True}], ids=["soft", "default", "full"])
+def test_a_live_vessel_refuses_every_executing_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: dict[str, Any],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    owner = os.getppid()
+    assert owner != os.getpid() and is_pid_alive(owner)  # premise: a live process that is not this one
+    (data_dir / "probos.pid").write_text(str(owner), encoding="utf-8")
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, **flags) == 1
+
+    assert _nothing_deleted(data_dir)
+    assert (data_dir / "probos.pid").read_text(encoding="utf-8") == str(owner)  # the owner's pidfile is kept
+    assert not (tmp_path / "archive.db").exists()
+
+
+def test_with_the_archive_disabled_the_reset_proceeds_and_erase_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path, archive_enabled=False)
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+
+    assert "Ship's Archive is disabled" in capsys.readouterr().out
+    assert not (data_dir / "trust.db").exists()
+    assert not (tmp_path / "archive.db").exists()
+    assert _erase(monkeypatch, config, 1, "superseded") == 2
+
+
+@pytest.mark.parametrize("with_records", [True, False], ids=["with-records", "nothing-to-promote"])
+def test_without_an_instance_id_records_to_promote_refuse_the_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_records: bool,
+) -> None:
+    data_dir = _data_dir(tmp_path, instance_id="")
+    if with_records:
+        asyncio.run(_write_records(data_dir))
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir) == (1 if with_records else 0)
+
+    assert (data_dir / "trust.db").is_file() is with_records
+    assert not (tmp_path / "archive.db").exists()  # nothing attributed, and no generation recorded
+
+
+# --- R10, R10b: the Captain's erasure ----------------------------------------------------------------------------
+
+
+def test_the_captain_erases_an_entry_and_the_next_reset_does_not_bring_it_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir) == 0
+    archive = tmp_path / "archive.db"
+    (entry_id,) = _rows(archive, "SELECT id FROM archive WHERE source_ref = ?", (_CONVERGENCE,))[0]
+
+    assert _erase(monkeypatch, config, entry_id, "superseded by the Captain") == 0
+
+    assert "will not be promoted again" in capsys.readouterr().out
+    assert _rows(archive, "SELECT COUNT(*) FROM archive WHERE id = ?", (entry_id,)) == [(0,)]
+    assert _rows(archive, "SELECT entry_id, timeline_id, source_kind, source_ref, reason FROM archive_erasures") == [
+        (entry_id, _SHIP, "convergence_report", _CONVERGENCE, "superseded by the Captain"),
+    ]
+
+    # The next crew's reset reads the same Ship's Records (tier 2 kept them) and does not archive it again.
+    (data_dir / "ontology" / "instance_id").write_text(_NEXT_SHIP, encoding="utf-8")
+    assert _reset(monkeypatch, config, data_dir) == 0
+    assert _rows(archive, "SELECT COUNT(*) FROM archive WHERE source_ref = ?", (_CONVERGENCE,)) == [(0,)]
+    assert _rows(
+        archive, "SELECT timeline_id, created_count, present_count, erased_count FROM generations ORDER BY id",
+    ) == [(_SHIP, 2, 0, 0), (_NEXT_SHIP, 0, 1, 1)]
+
+
+@pytest.mark.parametrize(
+    ("entry_id", "reason", "answer", "code"),
+    [(999, "superseded", "y", 1), (0, "superseded", "y", 2), (None, "   ", "y", 2), (None, "superseded", "n", 0)],
+    ids=["no-such-entry", "zero-id", "blank-reason", "declined"],
+)
+def test_an_erasure_that_cannot_or_should_not_happen_erases_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry_id: int | None, reason: str, answer: str, code: int,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir) == 0
+    archive = tmp_path / "archive.db"
+    (existing,) = _rows(archive, "SELECT id FROM archive WHERE source_ref = ?", (_CONVERGENCE,))[0]
+    monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+
+    assert _erase(monkeypatch, config, existing if entry_id is None else entry_id, reason, yes=False) == code
+
+    assert _rows(archive, "SELECT COUNT(*) FROM archive") == [(2,)]
+    assert _rows(archive, "SELECT COUNT(*) FROM archive_erasures") == [(0,)]
+
+
+# --- R11, R12, R13: the census, the chain, the parser ------------------------------------------------------------
+
+
+def test_only_the_cli_erases_an_entry_or_closes_a_generation() -> None:
+    """``erase_entry`` and ``record_generation`` are named in ``src`` (called, referenced or spelled as a string)
+    by ``__main__.py`` alone, beside the store's definitions: no agent or service erases or closes a generation."""
+    naming: dict[str, set[str]] = {"erase_entry": set(), "record_generation": set()}
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in naming:
+                naming[node.attr].add(path.relative_to(_SRC).as_posix())
+            elif isinstance(node, ast.Constant) and type(node.value) is str and node.value in naming:
+                naming[node.value].add(path.relative_to(_SRC).as_posix())
+    assert naming == {"erase_entry": {"__main__.py"}, "record_generation": {"__main__.py"}}
+
+
+def test_a_later_crews_oracle_reads_what_the_reset_archived_under_the_old_timeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 0
+
+    results = asyncio.run(_oracle_query(tmp_path, "coolant drift"))
+    assert results, "premise: the query reaches the archive tier"
+    assert {result.metadata["timeline_id"] for result in results} == {_SHIP}
+    assert any("coolant drift" in result.content for result in results)
+
+
+@pytest.mark.parametrize(
+    ("argv", "command", "attribute", "value"),
+    [
+        (["reset", "--yes", "--skip-promotion", "drill"], "_cmd_reset", "skip_promotion", "drill"),
+        (["archive", "erase", "7", "--reason", "superseded", "--yes"], "_cmd_archive", "entry_id", 7),
+    ],
+    ids=["reset", "archive-erase"],
+)
+def test_main_parses_the_new_arguments_and_exits_with_the_command_code(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], command: str, attribute: str, value: Any,
+) -> None:
+    seen: list[_Namespace] = []
+
+    def _command(args: _Namespace) -> int:
+        seen.append(args)
+        return 3
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)  # no repository .env into the worker
+    monkeypatch.setattr(asyncio, "set_event_loop_policy", lambda policy: None)  # main sets one on Windows
+    monkeypatch.setattr(cli, command, _command)
+    monkeypatch.setattr("sys.argv", ["probos", *argv])
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+
+    assert exited.value.code == 3
+    assert [getattr(args, attribute) for args in seen] == [value]
+```
+
 ## 8. Tracking (tracker pairs; in M4's commit)
 
 Written against `0e122174` and re-anchored by the orchestrator on `80456da2`, because BF-903 merged first: both pairs anchor on BF-903's head line and its *Reversal* bullet. Set the date to the commit date.
@@ -2028,7 +3642,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1341 S1 (2026-10-22), #1569 slice 1 of 6 -- what the crew published survives a reset: `probos reset` promotes it into the Ship's Archive first, with provenance, and the Captain can erase an archive entry.** The Ship's Archive (AD-524) is at schema v1, migrated in place from v0. It gains provenance columns (source kind and ref, content SHA-256, classification, author DID, source episode ids), a partial unique index on `(source_kind, source_ref, content_sha256)`, and `generations` and `archive_erasures` tables; `secure_delete` is set and verified, and any other schema version is refused. `ArchiveStore.append` is gone. `promote_entry(PromotionRecord)` is the one write: idempotent across timelines, because Ship's Records survive a tier 2 reset. Only `ship` and `fleet` records can be built (C1). There is no episode source kind. `erase_entry` deletes a row and leaves a marker with no title, content or hash, which also keeps that source from being promoted again. The records-only service `knowledge/archive_promotion.py` promotes convergence reports, the Captain's log, published reports and governed notebook findings, read as the anonymous reader, with no model call; anything narrower than ship is withheld and reported. `config.resolve_records_repo_path` is the one records-path resolver. `probos reset` at tier 2 and above promotes before it wipes and refuses on any failure (exit 1). `--skip-promotion REASON` is recorded in `generations`, `--dry-run` lists the plan, and every executing reset holds the AD-816 pidfile and refuses beside a running vessel. `probos archive erase ENTRY_ID --reason` is the Captain's erasure. New: `tests/test_ad1341_s1_archive_store.py`, `tests/test_ad1341_s1_promotion.py` and `tests/test_ad1341_s1_reset_and_erase.py` (the real store, records, Oracle and reset command). Updated where they pinned the old write or used partial config fakes: `test_ad524_ships_archive.py`, `test_reset_integration.py`, `test_distribution.py`, `test_proactive.py` and `test_identity_deterministic.py`. The store-registry baseline row lists the two new tables. The contract is `prompts/ad-1341-s1-archive-provenance-promotion.md`.
+**AD-1341 S1 (2026-10-22), #1569 slice 1 of 6 -- what the crew published survives a reset: `probos reset` promotes it into the Ship's Archive first, with provenance, and the Captain can erase an archive entry.** The Ship's Archive (AD-524) is at schema v1, migrated in place from v0. It gains provenance columns (source kind and ref, content SHA-256, classification, author DID, source episode ids), a partial unique index on `(source_kind, source_ref, content_sha256)`, and `generations` and `archive_erasures` tables; `secure_delete` is set and verified, and any other schema version is refused. `ArchiveStore.append` is gone. `promote_entry(PromotionRecord)` is the one write: idempotent across timelines, because Ship's Records survive a tier 2 reset. Only `ship` and `fleet` records can be built (C1). There is no episode source kind. `erase_entry` deletes a row and leaves a marker with no title, content or hash, which also keeps that source from being promoted again. The store's writes and its close take turns on its one connection, so no call's rollback can undo another's work, and an id beyond SQLite's range is simply no entry. The records-only service `knowledge/archive_promotion.py` promotes convergence reports, the Captain's log, published reports and governed notebook findings, read as the anonymous reader, with no model call; anything narrower than ship is withheld and reported. `config.resolve_records_repo_path` is the one records-path resolver. `probos reset` at tier 2 and above promotes before it wipes and refuses on any failure (exit 1). `--skip-promotion REASON` is recorded in `generations`, `--dry-run` lists the plan, and every executing reset holds the AD-816 pidfile and refuses beside a vessel started with `probos serve`. `probos archive erase ENTRY_ID --reason` is the Captain's erasure. New: `tests/test_ad1341_s1_archive_store.py`, `tests/test_ad1341_s1_promotion.py` and `tests/test_ad1341_s1_reset_and_erase.py` (the real store, records, Oracle and reset command). Updated where they pinned the old write or used partial config fakes: `test_ad524_ships_archive.py`, `test_reset_integration.py`, `test_distribution.py`, `test_proactive.py`, `test_identity_deterministic.py` and `test_ad1270e1_config_facade.py` (its name counts). The store-registry baseline row lists the two new tables, and the config-facade baseline lists `resolve_records_repo_path` as owned. The contract is `prompts/ad-1341-s1-archive-provenance-promotion.md`.
 
 **BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.**
 ```
@@ -2047,13 +3661,13 @@ REPLACE:
 
 ### AD-1341 S1 -- What the crew published is promoted into the Ship's Archive before a reset, with provenance, and the Captain can erase an archive entry (2026-10-22, #1569 slice 1 of 6)
 
-- *Scope.* Slice 1 of #1569, in four milestone commits, one gate and one PR. Files: `knowledge/archive_store.py` (schema v1, `promote_entry`, `record_generation`, `erase_entry`, `entry_by_id`, the record types), new `knowledge/archive_promotion.py`, `config.py` (`resolve_records_repo_path`), `startup/cognitive_services.py`, `__main__.py` (`probos reset` promotion, `probos archive erase`), `docs/development/store-baseline.yaml` and tests. Contract: `prompts/ad-1341-s1-archive-provenance-promotion.md`. Later slices: S2 the inherited label, S3 the review queue and veto, S4 lessons and the stand-down, S5 after-action triggers and continuous promotion, S6 the `--full` snapshot and clean slate.
+- *Scope.* Slice 1 of #1569, in four milestone commits, one gate and one PR. Files: `knowledge/archive_store.py` (schema v1, `promote_entry`, `record_generation`, `erase_entry`, `entry_by_id`, the record types), new `knowledge/archive_promotion.py`, `config.py` (`resolve_records_repo_path`), `startup/cognitive_services.py`, `__main__.py` (`probos reset` promotion, `probos archive erase`), `docs/development/store-baseline.yaml`, `docs/development/config-facade-baseline.yaml` and tests. Contract: `prompts/ad-1341-s1-archive-provenance-promotion.md`. Later slices: S2 the inherited label, S3 the review queue and veto, S4 lessons and the stand-down, S5 after-action triggers and continuous promotion, S6 the `--full` snapshot and clean slate.
 - *D3 (the key).* `(source_kind, source_ref, content_sha256)`, without the timeline. Ship's Records survive a tier 2 reset, so a key with the timeline would archive every surviving record again under each new timeline: false provenance, duplicates, and an erasure undone. A changed document is a new entry under the timeline that changed it.
-- *D4-D6 (the store).* `promote_entry` is the one write (`append` is removed; `promote` was already a method name on two other classes); the erasure check and the insert are one statement. The contract types live in the store module and validate on construction with exact types; nothing narrower than `ship` can be built (C1). The migration is additive and idempotent, and `user_version` is written last; any other version is refused; `secure_delete` is verified.
+- *D4-D6 (the store).* `promote_entry` is the one write (`append` is removed; `promote` was already a method name on two other classes); the erasure check and the insert are one statement. The contract types live in the store module and validate on construction with exact types; nothing narrower than `ship` can be built (C1). The migration is additive and idempotent, and `user_version` is written last; any other version is refused; `secure_delete` is verified. (A2) The writes and the close hold one store lock through their commit or rollback (AD-1340 R3's pattern): on the shared connection, one call's rollback undid another's work, which still reported success. An id above SQLite's largest rowid is no entry, not an error.
 - *D7 (erasure).* The marker holds the entry id, timeline, source kind and ref, the reason and the time; never the title, content, metadata or hash. It blocks re-promotion of that source with any content, because the source still exists in Ship's Records.
 - *D8 (criteria).* Convergence reports by `system`, the Captain's log by `captain`, other reports when `published`, notebooks with a `claim_id` (AD-1140) or `published`. Read as the anonymous reader; anything narrower than ship, or with an empty body, is withheld and reported. No model call; records carry no episode ids.
 - *D11 (store registry).* The baseline row is updated, not declared: the archive lives outside `data_dir`, so its declaration is AD-1265's second-root question.
-- *D12-D13 (the reset).* At tier 2 and above `probos reset` promotes before deleting and refuses on any failure (exit 1). `--skip-promotion REASON` writes a `generations` row. Every executing reset holds the AD-816 pidfile, so it refuses beside a running vessel. With the archive disabled it proceeds with a notice.
+- *D12-D13 (the reset).* At tier 2 and above `probos reset` promotes before deleting and refuses on any failure (exit 1); without an instance id, records to promote also refuse. `--skip-promotion REASON` writes a `generations` row; a blank, over-long or tier 1 reason exits 2. Every executing reset holds the AD-816 pidfile, so it refuses beside a vessel started with `probos serve` (the interactive shell takes no pidfile: register). With the archive disabled the reset proceeds with a notice and `probos archive erase` exits 2.
 - *C1.* Promoting at `ship` classification or above only stands; the Captain can overrule it.
 - *Disclosed effects.* The live archive migrates to v1 on its next boot; an archive at another version is refused (the Oracle's archive tier off). `probos reset` can now refuse and exit 1, including `--soft` beside a running vessel. Erased bytes stay in earlier snapshots until they age out. A record first eligible in a later generation is attributed to that generation.
 - *Reversal.* Revert the S1 commits. The archive file stays at v1: AD-524's code reads and writes it unchanged, since its statements name only v0 columns and the partial index excludes rows with no hash. Promoted rows, generations and markers stay until the Captain removes them. `probos reset` stops promoting and stops refusing beside a running vessel.
@@ -2075,11 +3689,13 @@ REPLACE:
 - `RecordsStore` itself; `record_is_readable`; `publish_finding`; the AD-551 step.
 - The AD-1265 backup roots and the AD-1266 restore; the store declarations (only the baseline row changes).
 - `doctor/runner.py`'s `_default_data_dir` (register).
+- (M3) `pidfile_guard.py` and `_serve`'s use of it; the interactive shell still takes no pidfile (register RA1-1); the `rebuild-episodic` and `backup-reclaim` probes.
+- (M3) The tier loop's behaviour and its two git launches, `_show_dry_run`, `_show_confirmation_prompt` and every other subcommand.
 - Federation sharing of the archive; trust scoring (the just-culture note goes to its next owner).
 
-## 10. Mutation rows (30 rows for M1 and M2; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (46 rows: 36 for M1 and M2, 10 for M3; whole stripped lines, each occurring once in its file after §7)
 
-Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s1_archive_store.py` (rows K) or `tests/test_ad1341_s1_promotion.py` (rows P, C, S) on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. M3's rows come with Amendment A1.
+Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s1_archive_store.py` (rows K) or `tests/test_ad1341_s1_promotion.py` (rows P, C, S) on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. Rows M-R run against `tests/test_ad1341_s1_reset_and_erase.py` on the tree with §7.9 to §7.14 applied.
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -2102,6 +3718,12 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | K17 | `src/probos/knowledge/archive_store.py` | `if type(self.source_kind) is not SourceKind:` | `if False:` | A6 `[plain-str-kind]` |
 | K18 | `src/probos/knowledge/archive_store.py` | `if self.outcome is GenerationOutcome.SKIPPED and not self.reason.strip():` | `if False:` | A12b `[skipped-without-reason]` |
 | K19 | `src/probos/knowledge/archive_store.py` | `source_kind=row[9],` | `source_kind="",` | A4 (the entry assertion) |
+| K20 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 F1: the insert and its erasure check commit or roll back alone` | `if True:` | A14 `[missing-erase-and-promote]` (CREATED, no second row). A2, D16 |
+| K21 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 F1: the generation row commits or rolls back alone` | `if True:` | A14 `[missing-erase-and-generation]` (an id, no row); also A15. A2, D16 |
+| K22 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 F1: the marker and the delete commit or roll back alone` | `if True:` | A14 `[erase-and-missing-erase]` (True, the row kept, no marker). A2, D16 |
+| K23 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 F1: never close inside another call's transaction` | `if True:` | A14b (the erasure raises; `wait_for` bounds the run). A2, D16 |
+| K24 | `src/probos/knowledge/archive_store.py` | `if entry_id > _SQLITE_MAX_ROWID:  # AD-1341 F2: no row has it, and SQLite cannot bind it` | `if False:` | A16 `[above-sqlite]` (`OverflowError` from `erase_entry`). A2, D17 |
+| K25 | `src/probos/knowledge/archive_store.py` | `if not self._db or not 0 < entry_id <= _SQLITE_MAX_ROWID:  # AD-1341 F2: ids are positive rowids` | `if not self._db:` | A16 `[above-sqlite]` (`OverflowError` from `entry_by_id`). A2, D17 |
 | P-R1 | `src/probos/knowledge/archive_promotion.py` | `return SourceKind.CONVERGENCE_REPORT if author == "system" else None` | `return SourceKind.CONVERGENCE_REPORT` | P3 `[convergence-by-agent]` |
 | P-R2 | `src/probos/knowledge/archive_promotion.py` | `return SourceKind.CAPTAINS_LOG if author == "captain" else None` | `return SourceKind.CAPTAINS_LOG` | P3 `[captains-log-by-agent]` |
 | P-R3 | `src/probos/knowledge/archive_promotion.py` | `return SourceKind.PUBLISHED_REPORT if status == "published" else None` | `return SourceKind.PUBLISHED_REPORT` | P3 `[draft-report]` (also `[gap-report]`) |
@@ -2113,14 +3735,29 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | C-R1 | `src/probos/config.py` | `return Path(data_dir) / "ship-records"` | `return Path(data_dir) / "records"` | P12 `[default]` |
 | C-R2 | `src/probos/config.py` | `if records.repo_path:` | `if False:` | P12 `[override]` |
 | S-R1 | `src/probos/startup/cognitive_services.py` | `rcfg = rcfg.model_copy(update={"repo_path": str(resolve_records_repo_path(rcfg, data_dir))})` | `rcfg = rcfg.model_copy(update={"repo_path": str(data_dir / "ship-records")})` | P13 |
+| M-R1 | `src/probos/__main__.py` | `if promote_first and not _promote_before_reset(config, tier, data_dir, skip_reason, console):` | `if False:` | R1 (no archive). "Promote after delete": the tier loop runs with nothing promoted first |
+| M-R2 | `src/probos/__main__.py` | `return False  # AD-1341 S1: a failed promotion refuses the reset` | `return True` | R3 (exit 0, `trust.db` deleted). "Swallow the error" |
+| M-R3 | `src/probos/__main__.py` | `timeline_id = _read_instance_id(data_dir)  # before the tier loop deletes it` | `timeline_id = ""` | R1 (exit 1: no instance id). "The instance id read after deletion" |
+| M-R4 | `src/probos/__main__.py` | `promote_first = tier >= 2  # AD-1341 S1: tier 1 keeps the crew, so it has nothing to promote` | `promote_first = tier >= 1` | R5 (exit 1 and an archive file). "Tier 1 promotes" |
+| M-R5 | `src/probos/__main__.py` | `return _show_promotion_plan(config, data_dir, skip_reason, console)` | `return 0 if _promote_before_reset(config, tier, data_dir, skip_reason, console) else 1` | R6 (the archive file exists). "The dry run writes" |
+| M-R6 | `src/probos/__main__.py` | `reset_pidfile = acquire_pidfile(data_dir)` | `reset_pidfile = data_dir / "probos.pid"` | R7 `[soft]` (exit 0; `events.db` deleted; the owner's pidfile unlinked). "The pidfile guard dropped" |
+| M-R7 | `src/probos/__main__.py` | `await archive.record_generation(skipped)` | `pass` | R4 (no `generations` row). "A skip without its row" |
+| M-R8 | `src/probos/__main__.py` | `return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted` | `return 0` | R3 (exit 0). "A refusal that exits 0" |
+| M-R9 | `src/probos/__main__.py` | `if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id` | `if False:` | R9 `[with-records]` (exit 0; deletes) |
+| M-R10 | `src/probos/__main__.py` | `if not confirmed and input("  Erase it? [y/N]: ").strip().lower() != "y":` | `if False:` | R10b `[declined]` (the entry is erased) |
 
 **Lines without a row, and why:**
 - `ARCHIVE_READER = ""` → `"captain"`, and `read_entry`'s reader argument: **equivalent**. Every record the captain could read beyond the anonymous reader is narrower than ship, and P-R7's gate withholds it. Reading as anonymous is defence in depth (the orchestrator's "read as captain").
 - `if not row or int(row[0]) != 1:`: equivalent while `secure_delete` is available.
 - `if type(record) is not PromotionRecord:`: A6c kills it only through the database error; not distinct.
 - The title and metadata lines in `plan_promotion`: no behaviour reads them in S1.
-- The `_valid_reason` call site, the logging lines, and the `entry_by_id` body: any change breaks A8, or they have no behaviour.
+- The `_valid_reason` call site, the logging lines, and the rest of the `entry_by_id` body: any change breaks A8, or they have no behaviour.
+- (A2) `_write_lock`'s construction: K20 to K23 remove each holder. The three `if not self._db:` checks inside the lock are identical lines (no unique row), and a close landing while a write waits for the lock is not stageable without a hook. `_SQLITE_MAX_ROWID`: raised, A16 `[above-sqlite]` fails; lowered, it is equivalent for every id a row can have.
 - `_rollback_quietly` and `_close_quietly`: their failure paths are not stageable deterministically.
+- (M3) `_skip_promotion_problem`'s two checks and `_cmd_archive`'s disabled, id and reason checks: R4b, R8 and R10b fail on `if False:` for each, and the store's own checks (K14, K15, K18) back them; no extra rows.
+- (M3) `_configured_archive_store`'s `mkdir` for the computed default: the tests set `db_path`, and reaching the platform default would write outside `tmp_path`.
+- (M3) The pidfile `unlink` in `finally` and its `FileNotFoundError` and `OSError` branches: R1 and R3 assert the file is gone; the failure branch is not stageable deterministically.
+- (M3) The notice and summary `console.print` lines: output only.
 
 ## 11. Verified Against Codebase (2026-10-22, HEAD `0e122174`, tree `70e8542d8b3b7ae262e91ad147caedfaeb28c9a1`)
 
@@ -2160,6 +3797,14 @@ src/probos/storage/sqlite_factory.py:12-42 SQLiteConnectionFactory.connect(db_pa
 src/probos/protocols.py:325-354 DatabaseConnection (execute, executemany, executescript, fetchone, fetchall, commit); 362-371 ConnectionFactory
 src/probos/agent_stop.py:150-155 _rollback_quietly (execute("ROLLBACK"))
 src/probos/cognitive/episode_archive.py:463-484 secure_delete set+verify; user_version not in (0, V) -> refuse
+(A2, read at 67f00845)
+src/probos/cognitive/episode_archive.py:451-455 _write_lock = asyncio.Lock() (AD-1340 R3: every mutation and stop() hold it; reads never)   486-490 stop() under it
+src/probos/cognitive/procedure_store.py:157-159 _write_lock = asyncio.Lock() (BF-891: binds to the loop on first contention)   cognitive/episodic.py:1466 _store_write_lock
+src/probos/knowledge/archive_store.py (M1 as built): 284-289 _rollback_quietly (a connection-wide ROLLBACK); 359-435 the three writes share self._db, unserialised; 419 erase_entry's id guard (type and <= 0 only); 437-443 entry_by_id binds any int
+src/probos/storage/sqlite_factory.py:37 aiosqlite.connect (sqlite3's default isolation: an implicit BEGIN before each write)
+src/probos/__main__.py (M3 as built): 3309-3318 archive erase (argparse type=int at 3671; only <= 0 refused; a catch-all prints "The erasure failed"); 3328 entry_by_id before 3338 erase_entry
+scripts/phantom_api_ast_helper.py:271-274 _PATTERN_B_RE (a line starting "name = ClassName(" or "name=ClassName(" types name contract-wide)
+tests/test_issue1419_failed_start_rollback.py:2254 ("_archive_store", "close", "_db", True)
 src/probos/infrastructure/backup_inventory.py:216-247 archive root   backup.py:793 src_conn.backup(dest_conn)   config_models/operations.py:585 backup_include_archive_root = True
 src/probos/identity.py:103-112 generate_ship_did   ontology/loader.py:95-102 instance id read/strip
 src/probos/runtime.py:234-251 _platform_data_dir   doctor/runner.py:32-39 its own _default_data_dir
@@ -2171,6 +3816,45 @@ tests/test_issue1419_failed_start_rollback.py:2254 ("_archive_store", "close", "
 tests/fixtures/ad1343_seam_census.py:25-39 STOP_CALLEES, GUARD_CALLEES, RECORDED; tests/fixtures/ad1343_seam_registry.py:42-61
 tests/test_layer_boundaries.py:45-57 knowledge -> {substrate}
 pyproject.toml:9 requires-python >=3.12 (StrEnum); 181 asyncio_mode = "auto"; 196 addopts -n 16 --dist=loadfile
+```
+
+**A1 additions (2026-10-22; the dry-run tree `0f13771c`, tree `6799dd885f0564c12eaf3613f4bb99834a7269da`, M1 and M2 as this contract builds them).** Each A1 SEARCH was grepped in this contract at `b1a0b80d` with no `$` anchor and found once; each §7.9 to §7.13 SEARCH was read in its file at the lines below.
+
+```text
+src/probos/__main__.py
+  13 from __future__ import annotations; 19 import asyncio; 25 import sys; 64-65 if TYPE_CHECKING: import httpx; 68 _default_data_dir
+  506-509 _load_config_with_fallback -> (load_config(resolved), resolved)
+  586 _boot_runtime: data_path = data_dir or _default_data_dir()   675-677 _boot_and_run (no pidfile)
+  722-751 _serve: resolved_data_dir = data_dir or _default_data_dir(); acquire_pidfile; AnotherInstanceRunning -> SystemExit(2)
+  774, 801, 955 _pidfile.unlink(missing_ok=True)
+  2622-2661 RESET_TIERS (no probos.pid), _ALWAYS_PRESERVED   2775-2829 _show_confirmation_prompt   2832-2882 _show_dry_run
+  2885-3078 _cmd_reset -> None: 2887 console = Console(); 2894 config; 2896-2897 data_dir; 2904-2905 tier; 2928-2931 dry run;
+    2933-2937 confirmation; 2939-3042 tier loop and git commit (3030, 3035 subprocess.run, env=trusted_command_env()); 3044-3078 summary
+  3081 _force_remove_readonly   3146-3172 the pairing subparsers (the add_subparsers(dest=..., required=True) pattern)
+  3381-3391 reset parser; args = parser.parse_args()   3393-3444 sys.exit(_cmd_*(args)) with a local import sys   3446-3448 reset dispatch
+src/probos/pidfile_guard.py: 24-34 AnotherInstanceRunning(RuntimeError); 94-106 O_EXCL create (96 mkdir parents);
+  109-165 acquire_pidfile (garbage: unlink and retry; own PID: reclaim; live: raise; stale: unlink and retry); 168-183 assert_no_other_instance
+src/probos/knowledge/archive_store.py (built): 71 ARCHIVE_REASON_MAX_CHARS; 94-98 GenerationOutcome; 154-179 GenerationRecord;
+  200-223 generations and archive_erasures columns; 313-351 initialize; 393-409 record_generation; 411-435 erase_entry; 437-443 entry_by_id
+src/probos/knowledge/archive_promotion.py (built): 86-130 plan_promotion; 133-161 promote_ship_records -> PromotionReport
+src/probos/config.py (built): 2631-2655 resolve_archive_db_path; 2658-2666 resolve_records_repo_path; 3897-3899 knowledge, records, archive
+src/probos/config_models/knowledge.py: 280-284 KnowledgeConfig.repo_path; 317-322 RecordsConfig; 358-362 ArchiveConfig(enabled, db_path)
+src/probos/knowledge/records_store.py:174-176 RecordsStore(config, ontology=None)
+src/probos/startup/cognitive_services.py:669-697 the archive at startup (mkdir only for the default)
+src/probos/ontology/loader.py:95-102, 153-161 {data_dir}/ontology/instance_id, read and stripped
+tests/test_bf892_spawn_env_guard.py:82-85 TRUSTED_ENV_SITES ("src/probos/__main__.py", "_cmd_reset"): (2, ...)
+tests/test_quality_hardening.py:64-71 "text=True" not in getsource(_cmd_reset)
+tests/test_ad1340_s1_restore_reset.py:44 imports _run_reset; 264-297 tiers 2 and 1; 318-332 two EpisodicMemory constructions in __main__
+tests/test_bf902_fts_reconciliation.py:32 imports _run_reset; 242 and 259 async; 280-292 RESET_TIERS pins
+tests/test_reset_integration.py:35-57 _reset_args, _run_reset (MagicMock config)
+tests/test_distribution.py:10-16 imports; 1099-1288 seven reset tests, six at tier 2 or above
+tests/test_proactive.py:698-755 two tier 2+ tests; 760-811 two tier 1 tests
+tests/test_identity_deterministic.py:3-6 imports; 117-180 three tier 2 tests
+tests/test_dotenv.py:12-40 main() with --help builds the whole parser
+tests/test_ad1270e1_config_facade.py:1515-1556, 1780-1791 the pinned counts
+docs/development/config-facade-baseline.yaml:48-55 surface_counts; 142 names:; 445-449 the rows around resolve_archive_db_path
+tests/fixtures/ad1343_seam_census.py:25-39; tests/fixtures/ad1343_seam_registry.py:42-61
+scripts/phantom-api-precheck.ps1:113-128 (only python fences kept, SEARCH blocks included), 217, 228; scripts/phantom_api_ast_helper.py:271-274 pattern B
 ```
 
 ## Absence Verified (2026-10-22)
@@ -2212,6 +3896,68 @@ FOUND: none of promote_entry, record_generation, erase_entry, entry_by_id, plan_
 HOLDS: yes
 ```
 
+**A1 additions:**
+
+```text
+CLAIM: only `probos serve` holds the AD-816 pidfile; the interactive shell takes none                    (A1-AV1)
+RUN:   Grep 'acquire_pidfile|assert_no_other_instance' src/probos
+FOUND: pidfile_guard.py:109, 168, 171; __main__.py:745, 748 (_serve); 2105, 2110 (backup-reclaim --force probe); 2198, 2208 (rebuild-episodic probe)
+HOLDS: yes: _boot_and_run acquires nothing (register RA1-1)
+
+CLAIM: no caller reads `_cmd_reset`'s return value                                                         (A1-AV2)
+RUN:   Grep '_cmd_reset' *.py
+FOUND: __main__.py:2885 (def), 3447 (dispatch, value dropped); test_bf892:85 (site key); test_distribution.py:1110-1288 (7 calls);
+       test_identity_deterministic.py:125-180 (3); test_proactive.py:702-809 (4); test_quality_hardening.py:68-70 (getsource); test_reset_integration.py:46, 57
+HOLDS: yes: no assignment, assert or comparison
+
+CLAIM: only bf902's two async tests call `_cmd_reset` inside a running event loop                           (A1-AV3)
+RUN:   Grep '^(async )?def test_|_run_reset\(' in test_ad1340_s1_restore_reset.py, test_bf902_fts_reconciliation.py; Grep 'async def' in the four updated files
+FOUND: bf902:242 (tier 2), :259 (tier 1) async; ad1340:264 sync; the reset tests in the four files are sync defs
+HOLDS: yes: with the archive disabled (7.10), neither reaches asyncio.run
+
+CLAIM: no M3 name is an AD-1343 census callee                                                               (A1-AV4)
+RUN:   Read tests/fixtures/ad1343_seam_census.py:25-39 and ad1343_seam_registry.py:42-61
+FOUND: none of _cmd_archive, _erase_archive_entry, _promote_before_reset, _promote_into_archive, _show_promotion_plan, _read_instance_id,
+       _reset_records_store, _configured_archive_store, _skip_promotion_problem, acquire_pidfile, record_generation, erase_entry, entry_by_id,
+       plan_promotion, promote_ship_records, run
+HOLDS: yes
+
+CLAIM: nothing in src names erase_entry, record_generation or entry_by_id as an attribute today            (A1-AV5)
+RUN:   Grep '\.(erase_entry|record_generation|entry_by_id)\b' src/probos
+FOUND: 0
+HOLDS: yes: R11 fails on the M2 tree and passes after 7.9
+
+CLAIM: no reset tier deletes the pidfile                                                                    (A1-AV6)
+RUN:   Read __main__.py:2622-2661; Grep 'probos\.pid' src/probos
+FOUND: no probos.pid in RESET_TIERS; pidfile_guard.py:3, 116, 174 (the other hits are the module name)
+HOLDS: yes
+
+CLAIM: no test pins the CLI's subcommands or calls main() with reset; no archive subcommand exists         (A1-AV7)
+RUN:   Grep '"reset"|add_parser\("archive"' {src,tests}/**/*.py; Grep '"backup-reclaim"|_choices_actions' tests
+FOUND: __main__.py:3382 (the reset parser), 2974 (an audit literal); no archive parser; test_dotenv.py calls main() with --help only
+HOLDS: yes
+
+CLAIM: the facade counts are pinned only in the baseline and four test lines                               (A1-AV8)
+RUN:   Grep 'names=30[0-9]|== 307|== 294' over tests, scripts, docs, src
+FOUND: test_ad1270e1_config_facade.py:1521, 1522, 1555, 1791; config-facade-baseline.yaml:54-55; test_bf822_browser_navigation_floor.py:937, 1106, 1354 (HTTP 307, unrelated)
+HOLDS: yes
+
+CLAIM: no store method calls another store method, so the non-re-entrant lock cannot deadlock             (A2-AV1)
+RUN:   Grep 'self\.(promote_entry|record_generation|erase_entry|entry_by_id|search|get_recent|count|close|initialize)\(' src/probos/knowledge/archive_store.py (at 67f00845)
+FOUND: 0
+HOLDS: yes
+
+CLAIM: no src caller overlaps two calls on one archive store (F1 is injected-only in S1)                   (A2-AV2)
+RUN:   Grep '\.(promote_entry|record_generation|erase_entry|entry_by_id)\(' src/probos; Grep 'gather|create_task|TaskGroup' src/probos/knowledge/archive_promotion.py
+FOUND: archive_promotion.py:147; __main__.py:3239, 3247, 3328, 3338, each awaited alone; 0 in archive_promotion.py
+HOLDS: yes. S2 to S6 add writers inside the vessel, which is why D16 fixes it now
+
+CLAIM: M1's tests had no overlapping-write or failed-write coverage                                         (A2-AV3)
+RUN:   Grep 'gather|create_task|asyncio' tests/test_ad1341_s1_archive_store.py (at 67f00845)
+FOUND: 0
+HOLDS: yes: A14, A14b and A15 are new
+```
+
 ## 12. Deterministic gate checks, resolved up front
 
 | Check | Result |
@@ -2224,12 +3970,19 @@ HOLDS: yes
 | Store registry | Rule 11: 7.3 updates the row; run `scripts/check_store_registry.py --check` in M1 |
 | `.db` literal census (`test_ad1265_backup_coverage.py`) | no new `*.db` literal in `src` |
 | AD-1343 census | no new name in `STOP_CALLEES`, `GUARD_CALLEES` or `RECORDED`; no `.complete(`, `.finalize(` or `.report(` call |
-| Subprocess census (`test_bf892`) | none added (M1, M2); M3 must add none to `_cmd_reset` |
-| Hidden pins | `test_ad524` (7.2); `test_issue1419:2254` (`close` and `_db` kept); M3's `_cmd_reset` and `RESET_TIERS` pins (§4) |
+| Subprocess census (`test_bf892`) | none added. M3 re-indents the tier loop inside `_cmd_reset`'s `try` instead of extracting it, so both git launches keep the site key `("src/probos/__main__.py", "_cmd_reset")` (`test_bf892_spawn_env_guard.py:85`) |
+| Hidden pins | `test_ad524` (7.2); `test_issue1419:2254` (`close` and `_db` kept); `test_quality_hardening.py:64-71` (no `text=True` added to `_cmd_reset`); `test_ad1340_s1_restore_reset.py:325-327` (no `EpisodicMemory` construction added to `__main__`); the `RESET_TIERS` pins (`test_ad1340_s1_restore_reset.py:293-296`, `test_bf902_fts_reconciliation.py:282-292`: unchanged); `test_bf877_unapproved_design_is_refused.py:457` (the `ProbOSShell` sites unchanged); `test_bf781_isolation_claims.py:378-385` (the `wait_for` timeouts unchanged); the facade counts (7.6c) |
 | db-connect | the store uses its injected `ConnectionFactory`; tests use `sqlite3` read-back only |
-| Config | no new field; `resolve_records_repo_path` reads no environment variable (`test_ad1270e1_config_facade.py` in M2) |
-| Size | `archive_store.py` grows by about 230 lines (to about 420); `archive_promotion.py` about 150; the tests about 330 and 300 |
+| Config | no new field; `resolve_records_repo_path` reads no environment variable. It is a new public name of `probos.config`: 7.6b adds its `tier: owned` row beside `resolve_archive_db_path` (AD-1265's precedent) and the counts 308 and 295, and 7.6c updates the four pinned values. M2's gate runs `scripts/check_config_facade.py --check`. No mutation row: the baseline is data, guarded by `--check` and the two pinned tests |
+| Size | `archive_store.py` grows by about 245 lines (to about 435); `archive_promotion.py` about 150; the tests about 440 and 300 |
 | Ledger | M4 |
+| Phantom precheck (M3) | the new capitalised calls are ProbOS classes (`GenerationRecord`, `ArchiveStore`, `RecordsStore`; in the test also `SystemConfig`, `KnowledgeConfig`, `ArchiveConfig`, `RecordsConfig`, `OracleService`). The test aliases `argparse.Namespace` as `_Namespace`; 7.11 and 7.13 alias `SimpleNamespace` as `_SimpleNamespace`. No python block includes the existing `Console` construction (`__main__.py:2887`) or a fake's `SimpleNamespace` constructor line, and `_cmd_archive` writes with `print`. `AnotherInstanceRunning` appears only in `except` |
+| Method check (pattern B, M3) | no store is assigned from a constructor: both come from `return` helpers (`_configured_archive_store`, `_reset_records_store`; in the test `_archive_store`, `_records`). `skipped` and `closed` (built from `GenerationRecord`) get no method call |
+| AD-1343 census (M3) | no new name in `STOP_CALLEES`, `GUARD_CALLEES` or `RECORDED` (A1-AV4); no `.report(`, `.complete(` or `.finalize(` call |
+| Event loop (M3) | `_cmd_reset` runs at most one `asyncio.run`, after the archive-enabled check; the async callers (A1-AV3) reach it with the archive disabled or at tier 1 |
+| Lock (A2) | the lock comes from `asyncio`; `src` annotates `asyncio.Lock` (`http_fetch.py:782`), so the precheck resolves it, and it binds to the running loop only when first contended (BF-891, `procedure_store.py:157-159`). No new name in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`; no new public method (A7 unchanged) |
+| Phantom precheck (A2) | 20 candidates on the A1 text, 0 after A2: 7.14's `_config` binds `section` (no method is called on it anywhere), so no line begins `archive=`; the reset's `finally` calls `unlink()` and passes on `FileNotFoundError`. A15's trigger spells `RAISE (` with a space |
+| Size (M3) | `__main__.py` grows by about 250 lines; the new test is about 330 lines |
 
 ## 13. Prior Art and Blind Spots
 
@@ -2266,6 +4019,19 @@ HOLDS: yes
 6. Several vessels on one machine share the archive. Accepted; disclosed effect 7.
 7. Records carry no author DID, so `author_did` is empty until S4.
 8. The doctor's data-dir function differs from the reset's. Register.
+9. (A1) Only `probos serve` takes the pidfile; the interactive shell does not. Register RA1-1.
+10. (A1) Two async tests call `_cmd_reset` inside a running loop. Fixed: the disabled check comes before `asyncio.run`.
+11. (A1) Two resets with no boot between have no instance id. Disclosed effect 8; register RA1-2.
+12. (A1) The config facade pins its public-name counts. Fixed by 7.6b and 7.6c.
+13. (A1) Captain-supplied and archive text printed through Rich markup. `escape` on `_cmd_reset`'s new output (BF-903 A3's pattern); plain `print` in `_cmd_archive`.
+14. (A2) Overlapping calls share one connection: one call's rollback undid another's work, which still reported success. Fixed by D16.
+15. (A2) An id above SQLite's INTEGER range raised instead of meaning "no entry", and the CLI reaches it with the Captain's input. Fixed by D17.
+16. (A2) A read during a write sees the write in flight (one connection). Accepted: no S1 process reads and writes one store at once. Register RA2-1.
+17. (A2) Two concurrent `initialize` calls each open a connection (AD-524's shape, unchanged). Register RA2-2.
+
+**A1 prior art.** AD-816's `acquire_pidfile` is reused, not reimplemented. `verify-snapshot`'s pidfile-free read path is followed for `--dry-run`. BF-903 A3's `rich.markup.escape` is adopted. External search was skipped: this is ProbOS CLI plumbing with no outside analogue worth the search.
+
+**A2 prior art.** AD-1340 R3's `_write_lock` (`episode_archive.py:451-455`) is followed: created in `__init__`, held by every mutation and the close, never by reads; `procedure_store.py:159` (BF-891) and `episodic.py:1466` create theirs the same way. AD-1340's `stop()` swaps the handle out and swallows a failed close; this store keeps its own close, which keeps `_db` after a failure for shutdown's last resort (`test_issue1419_failed_start_rollback.py:2254`). External search was skipped: the defect is this store sharing its own connection, and the repo's pattern fixes it; the reference-projects review does not apply to a bug-fix amendment.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -2273,21 +4039,31 @@ HOLDS: yes
 2. A record narrower than `ship`, with a non-`SourceKind` kind, or with blank required text cannot be built. The service withholds such records rather than failing the run. No `SourceKind` member names an episode.
 3. The idempotence key is `(source_kind, source_ref, content_sha256)` in both the index and the conflict target (one constant). A second run, under any timeline, writes nothing.
 4. The erasure check and the insert are one statement. An erased source (kind and ref) is never written again, with any content.
-5. `erase_entry` writes the marker and deletes the row in one transaction; the marker has exactly the 7 columns in A8 and no title, content, metadata or hash. A missing id writes nothing and returns False. A failure rolls back.
+5. `erase_entry` writes the marker and deletes the row in one transaction; the marker has exactly the 7 columns in A8 and no title, content, metadata or hash. A missing id, including one above SQLite's largest rowid (D17), writes nothing and returns False; `entry_by_id` returns None for it. A failure rolls back.
+5b. (A2) `promote_entry`, `record_generation`, `erase_entry` and `close` each hold the one `_write_lock` (created in `__init__`) from the `_db` check through the commit or rollback; reads and `initialize` do not. No method holding it calls another store method. `close` still clears `_db` only after a successful close. A14, A14b and A15 read the file back with `sqlite3`, and each fails on the unamended M1.
 6. `initialize` sets and verifies `secure_delete` before any schema work, refuses any version but 0 or 1 unopened, adds only absent columns, creates the partial unique index, and writes `user_version` last. A failed open closes the connection.
 7. v0 rows survive with their content; `search`, `get_recent` and the Oracle return them.
 8. Startup's records path is byte-identical to before; the resolver has no other effect.
 9. The service makes no model call, swallows nothing, reads as `""`, and writes nothing while planning.
 10. The store-baseline row lists exactly the tables the module creates, sorted.
 11. Each updated test changes only where it pinned `append`, with an inline `AD-1341 S1 (#1569)` reason; none is deleted.
+12. (M3) At tier 2 and above nothing is deleted before `_promote_before_reset` returns True. Any exception, a refused archive version, or records with no instance id exit 1 with every file in place. Tier 1 never reads `config.archive`.
+13. (M3) Every executing reset (`--soft` included) holds `{data_dir}/probos.pid` from after the confirmation through the tier loop and the git commit, and releases it on every exit. A live owner exits 1 and its pidfile is untouched. `--dry-run` takes no pidfile and opens no archive.
+14. (M3) A blank, over-long or tier 1 `--skip-promotion` exits 2 before anything is read, locked or deleted. A valid one writes exactly one `skipped` row and promotes nothing.
+15. (M3) The instance id is read before the tier loop, and the `promoted` row names it.
+16. (M3) `probos archive erase` shows the entry and asks unless `--yes`. It exits 2 with the archive disabled or a bad id or reason, 1 for no such entry, and 0 when erased or declined. `src` names `erase_entry` and `record_generation` only in `__main__.py` (R11).
+17. (M3) The tier loop and git commit are byte-identical apart from four spaces of indentation. `RESET_TIERS`, both launches and their `trusted_command_env()` are unchanged.
+18. (M2, M3) The fakes disable the archive with an inline `AD-1341 S1 (#1569)` reason, and none is deleted. The facade counts move only by the one owned name.
 
 ## 15. Acceptance criteria
 
 1. Schema v1 with provenance, migrated in place, versions refused, `secure_delete` verified (A1–A3; K3–K7).
 2. One idempotent write, D3's key, C1 enforced at the store, a closed `SourceKind` with no episode member (A4–A7; K1, K2, K8, K16, K17, K19).
-3. The Captain's erasure: the row gone, the bytes overwritten, a content-free marker, no re-promotion (A8–A11; K9–K15).
+3. The Captain's erasure: the row gone, the bytes overwritten, a content-free marker, no re-promotion, and an id beyond SQLite is no entry (A8–A11, A16; K9–K15, K24, K25).
 4. Generations recorded with validation (A12; K18).
+4b. (A2) One transaction at a time on the store's one connection: overlapping writes, a failed write and a close never undo or end another call's work (D16; A14, A14b, A15; K20–K23).
 5. Records-only promotion with fixed criteria, the anonymous reader, C1 withholding, offline reads, no swallowed failure, and the chain to a later crew's Oracle (P1–P11; P-R1–P-R8).
-6. One records-path resolver (P12, P13; C-R1, C-R2, S-R1); layer and census (P14, P15).
-7. Every change has a test that fails on today's tree (§6), and every mutation row is killed by the named test. One broad gate and one PR for M1–M4; a cross-family GPT-6.1 Sol review per milestone (tier HIGH).
-8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+6. One records-path resolver (P12, P13; C-R1, C-R2, S-R1); layer and census (P14, P15); the config facade baseline and its pins name it (7.6b, 7.6c; `check_config_facade.py --check`).
+7. (M3) `probos reset` promotes before it deletes at tier 2 and above. It refuses with nothing deleted on any failure, with no instance id for records to promote, or beside a live pidfile. It records `--skip-promotion`, and lists the plan on `--dry-run` without writing. `probos archive erase` is the Captain's erasure, and an erased source stays out of the next generation's archive (R1–R13; M-R1–M-R10).
+8. Every change has a test that fails on today's tree (§6), and every mutation row is killed by the named test. One broad gate and one PR for M1–M4; a cross-family GPT-6.1 Sol review per milestone (tier HIGH).
+9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
