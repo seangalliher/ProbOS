@@ -1,11 +1,11 @@
 # BF-904b: the sealed-core observation can fire, refusals and syntax state are kept apart, a build in review holds its files, and the visiting builder works from whole files
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, §16)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-21 (Amendment A1, §16; Amendment A2, §17)
 
 **Status:** build-ready on the merged main (after BF-901 S3). **Closes #1585** (BF-904b: items 2, 4, 6 and 7; BF-904a did 1, 3 and 5). **Tier HIGH** (the build pipeline; item 2 is a governance control; M2 changes when model-written code runs). No new AD or BF number. **Base:** drafted on HEAD `90a9e040`, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061` (`origin/main` `ad5f820c` plus BF-901 S3, which touches nothing in the build pipeline). **Source:** the Architect's read-only consult of 2026-10-21.
 
-**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 9 functions, 21 cases. M2 `tests/test_bf904b_fix_loop_state.py`: 6 functions, 10 cases. M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **42 cases in 20 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2), `tests/test_bf896_executor_identity_and_blocks.py` (2: the signature pin in M1, 7.5b, added by Amendment A1; the seed test in M3, 7.12).
+**Tests:** three new files. M1 `tests/test_bf904b_sealed_core_observation.py`: 10 functions, 24 cases (S9 added by Amendment A2). M2 `tests/test_bf904b_fix_loop_state.py`: 6 functions, 10 cases. M3 `tests/test_bf904b_dispatch_and_visiting.py`: 5 functions, 11 cases. **45 cases in 21 functions.** Updated where they pinned the old behaviour, each with an inline reason: `tests/test_ad481_extensions.py` (2 functions, M1), `tests/test_bf898_fix_loop_grader_protection.py` (1, M2), `tests/test_bf896_executor_identity_and_blocks.py` (2: the signature pin in M1, 7.5b, added by Amendment A1; the seed test in M3, 7.12).
 
 **Line endings:** every edited file's working copy is CRLF (`core.autocrlf=true`). The SEARCH blocks are written with LF; match and write with the file's own line endings. The new test files are written LF and checked in as git normalises them.
 
@@ -50,7 +50,7 @@ The one `branch -D` left (`builder.py:3728`) deletes `build_branch`, which `_git
 - **D2 (slicing).** M1 item 2; M2 item 4 and F-153 item 18; M3 items 6 and 7. One broad gate and one PR for all three. M1 and M2 share `execute_approved_build`, so M2's review reads M1's changes to that function. M3 is independent; its chain test (V2) runs the executor M1 and M2 left. Ranked: (A) this order; (B) item 4 first, which defers the security-relevant review; (C) four milestones, which exceeds the three-slice batch.
 - **D3 (item 2 wiring).** (A) **chosen:** a flag parameter. The route reads its runtime's config tolerantly; the dispatcher is given the flag by constructor injection; `BuildPipeline`'s runtime path is unchanged. (B) Pass the runtime from both callers: rejected. It switches on the pre-flight runner (`builder.py:3211-3222`; `startup/finalize.py:4274` sets `runtime.pre_flight_runner`) and Hebbian recording (`builder.py:3742-3748`) for those routes, and the dispatcher would have to hold the whole runtime. (C) A global config lookup: rejected (a hidden dependency).
 - **D4 (item 2 matching).** (A) **chosen:** lexical normalisation of the admitted change path (`os.path.normpath`, `/` separators, `str.casefold` on the path and on the globs), with the policy read from `_PROJECT_ROOT/config/sealed_modules.yaml` only when the flag is on. Case folding gives one rule on every host: a sealed file written under another case on Windows or macOS is still the sealed file. On a case-sensitive Linux tree it can over-report a distinct `Src/...` directory, which is acceptable for a warning. (B) `realpath` relative to `work_dir`: rejected. It follows links and junctions (F-124 owns aliases), and a file that does not yet exist resolves differently per host. (C) The work tree's own policy: rejected, because a build can write `config/` (`builder_paths.py:52`) and so could switch its own observation off.
-- **D5 ("observed").** One `logger.warning` on `probos.cognitive.builder` per write to a sealed path, at each of the four write sites, naming the path as written (`%r`); the build's outcome is unchanged. With the flag off: no policy read, no `is_sealed_path` call, no log. No `BuildResult` field and no event (AD-481l's).
+- **D5 ("observed").** One `logger.warning` on `probos.cognitive.builder` per write to a sealed path, at each of the four write sites, naming the path as written (`%r`); the build's outcome is unchanged. With the flag off: no policy read, no `is_sealed_path` call, no log. No `BuildResult` field and no event (AD-481l's). A policy that cannot be read gives no globs: that build observes nothing and its outcome is still unchanged. The loader degrades a missing file (no log), a YAML error and an OS error in the read (its own warning). `_sealed_globs` degrades what escapes the loader (an `OSError` from the existence check, a `ValueError` such as a decoding error or an impossible date, a `RecursionError` from deep nesting) with one warning naming the file and the exception class (Amendment A2, §17).
 - **D6 (item 4 state).** (A) **chosen:** refusals stay in `validation_errors`; syntax is a set of paths read again at 5.5 on the current files; the error keeps its `"Syntax errors:"` lead (19 assertions in 5 test files read it), refusals first. (B) Drop a path's error when a later write of it validates: rejected. It misses changes the tests make (F6) and needs per-path bookkeeping. (C) Re-validate at the start of each attempt: rejected; still stale after the last attempt.
 - **D7 (F-153 item 18, coupled).** (A) **chosen:** a refusal recorded before the review skips the review, the targeted tests and the repair loop. Item 4 makes a refusal permanent, so these steps can only run model-written code and spend model calls for a build that cannot commit. (B) Leave it: rejected. Closes the BF-904b part of F-153 item 20 too, since a write-time refusal is in the same list.
 - **D8 (F-153 item 4, not taken).** `classify_build_failure`'s substring matching is a separate contract: categories feed the resolution options and the HXI. Item 4 adds no string it matches (the lead stays `"Syntax errors"`, which contains none of its five substrings). Every resolution it can offer re-runs the guarded executor, and after an incomplete cleanup only abort is taken (BF-904a D30). It stays in the register.
@@ -107,6 +107,7 @@ All tests run on real objects: real git in `tmp_path` repositories, the real `is
 | S6 | `test_the_dispatcher_hands_its_flag_to_the_executor[on, default]` | the executor receives the dispatcher's flag | fails (TypeError) |
 | S7 | `test_a_real_boot_wires_the_config_flag_into_the_dispatcher` | a boot with the flag on gives a dispatcher with it on | fails |
 | S8 | `test_build_pipeline_still_turns_it_on_through_its_runtime` | `BuildPipeline`'s runtime config turns it on | fails (absolute path) |
+| S9 | `test_a_policy_that_cannot_be_read_observes_nothing_and_the_build_commits[not-utf-8, invalid-date, deep-nesting]` | with the flag on, a policy the loader raises on gives one warning naming the file and the exception class, nothing is observed, and the resolve route's build commits | fails (no `_SEALED_POLICY` before M1; on the round-1 M1 candidate the route reports `BUILD_FAILURE`) |
 | F1 | `test_a_syntax_error_a_repair_fixes_no_longer_blocks_the_commit` | a repaired syntax error commits | fails |
 | F2 | `test_a_file_a_repair_creates_is_targeted_on_the_next_attempt` | attempt 2 targets the repair's new file | fails |
 | F3 | `test_a_refusal_blocks_the_commit_whatever_the_syntax_state` | a refusal blocks although every file parses | passes (guard) |
@@ -181,10 +182,24 @@ def sealed_core_enforced(runtime: Any) -> bool:
 
 
 def _sealed_globs() -> tuple[str, ...]:
-    """BF-904b (#1585): the globs of this ProbOS's sealed-core policy (empty when it is missing or malformed)."""
+    """BF-904b (#1585): the globs of this ProbOS's sealed-core policy; empty when it is missing or cannot be read.
+
+    The loader degrades a missing file, a YAML error and an OS error in the read itself. An OS error from its
+    existence check, a file that is not UTF-8, a scalar PyYAML cannot construct (a date such as ``2026-13-45``)
+    and nesting past the recursion limit raise out of it; they are caught here, with one warning naming the file
+    and the exception class, so the observation never changes a build's outcome (D5, Amendment A2). Nothing is
+    cached when the loader raises, so each flagged build reads the file again.
+    """
     from probos.extensions.sealed_core import load_sealed_globs
 
-    return load_sealed_globs(str(_SEALED_POLICY))
+    try:
+        return load_sealed_globs(str(_SEALED_POLICY))
+    except (OSError, ValueError, RecursionError) as exc:
+        logger.warning(
+            "BF-904b: the sealed policy %s cannot be read (%s); this build observes nothing",
+            _SEALED_POLICY, type(exc).__name__,
+        )
+        return ()  # BF-904b A2: no globs, so nothing is observed and the build goes on
 
 
 def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
@@ -551,6 +566,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Awaitable
 from pathlib import Path
 from types import SimpleNamespace as _SimpleNamespace
@@ -874,6 +890,45 @@ async def test_build_pipeline_still_turns_it_on_through_its_runtime(
         ))
     assert result.success and result.commit_hash, result.error
     assert len(_sealed_records(caplog)) == 1
+
+
+# S9 (Amendment A2)
+@needs_git
+@pytest.mark.parametrize(
+    ("kind", "raised"),
+    [("not-utf-8", "UnicodeDecodeError"), ("invalid-date", "ValueError"), ("deep-nesting", "RecursionError")],
+    ids=["not-utf-8", "invalid-date", "deep-nesting"],
+)
+async def test_a_policy_that_cannot_be_read_observes_nothing_and_the_build_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, kind: str, raised: str,
+) -> None:
+    """The loader degrades a missing file, a YAML error and an OS error itself; these three raise out of it. With the
+    flag on, ``_sealed_globs`` logs one warning naming the file and the exception class, nothing is observed, and the
+    resolve route's build still commits (D5). A scratch policy is substituted; the shipped one loads."""
+    if kind == "not-utf-8":
+        text = b"sealed_globs:\n  - \xff\xfe/**\n"
+    elif kind == "invalid-date":  # PyYAML's timestamp constructor raises ValueError, not a YAMLError
+        text = b"sealed_globs:\n  - src/probos/substrate/**\nreviewed: 2026-13-45\n"
+    else:  # the composer recurses twice per level, so this depth passes the recursion limit whatever it is set to
+        depth = sys.getrecursionlimit()
+        text = ("sealed_globs: " + "[" * depth + "]" * depth + "\n").encode("utf-8")
+    policy = tmp_path / "policy" / "sealed_modules.yaml"
+    policy.parent.mkdir()
+    policy.write_bytes(text)
+    monkeypatch.setattr(builder_module, "_SEALED_POLICY", policy)
+    _api_module, build_router = _route_modules()
+    repo = _init_repo(tmp_path / "repo", SEED)
+    rt = _Runtime(_config(True))
+    with caplog.at_level(logging.WARNING, logger=BUILDER_LOGGER):
+        await _bounded(build_router._execute_build(
+            "bf904b-s9", [_modify(SEALED, "a = 1", "a = 2")], _spec(), str(repo), rt, run_tests=False,
+        ))
+    kinds = [call.args[0] for call in rt.emit_event.call_args_list]
+    assert EventType.BUILD_SUCCESS in kinds and EventType.BUILD_FAILURE not in kinds, f"the policy changed the build: {kinds}"
+    degraded = [r.getMessage() for r in caplog.records if r.name == BUILDER_LOGGER and "sealed policy" in r.getMessage()]
+    assert len(degraded) == 1 and str(policy) in degraded[0], degraded
+    assert f"({raised})" in degraded[0], degraded
+    assert _sealed_records(caplog) == [], "no globs, so the sealed write is not observed"
 ```
 
 ### 7.7 `src/probos/cognitive/builder.py` (M2, applied after 7.1)
@@ -1774,7 +1829,7 @@ REPLACE:
 - `BuildPipeline`, `CopilotBuilderAdapter`, `seed_session_directory`, `_localize_context`, `_should_use_transporter`, `transporter_build`.
 - `BuildQueue.active_count`, its transitions, `BuildDispatcher` concurrency, `WorktreeManager`.
 
-## 10. Mutation rows (37 rows; whole stripped lines; each occurs once in its file after §7)
+## 10. Mutation rows (42 rows; whole stripped lines; each occurs once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against the three new test files on the contract-applied tree, after an unmutated baseline run of those files that passes. A18's killer is the updated pin in `tests/test_bf896_executor_identity_and_blocks.py` (7.5b), not a new file: run that test alone against the mutant, after an unmutated run of it that passes. Restore each file before the next row. "First failing" is in file order (S, then F, then D/V); where another test fails first, run the named one alone against the mutant.
 
@@ -1798,6 +1853,11 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | A16 | `src/probos/build_dispatcher.py` | `return self._enforce_sealed_core` | `return False` | S6 `[on]` (the property assertion; also S7) |
 | A17 | `src/probos/startup/structural_services.py` | `enforce_sealed_core=config.extensions.enforce_sealed_core,  # BF-904b (#1585): AD-481f's observation, off by default` | `enforce_sealed_core=False,` | S7 |
 | A18 | `src/probos/cognitive/builder.py` | `specialty: str = "general",` | `*, specialty: str = "general",` | 7.5b `test_expected_git_dir_keeps_its_position_and_only_optional_parameters_follow_it` in `tests/test_bf896_executor_identity_and_blocks.py` (the kind assertion: a positional call would no longer reach `specialty` or `expected_git_dir`); run it alone |
+| A19 | `src/probos/cognitive/builder.py` | `except (OSError, ValueError, RecursionError) as exc:` | `except (OSError, RecursionError) as exc:` | S9 `[not-utf-8]` (the `BUILD_SUCCESS` assertion; also `[invalid-date]`) (Amendment A2) |
+| A20 | `src/probos/cognitive/builder.py` | `except (OSError, ValueError, RecursionError) as exc:` | `except (OSError, ValueError) as exc:` | S9 `[deep-nesting]` (the `BUILD_SUCCESS` assertion) (Amendment A2) |
+| A21 | `src/probos/cognitive/builder.py` | `_SEALED_POLICY, type(exc).__name__,` | `_SEALED_POLICY, "",` | S9 `[not-utf-8]` (the exception-class assertion) (Amendment A2) |
+| A22 | `src/probos/cognitive/builder.py` | `_SEALED_POLICY, type(exc).__name__,` | `"", type(exc).__name__,` | S9 `[not-utf-8]` (the path assertion) (Amendment A2) |
+| A23 | `src/probos/cognitive/builder.py` | `return ()  # BF-904b A2: no globs, so nothing is observed and the build goes on` | `raise` | S9 `[not-utf-8]` (the `BUILD_SUCCESS` assertion) (Amendment A2) |
 | B1 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a main-loop modify, read again at 5.5` | `pass` | F5 `[main-modify]` |
 | B2 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a main-loop create, read again at 5.5` | `pass` | F5 `[main-create]` |
 | B3 | `src/probos/cognitive/builder.py` | `syntax_checked[path] = None  # BF-904b: a repair's file, read again at 5.5` | `pass` | F5 `[repair]` |
@@ -1818,7 +1878,7 @@ Tier HIGH: every changed production file has rows. Run each row against the thre
 | C5 | `src/probos/cognitive/builder.py` | `copilot_result = await adapter.execute(spec, seeded)` | `copilot_result = await adapter.execute(spec, all_files)` | V1 |
 | C6 | `src/probos/cognitive/builder.py` | `file_changes = _normalize_change_paths(decision.get("file_changes", []))` | `file_changes = decision.get("file_changes", [])` | V3 `[transporter]` |
 
-Lines without a row: the docstrings and comments; `errors: list[str] = []` and `return errors` (any change breaks every F test); the dispatcher's signature line (S6 covers the keyword); the executor's `expected_git_dir` and `enforce_sealed_core` parameter lines (each contains a `|`, which a table cell cannot hold as one string; A18 mutates the `specialty` line instead, removing the flag's default is a syntax error, and by §6's premises S3 `[unset-without-runtime]` and S8 cover a changed default).
+Lines without a row: the docstrings and comments; `errors: list[str] = []` and `return errors` (any change breaks every F test); the dispatcher's signature line (S6 covers the keyword); the executor's `expected_git_dir` and `enforce_sealed_core` parameter lines (each contains a `|`, which a table cell cannot hold as one string; A18 mutates the `specialty` line instead, removing the flag's default is a syntax error, and by §6's premises S3 `[unset-without-runtime]` and S8 cover a changed default). In `_sealed_globs` (Amendment A2): `try:` (removing or rewriting it is a syntax error); `logger.warning(` and its closing `)` (not unique in the file; A21 and A22 mutate the arguments); the message line (its wording is not a behaviour; S9 selects the record by `sealed policy`, so a change there fails S9's count).
 
 ## 11. Verified Against Codebase (2026-10-21, tree `39b6ec2b73372aa40efc8a883fa494cd3a286061`, HEAD `90a9e040`)
 
@@ -1858,6 +1918,7 @@ src/probos/cognitive/builder.py
   3706: restore_tree = not result.commit_hash   3718-3730: return, then branch -D build_branch
   3742-3748: Hebbian record when runtime has hebbian_router
 src/probos/extensions/sealed_core.py: 20 _DEFAULT_SEALED_CONFIG = Path("config/sealed_modules.yaml"); 23-44 load_sealed_globs (lru_cache maxsize=1); 47-71 is_sealed_path
+  31 if not target.exists(): (outside the try)   34-38 read_text + yaml.safe_load; except (yaml.YAMLError, OSError) only (Amendment A2, §17)
 config/sealed_modules.yaml: 10-20 sealed_globs incl. "src/probos/substrate/**"
 src/probos/config_models/agentic.py: 125-137 ExtensionsConfig; 135 enforce_sealed_core: bool = False
 src/probos/config.py: 3858 class SystemConfig; 3980 extensions: ExtensionsConfig
@@ -1948,6 +2009,7 @@ HOLDS: yes
 | srp-size | `builder.py` grows about 60 lines; new helpers 10 to 20 lines each; test files about 330, 230 and 260 lines |
 | Hidden pins | `tests/test_bf896_executor_identity_and_blocks.py:701-705`, the executor's signature pin (updated, 7.5b; found by the dry run, Amendment A1); 19 `startswith("Syntax errors")` assertions (lead kept); `test_build_dispatcher.py` constructor calls (keyword default); `tests/test_bf896_dispatcher_confinement_seam.py` executor wrappers take `**kwargs` |
 | Ledger | M3 (§8) |
+| Amendment A2 | 7.1's `_sealed_globs` names `OSError`, `ValueError` and `RecursionError` only in an `except` tuple, never called. S9 calls underscore helpers, `sys.getrecursionlimit` and no capitalised name; `EventType.BUILD_SUCCESS` and `EventType.BUILD_FAILURE` exist (`routers/build.py:452`, `:482`). `builder.py` grows by 14 more lines; no new module-scope import in `builder.py`; the test file gains `import sys` |
 
 ## 13. What I could not verify here, and Prior Art
 
@@ -1973,10 +2035,11 @@ HOLDS: yes
 13. No change to `builder_write_refusal`, `fix_loop_write_refusal`, the native harness route, the worktree start point or `config/system.yaml`.
 14. Each updated test changes only where it pinned the old behaviour, with an inline `BF-904b (#1585)` reason; none is deleted or weakened elsewhere.
 15. `execute_approved_build`'s eleven earlier parameters keep their names, order and positional-or-keyword kind; `enforce_sealed_core` follows `expected_git_dir` with default `None`. 7.5b renames its test only because the old name said "last". It still asserts `expected_git_dir`'s index and `None` default and that everything after `work_dir` is optional; it drops only the "nothing follows" clause.
+16. With the flag on, a policy that cannot be read never changes a build's outcome. `_sealed_globs` returns `()` for every exception the loader lets out on an unreadable or corrupt file (`OSError`, `ValueError` including `UnicodeDecodeError`, `RecursionError`) and logs one warning naming the file and the exception class. Nothing after it in the observation can raise on the `str` path and `str` globs it handles (§17's enumeration). `MemoryError` and `BaseException` still propagate. With the flag off the policy is still not read (property 1).
 
 ## 15. Acceptance criteria
 
-1. (2) Both production callers give the executor the flag; `is_sealed_path` receives the repository-relative, normalised, case-folded path; a write to a sealed glob is observed with the flag on and nothing is read or logged with it off (S1 to S8; A1 to A18). Every parameter the executor had keeps its name, index and kind, and the updated pin asserts it (7.5b).
+1. (2) Both production callers give the executor the flag; `is_sealed_path` receives the repository-relative, normalised, case-folded path; a write to a sealed glob is observed with the flag on and nothing is read or logged with it off; a policy that cannot be read observes nothing, with one warning, and the build still commits (S1 to S9; A1 to A23). Every parameter the executor had keeps its name, index and kind, and the updated pin asserts it (7.5b).
 2. (4) Refusals are permanent; syntax is read on the current files after the loop; `all_changed_files` is recomputed at each attempt; a build with a refusal runs no review, tests or repair (F1 to F6; B1 to B13).
 3. (6) `has_footprint_conflict` includes `reviewing`; the force-delete clause is recorded as met by BF-904a D31 (D1, D2; C1, C2).
 4. (7) The visiting builder receives whole files, the excerpts serve only the native prompt context, and `transporter_complete` changes go through `_normalize_change_paths` (V1 to V3; C3 to C6).
@@ -1996,3 +2059,29 @@ HOLDS: yes
 **Other pins.** None that the dry run's file list would not have run (Absence Verified, A1).
 
 **Unchanged:** D1 to D11 and every production pair; only §5's "positional order unchanged" is corrected.
+
+## 17. Amendment A2 (2026-10-21): an unreadable policy degrades instead of aborting the build
+
+**Found by:** the M1 Diff Reviewer, round 1 (`gpt-6.1-sol`, candidate `36e99319`, tree `ccc583a6`). With the flag on and a policy that is not UTF-8, `execute_approved_build` raised at entry (`builder.py:3188` to `_sealed_globs` `:3109` to `sealed_core.py:35`), before its `try` (`:3279`). The resolve route reported `BUILD_FAILURE` (`routers/build.py:487-493`) where the base, which never read the policy, committed. `load_sealed_globs` catches `(yaml.YAMLError, OSError)` only (`sealed_core.py:36`). P2, injected-only (the shipped policy loads), and a regression against D5. The Architect's consult had listed it as a register item without the base comparison; A2 fixes it, and it leaves the register.
+
+**Decision.** (A) **chosen:** guard in `_sealed_globs`, M1's own function: `except (OSError, ValueError, RecursionError)`, one warning naming the file and the exception class, `()`. (B) Widen the loader's tuple: deferred. It adds AD-481f's module, a fifth production file, to M1 (§9 keeps `extensions/sealed_core.py` unchanged), and `_sealed_globs` is its only caller in `src/` besides the package re-export (`extensions/__init__.py:34`). (C) `except Exception` at entry and at each write site: rejected. After the loader every operation works on `str` and cannot raise (below), and a blanket catch would hide a defect in this code as a silent non-observation.
+
+**What the observation can raise (CPython 3.12.13; PyYAML's pure-Python `SafeLoader`).**
+
+| Step | Raises | Covered |
+|---|---|---|
+| `target.exists()` (`sealed_core.py:31`) | an `OSError` that is not a not-found kind (3.12 re-raises it) | `OSError` |
+| `read_text(encoding="utf-8")` | `OSError` (the loader catches it); `UnicodeDecodeError` (a `ValueError`) | `ValueError` |
+| `yaml.safe_load` | `YAMLError` subclasses (the loader catches them); `ValueError` from `datetime.date` for an impossible date; `RecursionError` from the recursive composer; `MemoryError` | `ValueError`, `RecursionError`; `MemoryError` propagates |
+| shape checks, `lru_cache`, `glob.casefold()` | nothing (safe-loaded values, `str` globs; an exception is not cached) | none needed |
+| path `replace` / `os.path.normpath` / `casefold` | nothing on a `str`; the write boundary already ran `.replace` on it, and the sites are inside the executor's `try` | none needed |
+| `is_sealed_path` (`fnmatch`) | nothing: `translate` escapes other characters and removes empty or reversed ranges | none needed |
+| the `%r` warning | nothing (`repr` of a `str`) | none needed |
+
+**Tests and rows.** S9 (7.6), three cases, driven through the resolve route as the reviewer reproduced it, with `_SEALED_POLICY` substituted by a scratch file. All three fail on the round-1 candidate. M1: 10 functions, 24 cases; total 45 cases in 21 functions. Rows A19 to A23: 37 to 42.
+
+**Milestone and anchors.** M1 only. A2 edits 7.1's `_sealed_globs` REPLACE text, 7.6's file block and the prose sections (header, §3 D5, §6, §10, §11, §12, §14, §15, this section). No anchor heading, no §8 tracker pair, and no SEARCH or REPLACE text of 7.7 to 7.13 is touched. M2's pairs apply unchanged: `_sealed_globs` (`builder.py:3105`) is far from `_fix_loop_changed` (`:2783`), and M2's executor hunks start after `:3279`.
+
+**Absence verified (2026-10-21).** Callers of `load_sealed_globs` in `src/`: `builder.py:3109` and `extensions/__init__.py:34` only. Tests that pin a raise from `_sealed_globs` or the loader: none (`tests/test_ad481_extensions.py:128-192` and the 7.6 file only).
+
+**Unchanged:** D1 to D4, D6 to D11, every other pair; D5 gains its last sentence.
