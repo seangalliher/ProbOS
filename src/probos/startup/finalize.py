@@ -4961,6 +4961,8 @@ async def finalize_startup(
             sweep_interval_seconds=vo_cfg.sweep_interval_seconds,
         )
         await runtime.visiting_officers.start()
+        if runtime.ward_room is not None:  # BF-903 (#1581): the Ward Room checks visiting officers against this registry
+            runtime.ward_room.attach_visiting_officers(runtime.visiting_officers)
         logger.info(
             "AD-701: VisitingOfficerRegistry wired (ttl=%.0fs, sweep=%.0fs)",
             vo_cfg.session_ttl_seconds,

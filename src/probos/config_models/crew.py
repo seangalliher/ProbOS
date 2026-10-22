@@ -7,6 +7,8 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -300,6 +302,33 @@ class AssignmentConfig(BaseModel):
     enabled: bool = False  # Disabled by default — enable after HXI surface is ready
 
 
+# BF-903 (#1581): the visiting-officer capability vocabulary, its one owner (Amendment A2). It is
+# defined in this module, which imports nothing from ``probos``, so the default and the validator
+# below read it without an import; ``probos.visiting_officers`` re-exports it, and the registry, the
+# pairing defaults and every checking path import it from there. AD-701 declared the two Ward Room
+# capabilities and AD-802 the two DM ones; nothing else is a capability.
+CAP_WARD_ROOM_POST: str = "ward_room.post"
+CAP_WARD_ROOM_READ: str = "ward_room.read"
+CAP_DM_SEND: str = "dm.send"
+CAP_DM_RECEIVE: str = "dm.receive"
+VISITOR_CAPABILITIES: frozenset[str] = frozenset({CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ, CAP_DM_SEND, CAP_DM_RECEIVE})
+
+
+def undeclared_capabilities(capabilities: Iterable[str]) -> list[str]:
+    """BF-903: the names in ``capabilities`` that ``VISITOR_CAPABILITIES`` lacks, once each, in order.
+
+    The one membership test: the validator below and ``probos.visiting_officers``'s
+    ``require_known_capabilities`` both call it. Iterating a bare string yields its characters,
+    each of which is undeclared.
+    """
+    return [c for c in dict.fromkeys(capabilities) if c not in VISITOR_CAPABILITIES]
+
+
+def _default_visitor_capabilities() -> list[str]:
+    """BF-903 (#1581): the default is two declared names, a new list per instance."""
+    return [CAP_WARD_ROOM_POST, CAP_WARD_ROOM_READ]
+
+
 class VisitingOfficersConfig(BaseModel):
     """AD-701: Visiting officer registry tunables.
 
@@ -313,9 +342,22 @@ class VisitingOfficersConfig(BaseModel):
     enabled: bool = False
     session_ttl_seconds: float = Field(default=3600.0, gt=0.0)
     sweep_interval_seconds: float = Field(default=60.0, gt=0.0)
-    default_capabilities: list[str] = Field(
-        default_factory=lambda: ["ward_room.post", "ward_room.read"]
-    )
+    default_capabilities: list[str] = Field(default_factory=_default_visitor_capabilities)
+
+    @field_validator("default_capabilities")
+    @classmethod
+    def _declared_capabilities_only(cls, value: list[str]) -> list[str]:
+        """BF-903: an undeclared capability is refused when the configuration is parsed.
+
+        The text matches ``UnknownCapabilityError``'s; pydantic wraps either as a validation error.
+        """
+        unknown = undeclared_capabilities(value)
+        if unknown:
+            raise ValueError(
+                f"undeclared visiting-officer capabilities {unknown!r}; "
+                f"declared: {sorted(VISITOR_CAPABILITIES)!r} (BF-903)"
+            )
+        return value
 
 
 class FirewallConfig(BaseModel):

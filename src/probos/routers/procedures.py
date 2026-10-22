@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from probos.routers.deps import get_runtime
+from probos.visiting_officers import VisitorScopeRefused
 
 router = APIRouter(prefix="/api/procedures", tags=["procedures"])
 logger = logging.getLogger(__name__)
@@ -204,6 +205,8 @@ async def teach_procedure(
             body=dm_body,
             author_callsign="captain",
         )
+    except VisitorScopeRefused:  # BF-903 (A4): a scope refusal reaches the API's 403 handler, not this route's error string
+        raise
     except Exception as e:
         return {"success": False, "error": f"Teaching DM failed: {e}"}
 

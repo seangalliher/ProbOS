@@ -12,6 +12,14 @@ import aiosqlite
 from probos.config import format_trust
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
+from probos.visiting_officers import (
+    CAP_DM_RECEIVE,
+    CAP_DM_SEND,
+    CAP_WARD_ROOM_POST,
+    CAP_WARD_ROOM_READ,
+    is_visiting_identity,
+    require_visitor_capability,
+)
 from probos.ward_room.channels import ChannelManager
 from probos.ward_room.messages import MessageStore
 from probos.ward_room.models import (
@@ -25,6 +33,12 @@ from probos.ward_room.receipt_facts import DmFactsPage, DmReceiptFacts
 from probos.ward_room.threads import ThreadManager
 
 logger = logging.getLogger(__name__)
+
+# BF-903 (#1581): the channel type a visiting officer's write lands in. Read only for a visiting
+# officer, so a crew write costs no query; a DM channel needs dm.send, any other ward_room.post.
+_CHANNEL_TYPE_OF_CHANNEL = "SELECT channel_type FROM channels WHERE id = ?"
+_CHANNEL_TYPE_OF_THREAD = "SELECT c.channel_type FROM threads t JOIN channels c ON c.id = t.channel_id WHERE t.id = ?"
+_CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.id = p.thread_id JOIN channels c ON c.id = t.channel_id WHERE p.id = ?"
 
 
 class WardRoomService(EventEmitterMixin):
@@ -58,6 +72,7 @@ class WardRoomService(EventEmitterMixin):
         self._messages: MessageStore | None = None
         self._last_stats: dict[str, Any] | None = None
         self._receipt_facts: DmReceiptFacts | None = None  # AD-1229: built in start()
+        self._visiting_officers: Any = None  # BF-903: AD-701's registry, attached by finalize when it is on
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -239,11 +254,42 @@ class WardRoomService(EventEmitterMixin):
         """Inject ontology reference (constructed after WardRoom)."""
         self._ontology = ontology
 
+    def attach_visiting_officers(self, registry: Any) -> None:
+        """BF-903 (#1581): late-bind AD-701's registry, which finalize builds after the Ward Room.
+
+        Unattached (and whenever AD-701 is off), a visiting officer's DID is refused at every
+        guarded entry. A crew member's or the Captain's id is never looked up either way.
+        """
+        self._visiting_officers = registry
+
+    def _require_visitor(self, actor_id: str, capability: str, entry: str) -> None:
+        """BF-903: refuse a visiting officer whose session lacks ``capability`` at ``entry``; anyone else passes."""
+        require_visitor_capability(
+            actor_id,
+            capability,
+            surface=f"ward_room.{entry}",
+            identity_registry=self._identity_registry,
+            visiting_officers=self._visiting_officers,
+        )
+
+    async def _require_visitor_write(self, actor_id: str, entry: str, query: str, key: str) -> None:
+        """BF-903: a visiting officer's write needs dm.send in a DM channel and ward_room.post elsewhere."""
+        if not is_visiting_identity(self._identity_registry, actor_id):
+            return
+        channel_type = ""
+        if self._db is not None:
+            async with self._db.execute(query, (key,)) as cursor:
+                row = await cursor.fetchone()
+            channel_type = row[0] if row else ""
+        capability = CAP_DM_SEND if channel_type == "dm" else CAP_WARD_ROOM_POST
+        self._require_visitor(actor_id, capability, entry)
+
     # ------------------------------------------------------------------
     # Channel delegation
     # ------------------------------------------------------------------
 
     async def list_channels(self, agent_id: str | None = None) -> list[WardRoomChannel]:
+        self._require_visitor(agent_id or "", CAP_WARD_ROOM_READ, "list_channels")  # BF-903
         return await self._channels.list_channels(agent_id)
 
     async def create_channel(
@@ -259,6 +305,8 @@ class WardRoomService(EventEmitterMixin):
         self, agent_a_id: str, agent_b_id: str,
         callsign_a: str = "", callsign_b: str = "",
     ) -> WardRoomChannel:
+        for participant in (agent_a_id, agent_b_id):  # BF-903: a visiting officer in a DM must be able to receive it
+            self._require_visitor(participant, CAP_DM_RECEIVE, "get_or_create_dm_channel")
         return await self._channels.get_or_create_dm_channel(agent_a_id, agent_b_id, callsign_a, callsign_b)
 
     def get_channel_snapshot(self) -> list[dict[str, Any]]:
@@ -342,6 +390,7 @@ class WardRoomService(EventEmitterMixin):
         thread_mode: str | None = None, limit: int = 10,
         since: float = 0.0, sort: str = "recent",
     ) -> list[WardRoomThread]:
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, "browse_threads")  # BF-903
         return await self._threads.browse_threads(agent_id, channels, thread_mode, limit, since, sort)
 
     async def get_recent_activity(
@@ -363,6 +412,7 @@ class WardRoomService(EventEmitterMixin):
         self, channel_id: str, author_id: str, title: str, body: str,
         author_callsign: str = "", thread_mode: str = "discuss", max_responders: int = 0,
     ) -> WardRoomThread:
+        await self._require_visitor_write(author_id, "create_thread", _CHANNEL_TYPE_OF_CHANNEL, channel_id)  # BF-903
         return await self._threads.create_thread(
             channel_id, author_id, title, body, author_callsign, thread_mode, max_responders,
         )
@@ -406,32 +456,46 @@ class WardRoomService(EventEmitterMixin):
         self, thread_id: str, author_id: str, body: str,
         parent_id: str | None = None, author_callsign: str = "",
     ) -> WardRoomPost:
+        await self._require_visitor_write(author_id, "create_post", _CHANNEL_TYPE_OF_THREAD, thread_id)  # BF-903
         return await self._messages.create_post(thread_id, author_id, body, parent_id, author_callsign)
 
     async def get_post(self, post_id: str) -> dict[str, Any] | None:
         return await self._messages.get_post(post_id)
 
     async def edit_post(self, post_id: str, author_id: str, new_body: str) -> WardRoomPost:
+        await self._require_visitor_write(author_id, "edit_post", _CHANNEL_TYPE_OF_POST, post_id)  # BF-903
         return await self._messages.edit_post(post_id, author_id, new_body)
 
     async def endorse(
         self, target_id: str, target_type: str, voter_id: str, direction: str,
     ) -> dict[str, Any]:
+        self._require_visitor(voter_id, CAP_WARD_ROOM_POST, "endorse")  # BF-903
         return await self._messages.endorse(target_id, target_type, voter_id, direction)
 
     async def get_credibility(self, agent_id: str) -> WardRoomCredibility:
         return await self._messages.get_credibility(agent_id)
 
     async def subscribe(self, agent_id: str, channel_id: str, role: str = "member") -> None:
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, "subscribe")  # BF-903
         await self._messages.subscribe(agent_id, channel_id, role)
+
+    def check_subscribe(self, agent_id: str) -> None:
+        """BF-903 (A4): raise ``VisitorScopeRefused`` exactly where ``subscribe(agent_id, ...)`` would, and do nothing else.
+
+        A caller that subscribes several members, or writes its own rows first, checks every member before its
+        first side effect, so a refused visiting officer changes nothing (``AssignmentService``).
+        """
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, entry="subscribe")  # BF-903 (A4): subscribe's check, with no side effect
 
     async def unsubscribe(self, agent_id: str, channel_id: str) -> None:
         await self._messages.unsubscribe(agent_id, channel_id)
 
     async def update_last_seen(self, agent_id: str, channel_id: str) -> None:
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, "update_last_seen")  # BF-903
         await self._messages.update_last_seen(agent_id, channel_id)
 
     async def get_unread_counts(self, agent_id: str) -> dict[str, int]:
+        self._require_visitor(agent_id, CAP_WARD_ROOM_READ, "get_unread_counts")  # BF-903
         return await self._messages.get_unread_counts(agent_id)
 
     async def get_channel_subscriber_ids(self, channel_id: str) -> set[str]:
@@ -443,6 +507,7 @@ class WardRoomService(EventEmitterMixin):
         return await self._messages.get_all_channel_members()
 
     async def get_unread_dms(self, agent_id: str, limit: int = 3, exchange_limit: int = 0) -> list[dict]:
+        self._require_visitor(agent_id, CAP_DM_RECEIVE, "get_unread_dms")  # BF-903
         return await self._messages.get_unread_dms(agent_id, limit, exchange_limit=exchange_limit)
 
     async def dm_receipt_facts(

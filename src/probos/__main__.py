@@ -1910,6 +1910,8 @@ def _cmd_pairing(args: argparse.Namespace) -> int:
         PairingService,
         UnknownPairingCode,
     )
+    from probos.visiting_officers import UnknownCapabilityError
+    from rich.markup import escape  # BF-903 (A3): a refused name prints as text, never as markup
 
     console = Console()
     data_dir = _default_data_dir()
@@ -1971,8 +1973,8 @@ def _cmd_pairing(args: argparse.Namespace) -> int:
                     session_ttl_seconds=ttl_s,
                 ),
             )
-        except UnknownPairingCode as exc:
-            console.print(f"[red]Approve failed:[/red] {exc}")
+        except (UnknownPairingCode, UnknownCapabilityError) as exc:  # BF-903: an undeclared --cap is refused with its name
+            console.print(f"[red]Approve failed:[/red] {escape(str(exc))}", emoji=False)  # BF-903 (A3): a refused name prints as text
             return 1
         console.print(
             f"[green]Approved.[/green] did={paired.did} channel={paired.channel} "

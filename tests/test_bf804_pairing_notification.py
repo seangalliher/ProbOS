@@ -34,6 +34,7 @@ from typing import Any, Callable
 import pytest
 
 from probos.channels.base import (
+    _PAIRED_NO_CONVERSATION,
     _PAIRING_NOTICE_FAILED,
     ChannelMessage,
     PairingNotificationError,
@@ -163,7 +164,8 @@ async def test_undelivered_pairing_instructions_leave_the_mail_unread(
 ) -> None:
     """The deliverable. One batch, three senders, three distinct outcomes.
 
-    * carol is PAIRED -> processed, answered, UID flagged.
+    * carol is PAIRED -> answered (BF-903: with the refusal of natural
+      language a paired visitor gets), UID flagged.
     * bob is unpaired and his instructions were DELIVERED -> no answer, UID
       flagged. This is the outcome that must NOT start retrying forever.
     * alice is unpaired and her instructions were REFUSED -> UID NOT flagged
@@ -195,8 +197,15 @@ async def test_undelivered_pairing_instructions_leave_the_mail_unread(
     assert notifier.recipients() == [_BOB, _CAROL], (
         "control: bob's pairing notice and carol's answer both left"
     )
-    assert len(runtime.processed) == 1 and "status" in runtime.processed[0], (
-        "control: the paired sender was processed past the gate"
+    # BF-903 (#1581): a paired sender is a visiting officer and no declared
+    # capability grants a natural-language turn, so carol's answer is the
+    # refusal, not an LLM reply. Her answer and her acknowledged UID remain
+    # the control that the probe sees a paired sender settle.
+    assert runtime.processed == [], (
+        "control: a paired sender's natural language is refused before any LLM turn"
+    )
+    assert [text for _, text, _ in notifier.answers()] == [_PAIRED_NO_CONVERSATION], (
+        "control: the paired sender was answered past the gate"
     )
     _assert_store_probe_discriminates()
 
@@ -428,7 +437,10 @@ async def test_slack_webhook_entry_point_still_returns_empty_on_undelivered_noti
 
         paired = SlackAdapter(_PairedRuntime(_Paired()), cfg, client=client)
         answered = await paired.receive(text="hi", channel_id="C1", user_id="U42")
-        assert answered == "acknowledged, Captain", (
+        # BF-903 (#1581): a paired sender's natural language is refused with a
+        # reply naming the reason -- still a non-empty answer from receive(),
+        # which is all this control needs.
+        assert answered == _PAIRED_NO_CONVERSATION, (
             "control: receive() must be capable of returning a non-empty "
             "reply, otherwise the assertion above proves nothing"
         )

@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.routers.auth import verify_ws_token
+from probos.visiting_officers import VisitorScopeRefused
 from probos.ws_event_stream import WSEventStreamHub
 
 # AD-516: Models moved to api_models.py — re-export for backwards compatibility
@@ -177,6 +178,21 @@ def create_app(runtime: Any) -> FastAPI:
                 # this exists to produce back into a 500.
                 "intent": str(exc.intent_name),
                 "reason": str(exc.reason),
+            },
+        )
+
+    # BF-903 (#1581): a visiting officer refused by AD-701's seam is a policy outcome, as BF-771's
+    # denial is, so a route that reaches a guarded Ward Room entry answers 403 with the reason.
+    @app.exception_handler(VisitorScopeRefused)
+    async def _visitor_refused(_request: Request, exc: VisitorScopeRefused) -> JSONResponse:
+        logger.info("BF-903: %s at the API boundary", exc)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "visitor_scope_refused",
+                "capability": exc.capability,
+                "reason": exc.reason,
+                "surface": exc.surface,
             },
         )
 
