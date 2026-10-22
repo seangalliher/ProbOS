@@ -47,7 +47,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
 
 - **M1.**
   - The four names are defined once, in `config_models/crew.py`, and re-exported by `probos.visiting_officers` (A2); any other name is refused at `register`, at pairing request and approve, in `probos pairing approve` and at config parse.
-  - The registry gains `refusal` and `check`; `get` hides an expired session.
+  - The registry gains `capability_refusal` and `check`; `get` hides an expired session.
   - The module gains `is_visiting_identity` (by certificate) and the one guard, `require_visitor_capability`.
 - **M2.**
   - The Ward Room facade calls the guard at the eleven methods that act for an actor id. The twelve test cases count the DM channel twice, once per participant side.
@@ -79,7 +79,7 @@ AD-701 says the registry is the enforcement seam and that consumers check `has_c
   - `VISITING_OFFICER_REFUSED` through the registry's emitter, plus a warning; with the registry off, the warning alone.
   - Reason codes: `visitor_session_unknown`, `visitor_session_expired`, `visitor_capability_missing`, `visitor_registry_off`.
   - No `EventType` member: the registry's existing events are strings too. No admission record (#1604).
-- **D6 (expiry).** `refusal`, `check` and `get` read the clock at use; `deregister` already removes the session.
+- **D6 (expiry).** `capability_refusal`, `check` and `get` read the clock at use; `deregister` already removes the session.
 - **D7 (M3, coupled).** `_check_pairing`'s `resolve_did` failure fails closed. Slash commands and natural language for a paired sender are refused, because no declared capability grants them. The Captain may overrule.
 - **D8 (tier).** HIGH.
 
@@ -123,7 +123,7 @@ One Builder delegation and one local commit per milestone, built in order. Run e
 | `VISITOR_CAPABILITIES`, `CAP_*` and `undeclared_capabilities` (defined in `config_models/crew.py`, re-exported by `visiting_officers`; A2) | `register`; `require_known_capabilities`; the pairing defaults; the config default and validator; the Ward Room facade; M3. Every importer of `visiting_officers` now also loads `probos.config_models` (`api.py` and `ward_room/service.py` already did, through `probos.config`) | one set of names; no cycle (AV15) |
 | `register` refusing undeclared names | `PairingService.approve_pairing` (`:171`) and `restore_active_sessions` (`:255`, no caller, AV4) | restore catches `Exception` and logs (`:262-266`) |
 | `get` hiding expired sessions | no production caller; `test_ad701` `:127`, `:169`, `:201`, `:207` | their assertions hold |
-| `has_capability` delegating to `refusal` | no production caller; `test_ad701:180-193` | same truth table |
+| `has_capability` delegating to `capability_refusal` | no production caller; `test_ad701:180-193` | same truth table |
 | `DEFAULT_CAPABILITIES` | `security/pairing/__init__.py` re-export; `request_pairing`; `approve_pairing`; `test_ad802` | same value |
 | `UnknownCapabilityError` | the CLI approve branch (7.4) | prints the reason as text (escaped, A3) and returns 1; the pending row is kept (A3) |
 | `VisitorScopeRefused` (`PermissionError`) | the API handler (7.10); the routers catch `ValueError` only (`wardroom.py:289`, `:357`, `:371`, `:385`), so it reaches the handler | 403 |
@@ -297,14 +297,14 @@ SEARCH:
 REPLACE:
 ```python
       - has_capability(did, capability) -> bool
-      - refusal(did, capability) -> str | None   (BF-903)
+      - capability_refusal(did, capability) -> str | None   (BF-903)
       - check(did, capability, *, surface) -> None   (BF-903; raises on refusal)
       - active() -> tuple[VisitingOfficerSession, ...]
       - async start() / async stop()
 
     BF-903: consumers call the module's ``require_visitor_capability``,
     which recognises a visiting officer and then calls ``check``. ``get``,
-    ``refusal`` and ``check`` read expiry at use, so an expired session is
+    ``capability_refusal`` and ``check`` read expiry at use, so an expired session is
     refused before the sweep removes it.
     """
 ```
@@ -344,7 +344,7 @@ REPLACE:
             return None
         return session
 
-    def refusal(self, did: str, capability: str) -> str | None:
+    def capability_refusal(self, did: str, capability: str) -> str | None:  # BF-903 A5: AD-1343's census reads any call named "refusal" as a stop check
         """BF-903: why ``did`` may not use ``capability`` now, or None when it may.
 
         Read at each use: a deregistered session is refused at once and an expired one before
@@ -360,7 +360,7 @@ REPLACE:
         return None
 
     def has_capability(self, did: str, capability: str) -> bool:
-        return self.refusal(did, capability) is None
+        return self.capability_refusal(did, capability) is None
 
     def check(self, did: str, capability: str, *, surface: str) -> None:
         """BF-903: return when ``did`` may use ``capability``; otherwise record the refusal and raise.
@@ -368,7 +368,7 @@ REPLACE:
         The record is a ``VISITING_OFFICER_REFUSED`` event through this registry's emitter, the
         sink its registration and deregistration events use, and a warning.
         """
-        reason = self.refusal(did, capability)
+        reason = self.capability_refusal(did, capability)
         if reason is None:
             return
         self._emit("VISITING_OFFICER_REFUSED", {
@@ -3187,7 +3187,7 @@ SEARCH:
 ```
 REPLACE:
 ```markdown
-**BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `config_models/crew.py` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`), re-exported by `probos.visiting_officers`; `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type, named by its DID or its bare certificate UUID, and never looks up a slot id, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. M3: a paired channel sender is a visiting officer, so its slash commands and natural language are refused with a reply naming the reason and an `@callsign` DM needs a live `dm.send`; a pairing store that cannot be read refuses the message (`PairingLookupError`) instead of letting it through; the inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning (MCP: `MCP_BRIDGE_FAILED`, reason `visitor_unbound`). Both flags stay off. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`, `tests/test_bf903_channel_and_mcp.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`, `test_bf804_pairing_notification.py`, `test_ad807_discord_refresh.py`. The contract is `prompts/bf-903-visiting-officer-capability-seam.md`.
+**BF-903 (2026-10-22), closes #1581 -- a visiting officer's capabilities are checked where it acts, and the capability names have one owner.** AD-701 called its registry the enforcement seam, but nothing called `has_capability`. M1: `config_models/crew.py` owns the four names AD-701 and AD-802 declared (`ward_room.post`, `ward_room.read`, `dm.send`, `dm.receive`), re-exported by `probos.visiting_officers`; `register`, the pairing service, `probos pairing approve` and `visiting_officers.default_capabilities` refuse any other name before a certificate, a pending row or a consumed code. The registry gains `capability_refusal` and `check`, which read expiry at use (`get` hides an expired session), and the module gains the one guard every path calls, `require_visitor_capability`: it recognises a visiting officer by its birth certificate's agent type, named by its DID or its bare certificate UUID, and never looks up a slot id, the Captain's or the system's id. M2: the Ward Room facade calls it at the eleven entries that act for an actor id (a write needs `dm.send` in a DM channel and `ward_room.post` elsewhere); finalize attaches the registry; the API answers a refusal with 403 and the reason. M3: a paired channel sender is a visiting officer, so its slash commands and natural language are refused with a reply naming the reason and an `@callsign` DM needs a live `dm.send`; a pairing store that cannot be read refuses the message (`PairingLookupError`) instead of letting it through; the inbound MCP server refuses a `tools/call` whose arguments name a visiting officer, before either dispatch branch. A refusal is a `VISITING_OFFICER_REFUSED` event through the registry's emitter and a warning (MCP: `MCP_BRIDGE_FAILED`, reason `visitor_unbound`). Both flags stay off. New: `tests/test_bf903_visitor_scope.py`, `tests/test_bf903_ward_room_scope.py`, `tests/test_bf903_seam_was_open.py`, `tests/test_bf903_channel_and_mcp.py`. Updated: `test_ad701_visiting_officers.py`, `test_ad802_pairing.py`, `test_bf804_pairing_notification.py`, `test_ad807_discord_refresh.py`. The contract is `prompts/bf-903-visiting-officer-capability-seam.md`.
 ```
 
 **`DECISIONS.md`**, BF-903's entry as M2 wrote it:
@@ -3265,7 +3265,7 @@ Tier HIGH: every changed production file has rows.
 | A7 | `src/probos/visiting_officers.py` | `if self._clock() >= session.expires_at:` | `if False:` | V6 (`has_capability` after expiry) |
 | A8 | `src/probos/visiting_officers.py` | `return REFUSED_EXPIRED` | `return None` | V6 |
 | A9 | `src/probos/visiting_officers.py` | `if capability not in session.capabilities:` | `if False:` | V6 (missing) |
-| A10 | `src/probos/visiting_officers.py` | `return self.refusal(did, capability) is None` | `return True` | V6 |
+| A10 | `src/probos/visiting_officers.py` | `return self.capability_refusal(did, capability) is None` | `return True` | V6 (A5 renamed the method) |
 | A11 | `src/probos/visiting_officers.py` | `"did": did, "capability": capability, "reason": reason, "surface": surface,` | `"did": did,` | V6 (event equality) |
 | A12 | `src/probos/visiting_officers.py` | `raise VisitorScopeRefused(did, capability, reason, surface)` | `return` | V6 |
 | A13 | `src/probos/visiting_officers.py` | `if parsed is None or parsed.get("type") != "agent":` | `if parsed is None:` | V7 (the ship DID raises `KeyError`) |
@@ -3794,3 +3794,13 @@ Written by the orchestrator after the build, from the campaign's own output. It 
 **Consolidated focused checks** (the test files that name a changed surface, scrubbed environment at `-n 8`, then the three tree-scanning files unscrubbed at `-n 0`): M1's frozen candidate (round 3, 51 files) 1,843 passed, 2 skipped, 0 failed (44 passed unscrubbed); M2's (round 2, 53 files) 1,882 passed, 1 skipped, 0 failed (44 unscrubbed); M3's (round 2, 73 files) 2,838 passed, 2 skipped, 0 failed (44 unscrubbed); the whole contract applied by tool to a scratch tree gave the same 2,838 and 2. The broad gate's receipt and CI are recorded on #1581, not here.
 
 **Register.** F-272 to F-285 are on #1523 (comment 6342228448); BF-914 (#1621) holds the latent channel exposure found while building this.
+
+## 21. Amendment A5 (2026-10-22): the broad gate, and a method name the AD-1343 census reads
+
+**Amended by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22, on the red broad gate of `560e01b5` (one failure: `tests/test_ad1343_stop_seam_inventory.py::test_stop_checks_are_exactly_the_inventory`), read on a detached tree at that head.
+
+- **Cause (regression, ordinary reach: every checkout fails the guard).** The AD-1343 census (`tests/fixtures/ad1343_seam_census.py`) records any call whose bare callee name is `refusal` as a stop check, with its second argument as the seam. 7.1's registry method was named `refusal`, so `has_capability` and `check` were read as two stop checks naming the seam `capability`. It is a name collision; there is no behaviour fault.
+- **Fix: the method is renamed `capability_refusal`** (7.1, A10), the repo's `<noun>_refusal` convention for a reason-or-None. AD-1343's guard and tables are unchanged. Rejected: exempting the file or the receiver in the census (it leaves a hole for a real stop check added there), pinning the two sites as stop checks (`capability` is not a stop seam), and keeping the name behind a private helper (a public method nothing calls).
+- **Text.** Sections 2, 3 (D6), 5 and 8b's REPLACE, and `PROGRESS.md`, name the new method. Section 8's interim text and 8b's SEARCH stay as M2 wrote them, so 8b still matches 8. The ledger carries no method name; it is regenerated and checked with `--check`.
+- **Mutation.** Group A (37 rows) reruns, because the sha256 of `src/probos/visiting_officers.py` changes. Groups B and C stand on tree `59ce0f0392eb9a91954b5fe98cd8241999aa2d0b`: their files and test files are unchanged, and the rename changes no behaviour.
+- **Lesson for validation.** A new method name is an input to the name-based censuses. Before naming one, check it against `STOP_CALLEES`, `GUARD_CALLEES` and `RECORDED`, and put every test that imports `tests.fixtures.ad1343_seam_census` or `tests.fixtures.ad1343_seam_registry` in each focused list.
