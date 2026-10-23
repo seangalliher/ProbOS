@@ -4,13 +4,20 @@
 
 **Status:** build-ready after AD-1347 S1 merges (S1 shares no code file with this slice). Slice 4 of 4 of #1627; it does not close the issue (S2 and S3 remain). **Tier HIGH**: a read path over archived private messages with a privacy rule. **AD number:** AD-1347, from `scripts/ad_ceiling.py` (ceiling AD-1347 from issue titles and prompt filenames, next AD-1348); no new number. **Base:** `origin/main` `3a94845f`. Every code SEARCH anchors on text; the tracker SEARCHes anchor on lines that BF-912 and S1 do not change.
 
-**Tests:** M1 `tests/test_ad1347_s4_ward_room_lookup.py`, 19 functions (27 cases). M2 `tests/test_ad1347_s4_chain_lookup.py`, 9 functions. Updated pins: `tests/test_ad643a_intent_routing.py` (2 asserts), `tests/test_ad645_composition_briefs.py` (2 asserts).
+**Tests:** M1 `tests/test_ad1347_s4_ward_room_lookup.py`, 25 functions (33 cases; tests 20-25 from Amendment A1). M2 `tests/test_ad1347_s4_chain_lookup.py`, 9 functions. Updated pins: `tests/test_ad643a_intent_routing.py` (2 asserts), `tests/test_ad645_composition_briefs.py` (2 asserts).
 
 **Line endings:** working copies are CRLF (`core.autocrlf=true`). SEARCH blocks here are LF; match and write with each file's own endings. New files are written LF.
 
 **Not built here:** S2 (the chain's action tags), S3 (execution and report-back), any event-log read in the chain, and tool access in the chain.
 
 **Mechanical repairs by the orchestrator (2026-10-23; no decision changed):** (1) the bridge's capture had turned 23 non-ASCII characters (section signs, em dashes and arrows) into CP437 mojibake; they are restored; (2) section 10's heading said 30 rows while its table holds 32 (L1 to P1); the heading now says 32 and no row changed; (3) so that the phantom precheck is clean, the placeholder spelling of the archive file name in section 0's table row and in the module docstring of section 7.1 is `ward_room_archive_<month>.jsonl`, and the test variable `result` of `test_no_ref_means_no_read_and_a_failing_ward_room_reads_as_unavailable` in section 7.10 is named `handled` (the precheck typed it as the module's result class from other blocks); (4) both new test files stop every service their helpers start in an autouse fixture (`_STARTED`, `_stop_started_services`; the existing `await wr.stop()` calls stay and the second stop is a no-op), because those calls ran only on the passing path: a failed assertion left aiosqlite's non-daemon connection thread alive and the pytest process never exited (found by execution when the first killed mutant, row L1, left `pytest` running past its own summary; Testing Standards, "No test pollution"). No test body, mutation row or acceptance criterion changed, and each file gains one fixture (not a test); (5) the M1 file's case count is 27 (17 plain functions, test 9 with 4 cases and test 11 with 6), as collected from the block, not the 28 the header first said.
+
+**Amendment A1 (2026-10-23, review round 1, `claude-architect`; no decision D1-D9 reopened):**
+- **F1 (P2; reach injected-only, because service-made uuid4 ids almost never put four records on one 8-hex prefix; fixed because it falsified D4, §15 property 2 and A4).** The live prefix queries (`LIMIT 4`) and the archive scan (return at 4 raw candidates) were capped before the visibility filter. As a result, hidden records changed `complete` and the text, and could crowd out a visible record; the live path reported the omission as complete. Now each live table and the archive scan collect up to `MAX_RAW_MATCHES = 32` raw matches, a safety bound that service-made ids do not reach. The filter runs before anything is counted. `render_lookup` lists `MAX_LISTED = 4` visible matches and counts the visible rest. Reaching the raw bound makes the answer `complete=False`, live as well as archived (`live_candidates` returns its own completeness).
+- **F2 (P2; ordinary during a prune's append).** The scan checks termination and length before the id prefilter. An unterminated last line is torn whatever it holds, because the writer ends every record with a newline. The cap counts the newline: a terminated line over it is skipped without draining, and only an unterminated over-cap head is drained.
+- The incomplete note no longer says "archive", because the live path can now be incomplete.
+- Tests 20-25 are new; each fails on the round-1 candidate `854bf668`. Rows L15 and L22 are rewritten and L25-L33 are added, for 41 rows.
+- The reviewer's injected-only observations: the M1 helper's docstring is corrected here (Captain-authored threads can be kept, `threads.py:881`). The reused-observation context, the directory-check `OSError` and a renderer fault in QUERY are register entries; §15 properties 4, 6 and 7 name them.
 
 ---
 
@@ -55,13 +62,13 @@ Crew DM'd the Captain for Ward Room reads they cannot make (#1627, live evidence
 **D3 (archive read).** A bounded scan:
 - newest file name first, at most `MAX_ARCHIVE_FILES = 12`;
 - `MAX_ARCHIVE_BYTES = 64 MiB` read in total;
-- `readline(MAX_LINE_BYTES + 1)` with `MAX_LINE_BYTES = 4 MiB`, and an oversized line is read past without being held;
+- `readline(MAX_LINE_BYTES + 1)` with `MAX_LINE_BYTES = 4 MiB`, the record's newline counted in the cap (A1). Termination and length are checked before the prefilter: an unterminated last line is torn whatever it holds, a terminated line over the cap is skipped, and only an unterminated over-cap head is read past without being held;
 - a byte prefilter on the writer's `json.dumps` shape (`"thread_id": "<ref>`, `"id": "<ref>`), then a parse;
 - run in `asyncio.to_thread`.
 
 An oversized, torn or unreadable record, a reached bound, or an unknown archive directory makes the result `complete=False`. The text then says the search stopped, and that note depends on sizes and torn lines, never on visibility. Index at prune time: deferred (a persisted-artifact change and a backfill; not a Captain item). A month convention is impossible.
 
-**D4 (privacy).** For each candidate, `get_channel(channel_id)` must return a channel, else the candidate is not visible. It is visible when the asker is in `get_channel_subscriber_ids(channel_id)`, or when the channel type is `"dm"` and the asker authored the thread or a post in it. Visible matches are counted only after the filter. "Not visible" and "not found" return the same `LookupResult` and the same text. Ward Room visibility has no rank rule, so none is added.
+**D4 (privacy).** For each candidate, `get_channel(channel_id)` must return a channel, else the candidate is not visible. It is visible when the asker is in `get_channel_subscriber_ids(channel_id)`, or when the channel type is `"dm"` and the asker authored the thread or a post in it. Visible matches are counted only after the filter. Before it, each live table and the archive scan collect up to `MAX_RAW_MATCHES = 32` raw matches (A1), a safety bound that service-made uuid4 ids do not reach. Reaching it makes the answer `complete=False`; hidden records never decide what is shown. "Not visible" and "not found" return the same `LookupResult` and the same text. Ward Room visibility has no rank rule, so none is added.
 
 **D5 (identity).** The asker is the chain's `_agent_id` only; a `params` agent id is never the asker. `_requester` returns None for:
 - a non-string or blank id;
@@ -137,6 +144,12 @@ On today's tree every new test fails at import (`probos.ward_room.lookup` and `_
 | 17 | `test_a_record_in_an_unknown_channel_is_visible_to_no_one` | A3 |
 | 18 | `test_a_long_thread_renders_its_last_posts_within_the_character_cap` | A6 |
 | 19 | `test_a_post_flagged_deleted_shows_the_flag_and_reason_never_its_body` | A6 |
+| 20 | `test_hidden_archived_records_sharing_a_prefix_change_nothing_a_non_member_sees` | A4 (A1, F1: equal to absent; no crowding out) |
+| 21 | `test_hidden_live_threads_sharing_a_prefix_do_not_crowd_out_a_visible_one` | A4 (A1, F1, live) |
+| 22 | `test_a_reached_raw_match_bound_is_reported_incomplete_live_and_archived` | A7 (A1) |
+| 23 | `test_an_ambiguity_lists_four_visible_matches_and_counts_only_the_visible_rest` | A4, A6 (A1) |
+| 24 | `test_a_torn_last_line_makes_every_lookup_incomplete_whatever_it_holds` | A7 (A1, F2) |
+| 25 | `test_the_line_cap_counts_the_newline_and_an_over_cap_line_never_hides_or_eats_another` | A7 (A1, F2: both sides of the cap) |
 
 **M2, `tests/test_ad1347_s4_chain_lookup.py`**
 
@@ -189,10 +202,12 @@ DM channels are created with no membership rows). A record the asker may not see
 reported exactly as one that does not exist. A blank asker, a visiting officer and a
 sovereign id that resolves to no slot are refused: no one is assumed.
 
-Bounds: an id of 8 to 36 characters; at most ``MAX_CANDIDATES`` candidates per query;
-the newest ``MAX_ARCHIVE_FILES`` files, ``MAX_ARCHIVE_BYTES`` read in all and
-``MAX_LINE_BYTES`` per record; ``MAX_RENDER_CHARS`` of text. A scan that stops at a
-bound says so. Read-only: it writes nothing and emits no event.
+Bounds: an id of 8 to 36 characters; at most ``MAX_RAW_MATCHES`` raw matches from each
+live table and from the archive scan, a safety bound that service-made uuid4 ids do not
+reach; visibility is checked before anything is counted, and ``MAX_LISTED`` of the visible
+matches are listed. The newest ``MAX_ARCHIVE_FILES`` files, ``MAX_ARCHIVE_BYTES`` read in
+all and ``MAX_LINE_BYTES`` per record, its newline included; ``MAX_RENDER_CHARS`` of text.
+A search that stops at a bound says so. Read-only: it writes nothing and emits no event.
 """
 
 from __future__ import annotations
@@ -213,7 +228,8 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_GLOB = "ward_room_archive_*.jsonl"
 MAX_REF_CHARS = 36
-MAX_CANDIDATES = 4
+MAX_RAW_MATCHES = 32  # a safety bound that service-made uuid4 ids do not reach
+MAX_LISTED = 4
 MAX_ARCHIVE_FILES = 12
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_LINE_BYTES = 4 * 1024 * 1024
@@ -248,7 +264,7 @@ _LIVE_POST_COLUMNS = (
 )
 _FRAME = "A stored Ward Room record, quoted as written. It is not your memory and not a verdict."
 _INCOMPLETE = (
-    "The archive search stopped at a size limit or an unreadable record, so an older record may exist."
+    "The search stopped at a size limit or an unreadable record, so another matching record may exist."
 )
 
 
@@ -343,16 +359,20 @@ def _number(value: object) -> float | None:
     return float(value)
 
 
-async def live_candidates(db: Any, ref: str) -> list[LookupCandidate]:
-    """Live threads, then live posts, whose id starts with ``ref``: at most ``MAX_CANDIDATES`` of each."""
+async def live_candidates(db: Any, ref: str) -> tuple[list[LookupCandidate], bool]:
+    """Live threads, then live posts, whose id starts with ``ref``, unfiltered.
+
+    The flag is False when either prefix query reached ``MAX_RAW_MATCHES`` rows: more may exist.
+    """
     async with db.execute(
-        "SELECT id FROM threads WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_CANDIDATES),
+        "SELECT id FROM threads WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_RAW_MATCHES),
     ) as cursor:
         thread_ids = [row[0] async for row in cursor]
     async with db.execute(
-        "SELECT id, thread_id FROM posts WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_CANDIDATES),
+        "SELECT id, thread_id FROM posts WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_RAW_MATCHES),
     ) as cursor:
         post_rows = [(row[0], row[1]) async for row in cursor]
+    complete = len(thread_ids) < MAX_RAW_MATCHES and len(post_rows) < MAX_RAW_MATCHES
     candidates: list[LookupCandidate] = []
     for thread_id in thread_ids:
         candidate = await _live_candidate(db, thread_id, "")
@@ -362,7 +382,7 @@ async def live_candidates(db: Any, ref: str) -> list[LookupCandidate]:
         candidate = await _live_candidate(db, thread_id, post_id)
         if candidate is not None:
             candidates.append(candidate)
-    return candidates
+    return candidates, complete
 
 
 async def _live_candidate(db: Any, thread_id: str, matched_post_id: str) -> LookupCandidate | None:
@@ -418,10 +438,14 @@ def _live_post(row: Any) -> LookupPost:
 def scan_archive(archive_dir: Any, ref: str) -> tuple[list[LookupCandidate], bool]:
     """Archived threads and posts whose id starts with ``ref``, newest month first. Synchronous; run it off the loop.
 
-    Returns the candidates and whether every archive file was read to its end. A directory
-    nothing was pruned into yet is an empty archive. No known directory, an unreadable file,
-    an oversized or torn record, or a reached bound makes the scan incomplete. Never raises
-    ``OSError``.
+    Returns the candidates, before any visibility check, and whether every archive file was
+    read to its end. A directory nothing was pruned into yet is an empty archive. No known
+    directory, an unreadable file, a record over ``MAX_LINE_BYTES`` with its newline, an
+    unterminated last line (the writer ends every record with a newline, so it is torn,
+    whatever it holds), a line that is not a record, or ``MAX_RAW_MATCHES`` reached makes the
+    scan incomplete. Termination and length are checked before the id prefilter, so
+    completeness never depends on the id asked. Never raises ``OSError`` once the directory
+    check has run.
     """
     if archive_dir is None:
         return [], False
@@ -448,9 +472,13 @@ def scan_archive(archive_dir: Any, ref: str) -> tuple[list[LookupCandidate], boo
                     if not line:
                         break
                     budget -= len(line)
-                    if len(line) > MAX_LINE_BYTES and not line.endswith(b"\n"):
+                    if not line.endswith(b"\n"):  # a torn tail, or the head of an over-cap record
                         complete = False
-                        budget = _skip_rest_of_line(handle, budget)
+                        if len(line) > MAX_LINE_BYTES:  # the rest of an over-cap record is still unread
+                            budget = _skip_rest_of_line(handle, budget)
+                        continue
+                    if len(line) > MAX_LINE_BYTES:  # the cap counts the record's newline
+                        complete = False
                         continue
                     if thread_marker not in line and post_marker not in line:
                         continue
@@ -459,7 +487,7 @@ def scan_archive(archive_dir: Any, ref: str) -> tuple[list[LookupCandidate], boo
                         complete = False
                         continue
                     found.extend(parsed)
-                    if len(found) >= MAX_CANDIDATES:
+                    if len(found) >= MAX_RAW_MATCHES:
                         return found, False
         except OSError:
             logger.warning("AD-1347: the Ward Room archive file %s could not be read", path, exc_info=True)
@@ -542,10 +570,12 @@ def render_lookup(result: LookupResult) -> str:
     if result.outcome == LOOKUP_FOUND:
         text = "\n".join([_FRAME, *_match_lines(result.matches[0])])
     elif result.outcome == LOOKUP_AMBIGUOUS:
+        more = len(result.matches) - MAX_LISTED
         text = "\n".join([
             f"More than one Ward Room thread or post you can see starts with {result.ref}; "
             "look it up again with more of its id:",
-            *(_summary_line(match) for match in result.matches),
+            *(_summary_line(match) for match in result.matches[:MAX_LISTED]),
+            *([f"- and {more} more you can see"] if more > 0 else []),
         ])
     elif result.outcome == LOOKUP_NOT_FOUND:
         text = f"No Ward Room thread or post with id {result.ref} that you can see is in the Ward Room or its archive."
@@ -670,11 +700,12 @@ class WardRoomRecordLookup:
         return slot if type(slot) is str and slot else None
 
     async def _find(self, requester: str, ref: str, archive_dir: Any) -> LookupResult:
-        visible = await self._visible(requester, await live_candidates(self._db, ref))
-        complete = True
+        live, complete = await live_candidates(self._db, ref)
+        visible = await self._visible(requester, live)
         if not visible:
-            archived, complete = await asyncio.to_thread(scan_archive, archive_dir, ref)
+            archived, archive_complete = await asyncio.to_thread(scan_archive, archive_dir, ref)
             visible = await self._visible(requester, archived)
+            complete = complete and archive_complete
         if len(visible) == 1:
             return LookupResult(LOOKUP_FOUND, ref, tuple(visible), complete)
         if visible:
@@ -853,7 +884,7 @@ async def _attach_archive(wr: Any, archive: Path) -> None:
 
 
 async def _prune_all(wr: Any, archive: Path) -> None:
-    """AD-416's real prune of every thread into one monthly file (a negative retention reaches every thread)."""
+    """AD-416's real prune into one monthly file: a negative retention reaches every eligible thread (all the fixtures' are; a Captain-authored one can be kept)."""
     await wr.prune_old_threads(retention_days=-1, retention_days_endorsed=-1, archive_path=str(archive / MONTH))
 
 
@@ -1205,6 +1236,174 @@ async def test_a_post_flagged_deleted_shows_the_flag_and_reason_never_its_body(t
         text = render_lookup(await wr.lookup_record(FORGE, ref))
         assert "[deleted: moderated by the Captain]" in text, ref
         assert "The words that were removed." not in text, ref
+    await wr.stop()
+
+
+async def test_hidden_archived_records_sharing_a_prefix_change_nothing_a_non_member_sees(tmp_path: Path) -> None:
+    wr = await _ward_room(tmp_path)
+    archive = tmp_path / "ward_room_archive"
+    await _attach_archive(wr, archive)
+    engineering = await wr.get_channel_by_department("engineering")
+    medical = await wr.get_channel_by_department("medical")
+    archive.mkdir(parents=True, exist_ok=True)
+    hidden_lines = "".join(
+        _archive_line(f"abcdef{prefix}-0000-4000-8000-00000000000{n}", medical.id)
+        for prefix in ("03", "05") for n in range(4)
+    )
+    (archive / MONTH).write_text(
+        hidden_lines + _archive_line("abcdef05-0000-4000-8000-0000000000ff", engineering.id, body="the visible one"),
+        encoding="utf-8",
+    )
+    assert (await wr.lookup_record(CHAPEL, "abcdef03")).outcome == LOOKUP_AMBIGUOUS, "premise: a member sees the four"
+
+    hidden = await wr.lookup_record(FORGE, "abcdef03")
+    absent = await wr.lookup_record(FORGE, "abcdef04")
+    assert (hidden.outcome, hidden.matches, hidden.complete) == (LOOKUP_NOT_FOUND, (), True)
+    assert (absent.outcome, absent.matches, absent.complete) == (LOOKUP_NOT_FOUND, (), True)
+    assert render_lookup(hidden).replace("abcdef03", "<id>") == render_lookup(absent).replace("abcdef04", "<id>")
+    crowded = await wr.lookup_record(FORGE, "abcdef05")
+    assert (crowded.outcome, crowded.complete) == (LOOKUP_FOUND, True), "four hidden records come before it"
+    assert "the visible one" in render_lookup(crowded)
+    await wr.stop()
+
+
+async def test_hidden_live_threads_sharing_a_prefix_do_not_crowd_out_a_visible_one(tmp_path: Path) -> None:
+    wr = await _ward_room(tmp_path)
+    await _attach_archive(wr, tmp_path / "never-written")
+    engineering = await wr.get_channel_by_department("engineering")
+    medical = await wr.get_channel_by_department("medical")
+    made = [await wr.create_thread(medical.id, CHAPEL, f"Medical {n}", "sickbay", author_callsign="Chapel") for n in range(4)]
+    made.append(await wr.create_thread(engineering.id, FORGE, "Engineering", "the visible one", author_callsign="Forge"))
+    crafted = [f"abcdef06-0000-4000-8000-00000000000{n}" for n in range(4)] + ["abcdef06-0000-4000-8000-0000000000ff"]
+    connection = sqlite3.connect(str(tmp_path / "wr.db"))
+    try:  # the service makes uuid4 ids; a shared prefix needs an import or a hand edit, as here
+        for thread, crafted_id in zip(made, crafted):
+            connection.execute("UPDATE threads SET id = ? WHERE id = ?", (crafted_id, thread.id))
+        connection.commit()
+    finally:
+        connection.close()
+    assert (await wr.lookup_record(CHAPEL, "abcdef06")).outcome == LOOKUP_AMBIGUOUS, "premise: the crafted ids are live"
+
+    found = await wr.lookup_record(FORGE, "abcdef06")
+    assert (found.outcome, found.complete) == (LOOKUP_FOUND, True)
+    assert found.matches[0].candidate.thread_id == crafted[-1]
+    hidden = await wr.lookup_record(WORF, "abcdef06")
+    absent = await wr.lookup_record(WORF, "abcdef07")
+    assert (hidden.outcome, hidden.matches, hidden.complete) == (absent.outcome, absent.matches, absent.complete)
+    assert hidden.outcome == LOOKUP_NOT_FOUND and hidden.complete
+    await wr.stop()
+
+
+async def test_a_reached_raw_match_bound_is_reported_incomplete_live_and_archived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lookup_module, "MAX_RAW_MATCHES", 2)
+    wr = await _ward_room(tmp_path)
+    archive = tmp_path / "ward_room_archive"
+    await _attach_archive(wr, archive)
+    engineering = await wr.get_channel_by_department("engineering")
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / MONTH).write_text(
+        "".join(_archive_line(f"abcdef08-0000-4000-8000-00000000000{n}", engineering.id) for n in range(3)),
+        encoding="utf-8",
+    )
+    made = [await wr.create_thread(engineering.id, FORGE, f"Live {n}", "core", author_callsign="Forge") for n in range(2)]
+    connection = sqlite3.connect(str(tmp_path / "wr.db"))
+    try:
+        for n, thread in enumerate(made):
+            connection.execute(
+                "UPDATE threads SET id = ? WHERE id = ?", (f"abcdef09-0000-4000-8000-00000000000{n}", thread.id),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    archived = await wr.lookup_record(FORGE, "abcdef08")
+    live = await wr.lookup_record(FORGE, "abcdef09")
+
+    assert (archived.outcome, len(archived.matches), archived.complete) == (LOOKUP_AMBIGUOUS, 2, False)
+    assert (live.outcome, len(live.matches), live.complete) == (LOOKUP_AMBIGUOUS, 2, False)
+    assert "stopped at a size limit" in render_lookup(live)
+    await wr.stop()
+
+
+async def test_an_ambiguity_lists_four_visible_matches_and_counts_only_the_visible_rest(tmp_path: Path) -> None:
+    wr = await _ward_room(tmp_path)
+    archive = tmp_path / "ward_room_archive"
+    await _attach_archive(wr, archive)
+    engineering = await wr.get_channel_by_department("engineering")
+    medical = await wr.get_channel_by_department("medical")
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / MONTH).write_text(
+        "".join(_archive_line(f"abcdef0a-0000-4000-8000-00000000000{n}", engineering.id) for n in range(6))
+        + _archive_line("abcdef0a-0000-4000-8000-0000000000ff", medical.id),
+        encoding="utf-8",
+    )
+
+    result = await wr.lookup_record(FORGE, "abcdef0a")
+
+    assert (result.outcome, len(result.matches), result.complete) == (LOOKUP_AMBIGUOUS, 6, True)
+    lines = render_lookup(result).splitlines()
+    assert len([line for line in lines if line.startswith("- thread ")]) == 4
+    assert lines[-1] == "- and 2 more you can see", "the Medical record is not counted"
+    await wr.stop()
+
+
+async def test_a_torn_last_line_makes_every_lookup_incomplete_whatever_it_holds(tmp_path: Path) -> None:
+    wr = await _ward_room(tmp_path)
+    archive = tmp_path / "ward_room_archive"
+    await _attach_archive(wr, archive)
+    engineering = await wr.get_channel_by_department("engineering")
+    archive.mkdir(parents=True, exist_ok=True)
+    first = _archive_line("ff000001-0000-4000-8000-000000000001", engineering.id).encode("utf-8")
+    tail = _archive_line("ff000002-0000-4000-8000-000000000002", engineering.id).encode("utf-8")
+    month = archive / MONTH
+    month.write_bytes(first + tail[:60])  # a prune mid-append: the writer ends every record with a newline
+
+    for ref in ("ff000001", "ff000003"):  # a record before the torn tail, and an id the tail does not hold
+        assert (await wr.lookup_record(FORGE, ref)).complete is False, ref
+    assert (await wr.lookup_record(FORGE, "ff000001")).outcome == LOOKUP_FOUND
+
+    month.write_bytes(first + tail)  # the writer finished the record
+    finished = await wr.lookup_record(FORGE, "ff000002")
+    unrelated = await wr.lookup_record(FORGE, "ff000003")
+    assert (finished.outcome, finished.complete) == (LOOKUP_FOUND, True)
+    assert (unrelated.outcome, unrelated.complete) == (LOOKUP_NOT_FOUND, True)
+    await wr.stop()
+
+
+async def test_the_line_cap_counts_the_newline_and_an_over_cap_line_never_hides_or_eats_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lookup_module, "MAX_LINE_BYTES", 1024)
+    wr = await _ward_room(tmp_path)
+    archive = tmp_path / "ward_room_archive"
+    await _attach_archive(wr, archive)
+    engineering = await wr.get_channel_by_department("engineering")
+    archive.mkdir(parents=True, exist_ok=True)
+
+    def sized(thread_id: str, size: int) -> bytes:
+        """A record of exactly ``size`` bytes, its newline included."""
+        bare = _archive_line(thread_id, engineering.id, body="").encode("utf-8")
+        return _archive_line(thread_id, engineering.id, body="x" * (size - len(bare))).encode("utf-8")
+
+    month = archive / MONTH
+    month.write_bytes(sized("ab000001-0000-4000-8000-000000000001", 1024))
+    at_cap = await wr.lookup_record(FORGE, "ab000001")
+    assert (at_cap.outcome, at_cap.complete) == (LOOKUP_FOUND, True), "1024 bytes with the newline is within the cap"
+
+    pad = b'{"note": "' + b"p" * 1013 + b'"}'
+    assert len(pad) == 1025, "premise: the scanner's first read of the padded line is exactly the cap plus one"
+    month.write_bytes(
+        sized("ab000002-0000-4000-8000-000000000002", 1025)
+        + pad + _archive_line("ab000004-0000-4000-8000-000000000004", engineering.id).encode("utf-8")
+        + _archive_line("ab000005-0000-4000-8000-000000000005", engineering.id).encode("utf-8")
+    )
+    for ref in ("ab000002", "ab000004"):  # over the cap by its newline; a record inside an over-cap line
+        result = await wr.lookup_record(FORGE, ref)
+        assert (result.outcome, result.complete) == (LOOKUP_NOT_FOUND, False), ref
+    after = await wr.lookup_record(FORGE, "ab000005")
+    assert (after.outcome, after.complete) == (LOOKUP_FOUND, False), "an over-cap line is skipped, never the line after it"
     await wr.stop()
 ```
 
@@ -1878,7 +2077,7 @@ REPLACE:
 - *Scope.* Slice 4 of #1627, two milestone commits. Files: new `ward_room/lookup.py`; `ward_room/service.py` (`lookup_record`, the archive directory); `cognitive/sub_tasks/query.py`, `analyze.py`, `compose.py`; `cognitive/cognitive_agent.py`; tests. Contract: `prompts/ad-1347-s4-archive-aware-thread-and-post-lookup.md`.
 - *D1 (route).* ANALYZE names the id (AD-696's one-shot QUERY shape), gated by a communication action so the answer is never discarded; rejected a text parse (git SHAs share the shape) and a proactive context key; a loop tool waits for AD-1346.
 - *D2 (archive).* A bounded scan, newest month first, with a byte prefilter on the writer's JSON shape; a prune-time index deferred until live sizes call for it.
-- *D3 (privacy).* AD-621 membership reused; authorship counts only in DM channels; an unknown channel is visible to no one; invisible reads as absent; the asker is `_agent_id` only, resolved through BF-907, visitors refused.
+- *D3 (privacy).* AD-621 membership reused; authorship counts only in DM channels; an unknown channel is visible to no one; invisible reads as absent, and hidden records never decide what is listed, counted or called complete (a 32-match raw safety bound per source; a torn or over-cap archive line marks any lookup incomplete); the asker is `_agent_id` only, resolved through BF-907, visitors refused.
 - *D4 (no flag).* Nothing becomes readable that a member could not read; retention for one's own channels is what changes.
 - *Disclosed effects.* Every chain agent's two ANALYZE prompts gain one optional action and key. The prune archive is now read, by participants and members only.
 - *Reversal.* Revert the two commits; the archive and the database are unchanged.
@@ -1901,7 +2100,7 @@ REPLACE:
 - Tools and the tool registry: no new tool; `event_log_query` stays loop-only.
 - AD-1119's resolvers (register R1).
 
-## 10. Mutation rows (32 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (41 rows after Amendment A1; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline run that passes, and restore each file before the next row. None of these has been executed; the build's campaign is the campaign of record.
 
@@ -1921,14 +2120,14 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | L12 | `src/probos/ward_room/lookup.py` | `files = sorted((p for p in root.glob(ARCHIVE_GLOB) if p.is_file()), key=lambda p: p.name, reverse=True)` | `files = sorted((p for p in root.glob(ARCHIVE_GLOB) if p.is_file()), key=lambda p: p.name, reverse=False)` | test 13 (the newest month is not read) |
 | L13 | `src/probos/ward_room/lookup.py` | `for path in files[:MAX_ARCHIVE_FILES]:` | `for path in files:` | test 13 (the thirteenth month is found) |
 | L14 | `src/probos/ward_room/lookup.py` | `complete = len(files) <= MAX_ARCHIVE_FILES` | `complete = True` | test 13 |
-| L15 | `src/probos/ward_room/lookup.py` | `if len(line) > MAX_LINE_BYTES and not line.endswith(b"\n"):` | `if False:` | test 14 (`after.complete` becomes True) |
+| L15 | `src/probos/ward_room/lookup.py` | `if not line.endswith(b"\n"):  # a torn tail, or the head of an over-cap record` | `if False:` | test 24 (a lookup for an id the torn tail does not hold reads complete) |
 | L16 | `src/probos/ward_room/lookup.py` | `if thread_marker not in line and post_marker not in line:` | `if thread_marker not in line:` | test 4 (the archived post) |
 | L17 | `src/probos/ward_room/lookup.py` | `if budget <= 0:` | `if False:` | test 15 |
 | L18 | `src/probos/ward_room/lookup.py` | `if thread_id.startswith(ref):` | `if True:` | test 4 (the archived post becomes ambiguous) |
 | L19 | `src/probos/ward_room/lookup.py` | `if post.post_id.startswith(ref):` | `if True:` | test 2 (the archived thread becomes ambiguous) |
 | L20 | `src/probos/ward_room/lookup.py` | `text = ref.strip().lower().removeprefix("#")` | `text = ref` | test 1 (the `#` upper-case form) |
 | L21 | `src/probos/ward_room/lookup.py` | `_REF_RE = re.compile(r"[0-9a-f]{8}[0-9a-f-]{0,28}")` | `_REF_RE = re.compile(r"[0-9a-f]{7}[0-9a-f-]{0,29}")` | test 11 (the 7-character case) |
-| L22 | `src/probos/ward_room/lookup.py` | `"SELECT id FROM threads WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_CANDIDATES),` | `"SELECT id FROM threads WHERE id = ? AND length(?) > 0 LIMIT ?", (ref, ref, MAX_CANDIDATES),` | test 1 (the 8-character prefix) |
+| L22 | `src/probos/ward_room/lookup.py` | `"SELECT id FROM threads WHERE substr(id, 1, ?) = ? LIMIT ?", (len(ref), ref, MAX_RAW_MATCHES),` | `"SELECT id FROM threads WHERE id = ? AND length(?) > 0 LIMIT ?", (ref, ref, MAX_RAW_MATCHES),` | test 1 (the 8-character prefix) |
 | L23 | `src/probos/ward_room/lookup.py` | `if post.deleted:` | `if False:` | test 19 |
 | L24 | `src/probos/ward_room/lookup.py` | `return text[:MAX_RENDER_CHARS]` | `return text` | test 18 |
 | S1 | `src/probos/ward_room/service.py` | `self._archive_dir = archive_dir  # AD-1347 S4: the lookup reads what the prune writes` | `pass` | tests 2 and 16 |
@@ -1939,8 +2138,17 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | G2 | `src/probos/cognitive/cognitive_agent.py` | `observation["_ward_room_lookup_fired"] = False  # AD-1347 S4 (once per chain)` | `pass` | C7 |
 | G3 | `src/probos/cognitive/cognitive_agent.py` | `observation["_ward_room_lookup_context"] = text` | `pass` | C4, C5 |
 | P1 | `src/probos/cognitive/sub_tasks/compose.py` | `_wr_lookup = context.get("_ward_room_lookup_context", "")` | `_wr_lookup = ""` | C9, C5 |
+| L25 | `src/probos/ward_room/lookup.py` | `if len(line) > MAX_LINE_BYTES:  # the rest of an over-cap record is still unread` | `if False:` | test 25 (the record inside the over-cap line is found) |
+| L26 | `src/probos/ward_room/lookup.py` | `if len(line) > MAX_LINE_BYTES:  # the cap counts the record's newline` | `if False:` | test 25 (the 1025-byte record is found) |
+| L27 | `src/probos/ward_room/lookup.py` | `if len(line) > MAX_LINE_BYTES:  # the cap counts the record's newline` | `if len(line) >= MAX_LINE_BYTES:` | test 25 (the 1024-byte record at the cap is not found) |
+| L28 | `src/probos/ward_room/lookup.py` | `complete = len(thread_ids) < MAX_RAW_MATCHES and len(post_rows) < MAX_RAW_MATCHES` | `complete = True` | test 22 (the live ambiguity reads complete) |
+| L29 | `src/probos/ward_room/lookup.py` | `if len(found) >= MAX_RAW_MATCHES:` | `if False:` | test 22 (three archived matches, complete) |
+| L30 | `src/probos/ward_room/lookup.py` | `complete = complete and archive_complete` | `complete = complete` | test 16 (an unknown directory reads complete) |
+| L31 | `src/probos/ward_room/lookup.py` | `*(_summary_line(match) for match in result.matches[:MAX_LISTED]),` | `*(_summary_line(match) for match in result.matches),` | test 23 (six lines listed) |
+| L32 | `src/probos/ward_room/lookup.py` | `*([f"- and {more} more you can see"] if more > 0 else []),` | `*(),` | test 23 (no count of the rest) |
+| L33 | `src/probos/ward_room/lookup.py` | `MAX_RAW_MATCHES = 32  # a safety bound that service-made uuid4 ids do not reach` | `MAX_RAW_MATCHES = 4` | tests 20 and 21 (the round-1 raw cap: hidden records decide) |
 
-Uniqueness: rows L6 and L7 name the same line with two different mutants; every other Line cell is distinct. No Line cell is a substring of another line in its file: `return text[:MAX_RENDER_CHARS]` differs from the incomplete branch's `text[: MAX_RENDER_CHARS - ...` by its space, and `if budget <= 0:` from `while budget > 0:`. G1's `if False:` variant is covered by C5 through Q2 and G3.
+Uniqueness: rows L6 and L7, and rows L26 and L27, name the same line with two different mutants; every other Line cell is distinct. The two `if len(line) > MAX_LINE_BYTES:` lines differ by their comments, which are part of the stripped line. No Line cell is a substring of another line in its file: `return text[:MAX_RENDER_CHARS]` differs from the incomplete branch's `text[: MAX_RENDER_CHARS - ...` by its space, and `if budget <= 0:` from `while budget > 0:`. G1's `if False:` variant is covered by C5 through Q2 and G3.
 
 ## 11. Verified Against Codebase (2026-10-22, worktree at `3a94845f`)
 
@@ -1993,6 +2201,11 @@ wc -l src/probos/ward_room/service.py   521 (class starts at 44)
 tests/test_ad643a_intent_routing.py:514-528, tests/test_ad645_composition_briefs.py:56-78   the key-count pins
 pyproject.toml:181           asyncio_mode = "auto"
 scripts/ad_ceiling.py        CEILING AD-1347, NEXT AD-1348
+threads.py:467, messages.py:212   (A1, 2026-10-23) thread and post ids are uuid4 strings made by the service
+threads.py:473, messages.py:217   (A1) the only inserts into threads and posts in src/probos
+threads.py:881               (A1) a Captain-authored thread is kept when retention_days_captain == 0
+threads.py:1119-1121         (A1) the writer appends in text mode, one record per line; on Windows each ends in a carriage return and newline
+rg "live_candidates|MAX_CANDIDATES|scan_archive"   (A1) only lookup.py and this contract; the other MAX_CANDIDATES is profile_qualification_store.py's own
 ```
 
 SEARCH uniqueness was checked by Grep in each target file. Each block contains a line that occurs once in its file:
@@ -2052,12 +2265,12 @@ SEARCH uniqueness was checked by Grep in each target file. Each block contains a
 ## 15. Diff Reviewer: properties to verify
 
 1. Every record returned or rendered passes the visibility rule. The only grants are membership in `get_channel_subscriber_ids(channel_id)`, or authorship when the channel type is `"dm"`. A missing channel grants nothing.
-2. For a given asker and id, an absent record and an invisible one produce equal `LookupResult` fields (apart from `ref`) and equal text with the id substituted.
+2. For a given asker and id, an absent record and an invisible one produce equal `LookupResult` fields (apart from `ref`) and equal text with the id substituted, whenever fewer than `MAX_RAW_MATCHES` (32) records in a live table or in the scanned archive share the prefix. Invisible records never decide what is listed, counted or called complete. Reaching the raw bound gives `complete=False` (A1); service-made uuid4 ids do not reach it.
 3. The asker is `_agent_id` only. No path treats a blank, unresolved or visiting id as anyone; no path maps to "captain".
-4. The archive reader holds at most `MAX_LINE_BYTES + 1` bytes per read, reads at most `MAX_ARCHIVE_FILES` files and about `MAX_ARCHIVE_BYTES` bytes, writes nothing, and never raises `OSError`.
+4. The archive reader holds at most `MAX_LINE_BYTES + 1` bytes per read, accepts a record of at most `MAX_LINE_BYTES` bytes with its newline, reads at most `MAX_ARCHIVE_FILES` files and about `MAX_ARCHIVE_BYTES` bytes, and writes nothing. Any unterminated last line or over-cap line marks the scan incomplete whatever it holds, and this is decided before the id prefilter. It drains only an unterminated over-cap head, so the next record is always read. It never raises `OSError` once its directory check has run (an `OSError` from that check escapes; QUERY contains it as unavailable; register F-334).
 5. `render_lookup` never exceeds `MAX_RENDER_CHARS`, and never shows the body of a post flagged deleted.
-6. `_query_ward_room_lookup` never raises an `Exception` subclass, so the QUERY step's success is unchanged by a Ward Room fault.
-7. The dispatch runs at most once per routed chain, only with a communication action, and the fired flag is reset at the start of each routed chain.
+6. `_query_ward_room_lookup` never raises an `Exception` subclass from the service, so the QUERY step's success is unchanged by a Ward Room fault (a fault injected into `render_lookup` itself escapes: register F-335).
+7. The dispatch runs at most once per routed chain, only with a communication action, and the fired flag is reset at the start of each routed chain (a caller that reuses one observation for two routed chains keeps the earlier lookup text: register F-333).
 8. `WardRoomService`'s class body stays under 500 lines, and `check_architecture_principles.py --check` passes.
 9. The updated pins state why they changed; no test was deleted.
 
@@ -2066,13 +2279,13 @@ SEARCH uniqueness was checked by Grep in each target file. Each block contains a
 - A1: a member gets a live thread or post by an 8 to 36 character id, with the `#` and upper-case forms accepted.
 - A2: a pruned thread or post is found in the archive the real prune wrote, labelled with its prune time.
 - A3: visibility as in property 1, for department channels, DMs (live, AD-485-archived and pruned) and Captain DM channels.
-- A4: invisible reads as absent (property 2), and only visible records count toward found or ambiguous.
+- A4: invisible reads as absent (property 2), and only visible records count toward found or ambiguous, what is listed and the count of the rest, including when hidden records share the prefix, live or archived (tests 20, 21, 23).
 - A5: identity as in property 3.
 - A6: an invalid id is typed; ambiguity lists the visible matches; caps hold; deleted posts are flagged.
-- A7: an incomplete scan is reported as incomplete (file cap, byte budget, oversized or torn record, unknown directory).
+- A7: an incomplete search is reported as incomplete (file cap, byte budget, the raw-match bound live or archived, a record over the cap with its newline, an unterminated last line whatever it holds, an unreadable record, unknown directory), and never because of which id was asked.
 - A8: the operation is registered, never raises, and both ANALYZE prompts teach it.
 - A9: C5 passes, crossing ANALYZE to COMPOSE through the real executor, handler, service and archive; C6 and C7 pass.
-- Every new test fails on `3a94845f`. The mutation rows are each killed by their named test.
+- Every new test fails on `3a94845f`. Tests 20-25 also fail on the round-1 candidate `854bf668`. The mutation rows are each killed by their named test.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 17. Live-system checks before the build (read-only, `%LOCALAPPDATA%\ProbOS\data`)
