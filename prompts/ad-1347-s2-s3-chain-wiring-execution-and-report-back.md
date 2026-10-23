@@ -1,14 +1,15 @@
-# AD-1347 S2 and S3: the chain's agent-work tags, and the Ship's Computer runs, parks, resumes and reports agent-created work (closes #1627)
+# AD-1347 S2 and S3: the chain's agent-work tags, and the Ship's Computer runs, parks, resumes and reports agent-created work (#1627 slices 2 and 3; the issue closes after the Captain's live acceptance)
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A1: the repair of review round 1)
 
-**Status:** build-ready after wave 2 (BF-917 #1625, BF-915 #1623) merges. Slices 2 and 3 of 4 of #1627, built as one batch (the Architect's queue ruling, comment `IC_kwDORgp-xs8AAAABer-scw`). **S3 closes AD-1347.** **Tier HIGH:** crew create governed work through the chain; colleagues run it with tools; there is a Captain approval path. **AD number:** AD-1347; this batch allocates nothing (the orchestrator runs `scripts/ad_ceiling.py`). **Base:** `origin/main` `6b950acf` (S1 and S4 merged).
+**Status:** build-ready after wave 2 (BF-917 #1625, BF-915 #1623) merges. Slices 2 and 3 of 4 of #1627, built as one batch (the Architect's queue ruling, comment `IC_kwDORgp-xs8AAAABer-scw`). **S3 completes AD-1347's build; #1627 closes after the Captain's live acceptance (A1).** **Tier HIGH:** crew create governed work through the chain; colleagues run it with tools; there is a Captain approval path. **AD number:** AD-1347; this batch allocates nothing (the orchestrator runs `scripts/ad_ceiling.py`). **Base:** `origin/main` `6b950acf` (S1 and S4 merged).
 
 **Wave 2:** this contract needs nothing from wave 2 and edits none of its files: `skill_framework.py`, `acm.py`, `crew_enrollment.py`, `config/ontology/skills.yaml`, the doctor checks, `role_template_audit.py`, `storage_declarations.py` and its four test files. Every code SEARCH anchors on text. Each tracker SEARCH anchors on a line that wave 2's entries do not change (§8).
 
 **Tests:**
-- M1: `tests/test_ad1347_s2_chain_tags.py`, 13 functions.
-- M2: `tests/test_ad1347_s3_execution.py`, 12 functions; `tests/test_ad1347_s3_wiring.py`, 1 function (a real boot).
+- M1: `tests/test_ad1347_s2_chain_tags.py`, 16 functions after A1 (C1 has 11 cases; A1's C14 to C16 and its C1 and C5 changes are applied in M2's §7.30).
+- M2: `tests/test_ad1347_s3_execution.py`, 21 functions after A1 (X17 has 2 cases); `tests/test_ad1347_s3_wiring.py`, 1 function (a real boot); A1: `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (3 vitest cases) over the shared fixture `ui/e2e/fixtures/ad1347-agent-work-approvals.json`.
 - Updated pins:
   - `tests/fixtures/ad1343_seam_registry.py`: one `AGENTIC_RUN_OWNERS` row and the `agent_work` `SEAM_INDEX` text;
   - `tests/test_ad1156_plan_execute_mode.py`: the `_NEVER_RAN_REFUSALS` set;
@@ -19,7 +20,9 @@
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks here are LF; match and write with each file's own endings. New files are written LF.
 
-**Mechanical repairs by the orchestrator (2026-10-23; seven, found by applying the contract by tool on `6b950acf` and `ba20e949`, running its tests and its mutation table, and building M1; no decision changed, and the production code needed none).** (1) `tests/test_ad1347_s3_execution.py` imported `AgentWorkConfig` from `probos.agent_work`, which does not export it (S1 defines it in `probos.config`, and S1's own tests import it there): the import moves. (2) C9's first case used the thread id `"bad thread"`, which S1's `AgentWorkOrigin` accepts (it refuses only a non-str, an id over 128 characters, an id with surrounding whitespace and an id that does not encode as UTF-8), so the tag was filed: the case is `" t1"`, an id with surrounding whitespace. (3) X3's `restricted_before_run` case issued its restriction at `ToolPermission.READ`, which restricts nothing at read level (S1's tests restrict with `ToolPermission.NONE`): it is `NONE`. (4) W3's boot config left the Ward Room off, and finalize wires AD-855's driver only inside `if runtime.ward_room:`, so the premise assertion failed: the test now builds its config through a local `_config` that sets `ward_room.enabled = True`, the change §7.21's note had told the Builder to make. After the four, all 41 test cases pass on the contract applied by tool. (5) Found by the campaign: row R11 (`if outcome == OUTCOME_EXPIRED:` to `if False:`) survived, because X5 asserted only that the notice contains "expired", and the fallback text ("ended as expired without a result") contains it too: X5 now asserts the expired wording itself. (Row SD1's killer is `tests/test_issue1419_failed_start_rollback.py`: its campaign command names that file as well.) The mutation table has 53 rows; the heading said 44. (6) Found by the M1 Builder: two existing test stubs of the extractor, `_fake_extract` in `tests/test_bf237_pipeline_post_budget.py` and in `tests/test_bf238_post_budget_telemetry.py`, have the fixed signature `(agent, text, *, post_budget=None)`, so the pipeline's new `thread_id` and `post_id` keywords raised `TypeError` in four bf237 tests (bf238's stub fails the same way): §7.3a and §7.3b give each stub the two keywords. §5's row and AV5's claim that no test fakes the extractor's kwargs were wrong (AV5 searched only for `def extract_and_execute_actions`) and are corrected; M1's focused command now names the bf238 test. (7) Found by the M2 Builder's focused command: `tests/test_ad1155_loop_until_done.py::test_work_item_agentic_executor_run_signature_is_unchanged` pins not only the 21-name prefix (`:508`, which §5 and §6 cited) but also the five names after it (`:531`) and the whole tail after the 26th name (`list(params)[26:] == [...]`, `:538`), and §7.8 appends `confinement` after `admitted_turn`, so the tail pin saw one extra name and the case failed; §5's row and §6's list called the test unaffected after reading only the prefix: §7.8a adds `"confinement"` to the pinned tail, and both lists and AV now say so. The change is test-only and the production code is the contract's own. **Re-verified on `origin/main` `ba20e949` (wave 2 merged):** all 38 code pairs and both tracker pairs apply, each SEARCH exactly once; the 41 test cases pass on the contract applied by tool; the table's rows are run on that tree and recorded in §17. The phantom precheck lists 21 candidates on the base tree `6b950acf` and 8 on the tree with this contract applied, each explained: the 13 `kwarg_mismatch` (base tree only) are the `thread_id` and `post_id` parameters this contract adds to the extractor; 5 `method_phantom` (`restrict_to_plan_mode` and `confine_calls` exist on `DispatchToolExecutor`, where the precheck typed `executor` as `WorkItemAgenticExecutor`; `mark_fulfilled` exists on the capability-request store, where it typed `store` as `WorkItemStore`); 1 `field_phantom` (`origin.id` is a Ward Room thread's id, where the precheck typed `origin` as `AgentWorkOrigin`); and two stdlib classes (`AssertionError`, `SimpleNamespace`).
+**Mechanical repairs by the orchestrator (2026-10-23; eight, found by applying the contract by tool on `6b950acf` and `ba20e949`, running its tests and its mutation table, and building M1; no decision changed, and the production code needed none).** (1) `tests/test_ad1347_s3_execution.py` imported `AgentWorkConfig` from `probos.agent_work`, which does not export it (S1 defines it in `probos.config`, and S1's own tests import it there): the import moves. (2) C9's first case used the thread id `"bad thread"`, which S1's `AgentWorkOrigin` accepts (it refuses only a non-str, an id over 128 characters, an id with surrounding whitespace and an id that does not encode as UTF-8), so the tag was filed: the case is `" t1"`, an id with surrounding whitespace. (3) X3's `restricted_before_run` case issued its restriction at `ToolPermission.READ`, which restricts nothing at read level (S1's tests restrict with `ToolPermission.NONE`): it is `NONE`. (4) W3's boot config left the Ward Room off, and finalize wires AD-855's driver only inside `if runtime.ward_room:`, so the premise assertion failed: the test now builds its config through a local `_config` that sets `ward_room.enabled = True`, the change §7.21's note had told the Builder to make. After the four, all 41 test cases pass on the contract applied by tool. (5) Found by the campaign: row R11 (`if outcome == OUTCOME_EXPIRED:` to `if False:`) survived, because X5 asserted only that the notice contains "expired", and the fallback text ("ended as expired without a result") contains it too: X5 now asserts the expired wording itself. (Row SD1's killer is `tests/test_issue1419_failed_start_rollback.py`: its campaign command names that file as well.) The mutation table has 53 rows; the heading said 44. (6) Found by the M1 Builder: two existing test stubs of the extractor, `_fake_extract` in `tests/test_bf237_pipeline_post_budget.py` and in `tests/test_bf238_post_budget_telemetry.py`, have the fixed signature `(agent, text, *, post_budget=None)`, so the pipeline's new `thread_id` and `post_id` keywords raised `TypeError` in four bf237 tests (bf238's stub fails the same way): §7.3a and §7.3b give each stub the two keywords. §5's row and AV5's claim that no test fakes the extractor's kwargs were wrong (AV5 searched only for `def extract_and_execute_actions`) and are corrected; M1's focused command now names the bf238 test. (7) Found by the M2 Builder's focused command: `tests/test_ad1155_loop_until_done.py::test_work_item_agentic_executor_run_signature_is_unchanged` pins not only the 21-name prefix (`:508`, which §5 and §6 cited) but also the five names after it (`:531`) and the whole tail after the 26th name (`list(params)[26:] == [...]`, `:538`), and §7.8 appends `confinement` after `admitted_turn`, so the tail pin saw one extra name and the case failed; §5's row and §6's list called the test unaffected after reading only the prefix: §7.8a adds `"confinement"` to the pinned tail, and both lists and AV now say so. The change is test-only and the production code is the contract's own. (8) Found when Amendment A1 was applied by tool: pair A1-30 replaced the heading line of §12 with its own additions, so §12's absence table sat under `### A1 additions` with no §12 heading: the heading is restored after the additions (no decision, text or count changed). **Re-verified on `origin/main` `ba20e949` (wave 2 merged):** all 38 code pairs and both tracker pairs apply, each SEARCH exactly once; the 41 test cases pass on the contract applied by tool; the table's rows are run on that tree and recorded in §17. The phantom precheck lists 21 candidates on the base tree `6b950acf` and 8 on the tree with this contract applied, each explained: the 13 `kwarg_mismatch` (base tree only) are the `thread_id` and `post_id` parameters this contract adds to the extractor; 5 `method_phantom` (`restrict_to_plan_mode` and `confine_calls` exist on `DispatchToolExecutor`, where the precheck typed `executor` as `WorkItemAgenticExecutor`; `mark_fulfilled` exists on the capability-request store, where it typed `store` as `WorkItemStore`); 1 `field_phantom` (`origin.id` is a Ward Room thread's id, where the precheck typed `origin` as `AgentWorkOrigin`); and two stdlib classes (`AssertionError`, `SimpleNamespace`). **Re-verified after Amendment A1 on `origin/main` `ba20e949`:** all 88 code pairs (M1 8, M2 30, A1's §7.22 to §7.31 50) and both tracker pairs apply, each SEARCH exactly once (the slices, cut at `### 7.1`, `### 7.7`, `### 7.22` and `## 8. Tracking`, hold 88 of the contract's 88 SEARCH labels in that span); the 59 Python test cases pass on the contract applied by tool, and so do the 3 new vitest cases and the 682 existing vitest cases of the approval UI (`src/store`, `src/components/capability`, `src/components/approvals`, the profile and bridge approval tests); the phantom precheck lists 12 candidates on the applied tree, each a false positive: the 8 explained above plus `CapabilityRequestCard.tsx` (a file name in prose), `ContextVar` (the standard library's `contextvars.ContextVar`, which `_STRICT_APPROVAL_DISPATCH` already uses) and `WorkItemStore.list_pending` twice (the precheck typed `store` as `WorkItemStore`; `list_pending` is a method of the capability-request store, `capability_request.py:1140`).
+
+**Amendment A1 (2026-10-23): the repair of review round 1 (`gpt-6.1-sol`, NOT READY, 14 findings). Not a mechanical repair; no decision D1 to D8 is reversed.** All code is in new sections §7.22 to §7.31 at the end of M2, whose SEARCH blocks are the built text, so M1's commit is unchanged and the delta is one place. Repaired: F1 (both fulfilment predicates, Python `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the agent-work call bound to its own item; a shared fixture is asserted equal to the real route output and fed to the real decoder), F2 (a start that arrives during a run is made when that run ends), F3 (a confinement's admission is carried past AD-1154's inbox for that one call; credential entry stays refused; an item AD-1324 parked itself stays parked), F4 (done only when the run completed with an answer; any other stop fails with its reason), F5 (a request's eligibility is asked again before parking), F6, F7 and F11 (one linear scanner: any letter case, every marker stripped, fenced, quoted and nested tags never acted on), F8 (declines reach every watcher), F10 (a fault on one tag is acknowledged and the reply goes on), F12 (off neither imports nor calls the tag module), F13 (the notice states the TTL exactly), F14 (X3 asserts the executor is not entered before the run; X12 uses the real router), and F15, found while repairing F3 (the gate never records a browser confirmation token, as AD-1154 does not). F9: the decline acknowledgement no longer says "was told" when the post failed; a failed post still consumes its claimed notice (register R8: needs a release operation on the notice table, a store contract change). Tests: 41 cases became 59; rows: 53 became 76 Python rows, plus 4 TypeScript rows run by hand (§10). Round 2 reviews the whole candidate: the predicate, the HXI decoder, `_park_or_admit` and the terminal status mapping are shared contracts.
 
 ---
 
@@ -80,6 +83,8 @@ S1 can create agent work, but nothing in the chain calls it, and nothing runs, p
 - A `ValueError` from `AgentWorkOrigin` is a refused tag, as S1 asked (S1 status, F2/F3).
 - The acknowledgement is a parenthesised line, `(Ship's Computer: ...)`, appended to the agent's own reply text. It has no brackets, so BF-203 leaves it alone, and it starts no routing of its own.
 - Disclosed: if BF-237 suppresses the main post because a `[REPLY]` was posted, the acknowledgement is not posted. The item exists either way and its report names it.
+- Reading (A1: F6, F7, F11): tag names are read in any letter case; every marker, closers included, is removed from the posted text; a marker in a code fence or on a Markdown quote line (`>`) is an example or a quotation and is never acted on; a block that holds another marker (nested or broken) is removed whole and not acted on; one pass reads the markers, each at most 160 characters to its bracket, so the parse is linear. The grammar the compose step teaches is unchanged.
+- A fault while acting on one tag (A1, F10) is logged and acknowledged ("could not be confirmed ... check the board"), never retried, and the rest of the reply and its other tags go on.
 
 **D3 (how an item runs).** `AgentWorkRunner` in `probos/agent_work_runner.py`, built in finalize only while `runtime.agent_work` is the real service. One listener on the work store's events:
 - a created self-task or chief assignment starts a run;
@@ -87,14 +92,16 @@ S1 can create agent work, but nothing in the chain calls it, and nothing runs, p
 - a claimed request starts a run;
 - an item reaching done, failed or cancelled has its live bookings closed and its notices delivered.
 
-A claim through the chain also starts the run directly, and the runner holds each item to one run at a time. `recover` restarts every assigned, unfinished, unparked item at start.
+A claim through the chain also starts the run directly, and the runner holds each item to one run at a time. `recover` restarts every assigned, unfinished, unparked item at start. A start that arrives while the item runs (BF-878 resuming an approval that settled before the run parked, or a duplicate event) is kept and made when that run ends; the next run re-reads the item, so a finished or parked item does nothing (A1, F2). A stopped runner starts and keeps nothing; the next start's `recover` runs what is left.
 
 Each run calls `WorkItemAgenticExecutor.run` without `admitted_turn`, so the run entry refuses a stopped agent at `agentic_run`. The task text frames the work as a colleague's request, not the Captain's.
 
 Before a request runs, `AgentWorkService.execution_allowed` asks the claim gate's question again (S1's hand-on, A3).
 - If the claimant may not run it, the request is unassigned: its booking is cancelled and its status is open again.
-- After the run the question is asked once more. A claimant stopped mid-run, or one that lost the tool, also releases the request, because AD-1343 S2 is not built (blind spot 7).
+- After the run the question is asked once more. A claimant stopped mid-run, or one that lost the tool, also releases the request, because AD-1343 S2 is not built (blind spot 7). It is asked first, before parking (A1, F5): a claimant stopped after it filed a call is released, never parked; the call it filed stays on the Captain's queue, inert, because AD-855 and the admission act only on an item parked on that request (register R9).
 - A self-task or assignment whose assignee may not run it is left for its TTL.
+
+How a run ends (A1: F3, F4). A run that filed a call parks on the first one. A run the executor parked itself (AD-1324's tier-floor ask, `parked_request_id`) stays parked, its booking held. Otherwise the item is `done` only when the executor's `stopped_reason` is `complete` and it gave an answer; any other stop (`max_iterations`, `token_budget`, `error`, an empty answer, an unknown reason) marks it `failed`, for every kind, with the reason in `agent_work_result.stopped`, and the report names it (`STOP_WORDS`). A failed request is not returned to the board: its requester is told and may ask again.
 
 Ranked:
 - **A** (chosen): push through the store's events, plus a direct start and recovery.
@@ -108,6 +115,8 @@ Ranked:
 - A gate fault refuses. The two refusal texts are never-ran outcomes, classified `permission_denied` and kept out of defect evidence.
 - The offer is unchanged: the agent can name any tool it holds, and only read-only calls run unasked.
 - Confinement and plan mode are mutually exclusive (`tool_call_confinement_invalid`).
+- A call the gate admits carries that admission past AD-1154's browser inbox for that one call (A1, F3): the context variable `_CONFINED_ADMISSION` is set around `_park_or_admit` as `_STRICT_APPROVAL_DISPATCH` is, and the inbox admits it after its step 3, so credential entry stays refused. No other guard is skipped, and `_park_or_admit`'s pinned signature is unchanged.
+- The gate never records a browser confirmation token, as AD-1154's inbox never does (A1, F15: BF-682); it is stripped before filing and before matching alike.
 
 Ranked:
 - **A** (chosen): as above.
@@ -123,7 +132,7 @@ Ranked:
 
 It checks the AD-1154 pending cap first (`approval_inbox.max_pending_per_agent`), and dedup is AD-1154's own. After the run, the item parks on the first request it filed (`block_on_request`).
 
-**Approval** is its own fulfilment: a new branch in `_maybe_fulfil_on_approval` marks the request fulfilled.
+**Approval** is its own fulfilment: a new branch in `_maybe_fulfil_on_approval` marks the request fulfilled. Both fulfilment predicates know this one subtype (A1, F1): `capability_request.agent_work_call` (the runner's `agent_work_approval` delegates to it) makes `can_fulfil_request` true for it, so an approved, unfulfilled one stays on the actionable queue with `can_retry_fulfilment` (BF-722's retry marks it fulfilled); the HXI's `canFulfil` mirrors it with the request's `work_item_id`, so the decoder accepts the approval's `fulfilled` response. Every other action still has no fulfiller.
 - FULFILLED makes AD-855 resume the item. `_resume` hands an agent-work item to `resume_agent_work`, never to the router.
 - The resumed run admits exactly the approved call (same agent, item, tool and parameters) once, consuming the approval on a claim-once `agent_work_notices` row (kind `approval_use:<request id>`), so a restart cannot replay it.
 - A repeat of the call is filed again.
@@ -174,11 +183,16 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | `run(..., confinement=None)` | every existing caller | appended after `admitted_turn` (the 21-name prefix pinned by `tests/test_ad1155_loop_until_done.py:508` is unchanged; the same test's tail pin at `:538` gains the name, §7.8a); forwarded only when set (the arguments dict pinned by AD-1239 is unchanged) |
 | `_NEVER_RAN_REFUSALS` (+2), `classify_tool_fault_error` tuple (+2) | AD-1189/1257 defect evidence; AD-1205 fault classification | both new texts are emitted only under a confinement |
 | `metadata["capability_request_id"]` on an agent-work item | AD-855 resume and cancel (compare and set); `_approved_admission`; `_denial_reason` | written only by `block_on_request` |
-| `agent_work_call` `action` requests | `_maybe_fulfil_on_approval` (new branch); HXI card (generic `action`) | AD-1154's exact six-key payload |
+| `agent_work_call` `action` requests | `_maybe_fulfil_on_approval` (new branch); HXI card (generic `action`); A1: `can_fulfil_request` and the HXI decoder (rows below) | AD-1154's exact six-key payload, scoped `agent_work:<its own work_item_id>` |
 | `metadata["agent_work_result"]` | report text; the board (`to_dict`) | not a reserved key; written with the done status in one write |
 | `agent_work_notices` kinds `activation`, `decline`, `approval_use:<id>` | `list_due_work_notices` filters by kind `terminal` | other kinds never appear in the terminal query |
 | Ward Room posts by `system` | the router (routes like an agent post: mentions first, `max_responders` on the notice thread) | the same author as BF-200 and AD-1343 notices |
 | `runtime.agent_work_runner` | `resume_agent_work`, `apply_agent_work_tags`, shutdown | `None` unless finalize built it |
+| A1: `can_fulfil_request` true for the bound agent-work call | `_serialize`'s `can_retry_fulfilment` (`routers/capability_requests.py:82-84`); `list_actionable` (`capability_request.py:1118-1124`) and its callers, the actionable route (`routers/capability_requests.py:114`) and AD-1220's install dedup (`runtime.py:386`, filters `kind == "install"`); tests `test_ad1206_repair_issue.py:391-435`, `test_ad1212_1216_approval_ui.py:646,711-712`, `test_ad1299_s2a_candidate_approval.py:325,332`, `tests/fixtures/approval_ui_bridge.py:435,450,476` | only an `action` with `agent_work_call` scoped to its own item is new; every asserted row is repair, ordinary or another kind; the non-action kind check comes first, so no payload is read for other kinds |
+| A1: HXI `canFulfil(kind, payload, workItemId)` | `isCapabilityRequestView` (`capabilityApprovals.ts:283`), `parseCapabilityDecision` (`:307-308`); file-private | mirrors the Python predicate field for field; Python serialises an action payload only after it validated (`capability_request.py:443-446`), so the six-key check agrees |
+| A1: `can_retry_fulfilment` true for an approved, unfulfilled agent-work call | `useStore.ts:441`, `CapabilityRequestCard.tsx:138-180` (Retry fulfilment), `capabilityApprovals.ts:151,207,289,357,391-396` | the retry is BF-722's route path, which marks it fulfilled again |
+| A1: `_CONFINED_ADMISSION` | `_park_or_admit` only (one caller, `agentic_dispatch.py:840`) | False unless a confinement admitted the call; the tests that call `_park_or_admit` directly get the default |
+| A1: `failed` with `agent_work_result.stopped` | the requester's terminal notice (`outcome_text`), the board | the result keeps its keys; `stopped` is added only for an unfinished run |
 
 ## 6. Milestones and tests
 
@@ -192,7 +206,7 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 
 | # | Test | Covers |
 |---|---|---|
-| C1 | `test_the_parser_reads_each_tag_and_strips_every_marker` (6 cases) | grammar |
+| C1 | `test_the_parser_reads_each_tag_and_strips_every_marker` (11 cases; A1 adds fenced, quoted, nested, mixed-case and unclosed-with-marker) | grammar |
 | C2 | `test_a_text_without_agent_work_tags_is_returned_unchanged` | off-path equality |
 | C3 | `test_a_self_task_tag_in_a_ward_room_reply_files_under_the_agents_slot_with_the_thread_as_origin` | acceptance 6; D1 |
 | C4 | `test_a_request_tag_publishes_to_a_department_and_the_chain_request_is_discoverable` | acceptance 6 (placement regression through the chain) |
@@ -205,6 +219,11 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | C11 | `test_the_compose_prompt_teaches_the_tags_only_while_agent_work_is_on` (3 modes) | byte-identical golden of the prompt |
 | C12 | `test_the_ward_room_pipeline_passes_its_thread_and_post_to_the_extractor` | crosses pipeline, extractor and service |
 | C13 | `test_a_chief_assigns_a_member_of_its_department_by_callsign` | assignment by callsign |
+| C14 | `test_an_example_a_quotation_or_a_broken_block_is_stripped_and_nothing_is_filed` | A1: F6, F7 through the extractor |
+| C15 | `test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass` | A1: F11 |
+| C16 | `test_a_work_store_fault_on_one_tag_is_acknowledged_and_the_rest_of_the_reply_is_kept` | A1: F10 |
+
+A1 also changes C5: the off runtime (`agent_work` None) never calls `agent_work_service` (F12).
 
 **M2, `tests/test_ad1347_s3_execution.py`.**
 
@@ -212,7 +231,7 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 |---|---|---|
 | X1 | `test_a_chain_request_is_announced_claimed_run_and_reported_in_its_origin_thread` | **acceptance 2** (the whole seam); acceptance 1's evidence shapes |
 | X2 | `test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_it_exactly_once` | acceptance 4 (approve, run once, deny with reason) |
-| X3 | `test_a_claimant_that_may_not_run_returns_the_request_to_the_board_unclaimed` (3 cases) | acceptance 5; blind spot 7 |
+| X3 | `test_a_claimant_that_may_not_run_returns_the_request_to_the_board_unclaimed` (3 cases) | acceptance 5; blind spot 7; A1 (F14): the before-run cases assert the executor is never entered |
 | X4 | `test_every_watcher_of_a_deduplicated_request_gets_the_report` | blind spot 6 |
 | X5 | `test_an_expired_request_tells_each_recipient_once_across_two_overlapping_deliveries` | TTL notice; concurrency |
 | X6 | `test_two_overlapping_starts_run_an_item_once` | concurrency |
@@ -221,7 +240,20 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | X9 | `test_the_confinement_gate_decides_every_call_outside_its_set` (4 cases) and `test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_outcome` | D4 |
 | X10 | `test_a_full_approval_inbox_refuses_the_call_without_filing_it` | AD-1154 cap |
 | X11 | `test_recover_runs_work_a_previous_start_left_unfinished` | restart |
-| X12 | `test_an_ordinary_item_still_resumes_through_the_work_item_router` | regression |
+| X12 | `test_an_ordinary_item_still_resumes_through_the_work_item_router` | regression; A1 (F14): the real `WorkItemRouter`, a dispatchable item admitted once, a tagless one as the negative control |
+| X13 | `test_an_agent_work_approval_crosses_the_hxi_wire_fulfilled_and_retryable` | A1: F1 (the shared fixture equals the real route output; the bound subtype only) |
+| X14 | `test_an_approval_that_settles_before_the_run_parks_still_runs_the_call_once` | A1: F2 |
+| X15 | `test_an_admitted_confined_call_is_not_parked_again_by_the_approval_inbox` | A1: F3 (real `BrowserTool`, inbox armed) |
+| X16 | `test_an_item_the_executor_parked_itself_stays_parked_with_its_booking` | A1: F3's remaining parking outcome |
+| X17 | `test_a_run_that_stops_without_a_finished_answer_fails_and_says_why` (2 cases) | A1: F4 |
+| X18 | `test_a_claimant_stopped_after_it_filed_a_call_returns_the_request_to_the_board` | A1: F5 |
+| X19 | `test_a_decline_whose_notice_cannot_be_posted_does_not_say_it_was_told` | A1: F9's literal |
+| X20 | `test_the_activation_notice_states_the_configured_ttl` | A1: F13 |
+| X21 | `test_a_confirmation_token_is_never_recorded_in_an_approval` | A1: F15 |
+
+A1 also changes X7: a watcher of the deduplicated request is named in the decline (F8).
+
+**HXI, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (A1, F1):** the real decoder accepts the pending row and the fulfilled decision, keeps the approved, unfulfilled row as retryable, and refuses a retry flag on a call bound to another item.
 
 **M2, `tests/test_ad1347_s3_wiring.py`:** W3 `test_the_runner_is_wired_only_with_the_service_and_released_at_stop`.
 
@@ -229,7 +261,8 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 - two overlapping deliveries tell each recipient once (X5);
 - two overlapping starts run once (X6);
 - a decline repeats nothing (X7);
-- an approval admits one call (X2).
+- an approval admits one call (X2);
+- an approval that settles while the run that filed it is still finishing runs the call once, after that run (X14, A1).
 
 **Stale pins and readers hunted:**
 - `tests/test_ad1343_stop_seam_inventory.py`: `AGENTIC_RUN_OWNERS` (updated); `ADMITTED_TURN_SITES`, `STOP_CHECK_SITES`, `STANDING_STOP_SITES` and `DIRECT_TOOL_INVOKES` gain nothing.
@@ -241,12 +274,16 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 - `tests/test_bf688_chain_priority_inheritance.py:51` (no new model call in compose).
 - The proactive `read_text` pins (`test_bf156`, `bf163`, `bf164`, `bf257`, `ad590`, `ad591`) assert DM strings this contract does not touch.
 - `tests/test_ad1211_approval_fulfils_every_kind.py` and `tests/test_ad1154_approval_inbox.py`: ordinary actions still return `fulfilled: False` (the new branch recognises only `agent_work_call` scoped to its own item).
+- A1: `tests/test_ad1154_approval_inbox.py::test_park_or_admit_keeps_its_pinned_signature` (`:1964-1979`) is unaffected: A1 adds no parameter (a context variable). The `can_fulfil_request` tests (`test_ad1206_repair_issue.py:391-435`, `test_ad1212_1216_approval_ui.py:646,711-712`, `test_ad1299_s2a_candidate_approval.py:325,332`) build no agent-work call bound to its item. The HXI tests that decode actions (`CapabilityRequestPanel.test.tsx:815-826`, `ApprovalWave.test.tsx`) use ordinary or repair payloads; AD-1206's fixture is unchanged. No test pins the runner's decline or notice wording (`rg "was told|after it was asked" tests`: only this contract's tests).
+- A1, the architecture check: `AgentWorkRunner` stays at 15 direct methods (the trigger is above 15; `_record_outcome` and `ttl_words` are module functions); `_ApprovalGuardMixin` (unlisted, about 485 lines) gains 6 lines, under the 500-line trigger.
 - `cognitive/dm/reply_pipeline.py` is untouched, so its 24-step guard is too.
 
 **Focused commands:**
 - M1: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1347_s2_chain_tags.py tests/test_ad1347_s1_agent_work.py tests/test_ad868_self_originated_crew.py tests/test_ad437_action_space.py tests/test_bf237_pipeline_post_budget.py tests/test_bf238_post_budget_telemetry.py tests/test_ad654a_async_dispatch.py tests/test_bf874_dm_callsign_and_fail_closed.py tests/test_bf213_proactive_action_vocabulary.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py tests/test_proactive.py -q -n 0 -p no:randomly`
 - M2: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1347_s3_execution.py tests/test_ad1347_s3_wiring.py tests/test_ad1347_s1_wiring.py tests/test_ad1347_s2_chain_tags.py tests/test_ad1156_plan_execute_mode.py tests/test_issue1419_failed_start_rollback.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad1343_seam_registry.py tests/test_ad1154_approval_inbox.py tests/test_ad1211_approval_fulfils_every_kind.py tests/test_ad1328_s2c_park_and_scope.py tests/test_ad1187_agent_work_pull.py tests/test_ad1155_loop_until_done.py tests/test_ad1142_crew_child_compaction.py tests/test_ad1239*.py -q -n 0 -p no:randomly`
 - Glob `test_ad1239*`, and drop any file that does not exist.
+- A1 adds to M2's command: `tests/test_ad1206_repair_issue.py tests/test_ad1212_1216_approval_ui.py tests/test_ad857_capability_request_api.py tests/test_ad1299_s2a_candidate_approval.py tests/test_distribution.py tests/test_bf887_continue_resumes_the_promoted_turn.py tests/test_ad581_hybrid_dispatch.py tests/test_proactive.py tests/test_ad437_action_space.py tests/test_ad868_self_originated_crew.py tests/test_bf237_pipeline_post_budget.py tests/test_bf238_post_budget_telemetry.py tests/test_ad654a_async_dispatch.py tests/test_ad1270b_architecture_fitness.py`.
+- A1, the HXI (the broad gate does not run vitest; CI does): from `ui/`, `npx vitest run src/store/__tests__/capabilityApprovals.ad1347.test.ts src/components/capability/__tests__/ApprovalWave.test.tsx src/__tests__/CapabilityRequestPanel.test.tsx src/components/approvals/__tests__/ApprovalsInBridge.test.tsx src/store/__tests__/approvalPolling.test.ts`.
 
 ## 7. The contract
 
@@ -2888,6 +2925,1578 @@ async def test_the_runner_is_wired_only_with_the_service_and_released_at_stop(
 
 W3 boots through `_config`, S1's boot shape with the Ward Room on. On S1's own boot config the Ward Room is off, so finalize wires neither AD-855's driver nor anything else inside its `if runtime.ward_room:` block, and the premise assertion fails (shown by execution, 2026-10-23); with it on, the runner and its collaborators exist. The test's assertions are unchanged.
 
+### 7.22 `src/probos/capability_request.py` (M2, A1: F1, one definition of the bound agent-work call)
+
+SEARCH:
+```python
+def can_fulfil_request(req: CapabilityRequest) -> bool:
+    return req.kind in FULFILMENT_KINDS or repair_action(req) is not None
+```
+REPLACE:
+```python
+#: AD-1347 S3 A1 (F1): one tool call in one agent-created work item, filed by the agent-work runner's confinement.
+AGENT_WORK_CALL_ACTION = "agent_work_call"
+AGENT_WORK_SCOPE_PREFIX = "agent_work:"
+
+
+def agent_work_call(req: Any) -> dict[str, Any] | None:
+    """The validated payload when ``req`` asks to make one tool call in one agent-created work item, else None.
+
+    Bound to its own item: the scope is ``agent_work:`` and the request's ``work_item_id``. Its approval is its own
+    fulfilment (the approval route marks it fulfilled and AD-855 resumes the item), so it is fulfillable, as the repair
+    action is; every other action still has no fulfiller. The HXI's ``canFulfil`` (``ui/src/store/capabilityApprovals.ts``)
+    mirrors this exactly: ``can_retry_fulfilment`` must agree on both sides.
+    """
+    if getattr(req, "kind", None) != "action":
+        return None
+    payload = validate_action_payload(getattr(req, "payload", None))
+    work_item_id = getattr(req, "work_item_id", None)
+    if (
+        payload is None or payload["action"] != AGENT_WORK_CALL_ACTION
+        or type(work_item_id) is not str or not work_item_id
+        or payload["scope_key"] != AGENT_WORK_SCOPE_PREFIX + work_item_id
+    ):
+        return None
+    return payload
+
+
+def can_fulfil_request(req: CapabilityRequest) -> bool:
+    return req.kind in FULFILMENT_KINDS or repair_action(req) is not None or agent_work_call(req) is not None
+```
+
+### 7.23 `ui/src/store/capabilityApprovals.ts` (M2, A1: F1, the HXI decoder mirrors the predicate)
+
+Pair 1 of 3:
+
+SEARCH:
+```ts
+function canFulfil(kind: unknown, payload: unknown): boolean {
+  if (FULFILMENT_KINDS.has(String(kind))) return true;
+  if (kind !== 'action' || !isRecord(payload)) return false;
+  const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+```
+REPLACE:
+```ts
+/** AD-1347 S3 A1 (F1): one tool call in one agent-created work item, bound to it by its scope. Its approval is its
+ * own fulfilment. Mirrors Python's `agent_work_call` (src/probos/capability_request.py) exactly:
+ * `can_retry_fulfilment` must agree on both sides, or every row of the actionable queue is refused. */
+function isAgentWorkCall(payload: Record<string, unknown>, workItemId: unknown): boolean {
+  return payload.action === 'agent_work_call' && typeof workItemId === 'string' && workItemId !== ''
+    && payload.scope_key === 'agent_work:' + workItemId;
+}
+
+function canFulfil(kind: unknown, payload: unknown, workItemId: unknown): boolean {
+  if (FULFILMENT_KINDS.has(String(kind))) return true;
+  if (kind !== 'action' || !isRecord(payload)) return false;
+  const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+  if (Object.keys(payload).length === keys.length && keys.every(key => key in payload) && isAgentWorkCall(payload, workItemId)) return true;
+```
+
+Pair 2 of 3:
+
+SEARCH:
+```ts
+    && value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload));
+```
+REPLACE:
+```ts
+    && value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, value.work_item_id));
+```
+
+Pair 3 of 3:
+
+SEARCH:
+```ts
+    || (request.can_retry_fulfilment && !canFulfil(expected.kind, expected.payload))
+    || (value.fulfilled && (!canFulfil(request.kind, request.payload) || !canFulfil(expected.kind, expected.payload)))) {
+```
+REPLACE:
+```ts
+    || (request.can_retry_fulfilment && !canFulfil(expected.kind, expected.payload, expected.work_item_id))
+    || (value.fulfilled && (!canFulfil(request.kind, request.payload, request.work_item_id)
+      || !canFulfil(expected.kind, expected.payload, expected.work_item_id)))) {
+```
+
+### 7.24 New file: `ui/e2e/fixtures/ad1347-agent-work-approvals.json` (M2, A1: F1; asserted equal to the real route output by X13)
+
+```json
+{
+  "pending": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "agent_id": "forge-1",
+        "kind": "action",
+        "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+        "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+        "work_item_id": "wi-agent-work-1",
+        "status": "pending",
+        "created_at": 1000.0,
+        "decided_at": null,
+        "decided_by": "",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "hull_survey",
+          "action": "agent_work_call",
+          "params": {"depth": 2},
+          "scope_key": "agent_work:wi-agent-work-1",
+          "session_id": null,
+          "thread_id": ""
+        },
+        "can_retry_fulfilment": false
+      }
+    ]
+  },
+  "fulfilled": {
+    "request": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "agent_id": "forge-1",
+      "kind": "action",
+      "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+      "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+      "work_item_id": "wi-agent-work-1",
+      "status": "fulfilled",
+      "created_at": 1000.0,
+      "decided_at": 1000.0,
+      "decided_by": "captain",
+      "decision_reason": "",
+      "payload": {
+        "tool_id": "hull_survey",
+        "action": "agent_work_call",
+        "params": {"depth": 2},
+        "scope_key": "agent_work:wi-agent-work-1",
+        "session_id": null,
+        "thread_id": ""
+      },
+      "can_retry_fulfilment": false
+    },
+    "standing_rule": null,
+    "fulfilled": true
+  },
+  "approved": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "agent_id": "forge-1",
+        "kind": "action",
+        "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+        "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+        "work_item_id": "wi-agent-work-1",
+        "status": "approved",
+        "created_at": 1000.0,
+        "decided_at": 1000.0,
+        "decided_by": "captain",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "hull_survey",
+          "action": "agent_work_call",
+          "params": {"depth": 3},
+          "scope_key": "agent_work:wi-agent-work-1",
+          "session_id": null,
+          "thread_id": ""
+        },
+        "can_retry_fulfilment": true
+      }
+    ]
+  }
+}
+```
+
+### 7.25 New file: `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (M2, A1: F1)
+
+```ts
+/**
+ * AD-1347 S3 A1 (F1): the HXI decoder accepts the approval route's real agent-work envelopes.
+ * The fixture is asserted equal to the real Python route output by tests/test_ad1347_s3_execution.py (X13).
+ */
+import { describe, expect, it } from 'vitest';
+import { isActionableCapabilityPayload, isCapabilityRequestView, parseCapabilityDecision } from '../capabilityApprovals';
+import wire from '../../../e2e/fixtures/ad1347-agent-work-approvals.json';
+
+describe('AD-1347 agent-work approval wire', () => {
+  it('confirms the fulfilled approval of the agent-work call bound to its item', () => {
+    expect(isActionableCapabilityPayload(wire.pending)).toBe(true);
+    const [pending] = wire.pending.requests;
+    if (!isCapabilityRequestView(pending)) throw new Error('Invalid Python pending fixture');
+    const outcome = parseCapabilityDecision(wire.fulfilled, pending, true);
+    expect(outcome.fulfilled).toBe(true);
+    expect(outcome.request.status).toBe('fulfilled');
+  });
+
+  it('keeps an approved, unfulfilled agent-work call on the queue as retryable', () => {
+    expect(isActionableCapabilityPayload(wire.approved)).toBe(true);
+    expect(wire.approved.requests[0].can_retry_fulfilment).toBe(true);
+  });
+
+  it('refuses a retry flag on an agent-work call bound to another item or another action', () => {
+    const [row] = wire.approved.requests;
+    for (const changed of [
+      { ...row, work_item_id: 'wi-other' },
+      { ...row, payload: { ...row.payload, action: 'click' } },
+    ]) expect(isCapabilityRequestView(changed)).toBe(false);
+  });
+});
+```
+
+### 7.26 `src/probos/cognitive/agentic_dispatch.py` (M2, A1: F3, an admitted call is not parked again)
+
+Pair 1 of 5 (the context variable):
+
+SEARCH:
+```python
+_STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
+    "strict_approval_dispatch", default=None
+)
+```
+REPLACE:
+```python
+_STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
+    "strict_approval_dispatch", default=None
+)
+# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted under the Captain's single-use approval of that
+# exact call, so AD-1154's inbox does not park it again. Credential entry (the inbox's step 3) is still refused.
+_CONFINED_ADMISSION: ContextVar[bool] = ContextVar("confined_admission", default=False)
+```
+
+Pair 2 of 5:
+
+SEARCH:
+```python
+        confinement = self._confinement
+        if confinement is not None and tool_id not in confinement.tool_ids:
+```
+REPLACE:
+```python
+        confinement = self._confinement
+        confined_admission = False
+        if confinement is not None and tool_id not in confinement.tool_ids:
+```
+
+Pair 3 of 5:
+
+SEARCH:
+```python
+            if refusal is not None:
+                strict_log("confinement", "confinement_refused")
+                return refuse(refusal, "confinement_refused")
+        if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
+```
+REPLACE:
+```python
+            if refusal is not None:
+                strict_log("confinement", "confinement_refused")
+                return refuse(refusal, "confinement_refused")
+            # AD-1347 S3 A1 (F3): the Captain approved exactly this call, once; AD-1154's inbox below does not park it
+            # again (credential entry there stays refused).
+            confined_admission = True
+        if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
+```
+
+Pair 4 of 5:
+
+SEARCH:
+```python
+        strict_token = _STRICT_APPROVAL_DISPATCH.set(strict_dispatch)
+        try:
+            parked = await self._park_or_admit(
+```
+REPLACE:
+```python
+        strict_token = _STRICT_APPROVAL_DISPATCH.set(strict_dispatch)
+        admission_token = _CONFINED_ADMISSION.set(confined_admission)
+        try:
+            parked = await self._park_or_admit(
+```
+
+and
+
+SEARCH:
+```python
+        finally:
+            _STRICT_APPROVAL_DISPATCH.reset(strict_token)
+        if parked is not None:
+```
+REPLACE:
+```python
+        finally:
+            _CONFINED_ADMISSION.reset(admission_token)
+            _STRICT_APPROVAL_DISPATCH.reset(strict_token)
+        if parked is not None:
+```
+
+Pair 5 of 5 (between the inbox's steps 3 and 4):
+
+SEARCH:
+```python
+            return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
+
+        scope_key = self._resolve_scope_key(
+```
+REPLACE:
+```python
+            return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
+
+        if _CONFINED_ADMISSION.get():
+            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under the Captain's single-use approval
+            # of it, so it is not parked again; credential entry (step 3, above) stays refused.
+            logger.info("AD-1347: %s.%s for agent %s runs under the Captain's approval of this call", tool_id, action, agent_id[:12])
+            return None
+
+        scope_key = self._resolve_scope_key(
+```
+
+### 7.27 `src/probos/agent_work_runner.py` (M2, A1: F1, F2, F3, F4, F5, F8, F9's literal, F13, F15)
+
+Pair 1 of 13 (imports):
+
+SEARCH:
+```python
+from probos.capability_request import action_dedup_key, validate_action_payload
+```
+REPLACE:
+```python
+from probos.capability_request import (
+    AGENT_WORK_CALL_ACTION,
+    AGENT_WORK_SCOPE_PREFIX,
+    action_dedup_key,
+    agent_work_call,
+    validate_action_payload,
+)
+```
+
+Pair 2 of 13 (one definition; the unrecorded parameters):
+
+SEARCH:
+```python
+APPROVAL_ACTION: Final = "agent_work_call"
+APPROVAL_SCOPE_PREFIX: Final = "agent_work:"
+```
+REPLACE:
+```python
+APPROVAL_ACTION: Final = AGENT_WORK_CALL_ACTION  # A1 (F1): one definition, shared with the fulfilment predicate
+APPROVAL_SCOPE_PREFIX: Final = AGENT_WORK_SCOPE_PREFIX
+#: A1 (F15): parameters an approval never records, as AD-1154's inbox strips them (``_APPROVAL_PARAM_STRIP_KEYS``): a
+#: browser confirmation token is a bearer token ``BrowserTool`` honours, so persisting it is BF-682. Stripped before
+#: filing and before matching alike, so the approved call's identity does not depend on it.
+APPROVAL_UNRECORDED_PARAMS: Final[frozenset[str]] = frozenset({"confirmation_token"})
+```
+
+Pair 3 of 13 (how an unfinished run is named):
+
+SEARCH:
+```python
+TERMINAL_STATUSES: Final[frozenset[str]] = frozenset({"done", "failed", "cancelled"})
+```
+REPLACE:
+```python
+TERMINAL_STATUSES: Final[frozenset[str]] = frozenset({"done", "failed", "cancelled"})
+#: A1 (F4): how a report names a run that stopped without a finished answer, by the executor's ``stopped_reason``
+#: (``agentic_loop``); ``complete`` without an answer, and any other reason, read as ``UNFINISHED_WORDS``.
+STOP_WORDS: Final[dict[str, str]] = {
+    "max_iterations": "the run reached its step limit before it finished",
+    "token_budget": "the run used up its token budget before it finished",
+    "error": "the run stopped on an error",
+}
+UNFINISHED_WORDS: Final = "the run stopped without a finished answer"
+```
+
+Pair 4 of 13 (the subtype, delegated):
+
+SEARCH:
+```python
+def agent_work_approval(request: Any) -> dict[str, Any] | None:
+    """The validated payload when ``request`` asks to make one tool call in one agent-created work item, else None."""
+    if getattr(request, "kind", None) != "action":
+        return None
+    payload = validate_action_payload(getattr(request, "payload", None))
+    work_item_id = getattr(request, "work_item_id", None)
+    if (
+        payload is None or payload["action"] != APPROVAL_ACTION
+        or type(work_item_id) is not str or not work_item_id
+        or payload["scope_key"] != APPROVAL_SCOPE_PREFIX + work_item_id
+    ):
+        return None
+    return payload
+```
+REPLACE:
+```python
+def agent_work_approval(request: Any) -> dict[str, Any] | None:
+    """The validated payload when ``request`` asks to make one tool call in one agent-created work item, else None.
+
+    A1 (F1): one definition, ``capability_request.agent_work_call``, which the fulfilment predicate shares.
+    """
+    return agent_work_call(request)
+```
+
+Pair 5 of 13 (no token is recorded):
+
+SEARCH:
+```python
+    if type(tool_id) is not str or type(params) is not dict:
+        return None
+    return validate_action_payload({
+        "tool_id": tool_id, "action": APPROVAL_ACTION, "params": dict(params),
+```
+REPLACE:
+```python
+    if type(tool_id) is not str or type(params) is not dict:
+        return None
+    recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}
+    return validate_action_payload({
+        "tool_id": tool_id, "action": APPROVAL_ACTION, "params": recorded,
+```
+
+Pair 6 of 13 (the report names an unfinished stop):
+
+SEARCH:
+```python
+        status = "is done" if outcome == "done" else f"ended as {outcome}, after this answer"
+```
+REPLACE:
+```python
+        if outcome == "done":
+            status = "is done"
+        elif type(result.get("stopped")) is str:  # A1 (F4): the run stopped without a finished answer
+            status = f"ended as {outcome}: {STOP_WORDS.get(result['stopped'], UNFINISHED_WORDS)}, after this answer"
+        else:
+            status = f"ended as {outcome}, after this answer"
+```
+
+Pair 7 of 13 (the TTL in words; the outcome of a run that did not park):
+
+SEARCH:
+```python
+        if completed and booking.status in ("active", "scheduled"):
+            await store.complete_booking(booking.id)
+        else:
+            await store.cancel_booking(booking.id)
+
+
+class AgentWorkRunner:
+```
+REPLACE:
+```python
+        if completed and booking.status in ("active", "scheduled"):
+            await store.complete_booking(booking.id)
+        else:
+            await store.cancel_booking(booking.id)
+
+
+def ttl_words(seconds: int) -> str:
+    """The TTL as a notice states it, never rounded (A1, F13): whole hours, else whole minutes, else seconds."""
+    for unit, size in (("h", 3_600), ("min", 60)):
+        if seconds >= size and seconds % size == 0:
+            return f"{seconds // size} {unit}"
+    return f"{seconds} s"
+
+
+async def _record_outcome(store: Any, item: WorkItem, executor: str, outcome: Any) -> None:
+    """A1 (F4): how a run that neither filed a call nor was parked is recorded. Done only when the executor completed
+    with an answer; any other stop (its step limit, its token budget, an error, an empty answer) is failed, with the
+    reason the report names. The result goes with the status in one write; an item the TTL ended meanwhile keeps its
+    end and gains the result (register R3)."""
+    answer = (outcome.final_text or "").strip()[:REPORT_MAX_CHARS]
+    stopped = outcome.stopped_reason if type(outcome.stopped_reason) is str else ""
+    finished = stopped == "complete" and bool(answer)
+    invocations = getattr(outcome, "tool_invocations", None)
+    result: dict[str, Any] = {
+        "executor": executor,
+        "answer": answer or "(no answer text)",
+        "tools": sorted(getattr(invocations, "succeeded", ()) or ()),
+        "trace": outcome.tool_trace_ref or "",
+    }
+    if not finished:
+        result["stopped"] = stopped or "unknown"
+    status = "done" if finished else "failed"
+    moved = await store.transition_work_item(
+        item.id, status, source=RUN_SOURCE, expected_status="in_progress", metadata_patch={RESULT_METADATA_KEY: result},
+    )
+    if moved is None:
+        current = await store.get_work_item(item.id)
+        if current is not None and current.status in TERMINAL_STATUSES:
+            await store.transition_work_item(
+                item.id, current.status, source=RUN_SOURCE, expected_status=current.status,
+                metadata_patch={RESULT_METADATA_KEY: result},
+            )
+    await _close_bookings(store, item.id, completed=moved is not None and finished)
+
+
+class AgentWorkRunner:
+```
+
+Pair 8 of 13 (the deferred starts):
+
+SEARCH:
+```python
+        self._active: set[str] = set()
+```
+REPLACE:
+```python
+        self._active: set[str] = set()
+        self._restart: set[str] = set()  # A1 (F2): starts that arrived while the item ran; made when that run ends
+```
+
+Pair 9 of 13 (a decline reaches every recipient, and says whether it was posted):
+
+SEARCH:
+```python
+        why = " ".join(reason.split())[:MAX_REASON_CHARS] or "no reason given"
+        requester = self._callsign_of(record.requester)
+        await self._post(item, record, f"@{requester} {self._callsign_of(member.slot_id)} declined work item {short} (\"{item.title}\"): {why}")
+        return "declined", f"you declined work item {short}; {requester} was told"
+```
+REPLACE:
+```python
+        why = " ".join(reason.split())[:MAX_REASON_CHARS] or "no reason given"
+        # A1 (F8): the requester and every watcher of a deduplicated request; posted once (the decline is claimed above).
+        recipients = await self._service.notice_recipients(item.id)
+        names = [self._callsign_of(slot) for slot in recipients]
+        mentions = " ".join(f"@{name}" for name in names)
+        posted = await self._post(item, record, f"{mentions} {self._callsign_of(member.slot_id)} declined work item {short} (\"{item.title}\"): {why}")
+        told = ", ".join(names)
+        if not posted:  # A1 (F9, the literal): a post that did not go through is not "told"
+            return "declined", f"you declined work item {short}; the notice to {told} could not be posted"
+        return "declined", f"you declined work item {short}; {told} {'was' if len(names) == 1 else 'were'} told"
+```
+
+Pair 10 of 13 (`_start` keeps a start that arrives during a run):
+
+SEARCH:
+```python
+        """Run one item in the background, at most once at a time in this process."""
+        if self._stopping or work_item_id in self._active:
+            return
+        self._active.add(work_item_id)
+```
+REPLACE:
+```python
+        """Run one item in the background, at most once at a time in this process.
+
+        A1 (F2): a start that arrives while the item runs (an approval that settled before the run parked, through
+        BF-878, or a duplicate event) is kept and made when that run ends; that run re-reads the item, so a finished or
+        parked one does nothing. A stopped runner starts and keeps nothing: the next start's ``recover`` runs what is left.
+        """
+        if self._stopping:
+            return
+        if work_item_id in self._active:
+            self._restart.add(work_item_id)
+            return
+        self._active.add(work_item_id)
+```
+
+Pair 11 of 13 (`_run`'s docstring):
+
+SEARCH:
+```python
+        """One confined run of one item, then park it, return it to the board, or record its answer. Never raises
+        (a cancellation from ``stop`` excepted); a failure marks the item failed, which its requester is told."""
+```
+REPLACE:
+```python
+        """One confined run of one item, then return it to the board, park it, or record how it ended. Never raises
+        (a cancellation from ``stop`` excepted); a failure marks the item failed, which its requester is told.
+
+        A1 (review round 1): a request's eligibility is asked again first (F5); a run that filed a call parks on it and
+        one the executor parked itself stays parked (F3); only a completed run with an answer is done (F4,
+        ``_record_outcome``); a start that arrived during this run is made when it ends (F2).
+        """
+```
+
+Pair 12 of 13 (after the executor returns):
+
+SEARCH:
+```python
+            except AgentStopped:
+                if record.kind == KIND_REQUEST:
+                    await self._store.unassign_work_item(item.id, reason="the claimant was stopped by the Captain")
+                return
+            if filed:
+                await self._parking.block_on_request(work_item_id=item.id, request_id=filed[0], reason=BLOCKED_REASON)
+                return
+            if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):
+                await self._store.unassign_work_item(item.id, reason="the claimant was stopped or lost the tool during the run")
+                return
+            invocations = getattr(outcome, "tool_invocations", None)
+            result = {
+                "executor": self._callsign_of(slot),
+                "answer": (outcome.final_text or "").strip()[:REPORT_MAX_CHARS] or "(no answer text)",
+                "tools": sorted(getattr(invocations, "succeeded", ()) or ()),
+                "trace": outcome.tool_trace_ref or "",
+            }
+            done = await self._store.transition_work_item(
+                item.id, "done", source=RUN_SOURCE, expected_status="in_progress", metadata_patch={RESULT_METADATA_KEY: result},
+            )
+            if done is None:
+                current = await self._store.get_work_item(item.id)
+                if current is not None and current.status in TERMINAL_STATUSES:
+                    await self._store.transition_work_item(
+                        item.id, current.status, source=RUN_SOURCE, expected_status=current.status,
+                        metadata_patch={RESULT_METADATA_KEY: result},
+                    )
+            await _close_bookings(self._store, item.id, completed=done is not None)
+```
+REPLACE:
+```python
+            except AgentStopped:
+                if record.kind == KIND_REQUEST:
+                    await self._store.unassign_work_item(item.id, reason="the claimant was stopped by the Captain")
+                return
+            # A1 (F5): first, so a claimant stopped (or that lost the tool) after it filed a call is released, never
+            # parked; a call it filed stays on the Captain's queue, inert: AD-855 and the admission act only on an item
+            # parked on that request.
+            if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):
+                await self._store.unassign_work_item(item.id, reason="the claimant was stopped or lost the tool during the run")
+                return
+            if filed:
+                await self._parking.block_on_request(work_item_id=item.id, request_id=filed[0], reason=BLOCKED_REASON)
+                return
+            if outcome.parked_request_id:
+                return  # A1 (F3): AD-1324 parked the item on its own tier-floor ask; that decision resumes it
+            await _record_outcome(self._store, item, self._callsign_of(slot), outcome)
+```
+
+and
+
+SEARCH:
+```python
+        finally:
+            self._active.discard(work_item_id)
+
+    async def _begin(self, item: WorkItem) -> bool:
+```
+REPLACE:
+```python
+        finally:
+            self._active.discard(work_item_id)
+            if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now
+                self._restart.discard(work_item_id)
+                self._start(work_item_id)
+
+    async def _begin(self, item: WorkItem) -> bool:
+```
+
+Pair 13 of 13 (the notice states the TTL):
+
+SEARCH:
+```python
+            f"then [/DECLINE_WORK]. The first claim wins; it expires {max(1, self._ttl_seconds // 3600)} h after it was asked."
+```
+REPLACE:
+```python
+            f"then [/DECLINE_WORK]. The first claim wins; it expires {ttl_words(self._ttl_seconds)} after it was asked."
+```
+
+### 7.28 `src/probos/agent_work_tags.py` (M2, A1: F6, F7, F10, F11)
+
+Pair 1 of 6 (the module docstring):
+
+SEARCH:
+```python
+Off: ``agent_work_service`` answers None, the extractor never calls this module, and nothing is taught.
+```
+REPLACE:
+```python
+Reading (A1, review round 1): names are read in any letter case and every marker is removed, closers included. A
+marker in a code fence or on a Markdown quote line (``>``) is an example or a quotation: removed, never acted on. A
+block that holds another marker (nested or broken) is removed whole and not acted on. One pass reads the markers, each
+at most 160 characters to its bracket, so the work is linear in the reply. A fault on one tag is acknowledged, never
+retried, and the rest of the reply goes on.
+
+Off: ``runtime.agent_work`` is None, so the extractor neither imports nor calls this module, and nothing is taught.
+```
+
+Pair 2 of 6:
+
+SEARCH:
+```python
+from dataclasses import dataclass
+```
+REPLACE:
+```python
+from dataclasses import dataclass, field
+```
+
+Pair 3 of 6 (the markers):
+
+SEARCH:
+```python
+_BLOCK_RE: Final = re.compile(
+    r"\[(SELF_TASK|REQUEST_WORK)\](.*?)\[/\1\]"
+    r"|\[CLAIM_WORK[ \t]+([A-Za-z0-9][A-Za-z0-9._:-]{0,127})[ \t]*\]"
+    r"|\[DECLINE_WORK[ \t]+([A-Za-z0-9][A-Za-z0-9._:-]{0,127})[ \t]*\](.*?)\[/DECLINE_WORK\]",
+    re.DOTALL,
+)
+_STRAY_RE: Final = re.compile(
+    r"\[/?(?:SELF_TASK|REQUEST_WORK|DECLINE_WORK)\]|\[(?:CLAIM_WORK|DECLINE_WORK)\b[^\]\n]{0,160}\]"
+)
+```
+REPLACE:
+```python
+#: A1 (F7, F11): every agent-work marker, opener or closer, in any letter case: ``[NAME]``, ``[/NAME]`` or
+#: ``[NAME <attribute>]``, on one line with at most 160 characters before its bracket, so one scan reads each
+#: character a bounded number of times.
+_MARKER_RE: Final = re.compile(
+    r"\[(/?)(SELF_TASK|REQUEST_WORK|CLAIM_WORK|DECLINE_WORK)\b([^\]\n]{0,160})\]", re.IGNORECASE,
+)
+_ITEM_ID_RE: Final = re.compile(r"[ \t]+([A-Za-z0-9][A-Za-z0-9._:-]{0,127})[ \t]*")
+#: A1 (F6): a Markdown code fence line (up to three spaces, then three backticks or three tildes).
+_FENCE_RE: Final = re.compile(r"[ \t]{0,3}(?:`{3}|~{3})")
+_BLOCK_NAMES: Final[frozenset[str]] = frozenset({"SELF_TASK", "REQUEST_WORK"})
+```
+
+Pair 4 of 6 (one linear scan):
+
+SEARCH:
+```python
+def split_agent_work_tags(text: str) -> tuple[str, tuple[AgentWorkTag, ...]]:
+    """Every agent-work tag in ``text``, in order, and the text without any of them (stray markers included).
+
+    A text with no tag and no stray marker is returned as it was, whitespace included.
+    """
+    tags: list[AgentWorkTag] = []
+    for match in _BLOCK_RE.finditer(text):
+        if match.group(1) is not None:
+            fields = _fields(match.group(2))
+            tags.append(AgentWorkTag(
+                ACTION_SELF_TASK if match.group(1) == "SELF_TASK" else ACTION_REQUEST,
+                title=fields.get("title", ""), reason=fields.get("reason", ""), details=fields.get("details", ""),
+                tool_id=fields.get("tool", ""), department=fields.get("department", "").lower(),
+                assignee=fields.get("assignee", "").lstrip("@").strip(),
+            ))
+        elif match.group(3) is not None:
+            tags.append(AgentWorkTag(ACTION_CLAIM, work_item_id=match.group(3)))
+        else:
+            tags.append(AgentWorkTag(ACTION_DECLINE, work_item_id=match.group(4), reason=" ".join(match.group(5).split())))
+    without = _STRAY_RE.sub("", _BLOCK_RE.sub("", text))
+    if not tags and without == text:
+        return text, ()
+    return without.strip(), tuple(tags)
+```
+REPLACE:
+```python
+@dataclass
+class _OpenBlock:
+    """A block opener the scan has not closed yet (A1)."""
+
+    name: str
+    item_id: str
+    start: int
+    body_start: int
+    actionable: bool
+    inner: list[tuple[int, int]] = field(default_factory=list)
+
+
+def _inert_line_ends(text: str) -> list[tuple[int, bool]]:
+    """(end offset, inert) of each line. Inert: inside a code fence or opening or closing one, or a Markdown quote line;
+    a marker there is an example or a quotation (A1, F6)."""
+    lines: list[tuple[int, bool]] = []
+    fenced = False
+    end = 0
+    for line in text.splitlines(keepends=True):
+        end += len(line)
+        fence = _FENCE_RE.match(line) is not None
+        lines.append((end, fenced or fence or line.lstrip().startswith(">")))
+        fenced = fenced != fence
+    return lines
+
+
+def _block_tag(block: _OpenBlock, body: str) -> AgentWorkTag:
+    """The tag a closed, actionable block asks for."""
+    if block.name == "DECLINE_WORK":
+        return AgentWorkTag(ACTION_DECLINE, work_item_id=block.item_id, reason=" ".join(body.split()))
+    fields = _fields(body)
+    return AgentWorkTag(
+        ACTION_SELF_TASK if block.name == "SELF_TASK" else ACTION_REQUEST,
+        title=fields.get("title", ""), reason=fields.get("reason", ""), details=fields.get("details", ""),
+        tool_id=fields.get("tool", ""), department=fields.get("department", "").lower(),
+        assignee=fields.get("assignee", "").lstrip("@").strip(),
+    )
+
+
+def split_agent_work_tags(text: str) -> tuple[str, tuple[AgentWorkTag, ...]]:
+    """Every agent-work tag in ``text``, in order, and the text without any marker.
+
+    One pass over the markers (A1: F6, F7, F11). Names are read in any letter case. A marker on an inert line (a code
+    fence, a quote) is removed and never acted on, and so is a block that holds another marker (nested or broken),
+    which is removed whole. A closed block is removed whole; an unclosed opener, the markers after it and every stray
+    marker are removed alone. A text with no marker is returned as it was, whitespace included.
+    """
+    tags: list[AgentWorkTag] = []
+    cuts: list[tuple[int, int]] = []
+    lines = _inert_line_ends(text)
+    line = 0
+    block: _OpenBlock | None = None
+    for match in _MARKER_RE.finditer(text):
+        while lines[line][0] <= match.start():
+            line += 1
+        inert = lines[line][1]
+        closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)
+        item_id = _ITEM_ID_RE.fullmatch(attribute) if not closer and name in ("CLAIM_WORK", "DECLINE_WORK") else None
+        if block is not None:
+            if closer and name == block.name and not attribute.strip():
+                if block.actionable:
+                    tags.append(_block_tag(block, text[block.body_start:match.start()]))
+                cuts.append((block.start, match.end()))
+                block = None
+            else:
+                block.actionable = False
+                block.inner.append((match.start(), match.end()))
+            continue
+        if (not closer and name in _BLOCK_NAMES and not attribute.strip()) or (item_id is not None and name == "DECLINE_WORK"):
+            block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), not inert)
+            continue
+        if item_id is not None and not inert:
+            tags.append(AgentWorkTag(ACTION_CLAIM, work_item_id=item_id.group(1)))
+        cuts.append((match.start(), match.end()))
+    if block is not None:
+        cuts.extend([(block.start, block.body_start), *block.inner])
+    if not cuts:
+        return text, ()
+    kept: list[str] = []
+    position = 0
+    for start, end in cuts:
+        kept.append(text[position:start])
+        position = end
+    kept.append(text[position:])
+    return "".join(kept).strip(), tuple(tags)
+```
+
+Pair 5 of 6 (one tag's fault is its own):
+
+SEARCH:
+```python
+async def apply_agent_work_tags(
+    text: str, *, runtime: Any, actor: str, rank: Rank, thread_id: str = "", post_id: str = "",
+) -> tuple[str, list[dict[str, Any]]]:
+```
+REPLACE:
+```python
+async def _apply_guarded(
+    tag: AgentWorkTag, *, service: AgentWorkService, runtime: Any, actor: str,
+    origin: AgentWorkOrigin | None, in_thread: bool,
+) -> tuple[str, dict[str, Any]]:
+    """One tag, isolated (A1, F10): a fault is logged and acknowledged, never retried (whether the write landed is
+    unknown, so the agent is told to check the board), and the reply and its other tags go on."""
+    try:
+        return await _apply_one(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=in_thread)
+    except Exception:
+        logger.warning("AD-1347: an agent-work %s tag from %s could not be completed; the reply goes on", tag.action, actor, exc_info=True)
+        return (
+            _ack(f"the {tag.action.replace('_', '-')} could not be confirmed: check the board before asking again"),
+            {"type": "agent_work", "action": tag.action, "outcome": "error"},
+        )
+
+
+async def apply_agent_work_tags(
+    text: str, *, runtime: Any, actor: str, rank: Rank, thread_id: str = "", post_id: str = "",
+) -> tuple[str, list[dict[str, Any]]]:
+```
+
+Pair 6 of 6:
+
+SEARCH:
+```python
+        ack, action = await _apply_one(
+            tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id),
+        )
+```
+REPLACE:
+```python
+        ack, action = await _apply_guarded(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))
+```
+
+### 7.29 `src/probos/proactive.py` (M2, A1: F12, off never reaches the tag module)
+
+SEARCH:
+```python
+        # --- Agent-created work (AD-1347 S2) — Lieutenant+; only while the service exists, so off is untouched ---
+        # Before BF-203: each tag has a closed form and is stripped whole here.
+        from probos.agent_work_tags import agent_work_service, apply_agent_work_tags
+
+        if agent_work_service(rt) is not None:
+            text, work_actions = await apply_agent_work_tags(
+                text, runtime=rt, actor=agent.id, rank=rank, thread_id=thread_id, post_id=post_id,
+            )
+            actions_executed.extend(work_actions)
+```
+REPLACE:
+```python
+        # --- Agent-created work (AD-1347 S2) — Lieutenant+; only while the service exists, so off is untouched ---
+        # Before BF-203: each tag has a closed form and is stripped whole here. Off (no service at all) neither imports
+        # nor calls the tag module (A1, F12); a runtime holding something else asks only whether it is the service.
+        if getattr(rt, "agent_work", None) is not None:
+            from probos.agent_work_tags import agent_work_service, apply_agent_work_tags
+
+            if agent_work_service(rt) is not None:
+                text, work_actions = await apply_agent_work_tags(
+                    text, runtime=rt, actor=agent.id, rank=rank, thread_id=thread_id, post_id=post_id,
+                )
+                actions_executed.extend(work_actions)
+```
+
+### 7.30 `tests/test_ad1347_s2_chain_tags.py` (M2, A1: C1, C5, C14 to C16)
+
+Pair 1 of 5:
+
+SEARCH:
+```python
+import contextlib
+import sqlite3
+from pathlib import Path
+```
+REPLACE:
+```python
+import contextlib
+import sqlite3
+import time
+from pathlib import Path
+```
+
+Pair 2 of 5:
+
+SEARCH:
+```python
+SELF_TASK = "[SELF_TASK]\nTitle: Check my build log\nReason: the relay drifted twice\n[/SELF_TASK]"
+```
+REPLACE:
+```python
+SELF_TASK = "[SELF_TASK]\nTitle: Check my build log\nReason: the relay drifted twice\n[/SELF_TASK]"
+FENCE = "`" * 3  # A1: a Markdown code fence, spelled so this file holds no literal fence
+```
+
+Pair 3 of 5 (C1: five more cases):
+
+SEARCH:
+```python
+    ("Stray [/REQUEST_WORK] and [CLAIM_WORK] and [DECLINE_WORK bad id!]", [], "Stray  and  and"),
+])
+```
+REPLACE:
+```python
+    ("Stray [/REQUEST_WORK] and [CLAIM_WORK] and [DECLINE_WORK bad id!]", [], "Stray  and  and"),
+    # A1 (F6): a fenced example and a quoted claim are stripped and never acted on.
+    (f"Example syntax only:\n{FENCE}\n[SELF_TASK]\nTitle: x\n[/SELF_TASK]\n{FENCE}", [], f"Example syntax only:\n{FENCE}\n\n{FENCE}"),
+    ("> [CLAIM_WORK wi-1]\nNot mine to take.", [], "> \nNot mine to take."),
+    # A1 (F6): a nested block is broken, removed whole, and files nothing ("Outer Inner" before A1).
+    ("[SELF_TASK]\nTitle: Outer\n[SELF_TASK]\nTitle: Inner\n[/SELF_TASK]\n[/SELF_TASK]", [], ""),
+    # A1 (F7): names in any case, and every marker goes, the claim closer included.
+    ("Ok. [Self_Task]\nTitle: Mixed\n[/sELF_tASK] [claim_work wi-123] [/CLAIM_WORK]",
+     [AgentWorkTag("self_task", title="Mixed"), AgentWorkTag("claim", work_item_id="wi-123")], "Ok."),
+    # A1 (F7): an unclosed opener and every marker after it are removed; the text stays.
+    ("Open [SELF_TASK] then [CLAIM_WORK wi-2]", [], "Open  then"),
+])
+```
+
+Pair 4 of 5 (C5: off never calls the tag module):
+
+SEARCH:
+```python
+    monkeypatch.setattr(tags_module, "apply_agent_work_tags", _spy)
+    async with _ship(tmp_path) as ship:
+        for service in (None, MagicMock()):  # off, and a double that is not the real service
+            loop = _loop(_loop_runtime(service, TrustNetwork()))
+            await loop._extract_and_execute_actions(ship.agents["forge-1"], f"Obs.\n{SELF_TASK}", thread_id="t1")
+        assert entered == []
+```
+REPLACE:
+```python
+    asked: list[Any] = []
+    service_of = tags_module.agent_work_service
+
+    def _service_of(runtime: Any) -> Any:
+        asked.append(runtime.agent_work)
+        return service_of(runtime)
+
+    monkeypatch.setattr(tags_module, "apply_agent_work_tags", _spy)
+    monkeypatch.setattr(tags_module, "agent_work_service", _service_of)
+    async with _ship(tmp_path) as ship:
+        doubles = (None, MagicMock())  # off, and a double that is not the real service
+        for service in doubles:
+            loop = _loop(_loop_runtime(service, TrustNetwork()))
+            await loop._extract_and_execute_actions(ship.agents["forge-1"], f"Obs.\n{SELF_TASK}", thread_id="t1")
+        assert entered == []
+        assert asked == [doubles[1]]  # A1 (F12): off neither imports nor calls the tag module
+```
+
+Pair 5 of 5 (C14 to C16):
+
+SEARCH:
+```python
+        assert "assigned to forge-1" in cleaned and actions[-1]["outcome"] == "created"
+```
+REPLACE:
+```python
+        assert "assigned to forge-1" in cleaned and actions[-1]["outcome"] == "created"
+
+
+# C14
+async def test_an_example_a_quotation_or_a_broken_block_is_stripped_and_nothing_is_filed(tmp_path: Path) -> None:
+    """A1 (F6, F7): fenced and quoted tags are examples and a nested block is broken; none is acted on, every marker
+    goes, in any letter case."""
+    text = (
+        f"Example syntax only:\n{FENCE}\n{SELF_TASK}\n{FENCE}\n> [CLAIM_WORK wi-1]\n"
+        "[SELF_TASK]\nTitle: Outer\n[Self_Task]\nTitle: Inner\n[/SELF_TASK]\n[/self_task] [/CLAIM_WORK]"
+    )
+    async with _ship(tmp_path) as ship:
+        loop = _loop(_loop_runtime(ship.service, TrustNetwork()))
+        cleaned, actions = await loop._extract_and_execute_actions(ship.agents["forge-1"], text, thread_id="t1")
+        assert await ship.store.list_agent_work(False, None, 10) == []
+        assert [action for action in actions if action.get("type") == "agent_work"] == []
+        lowered = cleaned.lower()
+        assert "self_task" not in lowered and "claim_work" not in lowered and cleaned.startswith("Example syntax only:")
+
+
+# C15
+def test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass() -> None:
+    """A1 (F11): 66 KB of unclosed openers. The review measured 3.1 s for this shape before A1 (one rescan per opener)."""
+    text = "[SELF_TASK]" * 6_000
+    started = time.perf_counter()
+    assert split_agent_work_tags(text) == ("", ())
+    assert time.perf_counter() - started < 0.5
+
+
+# C16
+async def test_a_work_store_fault_on_one_tag_is_acknowledged_and_the_rest_of_the_reply_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F10): the reply is posted, the next tag is acted on, and the failed one is acknowledged, not retried."""
+    async with _ship(tmp_path) as ship:
+        async def _broken(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("attempt to write a readonly database")
+
+        monkeypatch.setattr(ship.service, "create_self_task", _broken)
+        loop = _loop(_loop_runtime(ship.service, TrustNetwork()))
+        cleaned, actions = await loop._extract_and_execute_actions(
+            ship.agents["pulaski-1"], f"Obs.\n{SELF_TASK}\n{REQUEST}", thread_id="t1",
+        )
+        [item] = await ship.store.list_agent_work(False, None, 10)
+        record = read_agent_work(item)
+        assert record is not None and record.kind == "request"
+        assert cleaned.startswith("Obs.") and "could not be confirmed" in cleaned and item.id[:8] in cleaned
+        assert [action["outcome"] for action in actions if action.get("type") == "agent_work"] == ["error", "created"]
+```
+
+### 7.31 `tests/test_ad1347_s3_execution.py` (M2, A1: X3, X7, X12, X13 to X21)
+
+Pair 1 of 13 (imports):
+
+SEARCH:
+```python
+import ast
+import asyncio
+import contextlib
+import json
+import shutil
+import sqlite3
+import time
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+```
+REPLACE:
+```python
+import ast
+import asyncio
+import contextlib
+import itertools
+import json
+import shutil
+import sqlite3
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, replace
+```
+
+Pair 2 of 13:
+
+SEARCH:
+```python
+import pytest
+
+from probos.agent_stop import AgentStopService
+```
+REPLACE:
+```python
+import pytest
+
+import probos.capability_request as request_module
+from probos.agent_stop import AgentStopService
+```
+
+Pair 3 of 13:
+
+SEARCH:
+```python
+from probos.config import AgentWorkConfig, SystemConfig
+```
+REPLACE:
+```python
+from probos.capability_request import can_fulfil_request
+from probos.config import AgentWorkConfig, HybridDispatchConfig, SystemConfig
+```
+
+Pair 4 of 13:
+
+SEARCH:
+```python
+from probos.ontology import VesselOntologyService
+```
+REPLACE:
+```python
+from probos.mesh.department_dispatcher import DepartmentDispatcher
+from probos.mesh.work_item_router import WorkItemRouter
+from probos.ontology import VesselOntologyService
+```
+
+Pair 5 of 13:
+
+SEARCH:
+```python
+from probos.routers.capability_requests import decide_capability_request
+```
+REPLACE:
+```python
+from probos.routers.capability_requests import decide_capability_request, list_actionable_capability_requests
+```
+
+Pair 6 of 13:
+
+SEARCH:
+```python
+from tests.test_ad864_crew_assignment import _make_registry
+```
+REPLACE:
+```python
+from tests.test_ad864_crew_assignment import _make_registry
+from tests.test_ad1154_approval_inbox import _TIER_3_URL, _armed, _invoke, _open_session
+from tests.test_ad706_browser_tool import _FakePage
+from tests.test_bf887_continue_resumes_the_promoted_turn import _Dispatcher
+```
+
+Pair 7 of 13 (the rig's runner gets the section's TTL):
+
+SEARCH:
+```python
+            callsign_of=lambda slot: CALLSIGNS.get(slot, slot), max_pending=max_pending,
+```
+REPLACE:
+```python
+            callsign_of=lambda slot: CALLSIGNS.get(slot, slot), max_pending=max_pending,
+            ttl_seconds=(section or AgentWorkConfig(enabled=True)).ttl_seconds,
+```
+
+Pair 8 of 13 (the pump waits for a run started when another ended):
+
+SEARCH:
+```python
+        await asyncio.gather(*rig.runner.running)
+        if not work and not asked and not rig.work_events and not rig.request_events:
+            return
+```
+REPLACE:
+```python
+        await asyncio.gather(*rig.runner.running)
+        idle = all(task.done() for task in rig.runner.running)  # A1 (F2): a run's end can start the next
+        if not work and not asked and not rig.work_events and not rig.request_events and idle:
+            return
+```
+
+Pair 9 of 13 (watching the executor's entries and outcomes):
+
+SEARCH:
+```python
+    assert isinstance(created, AgentWorkCreated), created
+    return created.work_item.id
+```
+REPLACE:
+```python
+    assert isinstance(created, AgentWorkCreated), created
+    return created.work_item.id
+
+
+def _watch_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    then: Callable[[dict[str, Any], Any], Awaitable[Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """A1: wrap ``WorkItemAgenticExecutor.run``; each entry is recorded before the run and its outcome after it.
+    ``then`` stands in for what the executor itself does after its loop (AD-1324's own parking, X16)."""
+    runs: list[dict[str, Any]] = []
+    original = WorkItemAgenticExecutor.run
+
+    async def _run(self: Any, **kwargs: Any) -> Any:
+        entry: dict[str, Any] = {"agent_id": kwargs.get("agent_id"), "outcome": None}
+        runs.append(entry)
+        outcome = await original(self, **kwargs)
+        if then is not None:
+            outcome = await then(kwargs, outcome)
+        entry["outcome"] = outcome
+        return outcome
+
+    monkeypatch.setattr(WorkItemAgenticExecutor, "run", _run)
+    return runs
+```
+
+Pair 10 of 13 (X3: the executor is not entered before the run):
+
+SEARCH:
+```python
+async def test_a_claimant_that_may_not_run_returns_the_request_to_the_board_unclaimed(tmp_path: Path, cause: str) -> None:
+    """Acceptance 5 and blind spot 7: never failed; the booking is cancelled; the member may claim it again once allowed."""
+    holder: dict[str, Any] = {}
+```
+REPLACE:
+```python
+async def test_a_claimant_that_may_not_run_returns_the_request_to_the_board_unclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str,
+) -> None:
+    """Acceptance 5 and blind spot 7: never failed; the booking is cancelled; the member may claim it again once allowed.
+    A1 (F14): a refusal before the run is made before the executor is entered, not by the run entry's own stop check."""
+    holder: dict[str, Any] = {}
+    runs = _watch_runs(monkeypatch)
+```
+
+and
+
+SEARCH:
+```python
+        if cause == "stop_during_run":
+            [stop] = rig.stops.active()
+            assert rig.stops.refused_counts(stop.stop_id) == {"tool": 1}
+        else:
+            assert rig.llm.requests == []
+```
+REPLACE:
+```python
+        if cause == "stop_during_run":
+            [stop] = rig.stops.active()
+            assert rig.stops.refused_counts(stop.stop_id) == {"tool": 1}
+            assert [run["agent_id"] for run in runs] == ["forge-1"]
+        else:
+            assert rig.llm.requests == [] and runs == []  # refused before the executor was entered (A1, F14)
+```
+
+Pair 11 of 13 (X7: a watcher is told of the decline):
+
+SEARCH:
+```python
+        item_id = await _request(rig, "pulaski-1", origin.id)
+        await _pump(rig)
+        engineering = await rig.wr.get_channel_by_department("engineering")
+        [notice] = await rig.wr.list_threads(engineering.id)
+        assert await rig.pipeline.process_and_post(
+            agent=rig.agents["forge-1"], response_text=f"[DECLINE_WORK {item_id}]\nOn the warp core all shift.\n[/DECLINE_WORK]",
+```
+REPLACE:
+```python
+        item_id = await _request(rig, "pulaski-1", origin.id)
+        assert await _request(rig, "ogawa-1", origin.id) == item_id  # a watcher (A1, F8)
+        await _pump(rig)
+        engineering = await rig.wr.get_channel_by_department("engineering")
+        [notice] = await rig.wr.list_threads(engineering.id)
+        assert await rig.pipeline.process_and_post(
+            agent=rig.agents["forge-1"], response_text=f"[DECLINE_WORK {item_id}]\nOn the warp core all shift.\n[/DECLINE_WORK]",
+```
+
+Pair 12 of 13:
+
+SEARCH:
+```python
+        assert "declined" in relay and "warp core" in relay and "@Pulaski" in relay
+```
+REPLACE:
+```python
+        assert "declined" in relay and "warp core" in relay and "@Pulaski" in relay and "@Ogawa" in relay
+```
+
+Pair 13 of 13 (X12 through the real router; X13 to X21):
+
+SEARCH:
+```python
+# X12
+async def test_an_ordinary_item_still_resumes_through_the_work_item_router(tmp_path: Path) -> None:
+    async with _rig(tmp_path, []) as rig:
+        dispatched: list[str] = []
+
+        class _Router:
+            async def dispatch_work_item(self, wi: dict[str, Any]) -> bool:
+                dispatched.append(wi["id"])
+                return True
+
+            def is_dispatchable(self, wi: dict[str, Any]) -> bool:
+                return True
+
+        rig.runtime.work_item_router = _Router()
+        plain = await rig.store.create_work_item(title="Plain task", assigned_to="forge-1")
+        asked = await rig.requests.file_request(agent_id="forge-1", kind="continue", target="continue", work_item_id=plain.id)
+        assert await rig.driver.block_on_request(work_item_id=plain.id, request_id=asked.id, reason="waiting")
+        await rig.requests.decide(asked.id, True)
+        await rig.requests.mark_fulfilled(asked.id)
+        await _pump(rig)
+        assert dispatched == [plain.id]
+        assert rig.llm.requests == [] and rig.runner.running == ()
+```
+REPLACE:
+```python
+# X12
+async def test_an_ordinary_item_still_resumes_through_the_work_item_router(tmp_path: Path) -> None:
+    """Regression, through the real ``WorkItemRouter`` (A1, F14): a dispatchable item resumes into one admission at the
+    activation queue (the dispatcher records it); a tagless item is the negative control the router declines."""
+    async with _rig(tmp_path, []) as rig:
+        queue = _Dispatcher()
+        hybrid = HybridDispatchConfig()
+        rig.runtime.work_item_router = WorkItemRouter(
+            dispatcher=queue, department_dispatcher=DepartmentDispatcher(hebbian_router=None, ontology=None, config=hybrid),
+            registry=rig.runtime.registry, config=hybrid,
+        )
+        for title, tags, admitted in (("Consult", ["consultation"], 1), ("Plain task", [], 0)):
+            plain = await rig.store.create_work_item(title=title, assigned_to="forge-1", tags=tags)
+            asked = await rig.requests.file_request(agent_id="forge-1", kind="continue", target="continue", work_item_id=plain.id)
+            assert await rig.driver.block_on_request(work_item_id=plain.id, request_id=asked.id, reason="waiting")
+            await rig.requests.decide(asked.id, True)
+            await rig.requests.mark_fulfilled(asked.id)
+            await _pump(rig)
+            assert [event.source_id for event in queue.events].count(plain.id) == admitted, title
+        assert rig.llm.requests == [] and rig.runner.running == ()
+
+
+_WIRE = _REPO / "ui" / "e2e" / "fixtures" / "ad1347-agent-work-approvals.json"
+
+
+# X13
+async def test_an_agent_work_approval_crosses_the_hxi_wire_fulfilled_and_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1): the route's real envelopes are the shared fixture the HXI decoder test reads
+    (``ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts``); only the call bound to its own item is fulfillable."""
+    from probos.agent_work_runner import approval_payload
+
+    ids = itertools.count(1)
+    monkeypatch.setattr(request_module, "uuid", SimpleNamespace(uuid4=lambda: f"00000000-0000-0000-0000-{next(ids):012d}"))
+    monkeypatch.setattr(request_module, "time", SimpleNamespace(time=lambda: 1000.0))
+    wire = json.loads(_WIRE.read_text(encoding="utf-8"))
+    requests = CapabilityRequestStore(db_path=str(tmp_path / "requests.db"))
+    await requests.start()
+    try:
+        captain = SimpleNamespace(capability_request_store=requests)
+        rationale = "agent work wi-agent called hull_survey, outside the read-only set"
+        first = await requests.file_action_request(
+            "forge-1", approval_payload("hull_survey", {"depth": 2}, "wi-agent-work-1"), rationale=rationale,
+            work_item_id="wi-agent-work-1",
+        )
+        assert await list_actionable_capability_requests(captain) == wire["pending"]
+        assert await decide_capability_request(first.id, CapabilityRequestDecideRequest(approve=True), runtime=captain) == wire["fulfilled"]
+        second = await requests.file_action_request(
+            "forge-1", approval_payload("hull_survey", {"depth": 3}, "wi-agent-work-1"), rationale=rationale,
+            work_item_id="wi-agent-work-1",
+        )
+        await requests.decide(second.id, True)  # approved; its fulfilment has not happened yet
+        assert await list_actionable_capability_requests(captain) == wire["approved"]
+        retried = await decide_capability_request(second.id, CapabilityRequestDecideRequest(approve=True), runtime=captain)
+        assert retried["fulfilled"] is True and (await list_actionable_capability_requests(captain))["requests"] == []
+        stored = await requests.get(second.id)
+        assert stored is not None
+        bound = replace(stored, status="approved")
+        assert can_fulfil_request(bound)
+        for unbound in (
+            replace(bound, work_item_id="wi-other"), replace(bound, work_item_id=None),
+            replace(bound, payload={**bound.payload, "action": "click"}),
+        ):
+            assert not can_fulfil_request(unbound)
+    finally:
+        await requests.stop()
+
+
+# X14
+async def test_an_approval_that_settles_before_the_run_parks_still_runs_the_call_once(tmp_path: Path) -> None:
+    """A1 (F2): the Captain approves while the run that filed the call is still finishing; BF-878 resumes the item at
+    the park, and that start, made during the run, runs after it."""
+    holder: dict[str, Any] = {}
+
+    async def _approve_then_answer(request: LLMRequest) -> LLMResponse:
+        rig = holder["rig"]
+        [asked] = await rig.requests.list_pending()
+        captain = SimpleNamespace(capability_request_store=rig.requests)
+        assert (await decide_capability_request(asked.id, CapabilityRequestDecideRequest(approve=True), runtime=captain))["fulfilled"]
+        settled = list(rig.request_events)
+        rig.request_events.clear()
+        for kind, data in settled:  # the driver hears both events now, while the item is not yet parked
+            await rig.driver.on_capability_event({"type": getattr(kind, "value", kind), "data": data})
+        return _final("Waiting for the Captain.")
+
+    script = [_call("hull_survey", {}), _approve_then_answer, _call("hull_survey", {}), _final("Surveyed once.")]
+    async with _rig(tmp_path, script) as rig:
+        holder["rig"] = rig
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        created = await rig.service.create_self_task(
+            "forge-1", title="Survey the hull", description="", reason=REASON, origin=AgentWorkOrigin("ward_room", thread_id=origin.id),
+        )
+        assert isinstance(created, AgentWorkCreated)
+        await _pump(rig)
+        done = await rig.store.get_work_item(created.work_item.id)
+        assert done is not None and done.status == "done" and rig.survey.calls == 1
+        assert len(rig.llm.requests) == 4
+        [report] = _system_posts(rig, origin.id)
+        assert "Surveyed once." in report
+
+
+# X15
+async def test_an_admitted_confined_call_is_not_parked_again_by_the_approval_inbox(tmp_path: Path) -> None:
+    """A1 (F3): with AD-1154's inbox armed (the live configuration), the one call a confinement admits runs; credential
+    entry stays refused; a call the confinement files never reaches the inbox."""
+    executor, tool, store = await _armed(tmp_path, page=_FakePage(list_elements=[{"role": "button", "text": "Pay now"}]))
+    verdict = {"now": "admit"}
+
+    async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+        return verdict["now"]
+
+    try:
+        session_id = await _open_session(executor, tool, _TIER_3_URL)
+        executor.confine_calls(ToolCallConfinement(AGENT_WORK_READ_TOOL_IDS, gate))
+        await _invoke(executor, {"action": "click", "index": 0, "session_id": session_id})
+        assert len(tool.invocations) == 1 and await store.list_pending() == []
+        credential = await _invoke(executor, {"action": "fill_credential", "session_id": session_id})
+        assert agentic_dispatch._APPROVAL_CREDENTIAL_REFUSAL in (credential.error or "") and len(tool.invocations) == 1
+        verdict["now"] = "filed"
+        filed = await _invoke(executor, {"action": "click", "index": 0, "session_id": session_id})
+        assert CONFINED_CALL_FILED in (filed.error or "") and len(tool.invocations) == 1
+        assert await store.list_pending() == []
+    finally:
+        await store.stop()
+        await tool.stop()
+
+
+# X16
+async def test_an_item_the_executor_parked_itself_stays_parked_with_its_booking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F3's remaining parking outcome): a run AD-1324 parked on its own tier-floor ask (``parked_request_id``) is
+    neither done nor released; its claimant keeps the booking until the ask is decided."""
+    holder: dict[str, Any] = {}
+
+    async def _tier_floor_parks(kwargs: dict[str, Any], outcome: Any) -> Any:
+        rig = holder["rig"]
+        item_id = kwargs["work_item_id_provider"]()
+        ask = await rig.requests.file_request(agent_id=kwargs["agent_id"], kind="continue", target="continue", work_item_id=item_id)
+        # as file_tier_floor_request(park=True) does from inside the executor
+        assert await rig.driver.block_on_request(work_item_id=item_id, request_id=ask.id, reason="tier floor")
+        holder["ask"] = ask.id
+        outcome.stopped_reason, outcome.parked_request_id = "tier_floor_unavailable", ask.id
+        return outcome
+
+    _watch_runs(monkeypatch, then=_tier_floor_parks)
+    async with _rig(tmp_path, [_final()]) as rig:
+        holder["rig"] = rig
+        origin = await _thread_in(rig, "medical", "bones-1")
+        item_id = await _request(rig, "pulaski-1", origin.id)
+        await _pump(rig)
+        assert (await rig.runner.claim("forge-1", item_id))[0] == "claimed"
+        await _pump(rig)
+        item = await rig.store.get_work_item(item_id)
+        assert item is not None and (item.status, item.assigned_to) == ("blocked", "forge-1")
+        assert item.metadata["capability_request_id"] == holder["ask"]
+        assert [booking.status for booking in await rig.store.list_bookings(work_item_id=item_id)] == ["active"]
+        assert _system_posts(rig, origin.id) == []
+
+
+# X17
+@pytest.mark.parametrize("stop", ["error", "empty"])
+async def test_a_run_that_stops_without_a_finished_answer_fails_and_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop: str,
+) -> None:
+    """A1 (F4): only a run that completed with an answer is done; an error (as the step limit or the token budget) and
+    an empty answer fail, and the report names the stop instead of saying "is done"."""
+    async def _provider_down(request: LLMRequest) -> LLMResponse:
+        raise RuntimeError("provider down")
+
+    runs = _watch_runs(monkeypatch)
+    async with _rig(tmp_path, [_provider_down] if stop == "error" else [_final("")]) as rig:
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        created = await rig.service.create_self_task(
+            "forge-1", title="Read the log", description="", reason=REASON, origin=AgentWorkOrigin("ward_room", thread_id=origin.id),
+        )
+        assert isinstance(created, AgentWorkCreated)
+        await _pump(rig)
+        expected = "error" if stop == "error" else "complete"
+        assert [run["outcome"].stopped_reason for run in runs] == [expected]  # the premise: the executor's own stop
+        ended = await rig.store.get_work_item(created.work_item.id)
+        assert ended is not None and ended.status == "failed"
+        assert ended.metadata["agent_work_result"]["stopped"] == expected
+        [report] = _system_posts(rig, origin.id)
+        assert "is done" not in report and "ended as failed: the run " in report
+
+
+# X18
+async def test_a_claimant_stopped_after_it_filed_a_call_returns_the_request_to_the_board(tmp_path: Path) -> None:
+    """A1 (F5): the stop lands after the call was filed and before the run returns; the request goes back to the board
+    unclaimed with its booking cancelled, never parked; the filed call stays on the Captain's queue, inert."""
+    holder: dict[str, Any] = {}
+
+    async def _stop_then_answer(request: LLMRequest) -> LLMResponse:
+        await holder["rig"].stops.issue_stop("forge-1", reason=STOP_REASON)
+        return _final("Waiting for the Captain.")
+
+    async with _rig(tmp_path, [_call("hull_survey", {}), _stop_then_answer]) as rig:
+        holder["rig"] = rig
+        origin = await _thread_in(rig, "medical", "bones-1")
+        item_id = await _request(rig, "pulaski-1", origin.id)
+        await _pump(rig)
+        assert (await rig.runner.claim("forge-1", item_id))[0] == "claimed"
+        await _pump(rig)
+        item = await rig.store.get_work_item(item_id)
+        assert item is not None and (item.status, item.assigned_to) == ("open", None)
+        assert "capability_request_id" not in item.metadata and rig.survey.calls == 0
+        assert [booking.status for booking in await rig.store.list_bookings(work_item_id=item_id)] == ["cancelled"]
+        [filed] = await rig.requests.list_pending()
+        assert (filed.work_item_id, filed.payload["tool_id"]) == (item_id, "hull_survey")
+
+
+# X19
+async def test_a_decline_whose_notice_cannot_be_posted_does_not_say_it_was_told(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F9's literal): the decliner is told the truth when neither the thread nor the channel took the post."""
+    async with _rig(tmp_path, []) as rig:
+        origin = await _thread_in(rig, "medical", "bones-1")
+        item_id = await _request(rig, "pulaski-1", origin.id)
+        await _pump(rig)
+
+        async def _down(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("the Ward Room is down")
+
+        monkeypatch.setattr(rig.wr, "create_post", _down)
+        monkeypatch.setattr(rig.wr, "create_thread", _down)
+        outcome, said = await rig.runner.decline("forge-1", item_id, "On the warp core.")
+        assert outcome == "declined" and "could not be posted" in said and "told" not in said
+
+
+# X20
+async def test_the_activation_notice_states_the_configured_ttl(tmp_path: Path) -> None:
+    """A1 (F13): the notice names the TTL the store applies, never rounded up to an hour."""
+    from probos.agent_work_runner import ttl_words
+
+    assert [ttl_words(seconds) for seconds in (60, 90, 5_400, 86_400)] == ["1 min", "90 s", "90 min", "24 h"]
+    async with _rig(tmp_path, [], section=AgentWorkConfig(enabled=True, ttl_seconds=60)) as rig:
+        origin = await _thread_in(rig, "medical", "bones-1")
+        await _request(rig, "pulaski-1", origin.id)
+        await _pump(rig)
+        engineering = await rig.wr.get_channel_by_department("engineering")
+        [notice] = await rig.wr.list_threads(engineering.id)
+        assert "it expires 1 min after it was asked" in notice.body
+
+
+# X21
+def test_a_confirmation_token_is_never_recorded_in_an_approval() -> None:
+    """A1 (F15): AD-1154 strips a browser confirmation token before filing (BF-682); the agent-work gate does the same,
+    and the approved call's identity does not depend on the token."""
+    from probos.agent_work_runner import APPROVAL_UNRECORDED_PARAMS, approval_payload
+
+    assert APPROVAL_UNRECORDED_PARAMS == agentic_dispatch._APPROVAL_PARAM_STRIP_KEYS
+    with_token = approval_payload("browser", {"action": "click", "index": 0, "confirmation_token": "tok-1"}, "wi-1")
+    assert with_token is not None and "confirmation_token" not in with_token["params"]
+    assert with_token == approval_payload("browser", {"action": "click", "index": 0}, "wi-1")
+```
+
 ## 8. Tracking (in M2's commit, or a docs-only commit after it)
 
 Set the date to the commit date. Both anchors survive wave 2's entries.
@@ -2903,7 +4512,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
+**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. Review round 1 (A1) repaired 14 findings and one found in the repair: both fulfilment predicates (`can_fulfil_request` and the HXI's `canFulfil` in `ui/src/store/capabilityApprovals.ts`) accept the agent-work approval bound to its item, so the HXI confirms it and an unfulfilled one stays retryable; a start that arrives during a run runs after it; a confinement's admission is not parked again by AD-1154's inbox; only a completed run with an answer is done (any other stop fails with its reason); a stopped claimant is released before parking; the parser is one linear pass (any case, every marker stripped, fenced, quoted and nested tags never acted on); declines reach watchers; a fault on one tag is acknowledged; off neither imports nor calls the tag module; the notice states the TTL exactly; a browser confirmation token is never recorded. New: `ui/e2e/fixtures/ad1347-agent-work-approvals.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`. #1627 stays open until the Captain's live acceptance. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
 
 ```
 
@@ -2925,7 +4534,8 @@ REPLACE:
 - *D5 (approval).* An AD-1154 `action` (`agent_work_call`, scoped to the item); AD-855 parks the item; approval is its own fulfilment; the resumed run admits that call once on a claim-once row; a denial cancels and the report reads the reason from the request. No new request kind.
 - *D6 (reports).* Ship's Computer posts: the notice in the department channel (mentions, `max_responders`), the report, decline, expiry and denial in the origin thread (fallback the department channel), each notice claimed before it is sent. The store's TTL sweep stays the only expiry owner.
 - *Disclosed effects.* `S1_SCOPE` names agent-created work; two refusal texts join the never-ran set; `runtime.agent_work_runner` exists (None while off); a standing rule granted on an agent-work approval is inert.
-- *Reversal.* Revert both commits; open agent work stays on the board until its TTL; the AD-1154 requests filed stay in the inbox as ordinary actions with no fulfiller.
+- *A1 (review round 1).* No decision reversed. D3: a start during a run is deferred, eligibility is asked before parking, and only a completed run with an answer is done (any other stop is failed with its reason). D4: a confinement's admission is carried past AD-1154's inbox for that call only (credential entry stays refused), and a confirmation token is never recorded. D5: the subtype is fulfillable in both predicates, Python and HXI. D2: one linear scanner; fenced, quoted and nested tags are never acted on.
+- *Reversal.* Revert both commits; open agent work stays on the board until its TTL; the AD-1154 requests filed stay in the inbox as ordinary actions with no fulfiller. Reverting A1's HXI change with the Python change keeps the two predicates in agreement; reverting only one makes the HXI refuse any queue holding an approved, unfulfilled agent-work call.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -2936,7 +4546,7 @@ REPLACE:
 
 - `cognitive/dm/reply_pipeline.py`: the Captain's one-to-one chat, its 24 steps, its plan-mode tables; AD-845's `[CREATE_TASK]`; AD-1165 promotion.
 - `_handle_work_item_dispatch` and `_run_agentic_dispatch` (the AD-839 path).
-- AD-1154's browser inbox: `_APPROVAL_INBOX_TOOL_IDS`, `_park_or_admit`, the standing-rule machinery. A standing rule can still be granted on an agent-work approval, and the gate never reads it (register R2).
+- AD-1154's browser inbox: `_APPROVAL_INBOX_TOOL_IDS`, the standing-rule machinery, and `_park_or_admit`'s signature (pinned) and steps for every call a confinement did not admit. A1 (F3) adds one admission after its step 3, for the call a confinement admitted only. A standing rule can still be granted on an agent-work approval, and the gate never reads it (register R2).
 - Tools:
   - no `allowed_departments` or rank change;
   - no tool registered;
@@ -2951,7 +4561,7 @@ REPLACE:
 - `ward_room_router.py` and the Ward Room service.
 - `config/system.yaml`.
 
-## 10. Mutation rows (53 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (76 Python rows after A1, plus 4 TypeScript rows run by hand; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline that passes, and restore the file before the next row. None of these rows has been executed; the build's campaign is the one of record.
 
@@ -2972,7 +4582,7 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | WP1 | `src/probos/ward_room_pipeline.py` | `post_budget=budget, thread_id=thread_id, post_id=post_id or "",` | `post_budget=budget,` | C12 |
 | CP1 | `src/probos/cognitive/sub_tasks/compose.py` | `if mode_key in AGENT_WORK_COMPOSE_MODES:` | `if True:` | C11 (dm_response taught) |
 | S1 | `src/probos/agent_work.py` | `return self._directory.member(ref.slot_id) if ref is not None else None` | `return None` | X1 (claim refused) |
-| S2 | `src/probos/agent_work.py` | `if member is None or self._stopped_now(member.slot_id):` | `if member is None:` | X3 stop_before_run (the run starts) |
+| S2 | `src/probos/agent_work.py` | `if member is None or self._stopped_now(member.slot_id):` | `if member is None:` | X3 stop_before_run (the executor is entered; A1's entry assertion) and stop_during_run (a stopped claimant stays assigned) |
 | S3 | `src/probos/agent_work.py` | `return member.department == record.department and record.tool_id is not None and self._holds_tool(member, record.tool_id)` | `return True` | X3 restricted_before_run |
 | A1 | `src/probos/cognitive/agentic_dispatch.py` | `if confinement is not None and tool_id not in confinement.tool_ids:` | `if False:` | X2 (the survey runs at once) |
 | A2 | `src/probos/cognitive/agentic_dispatch.py` | `executor.confine_calls(confinement)` | `pass` | X2 |
@@ -2995,9 +4605,9 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | R12 | `src/probos/agent_work_runner.py` | `if denial:` | `if False:` | X2 (the reason) |
 | R13 | `src/probos/agent_work_runner.py` | `return str(request.decision_reason or "no reason recorded")[:MAX_REASON_CHARS]` | `return "no reason recorded"` | X2 |
 | R14 | `src/probos/agent_work_runner.py` | `await self._store.unassign_work_item(item.id, reason="the claimant may not run it now")` | `pass` | X3 before_run cases (status scheduled) |
-| R15 | `src/probos/agent_work_runner.py` | `if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):` | `if False:` | X3 stop_during_run (done, not open) |
+| R15 | `src/probos/agent_work_runner.py` | `if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):` | `if False:` | X3 stop_during_run (done, not open); X18 (parked, still assigned) |
 | R16 | `src/probos/agent_work_runner.py` | `await self._parking.block_on_request(work_item_id=item.id, request_id=filed[0], reason=BLOCKED_REASON)` | `pass` | X2 (not blocked) |
-| R17 | `src/probos/agent_work_runner.py` | `item.id, "done", source=RUN_SOURCE, expected_status="in_progress", metadata_patch={RESULT_METADATA_KEY: result},` | `item.id, "done", source=RUN_SOURCE, expected_status="in_progress",` | X1 (no answer in the report) |
+| R17 | `src/probos/agent_work_runner.py` | `item.id, status, source=RUN_SOURCE, expected_status="in_progress", metadata_patch={RESULT_METADATA_KEY: result},` | `item.id, status, source=RUN_SOURCE, expected_status="in_progress",` | X1 (no answer in the report) |
 | R18 | `src/probos/agent_work_runner.py` | `if completed and booking.status in ("active", "scheduled"):` | `if False:` | X1 (booking cancelled) |
 | R19 | `src/probos/agent_work_runner.py` | `return CONFINEMENT_ADMIT` | `return CONFINEMENT_FILED` | X2 (the survey never runs) |
 | R20 | `src/probos/agent_work_runner.py` | `if self._requests.count_pending_sync(agent_id) >= self._max_pending:` | `if False:` | X10 (a request is filed) |
@@ -3010,8 +4620,42 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | F2 | `src/probos/routers/capability_requests.py` | `return await store.mark_fulfilled(decided.id) is not None` | `return False` | X2 |
 | W1 | `src/probos/startup/finalize.py` | `if type(getattr(runtime, "agent_work", None)) is not AgentWorkService:` | `if False:` | W3 (the off boot builds a runner with no service and fails) |
 | SD1 | `src/probos/startup/shutdown.py` | `await work_runner.stop()` | `pass` | `tests/test_issue1419_failed_start_rollback.py::test_a_rollback_with_no_failed_step_asks_each_component_once_and_closes_nothing` |
+| N1 | `src/probos/capability_request.py` | `return req.kind in FULFILMENT_KINDS or repair_action(req) is not None or agent_work_call(req) is not None` | `return req.kind in FULFILMENT_KINDS or repair_action(req) is not None` | X13 (the approved row is not retryable) |
+| N2 | `src/probos/capability_request.py` | `or payload["scope_key"] != AGENT_WORK_SCOPE_PREFIX + work_item_id` | `or False` | X13 (`wi-other` is fulfillable) |
+| N3 | `src/probos/cognitive/agentic_dispatch.py` | `confined_admission = True` | `confined_admission = False` | X15 (the inbox parks the admitted click) |
+| N4 | `src/probos/cognitive/agentic_dispatch.py` | `if _CONFINED_ADMISSION.get():` | `if False:` | X15 |
+| N5 | `src/probos/agent_work_runner.py` | `self._restart.add(work_item_id)` | `pass` | X14 (in_progress, survey never runs) |
+| N6 | `src/probos/agent_work_runner.py` | `if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now` | `if False:` | X14 |
+| N7 | `src/probos/agent_work_runner.py` | `if outcome.parked_request_id:` | `if False:` | X16 (the booking is cancelled) |
+| N8 | `src/probos/agent_work_runner.py` | `finished = stopped == "complete" and bool(answer)` | `finished = True` | X17 (both cases: done) |
+| N9 | `src/probos/agent_work_runner.py` | `elif type(result.get("stopped")) is str:  # A1 (F4): the run stopped without a finished answer` | `elif False:` | X17 (the stop is not named) |
+| N10 | `src/probos/agent_work_runner.py` | `recipients = await self._service.notice_recipients(item.id)` | `recipients = (record.requester,)` | X7 (no `@Ogawa`) |
+| N11 | `src/probos/agent_work_runner.py` | `if not posted:  # A1 (F9, the literal): a post that did not go through is not "told"` | `if False:` | X19 |
+| N12 | `src/probos/agent_work_runner.py` | `if seconds >= size and seconds % size == 0:` | `if True:` | X20 ("0 h") |
+| N13 | `src/probos/agent_work_runner.py` | `recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}` | `recorded = dict(params)` | X21 |
+| N14 | `src/probos/agent_work_tags.py` | `block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), not inert)` | `block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), True)` | C1 fenced case; C14 |
+| N15 | `src/probos/agent_work_tags.py` | `block.actionable = False` | `pass` | C1 nested case ("Outer ... Inner" filed) |
+| N16 | `src/probos/agent_work_tags.py` | `lines.append((end, fenced or fence or line.lstrip().startswith(">")))` | `lines.append((end, fenced or fence))` | C1 quoted case |
+| N17 | `src/probos/agent_work_tags.py` | `closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)` | `closer, name, attribute = match.group(1) == "/", match.group(2), match.group(3)` | C1 mixed-case case |
+| N18 | `src/probos/agent_work_tags.py` | `cuts.append((match.start(), match.end()))` | `pass` | C1 stray case |
+| N19 | `src/probos/agent_work_tags.py` | `ack, action = await _apply_guarded(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | `ack, action = await _apply_one(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | C16 (the fault escapes) |
+| N20 | `src/probos/proactive.py` | `if getattr(rt, "agent_work", None) is not None:` | `if True:` | C5 (off calls `agent_work_service`) |
+| N21 | `src/probos/agent_work_tags.py` | `fence = _FENCE_RE.match(line) is not None` | `fence = False` | C1 fenced case |
+| N22 | `src/probos/agent_work_tags.py` | `cuts.extend([(block.start, block.body_start), *block.inner])` | `cuts.append((block.start, block.body_start))` | C1 unclosed-with-marker case |
+| N23 | `src/probos/agent_work_tags.py` | `if item_id is not None and not inert:` | `if item_id is not None:` | C1 quoted case (the claim is taken) |
 
 Row T3's Line cell escapes the union bar (`\|`) for the Markdown table; the source line has a plain `|`. X9b is `test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_outcome`.
+
+**A1 campaign.** The Python rows run against `tests/test_ad1347_s2_chain_tags.py tests/test_ad1347_s3_execution.py tests/test_ad1347_s3_wiring.py tests/test_ad1156_plan_execute_mode.py tests/test_issue1419_failed_start_rollback.py`. The TypeScript rows are not in the Python campaign: mutate each line, run `npx vitest run src/store/__tests__/capabilityApprovals.ad1347.test.ts` from `ui/`, expect a failure, restore. The Python half of that wire is proven by X13's fixture equality.
+
+| # | File | Line (stripped) | Mutate to | Killed by |
+|---|---|---|---|---|
+| TS1 | `ui/src/store/capabilityApprovals.ts` | `if (Object.keys(payload).length === keys.length && keys.every(key => key in payload) && isAgentWorkCall(payload, workItemId)) return true;` | `if (false) return true;` | vitest cases 1 and 2 |
+| TS2 | `ui/src/store/capabilityApprovals.ts` | `&& payload.scope_key === 'agent_work:' + workItemId;` | `&& true;` | vitest case 3 (`wi-other` accepted) |
+| TS3 | `ui/src/store/capabilityApprovals.ts` | `&& value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, value.work_item_id));` | `&& value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, undefined));` | vitest case 2 |
+| TS4 | `ui/src/store/capabilityApprovals.ts` | `\|\| !canFulfil(expected.kind, expected.payload, expected.work_item_id)))) {` | `\|\| !canFulfil(expected.kind, expected.payload, undefined)))) {` | vitest case 1 |
+
+TS4's Line cell escapes the bars as T3's does.
 
 ## 11. Verified Against Codebase (2026-10-23, worktree `s23-consult` at `6b950acf`)
 
@@ -3103,6 +4747,51 @@ grep -n "SRP_MAX_BODY_LINES = \|SRP_MAX_DIRECT_METHODS = " scripts/check_archite
 - `agent_stop.py`: 88.
 - `ward_room_pipeline.py`: `if agent and self._proactive_loop:` occurs twice (291, 307), so that SEARCH carries the next line, which occurs once.
 
+### A1 additions (2026-10-23, worktree `bf900-consult` at `c5ad2b4b`)
+
+```
+grep -n "def repair_action\|def can_fulfil_request\|def list_actionable\|can_fulfil_request(req)" src/probos/capability_request.py
+  127, 150, 1118, 1123
+grep -n "can_fulfil_request" src/probos/routers/capability_requests.py
+  20, 83   (_serialize's can_retry_fulfilment, :82-84)
+grep -n "function canFulfil\|canFulfil(\|function isRecord\|const FULFILMENT_KINDS" ui/src/store/capabilityApprovals.ts
+  7, 221, 245, 283, 307, 308 (twice)
+grep -n "agent_work_approval(decided)\|mark_fulfilled(decided.id) is not None" src/probos/routers/capability_requests.py
+  487, 493
+grep -n "_serialize\|validate_action_payload(decoded)" src/probos/capability_request.py src/probos/routers/capability_requests.py
+  capability_request.py:446 (an action payload is validated on decode, else None)
+grep -n "def _start\|self._active\|block_on_request\|finally:" src/probos/agent_work_runner.py
+  235, 361-368, 407, 444-445
+grep -n "_resolve_if_settled\|await self._resume(store" src/probos/cognitive/capability_gap_driver.py
+  187, 190, 212
+grep -n "_STRICT_APPROVAL_DISPATCH\|_NEVER_PARK_ACTIONS\|_ALWAYS_TIER_3_ACTIONS\|_APPROVAL_PARAM_STRIP_KEYS\|async def _park_or_admit" src/probos/cognitive/agentic_dispatch.py
+  105, 233, 242, 244, 838, 850, 1136, 1174, 1191-1208
+grep -n "test_park_or_admit_keeps_its_pinned_signature" tests/test_ad1154_approval_inbox.py
+  1964   (six names pinned; A1 adds none)
+grep -n "park=not is_crew and bool(work_item_id)\|parked_request_id" src/probos/cognitive/agentic_dispatch.py
+  2366, 2529, 4281
+grep -n 'stopped_reason = "' src/probos/cognitive/swe_harness/agentic_loop.py
+  1808 error, 2011 token_budget, 2050 complete, 2257 max_iterations
+grep -n "async def notice_recipients" src/probos/agent_work.py
+  466
+grep -n "max(1, self._ttl_seconds // 3600)" src/probos/agent_work_runner.py
+  512
+grep -n "ttl_seconds: int = Field" src/probos/config.py
+  3585 (ge=60)
+grep -n 'params.get("confirmation_token")' src/probos/tools/browser/tool.py
+  1600
+grep -n "from probos.agent_work_tags import agent_work_service, apply_agent_work_tags" src/probos/proactive.py
+  3816
+grep -n "SRP_MAX_BODY_LINES\|SRP_MAX_DIRECT_METHODS\|methods > SRP" scripts/check_architecture_principles.py
+  187, 188, 568
+grep -n "^class _ApprovalGuardMixin\|^class DispatchToolExecutor" src/probos/cognitive/agentic_dispatch.py
+  970, 1455
+grep -n "def is_dispatchable\|dispatchable_tags" src/probos/mesh/work_item_router.py src/probos/config.py
+  work_item_router.py:59-66; config.py:3490 (["consultation"])
+grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.py
+  128
+```
+
 ## 12. Absence Verified (2026-10-23)
 
 | # | Claim | Run | Found | Holds |
@@ -3114,6 +4803,11 @@ grep -n "SRP_MAX_BODY_LINES = \|SRP_MAX_DIRECT_METHODS = " scripts/check_archite
 | AV5 | two test stubs fake `extract_and_execute_actions` with a fixed signature; no other double constrains its kwargs | `rg "def _fake_extract\|post_budget=None\):" tests`; `rg "extract_and_execute_actions *=" tests` | `tests/test_bf237_pipeline_post_budget.py:25` and `tests/test_bf238_post_budget_telemetry.py:174` (both updated: §7.3a, §7.3b); the other doubles are `AsyncMock`s | yes (corrected after the M1 build: the first claim searched only for `def extract_and_execute_actions`) |
 | AV6 | no test pins `S1_SCOPE["refuses"]` text | `rg "browser actions and every\|result is escalated unverified"` (excluding prompts) | `agent_stop.py:88` only | yes |
 | AV7 | an ordinary approved `action` has no fulfiller today | `routers/capability_requests.py:248-257`, `:424-429` | `continue`, `grant`, `install`, `build` only | yes |
+| AV8 | nothing but `capabilityApprovals.ts` defines or calls `canFulfil` | `rg "canFulfil\(" ui/src` | `capabilityApprovals.ts:245,283,307,308` only | yes |
+| AV9 | `_park_or_admit` has one production caller | `rg "_park_or_admit" src` | `agentic_dispatch.py:840` (call), `:1136` (def) | yes |
+| AV10 | `split_agent_work_tags` has one production caller | `rg "split_agent_work_tags" src` | `agent_work_tags.py:252` | yes |
+| AV11 | nothing restarts a start `_start` dropped during a run (F2's premise) | read `agent_work_runner.py:361-368`, `:444-445` | `_start` returns; `finally` only discards | yes |
+| AV12 | the HXI has no special path for AD-1328 command approvals (register R10) | `rg "run_command\|command escalation\|AD-1328" ui/src` | no matches | yes |
 
 ## 13. Prior Art and Blind Spots
 
@@ -3130,27 +4824,33 @@ grep -n "SRP_MAX_BODY_LINES = \|SRP_MAX_DIRECT_METHODS = " scripts/check_archite
   - An agent-run DM thread origin is a Ward Room thread. Handled: origin channel `ward_room`.
   - A pull-claim from an agent's own loop also triggers the runner. Accepted: the runner is the executor of record.
   - The pull tools are offered inside an agent-work run, so a claim made there is filed for approval (register R7).
+  - A1, register R8 (F9, P2, injected-only): a post that fails in both the origin thread and the department channel still consumes its claimed notice; a retry needs a release operation on `agent_work_notices` (a store contract change). The decline's acknowledgement no longer says "was told" then.
+  - A1, register R9 (F5's remainder, P3): the call a claimant filed just before it was stopped stays pending; approving it marks it fulfilled and runs nothing (AD-855 and the admission act only on an item parked on it).
+  - A1, register R10 (pre-existing, outside this batch; read, not executed): AD-1328's command approvals are marked fulfilled (`command_escalation.py:312`) and the HXI's `canFulfil` accepts only the repair action, so the HXI likely refuses their decision response too. To be filed as a BF.
+  - A1, register R11 (P3): the gate files a `browser` `fill_credential` call, which AD-1154 refuses after the approval, so the Captain decides something that cannot run; nothing is entered.
 
 ## 14. Diff Reviewer: properties to verify
 
 1. With `agent_work` off:
-   - no new path is entered: the extractor never calls the tag module;
+   - no new path is entered: while `runtime.agent_work` is None the extractor neither imports nor calls the tag module (a runtime holding any other object asks only `agent_work_service`, which answers None; A1, F12);
    - the compose system prompt equals the builder's output;
    - finalize builds no runner and `runtime.agent_work_runner` is None;
    - the executor's run arguments and its unarmed state are unchanged;
    - the router's and AD-855's behaviour for every non-agent-work request and item is unchanged.
 2. Every agent-created item is created through `AgentWorkService` only. `created_by` is the resolved requester slot, and no path stamps the Captain.
-3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker is removed from the posted text.
+3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker, in any letter case and closers included, is removed from the posted text; a marker in a code fence, on a quote line or inside another block is never acted on; the parse is one linear pass; a fault on one tag is acknowledged and the reply goes on.
 4. The acknowledgement is part of the agent's own reply text; the tag module creates no Ward Room post.
 5. A chain claim goes through `ToolRegistry.check_and_invoke` for `claim_work_item`, with the claimant's department, rank and agent type, at WRITE.
 6. Every agent-work run passes a `ToolCallConfinement` and never passes `admitted_turn`. No run starts for an item that `execution_allowed` refuses.
-7. A call outside `AGENT_WORK_READ_TOOL_IDS` reaches its tool only when an approval on record for the same agent, item, tool and parameters is consumed in that call. Each approval admits at most one call, across restarts.
+7. A call outside `AGENT_WORK_READ_TOOL_IDS` reaches its tool only when an approval on record for the same agent, item, tool and parameters is consumed in that call. Each approval admits at most one call, across restarts. AD-1154's inbox does not park that admitted call again; its credential refusal still applies; no other guard is skipped. No confirmation token is recorded.
 8. A gate fault, a store fault or a payload that cannot be recorded refuses the call; none admits it.
-9. A request whose claimant may not run it ends open and unassigned with its booking cancelled, never failed or cancelled.
-10. Each terminal, activation and decline notice is claimed before it is sent. Delivery makes one post per item, and every watcher of a deduplicated request is a recipient.
+9. A request whose claimant may not run it ends open and unassigned with its booking cancelled, never failed or cancelled, also when its run filed a call (the release comes before parking).
+10. Each terminal, activation and decline notice is claimed before it is sent. Delivery makes one post per item, and every watcher of a deduplicated request is a recipient of its reports and of its declines. A decline that could not be posted is not acknowledged as told; a failed post is not retried (register R8).
 11. No new EventLog category or event pair, request kind, config field, table, stop-seam constant or stop-check site.
 12. Every background run is held in a set and cancelled at stop. Shutdown stops the runner before the work store.
 13. `probos.agent_work_runner` imports the cognitive layer only inside functions, so the approval route's import chain gains no cognitive module.
+14. (A1) Both fulfilment predicates, Python's `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the `agent_work_call` scoped to its own item and agree on every row; the HXI confirms the approval's `fulfilled` response, and an approved, unfulfilled one stays on the actionable queue as retryable.
+15. (A1) Only a run that completed with an answer is done; any other stop is failed with its reason named; a run the executor parked stays parked with its booking; a start that arrives during a run is made after it, once.
 
 ## 15. Acceptance criteria
 
@@ -3161,7 +4861,8 @@ grep -n "SRP_MAX_BODY_LINES = \|SRP_MAX_DIRECT_METHODS = " scripts/check_archite
 5. **The stop:** C7 (create), X3 (claim and run); the census rows are updated (§7.16).
 6. **Provenance through the chain:** C3, C4.
 7. **Off is unchanged:** C5, C11, W3. AD-845 and AD-1165 are untouched (§9).
-8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+8. **Review round 1 (A1):** C1 (11 cases), C5, C14 to C16, X3, X7, X12 to X21 and `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`; each new or changed assertion fails on the candidate `c5ad2b4b` except X12's negative control and X21's pin of AD-1154's set; the HXI file runs under vitest (not in the broad gate).
+9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Live acceptance (acceptance 1): what the Captain does and what is read
 
