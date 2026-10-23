@@ -289,9 +289,10 @@ class WardRoomPostPipeline:
         # BF-237: Budget tracks whether action extractor already posted.
         budget = PostBudget()
         if agent and self._proactive_loop:
+            # AD-1347 S2: the thread and post this reply answers are the origin of any work it files.
             response_text, _actions = await self._proactive_loop.extract_and_execute_actions(
                 agent, response_text,
-                post_budget=budget,
+                post_budget=budget, thread_id=thread_id, post_id=post_id or "",
             )
             response_text = response_text.strip()
         elif self._router:

@@ -541,6 +541,7 @@ async def test_work_item_agentic_executor_run_signature_is_unchanged() -> None:
         "budget_awareness_state",  # AD-1320: transient presentation state only
         "inner_loop_hook",  # AD-1322: optional economic-organ hook only
         "admitted_turn",  # AD-1343 A2: the agent's own admitted turn skips the stop entry check; not continuation policy
+        "confinement",  # AD-1347 S3: a per-call authority bound for an owned read-only run; not continuation policy
     ]
     assert not any(
         "loop_until_done" in name or "continuation" in name for name in params

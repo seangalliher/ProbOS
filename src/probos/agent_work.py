@@ -413,6 +413,35 @@ class AgentWorkService:
             if not self._stopped_now(candidate.slot_id) and self._holds_tool(candidate, tool_id)
         )
 
+    def crew_member(self, key: str) -> CrewMember | None:
+        """S3: the live crew member ``key`` names (any identity form the facade resolves), or None (fail closed)."""
+        ref = self._identities.resolve(key) if _identifier(key) else None
+        return self._directory.member(ref.slot_id) if ref is not None else None
+
+    def execution_allowed(self, item: WorkItem, slot_id: str) -> bool:
+        """S3, asked before every run and again after it (A3's hand-on): may ``slot_id`` run this item now?
+
+        Its assignee only, live and not stopped. A request: a member of its department who may use its tool, the claim
+        gate's question asked again, so a claimant that lost eligibility after its claim is not run. A self-task or an
+        assignment: holding the named tool when one is named. Never cached; never raises.
+        """
+        try:
+            record = read_agent_work(item)
+            if record is None or item.assigned_to != slot_id:
+                return False
+            member = self._directory.member(slot_id)
+            if member is None or self._stopped_now(member.slot_id):
+                return False
+            if record.kind == KIND_REQUEST:
+                return member.department == record.department and record.tool_id is not None and self._holds_tool(member, record.tool_id)
+            return record.tool_id is None or self._holds_tool(member, record.tool_id)
+        except Exception:
+            logger.warning(
+                "AD-1347: the run check for work item %s failed; it is not run by %s now",
+                getattr(item, "id", "?"), slot_id, exc_info=True,
+            )
+            return False
+
     def claim_allowed(self, item: WorkItem, resource: BookableResource) -> bool:
         """The store's claim gate (``WorkItemStore.set_agent_work_claim_gate``): may this resource claim this now?
 

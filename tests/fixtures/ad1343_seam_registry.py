@@ -91,6 +91,8 @@ AGENTIC_RUN_OWNERS: dict[tuple[str, str], str] = {
     ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.recover_promoted_turn"): "S2 promoted resume",
     ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke"): "SEAM_DELEGATION, then the run entry",
     ("src/probos/startup/finalize.py", "_wire_crew_orchestrator"): "crew eligibility, correction rounds, the run entry",
+    # AD-1347 S3: agent-created work; execution_allowed (the stop, no count) before each run, then the run entry.
+    ("src/probos/startup/finalize.py", "_wire_agent_work_runner"): "agent-work eligibility, then the run entry",
 }
 ADMITTED_TURN_SITES: frozenset[tuple[str, str, str]] = frozenset({
     ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent._run_agentic_dispatch", "admitted_turn=True"),
@@ -222,7 +224,8 @@ SEAM_INDEX: dict[str, tuple[str, tuple[object, ...]]] = {
     "promoted_turn_resume": ("the resume of a promoted turn the Captain approved", ("exception", _PROMOTED_RESUME)),
     "long_runs": ("LongRunService records runs and starts no agent work", ("none", "src/probos/execution/long_runs.py")),
     "agent_work": (
-        "work an agent creates for itself or requests from a colleague (AD-1347); its claim is a tool call (SEAM_TOOL)",
+        "work an agent creates for itself or requests from a colleague (AD-1347); its claim is a tool call (SEAM_TOOL) "
+        "and its run a new agentic run (SEAM_AGENTIC_RUN)",
         ("at", ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop")),
     ),
 }

@@ -171,7 +171,7 @@ def _make_router():
 
 
 def _make_proactive_loop_spending_budget():
-    async def _fake_extract(agent, text, *, post_budget=None):
+    async def _fake_extract(agent, text, *, post_budget=None, thread_id="", post_id=""):
         if post_budget is not None:
             post_budget.spent = True
         return text, []

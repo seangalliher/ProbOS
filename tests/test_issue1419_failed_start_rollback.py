@@ -1138,6 +1138,7 @@ _STOPPED_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("proactive_loop", "proactive loop stop"),
     ("watch_manager", "watch manager stop"),
     ("persistent_task_store", "persistent task store stop"),
+    ("agent_work_runner", "agent work runner stop"),  # AD-1347 S3: before the store its runs write
     ("work_item_store", "workforce store stop"),
     ("build_dispatcher", "build dispatcher stop"),
     ("cognitive_journal", "cognitive journal stop"),

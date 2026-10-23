@@ -1,0 +1,82 @@
+{
+  "pending": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "agent_id": "forge-1",
+        "kind": "action",
+        "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+        "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+        "work_item_id": "wi-agent-work-1",
+        "status": "pending",
+        "created_at": 1000.0,
+        "decided_at": null,
+        "decided_by": "",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "hull_survey",
+          "action": "agent_work_call",
+          "params": {"depth": 2},
+          "scope_key": "agent_work:wi-agent-work-1",
+          "session_id": null,
+          "thread_id": ""
+        },
+        "can_retry_fulfilment": false
+      }
+    ]
+  },
+  "fulfilled": {
+    "request": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "agent_id": "forge-1",
+      "kind": "action",
+      "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+      "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+      "work_item_id": "wi-agent-work-1",
+      "status": "fulfilled",
+      "created_at": 1000.0,
+      "decided_at": 1000.0,
+      "decided_by": "captain",
+      "decision_reason": "",
+      "payload": {
+        "tool_id": "hull_survey",
+        "action": "agent_work_call",
+        "params": {"depth": 2},
+        "scope_key": "agent_work:wi-agent-work-1",
+        "session_id": null,
+        "thread_id": ""
+      },
+      "can_retry_fulfilment": false
+    },
+    "standing_rule": null,
+    "fulfilled": true
+  },
+  "approved": {
+    "view": "actionable",
+    "requests": [
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "agent_id": "forge-1",
+        "kind": "action",
+        "target": "hull_survey.agent_work_call @ agent_work:wi-agent-work-1",
+        "rationale": "agent work wi-agent called hull_survey, outside the read-only set",
+        "work_item_id": "wi-agent-work-1",
+        "status": "approved",
+        "created_at": 1000.0,
+        "decided_at": 1000.0,
+        "decided_by": "captain",
+        "decision_reason": "",
+        "payload": {
+          "tool_id": "hull_survey",
+          "action": "agent_work_call",
+          "params": {"depth": 3},
+          "scope_key": "agent_work:wi-agent-work-1",
+          "session_id": null,
+          "thread_id": ""
+        },
+        "can_retry_fulfilment": true
+      }
+    ]
+  }
+}
