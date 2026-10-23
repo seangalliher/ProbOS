@@ -392,7 +392,7 @@ HOLDS: yes
 5. **Privacy.** The capture holds crew prompt text (including DM content), so it is off by default, stored under the data dir and capped.
 6. **Repeatability is not validity.** A gauge can agree with itself and still be wrong. Bias against human or ground-truth labels is out of scope for S1. Note it as the follow-on question once repeatability is known.
 
-## BF candidates found while drafting (not drafted; for the orchestrator to file)
+## BF candidates found while drafting (filed as BF-921, #1636; not this AD)
 
 1. **The Counselor never receives `CONFABULATION_SUPPRESSED` in the live vessel.** The live logs hold 1,258 `BF-206: Chain output suppressed` lines (949 `quality_gate`, 309 `confabulation_detected`) and **zero** of the Counselor handler's first log line, `BF-206: Confabulation suppressed for` (`counselor.py:1720-1723`), although Counselor INFO lines appear in the same files. The root cause is unconfirmed. Candidate: the emit is guarded by `_rt = getattr(self, '_runtime', None)` (`cognitive_agent.py:5949-5950`). `tests/test_bf206_confab_feedback.py` exists, so this looks like a half-chain.
 2. **(Sequencing — important.)** A fix for 1 must not simply re-enable the chain. The LLM `quality_gate` suppressions (75% of all suppressions) arrive as `CONFABULATION_SUPPRESSED`. The Counselor then tells the agent its post "contained details that couldn't be verified" and applies a weight-0.5 trust penalty (`counselor.py:1742-1775`). That is a category error, a quality judgment from an unqualified gauge billed as confabulation. Recommend that the BF restrict the penalty to the deterministic `confabulation_detected` reason (`evaluate.py:519-542`) until AD-1350's baseline exists.
