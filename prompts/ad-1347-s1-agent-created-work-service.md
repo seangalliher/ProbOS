@@ -4,7 +4,7 @@
 
 **Status:** build-ready after BF-912 (#1615) merges. Slice 1 of 4 of #1627; it does not close the issue. **Tier HIGH**: governance, because crew create and route work to each other. **AD number:** AD-1347, from `scripts/ad_ceiling.py` (ceiling AD-1347 from issue titles, next AD-1348); no new number is allocated. **Base:** `88f0e5b8` (AD-1341 S1 and BF-916, PR #1628) on `origin/main` `80456da2`. BF-912 touches only `cognitive/decomposer.py`, one new test and the three trackers. Every code SEARCH below anchors on text; the tracker SEARCHes anchor on lines BF-912 does not change.
 
-**Tests:** M1 `tests/test_ad1347_s1_agent_work.py`, 28 functions and about 40 cases. M2 `tests/test_ad1347_s1_wiring.py`, 2 functions (real boots). Updated pins:
+**Tests:** M1 `tests/test_ad1347_s1_agent_work.py`, 31 functions and 57 cases (A3: tests 29 to 31, and test 28 asks the off opener with every collaborator). M2 `tests/test_ad1347_s1_wiring.py`, 2 functions (real boots; A3: the Ship's Archive is off and its path resolver is spied). Updated pins:
 - `tests/test_ad1343_agent_stop.py` (T8, the seam set);
 - `tests/fixtures/ad1343_seam_registry.py` (three rows);
 - `tests/test_ad1270e1_config_facade.py` (six counts);
@@ -16,13 +16,15 @@
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks here are LF; match and write with each file's own endings. New files are written LF.
 
-**Not built here (later slices):** S2 the chain's action tags; S3 claim, execution, activation notice, report-back and notice delivery; S4 the QUERY lookup.
+**Not built here (later slices):** S2 the chain's action tags; S3 claim, execution, activation notice, report-back and notice delivery; S4 the QUERY lookup. Two requirements A3 hands on: S3 asks `claim_allowed`'s question again, with the stop at `SEAM_AGENTIC_RUN`, before it executes a claimed request, because a same-owner claim replay is a receipt and is not re-gated, and S3 decides what a claimant that lost eligibility after its claim does with the item (release, decline or the TTL); S2's tag parser treats the `ValueError` an `AgentWorkOrigin` raises as a refused tag (F2, F3).
 
 **Mechanical repairs by the orchestrator (2026-10-23, so that the staged contract passes `scripts/phantom-api-precheck.ps1`; no decision changed):** (1) section 7.14's `_schema` helper reads `coalesce(sql, '')` in lower case (SQLite function names are case-insensitive; the capitalised spelling was read as a class call); (2) section 12's first bullet names the constructs it avoids without parentheses; (3) not a precheck repair: section 10's heading said 31 rows while its table holds 33 (A1 to C2, found when the campaign table was derived), so the heading now says 33 and no row changed.
 
 **Amendment A1 (`claude-architect`, 2026-10-22; the oracle's stale pins at the M1 build `3496b849`):** the first hunt missed four pinned surfaces: the profile census header (§7.10 pair 2), AD-1270's true-leaf set (§7.14b), the layer-boundary scan (§7.13 types the trust parameter with `AgentIdentityTrust`, so nothing is imported from the consensus layer) and the generated config reference (§7.14c, also pinned by `tests/test_config_reference_current.py`). It also makes §10's W3 and W4 Mutate-to cells literal. No decision D1 to D14 changed.
 
 **Amendment A2 (`claude-architect`, 2026-10-22; the build's mutation campaign on tree `49ded1b8`, at `2516c20b`):** 32 of §10's 33 rows were killed; row R1 (`if self.config.agent_work.enabled:` to `if True:` in `runtime.py`) survived test W1, because the opener's own guard (`if not config.enabled: return None`) leaves the same outcomes W1 asserted (`agent_work` None, no `agent_work_` table). Property 11 was stated but not pinned. A2 makes test W1 count the runtime's calls to the opener through a spy on the module attribute `probos.agent_work.open_agent_work_service` (the runtime imports that name inside its guarded block, so the boot reads the replaced attribute), installed with the `monkeypatch` fixture and delegating to the real opener: none while off, one while on. Production code is unchanged; the test keeps its name. It also makes §10's R1 cell name test W1 by file (§10 has a mutation row also called W1). The other 32 Killed-by cells were checked by reading and each named test kills its row; none changed. No decision D1 to D14 and nothing in A1 changed. Rerun after the build: row R1 and its baseline.
+
+**Amendment A3 (`claude-architect`, 2026-10-23; review round 1 on the frozen candidate `8ebf10f2`, findings F1 to F4):** (F1) the wiring boots used AD-1346's `_config`, which leaves the Ship's Archive on with an empty `db_path`, so each boot opened and migrated the live vessel's `%LOCALAPPDATA%\ProbOS\archive\archive.db`. `_boot_config` now turns the archive off, and both boots take the `archive_resolutions` fixture, a spy on `probos.config.resolve_archive_db_path` that answers with a path under `tmp_path` and must stay empty. (F2) a same-owner replay returns before readiness, so the gate is not asked. That is AD-1187's receipt contract (`test_claim_replay_precedes_readiness_capacity_and_publication`: a trust requirement, TTL or dependency changed after the claim does not refuse the replay), and the replay acquires nothing, so property 6 and the docstrings now say "every new claim"; test 29 pins the receipt and row W7 is the gated replay as a mutant. No production change for F2. (F3) one helper, `_encodable`, makes `_text`, `_identifier` and the origin's id check refuse a str that UTF-8 cannot encode (a JSON-decoded lone surrogate): every text and id input of both create methods is `invalid_request` before any lookup or write, and an origin id raises the origin's own `agent_work_origin_id_invalid` (tests 30 and 31; rows A27 to A30). (F4) test 28 asks the off opener with every collaborator and spies the store's schema and gate methods (row R4). Tests 28 and 29 pass on the frozen candidate by design; their red run is rows R4 and W7. No decision D1 to D14 and nothing in A1 or A2 changed; §10 has 39 rows. Rerun after the build: every `agent_work.py` row (A1 to A30, R2, R3, R4), W7, and R1 (its test changed), each with its baseline.
 
 ---
 
@@ -55,7 +57,7 @@ A Ship's Computer service, `AgentWorkService`, creates three kinds of ordinary `
 
 It enforces the chain-of-command rules, per-member tool eligibility, the Captain's stop, depth, rate, three open-item caps and dedup with watchers. Provenance goes under `metadata["agent_work"]`.
 
-Through a fail-closed claim gate it also makes discovery and claim of a request (tool path and legacy path) ask the same eligibility question again. Expiry stays with the store's sweep. Notices get a claim-before-send record. The runtime builds the service only when enabled. Nothing calls it in S1.
+Through a fail-closed claim gate it also makes discovery and every new claim of a request (tool path and legacy path) ask the same eligibility question again; a same-owner replay of a claim already persisted is AD-1187's receipt and is not asked again (A3). Expiry stays with the store's sweep. Notices get a claim-before-send record. The runtime builds the service only when enabled. Nothing calls it in S1.
 
 ## 3. Decisions
 
@@ -210,11 +212,15 @@ About 150 tool calls each at most. BF-912 lands first.
 | 25 | `test_the_text_limits_are_inclusive_and_an_origin_validates_itself` | — |
 | 26 | `test_the_directory_reads_department_rank_and_chief_from_the_live_ship` | — |
 | 27 | `test_the_configuration_defaults_off_and_validates_at_parse_time` | 7 |
-| 28 | `test_the_opener_builds_nothing_while_off_or_without_its_collaborators` | 7 |
+| 28 | `test_the_opener_builds_nothing_while_off_or_without_its_collaborators` | 7 (A3, F4: off with every collaborator, no schema or gate call; row R4) |
+| 29 | `test_a_same_owner_replay_is_the_persisted_receipt_and_a_restriction_refuses_every_new_claim` | 3; property 6 (A3, F2; row W7) |
+| 30 | `test_a_value_utf8_cannot_encode_is_a_typed_refusal_and_writes_nothing` (14 cases) | A3, F3 (rows A27 to A29) |
+| 31 | `test_an_origin_refuses_an_id_utf8_cannot_encode` (2 cases) | A3, F3 (rows A27 and A30) |
 
 **M2, `tests/test_ad1347_s1_wiring.py`.**
-- W1 `test_the_flag_decides_whether_the_service_and_its_two_tables_exist` (7, golden; A2: also counts the runtime's calls to the opener, none off and one on, which is what kills mutation row R1).
-- W2 `test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade` (6, premise 8).
+- W1 `test_the_flag_decides_whether_the_service_and_its_two_tables_exist` (7, golden; A2: also counts the runtime's calls to the opener, none off and one on, which is what kills mutation row R1; A3: neither boot resolves the Ship's Archive path).
+- W2 `test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade` (6, premise 8; A3: the boot never resolves the Ship's Archive path).
+- Both take the `archive_resolutions` fixture (A3, F1): `_boot_config` turns the archive off, and the fixture's spy on `probos.config.resolve_archive_db_path` answers with a path under `tmp_path` and must stay empty.
 
 **Updated pins (each fails on the M1 tree without its update):**
 - `tests/test_ad1343_agent_stop.py::test_refusals_are_counted_by_seam_and_an_unknown_seam_is_a_bug` (the literal set);
@@ -897,7 +903,9 @@ scope), and an eligible member claims it.
 Eligibility (D3) is the tool registry's own answer for each member: ``check_permission`` at read
 level with the member's id, department, rank and agent type, so AD-423b's department scope,
 ``restricted_to``, rank matrix and the Captain's grants and restrictions all apply. It is asked when
-a request is created and again at every discovery and claim (``claim_allowed``, the store's gate).
+a request is created and again at every discovery and every new claim (``claim_allowed``, the store's
+gate). A same-owner replay of a claim already persisted is AD-1187's receipt and acquires nothing, so the
+store does not ask again; S3 asks before it runs anything (Amendment A3).
 An unregistered or disabled tool has no eligible member.
 
 Provenance (D7) sits under ``metadata["agent_work"]``: never a top-level ``thread_id`` and never a
@@ -978,19 +986,33 @@ REFUSAL_CODES: Final[tuple[str, ...]] = (
 )
 
 
+def _encodable(value: str) -> bool:
+    """Whether ``value`` encodes as UTF-8 (Amendment A3).
+
+    A JSON body can decode to a str holding an unpaired surrogate. SQLite's bind and the dedup key's sha256 refuse
+    such a str with an exception, and a field that reaches neither would be stored as poisoned provenance, so every
+    text and id input passes this check before any lookup or write.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _text(value: object, limit: int, *, required: bool) -> str | None:
-    """The stripped text, or None when it is not an exact str, is blank where required, or is too long."""
+    """The stripped text, or None when it is not an exact str, is blank where required, is too long, or is not UTF-8."""
     if type(value) is not str:
         return None
     stripped = value.strip()
-    if (required and not stripped) or len(stripped) > limit:
+    if (required and not stripped) or len(stripped) > limit or not _encodable(stripped):
         return None
     return stripped
 
 
 def _identifier(value: object) -> bool:
-    """An exact str of 1 to 128 characters with no surrounding whitespace."""
-    return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value
+    """An exact str of 1 to 128 characters with no surrounding whitespace that encodes as UTF-8."""
+    return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value and _encodable(value)
 
 
 def normalize_title(title: str) -> str:
@@ -1016,7 +1038,7 @@ class AgentWorkOrigin:
         if type(self.channel) is not str or self.channel not in ORIGIN_CHANNELS:
             raise ValueError("agent_work_origin_channel_invalid")
         for value in (self.thread_id, self.post_id):
-            if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value:
+            if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value or not _encodable(value):
                 raise ValueError("agent_work_origin_id_invalid")
 
     def to_dict(self) -> dict[str, str]:
@@ -1594,6 +1616,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
+import json
 import logging
 import shutil
 import sqlite3
@@ -2226,27 +2249,114 @@ def test_the_configuration_defaults_off_and_validates_at_parse_time() -> None:
 
 # 28
 async def test_the_opener_builds_nothing_while_off_or_without_its_collaborators(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Acceptance 7. While off the opener touches nothing even with every collaborator present, so its own guard is
+    pinned apart from the missing-collaborator branch, which also returns None (A3, F4: mutation row R4)."""
     path = tmp_path / "workforce.db"
     store = WorkItemStore(db_path=str(path), tick_interval=1000)
     await store.start()
+    store_calls: list[str] = []
+
+    async def _schema_spy() -> None:
+        store_calls.append("ensure_agent_work_schema")
+
+    def _gate_spy(gate: object) -> None:
+        store_calls.append("set_agent_work_claim_gate")
+
+    monkeypatch.setattr(store, "ensure_agent_work_schema", _schema_spy)
+    monkeypatch.setattr(store, "set_agent_work_claim_gate", _gate_spy)
     try:
         before = _schema(path)
+        off_directory = RuntimeCrewDirectory(
+            agent_registry=await _make_registry([]), trust_network=TrustNetwork(), ontology=VesselOntologyService(_REPO / "config" / "ontology"),
+        )
+        off_stops = AgentStopService(data_dir=tmp_path / "stops")
         off = await open_agent_work_service(
             config=AgentWorkConfig(), store=store, tools=ToolRegistry(), identities=_SlotIdentities(()),
-            directory=None, stop_gate=None,
+            directory=off_directory, stop_gate=off_stops,
         )
         assert off is None and _schema(path) == before
+        assert store_calls == [], "while off the opener calls neither the schema nor the gate method"
         caplog.set_level(logging.WARNING, logger="probos.agent_work")
         missing = await open_agent_work_service(
             config=_section(), store=store, tools=ToolRegistry(), identities=_SlotIdentities(()),
             directory=None, stop_gate=None,
         )
-        assert missing is None and _schema(path) == before
+        assert missing is None and _schema(path) == before and store_calls == []
         assert "missing: crew_directory, agent_stops" in caplog.text
     finally:
         await store.stop()
+
+
+# 29
+async def test_a_same_owner_replay_is_the_persisted_receipt_and_a_restriction_refuses_every_new_claim(
+    tmp_path: Path,
+) -> None:
+    """Property 6 (A3, F2). Eligibility is asked at every discovery and every new claim, on both routes. A same-owner
+    replay acquires nothing: it is AD-1187's receipt of a claim already persisted and precedes readiness, as it does
+    when a trust requirement, a TTL or a dependency changes after the claim
+    (``tests/test_ad1187_agent_work_pull.py::test_claim_replay_precedes_readiness_capacity_and_publication``).
+    S3 asks again before it runs anything. Mutation row W7 is the gated replay."""
+    async with _ship(tmp_path) as ship:
+        first = await _request(ship, "pulaski-1")
+        second = await _request(ship, "pulaski-1", title="Read the next EventLog window")
+        assert isinstance(first, AgentWorkCreated) and isinstance(second, AgentWorkCreated)
+        assert await _claimed(ship, "forge-1", first.work_item.id) is True
+        await ship.permissions.issue_grant("forge-1", "event_log_query", ToolPermission.NONE, is_restriction=True)
+        owned = await ship.store.get_work_item(first.work_item.id)
+        assert owned is not None and owned.assigned_to == "forge-1"
+        assert ship.service.claim_allowed(
+            owned, BookableResource(resource_id="forge-1", agent_type="builder", department="", capacity=5, characteristics=[]),
+        ) is False, "premise: the gate asked directly refuses forge-1 now"
+        assert await _claimed(ship, "forge-1", first.work_item.id) is True  # the receipt of what is already persisted
+        assert second.work_item.id not in await _discovered(ship, "forge-1")
+        assert await _claimed(ship, "forge-1", second.work_item.id) is False
+        assert await ship.store.claim_work_item("forge-1") is None  # the legacy route
+        assert await _claimed(ship, "laforge-1", second.work_item.id) is True  # the restriction is forge-1's alone
+
+
+_SURROGATE = json.loads('"\\ud800"')  # what a JSON body's "\ud800" decodes to: a str that UTF-8 cannot encode
+_SURROGATE_CASES = [
+    *(("self_task", field) for field in ("requester", "title", "description", "reason", "tool_id", "spawned_from")),
+    *(("request", field) for field in (
+        "requester", "title", "description", "reason", "tool_id", "assignee", "department", "spawned_from",
+    )),
+]
+
+
+# 30
+@pytest.mark.parametrize(("method", "field"), _SURROGATE_CASES, ids=[f"{method}-{field}" for method, field in _SURROGATE_CASES])
+async def test_a_value_utf8_cannot_encode_is_a_typed_refusal_and_writes_nothing(
+    tmp_path: Path, method: str, field: str,
+) -> None:
+    """A3 (F3). SQLite's bind and the dedup key's sha256 raise on an unpaired surrogate, and a field that reaches
+    neither would be stored as poisoned provenance. Every text and id input of both create methods is refused as
+    invalid_request before any lookup or write; the same call with the clean value then creates."""
+    async with _ship(tmp_path) as ship:
+        parent = await ship.store.create_work_item(title="An ordinary parent")
+        clean: dict[str, Any] = {
+            "requester": "forge-1" if method == "self_task" else "pulaski-1", "title": "Check the window",
+            "description": "", "reason": REASON, "origin": ORIGIN, "tool_id": "event_log_query",
+            "spawned_from": parent.id,
+        }
+        if method == "request":
+            clean.update(assignee="forge-1", department="engineering")
+        create: Callable[..., Any] = ship.service.create_self_task if method == "self_task" else ship.service.request_work
+        poisoned = {**clean, field: f"{clean[field]}{_SURROGATE}"}
+        assert _code(await create(poisoned.pop("requester"), **poisoned)) == "invalid_request"
+        assert await ship.store.list_agent_work(False, None, 10) == []
+        assert isinstance(await create(clean.pop("requester"), **clean), AgentWorkCreated)
+
+
+# 31
+@pytest.mark.parametrize("field", ["thread_id", "post_id"])
+def test_an_origin_refuses_an_id_utf8_cannot_encode(field: str) -> None:
+    """A3 (F3). The caller builds the origin (S2's parser), so the origin's own ValueError is the refusal; the create
+    methods accept only an AgentWorkOrigin (test 24), so an id that cannot be stored never reaches the service."""
+    with pytest.raises(ValueError, match="agent_work_origin_id_invalid"):
+        AgentWorkOrigin("ward_room", **{field: f"51d91a7d{_SURROGATE}"})
+    assert AgentWorkOrigin("ward_room", **{field: "51d91a7d"}).to_dict()[field] == "51d91a7d"
 ```
 
 ### 7.14b `tests/test_ad1270e2i_agentic_models.py` (M1, Amendment A1: AD-1270's true-leaf pin records the new leaf)
@@ -2404,9 +2514,10 @@ from typing import Any
 import pytest
 
 import probos.agent_work as agent_work_module
+import probos.config as probos_config
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin, AgentWorkRefusal, AgentWorkService
 from probos.cognitive.llm_client import MockLLMClient
-from probos.config import AgentWorkConfig, SystemConfig, WorkforceConfig
+from probos.config import AgentWorkConfig, ArchiveConfig, SystemConfig, WorkforceConfig
 from probos.crew_utils import is_crew_agent
 from probos.runtime import ProbOSRuntime
 from tests.test_ad1346_admission_service_boot import _config as _admission_boot_config
@@ -2415,9 +2526,33 @@ AGENT_WORK_TABLES = {"agent_work_watchers", "agent_work_notices"}
 
 
 def _boot_config(*, enabled: bool) -> SystemConfig:
+    """AD-1346's boot shape with the workforce store on and the Ship's Archive off (A3, F1).
+
+    An empty ``archive.db_path`` resolves to the live vessel's archive outside ``tmp_path``, and an enabled archive
+    opens and migrates that file at boot. These boots need no archive, so it is off (``lifecycle_config`` redirects it
+    instead).
+    """
     return _admission_boot_config().model_copy(update={
         "workforce": WorkforceConfig(enabled=True), "agent_work": AgentWorkConfig(enabled=enabled),
+        "archive": ArchiveConfig(enabled=False),
     })
+
+
+@pytest.fixture
+def archive_resolutions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Every call a boot makes to resolve the Ship's Archive path; each test asserts there is none (A3, F1).
+
+    The boot imports ``resolve_archive_db_path`` inside its archive block, so replacing the module attribute is what
+    it calls. The spy answers with a path under ``tmp_path``, so even a boot that regresses never opens the live file.
+    """
+    calls: list[object] = []
+
+    def _resolve_under_tmp(archive: object) -> Path:
+        calls.append(archive)
+        return tmp_path / "archive-pin" / "archive.db"
+
+    monkeypatch.setattr(probos_config, "resolve_archive_db_path", _resolve_under_tmp)
+    return calls
 
 
 def _tables(path: Path) -> set[str]:
@@ -2427,7 +2562,7 @@ def _tables(path: Path) -> set[str]:
 
 # W1
 async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive_resolutions: list[object],
 ) -> None:
     """Acceptance 7: off never calls the opener and adds no table; on calls it once, adds exactly the two tables, and a
     clean stop releases the service.
@@ -2464,11 +2599,12 @@ async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(
     on_tables = _tables(tmp_path / "on" / "workforce.db")
     assert not off_tables & AGENT_WORK_TABLES
     assert on_tables - off_tables == AGENT_WORK_TABLES
+    assert archive_resolutions == [], "neither boot resolves the Ship's Archive path (A3, F1)"
 
 
 # W2
 async def test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade(
-    tmp_path: Path,
+    tmp_path: Path, archive_resolutions: list[object],
 ) -> None:
     """Acceptance 6 and premise 8 on the real IdentityService: a DID becomes its slot; an unknown DID is refused."""
     rt = ProbOSRuntime(config=_boot_config(enabled=True), data_dir=tmp_path / "data", llm_client=MockLLMClient())
@@ -2499,6 +2635,7 @@ async def test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through
         assert isinstance(unknown, AgentWorkRefusal) and unknown.code == "requester_unresolved"
     finally:
         await rt.stop()
+    assert archive_resolutions == [], "the boot never resolves the Ship's Archive path (A3, F1)"
 ```
 
 ## 8. Tracking (tracker pairs; in M2's commit, or a docs-only commit after it)
@@ -2518,7 +2655,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1347 S1 (2026-10-23), #1627 slice 1 of 4 -- the Ship's Computer service that owns agent-created work: an agent can create work for itself, a chief can assign within its department, and any other ask becomes a request published to a department holding the named tool. Default off; nothing calls it yet.** New `probos/agent_work.py` (`AgentWorkService`, `open_agent_work_service`) and `probos/cognitive/crew_directory.py` (`RuntimeCrewDirectory`). `created_by` is the slot the requester's identity resolves to, and an unresolved requester is refused, never stamped "captain". Provenance (requester, origin, reason, depth, department, tool, dedup key) sits under `metadata["agent_work"]`, never a top-level `thread_id` or a `parent_id`, so a request stays discoverable. Eligibility is the tool registry's own answer for each member (department scope, `restricted_to`, rank, the Captain's grants and restrictions), asked at creation and again at every discovery and claim through a fail-closed store gate, on the tool and legacy claim paths; an unregistered tool has no eligible member. Guards: caps per agent 3, per department 8 and ship-wide 24 (open items), 6 creations per agent per hour, depth 2, a 24 h TTL owned by the store's existing sweep, and dedup on (department, tool, normalised title) that adds the asker as a watcher. A stopped requester is refused at the new `agent_work` seam. `WorkItemStore` gains `set_agent_work_claim_gate`, `ensure_agent_work_schema`, `list_agent_work`, `add_work_watcher`, `list_work_watchers`, `claim_work_notice` and `list_due_work_notices`. Two tables (`agent_work_watchers`, `agent_work_notices`) are created only when enabled. New config `agent_work` (`AgentWorkConfig`). AD-865's chief lookup is now `find_chief_post` and `resolve_post_agent` in `crew_delegation.py`. New: `tests/test_ad1347_s1_agent_work.py` and `tests/test_ad1347_s1_wiring.py` (real store, registry, permission store, stop record, ontology and boots). Updated: `test_ad1343_agent_stop.py`, `fixtures/ad1343_seam_registry.py`, `test_ad1270e1_config_facade.py`, `test_ad1152_agentic_correlation.py`, `test_ad1270e2i_agentic_models.py` (the true-leaf set), the config-facade baseline, the config-profiles manifest (classification and census) and the generated config reference. The contract is `prompts/ad-1347-s1-agent-created-work-service.md`.
+**AD-1347 S1 (2026-10-23), #1627 slice 1 of 4 -- the Ship's Computer service that owns agent-created work: an agent can create work for itself, a chief can assign within its department, and any other ask becomes a request published to a department holding the named tool. Default off; nothing calls it yet.** New `probos/agent_work.py` (`AgentWorkService`, `open_agent_work_service`) and `probos/cognitive/crew_directory.py` (`RuntimeCrewDirectory`). `created_by` is the slot the requester's identity resolves to, and an unresolved requester is refused, never stamped "captain". Provenance (requester, origin, reason, depth, department, tool, dedup key) sits under `metadata["agent_work"]`, never a top-level `thread_id` or a `parent_id`, so a request stays discoverable. Eligibility is the tool registry's own answer for each member (department scope, `restricted_to`, rank, the Captain's grants and restrictions), asked at creation and again at every discovery and every new claim through a fail-closed store gate, on the tool and legacy claim paths (a same-owner replay is AD-1187's receipt of a claim already persisted; S3 asks again before it runs anything); every text and id input must encode as UTF-8, so a JSON-decoded lone surrogate is a typed refusal; an unregistered tool has no eligible member. Guards: caps per agent 3, per department 8 and ship-wide 24 (open items), 6 creations per agent per hour, depth 2, a 24 h TTL owned by the store's existing sweep, and dedup on (department, tool, normalised title) that adds the asker as a watcher. A stopped requester is refused at the new `agent_work` seam. `WorkItemStore` gains `set_agent_work_claim_gate`, `ensure_agent_work_schema`, `list_agent_work`, `add_work_watcher`, `list_work_watchers`, `claim_work_notice` and `list_due_work_notices`. Two tables (`agent_work_watchers`, `agent_work_notices`) are created only when enabled. New config `agent_work` (`AgentWorkConfig`). AD-865's chief lookup is now `find_chief_post` and `resolve_post_agent` in `crew_delegation.py`. New: `tests/test_ad1347_s1_agent_work.py` and `tests/test_ad1347_s1_wiring.py` (real store, registry, permission store, stop record, ontology and boots, the boots with the Ship's Archive off). Updated: `test_ad1343_agent_stop.py`, `fixtures/ad1343_seam_registry.py`, `test_ad1270e1_config_facade.py`, `test_ad1152_agentic_correlation.py`, `test_ad1270e2i_agentic_models.py` (the true-leaf set), the config-facade baseline, the config-profiles manifest (classification and census) and the generated config reference. The contract is `prompts/ad-1347-s1-agent-created-work-service.md`.
 
 ```
 
@@ -2535,7 +2672,8 @@ REPLACE:
 - *Scope.* Slice 1 of #1627, two milestone commits. Files: new `agent_work.py` and `cognitive/crew_directory.py`; `workforce.py` (provenance key, lazy tables, claim gate, six methods), `agent_stop.py` (`SEAM_AGENT_WORK`), `cognitive/crew_delegation.py` (the shared chief lookup), `config.py` (`AgentWorkConfig`), `runtime.py`, `startup/shutdown.py`, `storage_declarations.py` (a note), the config-facade baseline, the config-profiles manifest, the generated config reference and tests. Contract: `prompts/ad-1347-s1-agent-created-work-service.md`. Later: S2 the chain's action tags; S3 claim, execution, activation notice and report-back; S4 the QUERY lookup.
 - *D1 (home).* A Ship's Computer service with narrow injected interfaces, built by one opener, held as `runtime.agent_work` only when enabled; nothing calls it in S1.
 - *D2 (authority).* A self-task is assigned to its creator; a chief assigns only a member of its own department; any other named assignee becomes an unassigned request (never an assignment) published to one department holding the named tool. A requester who holds the tool is told to create a self-task. Depth is read from the parent's stored record; 2 is allowed, 3 refused.
-- *D3 (eligibility).* `check_permission` at read level per member (department, rank, agent type and the Captain's grants and restrictions), at creation and at every discovery and claim through a fail-closed store gate on both claim paths; stopped members excluded.
+- *D3 (eligibility).* `check_permission` at read level per member (department, rank, agent type and the Captain's grants and restrictions), at creation and at every discovery and every new claim through a fail-closed store gate on both claim paths; stopped members excluded. A same-owner replay is AD-1187's receipt of a claim already persisted and is not asked again; S3 asks before it runs anything (A3).
+- *Input (A3).* Every text and id input, and the origin's ids, must encode as UTF-8 (one helper); a JSON-decoded lone surrogate is a typed `invalid_request` (the origin: its own `ValueError`), never an exception or stored provenance.
 - *D4 (guards).* Open caps 3 per agent, 8 per department, 24 ship-wide; 6 creations per agent per trailing hour; dedup on sha256 of (department, tool, NFKC case-folded whitespace-collapsed title) adds the asker as a watcher; a refused create is a typed `AgentWorkRefusal`.
 - *D5 (persistence).* `work_items` plus `metadata["agent_work"]` (requests also carry AD-1187's `agent_pull`); two tables in `workforce.db`, created only when enabled. `--full` deletes them with `workforce.db`; the default reset keeps them, bounded by the 24 h TTL; `requester_sovereign_id` lets S3 recognise a slot now held by a new identity. Archive promotion does not read `workforce.db`.
 - *D6 (seams).* A new `agent_work` seam counts a refused create; claim stays at `tool`, execution at `agentic_run` (S3); candidate questions use `standing_stop`. `S1_SCOPE` is unchanged until the work is reachable (S2).
@@ -2567,7 +2705,7 @@ REPLACE:
 - The census header's other numbers in `config-profiles.yaml` (`boolean_fields_reachable`, `default_true`, `default_false_armed_by_system_yaml`, `default_false_never_armed`, `measured_at_commit`): no test or script reads them, and they were already stale on the base (Absence AV12; register). Only `default_false` moves.
 - Where `AgentWorkConfig` lives: it stays in `config.py` (D4) and is not moved into `config_models/` here (AD-1270 batch 10).
 
-## 10. Mutation rows (33 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (39 rows; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. None of these has been executed; the campaign of record is the build's.
 
@@ -2594,14 +2732,20 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | A24 | `src/probos/agent_work.py` | `ttl_seconds=self._config.ttl_seconds,` | `ttl_seconds=None,` | tests 2 and 22 |
 | A25 | `src/probos/agent_work.py` | `if member is None or ref is None:` | `if False:` | test 3 (raises instead of refusing) |
 | A26 | `src/probos/agent_work.py` | `and item.updated_at >= item.created_at + item.ttl_seconds` | `and False` | test 22 (`cancelled`, not `expired`) |
+| A27 | `src/probos/agent_work.py` | `value.encode("utf-8")` | `value.encode("utf-8", "surrogatepass")` | tests 30 and 31 (every case: the surrogate is accepted; A3) |
+| A28 | `src/probos/agent_work.py` | `if (required and not stripped) or len(stripped) > limit or not _encodable(stripped):` | `if (required and not stripped) or len(stripped) > limit:` | test 30 (the title, description and reason cases; A3) |
+| A29 | `src/probos/agent_work.py` | `return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value and _encodable(value)` | `return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value` | test 30 (the requester, tool_id, assignee, department and spawned_from cases; A3) |
+| A30 | `src/probos/agent_work.py` | `if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value or not _encodable(value):` | `if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value:` | test 31 (A3) |
 | R2 | `src/probos/agent_work.py` | `store.set_agent_work_claim_gate(service.claim_allowed)` | `pass` | test 10 (the eligible member discovers nothing) |
 | R3 | `src/probos/agent_work.py` | `await store.ensure_agent_work_schema()` | `pass` | test 20 (no watcher table); test 2 |
+| R4 | `src/probos/agent_work.py` | `if not config.enabled:` | `if False:` | test 28 (with every collaborator the off opener returns a service and calls the store's schema and gate methods; A3, F4) |
 | W1 | `src/probos/workforce.py` | `or not self._agent_work_claimable(item, resource)` | `or False` | tests 10, 12 and 13 |
 | W2 | `src/probos/workforce.py` | `if AGENT_WORK_METADATA_KEY not in item.metadata:` | `if True:` | test 13 (discoverable with no gate); test 10 |
 | W3 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",` | `"INSERT OR REPLACE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",` | test 22 (a second claim returns True) |
 | W4 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",` | `"INSERT OR REPLACE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",` | test 20 (`add_work_watcher` returns True) |
 | W5 | `src/probos/workforce.py` | `conditions.append("status NOT IN ('done', 'cancelled', 'failed')")` | `pass` | test 17 (a cancelled item still counts); test 20 |
 | W6 | `src/probos/workforce.py` | `"AND n.recipient = r.recipient AND n.kind = ?) "` | `"AND n.kind = ?) "` | test 22 (the watcher is no longer due after the requester's claim) |
+| W7 | `src/probos/workforce.py` | `and live[0].resource_id == resource_id` | `and live[0].resource_id == resource_id and self._agent_work_claimable(item, resource)` | test 29 (forge-1's replay after the restriction is not owned). An unchanged line: this mutant is the rejected option A, so the row pins F2's decision (A3) |
 | D1 | `src/probos/cognitive/crew_directory.py` | `chief = resolve_post_agent(self._ontology, chief_post.id)` | `chief = None` | tests 5 and 26 |
 | X1 | `src/probos/cognitive/crew_delegation.py` | `post.department_id == worker_post.department_id` | `True` | test 26 (laforge's chief becomes numberone-1); AD-865 tests |
 | R1 | `src/probos/runtime.py` | `if self.config.agent_work.enabled:` | `if True:` | test W1 (`tests/test_ad1347_s1_wiring.py`): the off boot calls the opener once, so `opened == []` fails (A2; the outcomes alone survive, because the opener also returns None while off) |
@@ -2735,6 +2879,38 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
   2333, 2346
 ```
 
+**A3 additions (2026-10-23, frozen candidate `8ebf10f2`):**
+
+```text
+src/probos/workforce.py
+  11034-11059: _ready_for_pull; 11047: or not self._agent_work_claimable(item, resource)
+  11493: owned_before = any(b.resource_id == resource_id for b in bookings)
+  11494-11503: the same-owner replay returns item, live[0] before _ready_for_pull (:11518)
+  11499: and live[0].resource_id == resource_id   (row W7's line; occurs once)
+tests/test_ad1187_agent_work_pull.py
+  442-461: test_claim_replay_precedes_readiness_capacity_and_publication (trust 0.99, TTL elapsed,
+           missing dependency, proficiency 0.1: the replay returns the same booking)
+  2245-2270: test_provider_failure_after_commit_recovers_by_exact_id_replay
+src/probos/tools/work_item_pull_tool.py
+  316-318: "owned=True confirms persisted ownership or same-owner replay, not execution or resume"
+  367-371: claim_work_item(actor, work_item_id=wanted, agent_pull=True, prepare_claim=prepare); None -> not_claimable
+src/probos/routers/workforce.py:398-402: claim_work_item(resource_id, work_type=..., department=...)  (no work_item_id)
+src/probos/tools/permissions.py:110-117: async def issue_grant(self, agent_id, tool_id, permission, *, is_restriction=False, ...)
+src/probos/agent_work.py (pre-A3 lines)
+  92-99 _text; 102-104 _identifier; 115 material.encode("utf-8"); 126-131 AgentWorkOrigin.__post_init__
+  299-301 create_self_task's tool id check; 335-340 request_work's id checks; 449-457 _admit's input check
+  579: if not config.enabled:
+src/probos/config_models/knowledge.py:361-362: enabled: bool = True / db_path: str = ""
+src/probos/config.py:2631-2645: resolve_archive_db_path (empty db_path -> the platform default under the home directory)
+src/probos/startup/cognitive_services.py:671-689: if config.archive.enabled: (lazy import :673; resolve :681; ArchiveStore initialize :689)
+src/probos/infrastructure/backup_inventory.py:229-240: lazy import; resolves only when archive.enabled and backup_include_archive_root
+tests/fixtures/runtime_lifecycle.py:74-90: lifecycle_config redirects archive.db_path under tmp_path
+tests/test_ad1346_admission_service_boot.py:42-47: _config sets no archive field
+src/probos/ontology/loader.py:48-56: OntologyLoader.__init__ stores its paths only
+src/probos/cognitive/crew_directory.py:30-36: RuntimeCrewDirectory.__init__ stores its three collaborators
+tests/test_ad864_crew_assignment.py:86-93: _make_registry(agents) -> a real AgentRegistry
+```
+
 ## Absence Verified (2026-10-22)
 
 | # | Claim | Run | Found | Holds |
@@ -2755,6 +2931,9 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
 | AV14 (A1) | No doc or seam manifest names the moved chief lookup or `_ready_for_pull` | Grep `_find_chief_post\|_resolve_post_agent\|_ready_for_pull\|crew_delegation` in `docs/` | 0 | yes |
 | AV15 (A1) | The new modules give the tree scanners nothing to flag (no quoted `*.db` literal, no event emission, no `ui_scaffold`, no `create_task`) | Grep in `agent_work.py` and in `cognitive/crew_directory.py`, one file per call | one `.db` hit, `agent_work.py:597`, inside a longer message string that `test_ad1265_backup_coverage.py:51`'s quoted-literal pattern does not match; nothing else | yes |
 | AV16 (A1) | No test pins who imports `AgentIdentityTrust` | Grep `AgentIdentityTrust` in `*.py` | `agentic_dispatch.py:411, :433`; `crew_assignment.py:33, :56`; `self_telemetry_domains.py:15, :56, :158`; no test | yes |
+| AV17 (A3) | Only the pull tool reaches the same-owner replay in production | Grep `\.claim_work_item\(` in `src/probos` | `work_item_pull_tool.py:367` (`work_item_id`, `agent_pull=True`); `routers/workforce.py:398` (no `work_item_id`, so never the replay branch) | yes |
+| AV18 (A3) | No boot path resolves the archive path while the archive is off | Grep `resolve_archive_db_path` in `src/probos` | `config.py:2631` (definition); `startup/cognitive_services.py:673, :681` (inside `if config.archive.enabled:` at :671); `infrastructure/backup_inventory.py:229, :240` (only when `enabled`, :236); `__main__.py:3205-3227` (CLI commands, not the boot) | yes |
+| AV19 (A3) | No test outside the two new files imports `probos.agent_work` | Grep `agent_work import\|probos\.agent_work\|AgentWorkOrigin` in `tests/` | `test_ad1347_s1_agent_work.py`, `test_ad1347_s1_wiring.py` | yes |
 
 ## 12. Deterministic gate checks, resolved up front
 
@@ -2766,6 +2945,7 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
    - New store methods are called positionally; the kwarg checker skips methods absent from `src` anyway.
    - Expected result on the built tree: clean.
    - Census safety of new names (`ad1343_seam_census.py`): `claim_allowed`, `_requester_stop`, `_stopped_now`, `_holds_tool`, `_commit`, `_admit`, `notice_recipients`, `terminal_notices_due`, `claim_notice`, `eligible_members` and the test helpers `_invoke`, `_discovered`, `_claimed`, `_request` and `_self_task`, and test W1's spy `_counted_opener` with its locals `real_opener` and `opened` (A2), are not in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`. The only recorded calls the new code makes are `active_stop` and `standing_stop`, registered in §7.3.
+   - A3's names: `_encodable` and, in the tests, `_SURROGATE`, `_SURROGATE_CASES`, `archive_resolutions`, `_resolve_under_tmp`, `_schema_spy`, `_gate_spy` and the locals `store_calls`, `off_directory`, `off_stops`, `clean`, `poisoned` and `create` are not in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`; the only new call in `src` is `encode` on a str, which no set records. Test 28's collaborators are bound to `off_directory` and `off_stops`, names with no method call elsewhere, so no keyword line constructs a class.
 2. **Store registry** (`check_store_registry --check`): no baseline change. The new `CREATE TABLE`s are in `probos.workforce`, the declared owner of `workforce.work-items`.
 3. **Architecture** (`check_architecture_principles --check`):
    - `AgentWorkService` has 13 direct methods, under 500 lines.
@@ -2805,24 +2985,27 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
 3. A request's `agent_pull` has exactly three keys (`_pull_visible`).
 4. `_agent_work_claimable` returns True for every item without the provenance key, so all existing pull behaviour is unchanged, and False with no gate.
 5. The gate is synchronous and does no I/O (directory and registry reads only); it never raises into the store.
-6. Eligibility always passes `agent_types` and READ, and is asked at creation and at every discovery and claim.
+6. Eligibility always passes `agent_types` and READ, and is asked at creation, at every discovery and at every new claim on both routes (every acquisition of ownership). A same-owner replay of a claim already persisted acquires nothing and is AD-1187's receipt: it precedes readiness, as it does for a changed trust requirement, TTL or dependency, so it is not asked again (test 29; row W7 pins that choice). S3 asks again before it executes anything (A3, F2).
 7. The stop: one counted `active_stop` at `SEAM_AGENT_WORK` per refused create, before any store write; candidate questions use `standing_stop`; the census rows in §7.3 match the code's (file, qualified name, callee).
 8. One lock spans dedup, guards and the insert; dedup runs before the guards; a dedup hit by a different requester adds exactly one watcher.
 9. The service has no loop, no `create_task` and no status transition; expiry is the store's sweep.
 10. `claim_work_notice` is insert-or-ignore on a primary key; `list_due_work_notices` includes every watcher and excludes only pairs already claimed.
-11. `ensure_agent_work_schema` is reached only through the opener (by reading: no other caller in `src`; row R3 pins that the opener calls it). The runtime calls the opener only when `config.agent_work.enabled` (test W1 counts the calls, none off and one on: row R1, A2), and the opener itself returns None while off, touching nothing (test 28). While off, `runtime.agent_work` is None and `workforce.db` gains no table (test W1).
+11. `ensure_agent_work_schema` is reached only through the opener (by reading: no other caller in `src`; row R3 pins that the opener calls it). The runtime calls the opener only when `config.agent_work.enabled` (test W1 counts the calls, none off and one on: row R1, A2), and the opener itself returns None while off, touching nothing even with every collaborator present (test 28 spies the store's schema and gate methods: row R4, A3). While off, `runtime.agent_work` is None and `workforce.db` gains no table (test W1).
 12. `crew_delegation` behaviour is unchanged (pure extraction); the AD-865 tests pass unmodified.
 13. `config.py` changes only by `AgentWorkConfig` and one `SystemConfig` field; the facade baseline diff is exactly §7.8.
 14. No `decide`, ticket or tool permission change; `agentic_dispatch.py` is not edited.
 15. Each updated pinned test records its reason inline; no pin is deleted.
 16. `cognitive/crew_directory.py` imports nothing from the consensus layer, even under `TYPE_CHECKING`; its `trust_network` is typed `AgentIdentityTrust`; `tests/test_layer_boundaries.py` is unchanged.
 17. Each config surface changes only by the new section: `config-reference.md` gains exactly one `agent_work` section between `workforce` and `temporal` and is byte-equal to the generator's output; the census header changes only `default_false` (223 -> 224); `REMAINING_TRUE_LEAVES` gains exactly `AgentWorkConfig`.
+18. Every text and id input of both create methods, and the origin's ids, must encode as UTF-8, by one helper (`_encodable`) used by `_text`, `_identifier` and the origin's own check; a value that does not is `invalid_request` before any lookup or write, and an origin id raises `agent_work_origin_id_invalid` (tests 30 and 31; rows A27 to A30; A3, F3).
+19. The wiring boots never resolve the Ship's Archive path: `_boot_config` turns the archive off and the `archive_resolutions` spy stays empty, so no boot opens the live vessel's archive (A3, F1).
 
 Consumers that must accept the change: `WorkItemStore._ready_for_pull` (discovery and claim), `ToolRegistry.check_and_invoke`, the AD-1343 census tests, the config facade and profile checkers, and the runtime start and shutdown.
 
 ## 15. Acceptance criteria
 
 - Every test in §6 passes with the focused commands. The updated pins pass, including the three A1 pins. The listed `--check` scripts pass, including `gen_config_reference.py --check` (§7.14c). `tests/test_layer_boundaries.py` passes with no new exception (§7.13).
-- With the default configuration the runtime never calls the opener, nothing is built and `workforce.db` is unchanged (test W1's call count and tables, tests 13 and 28, test_ad1152).
+- With the default configuration the runtime never calls the opener, nothing is built and `workforce.db` is unchanged (test W1's call count and tables, tests 13 and 28, test_ad1152); the off opener touches nothing even with every collaborator (test 28, A3).
+- No wiring boot resolves or opens the Ship's Archive (tests W1 and W2, A3).
 - Acceptance 3, 5 (the S1 half: creation and claim refused for a stopped agent), 6 and 7 of #1627 are each covered by the named tests. The S1 half of acceptance 2 is test 10, which S2 and S3 extend.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
