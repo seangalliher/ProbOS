@@ -21,6 +21,7 @@ from probos.visiting_officers import (
     require_visitor_capability,
 )
 from probos.ward_room.channels import ChannelManager
+from probos.ward_room.lookup import LookupResult, WardRoomRecordLookup
 from probos.ward_room.messages import MessageStore
 from probos.ward_room.models import (
     WardRoomChannel,
@@ -73,6 +74,7 @@ class WardRoomService(EventEmitterMixin):
         self._last_stats: dict[str, Any] | None = None
         self._receipt_facts: DmReceiptFacts | None = None  # AD-1229: built in start()
         self._visiting_officers: Any = None  # BF-903: AD-701's registry, attached by finalize when it is on
+        self._archive_dir: Any = None  # AD-1347 S4: where the prune writes its archive; set by start_prune_loop
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -443,10 +445,19 @@ class WardRoomService(EventEmitterMixin):
         return await self._threads.count_pruneable(retention_days, retention_days_endorsed, retention_days_captain)
 
     async def start_prune_loop(self, config: Any, archive_dir: Any) -> None:
+        self._archive_dir = archive_dir  # AD-1347 S4: the lookup reads what the prune writes
         await self._threads.start_prune_loop(config, archive_dir)
 
     async def stop_prune_loop(self) -> None:
         await self._threads.stop_prune_loop()
+
+    async def lookup_record(self, requester_id: str, ref: str) -> LookupResult:
+        """AD-1347 S4: one thread or post by id, live or archived, as ``requester_id`` may see it."""
+        lookup = WardRoomRecordLookup(
+            db=self._db, channels=self._channels, members=self._messages,
+            identity_registry=self._identity_registry,
+        )
+        return await lookup.lookup(requester_id, ref, archive_dir=self._archive_dir)
 
     # ------------------------------------------------------------------
     # Message delegation
