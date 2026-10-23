@@ -2,14 +2,17 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A1: the repair of review round 1)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2: the repair of review round 2)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2b: the scanner's CommonMark differential)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2c: a list item's fence ends left of the item's column)
 
 **Status:** build-ready after wave 2 (BF-917 #1625, BF-915 #1623) merges. Slices 2 and 3 of 4 of #1627, built as one batch (the Architect's queue ruling, comment `IC_kwDORgp-xs8AAAABer-scw`). **S3 completes AD-1347's build; #1627 closes after the Captain's live acceptance (A1).** **Tier HIGH:** crew create governed work through the chain; colleagues run it with tools; there is a Captain approval path. **AD number:** AD-1347; this batch allocates nothing (the orchestrator runs `scripts/ad_ceiling.py`). **Base:** `origin/main` `6b950acf` (S1 and S4 merged).
 
 **Wave 2:** this contract needs nothing from wave 2 and edits none of its files: `skill_framework.py`, `acm.py`, `crew_enrollment.py`, `config/ontology/skills.yaml`, the doctor checks, `role_template_audit.py`, `storage_declarations.py` and its four test files. Every code SEARCH anchors on text. Each tracker SEARCH anchors on a line that wave 2's entries do not change (§8).
 
 **Tests:**
-- M1: `tests/test_ad1347_s2_chain_tags.py`, 16 functions after A1 (C1 has 11 cases; A1's C14 to C16 and its C1 and C5 changes are applied in M2's §7.30).
-- M2: `tests/test_ad1347_s3_execution.py`, 21 functions after A1 (X17 has 2 cases); `tests/test_ad1347_s3_wiring.py`, 1 function (a real boot); A1: `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (3 vitest cases) over the shared fixture `ui/e2e/fixtures/ad1347-agent-work-approvals.json`.
+- M1: `tests/test_ad1347_s2_chain_tags.py`, 17 functions after A2b (C1 has 11 cases, C15 6 and C17 58; A1's C14 to C16 and its C1 and C5 changes are applied in M2's §7.30, A2's C1, C15 and C17 changes in §7.40).
+- M2: `tests/test_ad1347_s3_execution.py`, 24 functions after A2 (X17 has 2 cases); `tests/test_ad1347_s3_wiring.py`, 1 function (a real boot); A1: `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (3 vitest cases) over the shared fixture `ui/e2e/fixtures/ad1347-agent-work-approvals.json`; A2: `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts` (2 vitest cases) over the shared rows `ui/e2e/fixtures/ad1347-action-payload-rows.json`, and `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx` (1).
 - Updated pins:
   - `tests/fixtures/ad1343_seam_registry.py`: one `AGENTIC_RUN_OWNERS` row and the `agent_work` `SEAM_INDEX` text;
   - `tests/test_ad1156_plan_execute_mode.py`: the `_NEVER_RAN_REFUSALS` set;
@@ -23,6 +26,8 @@
 **Mechanical repairs by the orchestrator (2026-10-23; eight, found by applying the contract by tool on `6b950acf` and `ba20e949`, running its tests and its mutation table, and building M1; no decision changed, and the production code needed none).** (1) `tests/test_ad1347_s3_execution.py` imported `AgentWorkConfig` from `probos.agent_work`, which does not export it (S1 defines it in `probos.config`, and S1's own tests import it there): the import moves. (2) C9's first case used the thread id `"bad thread"`, which S1's `AgentWorkOrigin` accepts (it refuses only a non-str, an id over 128 characters, an id with surrounding whitespace and an id that does not encode as UTF-8), so the tag was filed: the case is `" t1"`, an id with surrounding whitespace. (3) X3's `restricted_before_run` case issued its restriction at `ToolPermission.READ`, which restricts nothing at read level (S1's tests restrict with `ToolPermission.NONE`): it is `NONE`. (4) W3's boot config left the Ward Room off, and finalize wires AD-855's driver only inside `if runtime.ward_room:`, so the premise assertion failed: the test now builds its config through a local `_config` that sets `ward_room.enabled = True`, the change §7.21's note had told the Builder to make. After the four, all 41 test cases pass on the contract applied by tool. (5) Found by the campaign: row R11 (`if outcome == OUTCOME_EXPIRED:` to `if False:`) survived, because X5 asserted only that the notice contains "expired", and the fallback text ("ended as expired without a result") contains it too: X5 now asserts the expired wording itself. (Row SD1's killer is `tests/test_issue1419_failed_start_rollback.py`: its campaign command names that file as well.) The mutation table has 53 rows; the heading said 44. (6) Found by the M1 Builder: two existing test stubs of the extractor, `_fake_extract` in `tests/test_bf237_pipeline_post_budget.py` and in `tests/test_bf238_post_budget_telemetry.py`, have the fixed signature `(agent, text, *, post_budget=None)`, so the pipeline's new `thread_id` and `post_id` keywords raised `TypeError` in four bf237 tests (bf238's stub fails the same way): §7.3a and §7.3b give each stub the two keywords. §5's row and AV5's claim that no test fakes the extractor's kwargs were wrong (AV5 searched only for `def extract_and_execute_actions`) and are corrected; M1's focused command now names the bf238 test. (7) Found by the M2 Builder's focused command: `tests/test_ad1155_loop_until_done.py::test_work_item_agentic_executor_run_signature_is_unchanged` pins not only the 21-name prefix (`:508`, which §5 and §6 cited) but also the five names after it (`:531`) and the whole tail after the 26th name (`list(params)[26:] == [...]`, `:538`), and §7.8 appends `confinement` after `admitted_turn`, so the tail pin saw one extra name and the case failed; §5's row and §6's list called the test unaffected after reading only the prefix: §7.8a adds `"confinement"` to the pinned tail, and both lists and AV now say so. The change is test-only and the production code is the contract's own. (8) Found when Amendment A1 was applied by tool: pair A1-30 replaced the heading line of §12 with its own additions, so §12's absence table sat under `### A1 additions` with no §12 heading: the heading is restored after the additions (no decision, text or count changed). **Re-verified on `origin/main` `ba20e949` (wave 2 merged):** all 38 code pairs and both tracker pairs apply, each SEARCH exactly once; the 41 test cases pass on the contract applied by tool; the table's rows are run on that tree and recorded in §17. The phantom precheck lists 21 candidates on the base tree `6b950acf` and 8 on the tree with this contract applied, each explained: the 13 `kwarg_mismatch` (base tree only) are the `thread_id` and `post_id` parameters this contract adds to the extractor; 5 `method_phantom` (`restrict_to_plan_mode` and `confine_calls` exist on `DispatchToolExecutor`, where the precheck typed `executor` as `WorkItemAgenticExecutor`; `mark_fulfilled` exists on the capability-request store, where it typed `store` as `WorkItemStore`); 1 `field_phantom` (`origin.id` is a Ward Room thread's id, where the precheck typed `origin` as `AgentWorkOrigin`); and two stdlib classes (`AssertionError`, `SimpleNamespace`). **Re-verified after Amendment A1 on `origin/main` `ba20e949`:** all 88 code pairs (M1 8, M2 30, A1's §7.22 to §7.31 50) and both tracker pairs apply, each SEARCH exactly once (the slices, cut at `### 7.1`, `### 7.7`, `### 7.22` and `## 8. Tracking`, hold 88 of the contract's 88 SEARCH labels in that span); the 59 Python test cases pass on the contract applied by tool, and so do the 3 new vitest cases and the 682 existing vitest cases of the approval UI (`src/store`, `src/components/capability`, `src/components/approvals`, the profile and bridge approval tests); the phantom precheck lists 12 candidates on the applied tree, each a false positive: the 8 explained above plus `CapabilityRequestCard.tsx` (a file name in prose), `ContextVar` (the standard library's `contextvars.ContextVar`, which `_STRICT_APPROVAL_DISPATCH` already uses) and `WorkItemStore.list_pending` twice (the precheck typed `store` as `WorkItemStore`; `list_pending` is a method of the capability-request store, `capability_request.py:1140`).
 
 **Amendment A1 (2026-10-23): the repair of review round 1 (`gpt-6.1-sol`, NOT READY, 14 findings). Not a mechanical repair; no decision D1 to D8 is reversed.** All code is in new sections §7.22 to §7.31 at the end of M2, whose SEARCH blocks are the built text, so M1's commit is unchanged and the delta is one place. Repaired: F1 (both fulfilment predicates, Python `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the agent-work call bound to its own item; a shared fixture is asserted equal to the real route output and fed to the real decoder), F2 (a start that arrives during a run is made when that run ends), F3 (a confinement's admission is carried past AD-1154's inbox for that one call; credential entry stays refused; an item AD-1324 parked itself stays parked), F4 (done only when the run completed with an answer; any other stop fails with its reason), F5 (a request's eligibility is asked again before parking), F6, F7 and F11 (one linear scanner: any letter case, every marker stripped, fenced, quoted and nested tags never acted on), F8 (declines reach every watcher), F10 (a fault on one tag is acknowledged and the reply goes on), F12 (off neither imports nor calls the tag module), F13 (the notice states the TTL exactly), F14 (X3 asserts the executor is not entered before the run; X12 uses the real router), and F15, found while repairing F3 (the gate never records a browser confirmation token, as AD-1154 does not). F9: the decline acknowledgement no longer says "was told" when the post failed; a failed post still consumes its claimed notice (register R8: needs a release operation on the notice table, a store contract change). Tests: 41 cases became 59; rows: 53 became 76 Python rows, plus 4 TypeScript rows run by hand (§10). Round 2 reviews the whole candidate: the predicate, the HXI decoder, `_park_or_admit` and the terminal status mapping are shared contracts.
+
+**Amendments A2, A2b and A2c (2026-10-23): the repair of review round 2 (`gpt-6.1-sol`, NOT READY, F16 to F21) and of the scanner's CommonMark differential. Not mechanical repairs; no decision D1 to D8 is reversed.** A2 (F16 to F21 and the standing-approval control) is in §7.32 to §7.41; A2b and A2c edit only the REPLACE halves of §7.32's first four pairs and §7.40's second and third, with no new pair, so M1's commit and the code pair count (107) stand. A2b: the orchestrator ran the A2 scanner against markdown-it-py 4.0.0 (CommonMark preset) over generated flat documents and found 35 minimal documents where it acts on a tag that CommonMark reads as code or quotation; A2b reads indentation two ways (top level and list item) and brings indented code, fences after list markers and quotes in a list item into scope. A2c: the orchestrator's extended differential (an alphabet with list markers, headings, thematic breaks, tabs and fences on list-marker lines; 12,000 documents per seed) found that A2b's list reading had no end rule: on seed 1347, 44 non-lazy disagreements, 39 of them regressions against candidate 3 (a fence opened in a list item, then a line left of the item's content column); A2c tracks the last list item's content column and ends a fence at a non-blank line left of it. **Measured on the A2c oracle (`dd8ecb20`), seeds 1347, 2024, 7 and 31337:** non-lazy disagreements 0, 3, 3 and 1, each also acted on by candidate 3 (none a regression; 6 of the 7 are a nested item and 1 a lazy line: register R15); the only other class is lazy quote continuation (45, 44, 42 and 35 minimal documents; one of those 166 is a regression against candidate 3, which ignored it only because it toggled on any fence-like line, F16: a quote line, then a line of three backticks and `a`b`, then an indented claim); documents the scanner ignores although CommonMark reads text, the over-inert trade (register R14): 79, 69, 65 and 60, against 128 for candidate 3 on seed 1347. **Real text** (read-only, the live Ward Room: all 16,386 post and thread bodies, 144,300 variants with a claim line inserted): no non-lazy disagreement; the lazy class in 8 of the 9 bodies that hold a quote; 90 over-inert variants in 45 bodies (a claim indented four or more columns after a list item); no body holds a fence indented one column or more. **Verified by tool:** A2 (30 pairs), A2b (24) and A2c (24) each applied with every SEARCH exactly once; the 107 code pairs (M1 8, M2 30, §7.22 to §7.41 69) and both tracker pairs apply to `ba20e949`, each SEARCH once (the slices, cut at `### 7.1`, `### 7.7`, `### 7.22` and `## 8. Tracking`, hold 107 of the contract's 107 SEARCH labels in that span); **125 Python test cases pass** on the contract applied by tool (C1 11, C15 6, C17 58), and so do the 6 new vitest cases and the 685 existing vitest cases of the approval UI (A2b and A2c change no TypeScript); the HXI predicate and Python agree on 6,000 of 6,000 generated payload rows (110 disagreed on candidate 3). The phantom precheck lists 15 candidates on the applied tree, each a false positive: the 11 explained above, `splitlines` on the `str` `body` of `_fields` (the precheck typed it as the route's request model), `spec.commonmark.org` (a URL in prose, read as an attribute of `SubTaskSpec`), and `mark_fulfilled` twice more on the capability-request store (`CapabilityRequestStore.mark_fulfilled`, `capability_request.py:1065`, in the route's honest-degrade handler). **Mechanical repair 9:** the contract's R15 named two blind spots of the item tracker; the differential's residual documents show a third (a nested item is tracked at its innermost marker's column only; 6 of the 7), so §9 and §13 name all three and say how it was found; no code or test changed. Round 3 reviews the delta (`_inert_spans` and its helpers, §7.32, and the C17 rows) and the consumers of every changed name (`split_agent_work_tags` has one caller, `apply_agent_work_tags`); the tests-first, campaign and Builder results go to §17.
 
 ---
 
@@ -83,7 +88,7 @@ S1 can create agent work, but nothing in the chain calls it, and nothing runs, p
 - A `ValueError` from `AgentWorkOrigin` is a refused tag, as S1 asked (S1 status, F2/F3).
 - The acknowledgement is a parenthesised line, `(Ship's Computer: ...)`, appended to the agent's own reply text. It has no brackets, so BF-203 leaves it alone, and it starts no routing of its own.
 - Disclosed: if BF-237 suppresses the main post because a `[REPLY]` was posted, the acknowledgement is not posted. The item exists either way and its report names it.
-- Reading (A1: F6, F7, F11): tag names are read in any letter case; every marker, closers included, is removed from the posted text; a marker in a code fence or on a Markdown quote line (`>`) is an example or a quotation and is never acted on; a block that holds another marker (nested or broken) is removed whole and not acted on; one pass reads the markers, each at most 160 characters to its bracket, so the parse is linear. The grammar the compose step teaches is unchanged.
+- Reading (A1: F6, F7, F11; A2: F16, F17): tag names are read in any letter case; every marker, closers included, is removed from the posted text. A marker in an inert region is an example or a quotation: it is removed alone, never acted on, and is no part of any block. The inert regions follow CommonMark 0.31.2, with the differences §9 names: a code fence opens on a run of three or more backticks or tildes (after backticks, no other backtick on the line), also after list item markers, and closes on a later line without a marker holding only a run of the same character at least as long, or runs to the end of the text; A2b: the scanner does not parse list items, so indentation is read two ways and a line is inert when either reading makes it so (the top-level reading is CommonMark's: a fence line starts within three columns, and a line indented four or more columns that does not continue a paragraph is indented code; the list reading opens a fence at any column and closes it only within three columns of its opener; A2c: it tracks the last list item's content column, a fence opened in an item ends at a non-blank line left of that column, which is then read afresh, and a tracked fence closes within three columns of the item's column); a line whose first non-blank character, after any list item markers, is `>`; and each inline code span within one line (a run of backticks to the next run of exactly as many). A line ends at LF, CRLF or CR, and a marker lies within one line. A block holds every block opened inside it and closes only on its own closer once those are closed; a block that holds any other marker is removed whole and not acted on; an unclosed block's opener and the markers after it are removed alone. One pass reads the lines and the markers, each marker at most 160 characters to its bracket, so the parse is linear. C17's rows are the grammar. The grammar the compose step teaches is unchanged.
 - A fault while acting on one tag (A1, F10) is logged and acknowledged ("could not be confirmed ... check the board"), never retried, and the rest of the reply and its other tags go on.
 
 **D3 (how an item runs).** `AgentWorkRunner` in `probos/agent_work_runner.py`, built in finalize only while `runtime.agent_work` is the real service. One listener on the work store's events:
@@ -132,7 +137,7 @@ Ranked:
 
 It checks the AD-1154 pending cap first (`approval_inbox.max_pending_per_agent`), and dedup is AD-1154's own. After the run, the item parks on the first request it filed (`block_on_request`).
 
-**Approval** is its own fulfilment: a new branch in `_maybe_fulfil_on_approval` marks the request fulfilled. Both fulfilment predicates know this one subtype (A1, F1): `capability_request.agent_work_call` (the runner's `agent_work_approval` delegates to it) makes `can_fulfil_request` true for it, so an approved, unfulfilled one stays on the actionable queue with `can_retry_fulfilment` (BF-722's retry marks it fulfilled); the HXI's `canFulfil` mirrors it with the request's `work_item_id`, so the decoder accepts the approval's `fulfilled` response. Every other action still has no fulfiller.
+**Approval** is its own fulfilment: a new branch in `_maybe_fulfil_on_approval` marks the request fulfilled. Both fulfilment predicates know this one subtype (A1, F1): `capability_request.agent_work_call` (the runner's `agent_work_approval` delegates to it) makes `can_fulfil_request` true for it, so an approved, unfulfilled one stays on the actionable queue with `can_retry_fulfilment` (BF-722's retry marks it fulfilled); the HXI's `canFulfil` mirrors it with the request's `work_item_id`, so the decoder accepts the approval's `fulfilled` response. Other action subtypes are unchanged by this predicate: an AD-1328 command escalation has its own fulfiller (`execution/command_escalation.py:312`) and is not made retryable (the HXI's refusal of its `fulfilled` response is register R10). A2 (F19): the HXI's `canFulfil` validates the payload as `validate_action_payload` does before it accepts the subtype, and one rows table, `ui/e2e/fixtures/ad1347-action-payload-rows.json`, is read by both sides (X22 through Python's predicates; `capabilityApprovals.ad1347a2.test.ts` through the HXI's queue reader and decoder). A2 (F20): a fault while marking the approval fulfilled returns the approved, retryable decision with HTTP 200, as the command branch does. A2 (F18): the card says an agent-work approval resumes its item, and no standing approval is offered (HXI) or issued (route) for one.
 - FULFILLED makes AD-855 resume the item. `_resume` hands an agent-work item to `resume_agent_work`, never to the router.
 - The resumed run admits exactly the approved call (same agent, item, tool and parameters) once, consuming the approval on a claim-once `agent_work_notices` row (kind `approval_use:<request id>`), so a restart cannot replay it.
 - A repeat of the call is filed again.
@@ -189,7 +194,12 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | Ward Room posts by `system` | the router (routes like an agent post: mentions first, `max_responders` on the notice thread) | the same author as BF-200 and AD-1343 notices |
 | `runtime.agent_work_runner` | `resume_agent_work`, `apply_agent_work_tags`, shutdown | `None` unless finalize built it |
 | A1: `can_fulfil_request` true for the bound agent-work call | `_serialize`'s `can_retry_fulfilment` (`routers/capability_requests.py:82-84`); `list_actionable` (`capability_request.py:1118-1124`) and its callers, the actionable route (`routers/capability_requests.py:114`) and AD-1220's install dedup (`runtime.py:386`, filters `kind == "install"`); tests `test_ad1206_repair_issue.py:391-435`, `test_ad1212_1216_approval_ui.py:646,711-712`, `test_ad1299_s2a_candidate_approval.py:325,332`, `tests/fixtures/approval_ui_bridge.py:435,450,476` | only an `action` with `agent_work_call` scoped to its own item is new; every asserted row is repair, ordinary or another kind; the non-action kind check comes first, so no payload is read for other kinds |
-| A1: HXI `canFulfil(kind, payload, workItemId)` | `isCapabilityRequestView` (`capabilityApprovals.ts:283`), `parseCapabilityDecision` (`:307-308`); file-private | mirrors the Python predicate field for field; Python serialises an action payload only after it validated (`capability_request.py:443-446`), so the six-key check agrees |
+| A1: HXI `canFulfil(kind, payload, workItemId)` | `isCapabilityRequestView` (`capabilityApprovals.ts:292`), `parseCapabilityDecision` (`:316-318`); file-private | A2 (F19): mirrors `agent_work_call` with `validate_action_payload` beneath it. Python serves only validated payloads, but the decoder must still refuse what Python refuses; the shared rows prove agreement row by row |
+| A2: `isAgentWorkApproval(request)` (exported) | `CapabilityRequestCard.tsx` (the copy), `standingApprovalEligible` | true only for a validated agent-work call bound to its own item |
+| A2: `standingApprovalEligible` false for an agent-work call | `CapabilityRequestCard.tsx:52` (the standing fieldset), `capabilityDecisionBody` (`capabilityApprovals.ts:165`), `parseCapabilityDecision` (`:332`, a receipt for an ineligible row is marked invalid) | narrows only; every other row unchanged |
+| A2: `_maybe_issue_standing_rule` returns None for an agent-work approval | `_decide_request` (`routers/capability_requests.py:197`) only | `standing_rule` null, as for repair and AD-1328 command approvals |
+| A2: the agent-work branch of `_maybe_fulfil_on_approval` returns False on a store fault | `_decide_request` (`:203-218`) | the envelope's shape is unchanged: `fulfilled` false with the approved, retryable request |
+| A2: `split_agent_work_tags` | `apply_agent_work_tags` only (AV10), tests | signature unchanged; a fenced or quoted example's text now stays in the post, its markers removed |
 | A1: `can_retry_fulfilment` true for an approved, unfulfilled agent-work call | `useStore.ts:441`, `CapabilityRequestCard.tsx:138-180` (Retry fulfilment), `capabilityApprovals.ts:151,207,289,357,391-396` | the retry is BF-722's route path, which marks it fulfilled again |
 | A1: `_CONFINED_ADMISSION` | `_park_or_admit` only (one caller, `agentic_dispatch.py:840`) | False unless a confinement admitted the call; the tests that call `_park_or_admit` directly get the default |
 | A1: `failed` with `agent_work_result.stopped` | the requester's terminal notice (`outcome_text`), the board | the result keeps its keys; `stopped` is added only for an unfinished run |
@@ -220,8 +230,9 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | C12 | `test_the_ward_room_pipeline_passes_its_thread_and_post_to_the_extractor` | crosses pipeline, extractor and service |
 | C13 | `test_a_chief_assigns_a_member_of_its_department_by_callsign` | assignment by callsign |
 | C14 | `test_an_example_a_quotation_or_a_broken_block_is_stripped_and_nothing_is_filed` | A1: F6, F7 through the extractor |
-| C15 | `test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass` | A1: F11 |
+| C15 | `test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass` (6 cases after A2b) | A1: F11; A2: nested levels, fence lines, quote lines and code spans under the same bound, one fence read per line; A2b: one line of 30,000 list markers |
 | C16 | `test_a_work_store_fault_on_one_tag_is_acknowledged_and_the_rest_of_the_reply_is_kept` | A1: F10 |
+| C17 | `test_every_inert_construct_and_block_form_is_read_as_the_grammar_says` (58 cases) | A2: F16, F17 (the grammar; §9's out-of-scope constructs are rows too); A2b: indentation read two ways, indented code, list item markers |
 
 A1 also changes C5: the off runtime (`agent_work` None) never calls `agent_work_service` (F12).
 
@@ -250,10 +261,15 @@ A1 also changes C5: the off runtime (`agent_work` None) never calls `agent_work_
 | X19 | `test_a_decline_whose_notice_cannot_be_posted_does_not_say_it_was_told` | A1: F9's literal |
 | X20 | `test_the_activation_notice_states_the_configured_ttl` | A1: F13 |
 | X21 | `test_a_confirmation_token_is_never_recorded_in_an_approval` | A1: F15 |
+| X22 | `test_both_fulfilment_predicates_read_every_shared_payload_row_alike` | A2: F19 (the Python oracle of the shared rows) |
+| X23 | `test_a_fulfilment_store_fault_on_an_agent_work_approval_returns_the_approval_as_retryable` | A2: F20 |
+| X24 | `test_an_agent_work_approval_issues_no_standing_rule` | A2: the standing control (register R2 closed) |
 
 A1 also changes X7: a watcher of the deduplicated request is named in the decline (F8).
 
 **HXI, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (A1, F1):** the real decoder accepts the pending row and the fulfilled decision, keeps the approved, unfulfilled row as retryable, and refuses a retry flag on a call bound to another item.
+
+**HXI (A2):** `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts` (2 cases) reads every row of `ui/e2e/fixtures/ad1347-action-payload-rows.json` through the real queue reader (`isCapabilityRequestView`, so `canFulfil`), `isAgentWorkApproval` and the real decoder (F19); `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx` (1 case) renders the card for the fixture's agent-work row and for an ordinary action (F18, the standing control).
 
 **M2, `tests/test_ad1347_s3_wiring.py`:** W3 `test_the_runner_is_wired_only_with_the_service_and_released_at_stop`.
 
@@ -4497,6 +4513,1074 @@ def test_a_confirmation_token_is_never_recorded_in_an_approval() -> None:
     assert with_token == approval_payload("browser", {"action": "click", "index": 0}, "wi-1")
 ```
 
+### 7.32 `src/probos/agent_work_tags.py` (M2, A2: F16, F17, the inert-region and block grammar)
+
+Pair 1 of 4:
+
+SEARCH:
+```python
+Reading (A1, review round 1): names are read in any letter case and every marker is removed, closers included. A
+marker in a code fence or on a Markdown quote line (``>``) is an example or a quotation: removed, never acted on. A
+block that holds another marker (nested or broken) is removed whole and not acted on. One pass reads the markers, each
+at most 160 characters to its bracket, so the work is linear in the reply. A fault on one tag is acknowledged, never
+retried, and the rest of the reply goes on.
+```
+REPLACE:
+```python
+Reading (A1, review round 1; A2, round 2; A2b): names are read in any letter case and every marker is removed,
+closers included. A marker in an inert region is an example or a quotation: removed alone, never acted on, and no
+part of any block. The inert regions (``_inert_spans``, after CommonMark 0.31.2 with the differences contract section
+9 names): a code fence, from a line opening a run of three or more backticks or tildes to a line holding only a run
+of the same character at least as long (an unclosed one runs to the end), with indentation read both at the top
+level and as in a list item; an indented code block; a line whose first non-blank character is ``>``; an inline
+code span within one line. A line ends at LF, CRLF or CR. A block holds every block opened inside it and is
+closed only by its own closer once those are closed; a block that holds any other marker is removed whole and not
+acted on. One pass reads the lines and the markers, each marker at most 160 characters to its bracket, so the work is
+linear in the reply. A fault on one tag is acknowledged, never retried, and the rest of the reply goes on.
+```
+
+Pair 2 of 4:
+
+SEARCH:
+```python
+#: A1 (F7, F11): every agent-work marker, opener or closer, in any letter case: ``[NAME]``, ``[/NAME]`` or
+#: ``[NAME <attribute>]``, on one line with at most 160 characters before its bracket, so one scan reads each
+#: character a bounded number of times.
+_MARKER_RE: Final = re.compile(
+    r"\[(/?)(SELF_TASK|REQUEST_WORK|CLAIM_WORK|DECLINE_WORK)\b([^\]\n]{0,160})\]", re.IGNORECASE,
+)
+_ITEM_ID_RE: Final = re.compile(r"[ \t]+([A-Za-z0-9][A-Za-z0-9._:-]{0,127})[ \t]*")
+#: A1 (F6): a Markdown code fence line (up to three spaces, then three backticks or three tildes).
+_FENCE_RE: Final = re.compile(r"[ \t]{0,3}(?:`{3}|~{3})")
+_BLOCK_NAMES: Final[frozenset[str]] = frozenset({"SELF_TASK", "REQUEST_WORK"})
+```
+REPLACE:
+```python
+#: A1 (F7, F11): every agent-work marker, opener or closer, in any letter case: ``[NAME]``, ``[/NAME]`` or
+#: ``[NAME <attribute>]``, on one line (A2: no LF or CR inside) with at most 160 characters before its bracket, so one
+#: scan reads each character a bounded number of times.
+_MARKER_RE: Final = re.compile(
+    r"\[(/?)(SELF_TASK|REQUEST_WORK|CLAIM_WORK|DECLINE_WORK)\b([^\]\r\n]{0,160})\]", re.IGNORECASE,
+)
+_ITEM_ID_RE: Final = re.compile(r"[ \t]+([A-Za-z0-9][A-Za-z0-9._:-]{0,127})[ \t]*")
+#: A2 (F16): a line and its ending, which is LF, CRLF or CR (CommonMark 0.31.2, 2.1); ``str.splitlines`` would also
+#: end a line at U+2028 and other separators that a Markdown renderer shows as text.
+_LINE_RE: Final = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+")
+#: A2 (F16): a code fence line (CommonMark 0.31.2, 4.5): blanks, a run of three or more backticks or tildes, and the
+#: rest of the line. A2b: its column decides which reading it opens or closes (``_inert_spans``).
+_FENCE_RE: Final = re.compile(r"[ \t]*(`{3,}|~{3,})(.*)")
+#: A2b: the list item markers that start a line (CommonMark 0.31.2, 5.2), so a fence after a marker is read. A2c: a
+#: marker may end the line (an empty item), so that item's content column is tracked too.
+_LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$))+")
+#: A2b: a line a paragraph does not continue past, so a line indented four columns after it is indented code
+#: (CommonMark 0.31.2, 4.1 to 4.4): an ATX heading, or one character of ``-*_=`` repeated, which also counts a setext
+#: underline and a bare list marker (this errs toward inert).
+_PARAGRAPH_END_RE: Final = re.compile(r" {0,3}(?:#{1,6}(?:[ \t].*)?|([-*_=])(?:[ \t]*\1)*[ \t]*)")
+#: A2 (F16): a run of backticks, which opens or closes an inline code span (CommonMark 0.31.2, 6.1).
+_TICKS_RE: Final = re.compile(r"`+")
+_BACKTICK: Final = "\x60"  # a backtick, spelled so the mutation table can quote the lines that use it
+_BLOCK_NAMES: Final[frozenset[str]] = frozenset({"SELF_TASK", "REQUEST_WORK"})
+```
+
+Pair 3 of 4:
+
+SEARCH:
+```python
+@dataclass
+class _OpenBlock:
+    """A block opener the scan has not closed yet (A1)."""
+
+    name: str
+    item_id: str
+    start: int
+    body_start: int
+    actionable: bool
+    inner: list[tuple[int, int]] = field(default_factory=list)
+
+
+def _inert_line_ends(text: str) -> list[tuple[int, bool]]:
+    """(end offset, inert) of each line. Inert: inside a code fence or opening or closing one, or a Markdown quote line;
+    a marker there is an example or a quotation (A1, F6)."""
+    lines: list[tuple[int, bool]] = []
+    fenced = False
+    end = 0
+    for line in text.splitlines(keepends=True):
+        end += len(line)
+        fence = _FENCE_RE.match(line) is not None
+        lines.append((end, fenced or fence or line.lstrip().startswith(">")))
+        fenced = fenced != fence
+    return lines
+```
+REPLACE:
+```python
+@dataclass
+class _OpenBlock:
+    """A block opener the scan has not closed yet (A1). A2 (F17): ``open_names`` holds it and every block opened inside
+    it, innermost last; only a closer of the innermost one closes a level, and the block ends when the last level does."""
+
+    name: str
+    item_id: str
+    start: int
+    body_start: int
+    open_names: list[str]
+    actionable: bool = True
+    inner: list[tuple[int, int]] = field(default_factory=list)
+
+
+def _code_spans(content: str, offset: int) -> list[tuple[int, int]]:
+    """A2 (F16): the inline code spans of one line, as offsets into the text: from a run of backticks to the next run of
+    exactly as many on the line (CommonMark 0.31.2, 6.1); a run with no such partner is text. Linear: one backward pass
+    finds each run's partner."""
+    runs = [(tick.start(), tick.end()) for tick in _TICKS_RE.finditer(content)]
+    partner: list[int | None] = [None] * len(runs)
+    latest: dict[int, int] = {}
+    for index in range(len(runs) - 1, -1, -1):
+        size = runs[index][1] - runs[index][0]
+        partner[index] = latest.get(size)
+        latest[size] = index
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(runs):
+        close = partner[index]
+        if close is None:
+            index += 1
+            continue
+        spans.append((offset + runs[index][1], offset + runs[close][0]))
+        index = close + 1
+    return spans
+
+
+def _columns(prefix: str) -> int:
+    """A2b: the columns ``prefix`` spans from the start of its line; a tab advances to the next multiple of four
+    (CommonMark 0.31.2, 2.2)."""
+    width = 0
+    for char in prefix:
+        width += 4 - width % 4 if char == "\t" else 1
+    return width
+
+
+def _closes(fence: tuple[str, int], run: re.Match[str] | None) -> bool:
+    """A2b: whether a fence line closes a fence of this character and run length (CommonMark 0.31.2, 4.5): only a
+    run of the same character at least as long, with nothing after it but blanks. Both readings use it."""
+    return (
+        run is not None and run.group(1)[0] == fence[0]
+        and len(run.group(1)) >= fence[1]
+        and not run.group(2).strip(" \t")
+    )
+
+
+def _inert_spans(text: str) -> list[tuple[int, int]]:
+    """A2 (F16), A2b, A2c: the (start, end) offsets, in order and apart, where a marker is an example or a quotation.
+
+    One pass over the lines, read two ways at once: the scanner does not parse list items, so it cannot tell which
+    reading holds, and a line is inert when either makes it so. In both, a code fence opens on a run of three or more
+    backticks or tildes (after backticks, no other backtick on the line), also after list item markers, and closes on
+    a line without a marker holding only a run of the same character at least as long; an unclosed one runs to the end
+    of the text. The top-level reading is CommonMark's: a fence line starts within three columns, and a line indented
+    four or more columns that does not continue a paragraph is indented code. The list reading opens a fence at any
+    column (a fence in a list item is indented by the item). A2c (CommonMark 0.31.2, 5.2): the list reading tracks the
+    last list item's content column, which a non-blank line left of it ends. Each fence has a floor, and a non-blank
+    line left of it ends the fence before the line is read, so the line may open a new one. A list fence in a tracked
+    item is floored at the item's column and closes within three columns of it; outside one it is floored at 0 within
+    three columns, else three columns left of it and never below 2, and closes within three columns of itself. The
+    top reading floors only a fence on a marker line. A line whose first non-blank character, after any list item
+    markers, is ``>`` is a quote and inert, and on any other line outside both readings' fences each inline code span
+    is inert.
+    """
+    spans: list[tuple[int, int]] = []
+    top_fence: tuple[tuple[str, int], int] | None = None
+    list_fence: tuple[tuple[str, int], int, int] | None = None
+    item_column: int | None = None
+    paragraph = False
+    for line in _LINE_RE.finditer(text):
+        start, end = line.span()
+        content = line.group().rstrip("\r\n")
+        item = _LIST_ITEM_RE.match(content)
+        head = item.group() if item is not None else ""
+        run = _FENCE_RE.fullmatch(content[len(head):])
+        closer = None if head else run
+        blank = not content.strip(" \t")
+        indent = _columns(content[: len(content) - len(content.lstrip(" \t"))])
+        column = _columns(content[: len(head) + run.start(1)]) if run is not None else 0
+        opened: tuple[str, int] | None = None
+        if run is not None and not (run.group(1)[0] == _BACKTICK and _BACKTICK in run.group(2)):
+            opened = (run.group(1)[0], len(run.group(1)))
+        if list_fence is not None and not blank and indent < list_fence[2]:
+            list_fence = None  # A2c: a line left of its item's content column ends the item
+        if top_fence is not None and not blank and indent < top_fence[1]:
+            top_fence = None  # A2c: likewise for a fence opened on a marker line
+        if head and list_fence is None:
+            item_column = _columns(head) + (0 if head[-1] in " \t" else 1)
+        elif item_column is not None and not blank and indent < item_column:
+            item_column = None
+        inert = top_fence is not None or list_fence is not None
+        if list_fence is None and opened is not None:
+            base = column if item_column is None else item_column
+            floor = item_column if item_column is not None else (0 if column <= 3 else max(2, column - 3))
+            list_fence, inert = (opened, base + 3, floor), True
+        elif list_fence is not None and _closes(list_fence[0], closer) and column <= list_fence[1]:
+            list_fence = None  # its closing fence
+        if top_fence is not None:
+            if _closes(top_fence[0], closer) and indent <= 3:
+                top_fence = None  # its closing fence
+        elif blank:
+            paragraph = False  # a blank line ends a paragraph
+        elif opened is not None and column <= 3:
+            top_fence, paragraph, inert = (opened, _columns(head)), False, True
+        elif content[len(head):].lstrip().startswith(">"):
+            paragraph, inert = False, True
+        elif indent >= 4:
+            inert = inert or not paragraph
+        else:
+            paragraph = _PARAGRAPH_END_RE.fullmatch(content) is None
+        if inert:
+            spans.append((start, end))
+        else:
+            spans.extend(_code_spans(content, start))
+    return spans
+```
+
+Pair 4 of 4:
+
+SEARCH:
+```python
+def split_agent_work_tags(text: str) -> tuple[str, tuple[AgentWorkTag, ...]]:
+    """Every agent-work tag in ``text``, in order, and the text without any marker.
+
+    One pass over the markers (A1: F6, F7, F11). Names are read in any letter case. A marker on an inert line (a code
+    fence, a quote) is removed and never acted on, and so is a block that holds another marker (nested or broken),
+    which is removed whole. A closed block is removed whole; an unclosed opener, the markers after it and every stray
+    marker are removed alone. A text with no marker is returned as it was, whitespace included.
+    """
+    tags: list[AgentWorkTag] = []
+    cuts: list[tuple[int, int]] = []
+    lines = _inert_line_ends(text)
+    line = 0
+    block: _OpenBlock | None = None
+    for match in _MARKER_RE.finditer(text):
+        while lines[line][0] <= match.start():
+            line += 1
+        inert = lines[line][1]
+        closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)
+        item_id = _ITEM_ID_RE.fullmatch(attribute) if not closer and name in ("CLAIM_WORK", "DECLINE_WORK") else None
+        if block is not None:
+            if closer and name == block.name and not attribute.strip():
+                if block.actionable:
+                    tags.append(_block_tag(block, text[block.body_start:match.start()]))
+                cuts.append((block.start, match.end()))
+                block = None
+            else:
+                block.actionable = False
+                block.inner.append((match.start(), match.end()))
+            continue
+        if (not closer and name in _BLOCK_NAMES and not attribute.strip()) or (item_id is not None and name == "DECLINE_WORK"):
+            block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), not inert)
+            continue
+        if item_id is not None and not inert:
+            tags.append(AgentWorkTag(ACTION_CLAIM, work_item_id=item_id.group(1)))
+        cuts.append((match.start(), match.end()))
+```
+REPLACE:
+```python
+def split_agent_work_tags(text: str) -> tuple[str, tuple[AgentWorkTag, ...]]:
+    """Every agent-work tag in ``text``, in order, and the text without any marker.
+
+    One pass over the markers (A1: F6, F7, F11; A2: F16, F17). Names are read in any letter case. A marker in an inert
+    region (``_inert_spans``: a fence, indented code, a quote line, a code span) is removed alone, never acted on, and is
+    no part of any block. A block opened outside one holds every block opened inside it and is closed only by its own
+    closer once each of those is closed; a block that holds any other marker is removed whole and not acted on. An
+    unclosed block's opener and the markers after it, and every stray marker, are removed alone. A text with no marker
+    is returned as it was, whitespace included.
+    """
+    tags: list[AgentWorkTag] = []
+    cuts: list[tuple[int, int]] = []
+    spans = _inert_spans(text)
+    span = 0
+    block: _OpenBlock | None = None
+    for match in _MARKER_RE.finditer(text):
+        while span < len(spans) and spans[span][1] <= match.start():
+            span += 1
+        inert = span < len(spans) and spans[span][0] <= match.start()
+        closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)
+        item_id = _ITEM_ID_RE.fullmatch(attribute) if not closer and name in ("CLAIM_WORK", "DECLINE_WORK") else None
+        opener = (not closer and name in _BLOCK_NAMES and not attribute.strip()) or (item_id is not None and name == "DECLINE_WORK")
+        if block is not None:
+            closes = closer and not inert and not attribute.strip()
+            if closes and name == block.open_names[-1]:
+                block.open_names.pop()
+                if not block.open_names:
+                    if block.actionable:
+                        tags.append(_block_tag(block, text[block.body_start:match.start()]))
+                    cuts.append((block.start, match.end()))
+                    block = None
+                    continue
+            elif not inert and opener:
+                block.open_names.append(name)
+            block.actionable = False
+            block.inner.append((match.start(), match.end()))
+            continue
+        if opener and not inert:
+            block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), [name])
+            continue
+        if item_id is not None and not inert:
+            tags.append(AgentWorkTag(ACTION_CLAIM, work_item_id=item_id.group(1)))
+        cuts.append((match.start(), match.end()))
+```
+
+### 7.33 `src/probos/capability_request.py` (M2, A2: F21, the docstring)
+
+SEARCH:
+```python
+    Bound to its own item: the scope is ``agent_work:`` and the request's ``work_item_id``. Its approval is its own
+    fulfilment (the approval route marks it fulfilled and AD-855 resumes the item), so it is fulfillable, as the repair
+    action is; every other action still has no fulfiller. The HXI's ``canFulfil`` (``ui/src/store/capabilityApprovals.ts``)
+    mirrors this exactly: ``can_retry_fulfilment`` must agree on both sides.
+```
+REPLACE:
+```python
+    Bound to its own item: the scope is ``agent_work:`` and the request's ``work_item_id``. Its approval is its own
+    fulfilment (the approval route marks it fulfilled and AD-855 resumes the item), so it is fulfillable, as the repair
+    action is. A2 (F21): other action subtypes are unchanged by this predicate; an AD-1328 command escalation has its
+    own fulfiller (``execution/command_escalation.py``) and stays outside it. The HXI's ``canFulfil``
+    (``ui/src/store/capabilityApprovals.ts``) mirrors this predicate and ``validate_action_payload`` beneath it, and
+    ``ui/e2e/fixtures/ad1347-action-payload-rows.json`` holds the rows both sides are tested on (A2, F19).
+```
+
+### 7.34 `src/probos/routers/capability_requests.py` (M2, A2: F20, and no standing rule on an agent-work approval)
+
+Pair 1 of 2:
+
+SEARCH:
+```python
+        # approval). A denial does nothing here: AD-855 cancels the item on the DECIDED event.
+        if not approve:
+            return False
+        return await store.mark_fulfilled(decided.id) is not None
+```
+REPLACE:
+```python
+        # approval). A denial does nothing here: AD-855 cancels the item on the DECIDED event.
+        if not approve:
+            return False
+        try:
+            return await store.mark_fulfilled(decided.id) is not None
+        except Exception:  # A2 (F20): the approval stands and stays retryable
+            logger.warning(
+                "AD-1347: marking agent-work approval %s fulfilled failed; the decision stands and the approval "
+                "can be retried", decided.id[:12], exc_info=True,
+            )
+            return False
+```
+
+Pair 2 of 2:
+
+SEARCH:
+```python
+    if command_approval_request(decided) is not None:  # AD-1328 S2b: no standing rule
+```
+REPLACE:
+```python
+    if agent_work_approval(decided):  # AD-1347 S3 A2: one exact call per approval; no standing rule
+        logger.info(
+            "AD-1347: agent-work request %s cannot grant a standing rule; the agent-work confinement admits one "
+            "exact call per approval and never reads a standing rule", decided.id[:12],
+        )
+        return None
+    if command_approval_request(decided) is not None:  # AD-1328 S2b: no standing rule
+```
+
+### 7.35 `ui/src/store/capabilityApprovals.ts` (M2, A2: F18, F19)
+
+Pair 1 of 2:
+
+SEARCH:
+```ts
+export function standingApprovalEligible(request: CapabilityApprovalView): boolean {
+  return request.status === 'pending' && ['action', 'continue'].includes(request.kind)
+    && request.payload?.tool_id !== 'repair';
+}
+```
+REPLACE:
+```ts
+/** AD-1347 S3 A2: no standing approval for an agent-work call. Its confinement admits one exact call per approval and
+ * never reads a standing rule, and the approval route issues none. */
+export function standingApprovalEligible(request: CapabilityApprovalView): boolean {
+  return request.status === 'pending' && ['action', 'continue'].includes(request.kind)
+    && request.payload?.tool_id !== 'repair' && !isAgentWorkApproval(request);
+}
+```
+
+Pair 2 of 2:
+
+SEARCH:
+```ts
+/** AD-1347 S3 A1 (F1): one tool call in one agent-created work item, bound to it by its scope. Its approval is its
+ * own fulfilment. Mirrors Python's `agent_work_call` (src/probos/capability_request.py) exactly:
+ * `can_retry_fulfilment` must agree on both sides, or every row of the actionable queue is refused. */
+function isAgentWorkCall(payload: Record<string, unknown>, workItemId: unknown): boolean {
+  return payload.action === 'agent_work_call' && typeof workItemId === 'string' && workItemId !== ''
+    && payload.scope_key === 'agent_work:' + workItemId;
+}
+
+function canFulfil(kind: unknown, payload: unknown, workItemId: unknown): boolean {
+  if (FULFILMENT_KINDS.has(String(kind))) return true;
+  if (kind !== 'action' || !isRecord(payload)) return false;
+  const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+  if (Object.keys(payload).length === keys.length && keys.every(key => key in payload) && isAgentWorkCall(payload, workItemId)) return true;
+```
+REPLACE:
+```ts
+/** AD-1347 S3 A2 (F19): Python's `validate_action_payload` (src/probos/capability_request.py) as the decoded wire shows
+ * it: exactly the six keys, each of its type and within its bound, valid Unicode throughout, and at most 4,000
+ * characters with each number counted as one. That size bound is exact for text and only a necessary one for numbers,
+ * whose Python spelling the decoded value does not keep; Python serves no payload it rejected (contract section 9). */
+function isActionWirePayload(payload: Record<string, unknown>): boolean {
+  if (Object.keys(payload).length !== ACTION_KEYS.length || !ACTION_KEYS.every(key => key in payload)
+    || typeof payload.tool_id !== 'string' || !/^[a-z0-9_:.-]{1,64}$/.test(payload.tool_id)
+    || typeof payload.action !== 'string' || !/^[a-z0-9_]{1,64}$/.test(payload.action)
+    || !isRecord(payload.params) || Object.keys(payload.params).length > 20
+    || !validText(payload.scope_key, 253) || !validText(payload.thread_id, 64)
+    || !(payload.session_id === null || validText(payload.session_id, 64))) return false;
+  try {
+    return hasPossibleActionPayloadSize(payload); // A2 (F19): the size and Unicode of Python's canonical form
+  } catch {
+    return false;
+  }
+}
+
+/** AD-1347 S3 A1 (F1), A2 (F19): one tool call in one agent-created work item, bound to it by its scope. Its approval
+ * is its own fulfilment. Mirrors Python's `agent_work_call` exactly, payload validation included; both sides are
+ * tested on the rows of `ui/e2e/fixtures/ad1347-action-payload-rows.json`. */
+function isAgentWorkCall(payload: Record<string, unknown>, workItemId: unknown): boolean {
+  return isActionWirePayload(payload) && payload.action === 'agent_work_call'
+    && typeof workItemId === 'string' && workItemId !== ''
+    && payload.scope_key === 'agent_work:' + workItemId;
+}
+
+/** AD-1347 S3 A2 (F18): a validated agent-work call bound to its own item. Approving it resumes that item. */
+export function isAgentWorkApproval(request: CapabilityApprovalView): boolean {
+  return request.kind === 'action' && isRecord(request.payload) && isAgentWorkCall(request.payload, request.work_item_id);
+}
+
+function canFulfil(kind: unknown, payload: unknown, workItemId: unknown): boolean {
+  if (FULFILMENT_KINDS.has(String(kind))) return true;
+  if (kind !== 'action' || !isRecord(payload)) return false;
+  const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+  if (isAgentWorkCall(payload, workItemId)) return true;
+```
+
+### 7.36 `ui/src/components/capability/CapabilityRequestCard.tsx` (M2, A2: F18)
+
+Pair 1 of 3:
+
+SEARCH:
+```ts
+import {
+  approvalDisplayText, capabilityFeedbackText, formatApprovalPayload, inspectActionPayload,
+  standingApprovalEligible, standingApprovalPolicy,
+} from '../../store/capabilityApprovals';
+```
+REPLACE:
+```ts
+import {
+  approvalDisplayText, capabilityFeedbackText, formatApprovalPayload, inspectActionPayload, isAgentWorkApproval,
+  standingApprovalEligible, standingApprovalPolicy,
+} from '../../store/capabilityApprovals';
+```
+
+Pair 2 of 3:
+
+SEARCH:
+```ts
+  const ordinary = expected?.kind === 'action' && expected.payload?.tool_id !== 'repair';
+```
+REPLACE:
+```ts
+  const ordinary = expected?.kind === 'action' && expected.payload?.tool_id !== 'repair';
+  // AD-1347 S3 A2 (F18): approving a validated agent-work call resumes its item, so it is not "decision only".
+  const agentWork = expected !== undefined && isAgentWorkApproval(expected);
+```
+
+Pair 3 of 3:
+
+SEARCH:
+```ts
+      {ordinary && <p>Approval records this decision only; it does not replay the original action.</p>}
+```
+REPLACE:
+```ts
+      {ordinary && !agentWork && <p>Approval records this decision only; it does not replay the original action.</p>}
+      {agentWork && <p>Approval resumes work item {approvalDisplayText(expected.work_item_id ?? '')}. If its run makes this
+        call again, with this tool and exactly these parameters, that call is admitted once, subject to the remaining
+        guards; nothing runs from here.</p>}
+```
+
+### 7.37 New file: `ui/e2e/fixtures/ad1347-action-payload-rows.json` (M2, A2: F19; X22 asserts each row is Python's answer)
+
+```json
+{
+  "about": "AD-1347 S3 A2 (F19): action payload rows with Python's answers (tests/test_ad1347_s3_execution.py X22), which the HXI must give too (ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts). Each row is an approved request of agent forge-1. A row's fill sets one field to that many x characters before it is read: tool_id, thread_id or session_id in the payload, note in its params, or work_item_id (and the payload's scope_key, agent_work: plus it).",
+  "rows": [
+    {"name": "bound_call", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": true, "agent_work_call": true},
+    {"name": "other_item", "kind": "action", "work_item_id": "wi-other", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "unlinked", "kind": "action", "work_item_id": null, "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "empty_item", "kind": "action", "work_item_id": "", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "ordinary_action", "kind": "action", "work_item_id": null, "payload": {"tool_id": "browser", "action": "click", "params": {"selector": "#send"}, "scope_key": "example.test", "session_id": null, "thread_id": "thread-a"}, "fulfillable": false, "agent_work_call": false},
+    {"name": "null_payload", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": null, "fulfillable": false, "agent_work_call": false},
+    {"name": "missing_key", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null}, "fulfillable": false, "agent_work_call": false},
+    {"name": "extra_key", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": "", "extra": 1}, "fulfillable": false, "agent_work_call": false},
+    {"name": "tool_id_number", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": 7, "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "tool_id_grammar", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "Hull Survey!", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "tool_id_64", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "tool_id", "chars": 64}, "fulfillable": true, "agent_work_call": true},
+    {"name": "tool_id_65", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "tool_id", "chars": 65}, "fulfillable": false, "agent_work_call": false},
+    {"name": "params_array", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": [], "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "params_text", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": "depth", "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "params_20_keys", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"k01": 1, "k02": 1, "k03": 1, "k04": 1, "k05": 1, "k06": 1, "k07": 1, "k08": 1, "k09": 1, "k10": 1, "k11": 1, "k12": 1, "k13": 1, "k14": 1, "k15": 1, "k16": 1, "k17": 1, "k18": 1, "k19": 1, "k20": 1}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": true, "agent_work_call": true},
+    {"name": "params_21_keys", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"k01": 1, "k02": 1, "k03": 1, "k04": 1, "k05": 1, "k06": 1, "k07": 1, "k08": 1, "k09": 1, "k10": 1, "k11": 1, "k12": 1, "k13": 1, "k14": 1, "k15": 1, "k16": 1, "k17": 1, "k18": 1, "k19": 1, "k20": 1, "k21": 1}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "scope_253", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "work_item_id", "chars": 242}, "fulfillable": true, "agent_work_call": true},
+    {"name": "scope_254", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "work_item_id", "chars": 243}, "fulfillable": false, "agent_work_call": false},
+    {"name": "thread_64", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "thread_id", "chars": 64}, "fulfillable": true, "agent_work_call": true},
+    {"name": "thread_65", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "thread_id", "chars": 65}, "fulfillable": false, "agent_work_call": false},
+    {"name": "thread_null", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": null}, "fulfillable": false, "agent_work_call": false},
+    {"name": "session_text", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": "s-1", "thread_id": ""}, "fulfillable": true, "agent_work_call": true},
+    {"name": "session_64", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "session_id", "chars": 64}, "fulfillable": true, "agent_work_call": true},
+    {"name": "session_65", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "session_id", "chars": 65}, "fulfillable": false, "agent_work_call": false},
+    {"name": "session_number", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": 5, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "lone_surrogate", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"note": "\ud800"}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "size_3947", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"note": ""}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "note", "chars": 3800}, "fulfillable": true, "agent_work_call": true},
+    {"name": "size_4047", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"note": ""}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "note", "chars": 3900}, "fulfillable": false, "agent_work_call": false},
+    {"name": "repair_dispatch", "kind": "action", "work_item_id": null, "payload": {"tool_id": "repair", "action": "dispatch", "params": {"fault_id": "f-1", "signature": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}, "scope_key": "fault:f-1", "session_id": null, "thread_id": ""}, "fulfillable": true, "agent_work_call": false},
+    {"name": "repair_bad_signature", "kind": "action", "work_item_id": null, "payload": {"tool_id": "repair", "action": "dispatch", "params": {"fault_id": "f-1", "signature": "zz"}, "scope_key": "fault:f-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "grant", "kind": "grant", "work_item_id": null, "payload": null, "fulfillable": true, "agent_work_call": false},
+    {"name": "install", "kind": "install", "work_item_id": null, "payload": null, "fulfillable": true, "agent_work_call": false},
+    {"name": "build", "kind": "build", "work_item_id": null, "payload": null, "fulfillable": true, "agent_work_call": false},
+    {"name": "continue", "kind": "continue", "work_item_id": null, "payload": null, "fulfillable": true, "agent_work_call": false},
+    {"name": "continue_with_call_payload", "kind": "continue", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": true, "agent_work_call": false}
+  ]
+}
+```
+
+### 7.38 New file: `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts` (M2, A2: F19)
+
+```ts
+/**
+ * AD-1347 S3 A2 (F19): the HXI reads every shared action-payload row as Python does. The expected answers are
+ * Python's: tests/test_ad1347_s3_execution.py (X22) asserts each row through the real `can_fulfil_request` and
+ * `agent_work_call`. A row's `fill` is applied here exactly as X22 applies it.
+ */
+import { describe, expect, it } from 'vitest';
+import { isAgentWorkApproval, isCapabilityRequestView, parseCapabilityDecision } from '../capabilityApprovals';
+import type { CapabilityApprovalView } from '../types';
+import table from '../../../e2e/fixtures/ad1347-action-payload-rows.json';
+
+interface Row {
+  name: string;
+  kind: string;
+  work_item_id: string | null;
+  payload: Record<string, unknown> | null;
+  fill?: { field: string; chars: number };
+  fulfillable: boolean;
+  agent_work_call: boolean;
+}
+
+const rows = table.rows as unknown as Row[];
+
+function view(row: Row, status: CapabilityApprovalView['status'], retry: boolean): CapabilityApprovalView {
+  const payload = row.payload === null ? null : structuredClone(row.payload);
+  let workItemId = row.work_item_id;
+  if (row.fill && payload !== null) {
+    const text = 'x'.repeat(row.fill.chars);
+    if (row.fill.field === 'work_item_id') {
+      workItemId = text;
+      payload.scope_key = 'agent_work:' + text;
+    } else if (row.fill.field === 'note') {
+      (payload.params as Record<string, unknown>).note = text;
+    } else {
+      payload[row.fill.field] = text;
+    }
+  }
+  return {
+    id: '00000000-0000-0000-0000-000000000009', agent_id: 'forge-1', kind: row.kind, target: 'hull_survey',
+    rationale: 'shared row', work_item_id: workItemId, status, created_at: 1000,
+    decided_at: status === 'pending' ? null : 1000, decided_by: status === 'pending' ? '' : 'captain',
+    decision_reason: '', payload, can_retry_fulfilment: retry,
+  };
+}
+
+describe('AD-1347 A2 shared action-payload rows', () => {
+  it('keeps an approved row retryable exactly when Python can fulfil it', () => {
+    expect(rows.length).toBeGreaterThan(30);
+    for (const row of rows) {
+      expect([row.name, isCapabilityRequestView(view(row, 'approved', row.fulfillable))]).toEqual([row.name, true]);
+      expect([row.name, isCapabilityRequestView(view(row, 'approved', !row.fulfillable))]).toEqual([row.name, false]);
+      expect([row.name, isAgentWorkApproval(view(row, 'pending', false))]).toEqual([row.name, row.agent_work_call]);
+    }
+  });
+
+  it('confirms a fulfilled decision exactly for the rows Python can fulfil', () => {
+    for (const row of rows) {
+      const pending = view(row, 'pending', false);
+      let confirmed = true;
+      try {
+        parseCapabilityDecision({ request: view(row, 'fulfilled', false), standing_rule: null, fulfilled: true }, pending, true);
+      } catch {
+        confirmed = false;
+      }
+      expect([row.name, confirmed]).toEqual([row.name, row.fulfillable]);
+    }
+  });
+});
+```
+
+### 7.39 New file: `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx` (M2, A2: F18)
+
+```ts
+/**
+ * AD-1347 S3 A2 (F18): the card says what approving an agent-work call does and offers no standing approval for it;
+ * an ordinary action keeps the ordinary copy and the standing choice (ApprovalWave.test.tsx pins that copy too).
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import type { CapabilityApprovalView } from '../../../store/types';
+import { useSettingsStore } from '../../../store/useSettingsStore';
+import { CapabilityRequestCard } from '../CapabilityRequestCard';
+import wire from '../../../../e2e/fixtures/ad1347-agent-work-approvals.json';
+
+const AGENT_WORK = wire.pending.requests[0] as unknown as CapabilityApprovalView;
+const ORDINARY = {
+  ...AGENT_WORK, id: '00000000-0000-0000-0000-000000000003', target: 'browser.click', work_item_id: null,
+  payload: { tool_id: 'browser', action: 'click', params: { selector: '#send' },
+    scope_key: 'example.test', session_id: null, thread_id: 'thread-a' },
+} as CapabilityApprovalView;
+
+beforeEach(() => { useSettingsStore.setState({ loaded: true, loading: false }); });
+afterEach(() => { cleanup(); });
+
+describe('AD-1347 agent-work approval card', () => {
+  it('says an agent-work approval resumes its item and offers no standing approval; an ordinary action keeps both', () => {
+    render(<CapabilityRequestCard requestId={AGENT_WORK.id} request={AGENT_WORK} />);
+    expect(screen.queryByText(/does not replay the original action/)).toBeNull();
+    expect(screen.getByText(/Approval resumes work item wi-agent-work-1\./)).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: 'Grant standing approval' })).toBeNull();
+    cleanup();
+    render(<CapabilityRequestCard requestId={ORDINARY.id} request={ORDINARY} />);
+    expect(screen.getByText(/does not replay the original action/)).toBeTruthy();
+    expect(screen.queryByText(/Approval resumes work item/)).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Grant standing approval' })).toBeTruthy();
+  });
+});
+```
+
+### 7.40 `tests/test_ad1347_s2_chain_tags.py` (M2, A2: C1's fenced case, C15, C17)
+
+Pair 1 of 3:
+
+SEARCH:
+```python
+    # A1 (F6): a fenced example and a quoted claim are stripped and never acted on.
+    (f"Example syntax only:\n{FENCE}\n[SELF_TASK]\nTitle: x\n[/SELF_TASK]\n{FENCE}", [], f"Example syntax only:\n{FENCE}\n\n{FENCE}"),
+```
+REPLACE:
+```python
+    # A1 (F6): a fenced example and a quoted claim are stripped and never acted on. A2: an inert marker is removed
+    # alone, so the example's text stays.
+    (f"Example syntax only:\n{FENCE}\n[SELF_TASK]\nTitle: x\n[/SELF_TASK]\n{FENCE}", [], f"Example syntax only:\n{FENCE}\n\nTitle: x\n\n{FENCE}"),
+```
+
+Pair 2 of 3:
+
+SEARCH:
+```python
+# C15
+def test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass() -> None:
+    """A1 (F11): 66 KB of unclosed openers. The review measured 3.1 s for this shape before A1 (one rescan per opener)."""
+    text = "[SELF_TASK]" * 6_000
+    started = time.perf_counter()
+    assert split_agent_work_tags(text) == ("", ())
+    assert time.perf_counter() - started < 0.5
+```
+REPLACE:
+```python
+# C15
+@pytest.mark.parametrize(("text", "cleaned"), [
+    ("[SELF_TASK]" * 6_000, ""),
+    ("[SELF_TASK]" * 6_000 + "[/SELF_TASK]" * 6_000, ""),
+    (f"{FENCE}\n" + "[CLAIM_WORK wi-1]\n" * 3_500, FENCE),
+    ("> [CLAIM_WORK wi-1]\n" * 3_000, ("> \n" * 3_000).strip()),
+    ("`[CLAIM_WORK wi-1]` " * 3_000, ("`` " * 3_000).strip()),
+    ("- " * 30_000 + "x", "- " * 30_000 + "x"),
+], ids=["unclosed_openers", "nested_levels", "fenced_lines", "quote_lines", "code_spans", "list_markers"])
+def test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass(
+    text: str, cleaned: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F11): 66 KB of unclosed openers. The review measured 3.1 s for this shape before A1 (one rescan per opener).
+    A2 (F16, F17): the same bound over 6,000 nested levels, fence lines, quote lines and code spans, and each line is
+    read for a fence exactly once (no rescan). A2b: and over one line of 30,000 list item markers."""
+    lines = len(text.splitlines())
+    reads = 0
+    fence_re = tags_module._FENCE_RE
+
+    def _read_once(content: str) -> Any:
+        nonlocal reads
+        reads += 1
+        return fence_re.fullmatch(content)
+
+    monkeypatch.setattr(tags_module, "_FENCE_RE", SimpleNamespace(fullmatch=_read_once))
+    started = time.perf_counter()
+    assert split_agent_work_tags(text) == (cleaned, ())
+    assert time.perf_counter() - started < 0.5
+    assert reads == lines
+```
+
+Pair 3 of 3:
+
+SEARCH:
+```python
+        assert cleaned.startswith("Obs.") and "could not be confirmed" in cleaned and item.id[:8] in cleaned
+        assert [action["outcome"] for action in actions if action.get("type") == "agent_work"] == ["error", "created"]
+```
+REPLACE:
+```python
+        assert cleaned.startswith("Obs.") and "could not be confirmed" in cleaned and item.id[:8] in cleaned
+        assert [action["outcome"] for action in actions if action.get("type") == "agent_work"] == ["error", "created"]
+
+
+TILDES = "~" * 3
+LONG_FENCE = "`" * 4  # A2: a four-backtick fence, spelled as FENCE is
+EXAMPLE = "[SELF_TASK]\nTitle: x\n[/SELF_TASK]"
+REAL = "[SELF_TASK]\nTitle: Real\n[/SELF_TASK]"
+REAL_TAG = AgentWorkTag("self_task", title="Real")
+
+
+def _claim(work_item_id: str) -> AgentWorkTag:
+    return AgentWorkTag("claim", work_item_id=work_item_id)
+
+
+#: A2 (F16, F17): the inert-region and block grammar, one row per construct (CommonMark 0.31.2 with the differences
+#: contract section 9 names; the out_of_scope rows are those differences, read as written).
+GRAMMAR = [
+    pytest.param(f"Ex:\n{FENCE}\n{EXAMPLE}\n{FENCE}\n{REAL}", [REAL_TAG], f"Ex:\n{FENCE}\n\nTitle: x\n\n{FENCE}", id="fence_backtick"),
+    pytest.param(f"Ex:\n{TILDES}\n{EXAMPLE}\n{TILDES}\n{REAL}", [REAL_TAG], f"Ex:\n{TILDES}\n\nTitle: x\n\n{TILDES}", id="fence_tilde"),
+    pytest.param(
+        f"Ex:\n{FENCE}\n{TILDES}\n{EXAMPLE}\n{FENCE}\n{REAL}", [REAL_TAG], f"Ex:\n{FENCE}\n{TILDES}\n\nTitle: x\n\n{FENCE}",
+        id="fence_tilde_inside_backtick_is_content",
+    ),
+    pytest.param(
+        f"Ex:\n{LONG_FENCE}\n{FENCE}\n{EXAMPLE}\n{FENCE}\n{LONG_FENCE}\n{REAL}", [REAL_TAG],
+        f"Ex:\n{LONG_FENCE}\n{FENCE}\n\nTitle: x\n\n{FENCE}\n{LONG_FENCE}", id="fence_shorter_run_inside_is_content",
+    ),
+    pytest.param(
+        f"Ex:\n{FENCE}\n{FENCE}python\n{EXAMPLE}\n{FENCE}\n{REAL}", [REAL_TAG],
+        f"Ex:\n{FENCE}\n{FENCE}python\n\nTitle: x\n\n{FENCE}", id="fence_line_with_info_inside_is_content",
+    ),
+    pytest.param(f"Ex:\n{FENCE}\n{EXAMPLE}\n{LONG_FENCE}\n{REAL}", [REAL_TAG], f"Ex:\n{FENCE}\n\nTitle: x\n\n{LONG_FENCE}", id="fence_longer_closer_closes"),
+    pytest.param(f"Ex:\n{FENCE}\n{REAL}", [], f"Ex:\n{FENCE}\n\nTitle: Real", id="fence_unclosed_runs_to_the_end"),
+    pytest.param(
+        f"1. Example:\n    {FENCE}\n    [CLAIM_WORK wi-1]\n    {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-2")],
+        f"1. Example:\n    {FENCE}\n    \n    {FENCE}", id="fence_indented_in_a_list_item",
+    ),
+    pytest.param(f"{FENCE}\n[DECLINE_WORK wi-1] busy [/DECLINE_WORK]\n{FENCE}", [], f"{FENCE}\n busy \n{FENCE}", id="fenced_decline_is_not_acted_on"),
+    pytest.param(
+        f"{FENCE}inline{FENCE} then\n[CLAIM_WORK wi-3]", [_claim("wi-3")], f"{FENCE}inline{FENCE} then",
+        id="backtick_run_with_a_backtick_after_is_a_code_span",
+    ),
+    pytest.param("> [CLAIM_WORK wi-1]\n[CLAIM_WORK wi-2]", [_claim("wi-2")], ">", id="quote_line"),
+    pytest.param("   > [CLAIM_WORK wi-1]", [], ">", id="quote_line_indented"),
+    pytest.param(f"> [SELF_TASK]\n{REAL}", [REAL_TAG], ">", id="quoted_opener_leaves_the_real_block_actionable"),
+    pytest.param("Reply with `[CLAIM_WORK wi-1]` to take it.", [], "Reply with `` to take it.", id="code_span_claim"),
+    pytest.param("Syntax: `[SELF_TASK] Title: x [/SELF_TASK]`", [], "Syntax: ` Title: x `", id="code_span_block"),
+    pytest.param("`a` [CLAIM_WORK wi-4] `b`", [_claim("wi-4")], "`a`  `b`", id="text_between_two_spans_is_actionable"),
+    pytest.param("`a`` [CLAIM_WORK wi-5] ``b", [], "`a``  ``b", id="span_closes_only_on_a_run_of_its_length"),
+    pytest.param("It is `odd [CLAIM_WORK wi-6]", [_claim("wi-6")], "It is `odd", id="unmatched_backtick_is_text"),
+    pytest.param(
+        "[SELF_TASK]\nTitle: Outer\n[SELF_TASK]\nTitle: Inner\n[/SELF_TASK]\n[SELF_TASK]\nTitle: Tail\n[/SELF_TASK]\n[/SELF_TASK]",
+        [], "", id="nested_tail",
+    ),
+    pytest.param(
+        "[SELF_TASK]\nTitle: Outer\n[SELF_TASK]\nTitle: Inner\n[/SELF_TASK]\nafter", [],
+        "Title: Outer\n\nTitle: Inner\n\nafter", id="unclosed_outer_with_a_closed_inner",
+    ),
+    pytest.param(
+        "[SELF_TASK]\nTitle: a\n[/REQUEST_WORK]\n[/SELF_TASK]\n[CLAIM_WORK wi-7]", [_claim("wi-7")], "",
+        id="closer_of_the_other_name_breaks_the_block",
+    ),
+    pytest.param(
+        "[SELF_TASK]\nTitle: `[/SELF_TASK]` x\n[/SELF_TASK]\n[CLAIM_WORK wi-8]", [_claim("wi-8")], "",
+        id="inert_closer_inside_a_block_breaks_it",
+    ),
+    pytest.param("Done [/SELF_TASK] [CLAIM_WORK wi-9]", [_claim("wi-9")], "Done", id="closer_without_opener_is_removed"),
+    pytest.param(
+        f"Ex:\r\n{FENCE}\r\n[CLAIM_WORK wi-1]\r\n{FENCE}\r\n[CLAIM_WORK wi-2]", [_claim("wi-2")], f"Ex:\r\n{FENCE}\r\n\r\n{FENCE}",
+        id="crlf",
+    ),
+    pytest.param(f"Ex:\r{FENCE}\r[CLAIM_WORK wi-1]", [], f"Ex:\r{FENCE}", id="lone_cr_ends_a_line"),
+    pytest.param(
+        f"Ex:\n{FENCE}\nx\u2028{FENCE}\n[CLAIM_WORK wi-1]", [], f"Ex:\n{FENCE}\nx\u2028{FENCE}",
+        id="unicode_line_separator_does_not_end_a_line",
+    ),
+    pytest.param("[SELF_TASK\r]\nTitle: x\n[/SELF_TASK]", [], "[SELF_TASK\r]\nTitle: x", id="marker_does_not_cross_a_line_end"),
+    pytest.param("Example:\n\n    [CLAIM_WORK wi-1]", [], "Example:", id="indented_code_after_a_blank_line"),
+    pytest.param("    [CLAIM_WORK wi-1]", [], "", id="indented_code_at_the_start"),
+    pytest.param(f"Text\n{FENCE}\nx\n{FENCE}\n    [CLAIM_WORK wi-1]", [], f"Text\n{FENCE}\nx\n{FENCE}", id="indented_code_after_a_fence"),
+    pytest.param("## Example\n    [CLAIM_WORK wi-1]", [], "## Example", id="indented_code_after_a_heading"),
+    pytest.param("Text\n***\n    [CLAIM_WORK wi-1]", [], "Text\n***", id="indented_code_after_a_thematic_break"),
+    pytest.param("Example:\n\n\t[CLAIM_WORK wi-1]", [], "Example:", id="indented_code_by_a_tab"),
+    pytest.param("Text\n    [CLAIM_WORK wi-1]", [_claim("wi-1")], "Text", id="indented_line_continuing_a_paragraph_is_text"),
+    pytest.param(
+        f"{FENCE}\n    {FENCE}\n[CLAIM_WORK wi-1]", [], f"{FENCE}\n    {FENCE}",
+        id="top_level_fence_four_column_line_inside_is_content",
+    ),
+    pytest.param(f"{FENCE}\n   {FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"{FENCE}\n   {FENCE}", id="top_level_closer_indented_three_closes"),
+    pytest.param(
+        f"   {FENCE}\n      {FENCE}\n[CLAIM_WORK wi-1]", [], f"{FENCE}\n      {FENCE}",
+        id="top_level_closer_indented_four_does_not_close",
+    ),
+    pytest.param(f"    {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [], f"{FENCE}\n{FENCE}", id="indented_code_then_a_top_level_fence"),
+    pytest.param(
+        f"1. Example:\n    {FENCE}\n            {FENCE}\n    [CLAIM_WORK wi-1]\n    {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-2")],
+        f"1. Example:\n    {FENCE}\n            {FENCE}\n    \n    {FENCE}", id="list_closer_more_than_three_past_its_opener_is_content",
+    ),
+    pytest.param(
+        f"- {FENCE}\n  [CLAIM_WORK wi-1]\n  {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-2")], f"- {FENCE}\n  \n  {FENCE}",
+        id="fence_on_a_list_marker_line",
+    ),
+    pytest.param(
+        f"- {FENCE}\n  a\n- {FENCE}\n  [CLAIM_WORK wi-1]\n  {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-2")],
+        f"- {FENCE}\n  a\n- {FENCE}\n  \n  {FENCE}", id="new_list_item_fence_line_does_not_close",
+    ),
+    pytest.param("- > [CLAIM_WORK wi-1]\n\n[CLAIM_WORK wi-2]", [_claim("wi-2")], "- >", id="quote_in_a_list_item"),
+    pytest.param(f"    {FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], FENCE, id="indented_fence_line_ends_at_an_unindented_line"),
+    pytest.param(f"- {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [], f"- {FENCE}\n{FENCE}", id="marker_line_fence_ends_at_an_unindented_fence_line"),
+    pytest.param(
+        f"- {FENCE}\n[CLAIM_WORK wi-1]\n   {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-1")], f"- {FENCE}\n\n   {FENCE}",
+        id="marker_line_fence_ends_at_an_outdented_line",
+    ),
+    pytest.param(
+        f"- {FENCE}\n> [CLAIM_WORK wi-1]\n  {LONG_FENCE}\n   [CLAIM_WORK wi-2]", [], f"- {FENCE}\n> \n  {LONG_FENCE}",
+        id="fence_in_an_item_ends_at_a_quote",
+    ),
+    pytest.param(
+        f"+ [CLAIM_WORK wi-1]\n   {FENCE}\n{FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-1")], f"+ \n   {FENCE}\n{FENCE}",
+        id="continuation_fence_ends_at_an_outdented_fence_line",
+    ),
+    pytest.param(
+        f"1. a\n   {FENCE}\n  {FENCE}\n[CLAIM_WORK wi-1]", [], f"1. a\n   {FENCE}\n  {FENCE}",
+        id="outdented_fence_line_after_an_item_fence_opens_a_top_level_fence",
+    ),
+    pytest.param(f"1. a\n\n   {FENCE}\n  {FENCE}\n[CLAIM_WORK wi-1]", [], f"1. a\n\n   {FENCE}\n  {FENCE}", id="blank_line_keeps_the_list_item"),
+    pytest.param(
+        f"1. a\n    {FENCE}\n\n   [CLAIM_WORK wi-1]\n    {FENCE}\n[CLAIM_WORK wi-2]", [_claim("wi-2")],
+        f"1. a\n    {FENCE}\n\n   \n    {FENCE}", id="blank_line_inside_a_list_fence_keeps_it_open",
+    ),
+    pytest.param(
+        f"- {FENCE}\n\n  x\n  {FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"- {FENCE}\n\n  x\n  {FENCE}",
+        id="blank_line_inside_a_marker_line_fence_keeps_it_open",
+    ),
+    pytest.param(f"-\n  {FENCE}\n {FENCE}\n[CLAIM_WORK wi-1]", [], f"-\n  {FENCE}\n {FENCE}", id="bare_marker_item_fence_ends_at_column_one"),
+    pytest.param(f"{FENCE}\n- {FENCE}\n[CLAIM_WORK wi-1]\n{FENCE}", [], f"{FENCE}\n- {FENCE}\n\n{FENCE}", id="marker_line_inside_a_fence_is_content"),
+    pytest.param(
+        f"1. Example:\n    {FENCE}\n    x\n    {FENCE}\n   [CLAIM_WORK wi-1]", [_claim("wi-1")],
+        f"1. Example:\n    {FENCE}\n    x\n    {FENCE}", id="text_after_a_list_fence_in_its_item_is_actionable",
+    ),
+    pytest.param(
+        f"- a\n\n     {FENCE}\n      {FENCE}\n  [CLAIM_WORK wi-1]", [], f"- a\n\n     {FENCE}\n      {FENCE}",
+        id="list_closer_counts_from_the_item_column",
+    ),
+    pytest.param(
+        f"1. a\nlazy\n   {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"1. a\nlazy\n   {FENCE}\n{FENCE}",
+        id="out_of_scope_lazy_line_then_an_item_fence_is_read_as_written",
+    ),
+    pytest.param("> Forge wrote:\n[CLAIM_WORK wi-1]", [_claim("wi-1")], "> Forge wrote:", id="out_of_scope_lazy_quote_continuation_is_read_as_written"),
+    pytest.param("`start\n[CLAIM_WORK wi-1]\nend`", [_claim("wi-1")], "`start\n\nend`", id="out_of_scope_span_across_lines_is_read_as_written"),
+]
+
+
+# C17
+@pytest.mark.parametrize(("text", "expected", "cleaned"), GRAMMAR)
+def test_every_inert_construct_and_block_form_is_read_as_the_grammar_says(
+    text: str, expected: list[AgentWorkTag], cleaned: str,
+) -> None:
+    """A2 (F16, F17), A2b: each construct's tags and posted text. A marker in a fence, indented code, a quote or a span is
+    removed alone and never acted on; a nested block stays one block until its own closer."""
+    got, tags = split_agent_work_tags(text)
+    assert list(tags) == expected
+    assert got == cleaned
+```
+
+### 7.41 `tests/test_ad1347_s3_execution.py` (M2, A2: X22 to X24)
+
+Pair 1 of 4:
+
+SEARCH:
+```python
+import ast
+import asyncio
+import contextlib
+import itertools
+```
+REPLACE:
+```python
+import ast
+import asyncio
+import contextlib
+import copy
+import itertools
+```
+
+Pair 2 of 4:
+
+SEARCH:
+```python
+import probos.capability_request as request_module
+from probos.agent_stop import AgentStopService
+```
+REPLACE:
+```python
+import probos.capability_request as request_module
+import probos.routers.capability_requests as route_module
+from probos.agent_stop import AgentStopService
+```
+
+Pair 3 of 4:
+
+SEARCH:
+```python
+from probos.api_models import CapabilityRequestDecideRequest
+from probos.capability_request import CapabilityRequestStore
+from probos.cognitive import agentic_dispatch
+```
+REPLACE:
+```python
+from probos.api_models import CapabilityRequestDecideRequest
+from probos.capability_request import CapabilityRequest, CapabilityRequestStore, agent_work_call
+from probos.cognitive import agentic_dispatch
+```
+
+Pair 4 of 4:
+
+SEARCH:
+```python
+    assert with_token is not None and "confirmation_token" not in with_token["params"]
+    assert with_token == approval_payload("browser", {"action": "click", "index": 0}, "wi-1")
+```
+REPLACE:
+```python
+    assert with_token is not None and "confirmation_token" not in with_token["params"]
+    assert with_token == approval_payload("browser", {"action": "click", "index": 0}, "wi-1")
+
+
+_ROWS = _REPO / "ui" / "e2e" / "fixtures" / "ad1347-action-payload-rows.json"
+#: A2 (F19): a row for each refusal of ``validate_action_payload`` and of the item binding.
+_REFUSALS = frozenset({
+    "missing_key", "extra_key", "tool_id_number", "tool_id_grammar", "tool_id_65", "params_array", "params_text",
+    "params_21_keys", "scope_254", "thread_65", "thread_null", "session_65", "session_number", "lone_surrogate",
+    "size_4047", "other_item", "unlinked", "empty_item",
+})
+
+
+def _row_request(row: dict[str, Any]) -> CapabilityRequest:
+    """The approved request a shared row describes, its ``fill`` applied as the HXI test applies it."""
+    payload = copy.deepcopy(row["payload"])
+    work_item_id = row["work_item_id"]
+    fill = row.get("fill")
+    if fill is not None:
+        text = "x" * fill["chars"]
+        if fill["field"] == "work_item_id":
+            work_item_id, payload["scope_key"] = text, "agent_work:" + text
+        elif fill["field"] == "note":
+            payload["params"]["note"] = text
+        else:
+            payload[fill["field"]] = text
+    return CapabilityRequest(
+        id="00000000-0000-0000-0000-000000000009", agent_id="forge-1", kind=row["kind"], target="hull_survey",
+        work_item_id=work_item_id, status="approved", created_at=1000.0, payload=payload,
+    )
+
+
+# X22
+def test_both_fulfilment_predicates_read_every_shared_payload_row_alike() -> None:
+    """A2 (F19): the Python oracle of ``ui/e2e/fixtures/ad1347-action-payload-rows.json``. Each row's answers are
+    Python's, through the real ``can_fulfil_request`` and ``agent_work_call``, and
+    ``ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`` requires the HXI's ``canFulfil`` and decoder to give
+    the same ones. The rows reach each refusal of ``validate_action_payload`` and of the item binding."""
+    rows = json.loads(_ROWS.read_text(encoding="utf-8"))["rows"]
+    names = [row["name"] for row in rows]
+    assert len(set(names)) == len(names) and _REFUSALS <= set(names)
+    for row in rows:
+        request = _row_request(row)
+        assert (row["name"], can_fulfil_request(request)) == (row["name"], row["fulfillable"])
+        assert (row["name"], agent_work_call(request) is not None) == (row["name"], row["agent_work_call"])
+    assert [row["name"] for row in rows if row["name"] in _REFUSALS and row["fulfillable"]] == []
+
+
+# X23
+async def test_a_fulfilment_store_fault_on_an_agent_work_approval_returns_the_approval_as_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (F20): the approval route degrades honestly: the decision is recorded and the response says it is approved,
+    not fulfilled, and retryable (HTTP 200, not 500); the retry then fulfils it."""
+    from probos.agent_work_runner import approval_payload
+
+    requests = CapabilityRequestStore(db_path=str(tmp_path / "requests.db"))
+    await requests.start()
+    try:
+        captain = SimpleNamespace(capability_request_store=requests)
+        filed = await requests.file_action_request(
+            "forge-1", approval_payload("hull_survey", {"depth": 2}, "wi-agent-work-1"), rationale="r",
+            work_item_id="wi-agent-work-1",
+        )
+        real_mark = requests.mark_fulfilled
+
+        async def _readonly(request_id: str) -> Any:
+            raise OSError("attempt to write a readonly database")
+
+        monkeypatch.setattr(requests, "mark_fulfilled", _readonly)
+        decided = await decide_capability_request(filed.id, CapabilityRequestDecideRequest(approve=True), runtime=captain)
+        assert decided["fulfilled"] is False
+        assert (decided["request"]["status"], decided["request"]["can_retry_fulfilment"]) == ("approved", True)
+        monkeypatch.setattr(requests, "mark_fulfilled", real_mark)
+        retried = await decide_capability_request(filed.id, CapabilityRequestDecideRequest(approve=True), runtime=captain)
+        assert (retried["fulfilled"], retried["request"]["status"]) == (True, "fulfilled")
+    finally:
+        await requests.stop()
+
+
+# X24
+async def test_an_agent_work_approval_issues_no_standing_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A2: the confinement admits one exact call per approval and never reads a standing rule, so the route issues
+    none for an agent-work approval, with standing rules on and the item's value confirmed, as for repair and AD-1328
+    command approvals; the HXI does not offer one (``CapabilityRequestCard.ad1347.test.tsx``)."""
+    from probos.agent_work_runner import approval_payload
+
+    issued: list[Any] = []
+
+    async def _confirmed(*args: Any) -> bool:
+        return True
+
+    async def _issue(*args: Any, **kwargs: Any) -> Any:
+        issued.append(args)
+        raise OSError("a standing rule was issued")
+
+    monkeypatch.setattr(route_module, "_work_item_value_confirmed", _confirmed)
+    requests = CapabilityRequestStore(db_path=str(tmp_path / "requests.db"))
+    await requests.start()
+    try:
+        inbox = SimpleNamespace(standing_rules_enabled=True, standing_rule_max_ttl_hours=12, standing_rule_default_ttl_hours=4)
+        runtime = SimpleNamespace(
+            capability_request_store=requests, action_approval_store=SimpleNamespace(issue_approval=_issue),
+            config=SimpleNamespace(approval_inbox=inbox),
+        )
+        filed = await requests.file_action_request(
+            "forge-1", approval_payload("hull_survey", {"depth": 2}, "wi-agent-work-1"), rationale="r",
+            work_item_id="wi-agent-work-1",
+        )
+        body = CapabilityRequestDecideRequest(approve=True, grant_standing=True, standing_ttl_hours=2)
+        decided = await decide_capability_request(filed.id, body, runtime=runtime)
+        assert (decided["standing_rule"], decided["fulfilled"], issued) == (None, True, [])
+    finally:
+        await requests.stop()
+```
+
 ## 8. Tracking (in M2's commit, or a docs-only commit after it)
 
 Set the date to the commit date. Both anchors survive wave 2's entries.
@@ -4512,7 +5596,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. Review round 1 (A1) repaired 14 findings and one found in the repair: both fulfilment predicates (`can_fulfil_request` and the HXI's `canFulfil` in `ui/src/store/capabilityApprovals.ts`) accept the agent-work approval bound to its item, so the HXI confirms it and an unfulfilled one stays retryable; a start that arrives during a run runs after it; a confinement's admission is not parked again by AD-1154's inbox; only a completed run with an answer is done (any other stop fails with its reason); a stopped claimant is released before parking; the parser is one linear pass (any case, every marker stripped, fenced, quoted and nested tags never acted on); declines reach watchers; a fault on one tag is acknowledged; off neither imports nor calls the tag module; the notice states the TTL exactly; a browser confirmation token is never recorded. New: `ui/e2e/fixtures/ad1347-agent-work-approvals.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`. #1627 stays open until the Captain's live acceptance. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
+**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. Review round 1 (A1) repaired 14 findings and one found in the repair: both fulfilment predicates (`can_fulfil_request` and the HXI's `canFulfil` in `ui/src/store/capabilityApprovals.ts`) accept the agent-work approval bound to its item, so the HXI confirms it and an unfulfilled one stays retryable; a start that arrives during a run runs after it; a confinement's admission is not parked again by AD-1154's inbox; only a completed run with an answer is done (any other stop fails with its reason); a stopped claimant is released before parking; the parser is one linear pass (any case, every marker stripped, fenced, quoted and nested tags never acted on); declines reach watchers; a fault on one tag is acknowledged; off neither imports nor calls the tag module; the notice states the TTL exactly; a browser confirmation token is never recorded. New: `ui/e2e/fixtures/ad1347-agent-work-approvals.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`. Review round 2 (A2) repaired 6 findings: fenced examples (any fence character and length, indented in a list) and inline code spans are never acted on, and a nested block stays inert until its own closer (one table of 30 constructs is the grammar); the HXI validates an agent-work payload as Python does (one shared rows table); a fulfilment-store fault on an agent-work approval returns it as retryable instead of HTTP 500; the Captain's card says approving an agent-work call resumes the item, and no standing approval is offered or issued for one. New: `ui/e2e/fixtures/ad1347-action-payload-rows.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`, `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx`. #1627 stays open until the Captain's live acceptance. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
 
 ```
 
@@ -4533,8 +5617,9 @@ REPLACE:
 - *D4 (read-only at the call).* `ToolCallConfinement`: the plan-mode read set without its off-ship reads runs; any other call is put to a gate before plan mode and the browser inbox; a gate fault refuses; the refusals never ran. The offer is not narrowed, so a write call is reachable and governed.
 - *D5 (approval).* An AD-1154 `action` (`agent_work_call`, scoped to the item); AD-855 parks the item; approval is its own fulfilment; the resumed run admits that call once on a claim-once row; a denial cancels and the report reads the reason from the request. No new request kind.
 - *D6 (reports).* Ship's Computer posts: the notice in the department channel (mentions, `max_responders`), the report, decline, expiry and denial in the origin thread (fallback the department channel), each notice claimed before it is sent. The store's TTL sweep stays the only expiry owner.
-- *Disclosed effects.* `S1_SCOPE` names agent-created work; two refusal texts join the never-ran set; `runtime.agent_work_runner` exists (None while off); a standing rule granted on an agent-work approval is inert.
+- *Disclosed effects.* `S1_SCOPE` names agent-created work; two refusal texts join the never-ran set; `runtime.agent_work_runner` exists (None while off); no standing rule is offered or issued on an agent-work approval (A2).
 - *A1 (review round 1).* No decision reversed. D3: a start during a run is deferred, eligibility is asked before parking, and only a completed run with an answer is done (any other stop is failed with its reason). D4: a confinement's admission is carried past AD-1154's inbox for that call only (credential entry stays refused), and a confirmation token is never recorded. D5: the subtype is fulfillable in both predicates, Python and HXI. D2: one linear scanner; fenced, quoted and nested tags are never acted on.
+- *A2 (review round 2).* No decision reversed. D2: the scanner's inert regions follow CommonMark 0.31.2's fences (character and run length), inline code spans and line endings, with named differences; a block nests and closes only on its own closer; one 30-row table is the grammar. D5: the HXI validates the agent-work payload as Python does, proven on one shared rows table; a fulfilment-store fault returns the retryable approval; the card says the approval resumes the item, and no standing approval is offered or issued for it.
 - *Reversal.* Revert both commits; open agent work stays on the board until its TTL; the AD-1154 requests filed stay in the inbox as ordinary actions with no fulfiller. Reverting A1's HXI change with the Python change keeps the two predicates in agreement; reverting only one makes the HXI refuse any queue holding an approved, unfulfilled agent-work call.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -4546,7 +5631,7 @@ REPLACE:
 
 - `cognitive/dm/reply_pipeline.py`: the Captain's one-to-one chat, its 24 steps, its plan-mode tables; AD-845's `[CREATE_TASK]`; AD-1165 promotion.
 - `_handle_work_item_dispatch` and `_run_agentic_dispatch` (the AD-839 path).
-- AD-1154's browser inbox: `_APPROVAL_INBOX_TOOL_IDS`, the standing-rule machinery, and `_park_or_admit`'s signature (pinned) and steps for every call a confinement did not admit. A1 (F3) adds one admission after its step 3, for the call a confinement admitted only. A standing rule can still be granted on an agent-work approval, and the gate never reads it (register R2).
+- AD-1154's browser inbox: `_APPROVAL_INBOX_TOOL_IDS`, the standing-rule machinery, and `_park_or_admit`'s signature (pinned) and steps for every call a confinement did not admit. A1 (F3) adds one admission after its step 3, for the call a confinement admitted only. A2: no standing rule is offered (HXI) or issued (route) on an agent-work approval, as for repair and AD-1328 command approvals; the confinement never reads one (register R2 closed).
 - Tools:
   - no `allowed_departments` or rank change;
   - no tool registered;
@@ -4560,8 +5645,16 @@ REPLACE:
 - `WorkItemStore`: no new method. The TTL sweep and the claim gate are unchanged.
 - `ward_room_router.py` and the Ward Room service.
 - `config/system.yaml`.
+- The tag scanner's grammar (A2: F16, F17) follows CommonMark 0.31.2 for fences (§4.5: character, run length, a backtick fence's info string without a backtick, unclosed to the end), inline code spans (§6.1: equal-length runs; an unmatched run is text) and line endings (§2.1: LF, CRLF, CR). These differences are deliberate, and each one a C17 row can show is one:
+  - Indentation is read two ways (A2b), because the scanner does not parse list containers, and a line is inert when either reading makes it so. The top-level reading is CommonMark's: a fence line starts within three columns (a tab advances to a multiple of four) and its closer has no list marker, and a line indented four or more columns that does not continue a paragraph is indented code (a paragraph ends at a blank line, a quote, a fence, an ATX heading, or a line of one repeated `-`, `*`, `_` or `=`). The list reading opens a fence at any column, after list item markers too (`fence_on_a_list_marker_line`), and closes it only on a line without a marker within three columns of its opener (`list_closer_more_than_three_past_its_opener_is_content`, `new_list_item_fence_line_does_not_close`). A2c: the list reading tracks the last list item's content column (a marker line sets it, an empty item's is the marker plus one, and a non-blank line left of it ends it). A non-blank line left of a fence's floor ends that fence before the line is read, so the line may open a new fence (`marker_line_fence_ends_at_an_unindented_fence_line`, `fence_in_an_item_ends_at_a_quote`, `continuation_fence_ends_at_an_outdented_fence_line`, `outdented_fence_line_after_an_item_fence_opens_a_top_level_fence`, `bare_marker_item_fence_ends_at_column_one`). A list fence in a tracked item is floored at the item's column and closes within three columns of it (`list_closer_counts_from_the_item_column`); outside one it is floored at 0 within three columns, else three columns left of it and never below 2 (`indented_fence_line_ends_at_an_unindented_line`), and closes within three columns of itself. The top reading floors only a fence on a marker line (`marker_line_fence_ends_at_an_outdented_line`). This errs toward inert where a tag indented four or more columns follows a blank line, as in a list item's continuation (register R14). It is still acted on where CommonMark is inert only where the one-level tracker is wrong and the top reading is wrong too (register R15): a lazy line ends the tracked item, so an item's fence after it is read as untracked (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`); and a line that only looks like an item (a setext `-` underline, an ordered marker that cannot interrupt a paragraph, a thematic break made of markers) is tracked as one; and a nested item is tracked at its innermost marker's content column only (`- - text`, or an item inside an item), so a fence at the outer item's column after it is floored at 0 as an untracked fence (orchestrator's differential, mechanical repair 9).
+  - A quote is any line whose first non-blank character, after any list item markers, is `>`, at any indentation (`quote_in_a_list_item`). A lazy continuation line is not quoted, so an agent's own tag placed straight after a quotation is acted on (`out_of_scope_lazy_quote_continuation_is_read_as_written`).
+  - A code span is read within one line; a span that crosses a line ending is read as text (`out_of_scope_span_across_lines_is_read_as_written`). Backslash escapes are not read, so an escaped backtick still opens or closes a span (this errs toward inert).
+  - HTML comments and raw HTML are read as text. A `>` line never opens a fence.
+  - A marker in an inert region is removed alone, and the example's text stays in the post (A1 removed a fenced example's whole block).
+  - Register R13 holds the lazy continuation and the span across lines, and register R15 the item tracker's three shapes the first bullet names (a renderer shows the tag as code or quote; it is acted on).
+- The HXI's size bound on an action payload counts each number as one character: the decoded value does not keep Python's spelling (`1e400`, which Python rejects, and an integer of 401 digits, which it accepts, both decode to Infinity). The bound is exact for text and only necessary for numbers, and Python serves no payload it rejected (it decodes it to `payload: null`), so a disagreement needs a forged response (register R12; not a shared row).
 
-## 10. Mutation rows (76 Python rows after A1, plus 4 TypeScript rows run by hand; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (119 Python rows after A2c, plus 11 TypeScript rows run by hand; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline that passes, and restore the file before the next row. None of these rows has been executed; the build's campaign is the one of record.
 
@@ -4633,29 +5726,79 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | N11 | `src/probos/agent_work_runner.py` | `if not posted:  # A1 (F9, the literal): a post that did not go through is not "told"` | `if False:` | X19 |
 | N12 | `src/probos/agent_work_runner.py` | `if seconds >= size and seconds % size == 0:` | `if True:` | X20 ("0 h") |
 | N13 | `src/probos/agent_work_runner.py` | `recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}` | `recorded = dict(params)` | X21 |
-| N14 | `src/probos/agent_work_tags.py` | `block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), not inert)` | `block = _OpenBlock(name, item_id.group(1) if item_id is not None else "", match.start(), match.end(), True)` | C1 fenced case; C14 |
+| N14 | `src/probos/agent_work_tags.py` | `if opener and not inert:` | `if opener:` | C17 `quoted_opener_leaves_the_real_block_actionable` (A2: replaces A1's row, whose constructor line A2 removes) |
 | N15 | `src/probos/agent_work_tags.py` | `block.actionable = False` | `pass` | C1 nested case ("Outer ... Inner" filed) |
-| N16 | `src/probos/agent_work_tags.py` | `lines.append((end, fenced or fence or line.lstrip().startswith(">")))` | `lines.append((end, fenced or fence))` | C1 quoted case |
+| N16 | `src/probos/agent_work_tags.py` | `elif content[len(head):].lstrip().startswith(">"):` | `elif content.lstrip().startswith(">"):` | C17 `quote_in_a_list_item` (A2b: the quote is read after list item markers) |
 | N17 | `src/probos/agent_work_tags.py` | `closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)` | `closer, name, attribute = match.group(1) == "/", match.group(2), match.group(3)` | C1 mixed-case case |
 | N18 | `src/probos/agent_work_tags.py` | `cuts.append((match.start(), match.end()))` | `pass` | C1 stray case |
 | N19 | `src/probos/agent_work_tags.py` | `ack, action = await _apply_guarded(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | `ack, action = await _apply_one(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | C16 (the fault escapes) |
 | N20 | `src/probos/proactive.py` | `if getattr(rt, "agent_work", None) is not None:` | `if True:` | C5 (off calls `agent_work_service`) |
-| N21 | `src/probos/agent_work_tags.py` | `fence = _FENCE_RE.match(line) is not None` | `fence = False` | C1 fenced case |
+| N21 | `src/probos/agent_work_tags.py` | `elif opened is not None and column <= 3:` | `elif opened is not None:` | C17 `indented_fence_line_ends_at_an_unindented_line` (A2c: the list reading's floor now covers A2b's killing case) |
 | N22 | `src/probos/agent_work_tags.py` | `cuts.extend([(block.start, block.body_start), *block.inner])` | `cuts.append((block.start, block.body_start))` | C1 unclosed-with-marker case |
 | N23 | `src/probos/agent_work_tags.py` | `if item_id is not None and not inert:` | `if item_id is not None:` | C1 quoted case (the claim is taken) |
+| N24 | `src/probos/agent_work_tags.py` | `inert = span < len(spans) and spans[span][0] <= match.start()` | `inert = False` | C1 fenced and quoted cases |
+| N25 | `src/probos/agent_work_tags.py` | `block.open_names.append(name)` | `pass` | C17 `nested_tail` |
+| N26 | `src/probos/agent_work_tags.py` | `block.open_names.pop()` | `pass` | C1 nested case (the block never closes; its text stays) |
+| N27 | `src/probos/agent_work_tags.py` | `if not block.open_names:` | `if True:` | C17 `nested_tail` |
+| N28 | `src/probos/agent_work_tags.py` | `closes = closer and not inert and not attribute.strip()` | `closes = closer and not attribute.strip()` | C17 `inert_closer_inside_a_block_breaks_it` |
+| N29 | `src/probos/agent_work_tags.py` | `if closes and name == block.open_names[-1]:` | `if closes:` | C17 `closer_of_the_other_name_breaks_the_block` |
+| N30 | `src/probos/agent_work_tags.py` | `run is not None and run.group(1)[0] == fence[0]` | `run is not None` | C17 `fence_tilde_inside_backtick_is_content` |
+| N31 | `src/probos/agent_work_tags.py` | `and len(run.group(1)) >= fence[1]` | `and True` | C17 `fence_shorter_run_inside_is_content` |
+| N32 | `src/probos/agent_work_tags.py` | `and not run.group(2).strip(" \t")` | `and True` | C17 `fence_line_with_info_inside_is_content` |
+| N33 | `src/probos/agent_work_tags.py` | `top_fence = None  # its closing fence` | `pass` | C17 `fence_backtick` (the real block after the fence is inert) |
+| N34 | `src/probos/agent_work_tags.py` | `if run is not None and not (run.group(1)[0] == _BACKTICK and _BACKTICK in run.group(2)):` | `if run is not None:` | C17 `backtick_run_with_a_backtick_after_is_a_code_span` |
+| N35 | `src/probos/agent_work_tags.py` | `spans.extend(_code_spans(content, start))` | `pass` | C17 `code_span_claim` |
+| N36 | `src/probos/agent_work_tags.py` | `size = runs[index][1] - runs[index][0]` | `size = 1` | C17 `span_closes_only_on_a_run_of_its_length` |
+| N37 | `src/probos/agent_work_tags.py` | `index = close + 1` | `index += 1` | C17 `text_between_two_spans_is_actionable` |
+| N38 | `src/probos/agent_work_tags.py` | `_LINE_RE: Final = re.compile(r"[^\r\n]*(?:\r\n\|\r\|\n)\|[^\r\n]+")` | `_LINE_RE: Final = re.compile(r"[^\n]*\n\|[^\n]+")` | C17 `lone_cr_ends_a_line` |
+| N39 | `src/probos/agent_work_tags.py` | `opened = (run.group(1)[0], len(run.group(1)))` | `opened = (run.group(1)[0], 3)` | C17 `fence_shorter_run_inside_is_content` (A2b: one opener size for both readings) |
+| N41 | `src/probos/agent_work_tags.py` | `_PARAGRAPH_END_RE: Final = re.compile(r" {0,3}(?:#{1,6}(?:[ \t].*)?\|([-*_=])(?:[ \t]*\1)*[ \t]*)")` | `_PARAGRAPH_END_RE: Final = re.compile(r" {0,3}#{1,6}(?:[ \t].*)?")` | C17 `indented_code_after_a_thematic_break` |
+| N42 | `src/probos/agent_work_tags.py` | `width += 4 - width % 4 if char == "\t" else 1` | `width += 1` | C17 `indented_code_by_a_tab` |
+| N43 | `src/probos/agent_work_tags.py` | `head = item.group() if item is not None else ""` | `head = ""` | C17 `fence_on_a_list_marker_line` |
+| N44 | `src/probos/agent_work_tags.py` | `closer = None if head else run` | `closer = run` | C17 `marker_line_inside_a_fence_is_content` (A2c: the floor now ends a fence at a new item) |
+| N45 | `src/probos/agent_work_tags.py` | `indent = _columns(content[: len(content) - len(content.lstrip(" \t"))])` | `indent = 0` | C17 `indented_code_after_a_blank_line` |
+| N46 | `src/probos/agent_work_tags.py` | `column = _columns(content[: len(head) + run.start(1)]) if run is not None else 0` | `column = 0` | C17 `list_closer_more_than_three_past_its_opener_is_content` |
+| N47 | `src/probos/agent_work_tags.py` | `if list_fence is None and opened is not None:` | `if False:` | C17 `fence_indented_in_a_list_item` |
+| N48 | `src/probos/agent_work_tags.py` | `elif list_fence is not None and _closes(list_fence[0], closer) and column <= list_fence[1]:` | `elif list_fence is not None and _closes(list_fence[0], closer):` | C17 `list_closer_more_than_three_past_its_opener_is_content` |
+| N49 | `src/probos/agent_work_tags.py` | `list_fence = None  # its closing fence` | `pass` | C17 `text_after_a_list_fence_in_its_item_is_actionable` (A2c: in A2b's case the floor now ends the fence) |
+| N50 | `src/probos/agent_work_tags.py` | `if _closes(top_fence[0], closer) and indent <= 3:` | `if _closes(top_fence[0], closer):` | C17 `top_level_closer_indented_four_does_not_close` |
+| N51 | `src/probos/agent_work_tags.py` | `paragraph = False  # a blank line ends a paragraph` | `pass` | C17 `indented_code_after_a_blank_line` |
+| N52 | `src/probos/agent_work_tags.py` | `top_fence, paragraph, inert = (opened, _columns(head)), False, True` | `top_fence, paragraph, inert = (opened, _columns(head)), paragraph, True` | C17 `indented_code_after_a_fence` |
+| N53 | `src/probos/agent_work_tags.py` | `inert = inert or not paragraph` | `inert = inert` | C17 `indented_code_at_the_start` |
+| N54 | `src/probos/agent_work_tags.py` | `paragraph = _PARAGRAPH_END_RE.fullmatch(content) is None` | `paragraph = True` | C17 `indented_code_after_a_heading` |
+| N55 | `src/probos/agent_work_tags.py` | `if list_fence is not None and not blank and indent < list_fence[2]:` | `if list_fence is not None and indent < list_fence[2]:` | C17 `blank_line_inside_a_list_fence_keeps_it_open` |
+| N56 | `src/probos/agent_work_tags.py` | `list_fence = None  # A2c: a line left of its item's content column ends the item` | `pass` | C17 `continuation_fence_ends_at_an_outdented_fence_line` |
+| N57 | `src/probos/agent_work_tags.py` | `if top_fence is not None and not blank and indent < top_fence[1]:` | `if top_fence is not None and indent < top_fence[1]:` | C17 `blank_line_inside_a_marker_line_fence_keeps_it_open` |
+| N58 | `src/probos/agent_work_tags.py` | `top_fence = None  # A2c: likewise for a fence opened on a marker line` | `pass` | C17 `marker_line_fence_ends_at_an_outdented_line` |
+| N59 | `src/probos/agent_work_tags.py` | `item_column = _columns(head) + (0 if head[-1] in " \t" else 1)` | `item_column = _columns(head)` | C17 `bare_marker_item_fence_ends_at_column_one` |
+| N60 | `src/probos/agent_work_tags.py` | `item_column = None` | `pass` | C17 `outdented_fence_line_after_an_item_fence_opens_a_top_level_fence` |
+| N61 | `src/probos/agent_work_tags.py` | `elif item_column is not None and not blank and indent < item_column:` | `elif item_column is not None and indent < item_column:` | C17 `blank_line_keeps_the_list_item` |
+| N62 | `src/probos/agent_work_tags.py` | `floor = item_column if item_column is not None else (0 if column <= 3 else max(2, column - 3))` | `floor = item_column if item_column is not None else 0` | C17 `indented_fence_line_ends_at_an_unindented_line` |
+| N63 | `src/probos/agent_work_tags.py` | `_LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]\|[0-9]{1,9}[.)])(?:[ \t]+\|$))+")` | `_LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]\|[0-9]{1,9}[.)])[ \t]+)+")` | C17 `bare_marker_item_fence_ends_at_column_one` |
+| N64 | `src/probos/agent_work_tags.py` | `base = column if item_column is None else item_column` | `base = column` | C17 `list_closer_counts_from_the_item_column` |
+| N40 | `src/probos/agent_work_tags.py` | `r"\[(/?)(SELF_TASK\|REQUEST_WORK\|CLAIM_WORK\|DECLINE_WORK)\b([^\]\r\n]{0,160})\]", re.IGNORECASE,` | `r"\[(/?)(SELF_TASK\|REQUEST_WORK\|CLAIM_WORK\|DECLINE_WORK)\b([^\]\n]{0,160})\]", re.IGNORECASE,` | C17 `marker_does_not_cross_a_line_end` |
+| F3 | `src/probos/routers/capability_requests.py` | `except Exception:  # A2 (F20): the approval stands and stays retryable` | `except ZeroDivisionError:  # A2 (F20): the approval stands and stays retryable` | X23 (the store fault escapes) |
+| F4 | `src/probos/routers/capability_requests.py` | `if agent_work_approval(decided):  # AD-1347 S3 A2: one exact call per approval; no standing rule` | `if False:  # AD-1347 S3 A2: one exact call per approval; no standing rule` | X24 (`issued` is not empty) |
 
 Row T3's Line cell escapes the union bar (`\|`) for the Markdown table; the source line has a plain `|`. X9b is `test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_outcome`.
 
-**A1 campaign.** The Python rows run against `tests/test_ad1347_s2_chain_tags.py tests/test_ad1347_s3_execution.py tests/test_ad1347_s3_wiring.py tests/test_ad1156_plan_execute_mode.py tests/test_issue1419_failed_start_rollback.py`. The TypeScript rows are not in the Python campaign: mutate each line, run `npx vitest run src/store/__tests__/capabilityApprovals.ad1347.test.ts` from `ui/`, expect a failure, restore. The Python half of that wire is proven by X13's fixture equality.
+**A1 and A2 campaign.** The Python rows run against `tests/test_ad1347_s2_chain_tags.py tests/test_ad1347_s3_execution.py tests/test_ad1347_s3_wiring.py tests/test_ad1156_plan_execute_mode.py tests/test_issue1419_failed_start_rollback.py`. The TypeScript rows are not in the Python campaign: mutate each line, run its vitest files from `ui/`, expect a failure, restore. Run TS1 to TS8 with `npx vitest run src/store/__tests__/capabilityApprovals.ad1347.test.ts src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`, and TS9 to TS11 with `npx vitest run src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx`. The Python half of the wire is proven by X13's fixture equality and X22's rows.
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
-| TS1 | `ui/src/store/capabilityApprovals.ts` | `if (Object.keys(payload).length === keys.length && keys.every(key => key in payload) && isAgentWorkCall(payload, workItemId)) return true;` | `if (false) return true;` | vitest cases 1 and 2 |
+| TS1 | `ui/src/store/capabilityApprovals.ts` | `if (isAgentWorkCall(payload, workItemId)) return true;` | `if (false) return true;` | `capabilityApprovals.ad1347.test.ts` cases 1 and 2 (A2: the line A2 rewrites) |
 | TS2 | `ui/src/store/capabilityApprovals.ts` | `&& payload.scope_key === 'agent_work:' + workItemId;` | `&& true;` | vitest case 3 (`wi-other` accepted) |
 | TS3 | `ui/src/store/capabilityApprovals.ts` | `&& value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, value.work_item_id));` | `&& value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, undefined));` | vitest case 2 |
 | TS4 | `ui/src/store/capabilityApprovals.ts` | `\|\| !canFulfil(expected.kind, expected.payload, expected.work_item_id)))) {` | `\|\| !canFulfil(expected.kind, expected.payload, undefined)))) {` | vitest case 1 |
+| TS5 | `ui/src/store/capabilityApprovals.ts` | `return isActionWirePayload(payload) && payload.action === 'agent_work_call'` | `return payload.action === 'agent_work_call'` | `capabilityApprovals.ad1347a2.test.ts` cases 1 and 2 (`tool_id_number` and every refusal row) |
+| TS6 | `ui/src/store/capabilityApprovals.ts` | `\|\| !isRecord(payload.params) \|\| Object.keys(payload.params).length > 20` | `\|\| !isRecord(payload.params)` | `capabilityApprovals.ad1347a2.test.ts` case 1 (`params_21_keys`) |
+| TS7 | `ui/src/store/capabilityApprovals.ts` | `\|\| !validText(payload.scope_key, 253) \|\| !validText(payload.thread_id, 64)` | `\|\| !validText(payload.scope_key, 253)` | `capabilityApprovals.ad1347a2.test.ts` case 1 (`thread_65`, `thread_null`) |
+| TS8 | `ui/src/store/capabilityApprovals.ts` | `return hasPossibleActionPayloadSize(payload); // A2 (F19): the size and Unicode of Python's canonical form` | `return true; // A2 (F19): the size and Unicode of Python's canonical form` | `capabilityApprovals.ad1347a2.test.ts` case 1 (`size_4047`, `lone_surrogate`) |
+| TS9 | `ui/src/store/capabilityApprovals.ts` | `&& request.payload?.tool_id !== 'repair' && !isAgentWorkApproval(request);` | `&& request.payload?.tool_id !== 'repair';` | `CapabilityRequestCard.ad1347.test.tsx` (the standing checkbox is offered) |
+| TS10 | `ui/src/components/capability/CapabilityRequestCard.tsx` | `{ordinary && !agentWork && <p>Approval records this decision only; it does not replay the original action.</p>}` | `{ordinary && <p>Approval records this decision only; it does not replay the original action.</p>}` | `CapabilityRequestCard.ad1347.test.tsx` |
+| TS11 | `ui/src/components/capability/CapabilityRequestCard.tsx` | `const agentWork = expected !== undefined && isAgentWorkApproval(expected);` | `const agentWork = false;` | `CapabilityRequestCard.ad1347.test.tsx` |
 
-TS4's Line cell escapes the bars as T3's does.
+TS4's, TS6's and TS7's Line cells, and N38's, N40's, N41's and N63's cells, escape the bars as T3's does. Row TS9 lives in `capabilityApprovals.ts` but is killed by the card test.
 
 ## 11. Verified Against Codebase (2026-10-23, worktree `s23-consult` at `6b950acf`)
 
@@ -4792,6 +5935,69 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
   128
 ```
 
+### A2 additions (2026-10-23, worktree `bf900-consult` at `f035964c`)
+
+```
+grep -n "_MARKER_RE: Final\|class _OpenBlock\|def _inert_line_ends\|fenced = fenced != fence\|block = None\|_FENCE_RE: Final" src/probos/agent_work_tags.py
+  94, 133, 144, 154, 195, 99
+grep -n "_ACTION_PAYLOAD_MAX_CHARS = \|_TOOL_ID_RE = \|_ACTION_RE = \|_MAX_ACTION_PARAM_KEYS = \|_SCOPE_KEY_MAX = \|_SESSION_ID_MAX = \|_THREAD_ID_MAX = \|def validate_action_payload\|encoded.encode" src/probos/capability_request.py
+  73, 77, 78, 79, 80, 81, 82, 191, 253
+grep -n "def agent_work_call\|every other action still has no fulfiller\|def can_fulfil_request\|^class CapabilityRequest:\|async def mark_fulfilled" src/probos/capability_request.py
+  155, 160, 176, 535, 1063
+grep -n "from probos.agent_work_runner import agent_work_approval\|Honest-degrade throughout\|return await store.mark_fulfilled(decided.id) is not None\|async def _work_item_value_confirmed\|async def _maybe_issue_standing_rule\|# AD-1328 S2b: no standing rule" src/probos/routers/capability_requests.py
+  17, 442, 493, 557, 577, 617   (the command branch's handler: 476-486)
+grep -n "return await request_store.mark_fulfilled" src/probos/execution/command_escalation.py
+  312
+grep -n "try:" src/probos/cognitive/repair_issue.py
+  295, 372   (the repair consumer degrades inside fulfil and decline)
+grep -n "const ACTION_KEYS\|export function standingApprovalEligible\|the original action was not replayed\|function validText\|function hasPossibleActionPayloadSize\|function isAgentWorkCall\|function canFulfil" ui/src/store/capabilityApprovals.ts
+  8, 125, 208, 225, 229, 248, 253
+grep -n "standingApprovalEligible(expected)\|const ordinary\|does not replay the original action\|Grant standing approval" ui/src/components/capability/CapabilityRequestCard.tsx
+  52, 55, 134, 146
+grep -n "does not replay the original action" ui/src/components/capability/__tests__/ApprovalWave.test.tsx
+  118
+grep -n "if (get().loaded || get().loading) return;" ui/src/store/useSettingsStore.ts
+  111
+grep -n "class CapabilityRequestDecideRequest" src/probos/api_models.py
+  271
+CommonMark 0.31.2 (https://spec.commonmark.org/0.31.2/), read 2026-10-23: 2.1 a line ending is LF, CR not followed by LF, or CRLF;
+  4.5 a fence is three or more backticks or tildes, not mixed; a backtick fence's info string has no backtick; the closer is the same
+  character, at least as long, up to three spaces of indent, followed only by spaces or tabs; an unclosed fence runs to the end of its
+  container; 6.1 a span runs between backtick strings of equal length, an unmatched string is literal, line endings inside become
+  spaces, and backslash escapes do not work inside.
+```
+
+### A2b additions (2026-10-23, worktree `bf900-consult` at `f035964c`, and the A2-applied contract)
+
+```
+grep -n "^from __future__ import annotations\|^import re" src/probos/agent_work_tags.py
+  47, 50   (so `re.Match[str]` in a parameter annotation is not evaluated)
+grep -n "requires-python" pyproject.toml
+  9: requires-python = ">=3.12"
+contract §7.32 pair 4: `spans = _inert_spans(text)` runs before the marker loop, so C15's list_markers case (no marker) reads its one line
+CommonMark 0.31.2 (https://spec.commonmark.org/0.31.2/), re-read 2026-10-23: 2.2 tabs behave as a tab stop of four; 4.1 and 4.2 up to three
+  spaces before a thematic break or an ATX heading; 4.4 an indented code block cannot interrupt a paragraph; 4.5 the closing fence may be
+  preceded by up to three spaces of indentation (not tied to the opener), and up to the opener's indentation is removed from content
+  lines; 5.2 the text after a list marker sets the item's content column.
+probe-s23-scanner-diff-a2.txt (markdown-it-py 4.0.0, 3000 flat documents, the A2 scanner): 35 minimal documents acted where CommonMark
+  is inert; 6 of the 14 closing-direction ones begin with a four-space opener (lines 5, 7, 8, 9, 19, 21), and 8 of the 9 indented-code
+  ones follow a fence closer (lines 6, 11, 12, 14, 16, 17, 18, 25)
+```
+
+### A2c additions (2026-10-23, the A2b-applied contract and the orchestrator's measurements)
+
+```
+probe-s23-scanner-diff2.py on the A2b oracle befc0f10 (12,000 documents with list markers, headings, breaks and tabs, seed 1347):
+  90 minimal EXTRA documents, 46 lazy-quote and 44 not; 39 of the 44 read right by candidate 3 (f035964c): a fence in a list
+  item kept open past a line left of the item's content column
+probe-s23-real-posts.py on ward_room.db (16,386 bodies, 144,300 variants): A2b 0 non-lazy EXTRA; no body holds a fence on a marker
+  line, a fence indented one column or more, or an unclosed fence
+D:\ProbOS-worktrees\s23-proto\src\probos\agent_work_tags.py:235-240 (prototype F1'): a list fence floored at its marker line's
+  column, else 0 within three columns and max(2, column - 3) beyond; 44 -> 5 non-lazy, 39 -> 0 regressions
+CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the item's content column; an empty item's
+  content column is the marker plus one
+```
+
 ## 12. Absence Verified (2026-10-23)
 
 | # | Claim | Run | Found | Holds |
@@ -4802,12 +6008,18 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
 | AV4 | the Captain's one-to-one chat does not call the extractor | `rg "extract_and_execute" src/probos/cognitive/dm/reply_pipeline.py` | `:1240-1316` (`extract_and_execute_dms`, `extract_and_execute_notebooks`) only | yes |
 | AV5 | two test stubs fake `extract_and_execute_actions` with a fixed signature; no other double constrains its kwargs | `rg "def _fake_extract\|post_budget=None\):" tests`; `rg "extract_and_execute_actions *=" tests` | `tests/test_bf237_pipeline_post_budget.py:25` and `tests/test_bf238_post_budget_telemetry.py:174` (both updated: §7.3a, §7.3b); the other doubles are `AsyncMock`s | yes (corrected after the M1 build: the first claim searched only for `def extract_and_execute_actions`) |
 | AV6 | no test pins `S1_SCOPE["refuses"]` text | `rg "browser actions and every\|result is escalated unverified"` (excluding prompts) | `agent_stop.py:88` only | yes |
-| AV7 | an ordinary approved `action` has no fulfiller today | `routers/capability_requests.py:248-257`, `:424-429` | `continue`, `grant`, `install`, `build` only | yes |
+| AV7 | an AD-1154 browser `action` has no fulfiller (A2, F21: corrected; the first FOUND listed only the map) | read `routers/capability_requests.py:453-526` | the repair branch (AD-1206, :453-464), the AD-1328 command branch (:465-486; its fulfiller ends at `execution/command_escalation.py:312`), the agent-work branch (:487-493), then `_APPROVAL_FULFILLERS` (`continue`, `grant`, `install`, `build`, :425-430) | yes for a browser action; "every other action" was false |
 | AV8 | nothing but `capabilityApprovals.ts` defines or calls `canFulfil` | `rg "canFulfil\(" ui/src` | `capabilityApprovals.ts:245,283,307,308` only | yes |
 | AV9 | `_park_or_admit` has one production caller | `rg "_park_or_admit" src` | `agentic_dispatch.py:840` (call), `:1136` (def) | yes |
 | AV10 | `split_agent_work_tags` has one production caller | `rg "split_agent_work_tags" src` | `agent_work_tags.py:252` | yes |
 | AV11 | nothing restarts a start `_start` dropped during a run (F2's premise) | read `agent_work_runner.py:361-368`, `:444-445` | `_start` returns; `finally` only discards | yes |
 | AV12 | the HXI has no special path for AD-1328 command approvals (register R10) | `rg "run_command\|command escalation\|AD-1328" ui/src` | no matches | yes |
+| AV13 | no test pins a card or store line A2 changes, except the ordinary-action sentence | `rg "Approval records this decision only\|standingApprovalEligible, standingApprovalPolicy\|approvalDisplayText, capabilityFeedbackText"` (excluding prompts); `rg "CapabilityRequestCard" tests` | the card source only; `ApprovalWave.test.tsx:118` (`/does not replay the original action/`, kept for an ordinary action); `test_ad1164_continue_or_ask.py:1080-1081` pins two card lines A2 does not touch | yes |
+| AV14 | nothing outside `agent_work_tags.py` uses `_inert_line_ends`, `_OpenBlock` or its `_FENCE_RE` | `rg "_inert_line_ends\|_OpenBlock\|tags_module\._\|agent_work_tags import _"` (excluding prompts) | `agent_work_tags.py:133,144,158,181,183,201` only (A2's C15 begins patching `tags_module._FENCE_RE`) | yes |
+| AV15 | no other UI file renders the ordinary-action sentence or the "not replayed" feedback | `rg "does not replay\|not replayed\|standingApprovalEligible\|isAgentWorkCall\|canFulfil\b" ui/src` | `CapabilityRequestCard.tsx:52,134`, `capabilityApprovals.ts:125,165,208,248,253,292,316-318,332`, `ApprovalWave.test.tsx:118,169` | yes |
+| AV16 | the agent-work branch was the only unguarded await in `_maybe_fulfil_on_approval` (F20) | read `routers/capability_requests.py:453-526`, `cognitive/repair_issue.py:293-383` | the repair consumer wraps fulfil and decline (:295, :372); the command branch (:476-486) and the map (:504-513) have handlers; :493 had none | yes |
+| AV17 | no name A2b adds to `agent_work_tags.py` exists there | `rg "indent\|column\|head\|opened\|closer =\|paragraph\|width\|top_fence\|list_fence\|_columns\|_closes\|_LIST_ITEM_RE\|_PARAGRAPH_END_RE" src/probos/agent_work_tags.py` at `f035964c`; `rg "(head\|indent\|column\|width\|opened\|paragraph\|closer) ="` over the contract | no matches in the file; the contract's only hit is `head =` in `agent_work_runner.py` (§7.9) | yes |
+| AV18 | no test except C17 hands the scanner a marker on a line indented four or more columns, or a fence after a list marker, so A2b changes no other expectation | `rg -i "( {4,}\|\\t)\[/?(SELF_TASK\|REQUEST_WORK\|CLAIM_WORK\|DECLINE_WORK)" tests`; the same over the contract; `rg "(- \|\* \|\d\. )\{(FENCE\|TILDES\|LONG_FENCE)\}"` over the contract | no test files; contract :5210 (`fence_indented_in_a_list_item`, unchanged) and :5253 (the row A2b replaces); no list-marker fence | yes |
 
 ## 13. Prior Art and Blind Spots
 
@@ -4828,6 +6040,20 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
   - A1, register R9 (F5's remainder, P3): the call a claimant filed just before it was stopped stays pending; approving it marks it fulfilled and runs nothing (AD-855 and the admission act only on an item parked on it).
   - A1, register R10 (pre-existing, outside this batch; read, not executed): AD-1328's command approvals are marked fulfilled (`command_escalation.py:312`) and the HXI's `canFulfil` accepts only the repair action, so the HXI likely refuses their decision response too. To be filed as a BF.
   - A1, register R11 (P3): the gate files a `browser` `fill_credential` call, which AD-1154 refuses after the approval, so the Captain decides something that cannot run; nothing is entered.
+- **A2 (review round 2).**
+  - Prior art: CommonMark 0.31.2 (https://spec.commonmark.org/0.31.2/), §2.1, §4.5 and §6.1. **Adopted** for fences, spans and line endings; **adapted** for indentation, quotes and spans, each difference named in §9. `docs/research/reference-projects.md` was not re-checked: this is a repair (considered, deferred).
+  - Register R2 is closed: no standing rule is offered or issued on an agent-work approval.
+  - Register R12 (P3, injected-only): the HXI's size bound counts each number as one character (§9).
+  - Register R13 (P3, ordinary but rare): lazy quote continuation and a span across lines are read as written (§9). A2b brought indented code into scope; A2c closed the list shape R13 held, by counting a tracked fence's closer from its item's column.
+  - Register R14 (P3): an inert tag is removed silently, so an agent that fences its real request gets no acknowledgement. A candidate fix is a "read as an example" line; it changes `split_agent_work_tags`'s return (considered, deferred). A2b widens it: a tag indented four or more columns after a blank line (a list item's continuation) is inert, and so is the text after a fence-like line indented four or more columns, until a closer or a line left of its floor (A2c).
+  - Register R15 (P3, ordinary but rare; A2c): the list reading tracks one list item and has three blind spots. A lazy line ends the tracked item (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`), a line that only looks like an item (a setext `-`, an ordered marker that cannot interrupt a paragraph, a thematic break made of markers) is tracked as one, and a nested item is tracked at its innermost marker's column only, so a fence at the outer item's column after `- - text` or an item inside an item is floored at 0 (found by the orchestrator's differential: 6 of the 7 non-lazy documents left on four seeds of 12,000, each also acted on by candidate 3; the seventh is the lazy-line shape; mechanical repair 9). Any of them acts on a tag where CommonMark is inert only if the top reading is wrong too. Measured reach 0: no Ward Room body holds a fence indented one column or more. Considered, deferred: a container stack with the lazy rule.
+  - Considered, deferred: `inspectActionPayload`'s field checks could share `isActionWirePayload`. Deferred so that round 3's delta stays off the inspection path ordinary approvals use.
+- **A2b (the scanner's CommonMark differential).**
+  - Evidence: the orchestrator's probe ran the A2 scanner against markdown-it-py 4.0.0 over 3000 generated flat documents (§11, A2b additions).
+  - **Adopted** from CommonMark 0.31.2, re-read 2026-10-23: §2.2, §4.1, §4.2, §4.4 (indented code does not interrupt a paragraph), §4.5 (a closer takes up to three spaces of indentation, independent of the opener) and §5.2 (the content column).
+  - **Rejected:** one deterministic indentation rule, whether A2's "any indentation" or a closer within three columns of its opener alone. Without container parsing, one reading shifts phase on an indented-code line and takes the real opener for its closer.
+  - **Adapted:** two readings in one pass, inert when either says so. They share one opener size and one closer test (`_closes`).
+  - Considered, deferred: parsing list containers (their blank-line and lazy rules), which would remove the over-inert residue.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -4838,7 +6064,7 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
    - the executor's run arguments and its unarmed state are unchanged;
    - the router's and AD-855's behaviour for every non-agent-work request and item is unchanged.
 2. Every agent-created item is created through `AgentWorkService` only. `created_by` is the resolved requester slot, and no path stamps the Captain.
-3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker, in any letter case and closers included, is removed from the posted text; a marker in a code fence, on a quote line or inside another block is never acted on; the parse is one linear pass; a fault on one tag is acknowledged and the reply goes on.
+3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker, in any letter case and closers included, is removed from the posted text. (A2) A marker in an inert region is removed alone and never acted on. The inert regions are: a code fence read by character and run length, closed only by a matching run and running to the end when unclosed, with indentation read both at the top level and as in a list item (A2b: inert when either reading says so; A2c: a fence in a list item ends at a non-blank line left of the item's content column, and that line is read afresh); an indented code block that does not continue a paragraph (A2b); a `>` line, also after list item markers; an inline code span within one line. Lines end at LF, CRLF or CR. A block holds the blocks opened inside it and closes only on its own closer once they are closed; a block holding any other marker is not acted on. C17's rows are the grammar, and §9 names what is read as text. The parse is one linear pass; a fault on one tag is acknowledged and the reply goes on.
 4. The acknowledgement is part of the agent's own reply text; the tag module creates no Ward Room post.
 5. A chain claim goes through `ToolRegistry.check_and_invoke` for `claim_work_item`, with the claimant's department, rank and agent type, at WRITE.
 6. Every agent-work run passes a `ToolCallConfinement` and never passes `admitted_turn`. No run starts for an item that `execution_allowed` refuses.
@@ -4849,7 +6075,7 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
 11. No new EventLog category or event pair, request kind, config field, table, stop-seam constant or stop-check site.
 12. Every background run is held in a set and cancelled at stop. Shutdown stops the runner before the work store.
 13. `probos.agent_work_runner` imports the cognitive layer only inside functions, so the approval route's import chain gains no cognitive module.
-14. (A1) Both fulfilment predicates, Python's `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the `agent_work_call` scoped to its own item and agree on every row; the HXI confirms the approval's `fulfilled` response, and an approved, unfulfilled one stays on the actionable queue as retryable.
+14. (A1, A2) Both fulfilment predicates, Python's `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the validated `agent_work_call` scoped to its own item. They agree on every row of `ui/e2e/fixtures/ad1347-action-payload-rows.json`, which reaches each refusal of `validate_action_payload` (X22 for Python, `capabilityApprovals.ad1347a2.test.ts` for the HXI). The HXI confirms the approval's `fulfilled` response, and an approved, unfulfilled one stays on the actionable queue as retryable. A fulfilment-store fault returns that retryable approval with HTTP 200 (X23). The card says an agent-work approval resumes its item and offers no standing approval, and the route issues none (X24).
 15. (A1) Only a run that completed with an answer is done; any other stop is failed with its reason named; a run the executor parked stays parked with its booking; a start that arrives during a run is made after it, once.
 
 ## 15. Acceptance criteria
@@ -4861,7 +6087,9 @@ grep -n "class _Dispatcher" tests/test_bf887_continue_resumes_the_promoted_turn.
 5. **The stop:** C7 (create), X3 (claim and run); the census rows are updated (§7.16).
 6. **Provenance through the chain:** C3, C4.
 7. **Off is unchanged:** C5, C11, W3. AD-845 and AD-1165 are untouched (§9).
-8. **Review round 1 (A1):** C1 (11 cases), C5, C14 to C16, X3, X7, X12 to X21 and `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`; each new or changed assertion fails on the candidate `c5ad2b4b` except X12's negative control and X21's pin of AD-1154's set; the HXI file runs under vitest (not in the broad gate).
+8. **Review round 1 (A1):** C1 (11 cases), C5, C14 to C16, X3, X7, X12 to X21 and `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`; each new or changed assertion fails on the candidate `c5ad2b4b` except X12's negative control and X21's pin of AD-1154's set; the HXI file runs under vitest (not in the broad gate). **Review round 2 (A2):** C1's fenced case, C15 (5 cases), C17 (30), X22 to X24, `capabilityApprovals.ad1347a2.test.ts` (2) and `CapabilityRequestCard.ad1347.test.tsx` (1). Each fails on the candidate `f035964c` except X22 (the Python oracle of the shared rows, correct today) and C17's 11 control rows (`quote_line`, `quote_line_indented`, `text_between_two_spans_is_actionable`, `unmatched_backtick_is_text`, `closer_of_the_other_name_breaks_the_block`, `closer_without_opener_is_removed`, `crlf`, `lone_cr_ends_a_line` and the three `out_of_scope_` rows), which keep a refuse-everything scanner from passing. Run the two new vitest files with `ApprovalWave.test.tsx` and the rest of `ui/src/components/capability` and `ui/src/store` (not in the broad gate).
+   **Review round 3 (A2b):** C15's `list_markers` case, C17's 15 new rows, and `indented_code_after_a_blank_line` (renamed from `out_of_scope_indented_code_is_read_as_written`, now inert). Each of the 16 new or changed C17 rows fails on the A2-applied candidate except three controls: `top_level_closer_indented_three_closes`, `indented_line_continuing_a_paragraph_is_text` and `out_of_scope_indented_fence_line_opens_a_list_fence`. C15's `list_markers` is a bound and passes. Rerun the CommonMark differential (markdown-it-py, the flat documents, plus list-marker, heading and `***` lines). No document may be acted on where CommonMark is inert except by lazy quote continuation, and each document CommonMark acts on that the scanner ignores must be one of §9's named over-inert shapes.
+   **Review round 3 (A2c, the dedent regressions A2b introduced):** C17's 13 new rows and `indented_fence_line_ends_at_an_unindented_line` (A2b's control `out_of_scope_indented_fence_line_opens_a_list_fence`, renamed; it now expects the claim). On candidate 3's source (`f035964c`), 7 of the 14 fail. The other 7 pass: `marker_line_fence_ends_at_an_unindented_fence_line`, `marker_line_fence_ends_at_an_outdented_line` and `fence_in_an_item_ends_at_a_quote` (candidate 3 already reads them right; these were the regressions), plus `marker_line_inside_a_fence_is_content`, `text_after_a_list_fence_in_its_item_is_actionable`, `out_of_scope_lazy_line_then_an_item_fence_is_read_as_written` and the renamed row. Rerun both probes. The scanner differential must show no document that candidate 3 reads right and A2c acts on, and every other non-lazy one must be a register R15 shape. The real-post probe must show 0 non-lazy.
 9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Live acceptance (acceptance 1): what the Captain does and what is read
