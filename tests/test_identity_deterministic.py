@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
+from types import SimpleNamespace as _SimpleNamespace  # AD-1341 S1: the reset fakes' archive (contract §12)
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,6 +137,8 @@ class TestResetIdentityCleanup:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         assert not identity_db.exists(), "identity.db should be deleted after reset"
@@ -158,6 +161,8 @@ class TestResetIdentityCleanup:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         assert not instance_id_file.exists(), "instance_id should be deleted after reset"
@@ -177,4 +182,6 @@ class TestResetIdentityCleanup:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)  # Should not raise

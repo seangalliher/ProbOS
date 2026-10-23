@@ -121,6 +121,8 @@ undeclared_stores:
 - module: probos.knowledge.archive_store
   tables:
   - archive
+  - archive_erasures
+  - generations
 - module: probos.knowledge.edges
   tables:
   - knowledge_edges

@@ -12,6 +12,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace as _SimpleNamespace  # AD-1341 S1: the reset fakes' archive
 from typing import Any
 from unittest.mock import patch
 
@@ -1119,6 +1120,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569) A4: every reset reads config.archive for its preflight; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         # Tier 1 files cleared
@@ -1150,6 +1153,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         # Tier 1+2 files cleared
@@ -1191,6 +1196,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         # All tiers cleared
@@ -1219,6 +1226,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         # Same as Tier 4 — everything cleared
@@ -1240,6 +1249,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a dry run of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         # Everything should still exist
@@ -1267,6 +1278,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)
 
         assert not uuid_dir.exists()
@@ -1285,6 +1298,8 @@ class TestProbOSReset:
                 SimpleNamespace(knowledge=SimpleNamespace(repo_path=str(repo))),
                 None,
             )
+            # AD-1341 S1 (#1569): a reset of tier 2 or above reads config.archive; this fake predates it.
+            mock_cfg.return_value[0].archive = _SimpleNamespace(enabled=False)
             _cmd_reset(args)  # Should not raise
 
 

@@ -2655,6 +2655,17 @@ def resolve_archive_db_path(archive: ArchiveConfig) -> Path:
     return base / "archive.db"
 
 
+def resolve_records_repo_path(records: RecordsConfig, data_dir: Path) -> Path:
+    """Effective location of Ship's Records (AD-434), shared by startup and ``probos reset`` (AD-1341).
+
+    ``repo_path`` is operator-overridable; empty means ``{data_dir}/ship-records``. One function, so the
+    reset's promotion reads the records this vessel writes rather than a path computed a second time.
+    """
+    if records.repo_path:
+        return Path(records.repo_path)
+    return Path(data_dir) / "ship-records"
+
+
 class SensoriumConfig(BaseModel):
     """AD-666/AD-1122: Agent Sensorium tracking configuration."""
 

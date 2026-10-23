@@ -6,7 +6,7 @@ import pytest
 
 from probos.cognitive.oracle_service import OracleService
 from probos.config import ArchiveConfig
-from probos.knowledge.archive_store import ArchiveEntry, ArchiveStore
+from probos.knowledge.archive_store import ArchiveEntry, ArchiveStore, PromotionOutcome, PromotionRecord, SourceKind
 from probos.storage.sqlite_factory import SQLiteConnectionFactory
 
 
@@ -20,20 +20,26 @@ async def test_archive_store_initialize(tmp_path) -> None:
         await store.close()
 
 
+# AD-1341 S1 (#1569): ``append`` is gone and ``promote_entry`` is the archive's one write. This test asserted that
+# the old write returned an id; it now asserts that the one write archives a record.
 @pytest.mark.asyncio
-async def test_archive_store_append(tmp_path) -> None:
+async def test_archive_store_promote(tmp_path) -> None:
     store = _make_store(tmp_path)
     try:
         await store.initialize()
-        entry_id = await _append_entry(store, title="Exit note", content="Keep logs")
-        assert entry_id > 0
+        outcome = await _append_entry(store, title="Exit note", content="Keep logs")
+        assert outcome is PromotionOutcome.CREATED
+        assert await store.count() == 1
     finally:
         await store.close()
 
 
 def test_archive_store_append_only() -> None:
+    # AD-1341 S1 (#1569): no update, delete or append. The one removal is the Captain's ``erase_entry``, reached
+    # only from ``probos archive erase``; tests/test_ad1341_s1_archive_store.py holds its marker contract.
     assert not hasattr(ArchiveStore, "update")
     assert not hasattr(ArchiveStore, "delete")
+    assert not hasattr(ArchiveStore, "append")
 
 
 @pytest.mark.asyncio
@@ -58,23 +64,24 @@ async def test_archive_store_search_by_category(tmp_path) -> None:
     store = _make_store(tmp_path)
     try:
         await store.initialize()
+        # AD-1341 S1 (#1569): an entry's category is now its source kind; the filter is unchanged.
         await _append_entry(
             store,
-            category="lesson_learned",
+            source_kind=SourceKind.CONVERGENCE_REPORT,
             title="Warp",
             content="Shared keyword",
         )
         await _append_entry(
             store,
-            category="procedure",
+            source_kind=SourceKind.CAPTAINS_LOG,
             title="Procedure",
             content="Shared keyword",
         )
 
-        results = await store.search("Shared", category="procedure")
+        results = await store.search("Shared", category="captains_log")
 
         assert len(results) == 1
-        assert results[0].category == "procedure"
+        assert results[0].category == "captains_log"
     finally:
         await store.close()
 
@@ -99,7 +106,7 @@ async def test_oracle_service_queries_archive_tier(tmp_path) -> None:
         await store.initialize()
         await _append_entry(
             store,
-            category="exit_note",
+            source_kind=SourceKind.NOTEBOOK_FINDING,  # AD-1341 S1 (#1569): the category is the source kind
             title="Reset lesson",
             content="Preserve mission logs",
             author_callsign="Chapel",
@@ -158,20 +165,26 @@ async def _append_entry(
     store: ArchiveStore,
     *,
     timeline_id: str = "timeline-1",
-    category: str = "duty_report",
+    source_kind: SourceKind = SourceKind.NOTEBOOK_FINDING,
     title: str,
     content: str,
     author_agent_type: str = "medical",
     author_callsign: str = "Chapel",
-) -> int:
-    return await store.append(
-        timeline_id=timeline_id,
-        category=category,
-        title=title,
-        content=content,
-        author_agent_type=author_agent_type,
-        author_callsign=author_callsign,
-        metadata={"source": "test"},
+) -> PromotionOutcome:
+    # AD-1341 S1 (#1569): ``append`` is gone; ``promote_entry`` is the archive's one write. The helper keeps its
+    # name so the tests above read as before; each entry is a ship-classified record with its own source ref.
+    return await store.promote_entry(
+        PromotionRecord(
+            timeline_id=timeline_id,
+            source_kind=source_kind,
+            source_ref=f"notebooks/{author_callsign}/{title}.md",
+            title=title,
+            content=content,
+            classification="ship",
+            author_callsign=author_callsign,
+            author_agent_type=author_agent_type,
+            metadata={"source": "test"},
+        )
     )
 
 

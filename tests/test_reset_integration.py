@@ -51,10 +51,13 @@ def _run_reset(data_dir, tmp_path, **flag_overrides):
     args = _reset_args(data_dir, **flag_overrides)
     mock_config = MagicMock()
     mock_config.knowledge.repo_path = str(knowledge_dir)
+    # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive, and a MagicMock's `enabled` reads as True. These
+    # tests exercise the tier loop; the promotion is tests/test_ad1341_s1_reset_and_erase.py's.
+    mock_config.archive.enabled = False
 
     with patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
         with patch("probos.__main__._default_data_dir", return_value=data_dir):
-            _cmd_reset(args)
+            assert _cmd_reset(args) == 0  # AD-1341 S1: _cmd_reset returns its exit code
 
 
 class TestTier1RebootIntegration:

@@ -1518,8 +1518,8 @@ def test_committed_baseline_records_the_measured_surface(
     """The numbers AD-1270e1 was drafted against, re-measured on this tree."""
     counts = baseline["surface_counts"]
 
-    assert counts["public_names"] == 307
-    assert counts["owned"] == 294
+    assert counts["public_names"] == 308  # AD-1341 S1 (#1569) adds resolve_records_repo_path (307 -> 308)
+    assert counts["owned"] == 295  # AD-1341 S1 (#1569): resolve_records_repo_path is owned (294 -> 295)
     assert counts["incidental"] == 13
     assert counts["own_models"] == 227
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
@@ -1552,7 +1552,7 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1340 adds memory.eviction_disposition (1868 -> 1869).
     assert counts["field_definitions"] == 1869  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
-    assert len(baseline["names"]) == 307
+    assert len(baseline["names"]) == 308  # AD-1341 S1 (#1569): resolve_records_repo_path
     assert len(baseline["models"]) == 228
 
 
@@ -1788,7 +1788,7 @@ def test_check_is_green_on_the_committed_baseline() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
-    assert "names=307" in proc.stdout
+    assert "names=308" in proc.stdout  # AD-1341 S1 (#1569): resolve_records_repo_path
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:

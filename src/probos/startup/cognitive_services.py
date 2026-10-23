@@ -599,11 +599,13 @@ async def init_cognitive_services(
     records_store = None
     if config.records.enabled:
         try:
+            from probos.config import resolve_records_repo_path
             from probos.knowledge.records_store import RecordsStore
 
+            # AD-1341: the default comes from the one resolver probos reset's promotion also reads.
             rcfg = config.records
             if not rcfg.repo_path:
-                rcfg = rcfg.model_copy(update={"repo_path": str(data_dir / "ship-records")})
+                rcfg = rcfg.model_copy(update={"repo_path": str(resolve_records_repo_path(rcfg, data_dir))})
             records_store = RecordsStore(rcfg, ontology=None)
             await records_store.initialize()
             # BF-084: Seed manuals from config/manuals/ into ship-records

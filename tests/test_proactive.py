@@ -716,6 +716,7 @@ class TestResetScope:
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive
 
         with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
             with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
@@ -749,6 +750,7 @@ class TestResetScope:
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569): a tier 2+ reset reads config.archive
 
         with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
             with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
@@ -777,6 +779,7 @@ class TestResetScope:
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569) A4: every reset reads config.archive
 
         with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
             with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):
@@ -803,6 +806,7 @@ class TestResetScope:
         from unittest.mock import patch as mock_patch
         mock_config = MagicMock()
         mock_config.knowledge.repo_path = str(knowledge_dir)
+        mock_config.archive.enabled = False  # AD-1341 S1 (#1569) A4: every reset reads config.archive
 
         with mock_patch("probos.__main__._load_config_with_fallback", return_value=(mock_config, None)):
             with mock_patch("probos.__main__._default_data_dir", return_value=data_dir):

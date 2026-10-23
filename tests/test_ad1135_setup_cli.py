@@ -1565,9 +1565,10 @@ def test_main_config_parsing_for_serve_and_the_shell_is_unchanged(tmp_path: Path
         monkeypatch.setattr(sys, "argv", ["probos", *argv])
         main_mod.main()
 
-    # Measured before B6: serve's own --config default replaces one given before `serve`. Only setup's
-    # parser changed, so this stays; the two commands setup prints (serve --config X, --config X) name X.
-    assert seen == [("serve", None), ("serve", explicit), ("shell", explicit)]
+    # Measured before B6: serve's own --config default replaced one given before `serve`, and this pinned it.
+    # BF-916 (#1624) gives serve's --config SUPPRESS, as setup's has, so X now reaches serve in either position;
+    # the two commands setup prints (serve --config X, --config X) still name X.
+    assert seen == [("serve", explicit), ("serve", explicit), ("shell", explicit)]
 
 
 @pytest.mark.parametrize("where", ["chat-excerpt", "listed-model"])

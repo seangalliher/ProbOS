@@ -64,6 +64,10 @@ from probos.experience.shell import ProbOSShell
 if TYPE_CHECKING:
     import httpx
 
+    from probos.config import SystemConfig
+    from probos.knowledge.archive_store import ArchiveStore
+    from probos.knowledge.records_store import RecordsStore
+
 
 def _default_data_dir() -> Path:
     """Return a stable, platform-appropriate data directory.
@@ -742,12 +746,14 @@ async def _serve(
     # TOCTOU race: either we win the pidfile and own it, or we lose and
     # raise AnotherInstanceRunning. The acquired path is removed in the
     # cleanup finally block below.
-    from probos.pidfile_guard import AnotherInstanceRunning, acquire_pidfile
+    from probos.pidfile_guard import AnotherInstanceRunning, PidfileLockUnavailable, acquire_pidfile
     resolved_data_dir = data_dir or _default_data_dir()
     try:
         _pidfile = acquire_pidfile(resolved_data_dir)
-    except AnotherInstanceRunning as exc:
-        console.print(f"[red]✗[/red] {exc}")
+    except (AnotherInstanceRunning, PidfileLockUnavailable) as exc:
+        from rich.markup import escape  # AD-1341 S1 A7 (F4): the refusal names a path; it prints as text, never markup
+
+        console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): serve's refusal
         raise SystemExit(2) from exc
 
     # AD-820: refuse to start when the previous shutdown left the data dir
@@ -950,11 +956,9 @@ async def _serve(
             await heartbeat_task
         except BaseException:
             pass
-        # Remove pidfile so external tooling knows the runtime is gone.
-        try:
-            _pidfile.unlink(missing_ok=True)
-        except Exception:
-            pass
+        # AD-1341 S1 A6 (F1): the pidfile is no longer removed here, before anything has stopped: that told a reset
+        # the data directory was free while the event log and the runtime's stores were still open. It goes after
+        # runtime.stop() has returned (below).
         # AD-708e: stop the LAN mDNS advertiser (idempotent, never raises).
         if _advertiser is not None:
             try:
@@ -992,8 +996,10 @@ async def _serve(
             except Exception as e:
                 console.print(f" [yellow]warn: {e}[/yellow]")
         console.print("  [dim]Stopping runtime...[/dim]", end="")
+        runtime_closed = False
         try:
             await asyncio.wait_for(runtime.stop(), timeout=10)
+            runtime_closed = True
             console.print(" [green]done[/green]")
         except asyncio.TimeoutError:
             console.print(" [yellow]timed out (10s)[/yellow]")
@@ -1003,6 +1009,15 @@ async def _serve(
             console.print(f" [yellow]warn: {e}[/yellow]")
         finally:
             console.print("[dim]ProbOS stopped.[/dim]")
+            # AD-1341 S1 A6 (F1): the pidfile goes only now, once runtime.stop() has returned and its writers have
+            # closed, and immediately before the process ends. A stop that timed out, failed or was interrupted may
+            # leave a writer open, so the pidfile stays: the process ends at once, and the next acquirer finds a
+            # dead PID and recovers it (AD-816).
+            if runtime_closed:
+                try:
+                    _pidfile.unlink()
+                except OSError:  # already gone, or not removable: the guard recovers a dead PID either way
+                    pass
             os._exit(0)
 
 
@@ -2109,7 +2124,9 @@ def _cmd_backup_reclaim(args: argparse.Namespace) -> int:
         try:
             assert_no_other_instance(data_dir)
         except AnotherInstanceRunning as exc:
-            console.print(f"[red]✗[/red] {exc}")
+            from rich.markup import escape  # AD-1341 S1 A7 (F4): the refusal names a path; it prints as text, never markup
+
+            console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): backup-reclaim's refusal
             console.print(
                 "[yellow]A running vessel may own one of these working "
                 "directories. Stop it before using --force, or drop --force to "
@@ -2207,7 +2224,9 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
     try:
         assert_no_other_instance(data_dir)
     except AnotherInstanceRunning as exc:
-        console.print(f"[red]✗[/red] {exc}")
+        from rich.markup import escape  # AD-1341 S1 A7 (F4): the refusal names a path; it prints as text, never markup
+
+        console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)  # A7 (F4): rebuild-episodic's refusal
         console.print(
             "[yellow]Stop the runtime cleanly (Ctrl+C in the serve "
             "session or POST /api/system/shutdown) before running rebuild-episodic.[/yellow]"
@@ -2882,13 +2901,31 @@ def _show_dry_run(tier: int, data_dir: Path, active_task_count: int, console: Co
     console.print("\n  [dim][DRY RUN] No changes made.[/dim]")
 
 
-def _cmd_reset(args: argparse.Namespace) -> None:
-    """Handle ``probos reset`` — tiered reset system (BF-070)."""
+def _cmd_reset(args: argparse.Namespace) -> int:
+    """Handle ``probos reset`` — tiered reset system (BF-070). Returns the exit code (AD-1341 S1).
+
+    0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, the Ship's
+    Archive lies inside what the reset deletes, or the promotion of a tier 2 or 3 reset failed); 2 a
+    ``--skip-promotion`` without a usable reason.
+    At tier 2 and above what the crew published is promoted into the Ship's Archive before the tier loop.
+    """
     console = Console()
 
     # Deprecated flag notice
     if getattr(args, 'wipe_records', False):
         console.print("[yellow]⚠ --wipe-records is deprecated, use --full[/yellow]")
+
+    # Resolve the effective tier (from the flags alone; it needs no configuration)
+    tier = _resolve_tier(args)
+
+    # AD-1341 S1: --skip-promotion REASON is checked before anything is read, locked or deleted, and (A4, F4)
+    # before the configuration is loaded, so a malformed configuration cannot turn exit 2 into a traceback.
+    skip_reason = getattr(args, 'skip_promotion', None)
+    if skip_reason is not None:
+        problem = _skip_promotion_problem(skip_reason, tier)
+        if problem:
+            console.print(f"[red]✗[/red] {problem}")
+            return 2
 
     # Load config to find knowledge repo_path
     config, _ = _load_config_with_fallback(getattr(args, 'config', None))
@@ -2901,8 +2938,16 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     if not repo_path.is_dir() and data_dir_knowledge.is_dir():
         repo_path = data_dir_knowledge
 
-    # Resolve the effective tier
-    tier = _resolve_tier(args)
+    # AD-1341 S1 A4 (F3): refuse a reset that would delete the Ship's Archive. Every tier and a dry run too, before
+    # the scheduled-task read, the confirmation and the pidfile; nothing is opened or touched.
+    overlap = _archive_reset_overlap(config, tier, data_dir, repo_path)
+    if overlap:
+        console.print("[red]✗[/red] probos reset refused: the Ship's Archive is inside what this reset deletes.")
+        console.print(
+            f"  archive.db_path is inside {overlap}; move it out of what a reset deletes. Nothing was changed.",
+            markup=False,
+        )
+        return 1
 
     # AD-418: Check for active scheduled tasks that survive reset
     scheduled_db = data_dir / "scheduled_tasks.db"
@@ -2928,118 +2973,153 @@ def _cmd_reset(args: argparse.Namespace) -> None:
     # --dry-run: show what would happen and exit
     if getattr(args, 'dry_run', False):
         _show_dry_run(tier, data_dir, active_task_count, console)
-        return
+        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
+            return _show_promotion_plan(config, data_dir, skip_reason, console)
+        return 0
 
     # Confirmation prompt (skipped with -y)
     if not getattr(args, 'yes', False):
         if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
             console.print("[dim]Aborted.[/dim]")
-            return
+            return 0
 
-    # ── Execute reset ──
-    tier_counts: dict[int, int] = {}
-    total_freed: int = 0
-    archive_path: Path | None = None
+    # AD-1341 S1 (D12): every executing reset holds the AD-816 pidfile `probos serve` takes for this data directory,
+    # so no vessel writes beside the reset or boots into it half done. A live owner refuses it.
+    from rich.markup import escape
 
-    for t in range(1, tier + 1):
-        tier_def = RESET_TIERS[t]
-        count = 0
+    from probos.pidfile_guard import AnotherInstanceRunning, PidfileLockUnavailable, acquire_pidfile
 
-        # Archive files first (ward_room.db at Tier 4)
-        for fname in tier_def.get("archive_first", []):
-            fpath = data_dir / fname
-            if fpath.is_file():
-                archive_dir = data_dir / "archives"
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-                archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
-                shutil.copy2(str(fpath), str(archive_path))
+    try:
+        reset_pidfile = acquire_pidfile(data_dir)
+    except AnotherInstanceRunning as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)
+        console.print("[yellow]probos reset refused: stop the vessel first. Nothing was changed.[/yellow]")
+        return 1
+    except PidfileLockUnavailable as exc:  # A6 (F2): no vessel to stop; this filesystem cannot lock
+        console.print(f"[red]✗[/red] {escape(str(exc))}", emoji=False)
+        console.print("[yellow]probos reset refused: file locks unavailable. Nothing was changed.[/yellow]")
+        return 1
+    try:
+        # AD-1341 S1: what the crew published is promoted before anything is deleted; any failure refuses.
+        promote_first = tier >= 2  # AD-1341 S1: tier 1 keeps the crew, so it has nothing to promote
+        if promote_first and not _promote_before_reset(config, tier, data_dir, skip_reason, console):
+            console.print("[red]✗[/red] probos reset refused before deleting anything.")
+            return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted
 
-        # AD-541f: Record reset eviction before deleting files
-        if t >= 2:
-            _audit_db = data_dir / "eviction_audit.db"
-            if _audit_db.is_file():
-                try:
-                    import sqlite3 as _sqlite3
-                    import time as _time
-                    import uuid as _uuid
-                    _aconn = _sqlite3.connect(str(_audit_db))
-                    _aconn.execute(
-                        "INSERT INTO eviction_audit "
-                        "(id, episode_id, agent_id, timestamp, reason, process, "
-                        "details, content_hash, episode_timestamp) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (_uuid.uuid4().hex, "*", "*", _time.time(),
-                         "reset", "probos_reset",
-                         f"Tier {tier} reset — total episodic memory wipe",
-                         "", 0.0),
-                    )
-                    _aconn.commit()
-                    _aconn.close()
-                except Exception:
-                    pass  # Best-effort — reset must proceed
+        # ── Execute reset ──
+        tier_counts: dict[int, int] = {}
+        total_freed: int = 0
+        archive_path: Path | None = None
 
-        # Delete files
-        for fname in tier_def.get("files", []):
-            fpath = data_dir / fname
-            if fpath.is_file():
-                total_freed += fpath.stat().st_size
-                fpath.unlink()
-                count += 1
+        for t in range(1, tier + 1):
+            tier_def = RESET_TIERS[t]
+            count = 0
 
-        # Delete directories
-        for dname in tier_def.get("dirs", []):
-            dpath = data_dir / dname
-            if dpath.is_dir():
-                for fp in dpath.glob("*"):
-                    if fp.is_file():
-                        total_freed += fp.stat().st_size
-                        fp.unlink()
-                    elif fp.is_dir():
-                        shutil.rmtree(fp, onerror=_force_remove_readonly)
-                count += 1
+            # Archive files first (ward_room.db at Tier 4)
+            for fname in tier_def.get("archive_first", []):
+                fpath = data_dir / fname
+                if fpath.is_file():
+                    archive_dir = data_dir / "archives"
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                    archive_path = archive_dir / f"{fpath.stem}_{timestamp}{fpath.suffix}"
+                    shutil.copy2(str(fpath), str(archive_path))
 
-        # Special cleanup
-        for special in tier_def.get("special", []):
-            if special == "chromadb_uuid_dirs":
-                for uuid_dir in _find_chromadb_uuid_dirs(data_dir):
-                    shutil.rmtree(uuid_dir, onerror=_force_remove_readonly)
+            # AD-541f: Record reset eviction before deleting files
+            if t >= 2:
+                _audit_db = data_dir / "eviction_audit.db"
+                if _audit_db.is_file():
+                    try:
+                        import sqlite3 as _sqlite3
+                        import time as _time
+                        import uuid as _uuid
+                        _aconn = _sqlite3.connect(str(_audit_db))
+                        _aconn.execute(
+                            "INSERT INTO eviction_audit "
+                            "(id, episode_id, agent_id, timestamp, reason, process, "
+                            "details, content_hash, episode_timestamp) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (_uuid.uuid4().hex, "*", "*", _time.time(),
+                             "reset", "probos_reset",
+                             f"Tier {tier} reset — total episodic memory wipe",
+                             "", 0.0),
+                        )
+                        _aconn.commit()
+                        _aconn.close()
+                    except Exception:
+                        pass  # Best-effort — reset must proceed
+
+            # Delete files
+            for fname in tier_def.get("files", []):
+                fpath = data_dir / fname
+                if fpath.is_file():
+                    total_freed += fpath.stat().st_size
+                    fpath.unlink()
                     count += 1
-            elif special == "knowledge_subdirs":
-                # Clear KnowledgeStore subdirectories (json/py files)
-                for sub in _RESET_SUBDIRS:
-                    sub_dir = repo_path / sub
-                    if not sub_dir.is_dir():
-                        continue
-                    for fp in sub_dir.glob("*"):
-                        if fp.is_file() and fp.suffix in (".json", ".py"):
+
+            # Delete directories
+            for dname in tier_def.get("dirs", []):
+                dpath = data_dir / dname
+                if dpath.is_dir():
+                    for fp in dpath.glob("*"):
+                        if fp.is_file():
+                            total_freed += fp.stat().st_size
                             fp.unlink()
-                    count += 1
-            elif special == "ontology_instance_id":
-                instance_id_file = data_dir / "ontology" / "instance_id"
-                if instance_id_file.is_file():
-                    instance_id_file.unlink()
+                        elif fp.is_dir():
+                            shutil.rmtree(fp, onerror=_force_remove_readonly)
                     count += 1
 
-        tier_counts[t] = count
+            # Special cleanup
+            for special in tier_def.get("special", []):
+                if special == "chromadb_uuid_dirs":
+                    for uuid_dir in _find_chromadb_uuid_dirs(data_dir):
+                        shutil.rmtree(uuid_dir, onerror=_force_remove_readonly)
+                        count += 1
+                elif special == "knowledge_subdirs":
+                    # Clear KnowledgeStore subdirectories (json/py files)
+                    for sub in _RESET_SUBDIRS:
+                        sub_dir = repo_path / sub
+                        if not sub_dir.is_dir():
+                            continue
+                        for fp in sub_dir.glob("*"):
+                            if fp.is_file() and fp.suffix in (".json", ".py"):
+                                fp.unlink()
+                        count += 1
+                elif special == "ontology_instance_id":
+                    instance_id_file = data_dir / "ontology" / "instance_id"
+                    if instance_id_file.is_file():
+                        instance_id_file.unlink()
+                        count += 1
 
-    # Git commit if repo is git-initialized
-    if (repo_path / ".git").is_dir():
+            tier_counts[t] = count
+
+        # Git commit if repo is git-initialized
+        if (repo_path / ".git").is_dir():
+            try:
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "add", "-A"],
+                    env=trusted_command_env(),
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(repo_path), "commit", "-m",
+                     f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
+                    env=trusted_command_env(),
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+                )
+            except Exception:
+                pass  # Best-effort git commit during reset
+    finally:
+        # AD-1341 S1: released on every exit. Left behind, it names a finished PID, which the next acquire removes.
         try:
-            subprocess.run(
-                ["git", "-C", str(repo_path), "add", "-A"],
-                env=trusted_command_env(),
-                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            reset_pidfile.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            console.print(
+                f"[yellow]⚠ The pidfile {escape(str(reset_pidfile))} was not removed: {escape(str(exc))}[/yellow]"
             )
-            subprocess.run(
-                ["git", "-C", str(repo_path), "commit", "-m",
-                 f"probos reset: Tier {tier} — {RESET_TIERS[tier]['name']}"],
-                env=trusted_command_env(),
-                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
-            )
-        except Exception:
-            pass  # Best-effort git commit during reset
 
     # ── Summary output ──
     tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
@@ -3076,6 +3156,260 @@ def _cmd_reset(args: argparse.Namespace) -> None:
             f"\n  [yellow]⚠ {active_task_count} scheduled task(s) active — "
             "routing may be degraded until Hebbian weights rebuild.[/yellow]"
         )
+    return 0
+
+
+# ── AD-1341 S1: the Ship's Archive before a reset, and the Captain's erasure ──
+
+#: Shown, never written: what a plan is attributed to when the ship has no instance id. A promotion needs one.
+_UNATTRIBUTED_TIMELINE = "(no instance id)"
+
+
+def _skip_promotion_problem(reason: str, tier: int) -> str:
+    """Why ``--skip-promotion REASON`` cannot be used, or ``""``. Checked before anything is read or locked."""
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    if tier < 2:
+        return "--skip-promotion applies to a reset of tier 2 or above; --soft promotes nothing."
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        return f"--skip-promotion needs a reason of 1 to {ARCHIVE_REASON_MAX_CHARS} characters."
+    return ""
+
+
+def _read_instance_id(data_dir: Path) -> str:
+    """The ship's instance id (``ontology/instance_id``, stripped), or ``""`` when there is none.
+
+    The generation a reset closes is attributed to it, and tier 2 deletes the file, so a reset reads it before
+    the tier loop. It is the file the ontology loader writes on a vessel's first boot.
+    """
+    id_file = data_dir / "ontology" / "instance_id"
+    if not id_file.is_file():
+        return ""
+    return id_file.read_text(encoding="utf-8").strip()
+
+
+def _reset_records_store(config: SystemConfig, data_dir: Path) -> RecordsStore:
+    """Ship's Records at the path this vessel writes (D10's resolver), never initialised: reading needs no git."""
+    from probos.config import resolve_records_repo_path
+    from probos.knowledge.records_store import RecordsStore
+
+    records_path = resolve_records_repo_path(config.records, data_dir)
+    return RecordsStore(config.records.model_copy(update={"repo_path": str(records_path)}), ontology=None)
+
+
+def _configured_archive_store(config: SystemConfig) -> ArchiveStore:
+    """The Ship's Archive at the path startup opens (AD-1265's resolver), not yet initialised.
+
+    Only the computed default's directory is created, as startup does; an operator's path is used as given.
+    """
+    from probos.config import resolve_archive_db_path
+    from probos.knowledge.archive_store import ArchiveStore
+    from probos.storage.sqlite_factory import default_factory
+
+    archive_path = resolve_archive_db_path(config.archive)
+    if not config.archive.db_path:
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+    return ArchiveStore(str(archive_path), connection_factory=default_factory)
+
+
+def _archive_reset_overlap(config: SystemConfig, tier: int, data_dir: Path, repo_path: Path) -> str:
+    """What a reset of ``tier`` deletes that is, or holds, the Ship's Archive; ``""`` when nothing (A4, F3).
+
+    The targets are what the tier loop removes for tiers 1 to ``tier``: each listed file; each listed directory,
+    whose contents go; ChromaDB's UUID-named directories; the knowledge store's subdirectories (only their ``.json``
+    and ``.py`` files go, but an archive there is refused too); and the instance id file. Both sides are resolved
+    (symlinks, ``..``) and compared with the platform's case rule. It reads paths only and opens nothing.
+    """
+    from probos.config import resolve_archive_db_path
+
+    if not config.archive.enabled:  # D13: the reset neither opens nor protects a disabled archive
+        return ""
+    archive = os.path.normcase(str(resolve_archive_db_path(config.archive).resolve()))
+    targets: list[Path] = []
+    for level in range(1, tier + 1):
+        tier_def = RESET_TIERS[level]
+        specials = tier_def.get("special", [])
+        targets += [data_dir / name for name in [*tier_def.get("files", []), *tier_def.get("dirs", [])]]
+        if "chromadb_uuid_dirs" in specials:
+            targets += _find_chromadb_uuid_dirs(data_dir)
+        if "knowledge_subdirs" in specials:
+            targets += [repo_path / sub for sub in _RESET_SUBDIRS]
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        if archive == resolved or archive.startswith(resolved.rstrip(os.sep) + os.sep):
+            return str(target)
+    return ""
+
+
+def _promote_before_reset(
+    config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, console: Console,
+) -> bool:
+    """Promote what the crew published into the Ship's Archive before a reset of tier 2 or above.
+
+    True when the reset may go on; False, having said why, when it must not, with nothing deleted. With the
+    archive disabled there is nowhere to promote to: a notice, and True (D13). That check comes before the one
+    ``asyncio.run``, so a caller already inside an event loop with the archive disabled
+    (``tests/test_bf902_fts_reconciliation.py``) never starts a second loop.
+    """
+    from rich.markup import escape
+
+    if not config.archive.enabled:
+        console.print(
+            "[yellow]⚠ The Ship's Archive is disabled (archive.enabled): "
+            "nothing is promoted before this reset.[/yellow]"
+        )
+        return True
+    try:
+        timeline_id = _read_instance_id(data_dir)  # before the tier loop deletes it
+        proceed, message = asyncio.run(_promote_into_archive(config, tier, data_dir, timeline_id, skip_reason))
+    except Exception as exc:  # any failure refuses the reset, and the Captain sees why
+        console.print(
+            f"[red]✗[/red] Ship's Archive promotion failed: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return False  # AD-1341 S1: a failed promotion refuses the reset
+    console.print(f"  {escape(message)}" if proceed else f"[red]✗[/red] {escape(message)}")
+    return proceed
+
+
+async def _promote_into_archive(
+    config: SystemConfig, tier: int, data_dir: Path, timeline_id: str, skip_reason: str | None,
+) -> tuple[bool, str]:
+    """The promotion run, or the recorded skip: (the reset may go on, what to tell the Captain).
+
+    Raises on any failure, and closes the archive on every exit. Without an instance id nothing can be
+    attributed (D9): anything to promote refuses, and a directory with nothing to promote has no generation to
+    record, so nothing is opened.
+    """
+    from probos.knowledge.archive_promotion import plan_promotion, promote_ship_records
+    from probos.knowledge.archive_store import GenerationOutcome, GenerationRecord
+
+    records = _reset_records_store(config, data_dir)
+    if skip_reason is None and not timeline_id:
+        plan = await plan_promotion(records, timeline_id=_UNATTRIBUTED_TIMELINE)
+        if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id
+            return False, (
+                f"No instance id: {len(plan.records)} record(s) cannot be attributed to a timeline. "
+                "Pass --skip-promotion REASON to reset without promoting them."
+            )
+        return True, "No instance id and nothing to promote: no generation is recorded."
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        if skip_reason is not None:
+            skipped = GenerationRecord(
+                timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.SKIPPED, reason=skip_reason,
+            )
+            await archive.record_generation(skipped)
+            return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}"
+        promoted = await promote_ship_records(records, archive, timeline_id=timeline_id)
+        closed = GenerationRecord(
+            timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.PROMOTED,
+            created=len(promoted.created), present=len(promoted.present), erased=len(promoted.erased),
+            withheld=len(promoted.withheld),
+        )
+        await archive.record_generation(closed)
+    finally:
+        await archive.close()
+    return True, (
+        f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
+        f"{len(promoted.erased)} erased by the Captain, {len(promoted.withheld)} withheld (timeline {timeline_id})."
+    )
+
+
+def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console) -> int:
+    """``--dry-run`` at tier 2 or above: what the reset would promote. Reads Ship's Records; opens no archive.
+
+    0 when the plan was shown (a reset that would refuse says so); 1 when Ship's Records could not be read.
+    """
+    from rich.markup import escape
+
+    from probos.knowledge.archive_promotion import plan_promotion
+
+    if not config.archive.enabled:
+        console.print("\n  [dim]The Ship's Archive is disabled (archive.enabled): nothing would be promoted.[/dim]")
+        return 0
+    if skip_reason is not None:
+        console.print(f"\n  Ship's Archive promotion would be skipped, recording: {escape(skip_reason.strip())}")
+        return 0
+    try:
+        timeline_id = _read_instance_id(data_dir)
+        plan = asyncio.run(
+            plan_promotion(_reset_records_store(config, data_dir), timeline_id=timeline_id or _UNATTRIBUTED_TIMELINE)
+        )
+    except Exception as exc:  # the dry run reports it; nothing is touched either way
+        console.print(
+            f"[red]✗[/red] The promotion plan could not be read: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return 1
+    console.print(f"\n  Ship's Archive plan for timeline {escape(timeline_id or _UNATTRIBUTED_TIMELINE)}:")
+    console.print(f"    {len(plan.records)} to promote, {len(plan.withheld)} withheld")
+    for record in plan.records:
+        console.print(f"    + {escape(record.source_ref)}")
+    for path in plan.withheld:
+        console.print(f"    - withheld: {escape(path)}")
+    if plan.records and not timeline_id:
+        console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
+    return 0
+
+
+def _cmd_archive(args: argparse.Namespace) -> int:
+    """Handle ``probos archive erase ENTRY_ID --reason TEXT`` (AD-1341 S1): the Captain's erasure.
+
+    The row is deleted and its bytes overwritten (``secure_delete``). A marker keeps the entry's id, timeline,
+    source kind and ref, the reason and the time, never its title or content, and keeps that source from being
+    promoted again. 0 erased or declined; 1 no such entry, or the erasure failed; 2 the archive disabled, or a
+    bad id or reason. Plain ``print``: the entry's title and the reason are shown as text, never as markup.
+    """
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    if getattr(args, "archive_cmd", None) != "erase":
+        print("usage: probos archive erase ENTRY_ID --reason TEXT [--yes] [--config PATH]")
+        return 2
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:
+        print("The Ship's Archive is disabled (archive.enabled): there is nothing to erase.")
+        return 2
+    entry_id, reason = args.entry_id, args.reason
+    if entry_id <= 0:
+        print("An archive entry id is a positive integer.")
+        return 2
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        print(f"--reason needs 1 to {ARCHIVE_REASON_MAX_CHARS} characters. Do not restate the entry's content.")
+        return 2
+    try:
+        return asyncio.run(_erase_archive_entry(config, entry_id, reason, bool(getattr(args, "yes", False))))
+    except Exception as exc:  # one transaction, so nothing is half-erased; the Captain sees why
+        print(f"The erasure failed: {type(exc).__name__}: {exc}")
+        return 1
+
+
+async def _erase_archive_entry(config: SystemConfig, entry_id: int, reason: str, confirmed: bool) -> int:
+    """Show the entry, ask unless ``--yes``, then erase it. The archive is closed on every exit."""
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        entry = await archive.entry_by_id(entry_id)
+        if entry is None:
+            print(f"No Ship's Archive entry has id {entry_id}.")
+            return 1
+        print(f"Ship's Archive entry {entry.id}: {entry.title}")
+        print(f"  source: {entry.source_kind or '(no provenance: an AD-524 entry)'} {entry.source_ref}")
+        print(f"  timeline: {entry.timeline_id}")
+        if not confirmed and input("  Erase it? [y/N]: ").strip().lower() != "y":
+            print("Aborted. Nothing was erased.")
+            return 0
+        if not await archive.erase_entry(entry_id, reason):
+            print(f"No Ship's Archive entry has id {entry_id}.")
+            return 1
+    finally:
+        await archive.close()
+    print(
+        f"Erased Ship's Archive entry {entry_id}. A marker records the erasure: if its source is still in Ship's "
+        "Records, it will not be promoted again."
+    )
+    return 0
 
 
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
@@ -3315,7 +3649,7 @@ def main() -> None:
         help="Delete the listed directories (refuses while a vessel owns the data dir)",
     )
     backup_reclaim_parser.add_argument(
-        "--data-dir", type=Path, default=None,
+        "--data-dir", type=Path, default=argparse.SUPPRESS,  # BF-916: a --data-dir before the command is kept
         help="Data directory checked for a running vessel; only used with --force",
     )
 
@@ -3324,11 +3658,12 @@ def main() -> None:
         "rebuild-episodic",
         help="Reconstruct ChromaDB episodic memory from surviving ward room (AD-819)",
     )
+    # BF-916, SUPPRESS as for doctor: a --data-dir or --config before `rebuild-episodic` (the root parser's) is kept.
     rebuild_parser.add_argument(
-        "--data-dir", type=Path, default=None, help="Data directory (default: platform path)"
+        "--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory (default: platform path)"
     )
     rebuild_parser.add_argument(
-        "--config", "-c", type=Path, default=None, help="Path to config YAML"
+        "--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML",
     )
     rebuild_parser.add_argument(
         "--dry-run", action="store_true",
@@ -3357,12 +3692,10 @@ def main() -> None:
 
     # --- probos serve ---
     serve_parser = subparsers.add_parser("serve", help="Start HTTP + WebSocket API server")
-    serve_parser.add_argument(
-        "--config", "-c", type=Path, default=None,
-        help="Path to config YAML",
-    )
-    serve_parser.add_argument("--fresh", action="store_true", help="Cold start")
-    serve_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+    # BF-916, SUPPRESS as for doctor: a --config, --fresh or --data-dir before `serve` (the root parser's) is kept.
+    serve_parser.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    serve_parser.add_argument("--fresh", action="store_true", default=argparse.SUPPRESS, help="Cold start")
+    serve_parser.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
     serve_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=18900, help="Bind port")
     serve_parser.add_argument("--interactive", action="store_true", help="Also run interactive shell")
@@ -3385,8 +3718,27 @@ def main() -> None:
     reset_parser.add_argument("--full", action="store_true", help="Tier 3: Maiden Voyage — everything including records")
     reset_parser.add_argument("--dry-run", action="store_true", help="Show what would be cleared, do nothing")
     reset_parser.add_argument("--wipe-records", action="store_true", help="(deprecated, use --full)")
-    reset_parser.add_argument("--config", "-c", type=Path, default=None, help="Path to config YAML")
-    reset_parser.add_argument("--data-dir", type=Path, default=None, help="Data directory")
+    reset_parser.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    reset_parser.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
+    reset_parser.add_argument(
+        "--skip-promotion", type=str, default=None, metavar="REASON",
+        help="AD-1341: reset without promoting Ship's Records into the Ship's Archive first; "
+             "the reason (1-500 characters) is recorded",
+    )
+
+    # --- probos archive (AD-1341 S1): the Captain's erasure ---
+    archive_parser = subparsers.add_parser("archive", help="The Ship's Archive: the Captain's erasure (AD-1341)")
+    archive_sub = archive_parser.add_subparsers(dest="archive_cmd", required=True)
+    archive_erase = archive_sub.add_parser(
+        "erase", help="Erase one Ship's Archive entry; its source is never promoted again",
+    )
+    archive_erase.add_argument("entry_id", type=int, help="The entry's id")
+    archive_erase.add_argument(
+        "--reason", type=str, required=True,
+        help="Why, in 1-500 characters; it is recorded. Do not restate the entry's content.",
+    )
+    archive_erase.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+    archive_erase.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
 
     args = parser.parse_args()
 
@@ -3444,8 +3796,12 @@ def main() -> None:
         sys.exit(2)
 
     if args.command == "reset":
-        _cmd_reset(args)
-        return
+        import sys
+        sys.exit(_cmd_reset(args))  # AD-1341 S1: 1 refused, 2 a bad --skip-promotion
+
+    if args.command == "archive":  # AD-1341 S1: the Captain's erasure
+        import sys
+        sys.exit(_cmd_archive(args))
 
     if args.command == "serve":
         try:
