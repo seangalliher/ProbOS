@@ -412,6 +412,34 @@ async def _query_introspective_telemetry(
         return {"introspective_telemetry": ""}
 
 
+async def _query_ward_room_lookup(
+    runtime: Any, spec: SubTaskSpec, context: dict,
+) -> dict:
+    """AD-1347 S4 (#1627): one Ward Room thread or post by id, live or archived.
+
+    Reads ``ward_room_lookup_ref`` (ANALYZE names it; ``_maybe_dispatch_ward_room_lookup``
+    copies it here) and the asking agent from ``_agent_id`` only: a ``params`` agent id is
+    never the asker. The Ward Room decides what the agent may see. Returns
+    ``{"ward_room_lookup": <text>}``: empty when no id was asked for, otherwise the record
+    or one line saying why there is none. Never raises, so the QUERY step stays a success.
+    """
+    ref = _ctx(context, "ward_room_lookup_ref")
+    if not isinstance(ref, str) or not ref.strip():
+        return {"ward_room_lookup": ""}
+    from probos.ward_room.lookup import LOOKUP_UNAVAILABLE, LookupResult, render_lookup
+
+    requester = context.get("_agent_id", "")
+    ward_room = getattr(runtime, "ward_room", None)
+    if ward_room is None:
+        return {"ward_room_lookup": render_lookup(LookupResult(LOOKUP_UNAVAILABLE, ""))}
+    try:
+        result = await ward_room.lookup_record(requester, ref)
+    except Exception:
+        logger.warning("AD-1347: ward_room_lookup failed for agent %s", requester, exc_info=True)
+        result = LookupResult(LOOKUP_UNAVAILABLE, "")
+    return {"ward_room_lookup": render_lookup(result)}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table — Open/Closed: add new operations here, no __call__ changes
 # ---------------------------------------------------------------------------
@@ -430,6 +458,7 @@ _QUERY_OPERATIONS: dict[str, QueryOperation] = {
     "introspective_telemetry": _query_introspective_telemetry,  # AD-646b
     "oracle_lookup": _query_oracle_lookup,                       # AD-696
     "oracle_refs": _query_oracle_refs,                           # AD-462f
+    "ward_room_lookup": _query_ward_room_lookup,                 # AD-1347 S4
 }
 
 

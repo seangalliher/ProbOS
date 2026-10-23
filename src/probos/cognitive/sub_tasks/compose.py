@@ -506,6 +506,16 @@ def _build_user_prompt(
             + _oracle
         )
 
+    # AD-1347 S4: a Ward Room thread or post the agent looked up by id (live or archived)
+    _wr_lookup = context.get("_ward_room_lookup_context", "")
+    if _wr_lookup:
+        parts.append(
+            "## Ward Room Record (looked up by id)\n\n"
+            "You asked for this record by its id. It is quoted as stored; cite it as "
+            "the Ward Room's record, not as your memory.\n\n"
+            + _wr_lookup
+        )
+
     # AD-646b: Self-recognition cue
     _self_cue = context.get("_self_recognition_cue", "")
     if _self_cue:

@@ -5681,6 +5681,64 @@ class CognitiveAgent(BaseAgent):
                     observation["_oracle_context"] = formatted
                 break
 
+    async def _maybe_dispatch_ward_room_lookup(
+        self, triage_results: list, observation: dict,
+    ) -> None:
+        """AD-1347 S4: look up one Ward Room thread or post by id, between triage and execute.
+
+        Reads ``ward_room_lookup_ref`` from the latest successful ANALYZE result, runs a
+        one-step QUERY chain (``ward_room_lookup``) and writes the text to
+        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders. Once per chain.
+        The Ward Room decides what this agent may see; this only carries the id.
+        """
+        if observation.get("_ward_room_lookup_fired"):
+            return
+        from probos.cognitive.sub_task import SubTaskChain, SubTaskSpec, SubTaskType
+
+        ref = ""
+        for r in reversed(triage_results):
+            if r.sub_task_type == SubTaskType.ANALYZE and r.success and r.result:
+                raw_ref = r.result.get("ward_room_lookup_ref")
+                ref = raw_ref.strip() if isinstance(raw_ref, str) else ""
+                break
+        if not ref:
+            return
+        observation["ward_room_lookup_ref"] = ref
+        observation["_ward_room_lookup_fired"] = True
+        if self._sub_task_executor is None:
+            return
+        lookup_chain = SubTaskChain(
+            steps=[
+                SubTaskSpec(
+                    sub_task_type=SubTaskType.QUERY,
+                    name="ward-room-lookup",
+                    context_keys=("ward_room_lookup",),
+                ),
+            ],
+            chain_timeout_ms=30000,
+            fallback="skip",
+            source="ad1347:ward_room_lookup",
+        )
+        try:
+            results = await self._sub_task_executor.execute(
+                lookup_chain,
+                observation,
+                agent_id=self.id,
+                agent_type=self.agent_type,
+                intent=observation.get("intent", ""),
+                intent_id=observation.get("intent_id", ""),
+                journal=self._cognitive_journal,
+            )
+        except Exception:
+            logger.warning("AD-1347: ward_room_lookup chain failed for %s", self.agent_type, exc_info=True)
+            return
+        for r in results:
+            if r.sub_task_type == SubTaskType.QUERY and r.success and r.result:
+                text = r.result.get("ward_room_lookup", "")
+                if isinstance(text, str) and text:
+                    observation["_ward_room_lookup_context"] = text
+                break
+
     @staticmethod
     def _extract_intended_actions(chain_results: list) -> list[str]:
         """AD-643a: Extract intended_actions from ANALYZE step results.
@@ -6116,6 +6174,7 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             observation["_recall_tier"] = None  # Gate-closed by default
         observation["_oracle_lookup_fired"] = False  # AD-696 (DLog #4)
+        observation["_ward_room_lookup_fired"] = False  # AD-1347 S4 (once per chain)
 
         # AD-644 Phase 1: Duty context for chain prompts
         _duty = _params.get("duty")
@@ -6231,6 +6290,11 @@ class CognitiveAgent(BaseAgent):
         # --- Determine if communication chain should fire ---
         _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
         has_comm_action = bool(_COMM_ACTIONS.intersection(intended_actions))
+
+        # AD-1347 S4: a Ward Room record by id, only when an action will use it; a
+        # non-communication triage falls through to the single call, which would not render it.
+        if has_comm_action and "ward_room_lookup" in intended_actions:
+            await self._maybe_dispatch_ward_room_lookup(triage_results, observation)
 
         # --- Load targeted skills based on intended_actions ---
         catalog = getattr(self, '_cognitive_skill_catalog', None)
