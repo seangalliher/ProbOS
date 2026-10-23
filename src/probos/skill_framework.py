@@ -945,6 +945,58 @@ ROLE_SKILL_TEMPLATES: dict[str, list[SkillDefinition]] = {
     ],
 }
 
+# ── BF-917 (#1625): the skills the ontology role templates name ─────
+# config/ontology/skills.yaml's role templates (keyed by post) name skill ids that
+# neither the PCCs nor ROLE_SKILL_TEMPLATES (keyed by agent type, the legacy
+# commissioning step) define. They are registered here and never acquired by
+# ``commission_agent``. Each is a ROLE skill with no prerequisite (acquisition is
+# unchanged), no preferred tool and no composite, the 14 days of decay a record
+# with no definition already had (``check_decay``), and a domain a legacy role
+# skill already has, so the AD-888 resolver's tag fallback asks nothing new.
+ONTOLOGY_TEMPLATE_SKILLS: list[SkillDefinition] = [
+    # Science (first officer, scout, data analyst, systems analyst, research specialist)
+    SkillDefinition(skill_id="architecture_review", name="Architecture Review", category=SkillCategory.ROLE, description="Review system architecture, identify patterns and verify implementation paths.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="pattern_recognition", name="Pattern Recognition", category=SkillCategory.ROLE, description="Recognise recurring structure across code, telemetry and reports.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="trend_analysis", name="Trend Analysis", category=SkillCategory.ROLE, description="Detect and explain change over time in ship metrics and findings.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="data_processing", name="Data Processing", category=SkillCategory.ROLE, description="Clean, transform and summarise data for analysis.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="quantitative_analysis", name="Quantitative Analysis", category=SkillCategory.ROLE, description="Apply measurement and statistics to answer a question.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="cross_department_synthesis", name="Cross-Department Synthesis", category=SkillCategory.ROLE, description="Combine findings from several departments into one picture.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="emergence_analysis", name="Emergence Analysis", category=SkillCategory.ROLE, description="Identify behaviour that arises from interactions rather than from one component.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="technical_writing", name="Technical Writing", category=SkillCategory.ROLE, description="Write clear, accurate technical reports and documentation.", domain="science", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="evidence_analysis", name="Evidence Analysis", category=SkillCategory.ROLE, description="Weigh evidence and sources before drawing a conclusion.", domain="science", decay_rate_days=14, origin="role"),
+    # Medical (counselor, chief medical officer, surgeon, pharmacist, pathologist)
+    SkillDefinition(skill_id="wellness_assessment", name="Wellness Assessment", category=SkillCategory.ROLE, description="Assess a crew member's cognitive wellness from their signals.", domain="medical", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="personality_analysis", name="Personality Analysis", category=SkillCategory.ROLE, description="Read personality traits and drift from a crew member's behaviour.", domain="medical", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="crew_counseling", name="Crew Counseling", category=SkillCategory.ROLE, description="Counsel crew members through cognitive and social difficulty.", domain="medical", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="diagnostic_analysis", name="Diagnostic Analysis", category=SkillCategory.ROLE, description="Trace a fault or symptom to its cause.", domain="medical", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="health_monitoring", name="Health Monitoring", category=SkillCategory.ROLE, description="Watch system and crew health signals for change.", domain="medical", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="treatment_planning", name="Treatment Planning", category=SkillCategory.ROLE, description="Plan a remedy for a diagnosed condition and its follow-up.", domain="medical", decay_rate_days=14, origin="role"),
+    # Engineering (chief engineer, builder); distinct from the pathologist's medical system_analysis
+    SkillDefinition(skill_id="systems_analysis", name="Systems Analysis", category=SkillCategory.ROLE, description="Analyse how the ship's systems fit together and where they fail.", domain="engineering", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="architecture_implementation", name="Architecture Implementation", category=SkillCategory.ROLE, description="Turn an architecture into working, maintainable components.", domain="engineering", decay_rate_days=14, origin="role"),
+    # Security (chief of security)
+    SkillDefinition(skill_id="threat_assessment", name="Threat Assessment", category=SkillCategory.ROLE, description="Judge the likelihood and impact of a threat.", domain="security", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="access_control", name="Access Control", category=SkillCategory.ROLE, description="Decide and verify who may use which capability.", domain="security", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="vulnerability_analysis", name="Vulnerability Analysis", category=SkillCategory.ROLE, description="Find and rank weaknesses an attacker could use.", domain="security", decay_rate_days=14, origin="role"),
+    # Operations (chief of operations)
+    SkillDefinition(skill_id="workflow_optimization", name="Workflow Optimization", category=SkillCategory.ROLE, description="Improve how work flows between crew and systems.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="system_monitoring", name="System Monitoring", category=SkillCategory.ROLE, description="Track operational readiness and resource health.", domain="operations", decay_rate_days=14, origin="role"),
+]
+
+
+def builtin_skill_definitions() -> list[SkillDefinition]:
+    """BF-917: every definition ``SkillRegistry.register_builtins`` registers, in order.
+
+    The PCCs, the legacy role skills and the ontology template skills. The
+    ``probos doctor`` role-template check reads the same list, so "registered"
+    means one thing.
+    """
+    definitions = list(BUILTIN_PCCS)
+    for role_skills in ROLE_SKILL_TEMPLATES.values():
+        definitions.extend(role_skills)
+    definitions.extend(ONTOLOGY_TEMPLATE_SKILLS)
+    return definitions
+
 
 # ---------------------------------------------------------------------------
 # SQLite schema
@@ -1116,12 +1168,9 @@ class SkillRegistry:
         return defn
 
     async def register_builtins(self) -> None:
-        """Register all built-in PCCs and role skill templates."""
-        for pcc in BUILTIN_PCCS:
-            await self.register_skill(pcc)
-        for role_skills in ROLE_SKILL_TEMPLATES.values():
-            for skill in role_skills:
-                await self.register_skill(skill)
+        """Register the built-in PCCs, the legacy role skills and the ontology template skills (BF-917)."""
+        for defn in builtin_skill_definitions():
+            await self.register_skill(defn)
 
     async def update_skill_definition(
         self, defn: SkillDefinition, *, create: bool = False,

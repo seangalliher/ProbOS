@@ -219,8 +219,9 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         retention_note=(
             "No DELETE FROM in probos.acm. lifecycle, identity_mapping and commissioning_records hold at most "
             "one row per agent or slot (PRIMARY KEY). lifecycle_transitions is an append-only HR history: one row "
-            "per state change and one per BF-906 commissioning, kept as the agent's record. Growth is bounded by "
-            "crew size and HR actions. `probos reset` (tier 2, Recommissioning) deletes the whole file."
+            "per state change, one per BF-906 commissioning and one per BF-917 role-template re-commissioning, "
+            "kept as the agent's record. Growth is bounded by crew size, HR actions and role-template changes. "
+            "`probos reset` (tier 2, Recommissioning) deletes the whole file."
         ),
         backup="included",
         restore="unknown",
