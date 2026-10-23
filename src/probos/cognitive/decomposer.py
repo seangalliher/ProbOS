@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from probos.cognitive.workflow_cache import WorkflowCache
     from probos.consensus.escalation import EscalationManager
     from probos.runtime import ProbOSRuntime
+    from probos.types import EscalationResult  # BF-912: an annotation only
 
 logger = logging.getLogger(__name__)
 
@@ -671,6 +672,22 @@ def _normalize_consensus_result(
     }
 
 
+def _approval_did_not_commit(esc_result: EscalationResult) -> bool:
+    """BF-912 (#1615): True when an escalation approved a node and nothing reports that its act was committed.
+
+    A consensus-gated act (the gate table's ``write_file`` and ``mcp_invoke``, or an intent that declares
+    ``propose_commit``) is performed only by the commit that follows an approving vote. Tier 2's "approve"
+    resolves with the rejected round's own dict, and Tier 3's yes with that round's proposals or a
+    re-broadcast of them, so neither commits. Only a resolution that itself reports ``committed`` True is a
+    performed act; no tier produces one today. A declined or unresolved escalation is not an approval: the
+    existing branches handle it.
+    """
+    if not esc_result.resolved or esc_result.user_approved is False:
+        return False  # BF-912: not an approval; the existing branches decide
+    approved_result = esc_result.resolution
+    return not (isinstance(approved_result, dict) and approved_result.get("committed") is True)
+
+
 def _summarize_node_result(node_result: Any) -> str:
     """Extract meaningful output from a node result for reflection.
 
@@ -942,12 +959,14 @@ class DAGExecutor:
             node.id, node.intent, node.depends_on, node.use_consensus,
         )
 
+        gated_route = node.use_consensus  # BF-912: until the gate table answers, a consensus node counts as gated
         try:
             # BF-779: table, not a name. A by-name check gated exactly one intent
             # and left mcp_invoke -- which HAS a gated runtime path -- proposing
             # into a void, committing nothing.
             _lookup = getattr(self.runtime, "gated_commit_for", None)
             gated = _lookup(node.intent) if (_lookup and node.use_consensus) else None
+            gated_route = gated is not None  # BF-912: the except path below needs to know
             if gated is not None:
                 result = await gated(params, timeout=10.0)
                 node.result = result
@@ -960,7 +979,7 @@ class DAGExecutor:
                     await self._handle_rejection(
                         node, dag, results,
                         f"Consensus {consensus.outcome.value}",
-                        on_event=on_event,
+                        on_event=on_event, gated=True,  # BF-912: the gate table's commit is this node's only commit
                     )
                 elif not result.get("committed", True):
                     # BF-911 (#1613) review F1: the vote approved, the commit did not happen
@@ -981,12 +1000,13 @@ class DAGExecutor:
                 # rather than as a green one that never committed.
                 _mode_of = getattr(self.runtime, "consensus_mode_for", None)
                 if _mode_of and _mode_of(node.intent) == "propose_commit":
+                    gated_route = True  # BF-912: declares propose_commit, and no gated path can commit it
                     await self._handle_rejection(
                         node, dag, results,
                         f"{node.intent} declares propose_commit but has no "
                         f"gated commit path registered; refusing to fall back "
                         f"to execute-then-vote",
-                        on_event=on_event,
+                        on_event=on_event, gated=True,  # BF-912: an approval cannot commit a propose_commit intent
                     )
                     return
                 result = await self.runtime.submit_intent_with_consensus(
@@ -1088,7 +1108,9 @@ class DAGExecutor:
                     },
                 )
                 node.escalation_result = esc_result.to_dict()
-                if esc_result.resolved:
+                if gated_route and _approval_did_not_commit(esc_result):
+                    await self._fail_uncommitted_approval(node, results, esc_result, on_event)  # BF-912: a raised gated call
+                elif esc_result.resolved:
                     if esc_result.resolution is not None:
                         node.result = esc_result.resolution
                         results[node.id] = esc_result.resolution
@@ -1142,8 +1164,14 @@ class DAGExecutor:
         results: dict[str, Any],
         error: str,
         on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        gated: bool = False,
     ) -> None:
-        """Handle a consensus-rejected node: escalate or mark failed."""
+        """Handle a consensus-rejected node: escalate or mark failed.
+
+        BF-912 (#1615): ``gated`` says the node's act is performed only by the commit that follows an
+        approving vote (the gate table's paths, and an intent that declares ``propose_commit``). An
+        approval at Tier 2 or Tier 3 cannot perform it, so the node fails with the reason instead of completing.
+        """
         if self.escalation_manager is not None:
             if on_event:
                 await on_event(EventType.ESCALATION_START, {
@@ -1168,6 +1196,9 @@ class DAGExecutor:
                 esc_result.user_approved, esc_result.resolution is not None,
             )
             node.escalation_result = esc_result.to_dict()
+            if gated and _approval_did_not_commit(esc_result):
+                await self._fail_uncommitted_approval(node, results, esc_result, on_event)  # BF-912: the rejection door
+                return  # BF-912: an approval of a gated node is not its commit
             if esc_result.resolved:
                 if esc_result.resolution is not None:
                     # Normalize consensus-wrapped results: strip the
@@ -1215,3 +1246,28 @@ class DAGExecutor:
             node.status = "failed"
             if on_event:
                 await on_event(EventType.NODE_FAILED, {"node": node, "error": error})
+
+    async def _fail_uncommitted_approval(
+        self,
+        node: TaskNode,
+        results: dict[str, Any],
+        esc_result: EscalationResult,
+        on_event: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
+        """BF-912 (#1615): fail a consensus-gated node that an escalation approved and nothing committed.
+
+        The approver's decision stays in ``node.escalation_result``, and whatever ``node.result`` held stays;
+        ``results`` carries the reason, so the plan says why it stopped. Dependents then wait
+        (``Dependency deadlock``), as they do for any failed node.
+        """
+        error = (
+            f"BF-912: approved at escalation tier {esc_result.tier.value}, but the approval could not commit "
+            f"{node.intent}: it commits only through an approving consensus vote, and no commit is reported"
+        )
+        logger.warning("BF-912: node %s (%s): %s", node.id, node.intent, error)
+        node.status = "failed"  # BF-912: an approval is not a commit
+        results[node.id] = {"error": error, "committed": False}
+        if on_event:  # BF-912: the board shows the failure and its reason
+            exhausted = {"node": node, "escalation": node.escalation_result, "error": error}
+            await on_event(EventType.ESCALATION_EXHAUSTED, {**exhausted, "category": "consensus", "event": "escalation_exhausted"})
+            await on_event(EventType.NODE_FAILED, {"node": node, "error": error, "committed": False})
