@@ -182,19 +182,18 @@ async def test_every_boot_wired_crew_member_is_onboarded_and_commissioned(
         held = {r.skill_id: r for r in (await rt.skill_service.get_profile(architect.id)).all_skills}
         assert held["communication"].proficiency == ProficiencyLevel.ADVISE
 
-        # A type with no role template is commissioned with its PCCs, recorded without one, and named in a WARNING.
+        # BF-915 (#1623): every crew type now resolves a role template, so the yeoman is commissioned under its own
+        # and no 'no role template' WARNING is logged. The WARNING itself stays pinned by
+        # test_bf906_acm_commissioning.py's HA8, with a type that has no template.
         yeomen = [a for a in crew if a.agent_type == "yeoman"]
         assert len(yeomen) == 1, f"premise: exactly one yeoman among the crew, got {len(yeomen)}"
-        assert rt.ontology.get_role_template_for_agent("yeoman") is None
+        assert rt.ontology.get_role_template_for_agent("yeoman") is not None
         yeoman_record = await rt.acm.get_commissioning_record(yeomen[0].id)
-        assert yeoman_record is not None and yeoman_record.role_template is None
-        warnings = [
+        assert yeoman_record is not None and yeoman_record.role_template == "yeoman"
+        assert [
             r for r in caplog.records
-            if r.name == "probos.crew_enrollment" and r.levelno == logging.WARNING
-            and yeomen[0].id in r.getMessage()
-        ]
-        assert len(warnings) == 1
-        assert "no role template" in warnings[0].getMessage()
+            if r.name == "probos.crew_enrollment" and "no role template" in r.getMessage()
+        ] == []
     finally:
         await rt.stop()
 

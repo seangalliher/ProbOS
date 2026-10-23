@@ -73,6 +73,7 @@ class CommissioningRecord:
     initiated_by: str
     reason: str
     timestamp: float
+    template_fingerprint: str | None = None  # BF-917: the role template last applied; None before BF-917
 
 
 # ── SQLite schema ───────────────────────────────────────────────────
@@ -120,6 +121,19 @@ _COMMISSIONING_HISTORY_SQL = (
     "VALUES (?, ?, ?, ?, ?, ?)"
 )
 
+
+async def _add_template_fingerprint_column(db: DatabaseConnection) -> None:
+    """BF-917: add ``commissioning_records.template_fingerprint`` where it is absent.
+
+    A module function, as ``capability_request._migrate_payload_column`` is, to keep
+    the service within its SRP budget. Idempotent. Existing rows read NULL: a
+    commissioning recorded before BF-917, which the crew enroller re-commissions once.
+    """
+    cursor = await db.execute("PRAGMA table_info(commissioning_records)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "template_fingerprint" not in columns:
+        await db.execute("ALTER TABLE commissioning_records ADD COLUMN template_fingerprint TEXT")
+
 # ── Service ─────────────────────────────────────────────────────────
 
 class AgentCapitalService:
@@ -153,6 +167,7 @@ class AgentCapitalService:
         self._db = await self._connection_factory.connect(str(self._data_dir / "acm.db"))
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
+        await _add_template_fingerprint_column(self._db)
         await self._db.commit()
 
     async def stop(self) -> None:
@@ -209,7 +224,7 @@ class AgentCapitalService:
             return None
         async with self._db.execute(
             "SELECT agent_id, agent_type, source, role_template, skills_json, tools_json, "
-            "initiated_by, reason, timestamp FROM commissioning_records WHERE agent_id = ?",
+            "initiated_by, reason, timestamp, template_fingerprint FROM commissioning_records WHERE agent_id = ?",
             (agent_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -218,7 +233,7 @@ class AgentCapitalService:
         return CommissioningRecord(
             agent_id=row[0], agent_type=row[1], source=row[2], role_template=row[3],
             skills=tuple(json.loads(row[4] or "[]")), tools=tuple(json.loads(row[5] or "[]")),
-            initiated_by=row[6], reason=row[7], timestamp=row[8],
+            initiated_by=row[6], reason=row[7], timestamp=row[8], template_fingerprint=row[9],
         )
 
     # ── Lifecycle mutations ─────────────────────────────────────────
@@ -339,6 +354,8 @@ class AgentCapitalService:
         tools: tuple[str, ...],
         initiated_by: str = "system",
         reason: str = "",
+        template_fingerprint: str | None = None,
+        recommission: bool = False,
     ) -> bool:
         """BF-906: record an agent's commissioning once; False when one already exists.
 
@@ -350,25 +367,40 @@ class AgentCapitalService:
         lock. No other writer's commit can make the record durable without its row,
         and any failure, cancellation included, rolls both back, so the next call
         records again.
+
+        BF-917: the record keeps ``template_fingerprint``, the digest of the role
+        template it was commissioned under. With ``recommission=True`` the existing
+        record's ``role_template`` and ``template_fingerprint`` are replaced instead,
+        in the same section and commit as a "re-commissioned" history row; False when
+        there is no record or it already holds this fingerprint. The record's skills,
+        tools, source and timestamp stay those of the first commissioning.
         """
         async with self._write_lock:  # BF-906 A3: the record and its history row commit together
             if not self._db:
                 raise RuntimeError("ACM not started")
             now = time.time()
             try:
-                cursor = await self._db.execute(
-                    "INSERT OR IGNORE INTO commissioning_records (agent_id, agent_type, source, "
-                    "role_template, skills_json, tools_json, initiated_by, reason, timestamp) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (agent_id, agent_type, source, role_template, json.dumps(list(skills)),
-                     json.dumps(list(tools)), initiated_by, reason, now),
-                )
+                if recommission:
+                    cursor = await self._db.execute(
+                        "UPDATE commissioning_records SET role_template = ?, template_fingerprint = ? "
+                        "WHERE agent_id = ? AND template_fingerprint IS NOT ?",
+                        (role_template, template_fingerprint, agent_id, template_fingerprint),
+                    )
+                else:
+                    cursor = await self._db.execute(
+                        "INSERT OR IGNORE INTO commissioning_records (agent_id, agent_type, source, "
+                        "role_template, skills_json, tools_json, initiated_by, reason, timestamp, "
+                        "template_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (agent_id, agent_type, source, role_template, json.dumps(list(skills)),
+                         json.dumps(list(tools)), initiated_by, reason, now, template_fingerprint),
+                    )
                 if cursor.rowcount == 0:
                     await self._db.commit()
                     return False
                 state = (await self.get_lifecycle_state(agent_id)).value
+                action = "re-commissioned" if recommission else "commissioned"
                 history_reason = (
-                    f"{reason}: commissioned, role_template={role_template or 'none'}; "
+                    f"{reason}: {action}, role_template={role_template or 'none'}; "
                     f"skills={','.join(skills) or 'none'}; tools={','.join(tools) or 'none'}"
                 )
                 history_row = (agent_id, state, state, history_reason, initiated_by, now)

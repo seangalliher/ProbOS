@@ -17,6 +17,7 @@ from probos.doctor.checks import (  # noqa: F401
     chroma_check,
     crew_enrollment_check,
     token_accounting_check,
+    role_template_check,  # BF-917/BF-915: after token_accounting, which stays next to crew_enrollment
     security_check,
     crew_scope_check,
     disk_check,

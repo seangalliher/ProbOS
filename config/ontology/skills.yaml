@@ -260,6 +260,46 @@ role_templates:
       - skill_id: duty_execution
         min_proficiency: 3
 
+  # BF-915 (#1623): Bridge -- the Ship's Yeoman, from the post's capabilities in organization.yaml
+  # (daily briefing, schedule lookup, inbox triage, delegation, standing-order relay)
+  yeoman:
+    required:
+      - skill_id: communication
+        min_proficiency: 4
+      - skill_id: chain_of_command
+        min_proficiency: 4
+      - skill_id: captain_briefing
+        min_proficiency: 4
+      - skill_id: schedule_coordination
+        min_proficiency: 3
+      - skill_id: correspondence_triage
+        min_proficiency: 3
+      - skill_id: crew_delegation
+        min_proficiency: 3
+    optional:
+      - skill_id: duty_execution
+        min_proficiency: 3
+
+  # BF-915 (#1623): Operations -- the Training Officer, from the post's capabilities in organization.yaml
+  # and AD-628 (drills, readiness reports, onboarding mentorship, limited-duty recommendations)
+  chief_training:
+    required:
+      - skill_id: communication
+        min_proficiency: 4
+      - skill_id: collaboration
+        min_proficiency: 4
+      - skill_id: drill_planning
+        min_proficiency: 4
+      - skill_id: readiness_assessment
+        min_proficiency: 4
+      - skill_id: onboarding_mentorship
+        min_proficiency: 4
+      - skill_id: limited_duty_planning
+        min_proficiency: 3
+    optional:
+      - skill_id: knowledge_stewardship
+        min_proficiency: 3
+
 # Qualification paths: structured requirements for rank transitions
 # These define what competencies must be demonstrated for promotion
 qualification_paths:
