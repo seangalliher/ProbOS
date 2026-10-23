@@ -164,6 +164,7 @@ if TYPE_CHECKING:
     from probos.acm import AgentCapitalService
     from probos.admission import AdmissionService  # AD-1346 M3a
     from probos.agent_stop import AgentStopService  # AD-1343
+    from probos.agent_work import AgentWorkService  # AD-1347 S1
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
     from probos.continue_extension_permits import SqliteContinueExtensionPermitStore  # AD-1323
@@ -508,6 +509,7 @@ class ProbOSRuntime:
     task_scheduler: TaskScheduler | None
     persistent_task_store: PersistentTaskStore | None
     work_item_store: WorkItemStore | None
+    agent_work: "AgentWorkService | None"  # AD-1347 S1: built in start() only when agent_work.enabled; released with the store
     crew_session_service: "CrewSessionService | None"
     crew_session_delivery_service: "CrewSessionDeliveryService | None"
     crew_session_delivery_listener: Callable[..., Any] | None
@@ -1129,6 +1131,8 @@ class ProbOSRuntime:
 
         # --- Workforce Scheduling Engine (AD-496) ---
         self.work_item_store: WorkItemStore | None = None
+        # AD-1347 S1: the service that owns agent-created work; built in start() only when agent_work.enabled
+        self.agent_work: "AgentWorkService | None" = None
 
         # --- Durable Crew Sessions (AD-1124) ---
         self.crew_session_service: "CrewSessionService | None" = None
@@ -3363,6 +3367,27 @@ class ProbOSRuntime:
                     "ship-wide commons but not their own private records",
                     exc_info=True,
                 )
+
+        # AD-1347 S1 (#1627): the Ship's Computer service that owns agent-created work. Built only when
+        # agent_work.enabled, here, where the work store, the tool registry, the stop gate and the ontology all
+        # exist; while off the attribute stays None and workforce.db gains no table. Nothing calls it in S1.
+        if self.config.agent_work.enabled:
+            from probos.agent_work import open_agent_work_service
+            from probos.cognitive.crew_directory import RuntimeCrewDirectory
+
+            directory = None
+            if self.ontology is not None:
+                directory = RuntimeCrewDirectory(
+                    agent_registry=self.registry, ontology=self.ontology, trust_network=self.trust_network,
+                )
+            self.agent_work = await open_agent_work_service(
+                config=self.config.agent_work,
+                store=self.work_item_store,
+                tools=self.tool_registry,
+                identities=self.identity_service,
+                directory=directory,
+                stop_gate=self.agent_stops,
+            )
 
         # AD-637: Update NATS subject prefix after ship commissioning assigns DID
         if self.nats_bus and self.identity_registry:

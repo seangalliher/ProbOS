@@ -34,6 +34,8 @@ STOP_CHECK_SITES: dict[tuple[str, str, str], str] = {
     ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", "active_stop"): "SEAM_AGENTIC_RUN",
     ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "active_stop"): "SEAM_AGENTIC_RUN",
     ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): "SEAM_TOOL",
+    # AD-1347 S1 (#1627): the requester's stop, asked before any agent-created work is written.
+    ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop"): "SEAM_AGENT_WORK",
 }
 
 # Every public coroutine on CognitiveAgent. sink: consults the stop itself; within_turn: runs
@@ -120,6 +122,8 @@ VERIFIER_STOP_SITES: frozenset[tuple[str, str]] = frozenset({
 STANDING_STOP_SITES: frozenset[tuple[str, str]] = frozenset({
     ("src/probos/cognitive/crew_assignment.py", "CrewAssignmentResolver.check_eligibility"),
     ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier._stopped"),
+    # AD-1347 S1: a colleague's stop, asked of candidates (an assignee, the claim gate, the eligible set); counts nothing.
+    ("src/probos/agent_work.py", "AgentWorkService._stopped_now"),
 })
 
 # ---- M0: every call that starts another agent's work, and its guard ----
@@ -217,6 +221,10 @@ SEAM_INDEX: dict[str, tuple[str, tuple[object, ...]]] = {
     "captain_persona": ("voice and appearance proposals the Captain requests", ("exception", _CAPTAIN_PERSONA)),
     "promoted_turn_resume": ("the resume of a promoted turn the Captain approved", ("exception", _PROMOTED_RESUME)),
     "long_runs": ("LongRunService records runs and starts no agent work", ("none", "src/probos/execution/long_runs.py")),
+    "agent_work": (
+        "work an agent creates for itself or requests from a colleague (AD-1347); its claim is a tool call (SEAM_TOOL)",
+        ("at", ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop")),
+    ),
 }
 
 # Report only (never gated until #1601 M3): a hand classification of a model call outside the crew modules, keyed by

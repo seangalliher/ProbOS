@@ -421,6 +421,7 @@ async def test_refusals_are_counted_by_seam_and_an_unknown_seam_is_a_bug(tmp_pat
     assert SEAMS == frozenset({
         "intent", "consultation", "tool", "proactive", "ward_room", "dm_route", "group_fanout", "browser_action_ack",
         "agentic_run", "delegation",  # A2 (F1): the run entry and correction rounds; a delegated task
+        "agent_work",  # AD-1347 S1 (#1627): a create refused for a stopped requester is counted at its own seam
     })  # the seam names the Captain reads in every answer
     async with _service(tmp_path, clock=_Clock()) as service:
         record = (await service.issue_stop(AGENT, reason=REASON)).record

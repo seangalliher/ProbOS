@@ -158,6 +158,8 @@ CROSS_FIELD_BOUND_VALUES: dict[tuple[str, str, str], float] = {
 #: Earlier batches did the same; six such comments now trail
 #: ``SelfDistillationConfig``.
 REMAINING_TRUE_LEAVES: tuple[str, ...] = (
+    # AD-1347 S1 (#1627): a new leaf beside WorkforceConfig; it moves with the workforce group in batch 10.
+    "AgentWorkConfig",
     "BootCampPhaseConfig",
     "ConsultationDeliveryConfig",
     "ConsultationDispatchConfig",

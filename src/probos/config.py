@@ -3569,6 +3569,30 @@ class WorkforceConfig(BaseModel):
     template_config_path: str = "config/work_templates.yaml"
 
 
+class AgentWorkConfig(BaseModel):
+    """AD-1347 S1 (#1627): work crew agents create for themselves and request from colleagues.
+
+    Default off: while off the runtime builds no service and workforce.db gains no table. Every count
+    is of work items; open means not done, cancelled or failed. The rate counts items created in the
+    trailing hour, whatever their status. The TTL applies to every agent-created item.
+    """
+
+    enabled: bool = False
+    max_open_per_agent: int = Field(default=3, ge=1, le=50)
+    max_open_per_department: int = Field(default=8, ge=1, le=200)
+    max_open_ship: int = Field(default=24, ge=1, le=500)
+    max_created_per_agent_per_hour: int = Field(default=6, ge=1, le=100)
+    ttl_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    max_depth: int = Field(default=2, ge=1, le=5)
+
+    @model_validator(mode="after")
+    def _validate_caps_fit_the_ship(self) -> "AgentWorkConfig":
+        """A per-agent or per-department cap above the ship cap could never be reached."""
+        if self.max_open_per_agent > self.max_open_ship or self.max_open_per_department > self.max_open_ship:
+            raise ValueError("agent_work: max_open_per_agent and max_open_per_department cannot exceed max_open_ship")
+        return self
+
+
 class QualificationConfig(BaseModel):
     """Configuration for the Crew Qualification Battery (AD-566)."""
 
@@ -4008,6 +4032,7 @@ class SystemConfig(BaseModel):
     edge_backfill: EdgeBackfillConfig = Field(default_factory=EdgeBackfillConfig)  # AD-689
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
+    agent_work: AgentWorkConfig = Field(default_factory=AgentWorkConfig)  # AD-1347 S1 (#1627)
     temporal: TemporalConfig = TemporalConfig()
     qualification: QualificationConfig = QualificationConfig()
     orientation: OrientationConfig = OrientationConfig()

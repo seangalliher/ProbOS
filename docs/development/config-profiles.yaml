@@ -17,7 +17,7 @@ census:
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
   boolean_fields_reachable: 445
-  default_false: 223
+  default_false: 224
   default_true: 225
   default_false_armed_by_system_yaml: 85
   default_false_never_armed: 136
@@ -588,6 +588,17 @@ flags:
   external_dependency: null
   requires:
   - dm_agentic.economic_judgment.continue_extension.enabled
+  conflicts_with: []
+- path: agent_work.enabled
+  kind: product-feature
+  profiles: []
+  evidence_to_promote: tests/test_ad1347_s1_agent_work.py tests/test_ad1347_s1_wiring.py
+    -- the real store, registry, permission store and stop record govern a request from creation
+    to an eligible claim; a real boot builds the service only when armed, and OFF builds nothing
+    and adds no table to workforce.db.
+  external_dependency: null
+  requires:
+  - workforce.enabled
   conflicts_with: []
 ci_divergences:
 - id: nats-forced-off-in-tests

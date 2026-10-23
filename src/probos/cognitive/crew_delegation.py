@@ -67,6 +67,28 @@ class DelegationDecision:
     reason: str
 
 
+def find_chief_post(ontology: VesselOntologyService, worker_post: Post) -> Post | None:
+    """First in-department superior whose authority_over holds the worker post (AD-865; shared with AD-1347)."""
+    chain = ontology.get_chain_of_command(worker_post.id)
+    for post in chain:
+        if post.id == worker_post.id:
+            continue
+        if (
+            post.department_id == worker_post.department_id
+            and worker_post.id in (post.authority_over or [])
+        ):
+            return post
+    return None
+
+
+def resolve_post_agent(ontology: VesselOntologyService, post_id: str) -> str | None:
+    """Live agent_id of the first assignment wired to ``post_id`` (AD-865; shared with AD-1347)."""
+    for assignment in ontology.get_agents_for_post(post_id):
+        if assignment.agent_id is not None:
+            return assignment.agent_id
+    return None
+
+
 class CrewDelegator:
     """Route a resolved worker sub-task through its department chief.
 
@@ -205,23 +227,11 @@ class CrewDelegator:
 
     def _find_chief_post(self, worker_post: "Post") -> "Post | None":
         """First in-department superior whose authority_over holds the worker post."""
-        chain = self._ontology.get_chain_of_command(worker_post.id)
-        for post in chain:
-            if post.id == worker_post.id:
-                continue
-            if (
-                post.department_id == worker_post.department_id
-                and worker_post.id in (post.authority_over or [])
-            ):
-                return post
-        return None
+        return find_chief_post(self._ontology, worker_post)
 
     def _resolve_post_agent(self, post_id: str) -> str | None:
         """Live agent_id of the first assignment wired to ``post_id``."""
-        for assignment in self._ontology.get_agents_for_post(post_id):
-            if assignment.agent_id is not None:
-                return assignment.agent_id
-        return None
+        return resolve_post_agent(self._ontology, post_id)
 
     def _directive_for(self, decision: "AssignmentDecision") -> str:
         """Non-empty directive text for the Order (issue_order rejects blanks)."""

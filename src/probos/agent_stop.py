@@ -67,9 +67,11 @@ SEAM_GROUP_FANOUT: Final = "group_fanout"
 SEAM_BROWSER_ACTION: Final = "browser_action_ack"
 SEAM_AGENTIC_RUN: Final = "agentic_run"  # A2: the shared entry of every new agentic run, and correction rounds
 SEAM_DELEGATION: Final = "delegation"  # A2: a task delegated to a stopped agent
+SEAM_AGENT_WORK: Final = "agent_work"  # AD-1347 S1: work an agent creates for itself or requests from a colleague
 SEAMS: Final[frozenset[str]] = frozenset({
     SEAM_INTENT, SEAM_CONSULTATION, SEAM_TOOL, SEAM_PROACTIVE, SEAM_WARD_ROOM,
     SEAM_DM_ROUTE, SEAM_GROUP_FANOUT, SEAM_BROWSER_ACTION, SEAM_AGENTIC_RUN, SEAM_DELEGATION,
+    SEAM_AGENT_WORK,
 })
 
 S1_SCOPE: Final[dict[str, str]] = {
