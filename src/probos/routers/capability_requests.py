@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from probos.agent_work_runner import agent_work_approval  # AD-1347 S3 (no cognitive import at module scope)
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.capability_request import (
     FULFILMENT_KINDS, REPAIR_TOOL_ID, CapabilityRequest, can_fulfil_request, repair_action,
@@ -483,6 +484,20 @@ async def _maybe_fulfil_on_approval(
                 "stands and an approval can be retried", decided.id[:12], exc_info=True,
             )
             return False
+    if agent_work_approval(decided) is not None:
+        # AD-1347 S3 (#1627): one tool call in one agent-created work item. The approval is its own fulfilment:
+        # FULFILLED resumes the parked item (AD-855), whose next run makes that call once (the runner consumes the
+        # approval). A denial does nothing here: AD-855 cancels the item on the DECIDED event.
+        if not approve:
+            return False
+        try:
+            return await store.mark_fulfilled(decided.id) is not None
+        except Exception:  # A2 (F20): the approval stands and stays retryable
+            logger.warning(
+                "AD-1347: marking agent-work approval %s fulfilled failed; the decision stands and the approval "
+                "can be retried", decided.id[:12], exc_info=True,
+            )
+            return False
     if not approve:
         return False
     fulfiller = _APPROVAL_FULFILLERS.get(decided.kind)
@@ -604,6 +619,12 @@ async def _maybe_issue_standing_rule(
             "AD-1206: repair request %s cannot grant standing authority; "
             "only the recorded Captain decision authorizes this issue filing",
             decided.id[:12],
+        )
+        return None
+    if agent_work_approval(decided):  # AD-1347 S3 A2: one exact call per approval; no standing rule
+        logger.info(
+            "AD-1347: agent-work request %s cannot grant a standing rule; the agent-work confinement admits one "
+            "exact call per approval and never reads a standing rule", decided.id[:12],
         )
         return None
     if command_approval_request(decided) is not None:  # AD-1328 S2b: no standing rule

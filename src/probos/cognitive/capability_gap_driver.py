@@ -318,11 +318,15 @@ class CapabilityGapDriver:
                 work_item_id,
             )
             return
+        from probos.agent_work_runner import resume_agent_work
         from probos.cognitive.turn_promotion import (
             is_promoted_turn,
             resume_promoted_turn,
         )
 
+        # AD-1347 S3: agent-created work is not dispatchable; its runner runs it again (the router would drop it).
+        if await resume_agent_work(self._runtime, updated):
+            return
         if is_promoted_turn(updated):
             await resume_promoted_turn(self._runtime, updated, request_id)
             return

@@ -165,6 +165,7 @@ if TYPE_CHECKING:
     from probos.admission import AdmissionService  # AD-1346 M3a
     from probos.agent_stop import AgentStopService  # AD-1343
     from probos.agent_work import AgentWorkService  # AD-1347 S1
+    from probos.agent_work_runner import AgentWorkRunner  # AD-1347 S3
     from probos.approval_authority import ApprovalAuthorityStore  # AD-1213
     from probos.decision_pre_clearance import DecisionPreClearanceStore  # AD-1214
     from probos.continue_extension_permits import SqliteContinueExtensionPermitStore  # AD-1323
@@ -510,6 +511,7 @@ class ProbOSRuntime:
     persistent_task_store: PersistentTaskStore | None
     work_item_store: WorkItemStore | None
     agent_work: "AgentWorkService | None"  # AD-1347 S1: built in start() only when agent_work.enabled; released with the store
+    agent_work_runner: "AgentWorkRunner | None"  # AD-1347 S3: built in finalize only with agent_work; stopped before the store
     crew_session_service: "CrewSessionService | None"
     crew_session_delivery_service: "CrewSessionDeliveryService | None"
     crew_session_delivery_listener: Callable[..., Any] | None
@@ -1133,6 +1135,8 @@ class ProbOSRuntime:
         self.work_item_store: WorkItemStore | None = None
         # AD-1347 S1: the service that owns agent-created work; built in start() only when agent_work.enabled
         self.agent_work: "AgentWorkService | None" = None
+        # AD-1347 S3: the Ship's Computer runner of agent-created work; built in finalize only with the service
+        self.agent_work_runner: "AgentWorkRunner | None" = None
 
         # --- Durable Crew Sessions (AD-1124) ---
         self.crew_session_service: "CrewSessionService | None" = None

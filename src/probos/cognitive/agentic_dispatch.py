@@ -105,6 +105,9 @@ logger = logging.getLogger(__name__)
 _STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
     "strict_approval_dispatch", default=None
 )
+# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted under the Captain's single-use approval of that
+# exact call, so AD-1154's inbox does not park it again. Credential entry (the inbox's step 3) is still refused.
+_CONFINED_ADMISSION: ContextVar[bool] = ContextVar("confined_admission", default=False)
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
 _CREW_WORK_ITEM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
@@ -293,11 +296,62 @@ _PLAN_MODE_TOOL_REFUSAL: str = (
     "switches to execute mode; finish the plan and name the step that needs "
     "this tool."
 )
+# AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
+# any other tool is put to the run's gate, which files it for the Captain's approval (an AD-1154 ``action``) or admits
+# the one call an approval on record covers. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+CONFINED_CALL_FILED: str = (
+    "That call needs the Captain's approval before it runs. It was filed for review and did not run. Do not "
+    "repeat it: a repeat is folded into the same request. Finish what the read-only tools allow and report "
+    "what remains open."
+)
+CONFINED_CALL_NOT_FILED: str = (
+    "That call needs the Captain's approval before it runs, and it could not be filed for review, so it did "
+    "not run. Finish what the read-only tools allow and report what remains open."
+)
+CONFINEMENT_ADMIT = "admit"
+CONFINEMENT_FILED = "filed"
+CONFINEMENT_REFUSED = "refused"
+
 # AD-1189 / AD-1156: refusals of calls that never ran. They say nothing about
 # the tool, so they are never defect evidence.
 _NEVER_RAN_REFUSALS: frozenset[str] = frozenset(
-    {_DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL}
+    {_DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED}
 )
+
+
+@dataclass(frozen=True)
+class ToolCallConfinement:
+    """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate every other call is put to.
+
+    ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
+    Captain's approval) or anything else (not filed). Enforced first in the executor's invoke, before plan mode and the
+    AD-1154 browser inbox, so the decision is made at the tool call, never by reading the plan.
+    """
+
+    tool_ids: frozenset[str]
+    gate: Callable[[str, Any, Any], Awaitable[str]]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.tool_ids) is not frozenset or not self.tool_ids
+            or any(type(tool_id) is not str or not tool_id for tool_id in self.tool_ids)
+            or not callable(self.gate)
+        ):
+            raise ValueError("tool_call_confinement_invalid")
+
+    async def refuse_or_admit(self, agent_id: str, tool_id: Any, params: Any) -> ToolResult | None:
+        """None admits the call; otherwise the refusal it gets. Fails closed: a gate that raises refuses."""
+        try:
+            verdict = await self.gate(agent_id, tool_id, params)
+        except Exception:
+            logger.warning(
+                "AD-1347: the confinement gate raised for a call from agent %s; the call is refused and did not run",
+                agent_id[:12], exc_info=True,
+            )
+            verdict = CONFINEMENT_REFUSED
+        if verdict == CONFINEMENT_ADMIT:
+            return None
+        return ToolResult(error=CONFINED_CALL_FILED if verdict == CONFINEMENT_FILED else CONFINED_CALL_NOT_FILED)
 
 
 @dataclass(frozen=True)
@@ -747,6 +801,16 @@ class _DispatchGuardMixin:
                 raise EffectDenied(reason_code, result=result)
             return result
 
+        confinement = self._confinement
+        confined_admission = False
+        if confinement is not None and tool_id not in confinement.tool_ids:
+            refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
+            if refusal is not None:
+                strict_log("confinement", "confinement_refused")
+                return refuse(refusal, "confinement_refused")
+            # AD-1347 S3 A1 (F3): the Captain approved exactly this call, once; AD-1154's inbox below does not park it
+            # again (credential entry there stays refused).
+            confined_admission = True
         if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
             if strict_dispatch is not None:
                 strict_log("plan_mode", "plan_mode_refused")
@@ -779,6 +843,7 @@ class _DispatchGuardMixin:
         dispositions: list[str] = []
         crew_item = context.get("_crew_work_item_id") if type(context) is dict else None
         strict_token = _STRICT_APPROVAL_DISPATCH.set(strict_dispatch)
+        admission_token = _CONFINED_ADMISSION.set(confined_admission)
         try:
             parked = await self._park_or_admit(
                 agent_id, tool_id, params, disposition_sink=dispositions,
@@ -790,6 +855,7 @@ class _DispatchGuardMixin:
                 ),
             )
         finally:
+            _CONFINED_ADMISSION.reset(admission_token)
             _STRICT_APPROVAL_DISPATCH.reset(strict_token)
         if parked is not None:
             return refuse(parked, "approval_required")
@@ -854,6 +920,7 @@ class _DispatchConfigurationMixin:
         # AD-1189: None = unarmed. Set only by ``arm_deferred_schemas``.
         self._deferred_schemas: Any = None
         self._plan_mode_tool_ids: frozenset[str] | None = None  # AD-1156: None = unarmed
+        self._confinement: ToolCallConfinement | None = None  # AD-1347 S3: None = unarmed
 
     def arm_approval_inbox(
         self,
@@ -886,6 +953,10 @@ class _DispatchConfigurationMixin:
     def restrict_to_plan_mode(self, tool_ids: frozenset[str]) -> None:
         """AD-1156: refuse, first in :meth:`invoke`, every call to a tool not in ``tool_ids``."""
         self._plan_mode_tool_ids = tool_ids
+
+    def confine_calls(self, confinement: ToolCallConfinement) -> None:
+        """AD-1347 S3: put every call to a tool outside ``confinement.tool_ids`` to its gate, first in :meth:`invoke`."""
+        self._confinement = confinement
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
         """AD-1153 / DD-1: confine ``browser`` calls to ``actions``.
@@ -1144,6 +1215,12 @@ class _ApprovalGuardMixin:
                     agent_id[:12],
                 )
             return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
+
+        if _CONFINED_ADMISSION.get():
+            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under the Captain's single-use approval
+            # of it, so it is not parked again; credential entry (step 3, above) stays refused.
+            logger.info("AD-1347: %s.%s for agent %s runs under the Captain's approval of this call", tool_id, action, agent_id[:12])
+            return None
 
         scope_key = self._resolve_scope_key(
             action, params, session, strict_dispatch=strict_dispatch
@@ -2027,6 +2104,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
+            CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,  # AD-1347 S3
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
@@ -2611,6 +2689,7 @@ class WorkItemAgenticExecutor:
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
         inner_loop_hook: Any = None,
         admitted_turn: bool = False,
+        confinement: ToolCallConfinement | None = None,
     ) -> WorkItemAgenticOutcome:
         """Reserve browser use across offer construction, execution and finalization.
 
@@ -2661,6 +2740,9 @@ class WorkItemAgenticExecutor:
         # AD-1322: transported unchanged; absent => the arguments are unchanged.
         if inner_loop_hook is not None:
             arguments["inner_loop_hook"] = inner_loop_hook
+        # AD-1347 S3: forwarded only when set, for the same reason.
+        if confinement is not None:
+            arguments["confinement"] = confinement
         if fault_observer_for(runtime) is not None:
             arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
         registry = getattr(runtime, "tool_registry", None)
@@ -2734,6 +2816,8 @@ class WorkItemAgenticExecutor:
         plan_mode_tool_ids: frozenset[str] | None = None,
         budget_awareness_state: AgenticBudgetAwarenessState | None = None,
         inner_loop_hook: Any = None,
+        # AD-1347 S3: agent-created work's per-call confinement. None -- every other caller -- changes nothing.
+        confinement: ToolCallConfinement | None = None,
     ) -> WorkItemAgenticOutcome:
         """Run one agentic work-item session and return its structured outcome.
 
@@ -2821,6 +2905,12 @@ class WorkItemAgenticExecutor:
             or any(type(tool_id) is not str or not tool_id for tool_id in plan_mode_tool_ids)
         ):
             raise ValueError("plan_mode_tool_ids_invalid")
+
+        # AD-1347 S3: a confinement is exact and never runs with plan mode, or the run does not start.
+        if confinement is not None and (
+            type(confinement) is not ToolCallConfinement or plan_mode_tool_ids is not None
+        ):
+            raise ValueError("tool_call_confinement_invalid")
 
         department, rank = _resolve_agentic_identity(
             runtime=runtime,
@@ -3451,6 +3541,9 @@ class WorkItemAgenticExecutor:
         if plan_mode_tool_ids is not None:
             tool_ids = [tool_id for tool_id in tool_ids if tool_id in plan_mode_tool_ids]
             executor.restrict_to_plan_mode(plan_mode_tool_ids)
+        # AD-1347 S3: the offer stays whole -- the agent may name any tool it holds -- and the call decides (D4).
+        if confinement is not None:
+            executor.confine_calls(confinement)
         # BF-755: the non-MCP half, so a mid-turn refresh can REBUILD the MCP
         # half from the current authorized view rather than unioning onto the
         # old one. An append-only merge could never drop a tool whose server was

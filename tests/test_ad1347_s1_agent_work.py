@@ -7,7 +7,7 @@ registered by its production function and a real ``ToolPermissionStore``; the re
 ``resolve_workforce_pull_resource``. Identity resolution is the one stand-in (``_SlotIdentities``): it answers as
 ``IdentityService.resolve`` does (AD-1346 M1a), and ``tests/test_ad1347_s1_wiring.py`` runs the real facade on a boot.
 
-S2 and S3 extend ``test_request_is_created_published_and_claimed_by_an_eligible_member`` into acceptance 2's chain.
+Acceptance 2's whole chain (tag, item, notice, claim, run, report) is ``tests/test_ad1347_s3_execution.py`` X1.
 """
 
 from __future__ import annotations
@@ -367,8 +367,8 @@ async def test_an_unregistered_tool_or_a_tool_nobody_may_use_is_refused_at_creat
 async def test_request_is_created_published_and_claimed_by_an_eligible_member(tmp_path: Path) -> None:
     """The S1 half of acceptance 2, and acceptance 3's claim half, through the real tools and the runtime's pull authority.
 
-    S2 and S3 extend this test into acceptance 2's chain: the chain tag before creation; the activation notice, the
-    execution with event_log_query and the post in the origin thread after the claim.
+    The whole chain, from the tag before creation to the post in the origin thread after the run, is
+    tests/test_ad1347_s3_execution.py X1.
     """
     async with _ship(tmp_path) as ship:
         created = await _request(ship, "pulaski-1")

@@ -3812,14 +3812,16 @@ class ProactiveCognitiveLoop:
         text = re.sub(handoff_pattern, '', text, flags=re.DOTALL).strip()
 
         # --- Agent-created work (AD-1347 S2) — Lieutenant+; only while the service exists, so off is untouched ---
-        # Before BF-203: each tag has a closed form and is stripped whole here.
-        from probos.agent_work_tags import agent_work_service, apply_agent_work_tags
+        # Before BF-203: each tag has a closed form and is stripped whole here. Off (no service at all) neither imports
+        # nor calls the tag module (A1, F12); a runtime holding something else asks only whether it is the service.
+        if getattr(rt, "agent_work", None) is not None:
+            from probos.agent_work_tags import agent_work_service, apply_agent_work_tags
 
-        if agent_work_service(rt) is not None:
-            text, work_actions = await apply_agent_work_tags(
-                text, runtime=rt, actor=agent.id, rank=rank, thread_id=thread_id, post_id=post_id,
-            )
-            actions_executed.extend(work_actions)
+            if agent_work_service(rt) is not None:
+                text, work_actions = await apply_agent_work_tags(
+                    text, runtime=rt, actor=agent.id, rank=rank, thread_id=thread_id, post_id=post_id,
+                )
+                actions_executed.extend(work_actions)
 
         # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.
         # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE,

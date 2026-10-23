@@ -147,8 +147,36 @@ def repair_action(req: CapabilityRequest) -> RepairAction | None:
     return RepairAction(fault_id, signature, payload["scope_key"], payload["thread_id"])
 
 
+#: AD-1347 S3 A1 (F1): one tool call in one agent-created work item, filed by the agent-work runner's confinement.
+AGENT_WORK_CALL_ACTION = "agent_work_call"
+AGENT_WORK_SCOPE_PREFIX = "agent_work:"
+
+
+def agent_work_call(req: Any) -> dict[str, Any] | None:
+    """The validated payload when ``req`` asks to make one tool call in one agent-created work item, else None.
+
+    Bound to its own item: the scope is ``agent_work:`` and the request's ``work_item_id``. Its approval is its own
+    fulfilment (the approval route marks it fulfilled and AD-855 resumes the item), so it is fulfillable, as the repair
+    action is. A2 (F21): other action subtypes are unchanged by this predicate; an AD-1328 command escalation has its
+    own fulfiller (``execution/command_escalation.py``) and stays outside it. The HXI's ``canFulfil``
+    (``ui/src/store/capabilityApprovals.ts``) mirrors this predicate and ``validate_action_payload`` beneath it, and
+    ``ui/e2e/fixtures/ad1347-action-payload-rows.json`` holds the rows both sides are tested on (A2, F19).
+    """
+    if getattr(req, "kind", None) != "action":
+        return None
+    payload = validate_action_payload(getattr(req, "payload", None))
+    work_item_id = getattr(req, "work_item_id", None)
+    if (
+        payload is None or payload["action"] != AGENT_WORK_CALL_ACTION
+        or type(work_item_id) is not str or not work_item_id
+        or payload["scope_key"] != AGENT_WORK_SCOPE_PREFIX + work_item_id
+    ):
+        return None
+    return payload
+
+
 def can_fulfil_request(req: CapabilityRequest) -> bool:
-    return req.kind in FULFILMENT_KINDS or repair_action(req) is not None
+    return req.kind in FULFILMENT_KINDS or repair_action(req) is not None or agent_work_call(req) is not None
 
 
 def _canonical_json(value: Any) -> str:

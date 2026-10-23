@@ -3402,6 +3402,56 @@ def _wire_task_completion_notifier(*, runtime: Any, config: "SystemConfig") -> b
     return True
 
 
+def _wire_agent_work_runner(*, runtime: Any) -> bool:
+    """AD-1347 S3 (#1627): build the Ship's Computer runner of agent-created work and subscribe it to the work store.
+
+    Only while ``runtime.agent_work`` is the real service (agent_work.enabled built it). The runner needs the Ward Room
+    to report, the tool registry to claim through, the capability-request store and AD-855's driver to park on the
+    Captain's decision, and an LLM client to run; with any missing it is not built and the reason is logged
+    (log-and-degrade: agent-created work is still filed, and a later start's recovery runs it).
+    """
+    from probos.agent_work import AgentWorkService
+
+    if type(getattr(runtime, "agent_work", None)) is not AgentWorkService:
+        return False
+    needed = (
+        "work_item_store", "ward_room", "tool_registry", "capability_request_store", "capability_gap_driver",
+        "llm_client", "callsign_registry", "registry",
+    )
+    missing = [name for name in needed if getattr(runtime, name, None) is None]
+    add_listener = getattr(runtime, "add_event_listener", None)
+    if missing or add_listener is None:
+        logger.warning(
+            "AD-1347: agent_work is on but its runner is not built (missing: %s); agent-created work is filed and "
+            "not run", ", ".join(missing) or "add_event_listener",
+        )
+        return False
+    from probos.agent_work_runner import AgentWorkRunner
+    from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+
+    registry = runtime.registry
+    callsigns = runtime.callsign_registry
+
+    def callsign_of(slot_id: str) -> str:
+        agent = registry.get(slot_id)
+        callsign = callsigns.get_callsign(agent.agent_type) if agent is not None else ""
+        return callsign or slot_id
+
+    approval_inbox = getattr(runtime.config, "approval_inbox", None)
+    runner = AgentWorkRunner(
+        service=runtime.agent_work, store=runtime.work_item_store, ward_room=runtime.ward_room,
+        tools=runtime.tool_registry, requests=runtime.capability_request_store, parking=runtime.capability_gap_driver,
+        executor=WorkItemAgenticExecutor(llm_client=runtime.llm_client), runtime=runtime, agents=registry,
+        callsign_of=callsign_of, max_pending=int(getattr(approval_inbox, "max_pending_per_agent", 20)),
+        ttl_seconds=runtime.config.agent_work.ttl_seconds,
+    )
+    add_listener(
+        runner.on_store_event, event_types=["work_item_created", "work_item_claimed", "work_item_status_changed"],
+    )
+    runtime.agent_work_runner = runner
+    return True
+
+
 def _wire_workspace_ontology(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-478 v1: Wire WorkspaceOntologyRegistry term frequency helper."""
     cfg = getattr(config, "workspace_ontology", None)
@@ -5533,6 +5583,12 @@ async def finalize_startup(
                     "AD-846: task-completion Captain-DM notifier wired "
                     "during finalization"
                 )
+
+            # AD-1347 S3 (#1627): the runner of agent-created work, after AD-855's driver (it parks on it). Only with
+            # the agent_work service; recover() runs what a previous start left unfinished and sends owed notices.
+            if _wire_agent_work_runner(runtime=runtime):
+                await runtime.agent_work_runner.recover()
+                logger.info("AD-1347: agent-work runner wired during finalization")
 
             # BF-223: Create per-agent JetStream dispatch consumers AFTER ship
             # commissioning has set the stable DID-based NATS prefix. During

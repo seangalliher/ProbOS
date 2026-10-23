@@ -1668,6 +1668,11 @@ async def shutdown(
             getattr(runtime, "crew_session_delivery_service", None),
         ):
             await _close_crew_session_delivery(runtime)
+        work_runner = getattr(runtime, "agent_work_runner", None)
+        if work_runner is not None:
+            with steps("agent work runner stop", work_runner):
+                await work_runner.stop()
+            runtime.agent_work_runner = None  # AD-1347 S3: its runs end before the store they write closes
         with steps("workforce store stop", runtime.work_item_store):
             await runtime.work_item_store.stop()
         runtime.work_item_store = None

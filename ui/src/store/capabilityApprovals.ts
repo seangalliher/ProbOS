@@ -122,9 +122,11 @@ export function inspectActionPayload(value: unknown): ActionInspection {
   }
 }
 
+/** AD-1347 S3 A2: no standing approval for an agent-work call. Its confinement admits one exact call per approval and
+ * never reads a standing rule, and the approval route issues none. */
 export function standingApprovalEligible(request: CapabilityApprovalView): boolean {
   return request.status === 'pending' && ['action', 'continue'].includes(request.kind)
-    && request.payload?.tool_id !== 'repair';
+    && request.payload?.tool_id !== 'repair' && !isAgentWorkApproval(request);
 }
 
 export function standingApprovalPolicy(config: unknown): { maxHours: number; defaultHours: number; issue: null }
@@ -242,10 +244,43 @@ function hasPossibleActionPayloadSize(value: unknown): boolean {
   return typeof lowerBound === 'string' && [...lowerBound].length <= 4000;
 }
 
-function canFulfil(kind: unknown, payload: unknown): boolean {
+/** AD-1347 S3 A2 (F19): Python's `validate_action_payload` (src/probos/capability_request.py) as the decoded wire shows
+ * it: exactly the six keys, each of its type and within its bound, valid Unicode throughout, and at most 4,000
+ * characters with each number counted as one. That size bound is exact for text and only a necessary one for numbers,
+ * whose Python spelling the decoded value does not keep; Python serves no payload it rejected (contract section 9). */
+function isActionWirePayload(payload: Record<string, unknown>): boolean {
+  if (Object.keys(payload).length !== ACTION_KEYS.length || !ACTION_KEYS.every(key => key in payload)
+    || typeof payload.tool_id !== 'string' || !/^[a-z0-9_:.-]{1,64}$/.test(payload.tool_id)
+    || typeof payload.action !== 'string' || !/^[a-z0-9_]{1,64}$/.test(payload.action)
+    || !isRecord(payload.params) || Object.keys(payload.params).length > 20
+    || !validText(payload.scope_key, 253) || !validText(payload.thread_id, 64)
+    || !(payload.session_id === null || validText(payload.session_id, 64))) return false;
+  try {
+    return hasPossibleActionPayloadSize(payload); // A2 (F19): the size and Unicode of Python's canonical form
+  } catch {
+    return false;
+  }
+}
+
+/** AD-1347 S3 A1 (F1), A2 (F19): one tool call in one agent-created work item, bound to it by its scope. Its approval
+ * is its own fulfilment. Mirrors Python's `agent_work_call` exactly, payload validation included; both sides are
+ * tested on the rows of `ui/e2e/fixtures/ad1347-action-payload-rows.json`. */
+function isAgentWorkCall(payload: Record<string, unknown>, workItemId: unknown): boolean {
+  return isActionWirePayload(payload) && payload.action === 'agent_work_call'
+    && typeof workItemId === 'string' && workItemId !== ''
+    && payload.scope_key === 'agent_work:' + workItemId;
+}
+
+/** AD-1347 S3 A2 (F18): a validated agent-work call bound to its own item. Approving it resumes that item. */
+export function isAgentWorkApproval(request: CapabilityApprovalView): boolean {
+  return request.kind === 'action' && isRecord(request.payload) && isAgentWorkCall(request.payload, request.work_item_id);
+}
+
+function canFulfil(kind: unknown, payload: unknown, workItemId: unknown): boolean {
   if (FULFILMENT_KINDS.has(String(kind))) return true;
   if (kind !== 'action' || !isRecord(payload)) return false;
   const keys = ['tool_id', 'action', 'params', 'scope_key', 'session_id', 'thread_id'];
+  if (isAgentWorkCall(payload, workItemId)) return true;
   if (Object.keys(payload).length !== keys.length || !keys.every(key => key in payload)
     || payload.tool_id !== 'repair' || payload.action !== 'dispatch'
     || payload.session_id !== null || !isRecord(payload.params)
@@ -280,7 +315,7 @@ export function isCapabilityRequestView(value: unknown): value is CapabilityAppr
     && typeof value.status === 'string'
     && ['pending', 'approved', 'denied', 'fulfilled', 'failed'].includes(value.status)
     && typeof value.can_retry_fulfilment === 'boolean'
-    && value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload));
+    && value.can_retry_fulfilment === (value.status === 'approved' && canFulfil(value.kind, value.payload, value.work_item_id));
 }
 
 export function isActionableCapabilityPayload(value: unknown): value is ApprovalPayload {
@@ -304,8 +339,9 @@ export function parseCapabilityDecision(
     || request.decided_at === null || !request.decided_by
     || (approve ? !['approved', 'fulfilled'].includes(request.status) : request.status !== 'denied')
     || value.fulfilled !== (request.status === 'fulfilled')
-    || (request.can_retry_fulfilment && !canFulfil(expected.kind, expected.payload))
-    || (value.fulfilled && (!canFulfil(request.kind, request.payload) || !canFulfil(expected.kind, expected.payload)))) {
+    || (request.can_retry_fulfilment && !canFulfil(expected.kind, expected.payload, expected.work_item_id))
+    || (value.fulfilled && (!canFulfil(request.kind, request.payload, request.work_item_id)
+      || !canFulfil(expected.kind, expected.payload, expected.work_item_id)))) {
     throw new Error('Inconsistent capability decision response; request state was not confirmed.');
   }
   if (!sameCapabilityRequest(request, {
