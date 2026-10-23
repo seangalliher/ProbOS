@@ -5,13 +5,14 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2: the repair of review round 2)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2b: the scanner's CommonMark differential)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2c: a list item's fence ends left of the item's column)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A2d: the repair of review round 3)
 
 **Status:** build-ready after wave 2 (BF-917 #1625, BF-915 #1623) merges. Slices 2 and 3 of 4 of #1627, built as one batch (the Architect's queue ruling, comment `IC_kwDORgp-xs8AAAABer-scw`). **S3 completes AD-1347's build; #1627 closes after the Captain's live acceptance (A1).** **Tier HIGH:** crew create governed work through the chain; colleagues run it with tools; there is a Captain approval path. **AD number:** AD-1347; this batch allocates nothing (the orchestrator runs `scripts/ad_ceiling.py`). **Base:** `origin/main` `6b950acf` (S1 and S4 merged).
 
 **Wave 2:** this contract needs nothing from wave 2 and edits none of its files: `skill_framework.py`, `acm.py`, `crew_enrollment.py`, `config/ontology/skills.yaml`, the doctor checks, `role_template_audit.py`, `storage_declarations.py` and its four test files. Every code SEARCH anchors on text. Each tracker SEARCH anchors on a line that wave 2's entries do not change (§8).
 
 **Tests:**
-- M1: `tests/test_ad1347_s2_chain_tags.py`, 17 functions after A2b (C1 has 11 cases, C15 6 and C17 58; A1's C14 to C16 and its C1 and C5 changes are applied in M2's §7.30, A2's C1, C15 and C17 changes in §7.40).
+- M1: `tests/test_ad1347_s2_chain_tags.py`, 17 functions after A2b (C1 has 11 cases, C15 6 and C17 74 after A2d; A1's C14 to C16 and its C1 and C5 changes are applied in M2's §7.30, A2's C1, C15 and C17 changes in §7.40).
 - M2: `tests/test_ad1347_s3_execution.py`, 24 functions after A2 (X17 has 2 cases); `tests/test_ad1347_s3_wiring.py`, 1 function (a real boot); A1: `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts` (3 vitest cases) over the shared fixture `ui/e2e/fixtures/ad1347-agent-work-approvals.json`; A2: `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts` (2 vitest cases) over the shared rows `ui/e2e/fixtures/ad1347-action-payload-rows.json`, and `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx` (1).
 - Updated pins:
   - `tests/fixtures/ad1343_seam_registry.py`: one `AGENTIC_RUN_OWNERS` row and the `agent_work` `SEAM_INDEX` text;
@@ -27,7 +28,9 @@
 
 **Amendment A1 (2026-10-23): the repair of review round 1 (`gpt-6.1-sol`, NOT READY, 14 findings). Not a mechanical repair; no decision D1 to D8 is reversed.** All code is in new sections §7.22 to §7.31 at the end of M2, whose SEARCH blocks are the built text, so M1's commit is unchanged and the delta is one place. Repaired: F1 (both fulfilment predicates, Python `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the agent-work call bound to its own item; a shared fixture is asserted equal to the real route output and fed to the real decoder), F2 (a start that arrives during a run is made when that run ends), F3 (a confinement's admission is carried past AD-1154's inbox for that one call; credential entry stays refused; an item AD-1324 parked itself stays parked), F4 (done only when the run completed with an answer; any other stop fails with its reason), F5 (a request's eligibility is asked again before parking), F6, F7 and F11 (one linear scanner: any letter case, every marker stripped, fenced, quoted and nested tags never acted on), F8 (declines reach every watcher), F10 (a fault on one tag is acknowledged and the reply goes on), F12 (off neither imports nor calls the tag module), F13 (the notice states the TTL exactly), F14 (X3 asserts the executor is not entered before the run; X12 uses the real router), and F15, found while repairing F3 (the gate never records a browser confirmation token, as AD-1154 does not). F9: the decline acknowledgement no longer says "was told" when the post failed; a failed post still consumes its claimed notice (register R8: needs a release operation on the notice table, a store contract change). Tests: 41 cases became 59; rows: 53 became 76 Python rows, plus 4 TypeScript rows run by hand (§10). Round 2 reviews the whole candidate: the predicate, the HXI decoder, `_park_or_admit` and the terminal status mapping are shared contracts.
 
-**Amendments A2, A2b and A2c (2026-10-23): the repair of review round 2 (`gpt-6.1-sol`, NOT READY, F16 to F21) and of the scanner's CommonMark differential. Not mechanical repairs; no decision D1 to D8 is reversed.** A2 (F16 to F21 and the standing-approval control) is in §7.32 to §7.41; A2b and A2c edit only the REPLACE halves of §7.32's first four pairs and §7.40's second and third, with no new pair, so M1's commit and the code pair count (107) stand. A2b: the orchestrator ran the A2 scanner against markdown-it-py 4.0.0 (CommonMark preset) over generated flat documents and found 35 minimal documents where it acts on a tag that CommonMark reads as code or quotation; A2b reads indentation two ways (top level and list item) and brings indented code, fences after list markers and quotes in a list item into scope. A2c: the orchestrator's extended differential (an alphabet with list markers, headings, thematic breaks, tabs and fences on list-marker lines; 12,000 documents per seed) found that A2b's list reading had no end rule: on seed 1347, 44 non-lazy disagreements, 39 of them regressions against candidate 3 (a fence opened in a list item, then a line left of the item's content column); A2c tracks the last list item's content column and ends a fence at a non-blank line left of it. **Measured on the A2c oracle (`dd8ecb20`), seeds 1347, 2024, 7 and 31337:** non-lazy disagreements 0, 3, 3 and 1, each also acted on by candidate 3 (none a regression; 6 of the 7 are a nested item and 1 a lazy line: register R15); the only other class is lazy quote continuation (45, 44, 42 and 35 minimal documents; one of those 166 is a regression against candidate 3, which ignored it only because it toggled on any fence-like line, F16: a quote line, then a line of three backticks and `a`b`, then an indented claim); documents the scanner ignores although CommonMark reads text, the over-inert trade (register R14): 79, 69, 65 and 60, against 128 for candidate 3 on seed 1347. **Real text** (read-only, the live Ward Room: all 16,386 post and thread bodies, 144,300 variants with a claim line inserted): no non-lazy disagreement; the lazy class in 8 of the 9 bodies that hold a quote; 90 over-inert variants in 45 bodies (a claim indented four or more columns after a list item); no body holds a fence indented one column or more. **Verified by tool:** A2 (30 pairs), A2b (24) and A2c (24) each applied with every SEARCH exactly once; the 107 code pairs (M1 8, M2 30, §7.22 to §7.41 69) and both tracker pairs apply to `ba20e949`, each SEARCH once (the slices, cut at `### 7.1`, `### 7.7`, `### 7.22` and `## 8. Tracking`, hold 107 of the contract's 107 SEARCH labels in that span); **125 Python test cases pass** on the contract applied by tool (C1 11, C15 6, C17 58), and so do the 6 new vitest cases and the 685 existing vitest cases of the approval UI (A2b and A2c change no TypeScript); the HXI predicate and Python agree on 6,000 of 6,000 generated payload rows (110 disagreed on candidate 3). The phantom precheck lists 15 candidates on the applied tree, each a false positive: the 11 explained above, `splitlines` on the `str` `body` of `_fields` (the precheck typed it as the route's request model), `spec.commonmark.org` (a URL in prose, read as an attribute of `SubTaskSpec`), and `mark_fulfilled` twice more on the capability-request store (`CapabilityRequestStore.mark_fulfilled`, `capability_request.py:1065`, in the route's honest-degrade handler). **Mechanical repair 9:** the contract's R15 named two blind spots of the item tracker; the differential's residual documents show a third (a nested item is tracked at its innermost marker's column only; 6 of the 7), so §9 and §13 name all three and say how it was found; no code or test changed. Round 3 reviews the delta (`_inert_spans` and its helpers, §7.32, and the C17 rows) and the consumers of every changed name (`split_agent_work_tags` has one caller, `apply_agent_work_tags`); the tests-first, campaign and Builder results go to §17.
+**Amendments A2, A2b and A2c (2026-10-23): the repair of review round 2 (`gpt-6.1-sol`, NOT READY, F16 to F21) and of the scanner's CommonMark differential. Not mechanical repairs; no decision D1 to D8 is reversed.** A2 (F16 to F21 and the standing-approval control) is in §7.32 to §7.41; A2b and A2c edit only the REPLACE halves of §7.32's first four pairs and §7.40's second and third, with no new pair, so M1's commit and the code pair count (107) stand. A2b: the orchestrator ran the A2 scanner against markdown-it-py 4.0.0 (CommonMark preset) over generated flat documents and found 35 minimal documents where it acts on a tag that CommonMark reads as code or quotation; A2b reads indentation two ways (top level and list item) and brings indented code, fences after list markers and quotes in a list item into scope. A2c: the orchestrator's extended differential (an alphabet with list markers, headings, thematic breaks, tabs and fences on list-marker lines; 12,000 documents per seed) found that A2b's list reading had no end rule: on seed 1347, 44 non-lazy disagreements, 39 of them regressions against candidate 3 (a fence opened in a list item, then a line left of the item's content column); A2c tracks the last list item's content column and ends a fence at a non-blank line left of it. **Measured on the A2c oracle (`dd8ecb20`), seeds 1347, 2024, 7 and 31337:** non-lazy disagreements 0, 3, 3 and 1, each also acted on by candidate 3 (none a regression; 6 of the 7 are a nested item and 1 a lazy line: register R15); the only other class is lazy quote continuation (45, 44, 42 and 35 minimal documents; one of those 166 is a regression against candidate 3, which ignored it only because it toggled on any fence-like line, F16: a quote line, then a line of three backticks and `a`b`, then an indented claim); documents the scanner ignores although CommonMark reads text, the over-inert trade (register R14): 79, 69, 65 and 60, against 128 for candidate 3 on seed 1347. **Real text** (read-only, the live Ward Room: all 16,386 post and thread bodies, 144,300 variants with a claim line inserted): no non-lazy disagreement; the lazy class in 8 of the 9 bodies that hold a quote; 90 over-inert variants in 45 bodies (a claim indented four or more columns after a list item); no body holds a fence indented one column or more. **Verified by tool:** A2 (30 pairs), A2b (24) and A2c (24) each applied with every SEARCH exactly once; the 107 code pairs (M1 8, M2 30, §7.22 to §7.41 69) and both tracker pairs apply to `ba20e949`, each SEARCH once (the slices, cut at `### 7.1`, `### 7.7`, `### 7.22` and `## 8. Tracking`, hold 107 of the contract's 107 SEARCH labels in that span); **125 Python test cases pass after A2c** on the contract applied by tool (C1 11, C15 6, C17 58), and so do the 6 new vitest cases and the 685 existing vitest cases of the approval UI (A2b and A2c change no TypeScript); the HXI predicate and Python agree on 6,000 of 6,000 generated payload rows (110 disagreed on candidate 3). The phantom precheck lists 15 candidates on the applied tree, each a false positive: the 11 explained above, `splitlines` on the `str` `body` of `_fields` (the precheck typed it as the route's request model), `spec.commonmark.org` (a URL in prose, read as an attribute of `SubTaskSpec`), and `mark_fulfilled` twice more on the capability-request store (`CapabilityRequestStore.mark_fulfilled`, `capability_request.py:1065`, in the route's honest-degrade handler). **Mechanical repair 9:** the contract's R15 named two blind spots of the item tracker; the differential's residual documents show a third (a nested item is tracked at its innermost marker's column only; 6 of the 7), so §9 and §13 name all three and say how it was found; no code or test changed. Round 3 reviews the delta (`_inert_spans` and its helpers, §7.32, and the C17 rows) and the consumers of every changed name (`split_agent_work_tags` has one caller, `apply_agent_work_tags`); the tests-first, campaign and Builder results go to §17.
+
+**Amendments A2d and A2e (2026-10-23): the repair of review round 3 (`gpt-6.1-sol`, NOT READY, F22 to F26), after the round-three brake decision (continue; comment 6372686155 on #1627). Not mechanical repairs; no decision D1 to D8 is reversed.** A2d edits only REPLACE halves (§7.32's first three pairs, §7.37's file, §7.40's third pair, §7.41's fourth) and A2e adds one C17 row and register text, with no new code pair, so the code pair count (107) stands. F22: the content column of the list item the last marker starts is CommonMark's (5.2): five or more columns of padding start the item with indented code, whose line is inert and opens no fence; F23: an empty item ends at its first blank line; F24: the quote test strips spaces and tabs only; F25: the two C17 rows get a blank line after the quote; F26: two shared payload rows (37) and the claim narrowed to the exits the rows reach, lines 221 and 234 named as non-wire exclusions. There is no new register entry R16: the item-start look-alikes are R15's third kind, with two examples added. **Decided at the A2d gate (Option A, the Architect):** a tag indented four or more columns after a marker line with five or more columns of padding is read as code (register R14, the over-inert direction); it is a regression against the round-3 candidate that cannot be separated from F22's repair, because that candidate read the padded line as text and so acted on indented code at 6 to 8 columns (130 documents). **Verified by tool:** A2d (37 pairs) and A2e (9) each applied with every SEARCH once; the 107 code pairs and 2 tracker pairs apply to `ba20e949`, each once; **141 Python test cases pass** (C1 11, C15 6, C17 74); the architecture fitness test (63) and the principles checker pass; tests-first on `9319b37d`'s source: **11 failed, 130 passed**, exactly the Architect's ten C17 rows plus the new R14 row; the campaign table's 141 Line cells (130 Python, 11 TypeScript) each resolve once on the applied tree; the C17 CommonMark audit (`probe-s23-c17-audit.py`) over the 74 rows finds exactly the five `out_of_scope_` disagreements and none else (on `9319b37d` it finds F25's two rows besides the three out-of-scope ones); the F22, F23 and F24 enumerations against `9319b37d` (`probe-s23-r3-findings.py`; 1,620, 900 and 25 documents): acting on code 72, 9 and 0 -> 0, 0 and 0, dropping a plain tag 172, 123 and 25 -> 172, 42 and 0, no regression; the four-seed differential against `9319b37d` (`probe-s23-scanner-diff3.py`, 12,000 documents per seed, seeds 1347, 2024, 7 and 31337, an alphabet that adds tabs, padding 0 to 8, bare markers with blank lines and U+00A0, U+2003 and U+3000 before `>`, markers and fences): non-lazy disagreements 0, 1, 1 and 0 documents (two R15 shapes whose last line is a U+00A0 or U+2003 line that `9319b37d` ignored by accident), lazy 64, 65, 72 and 71 (17 to 20 per seed are new, all a quote line followed by a Unicode-whitespace line and `>`: R13, with its C17 row), plain tags dropped 121, 117, 130 and 114 (20 or 21 per seed are the R14 shape above); the real Ward Room (16,386 bodies, read-only) gives the same result as for `9319b37d`, and **none of the shapes of F22 to F24 occurs in it: no body holds a wide-padded marker, a bare marker line, Unicode whitespace before `>`, a fence after a list marker or an indented fence**. The phantom precheck lists the same 15 false positives as after A2c. Round 4 reviews the delta only (`git diff 9319b37d <head>`: `_item_columns`, `_inert_spans` and the module docstring, the C17 rows, the two shared rows with `_REFUSALS` and X22's docstring, and this text); the tests-first, campaign and Builder results go to §17.
 
 ---
 
@@ -88,7 +91,7 @@ S1 can create agent work, but nothing in the chain calls it, and nothing runs, p
 - A `ValueError` from `AgentWorkOrigin` is a refused tag, as S1 asked (S1 status, F2/F3).
 - The acknowledgement is a parenthesised line, `(Ship's Computer: ...)`, appended to the agent's own reply text. It has no brackets, so BF-203 leaves it alone, and it starts no routing of its own.
 - Disclosed: if BF-237 suppresses the main post because a `[REPLY]` was posted, the acknowledgement is not posted. The item exists either way and its report names it.
-- Reading (A1: F6, F7, F11; A2: F16, F17): tag names are read in any letter case; every marker, closers included, is removed from the posted text. A marker in an inert region is an example or a quotation: it is removed alone, never acted on, and is no part of any block. The inert regions follow CommonMark 0.31.2, with the differences §9 names: a code fence opens on a run of three or more backticks or tildes (after backticks, no other backtick on the line), also after list item markers, and closes on a later line without a marker holding only a run of the same character at least as long, or runs to the end of the text; A2b: the scanner does not parse list items, so indentation is read two ways and a line is inert when either reading makes it so (the top-level reading is CommonMark's: a fence line starts within three columns, and a line indented four or more columns that does not continue a paragraph is indented code; the list reading opens a fence at any column and closes it only within three columns of its opener; A2c: it tracks the last list item's content column, a fence opened in an item ends at a non-blank line left of that column, which is then read afresh, and a tracked fence closes within three columns of the item's column); a line whose first non-blank character, after any list item markers, is `>`; and each inline code span within one line (a run of backticks to the next run of exactly as many). A line ends at LF, CRLF or CR, and a marker lies within one line. A block holds every block opened inside it and closes only on its own closer once those are closed; a block that holds any other marker is removed whole and not acted on; an unclosed block's opener and the markers after it are removed alone. One pass reads the lines and the markers, each marker at most 160 characters to its bracket, so the parse is linear. C17's rows are the grammar. The grammar the compose step teaches is unchanged.
+- Reading (A1: F6, F7, F11; A2: F16, F17): tag names are read in any letter case; every marker, closers included, is removed from the posted text. A marker in an inert region is an example or a quotation: it is removed alone, never acted on, and is no part of any block. The inert regions follow CommonMark 0.31.2, with the differences §9 names: a code fence opens on a run of three or more backticks or tildes (after backticks, no other backtick on the line), also after list item markers, and closes on a later line without a marker holding only a run of the same character at least as long, or runs to the end of the text; A2b: the scanner does not parse list items, so indentation is read two ways and a line is inert when either reading makes it so (the top-level reading is CommonMark's: a fence line starts within three columns, and a line indented four or more columns that does not continue a paragraph is indented code; the list reading opens a fence at any column and closes it only within three columns of its opener; A2c: it tracks the last list item's content column, a fence opened in an item ends at a non-blank line left of that column, which is then read afresh, and a tracked fence closes within three columns of the item's column; A2d: the column is CommonMark's for the line's last marker (§5.2: the marker plus one to four columns of padding, or the marker plus one when the item starts blank or with five or more columns of padding, whose first line's rest is then indented code and opens no fence), and an item with no content yet ends at a blank line); a line whose first character other than a space or a tab, after any list item markers, is `>`; and each inline code span within one line (a run of backticks to the next run of exactly as many). A line ends at LF, CRLF or CR, and a marker lies within one line. A block holds every block opened inside it and closes only on its own closer once those are closed; a block that holds any other marker is removed whole and not acted on; an unclosed block's opener and the markers after it are removed alone. One pass reads the lines and the markers, each marker at most 160 characters to its bracket, so the parse is linear. C17's rows are the grammar. The grammar the compose step teaches is unchanged.
 - A fault while acting on one tag (A1, F10) is logged and acknowledged ("could not be confirmed ... check the board"), never retried, and the rest of the reply and its other tags go on.
 
 **D3 (how an item runs).** `AgentWorkRunner` in `probos/agent_work_runner.py`, built in finalize only while `runtime.agent_work` is the real service. One listener on the work store's events:
@@ -232,7 +235,7 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | C14 | `test_an_example_a_quotation_or_a_broken_block_is_stripped_and_nothing_is_filed` | A1: F6, F7 through the extractor |
 | C15 | `test_repeated_unclosed_openers_are_parsed_in_one_bounded_pass` (6 cases after A2b) | A1: F11; A2: nested levels, fence lines, quote lines and code spans under the same bound, one fence read per line; A2b: one line of 30,000 list markers |
 | C16 | `test_a_work_store_fault_on_one_tag_is_acknowledged_and_the_rest_of_the_reply_is_kept` | A1: F10 |
-| C17 | `test_every_inert_construct_and_block_form_is_read_as_the_grammar_says` (58 cases) | A2: F16, F17 (the grammar; §9's out-of-scope constructs are rows too); A2b: indentation read two ways, indented code, list item markers |
+| C17 | `test_every_inert_construct_and_block_form_is_read_as_the_grammar_says` (74 cases after A2d) | A2: F16, F17 (the grammar; §9's out-of-scope constructs are rows too); A2b: indentation read two ways, indented code, list item markers; A2d: F22 to F25 (CommonMark's list item content column, an empty item, blanks before `>`, a blank line after each quoted control) |
 
 A1 also changes C5: the off runtime (`agent_work` None) never calls `agent_work_service` (F12).
 
@@ -261,7 +264,7 @@ A1 also changes C5: the off runtime (`agent_work` None) never calls `agent_work_
 | X19 | `test_a_decline_whose_notice_cannot_be_posted_does_not_say_it_was_told` | A1: F9's literal |
 | X20 | `test_the_activation_notice_states_the_configured_ttl` | A1: F13 |
 | X21 | `test_a_confirmation_token_is_never_recorded_in_an_approval` | A1: F15 |
-| X22 | `test_both_fulfilment_predicates_read_every_shared_payload_row_alike` | A2: F19 (the Python oracle of the shared rows) |
+| X22 | `test_both_fulfilment_predicates_read_every_shared_payload_row_alike` | A2: F19 (the Python oracle of the shared rows); A2d: F26 (37 rows: two reach the action refusal; the two refusals no decoded JSON payload reaches are named) |
 | X23 | `test_a_fulfilment_store_fault_on_an_agent_work_approval_returns_the_approval_as_retryable` | A2: F20 |
 | X24 | `test_an_agent_work_approval_issues_no_standing_rule` | A2: the standing control (register R2 closed) |
 
@@ -4527,16 +4530,18 @@ retried, and the rest of the reply goes on.
 ```
 REPLACE:
 ```python
-Reading (A1, review round 1; A2, round 2; A2b): names are read in any letter case and every marker is removed,
-closers included. A marker in an inert region is an example or a quotation: removed alone, never acted on, and no
-part of any block. The inert regions (``_inert_spans``, after CommonMark 0.31.2 with the differences contract section
-9 names): a code fence, from a line opening a run of three or more backticks or tildes to a line holding only a run
-of the same character at least as long (an unclosed one runs to the end), with indentation read both at the top
-level and as in a list item; an indented code block; a line whose first non-blank character is ``>``; an inline
-code span within one line. A line ends at LF, CRLF or CR. A block holds every block opened inside it and is
-closed only by its own closer once those are closed; a block that holds any other marker is removed whole and not
-acted on. One pass reads the lines and the markers, each marker at most 160 characters to its bracket, so the work is
-linear in the reply. A fault on one tag is acknowledged, never retried, and the rest of the reply goes on.
+Reading (A1, review round 1; A2, round 2; A2b; A2c; A2d, round 3): names are read in any letter case and every marker
+is removed, closers included. A marker in an inert region is an example or a quotation: removed alone, never acted on,
+and no part of any block. The inert regions (``_inert_spans``, after CommonMark 0.31.2 with the differences contract
+section 9 names): a code fence, from a line opening a run of three or more backticks or tildes to a line holding only a
+run of the same character at least as long (an unclosed one runs to the end), with indentation read both at the top
+level and as in a list item, at the item's content column (``_item_columns``); an indented code block, and the rest of
+a list item's first line after five or more columns of padding; a line whose first character other than a space or a
+tab, after any list item markers, is ``>``; an inline code span within one line. A line ends at LF, CRLF or CR. A
+block holds every block opened inside it and is closed only by its own closer once those are closed; a block that
+holds any other marker is removed whole and not acted on. One pass reads the lines and the markers, each marker at
+most 160 characters to its bracket, so the work is linear in the reply. A fault on one tag is acknowledged, never
+retried, and the rest of the reply goes on.
 ```
 
 Pair 2 of 4:
@@ -4570,7 +4575,8 @@ _LINE_RE: Final = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+")
 #: rest of the line. A2b: its column decides which reading it opens or closes (``_inert_spans``).
 _FENCE_RE: Final = re.compile(r"[ \t]*(`{3,}|~{3,})(.*)")
 #: A2b: the list item markers that start a line (CommonMark 0.31.2, 5.2), so a fence after a marker is read. A2c: a
-#: marker may end the line (an empty item), so that item's content column is tracked too.
+#: marker may end the line (an empty item), so that item's content column is tracked too. A2d: the match ends with
+#: the last marker and all of its padding, which ``_item_columns`` measures.
 _LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]|[0-9]{1,9}[.)])(?:[ \t]+|$))+")
 #: A2b: a line a paragraph does not continue past, so a line indented four columns after it is indented code
 #: (CommonMark 0.31.2, 4.1 to 4.4): an ATX heading, or one character of ``-*_=`` repeated, which also counts a setext
@@ -4659,6 +4665,18 @@ def _columns(prefix: str) -> int:
     return width
 
 
+def _item_columns(head: str, empty: bool) -> tuple[int, bool]:
+    """A2d (F22, F23; CommonMark 0.31.2, 5.2): the content column of the list item that the last marker in ``head``
+    starts, and whether the item starts with indented code. ``head`` ends with that marker and its padding. The column
+    is the marker's end plus the padding, for one to four columns of it; it is the marker's end plus one when the item
+    starts blank (``empty``: nothing follows the marker on its line) or when five or more columns of padding follow
+    (``wide``), and then the rest of the line is indented code."""
+    end = _columns(head.rstrip(" \t"))
+    padding = _columns(head) - end
+    wide = not empty and padding >= 5
+    return (end + 1 if empty or wide else end + padding), wide
+
+
 def _closes(fence: tuple[str, int], run: re.Match[str] | None) -> bool:
     """A2b: whether a fence line closes a fence of this character and run length (CommonMark 0.31.2, 4.5): only a
     run of the same character at least as long, with nothing after it but blanks. Both readings use it."""
@@ -4679,25 +4697,31 @@ def _inert_spans(text: str) -> list[tuple[int, int]]:
     of the text. The top-level reading is CommonMark's: a fence line starts within three columns, and a line indented
     four or more columns that does not continue a paragraph is indented code. The list reading opens a fence at any
     column (a fence in a list item is indented by the item). A2c (CommonMark 0.31.2, 5.2): the list reading tracks the
-    last list item's content column, which a non-blank line left of it ends. Each fence has a floor, and a non-blank
+    last list item's content column, which a non-blank line left of it ends. A2d (F22, F23): the column is the last
+    marker's (``_item_columns``); a marker line with five or more columns of padding is indented code, and no fence
+    opens on it; an item with no content yet also ends at a blank line. Each fence has a floor, and a non-blank
     line left of it ends the fence before the line is read, so the line may open a new one. A list fence in a tracked
     item is floored at the item's column and closes within three columns of it; outside one it is floored at 0 within
     three columns, else three columns left of it and never below 2, and closes within three columns of itself. The
-    top reading floors only a fence on a marker line. A line whose first non-blank character, after any list item
-    markers, is ``>`` is a quote and inert, and on any other line outside both readings' fences each inline code span
-    is inert.
+    top reading floors only a fence on a marker line. A line whose first character other than a space or a tab (A2d,
+    F24), after any list item markers, is ``>`` is a quote and inert, and on any other line outside both readings'
+    fences each inline code span is inert.
     """
     spans: list[tuple[int, int]] = []
     top_fence: tuple[tuple[str, int], int] | None = None
     list_fence: tuple[tuple[str, int], int, int] | None = None
     item_column: int | None = None
+    item_empty: bool = False
     paragraph = False
     for line in _LINE_RE.finditer(text):
         start, end = line.span()
         content = line.group().rstrip("\r\n")
         item = _LIST_ITEM_RE.match(content)
         head = item.group() if item is not None else ""
-        run = _FENCE_RE.fullmatch(content[len(head):])
+        rest = content[len(head):]
+        empty = bool(head) and not rest
+        content_column, wide = _item_columns(head, empty) if head else (0, False)
+        run = None if wide else _FENCE_RE.fullmatch(rest)  # A2d (F22): a wide line's rest is indented code
         closer = None if head else run
         blank = not content.strip(" \t")
         indent = _columns(content[: len(content) - len(content.lstrip(" \t"))])
@@ -4710,9 +4734,12 @@ def _inert_spans(text: str) -> list[tuple[int, int]]:
         if top_fence is not None and not blank and indent < top_fence[1]:
             top_fence = None  # A2c: likewise for a fence opened on a marker line
         if head and list_fence is None:
-            item_column = _columns(head) + (0 if head[-1] in " \t" else 1)
-        elif item_column is not None and not blank and indent < item_column:
+            item_column, item_empty = content_column, empty
+        # A2d (F23): an item ends at a non-blank line left of its column, and an empty one at its first blank line
+        elif item_column is not None and (item_empty if blank else indent < item_column):
             item_column = None
+        elif not blank:
+            item_empty = False  # A2d (F23): the item has content, so a blank line no longer ends it
         inert = top_fence is not None or list_fence is not None
         if list_fence is None and opened is not None:
             base = column if item_column is None else item_column
@@ -4725,9 +4752,11 @@ def _inert_spans(text: str) -> list[tuple[int, int]]:
                 top_fence = None  # its closing fence
         elif blank:
             paragraph = False  # a blank line ends a paragraph
+        elif wide:
+            paragraph, inert = False, True  # A2d (F22): the item starts with an indented code block
         elif opened is not None and column <= 3:
             top_fence, paragraph, inert = (opened, _columns(head)), False, True
-        elif content[len(head):].lstrip().startswith(">"):
+        elif rest.lstrip(" \t").startswith(">"):
             paragraph, inert = False, True
         elif indent >= 4:
             inert = inert or not paragraph
@@ -5031,6 +5060,8 @@ REPLACE:
     {"name": "extra_key", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": "", "extra": 1}, "fulfillable": false, "agent_work_call": false},
     {"name": "tool_id_number", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": 7, "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
     {"name": "tool_id_grammar", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "Hull Survey!", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "action_number", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": 7, "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
+    {"name": "action_grammar", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "Agent Work!", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
     {"name": "tool_id_64", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "tool_id", "chars": 64}, "fulfillable": true, "agent_work_call": true},
     {"name": "tool_id_65", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": {"depth": 2}, "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fill": {"field": "tool_id", "chars": 65}, "fulfillable": false, "agent_work_call": false},
     {"name": "params_array", "kind": "action", "work_item_id": "wi-agent-work-1", "payload": {"tool_id": "hull_survey", "action": "agent_work_call", "params": [], "scope_key": "agent_work:wi-agent-work-1", "session_id": null, "thread_id": ""}, "fulfillable": false, "agent_work_call": false},
@@ -5257,7 +5288,9 @@ def _claim(work_item_id: str) -> AgentWorkTag:
 
 
 #: A2 (F16, F17): the inert-region and block grammar, one row per construct (CommonMark 0.31.2 with the differences
-#: contract section 9 names; the out_of_scope rows are those differences, read as written).
+#: contract section 9 names; the out_of_scope rows are those differences, read as written). A2d (F25): every other
+#: row's markers are where CommonMark puts them, so a row that quotes a line puts a blank line before the tag after it
+#: (a line straight after a quote line continues the quote lazily, register R13).
 GRAMMAR = [
     pytest.param(f"Ex:\n{FENCE}\n{EXAMPLE}\n{FENCE}\n{REAL}", [REAL_TAG], f"Ex:\n{FENCE}\n\nTitle: x\n\n{FENCE}", id="fence_backtick"),
     pytest.param(f"Ex:\n{TILDES}\n{EXAMPLE}\n{TILDES}\n{REAL}", [REAL_TAG], f"Ex:\n{TILDES}\n\nTitle: x\n\n{TILDES}", id="fence_tilde"),
@@ -5284,9 +5317,9 @@ GRAMMAR = [
         f"{FENCE}inline{FENCE} then\n[CLAIM_WORK wi-3]", [_claim("wi-3")], f"{FENCE}inline{FENCE} then",
         id="backtick_run_with_a_backtick_after_is_a_code_span",
     ),
-    pytest.param("> [CLAIM_WORK wi-1]\n[CLAIM_WORK wi-2]", [_claim("wi-2")], ">", id="quote_line"),
+    pytest.param("> [CLAIM_WORK wi-1]\n\n[CLAIM_WORK wi-2]", [_claim("wi-2")], ">", id="quote_line"),
     pytest.param("   > [CLAIM_WORK wi-1]", [], ">", id="quote_line_indented"),
-    pytest.param(f"> [SELF_TASK]\n{REAL}", [REAL_TAG], ">", id="quoted_opener_leaves_the_real_block_actionable"),
+    pytest.param(f"> [SELF_TASK]\n\n{REAL}", [REAL_TAG], ">", id="quoted_opener_leaves_the_real_block_actionable"),
     pytest.param("Reply with `[CLAIM_WORK wi-1]` to take it.", [], "Reply with `` to take it.", id="code_span_claim"),
     pytest.param("Syntax: `[SELF_TASK] Title: x [/SELF_TASK]`", [], "Syntax: ` Title: x `", id="code_span_block"),
     pytest.param("`a` [CLAIM_WORK wi-4] `b`", [_claim("wi-4")], "`a`  `b`", id="text_between_two_spans_is_actionable"),
@@ -5387,10 +5420,59 @@ GRAMMAR = [
         id="list_closer_counts_from_the_item_column",
     ),
     pytest.param(
+        f"-     x\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [], f"-     x\n  {FENCE}\n{FENCE}",
+        id="padding_five_starts_the_item_with_indented_code",
+    ),
+    pytest.param(
+        f"-    x\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"-    x\n  {FENCE}\n{FENCE}",
+        id="padding_four_is_the_item_column",
+    ),
+    pytest.param(
+        f"-      x\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [], f"-      x\n  {FENCE}\n{FENCE}",
+        id="padding_six_starts_the_item_with_indented_code",
+    ),
+    pytest.param(
+        f"-\t\tx\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [], f"-\t\tx\n  {FENCE}\n{FENCE}",
+        id="tab_padding_is_counted_in_columns",
+    ),
+    pytest.param("-     [CLAIM_WORK wi-1]\n[CLAIM_WORK wi-2]", [_claim("wi-2")], "-", id="wide_padded_line_is_indented_code"),
+    pytest.param(
+        f"-     {FENCE}\n  [CLAIM_WORK wi-1]", [_claim("wi-1")], f"-     {FENCE}", id="fence_on_a_wide_padded_line_is_code_text",
+    ),
+    pytest.param(
+        f"-\n\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"-\n\n  {FENCE}\n{FENCE}",
+        id="empty_item_ends_at_a_blank_line",
+    ),
+    pytest.param(
+        f"-\n\n\n  {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"-\n\n\n  {FENCE}\n{FENCE}",
+        id="empty_item_ends_at_two_blank_lines",
+    ),
+    pytest.param(
+        f"- \n\n   {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"- \n\n   {FENCE}\n{FENCE}",
+        id="empty_item_with_a_trailing_blank_ends_at_a_blank_line",
+    ),
+    pytest.param("-\n\n[CLAIM_WORK wi-1]", [_claim("wi-1")], "-", id="empty_item_then_a_plain_tag"),
+    pytest.param(
+        f"-\n  {FENCE}\n  x\n  {FENCE}\n\n  {FENCE}\n {FENCE}\n[CLAIM_WORK wi-1]", [],
+        f"-\n  {FENCE}\n  x\n  {FENCE}\n\n  {FENCE}\n {FENCE}",
+        id="empty_item_that_opens_a_fence_keeps_its_column_across_a_blank_line",
+    ),
+    pytest.param("\u00a0> [CLAIM_WORK wi-1]", [_claim("wi-1")], ">", id="nbsp_before_a_quote_mark_is_text"),
+    pytest.param("\u2003> [CLAIM_WORK wi-1]", [_claim("wi-1")], ">", id="em_space_before_a_quote_mark_is_text"),
+    pytest.param("- a\n \t> [CLAIM_WORK wi-1]", [], "- a\n \t>", id="tab_before_a_quote_mark_in_a_list_item_is_a_quote"),
+    pytest.param(
         f"1. a\nlazy\n   {FENCE}\n{FENCE}\n[CLAIM_WORK wi-1]", [_claim("wi-1")], f"1. a\nlazy\n   {FENCE}\n{FENCE}",
         id="out_of_scope_lazy_line_then_an_item_fence_is_read_as_written",
     ),
     pytest.param("> Forge wrote:\n[CLAIM_WORK wi-1]", [_claim("wi-1")], "> Forge wrote:", id="out_of_scope_lazy_quote_continuation_is_read_as_written"),
+    pytest.param(
+        "> Forge wrote:\n\u00a0> [CLAIM_WORK wi-1]", [_claim("wi-1")], "> Forge wrote:\n\u00a0>",
+        id="out_of_scope_nbsp_line_after_a_quote_is_read_as_written",
+    ),
+    pytest.param(
+        "-     x\n    [CLAIM_WORK wi-1]", [], "-     x",
+        id="out_of_scope_wide_item_paragraph_indented_four_is_read_as_written",
+    ),
     pytest.param("`start\n[CLAIM_WORK wi-1]\nend`", [_claim("wi-1")], "`start\n\nend`", id="out_of_scope_span_across_lines_is_read_as_written"),
 ]
 
@@ -5470,11 +5552,14 @@ REPLACE:
 
 
 _ROWS = _REPO / "ui" / "e2e" / "fixtures" / "ad1347-action-payload-rows.json"
-#: A2 (F19): a row for each refusal of ``validate_action_payload`` and of the item binding.
+#: A2 (F19), A2d (F26): a row for each refusal of ``validate_action_payload`` that a decoded JSON payload can reach, and
+#: for each refusal of the item binding. No JSON payload reaches the other two, so they have no row: a params key that
+#: is not a string (``capability_request.py:220-221``; JSON object keys are strings) and a payload ``_canonical_json``
+#: refuses (``:233-234``; a non-finite number, which standard JSON cannot carry and the store never writes).
 _REFUSALS = frozenset({
-    "missing_key", "extra_key", "tool_id_number", "tool_id_grammar", "tool_id_65", "params_array", "params_text",
-    "params_21_keys", "scope_254", "thread_65", "thread_null", "session_65", "session_number", "lone_surrogate",
-    "size_4047", "other_item", "unlinked", "empty_item",
+    "missing_key", "extra_key", "tool_id_number", "tool_id_grammar", "action_number", "action_grammar", "tool_id_65",
+    "params_array", "params_text", "params_21_keys", "scope_254", "thread_65", "thread_null", "session_65",
+    "session_number", "lone_surrogate", "size_4047", "other_item", "unlinked", "empty_item",
 })
 
 
@@ -5502,7 +5587,9 @@ def test_both_fulfilment_predicates_read_every_shared_payload_row_alike() -> Non
     """A2 (F19): the Python oracle of ``ui/e2e/fixtures/ad1347-action-payload-rows.json``. Each row's answers are
     Python's, through the real ``can_fulfil_request`` and ``agent_work_call``, and
     ``ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`` requires the HXI's ``canFulfil`` and decoder to give
-    the same ones. The rows reach each refusal of ``validate_action_payload`` and of the item binding."""
+    the same ones. A2d (F26): the rows reach each refusal of ``validate_action_payload`` that a decoded JSON payload can
+    reach, and each refusal of the item binding; ``_REFUSALS`` names the two no JSON payload reaches. The test reads the
+    answers, not which refusal gave them: the two action rows are also refused by ``agent_work_call``'s action check."""
     rows = json.loads(_ROWS.read_text(encoding="utf-8"))["rows"]
     names = [row["name"] for row in rows]
     assert len(set(names)) == len(names) and _REFUSALS <= set(names)
@@ -5596,7 +5683,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. Review round 1 (A1) repaired 14 findings and one found in the repair: both fulfilment predicates (`can_fulfil_request` and the HXI's `canFulfil` in `ui/src/store/capabilityApprovals.ts`) accept the agent-work approval bound to its item, so the HXI confirms it and an unfulfilled one stays retryable; a start that arrives during a run runs after it; a confinement's admission is not parked again by AD-1154's inbox; only a completed run with an answer is done (any other stop fails with its reason); a stopped claimant is released before parking; the parser is one linear pass (any case, every marker stripped, fenced, quoted and nested tags never acted on); declines reach watchers; a fault on one tag is acknowledged; off neither imports nor calls the tag module; the notice states the TTL exactly; a browser confirmation token is never recorded. New: `ui/e2e/fixtures/ad1347-agent-work-approvals.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`. Review round 2 (A2) repaired 6 findings: fenced examples (any fence character and length, indented in a list) and inline code spans are never acted on, and a nested block stays inert until its own closer (one table of 30 constructs is the grammar); the HXI validates an agent-work payload as Python does (one shared rows table); a fulfilment-store fault on an agent-work approval returns it as retryable instead of HTTP 500; the Captain's card says approving an agent-work call resumes the item, and no standing approval is offered or issued for one. New: `ui/e2e/fixtures/ad1347-action-payload-rows.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`, `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx`. #1627 stays open until the Captain's live acceptance. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
+**AD-1347 S2 and S3 (2026-10-23), #1627 slices 2 and 3 of 4, closing AD-1347 -- crew file, claim and run governed work from the cognitive chain, read-only by default, with the Captain's approval for anything else, and the result is posted where it was asked.** New `probos/agent_work_tags.py`: one parser for `[SELF_TASK]`, `[REQUEST_WORK]`, `[CLAIM_WORK]` and `[DECLINE_WORK]`, acted on in `ProactiveCognitiveLoop._extract_and_execute_actions` (proactive thoughts and every Ward Room reply, whose pipeline now passes its thread and post), Lieutenant and above, at most 3 per reply, each acknowledged in the agent's own reply; the compose step teaches the tags only while `agent_work` is on (byte-identical off). New `probos/agent_work_runner.py` (`AgentWorkRunner`, wired in finalize only with the service): announces each request once to each eligible member in its department's channel; claims through the tool sink; runs each item in its assignee's agentic loop under the new `ToolCallConfinement` (read-only tools run; any other call is filed as an AD-1154 `action` request and the item parks on it through AD-855; the Captain's approval resumes it and admits that call once; a denial ends it with the reason); returns a request whose claimant may not run it to the board; reports each outcome once per requester and watcher in the origin thread. `AgentWorkService` gains `crew_member` and `execution_allowed`; the approval route fulfils agent-work approvals; AD-855 resumes agent work through its runner. The Captain's one-to-one chat is not wired (its work is the Captain's: AD-845, AD-1165). New: `tests/test_ad1347_s2_chain_tags.py`, `tests/test_ad1347_s3_execution.py` (acceptance 2 end to end), `tests/test_ad1347_s3_wiring.py`. Updated: the AD-1343 seam registry, `test_ad1156_plan_execute_mode.py`, `test_issue1419_failed_start_rollback.py`, two docstrings in `test_ad1347_s1_agent_work.py`. Review round 1 (A1) repaired 14 findings and one found in the repair: both fulfilment predicates (`can_fulfil_request` and the HXI's `canFulfil` in `ui/src/store/capabilityApprovals.ts`) accept the agent-work approval bound to its item, so the HXI confirms it and an unfulfilled one stays retryable; a start that arrives during a run runs after it; a confinement's admission is not parked again by AD-1154's inbox; only a completed run with an answer is done (any other stop fails with its reason); a stopped claimant is released before parking; the parser is one linear pass (any case, every marker stripped, fenced, quoted and nested tags never acted on); declines reach watchers; a fault on one tag is acknowledged; off neither imports nor calls the tag module; the notice states the TTL exactly; a browser confirmation token is never recorded. New: `ui/e2e/fixtures/ad1347-agent-work-approvals.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347.test.ts`. Review round 2 (A2) repaired 6 findings: fenced examples (any fence character and length, indented in a list) and inline code spans are never acted on, and a nested block stays inert until its own closer (A2b, A2c and review round 3's A2d: indentation is read both at the top level and in a list item at CommonMark's content column, an empty list item ends at a blank line, and a quote is read after spaces and tabs only; one table of 74 constructs is the grammar); the HXI validates an agent-work payload as Python does (one shared rows table); a fulfilment-store fault on an agent-work approval returns it as retryable instead of HTTP 500; the Captain's card says approving an agent-work call resumes the item, and no standing approval is offered or issued for one. New: `ui/e2e/fixtures/ad1347-action-payload-rows.json`, `ui/src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`, `ui/src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx`. #1627 stays open until the Captain's live acceptance. The contract is `prompts/ad-1347-s2-s3-chain-wiring-execution-and-report-back.md`.
 
 ```
 
@@ -5619,7 +5706,8 @@ REPLACE:
 - *D6 (reports).* Ship's Computer posts: the notice in the department channel (mentions, `max_responders`), the report, decline, expiry and denial in the origin thread (fallback the department channel), each notice claimed before it is sent. The store's TTL sweep stays the only expiry owner.
 - *Disclosed effects.* `S1_SCOPE` names agent-created work; two refusal texts join the never-ran set; `runtime.agent_work_runner` exists (None while off); no standing rule is offered or issued on an agent-work approval (A2).
 - *A1 (review round 1).* No decision reversed. D3: a start during a run is deferred, eligibility is asked before parking, and only a completed run with an answer is done (any other stop is failed with its reason). D4: a confinement's admission is carried past AD-1154's inbox for that call only (credential entry stays refused), and a confirmation token is never recorded. D5: the subtype is fulfillable in both predicates, Python and HXI. D2: one linear scanner; fenced, quoted and nested tags are never acted on.
-- *A2 (review round 2).* No decision reversed. D2: the scanner's inert regions follow CommonMark 0.31.2's fences (character and run length), inline code spans and line endings, with named differences; a block nests and closes only on its own closer; one 30-row table is the grammar. D5: the HXI validates the agent-work payload as Python does, proven on one shared rows table; a fulfilment-store fault returns the retryable approval; the card says the approval resumes the item, and no standing approval is offered or issued for it.
+- *A2 (review round 2).* No decision reversed. D2: the scanner's inert regions follow CommonMark 0.31.2's fences (character and run length), inline code spans and line endings, with named differences; a block nests and closes only on its own closer; one table of rows is the grammar (74 after A2d). D5: the HXI validates the agent-work payload as Python does, proven on one shared rows table; a fulfilment-store fault returns the retryable approval; the card says the approval resumes the item, and no standing approval is offered or issued for it.
+- *A2d (review round 3).* No decision reversed. D2: a list item's content column is CommonMark 0.31.2 §5.2's for the last marker on a line (five or more columns of padding start the item with indented code; an empty item ends at a blank line), a quote is read after spaces and tabs only, and every grammar row outside the named differences puts its markers where CommonMark does; general CommonMark compliance is not claimed. D5: the shared payload rows reach each refusal a decoded JSON payload can reach.
 - *Reversal.* Revert both commits; open agent work stays on the board until its TTL; the AD-1154 requests filed stay in the inbox as ordinary actions with no fulfiller. Reverting A1's HXI change with the Python change keeps the two predicates in agreement; reverting only one makes the HXI refuse any queue holding an approved, unfulfilled agent-work call.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -5646,15 +5734,16 @@ REPLACE:
 - `ward_room_router.py` and the Ward Room service.
 - `config/system.yaml`.
 - The tag scanner's grammar (A2: F16, F17) follows CommonMark 0.31.2 for fences (§4.5: character, run length, a backtick fence's info string without a backtick, unclosed to the end), inline code spans (§6.1: equal-length runs; an unmatched run is text) and line endings (§2.1: LF, CRLF, CR). These differences are deliberate, and each one a C17 row can show is one:
-  - Indentation is read two ways (A2b), because the scanner does not parse list containers, and a line is inert when either reading makes it so. The top-level reading is CommonMark's: a fence line starts within three columns (a tab advances to a multiple of four) and its closer has no list marker, and a line indented four or more columns that does not continue a paragraph is indented code (a paragraph ends at a blank line, a quote, a fence, an ATX heading, or a line of one repeated `-`, `*`, `_` or `=`). The list reading opens a fence at any column, after list item markers too (`fence_on_a_list_marker_line`), and closes it only on a line without a marker within three columns of its opener (`list_closer_more_than_three_past_its_opener_is_content`, `new_list_item_fence_line_does_not_close`). A2c: the list reading tracks the last list item's content column (a marker line sets it, an empty item's is the marker plus one, and a non-blank line left of it ends it). A non-blank line left of a fence's floor ends that fence before the line is read, so the line may open a new fence (`marker_line_fence_ends_at_an_unindented_fence_line`, `fence_in_an_item_ends_at_a_quote`, `continuation_fence_ends_at_an_outdented_fence_line`, `outdented_fence_line_after_an_item_fence_opens_a_top_level_fence`, `bare_marker_item_fence_ends_at_column_one`). A list fence in a tracked item is floored at the item's column and closes within three columns of it (`list_closer_counts_from_the_item_column`); outside one it is floored at 0 within three columns, else three columns left of it and never below 2 (`indented_fence_line_ends_at_an_unindented_line`), and closes within three columns of itself. The top reading floors only a fence on a marker line (`marker_line_fence_ends_at_an_outdented_line`). This errs toward inert where a tag indented four or more columns follows a blank line, as in a list item's continuation (register R14). It is still acted on where CommonMark is inert only where the one-level tracker is wrong and the top reading is wrong too (register R15): a lazy line ends the tracked item, so an item's fence after it is read as untracked (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`); and a line that only looks like an item (a setext `-` underline, an ordered marker that cannot interrupt a paragraph, a thematic break made of markers) is tracked as one; and a nested item is tracked at its innermost marker's content column only (`- - text`, or an item inside an item), so a fence at the outer item's column after it is floored at 0 as an untracked fence (orchestrator's differential, mechanical repair 9).
-  - A quote is any line whose first non-blank character, after any list item markers, is `>`, at any indentation (`quote_in_a_list_item`). A lazy continuation line is not quoted, so an agent's own tag placed straight after a quotation is acted on (`out_of_scope_lazy_quote_continuation_is_read_as_written`).
+  - Indentation is read two ways (A2b), because the scanner does not parse list containers, and a line is inert when either reading makes it so. The top-level reading is CommonMark's: a fence line starts within three columns (a tab advances to a multiple of four) and its closer has no list marker, and a line indented four or more columns that does not continue a paragraph is indented code (a paragraph ends at a blank line, a quote, a fence, an ATX heading, or a line of one repeated `-`, `*`, `_` or `=`). The list reading opens a fence at any column, after list item markers too (`fence_on_a_list_marker_line`), and closes it only on a line without a marker within three columns of its opener (`list_closer_more_than_three_past_its_opener_is_content`, `new_list_item_fence_line_does_not_close`). A2c, A2d: the list reading tracks the last list item's content column as CommonMark 0.31.2 §5.2 sets it for the last marker on a line: the marker plus one to four columns of padding, and the marker plus one for an item that starts blank or with five or more columns of padding, whose first line's rest is then indented code and opens no fence (`padding_five_starts_the_item_with_indented_code`, `padding_four_is_the_item_column`, `tab_padding_is_counted_in_columns`, `wide_padded_line_is_indented_code`, `fence_on_a_wide_padded_line_is_code_text`); a non-blank line left of the column ends the item, and so does a blank line while the item has no content (`empty_item_ends_at_a_blank_line`, `empty_item_that_opens_a_fence_keeps_its_column_across_a_blank_line`). A non-blank line left of a fence's floor ends that fence before the line is read, so the line may open a new fence (`marker_line_fence_ends_at_an_unindented_fence_line`, `fence_in_an_item_ends_at_a_quote`, `continuation_fence_ends_at_an_outdented_fence_line`, `outdented_fence_line_after_an_item_fence_opens_a_top_level_fence`, `bare_marker_item_fence_ends_at_column_one`). A list fence in a tracked item is floored at the item's column and closes within three columns of it (`list_closer_counts_from_the_item_column`); outside one it is floored at 0 within three columns, else three columns left of it and never below 2 (`indented_fence_line_ends_at_an_unindented_line`), and closes within three columns of itself. The top reading floors only a fence on a marker line (`marker_line_fence_ends_at_an_outdented_line`). This errs toward inert where a tag indented four or more columns follows a blank line, as in a list item's continuation, and (A2d) where it follows a marker line with five or more columns of padding, which is read as indented code, although CommonMark measures the indent from the item's content column, so a line two or three columns past that column is a paragraph (`out_of_scope_wide_item_paragraph_indented_four_is_read_as_written`; register R14). It is still acted on where CommonMark is inert only where the one-level tracker is wrong and the top reading is wrong too (register R15): a lazy line ends the tracked item, so an item's fence after it is read as untracked (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`); and a line that only looks like an item (a setext `-` underline, an ordered marker or an empty item that cannot interrupt a paragraph, a thematic break made of markers, or a second marker after five or more columns of padding, `-     - x`, whose rest CommonMark reads as indented code) is tracked as one; and a nested item is tracked at its innermost marker's content column only (`- - text`, or an item inside an item), so a fence at the outer item's column after it is floored at 0 as an untracked fence (orchestrator's differential, mechanical repair 9).
+  - A quote is any line whose first character other than a space or a tab, after any list item markers, is `>`, at any indentation (`quote_in_a_list_item`, `tab_before_a_quote_mark_in_a_list_item_is_a_quote`); A2d (F24): any other blank, such as U+00A0 or U+2003, is text, as in CommonMark (`nbsp_before_a_quote_mark_is_text`, `em_space_before_a_quote_mark_is_text`). A lazy continuation line is not quoted, so an agent's own tag placed straight after a quotation is acted on (`out_of_scope_lazy_quote_continuation_is_read_as_written`), also on a line that starts with such a blank and `>` (`out_of_scope_nbsp_line_after_a_quote_is_read_as_written`).
   - A code span is read within one line; a span that crosses a line ending is read as text (`out_of_scope_span_across_lines_is_read_as_written`). Backslash escapes are not read, so an escaped backtick still opens or closes a span (this errs toward inert).
   - HTML comments and raw HTML are read as text. A `>` line never opens a fence.
   - A marker in an inert region is removed alone, and the example's text stays in the post (A1 removed a fenced example's whole block).
   - Register R13 holds the lazy continuation and the span across lines, and register R15 the item tracker's three shapes the first bullet names (a renderer shows the tag as code or quote; it is acted on).
+  - A2d: general CommonMark compliance is not claimed. C17's rows and the differences above are the grammar.
 - The HXI's size bound on an action payload counts each number as one character: the decoded value does not keep Python's spelling (`1e400`, which Python rejects, and an integer of 401 digits, which it accepts, both decode to Infinity). The bound is exact for text and only necessary for numbers, and Python serves no payload it rejected (it decodes it to `payload: null`), so a disagreement needs a forged response (register R12; not a shared row).
 
-## 10. Mutation rows (119 Python rows after A2c, plus 11 TypeScript rows run by hand; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (130 Python rows after A2d, plus 11 TypeScript rows run by hand; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline that passes, and restore the file before the next row. None of these rows has been executed; the build's campaign is the one of record.
 
@@ -5728,7 +5817,7 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | N13 | `src/probos/agent_work_runner.py` | `recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}` | `recorded = dict(params)` | X21 |
 | N14 | `src/probos/agent_work_tags.py` | `if opener and not inert:` | `if opener:` | C17 `quoted_opener_leaves_the_real_block_actionable` (A2: replaces A1's row, whose constructor line A2 removes) |
 | N15 | `src/probos/agent_work_tags.py` | `block.actionable = False` | `pass` | C1 nested case ("Outer ... Inner" filed) |
-| N16 | `src/probos/agent_work_tags.py` | `elif content[len(head):].lstrip().startswith(">"):` | `elif content.lstrip().startswith(">"):` | C17 `quote_in_a_list_item` (A2b: the quote is read after list item markers) |
+| N16 | `src/probos/agent_work_tags.py` | `elif rest.lstrip(" \t").startswith(">"):` | `elif content.lstrip(" \t").startswith(">"):` | C17 `quote_in_a_list_item` (A2b: the quote is read after list item markers; A2d: the line reads `rest`) |
 | N17 | `src/probos/agent_work_tags.py` | `closer, name, attribute = match.group(1) == "/", match.group(2).upper(), match.group(3)` | `closer, name, attribute = match.group(1) == "/", match.group(2), match.group(3)` | C1 mixed-case case |
 | N18 | `src/probos/agent_work_tags.py` | `cuts.append((match.start(), match.end()))` | `pass` | C1 stray case |
 | N19 | `src/probos/agent_work_tags.py` | `ack, action = await _apply_guarded(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | `ack, action = await _apply_one(tag, service=service, runtime=runtime, actor=actor, origin=origin, in_thread=bool(thread_id))` | C16 (the fault escapes) |
@@ -5770,17 +5859,30 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | N56 | `src/probos/agent_work_tags.py` | `list_fence = None  # A2c: a line left of its item's content column ends the item` | `pass` | C17 `continuation_fence_ends_at_an_outdented_fence_line` |
 | N57 | `src/probos/agent_work_tags.py` | `if top_fence is not None and not blank and indent < top_fence[1]:` | `if top_fence is not None and indent < top_fence[1]:` | C17 `blank_line_inside_a_marker_line_fence_keeps_it_open` |
 | N58 | `src/probos/agent_work_tags.py` | `top_fence = None  # A2c: likewise for a fence opened on a marker line` | `pass` | C17 `marker_line_fence_ends_at_an_outdented_line` |
-| N59 | `src/probos/agent_work_tags.py` | `item_column = _columns(head) + (0 if head[-1] in " \t" else 1)` | `item_column = _columns(head)` | C17 `bare_marker_item_fence_ends_at_column_one` |
+| N59 | `src/probos/agent_work_tags.py` | `item_column, item_empty = content_column, empty` | `item_column, item_empty = _columns(head), empty` | C17 `bare_marker_item_fence_ends_at_column_one` (A2d: the line A2d rewrites) |
 | N60 | `src/probos/agent_work_tags.py` | `item_column = None` | `pass` | C17 `outdented_fence_line_after_an_item_fence_opens_a_top_level_fence` |
-| N61 | `src/probos/agent_work_tags.py` | `elif item_column is not None and not blank and indent < item_column:` | `elif item_column is not None and indent < item_column:` | C17 `blank_line_keeps_the_list_item` |
+| N61 | `src/probos/agent_work_tags.py` | `elif item_column is not None and (item_empty if blank else indent < item_column):` | `elif item_column is not None and (True if blank else indent < item_column):` | C17 `blank_line_keeps_the_list_item` (A2d: the line A2d rewrites) |
 | N62 | `src/probos/agent_work_tags.py` | `floor = item_column if item_column is not None else (0 if column <= 3 else max(2, column - 3))` | `floor = item_column if item_column is not None else 0` | C17 `indented_fence_line_ends_at_an_unindented_line` |
 | N63 | `src/probos/agent_work_tags.py` | `_LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]\|[0-9]{1,9}[.)])(?:[ \t]+\|$))+")` | `_LIST_ITEM_RE: Final = re.compile(r"(?:[ \t]*(?:[-+*]\|[0-9]{1,9}[.)])[ \t]+)+")` | C17 `bare_marker_item_fence_ends_at_column_one` |
 | N64 | `src/probos/agent_work_tags.py` | `base = column if item_column is None else item_column` | `base = column` | C17 `list_closer_counts_from_the_item_column` |
+| N65 | `src/probos/agent_work_tags.py` | `wide = not empty and padding >= 5` | `wide = not empty and padding >= 6` | C17 `padding_five_starts_the_item_with_indented_code` (A2d, F22) |
+| N66 | `src/probos/agent_work_tags.py` | `wide = not empty and padding >= 5` | `wide = not empty and padding >= 4` | C17 `padding_four_is_the_item_column` |
+| N67 | `src/probos/agent_work_tags.py` | `return (end + 1 if empty or wide else end + padding), wide` | `return (end + 1 if empty else end + padding), wide` | C17 `padding_five_starts_the_item_with_indented_code` |
+| N68 | `src/probos/agent_work_tags.py` | `return (end + 1 if empty or wide else end + padding), wide` | `return (end + 1 if wide else end + padding), wide` | C17 `bare_marker_item_fence_ends_at_column_one` |
+| N69 | `src/probos/agent_work_tags.py` | `padding = _columns(head) - end` | `padding = len(head) - len(head.rstrip(" \t"))` | C17 `tab_padding_is_counted_in_columns` |
+| N70 | `src/probos/agent_work_tags.py` | `empty = bool(head) and not rest` | `empty = False` | C17 `empty_item_ends_at_a_blank_line` (A2d, F23) |
+| N71 | `src/probos/agent_work_tags.py` | `run = None if wide else _FENCE_RE.fullmatch(rest)  # A2d (F22): a wide line's rest is indented code` | `run = _FENCE_RE.fullmatch(rest)  # A2d (F22): a wide line's rest is indented code` | C17 `fence_on_a_wide_padded_line_is_code_text` |
+| N72 | `src/probos/agent_work_tags.py` | `elif wide:` | `elif False:` | C17 `wide_padded_line_is_indented_code` |
+| N73 | `src/probos/agent_work_tags.py` | `elif item_column is not None and (item_empty if blank else indent < item_column):` | `elif item_column is not None and (False if blank else indent < item_column):` | C17 `empty_item_ends_at_a_blank_line` (F23's revert) |
+| N74 | `src/probos/agent_work_tags.py` | `item_empty = False  # A2d (F23): the item has content, so a blank line no longer ends it` | `pass` | C17 `empty_item_that_opens_a_fence_keeps_its_column_across_a_blank_line` |
+| N75 | `src/probos/agent_work_tags.py` | `elif rest.lstrip(" \t").startswith(">"):` | `elif rest.lstrip().startswith(">"):` | C17 `nbsp_before_a_quote_mark_is_text` (F24's revert) |
 | N40 | `src/probos/agent_work_tags.py` | `r"\[(/?)(SELF_TASK\|REQUEST_WORK\|CLAIM_WORK\|DECLINE_WORK)\b([^\]\r\n]{0,160})\]", re.IGNORECASE,` | `r"\[(/?)(SELF_TASK\|REQUEST_WORK\|CLAIM_WORK\|DECLINE_WORK)\b([^\]\n]{0,160})\]", re.IGNORECASE,` | C17 `marker_does_not_cross_a_line_end` |
 | F3 | `src/probos/routers/capability_requests.py` | `except Exception:  # A2 (F20): the approval stands and stays retryable` | `except ZeroDivisionError:  # A2 (F20): the approval stands and stays retryable` | X23 (the store fault escapes) |
 | F4 | `src/probos/routers/capability_requests.py` | `if agent_work_approval(decided):  # AD-1347 S3 A2: one exact call per approval; no standing rule` | `if False:  # AD-1347 S3 A2: one exact call per approval; no standing rule` | X24 (`issued` is not empty) |
 
 Row T3's Line cell escapes the union bar (`\|`) for the Markdown table; the source line has a plain `|`. X9b is `test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_outcome`.
+
+**A2d campaign.** Rerun the 59 existing rows on `src/probos/agent_work_tags.py`, because that file differs: T1 to T9, N14 to N19, N21 to N64 and N40. The rewritten N16, N59 and N61 are among them. Also run the 11 new rows N65 to N75, and TS5 to TS8, whose killing tests read the shared rows file, which differs. Every other row's file and killing test are unchanged, so the campaign of record stands for them: 60 Python rows (P1 to P3, WP1, CP1, S1 to S3, A1 to A7, R1 to R24, G1, F1 to F4, W1, SD1, N1 to N13, N20) and TS1 to TS4 and TS9 to TS11. F26 adds no row: X22 asserts answers, and the two action rows are also refused at `capability_request.py:170`, so a mutant of `:216` survives X22.
 
 **A1 and A2 campaign.** The Python rows run against `tests/test_ad1347_s2_chain_tags.py tests/test_ad1347_s3_execution.py tests/test_ad1347_s3_wiring.py tests/test_ad1156_plan_execute_mode.py tests/test_issue1419_failed_start_rollback.py`. The TypeScript rows are not in the Python campaign: mutate each line, run its vitest files from `ui/`, expect a failure, restore. Run TS1 to TS8 with `npx vitest run src/store/__tests__/capabilityApprovals.ad1347.test.ts src/store/__tests__/capabilityApprovals.ad1347a2.test.ts`, and TS9 to TS11 with `npx vitest run src/components/capability/__tests__/CapabilityRequestCard.ad1347.test.tsx`. The Python half of the wire is proven by X13's fixture equality and X22's rows.
 
@@ -5998,6 +6100,35 @@ CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the i
   content column is the marker plus one
 ```
 
+### A2d additions (2026-10-23, candidate 4 `9319b37d`, the prototype in `s23-proto` and the orchestrator's measurements)
+
+```
+D:\ProbOS-worktrees\s23-review3\src\probos\agent_work_tags.py:248  item_column = _columns(head) + (0 if head[-1] in " \t" else 1)
+D:\ProbOS-worktrees\s23-review3\src\probos\agent_work_tags.py:265  elif content[len(head):].lstrip().startswith(">"):
+D:\ProbOS-worktrees\s23-review3\src\probos\capability_request.py:170  payload is None or payload["action"] != AGENT_WORK_CALL_ACTION
+D:\ProbOS-worktrees\s23-review3\src\probos\capability_request.py:216-217, :220-221, :233-234  the action, params-key and canonical-JSON refusals
+D:\ProbOS-worktrees\s23-review3\src\probos\capability_request.py:189  allow_nan=False
+probe-s23-r3-findings.py against candidate 4: F22 family (1,620 documents) 72 act where CommonMark is inert, every one with
+  padding of 5 or more columns; F23 family (900) 81 MISSING regressions against candidate 3 and 9 EXTRA; F24 family (25
+  characters str.lstrip strips and CommonMark does not) 25 of 25 ignored. Prototype: 0, 0 EXTRA with 42 MISSING (candidate
+  3's own), 0
+probe-s23-r3-f26-census.py: the 35 rows end on 10 of validate_action_payload's 13 returns (:217, :221, :234 unreached);
+  with action_number and action_grammar, :217 is reached by both; X22 passes; the HXI agrees (6 vitest cases)
+probe-s23-scanner-diff3.py on the prototype, seeds 1347, 2024, 7, 31337 (12,000 documents each, markdown-it-py, baseline
+  9319b37d): non-lazy EXTRA 0, 1, 1, 0 (R15 shapes); lazy EXTRA 64, 65, 72, 71, of which 17 to 20 per seed are new and all
+  one shape: a quote line, then a line of U+00A0, U+2003 or U+3000 and `>` (R13, read as plain text since F24)
+CommonMark 0.31.2 (fetched 2026-10-23): 5.2 rule 2 (an item starting with indented code is the marker and one space),
+  rule 3 ("A list item can begin with at most one blank line"); 2.1 (a blank line holds only U+0020 or U+0009);
+  2.2 (a tab advances to a stop of 4; `-` + two tabs + `foo` is an item holding indented code)
+ABSENCE: no bare strip()/lstrip() in _inert_spans after A2d
+  RUN: Grep "lstrip|strip\(\)" D:\ProbOS-worktrees\s23-proto\src\probos\agent_work_tags.py
+  FOUND: :146-149 (_fields), :254 and :289 (lstrip(" \t")), :311 (_block_tag), :336, :338 (attribute.strip()), :368
+  HOLDS: yes; _inert_spans (:219-299) has only the " \t" forms; the others are field values, an attribute, the post
+probe-s23-wide-next-line.py (A2d gate; markers - * + 1. 1), padding 5 to 8 and a tab pair, then a second line): candidate
+  4 0 MISSING, and EXTRA 30/50/50 at 6/7/8 columns; A2d 100/50/20 MISSING at 4/5/6 columns and 0 EXTRA; register R14
+  (decided: Option A)
+```
+
 ## 12. Absence Verified (2026-10-23)
 
 | # | Claim | Run | Found | Holds |
@@ -6045,8 +6176,8 @@ CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the i
   - Register R2 is closed: no standing rule is offered or issued on an agent-work approval.
   - Register R12 (P3, injected-only): the HXI's size bound counts each number as one character (§9).
   - Register R13 (P3, ordinary but rare): lazy quote continuation and a span across lines are read as written (§9). A2b brought indented code into scope; A2c closed the list shape R13 held, by counting a tracked fence's closer from its item's column.
-  - Register R14 (P3): an inert tag is removed silently, so an agent that fences its real request gets no acknowledgement. A candidate fix is a "read as an example" line; it changes `split_agent_work_tags`'s return (considered, deferred). A2b widens it: a tag indented four or more columns after a blank line (a list item's continuation) is inert, and so is the text after a fence-like line indented four or more columns, until a closer or a line left of its floor (A2c).
-  - Register R15 (P3, ordinary but rare; A2c): the list reading tracks one list item and has three blind spots. A lazy line ends the tracked item (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`), a line that only looks like an item (a setext `-`, an ordered marker that cannot interrupt a paragraph, a thematic break made of markers) is tracked as one, and a nested item is tracked at its innermost marker's column only, so a fence at the outer item's column after `- - text` or an item inside an item is floored at 0 (found by the orchestrator's differential: 6 of the 7 non-lazy documents left on four seeds of 12,000, each also acted on by candidate 3; the seventh is the lazy-line shape; mechanical repair 9). Any of them acts on a tag where CommonMark is inert only if the top reading is wrong too. Measured reach 0: no Ward Room body holds a fence indented one column or more. Considered, deferred: a container stack with the lazy rule.
+  - Register R14 (P3): an inert tag is removed silently, so an agent that fences its real request gets no acknowledgement. A candidate fix is a "read as an example" line; it changes `split_agent_work_tags`'s return (considered, deferred). A2b widens it: a tag indented four or more columns after a blank line (a list item's continuation) is inert, and so is the text after a fence-like line indented four or more columns, until a closer or a line left of its floor (A2c). A2d (decided at the A2d gate): a tag indented four or more columns after a marker line with five or more columns of padding is inert, though CommonMark reads it as a paragraph up to the item's content column plus three. Against candidate 4 this is a regression: 100 and 50 MISSING documents at 4 and 5 columns in the orchestrator's `probe-s23-wide-next-line.py`, and 20 to 21 per seed of the differential. It cannot be separated from F22's repair: candidate 4 got those lines right only by reading the wide line as paragraph text, and that same reading made it act on indented code at 6 to 8 columns (130 EXTRA documents). Keeping the first without the second needs indentation measured from the item's column, which is this register's own deferred fix (considered, deferred: a code floor for wide items alone fixes one case of the class).
+  - Register R15 (P3, ordinary but rare; A2c): the list reading tracks one list item and has three blind spots. A lazy line ends the tracked item (`out_of_scope_lazy_line_then_an_item_fence_is_read_as_written`), a line that only looks like an item (a setext `-`, an ordered marker or an empty item that cannot interrupt a paragraph, a thematic break made of markers, or, A2d, a second marker after five or more columns of padding, `-     - x`) is tracked as one, and a nested item is tracked at its innermost marker's column only, so a fence at the outer item's column after `- - text` or an item inside an item is floored at 0 (found by the orchestrator's differential: 6 of the 7 non-lazy documents left on four seeds of 12,000, each also acted on by candidate 3; the seventh is the lazy-line shape; mechanical repair 9). Any of them acts on a tag where CommonMark is inert only if the top reading is wrong too. Measured reach 0: no Ward Room body holds a fence indented one column or more. Considered, deferred: a container stack with the lazy rule.
   - Considered, deferred: `inspectActionPayload`'s field checks could share `isActionWirePayload`. Deferred so that round 3's delta stays off the inspection path ordinary approvals use.
 - **A2b (the scanner's CommonMark differential).**
   - Evidence: the orchestrator's probe ran the A2 scanner against markdown-it-py 4.0.0 over 3000 generated flat documents (§11, A2b additions).
@@ -6054,6 +6185,14 @@ CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the i
   - **Rejected:** one deterministic indentation rule, whether A2's "any indentation" or a closer within three columns of its opener alone. Without container parsing, one reading shifts phase on an indented-code line and takes the real opener for its closer.
   - **Adapted:** two readings in one pass, inert when either says so. They share one opener size and one closer test (`_closes`).
   - Considered, deferred: parsing list containers (their blank-line and lazy rules), which would remove the over-inert residue.
+- **A2d (review round 3: F22 to F26; the Architect's round-three decision, continue).**
+  - Prior art: CommonMark 0.31.2, re-read 2026-10-23. §5.2 rules 1 to 3: one to four columns of padding set the content column; with five or more, the item starts with indented code and the column is the marker plus one; an item that starts with a blank line takes the marker plus one and "can begin with at most one blank line". §2.1: a blank line holds only spaces and tabs. **Adopted** for the last marker on a line (`_item_columns`). §2.1's Unicode whitespace is **rejected** as indentation (F24). markdown-it-py stays the differential oracle (§11). `docs/research/reference-projects.md` was not re-checked: this is a repair (considered, deferred).
+  - Where the tracker stops: §5.2's content column for the last marker on a line, and the end of an empty item at a blank line. General CommonMark compliance is not claimed. Every shape beyond that is R13, R14 or R15; no register entry is added (item-start conditions are R15's "line that only looks like an item").
+  - Register R13 gains one shape: a line that starts with a blank CommonMark does not count as indentation (U+00A0, U+2003, U+3000), then `>`, straight after a quote line. CommonMark reads it as a lazy continuation, and it is acted on here as every lazy line is (`out_of_scope_nbsp_line_after_a_quote_is_read_as_written`). Candidate 4 ignored it only because it read that line as a quote, which was F24's defect. It is 17 to 20 minimal documents per seed of the orchestrator's differential.
+  - Register R14 is smaller on the F23 family (the over-inert count fell from 123 to 42, which is candidate 3's own; orchestrator's enumeration) and gains one shape: a tag indented four or more columns after a wide-padded marker line (the R14 entry above).
+  - Register R15 gains two examples, an empty item that cannot interrupt a paragraph and `-     - x`. Candidate 4 reads both the same way.
+  - F26: the shared rows reach each refusal a decoded JSON payload can reach. X22 checks answers, not which refusal gave them, so no mutation row covers the action rows; the two refusals no JSON payload reaches are named in `_REFUSALS`'s comment.
+  - Blind spot handled: no fence opens on a wide line, so `_FENCE_RE` is not read there. C15's one-read-per-line count still holds, because none of its rows has a wide line.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -6064,7 +6203,7 @@ CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the i
    - the executor's run arguments and its unarmed state are unchanged;
    - the router's and AD-855's behaviour for every non-agent-work request and item is unchanged.
 2. Every agent-created item is created through `AgentWorkService` only. `created_by` is the resolved requester slot, and no path stamps the Captain.
-3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker, in any letter case and closers included, is removed from the posted text. (A2) A marker in an inert region is removed alone and never acted on. The inert regions are: a code fence read by character and run length, closed only by a matching run and running to the end when unclosed, with indentation read both at the top level and as in a list item (A2b: inert when either reading says so; A2c: a fence in a list item ends at a non-blank line left of the item's content column, and that line is read afresh); an indented code block that does not continue a paragraph (A2b); a `>` line, also after list item markers; an inline code span within one line. Lines end at LF, CRLF or CR. A block holds the blocks opened inside it and closes only on its own closer once they are closed; a block holding any other marker is not acted on. C17's rows are the grammar, and §9 names what is read as text. The parse is one linear pass; a fault on one tag is acknowledged and the reply goes on.
+3. Tags are acted on only for Lieutenant and above, at most three per reply. While on, every tag and stray marker, in any letter case and closers included, is removed from the posted text. (A2) A marker in an inert region is removed alone and never acted on. The inert regions are: a code fence read by character and run length, closed only by a matching run and running to the end when unclosed, with indentation read both at the top level and as in a list item (A2b: inert when either reading says so; A2c: a fence in a list item ends at a non-blank line left of the item's content column, and that line is read afresh; A2d: that column is CommonMark's for the line's last marker, five or more columns of padding make the rest of the marker line indented code, and an item with no content yet ends at a blank line); an indented code block that does not continue a paragraph (A2b); a `>` line (after spaces and tabs only, A2d), also after list item markers; an inline code span within one line. Lines end at LF, CRLF or CR. A block holds the blocks opened inside it and closes only on its own closer once they are closed; a block holding any other marker is not acted on. C17's rows are the grammar, and §9 names what is read as text; general CommonMark compliance is not claimed. The parse is one linear pass; a fault on one tag is acknowledged and the reply goes on.
 4. The acknowledgement is part of the agent's own reply text; the tag module creates no Ward Room post.
 5. A chain claim goes through `ToolRegistry.check_and_invoke` for `claim_work_item`, with the claimant's department, rank and agent type, at WRITE.
 6. Every agent-work run passes a `ToolCallConfinement` and never passes `admitted_turn`. No run starts for an item that `execution_allowed` refuses.
@@ -6075,7 +6214,7 @@ CommonMark 0.31.2 5.2 (fetched for A2b): the text after a list marker sets the i
 11. No new EventLog category or event pair, request kind, config field, table, stop-seam constant or stop-check site.
 12. Every background run is held in a set and cancelled at stop. Shutdown stops the runner before the work store.
 13. `probos.agent_work_runner` imports the cognitive layer only inside functions, so the approval route's import chain gains no cognitive module.
-14. (A1, A2) Both fulfilment predicates, Python's `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the validated `agent_work_call` scoped to its own item. They agree on every row of `ui/e2e/fixtures/ad1347-action-payload-rows.json`, which reaches each refusal of `validate_action_payload` (X22 for Python, `capabilityApprovals.ad1347a2.test.ts` for the HXI). The HXI confirms the approval's `fulfilled` response, and an approved, unfulfilled one stays on the actionable queue as retryable. A fulfilment-store fault returns that retryable approval with HTTP 200 (X23). The card says an agent-work approval resumes its item and offers no standing approval, and the route issues none (X24).
+14. (A1, A2) Both fulfilment predicates, Python's `can_fulfil_request` and the HXI's `canFulfil`, accept exactly the validated `agent_work_call` scoped to its own item. They agree on every row of `ui/e2e/fixtures/ad1347-action-payload-rows.json`, which reaches each refusal of `validate_action_payload` that a decoded JSON payload can reach (X22 for Python, `capabilityApprovals.ad1347a2.test.ts` for the HXI; A2d, F26: a non-string params key and a payload `_canonical_json` refuses are named as unreachable from JSON, and the tests check answers, not which refusal gave them). The HXI confirms the approval's `fulfilled` response, and an approved, unfulfilled one stays on the actionable queue as retryable. A fulfilment-store fault returns that retryable approval with HTTP 200 (X23). The card says an agent-work approval resumes its item and offers no standing approval, and the route issues none (X24).
 15. (A1) Only a run that completed with an answer is done; any other stop is failed with its reason named; a run the executor parked stays parked with its booking; a start that arrives during a run is made after it, once.
 
 ## 15. Acceptance criteria
