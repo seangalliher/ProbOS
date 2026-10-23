@@ -63,7 +63,7 @@ class TestAnalyzePromptCompositionBrief:
         assert "response_should_cover" in user
         assert "tone" in user
         assert "sources_to_draw_on" in user
-        assert "7 keys" in user
+        assert "8 keys" in user  # AD-1347 S4: was 7; the optional ward_room_lookup_ref joined
 
     def test_thread_analysis_prompt_requests_composition_brief(self):
         ctx = _base_context(context="Thread content here")
@@ -75,7 +75,7 @@ class TestAnalyzePromptCompositionBrief:
         assert "response_should_cover" in user
         assert "tone" in user
         assert "sources_to_draw_on" in user
-        assert "8 keys" in user
+        assert "9 keys" in user  # AD-1347 S4: was 8; the optional ward_room_lookup_ref joined
 
     def test_dm_comprehension_prompt_requests_composition_brief(self):
         ctx = _base_context(context="Hey, how is the crew?")
