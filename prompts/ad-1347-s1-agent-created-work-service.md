@@ -22,6 +22,8 @@
 
 **Amendment A1 (`claude-architect`, 2026-10-22; the oracle's stale pins at the M1 build `3496b849`):** the first hunt missed four pinned surfaces: the profile census header (§7.10 pair 2), AD-1270's true-leaf set (§7.14b), the layer-boundary scan (§7.13 types the trust parameter with `AgentIdentityTrust`, so nothing is imported from the consensus layer) and the generated config reference (§7.14c, also pinned by `tests/test_config_reference_current.py`). It also makes §10's W3 and W4 Mutate-to cells literal. No decision D1 to D14 changed.
 
+**Amendment A2 (`claude-architect`, 2026-10-22; the build's mutation campaign on tree `49ded1b8`, at `2516c20b`):** 32 of §10's 33 rows were killed; row R1 (`if self.config.agent_work.enabled:` to `if True:` in `runtime.py`) survived test W1, because the opener's own guard (`if not config.enabled: return None`) leaves the same outcomes W1 asserted (`agent_work` None, no `agent_work_` table). Property 11 was stated but not pinned. A2 makes test W1 count the runtime's calls to the opener through a spy on the module attribute `probos.agent_work.open_agent_work_service` (the runtime imports that name inside its guarded block, so the boot reads the replaced attribute), installed with the `monkeypatch` fixture and delegating to the real opener: none while off, one while on. Production code is unchanged; the test keeps its name. It also makes §10's R1 cell name test W1 by file (§10 has a mutation row also called W1). The other 32 Killed-by cells were checked by reading and each named test kills its row; none changed. No decision D1 to D14 and nothing in A1 changed. Rerun after the build: row R1 and its baseline.
+
 ---
 
 ## 0. Premise: what is present on this tree
@@ -146,7 +148,7 @@ The origin sits under the nested key on purpose: a top-level `thread_id` or a `p
 
 **D10 (byte-identical when off: what is compared, and on which path).**
 1. Default-config path: `test_ad1152`'s whole-`SystemConfig()` golden, with the new `agent_work` section popped at its asserted defaults (§7.11).
-2. Boot path: test W1 boots a real runtime off and on. Off has `runtime.agent_work is None` and no `agent_work_` table. On minus off is exactly the two tables.
+2. Boot path: test W1 boots a real runtime off and on. Off has `runtime.agent_work is None`, no `agent_work_` table and no call to the opener; on calls the opener once (W1's spy, A2). On minus off is exactly the two tables.
 3. Store path: test 13 (no gate means every plain item is discoverable as before) and test 28 (the opener while off leaves `sqlite_master` (type, name, sql) identical).
 4. Stop routes: `S1_SCOPE` is not edited (Absence AV6).
 
@@ -211,7 +213,7 @@ About 150 tool calls each at most. BF-912 lands first.
 | 28 | `test_the_opener_builds_nothing_while_off_or_without_its_collaborators` | 7 |
 
 **M2, `tests/test_ad1347_s1_wiring.py`.**
-- W1 `test_the_flag_decides_whether_the_service_and_its_two_tables_exist` (7, golden).
+- W1 `test_the_flag_decides_whether_the_service_and_its_two_tables_exist` (7, golden; A2: also counts the runtime's calls to the opener, none off and one on, which is what kills mutation row R1).
 - W2 `test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade` (6, premise 8).
 
 **Updated pins (each fails on the M1 tree without its update):**
@@ -2397,7 +2399,11 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+import probos.agent_work as agent_work_module
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin, AgentWorkRefusal, AgentWorkService
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import AgentWorkConfig, SystemConfig, WorkforceConfig
@@ -2420,19 +2426,37 @@ def _tables(path: Path) -> set[str]:
 
 
 # W1
-async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(tmp_path: Path) -> None:
-    """Acceptance 7: off builds nothing and adds no table; on adds exactly the two tables, and a clean stop releases it."""
+async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 7: off never calls the opener and adds no table; on calls it once, adds exactly the two tables, and a
+    clean stop releases the service.
+
+    The call count pins the runtime's own guard (mutation row R1): the opener also returns None while off, so the
+    outcomes alone cannot tell a runtime that skips its block from one that runs it. The runtime imports the opener
+    inside that block, so replacing the module attribute is what the boot calls; the spy delegates to the real opener.
+    """
+    real_opener = agent_work_module.open_agent_work_service
+    opened: list[dict[str, Any]] = []
+
+    async def _counted_opener(**kwargs: Any) -> AgentWorkService | None:
+        opened.append(kwargs)
+        return await real_opener(**kwargs)
+
+    monkeypatch.setattr(agent_work_module, "open_agent_work_service", _counted_opener)
     off = ProbOSRuntime(config=_boot_config(enabled=False), data_dir=tmp_path / "off", llm_client=MockLLMClient())
     await off.start()
     try:
         assert off.work_item_store is not None, "premise: the workforce store is on"
         assert off.agent_work is None
+        assert opened == [], "while off the runtime never calls the opener"
     finally:
         await off.stop()
     on = ProbOSRuntime(config=_boot_config(enabled=True), data_dir=tmp_path / "on", llm_client=MockLLMClient())
     await on.start()
     try:
         assert isinstance(on.agent_work, AgentWorkService)
+        assert len(opened) == 1 and opened[0]["config"].enabled is True, opened
     finally:
         await on.stop()
     assert on.agent_work is None, "a clean stop releases the service"
@@ -2580,7 +2604,7 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | W6 | `src/probos/workforce.py` | `"AND n.recipient = r.recipient AND n.kind = ?) "` | `"AND n.kind = ?) "` | test 22 (the watcher is no longer due after the requester's claim) |
 | D1 | `src/probos/cognitive/crew_directory.py` | `chief = resolve_post_agent(self._ontology, chief_post.id)` | `chief = None` | tests 5 and 26 |
 | X1 | `src/probos/cognitive/crew_delegation.py` | `post.department_id == worker_post.department_id` | `True` | test 26 (laforge's chief becomes numberone-1); AD-865 tests |
-| R1 | `src/probos/runtime.py` | `if self.config.agent_work.enabled:` | `if True:` | W1 |
+| R1 | `src/probos/runtime.py` | `if self.config.agent_work.enabled:` | `if True:` | test W1 (`tests/test_ad1347_s1_wiring.py`): the off boot calls the opener once, so `opened == []` fails (A2; the outcomes alone survive, because the opener also returns None while off) |
 | C2 | `src/probos/config.py` | `if self.max_open_per_agent > self.max_open_ship or self.max_open_per_department > self.max_open_ship:` | `if False:` | test 27 |
 
 ## 11. Verified Against Codebase (2026-10-22, worktree at `88f0e5b8`)
@@ -2738,10 +2762,10 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
    - Every new class and method is defined in this contract's python fences, so its symbol check skips them.
    - No line types a variable as `SystemConfig`; configuration is built through `model_copy(update=...)` and `AgentWorkConfig` locals, so `agent_work` is never read off a typed `SystemConfig` variable.
    - The contract's python fences call no `SystemExit`, no `AssertionError` and no `SimpleNamespace`, and no `unlink` with `missing_ok`.
-   - The test doubles are underscored (`_SlotIdentities`, `_Instrument`, `_Ship`).
+   - The test doubles are underscored (`_SlotIdentities`, `_Instrument`, `_Ship`). Test W1's spy is a nested coroutine function, `_counted_opener`, installed with the `monkeypatch` fixture, so no new line assigns a constructed class to a name (A2).
    - New store methods are called positionally; the kwarg checker skips methods absent from `src` anyway.
    - Expected result on the built tree: clean.
-   - Census safety of new names (`ad1343_seam_census.py`): `claim_allowed`, `_requester_stop`, `_stopped_now`, `_holds_tool`, `_commit`, `_admit`, `notice_recipients`, `terminal_notices_due`, `claim_notice`, `eligible_members` and the test helpers `_invoke`, `_discovered`, `_claimed`, `_request` and `_self_task` are not in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`. The only recorded calls the new code makes are `active_stop` and `standing_stop`, registered in §7.3.
+   - Census safety of new names (`ad1343_seam_census.py`): `claim_allowed`, `_requester_stop`, `_stopped_now`, `_holds_tool`, `_commit`, `_admit`, `notice_recipients`, `terminal_notices_due`, `claim_notice`, `eligible_members` and the test helpers `_invoke`, `_discovered`, `_claimed`, `_request` and `_self_task`, and test W1's spy `_counted_opener` with its locals `real_opener` and `opened` (A2), are not in `STOP_CALLEES`, `GUARD_CALLEES`, `RECORDED` or `AGENT_WORK_METHODS`. The only recorded calls the new code makes are `active_stop` and `standing_stop`, registered in §7.3.
 2. **Store registry** (`check_store_registry --check`): no baseline change. The new `CREATE TABLE`s are in `probos.workforce`, the declared owner of `workforce.work-items`.
 3. **Architecture** (`check_architecture_principles --check`):
    - `AgentWorkService` has 13 direct methods, under 500 lines.
@@ -2786,7 +2810,7 @@ grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
 8. One lock spans dedup, guards and the insert; dedup runs before the guards; a dedup hit by a different requester adds exactly one watcher.
 9. The service has no loop, no `create_task` and no status transition; expiry is the store's sweep.
 10. `claim_work_notice` is insert-or-ignore on a primary key; `list_due_work_notices` includes every watcher and excludes only pairs already claimed.
-11. `ensure_agent_work_schema` is reached only through the opener, and the opener only when `config.enabled`; while off, `runtime.agent_work` is None and `workforce.db` is untouched.
+11. `ensure_agent_work_schema` is reached only through the opener (by reading: no other caller in `src`; row R3 pins that the opener calls it). The runtime calls the opener only when `config.agent_work.enabled` (test W1 counts the calls, none off and one on: row R1, A2), and the opener itself returns None while off, touching nothing (test 28). While off, `runtime.agent_work` is None and `workforce.db` gains no table (test W1).
 12. `crew_delegation` behaviour is unchanged (pure extraction); the AD-865 tests pass unmodified.
 13. `config.py` changes only by `AgentWorkConfig` and one `SystemConfig` field; the facade baseline diff is exactly §7.8.
 14. No `decide`, ticket or tool permission change; `agentic_dispatch.py` is not edited.
@@ -2799,6 +2823,6 @@ Consumers that must accept the change: `WorkItemStore._ready_for_pull` (discover
 ## 15. Acceptance criteria
 
 - Every test in §6 passes with the focused commands. The updated pins pass, including the three A1 pins. The listed `--check` scripts pass, including `gen_config_reference.py --check` (§7.14c). `tests/test_layer_boundaries.py` passes with no new exception (§7.13).
-- With the default configuration nothing is built and `workforce.db` is unchanged (W1, tests 13 and 28, test_ad1152).
+- With the default configuration the runtime never calls the opener, nothing is built and `workforce.db` is unchanged (test W1's call count and tables, tests 13 and 28, test_ad1152).
 - Acceptance 3, 5 (the S1 half: creation and claim refused for a stopped agent), 6 and 7 of #1627 are each covered by the named tests. The S1 half of acceptance 2 is test 10, which S2 and S3 extend.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
