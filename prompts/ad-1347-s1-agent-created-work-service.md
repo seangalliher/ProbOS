@@ -8,13 +8,19 @@
 - `tests/test_ad1343_agent_stop.py` (T8, the seam set);
 - `tests/fixtures/ad1343_seam_registry.py` (three rows);
 - `tests/test_ad1270e1_config_facade.py` (six counts);
-- `tests/test_ad1152_agentic_correlation.py` (the golden's popped section).
+- `tests/test_ad1152_agentic_correlation.py` (the golden's popped section);
+- `docs/development/config-profiles.yaml` census `default_false` (§7.10 pair 2, Amendment A1);
+- `tests/test_ad1270e2i_agentic_models.py` (the true-leaf set, §7.14b, A1);
+- `docs/development/config-reference.md` (generated, §7.14c, A1; read by `tests/test_config_reference_current.py`).
+`tests/test_layer_boundaries.py` is not edited: §7.13 imports nothing from the consensus layer (A1).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks here are LF; match and write with each file's own endings. New files are written LF.
 
 **Not built here (later slices):** S2 the chain's action tags; S3 claim, execution, activation notice, report-back and notice delivery; S4 the QUERY lookup.
 
 **Mechanical repairs by the orchestrator (2026-10-23, so that the staged contract passes `scripts/phantom-api-precheck.ps1`; no decision changed):** (1) section 7.14's `_schema` helper reads `coalesce(sql, '')` in lower case (SQLite function names are case-insensitive; the capitalised spelling was read as a class call); (2) section 12's first bullet names the constructs it avoids without parentheses; (3) not a precheck repair: section 10's heading said 31 rows while its table holds 33 (A1 to C2, found when the campaign table was derived), so the heading now says 33 and no row changed.
+
+**Amendment A1 (`claude-architect`, 2026-10-22; the oracle's stale pins at the M1 build `3496b849`):** the first hunt missed four pinned surfaces: the profile census header (§7.10 pair 2), AD-1270's true-leaf set (§7.14b), the layer-boundary scan (§7.13 types the trust parameter with `AgentIdentityTrust`, so nothing is imported from the consensus layer) and the generated config reference (§7.14c, also pinned by `tests/test_config_reference_current.py`). It also makes §10's W3 and W4 Mutate-to cells literal. No decision D1 to D14 changed.
 
 ---
 
@@ -148,7 +154,7 @@ The origin sits under the nested key on purpose: a top-level `thread_id` or a `p
 
 | Milestone | Opens at | Content | Commit |
 |---|---|---|---|
-| **M1** | §7.1 | The seam and its pins; the shared chief lookup; the store's agent-work methods and gate; the declaration note; the config model with its facade, profile and golden updates; the service; the directory; the M1 tests | one |
+| **M1** | §7.1 | The seam and its pins; the shared chief lookup; the store's agent-work methods and gate; the declaration note; the config model with its facade, profile (classification and census) and golden updates, the true-leaf pin and the regenerated config reference; the service; the directory (trust typed by protocol); the M1 tests | one |
 | **M2** | §7.15 | Runtime wiring and shutdown release; the boot tests | one |
 | Trackers | §8 | — | M2's commit or a docs commit |
 
@@ -166,7 +172,8 @@ About 150 tool calls each at most. BF-912 lands first.
 | `assigned_to` set at insert | `_pull_candidates` (`assigned_to IS NULL`); AD-1165 precedent | |
 | the store gate | `_ready_for_pull` (`list_claimable_work_items`, `claim_work_item` on both paths) | synchronous, no I/O |
 | `runtime.agent_work` | S2, S3 (later); `startup/shutdown.py` release | |
-| `SystemConfig.agent_work` | the runtime build block; the config facade baseline; `config-profiles.yaml`; the test_ad1152 golden | |
+| `SystemConfig.agent_work` | the runtime build block; the config facade baseline; `config-profiles.yaml` (the classification and the census `default_false`, `test_ad1185_config_profiles.py:859`); the test_ad1152 golden; the generated `config-reference.md` (`gen_config_reference.py --check`, `test_config_reference_current.py:41`); AD-1270's true-leaf pin (`test_ad1270e2i_agentic_models.py:526`) | each is updated or regenerated in M1 (§7.8 to §7.11, §7.14b, §7.14c) |
+| `RuntimeCrewDirectory`'s `trust_network` is typed `AgentIdentityTrust` (A1) | `resolve_agentic_identity` (`agentic_dispatch.py:433`, the same protocol); the runtime's and the tests' `TrustNetwork` (`get_score`, `consensus/trust.py:1017`); `tests/test_layer_boundaries.py` (an AST scan that also counts `TYPE_CHECKING` imports) | structural protocol; a same-layer import; precedents `crew_assignment.py:33`, `self_telemetry_domains.py:15` |
 
 ## 6. Tests
 
@@ -213,9 +220,19 @@ About 150 tool calls each at most. BF-912 lands first.
 - `tests/test_ad1343_stop_seam_inventory.py` standing-stop set, line 202;
 - `tests/test_ad1343_seam_registry.py::test_every_indexed_seam_names_a_guard_that_still_holds` (`SEAM_INDEX`);
 - `tests/test_ad1270e1_config_facade.py::test_committed_baseline_records_the_measured_surface` and the CLI test (`names=`);
-- `tests/test_ad1152_agentic_correlation.py` (the golden).
+- `tests/test_ad1152_agentic_correlation.py` (the golden);
+- `tests/test_ad1185_config_profiles.py::test_the_measured_census_matches_the_manifest_header` (the manifest's census `default_false` 223 -> 224, §7.10 pair 2; A1);
+- `tests/test_ad1270e2i_agentic_models.py::test_the_remaining_true_leaf_set_is_pinned` (`AgentWorkConfig` is a true leaf, §7.14b; A1);
+- `tests/test_config_reference_current.py::test_the_reference_matches_the_models` and the gate's preflight `gen_config_reference.py --check` (generated, §7.14c; A1);
+- `tests/test_layer_boundaries.py::test_no_undocumented_cross_layer_imports` is NOT updated: §7.13 types trust with `AgentIdentityTrust` and imports nothing from the consensus layer (A1).
 
-**Hunt for stale, `?raw` and AST pins (done; Absence section):**
+**Hunt for stale, `?raw` and AST pins.** The first pass (Absence AV1 to AV11) missed the four A1 items above, which the oracle's run found. A1 hunted again, by tool, over the config surface, the layer scan, tree scanners, docs and every `scripts/gen_*` and `--check` script (Absence AV12 to AV16). Its findings:
+- The census header's other numbers are unpinned and were already stale on the base (AV12; register); only `default_false` moves.
+- The only docs that name config sections are the three files covered here (AV13); no seam manifest names the moved chief lookup (AV14).
+- The new modules give the tree scanners nothing to flag (AV15).
+- `gen_capability_truth` reads maturity declarations, and S1 adds none. `gen_file_durations` weighs an unknown file at the mean. `gen_ad_ledger` is covered by §8.
+
+The first pass's checks still hold:
 - Nothing pins `workforce.db`'s whole table set. The two `sqlite_master` readers use `>=` or a `LIKE` subset.
 - `ad1152_agent_off_golden.json`'s `base_source_blobs` are blobs of the historical base commit, not the current files.
 - `S1_SCOPE` is compared by object.
@@ -223,7 +240,7 @@ About 150 tool calls each at most. BF-912 lands first.
 - No test pins `crew_delegation.py`, `agent_stop.py` or `shutdown.py` by text.
 
 **Focused command per milestone:**
-- M1: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1347_s1_agent_work.py tests/test_ad1343_agent_stop.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad1343_seam_registry.py tests/test_ad1346_admission_service.py tests/test_ad1270e1_config_facade.py tests/test_ad1152_agentic_correlation.py tests/test_ad1187_agent_work_pull.py tests/test_ad865_crew_delegation.py tests/test_workforce.py -q -n 0 -p no:randomly`. Drop any file in that list that does not exist; `tests/test_ad865*` is named by AD, so glob it.
+- M1: `d:/ProbOS/.venv/Scripts/pytest.exe tests/test_ad1347_s1_agent_work.py tests/test_ad1343_agent_stop.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad1343_seam_registry.py tests/test_ad1346_admission_service.py tests/test_ad1270e1_config_facade.py tests/test_ad1152_agentic_correlation.py tests/test_ad1187_agent_work_pull.py tests/test_ad865_crew_delegation.py tests/test_workforce.py tests/test_ad1185_config_profiles.py tests/test_ad1270e2i_agentic_models.py tests/test_layer_boundaries.py tests/test_config_reference_current.py -q -n 0 -p no:randomly`. Drop any file in that list that does not exist; `tests/test_ad865*` is named by AD, so glob it.
 - M2: `tests/test_ad1347_s1_wiring.py tests/test_ad1346_admission_service_boot.py` with the same flags.
 
 ## 7. The contract
@@ -801,7 +818,9 @@ REPLACE:
     assert "names=309" in proc.stdout  # AD-1347 S1 (#1627): AgentWorkConfig
 ```
 
-### 7.10 `docs/development/config-profiles.yaml` (M1: a new default-off flag must be classified)
+### 7.10 `docs/development/config-profiles.yaml` (M1: a new default-off flag must be classified and counted)
+
+Pair 1 of 2 (the flag's classification):
 
 SEARCH:
 ```yaml
@@ -827,6 +846,21 @@ REPLACE:
   - workforce.enabled
   conflicts_with: []
 ci_divergences:
+```
+
+Pair 2 of 2 (Amendment A1: the census header). `tests/test_ad1185_config_profiles.py:859` asserts that the header's `default_false` equals the checker's count of default-off flags, and `agent_work.enabled` is one more default-off flag (223 -> 224). The precedent `b6c5734d` changed this number alone. The header's other numbers are read by no test or script and were already stale on the base (Absence AV12; register), so this pair leaves them alone. The SEARCH occurs once in the file (lines 19 to 21).
+
+SEARCH:
+```yaml
+  boolean_fields_reachable: 445
+  default_false: 223
+  default_true: 225
+```
+REPLACE:
+```yaml
+  boolean_fields_reachable: 445
+  default_false: 224
+  default_true: 225
 ```
 
 ### 7.11 `tests/test_ad1152_agentic_correlation.py` (M1: the whole-config golden absorbs the inert section)
@@ -1481,11 +1515,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from probos.agent_work import CrewMember
-from probos.cognitive.agentic_dispatch import AgenticIdentityUnresolved, resolve_agentic_identity
+from probos.cognitive.agentic_dispatch import (
+    AgenticIdentityUnresolved,
+    AgentIdentityTrust,
+    resolve_agentic_identity,
+)
 from probos.cognitive.crew_delegation import find_chief_post, resolve_post_agent
 
 if TYPE_CHECKING:
-    from probos.consensus.trust import TrustNetwork
     from probos.ontology import VesselOntologyService
     from probos.substrate.registry import AgentRegistry
 
@@ -1494,7 +1531,8 @@ class RuntimeCrewDirectory:
     """The live crew: alive, of a crew-tier agent type, with a resolvable department and rank."""
 
     def __init__(
-        self, *, agent_registry: AgentRegistry, ontology: VesselOntologyService, trust_network: TrustNetwork,
+        self, *, agent_registry: AgentRegistry, ontology: VesselOntologyService,
+        trust_network: AgentIdentityTrust,
     ) -> None:
         self._registry = agent_registry
         self._ontology = ontology
@@ -2209,6 +2247,32 @@ async def test_the_opener_builds_nothing_while_off_or_without_its_collaborators(
         await store.stop()
 ```
 
+### 7.14b `tests/test_ad1270e2i_agentic_models.py` (M1, Amendment A1: AD-1270's true-leaf pin records the new leaf)
+
+`AgentWorkConfig` names no other module-level name of `config.py`, so `test_the_remaining_true_leaf_set_is_pinned` (line 526) measures it as a true leaf. D4 keeps it beside `WorkforceConfig`; it moves with the workforce group in AD-1270's batch 10, and the pin records it as queued work. The SEARCH occurs once in the file (lines 160 and 161).
+
+SEARCH:
+```python
+REMAINING_TRUE_LEAVES: tuple[str, ...] = (
+    "BootCampPhaseConfig",
+```
+REPLACE:
+```python
+REMAINING_TRUE_LEAVES: tuple[str, ...] = (
+    # AD-1347 S1 (#1627): a new leaf beside WorkforceConfig; it moves with the workforce group in batch 10.
+    "AgentWorkConfig",
+    "BootCampPhaseConfig",
+```
+
+### 7.14c `docs/development/config-reference.md` (M1, Amendment A1: generated, then checked)
+
+Generated from the models; never edit it by hand. On the M1 tree run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py`, then the same command with `--check`. `git diff --stat` on the file must show 14 insertions and 0 deletions (measured by the oracle on the contract-applied tree). The diff must be exactly one new section for `agent_work`, between the `workforce` section and the `temporal` section:
+- its heading;
+- `AgentWorkConfig`'s docstring as the generator renders it;
+- a table of seven rows in field order (`enabled`, `max_open_per_agent`, `max_open_per_department`, `max_open_ship`, `max_created_per_agent_per_hour`, `ttl_seconds`, `max_depth`), with the defaults and bounds of §7.7.
+
+Anything else is a hard stop. Consumers: the gate's preflight step (`scripts/run_test_gate.py:1101`) and `tests/test_config_reference_current.py::test_the_reference_matches_the_models`.
+
 ### 7.15 `src/probos/runtime.py` (M2)
 
 Pair 1 of 4 (type-only import):
@@ -2430,7 +2494,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1347 S1 (2026-10-23), #1627 slice 1 of 4 -- the Ship's Computer service that owns agent-created work: an agent can create work for itself, a chief can assign within its department, and any other ask becomes a request published to a department holding the named tool. Default off; nothing calls it yet.** New `probos/agent_work.py` (`AgentWorkService`, `open_agent_work_service`) and `probos/cognitive/crew_directory.py` (`RuntimeCrewDirectory`). `created_by` is the slot the requester's identity resolves to, and an unresolved requester is refused, never stamped "captain". Provenance (requester, origin, reason, depth, department, tool, dedup key) sits under `metadata["agent_work"]`, never a top-level `thread_id` or a `parent_id`, so a request stays discoverable. Eligibility is the tool registry's own answer for each member (department scope, `restricted_to`, rank, the Captain's grants and restrictions), asked at creation and again at every discovery and claim through a fail-closed store gate, on the tool and legacy claim paths; an unregistered tool has no eligible member. Guards: caps per agent 3, per department 8 and ship-wide 24 (open items), 6 creations per agent per hour, depth 2, a 24 h TTL owned by the store's existing sweep, and dedup on (department, tool, normalised title) that adds the asker as a watcher. A stopped requester is refused at the new `agent_work` seam. `WorkItemStore` gains `set_agent_work_claim_gate`, `ensure_agent_work_schema`, `list_agent_work`, `add_work_watcher`, `list_work_watchers`, `claim_work_notice` and `list_due_work_notices`. Two tables (`agent_work_watchers`, `agent_work_notices`) are created only when enabled. New config `agent_work` (`AgentWorkConfig`). AD-865's chief lookup is now `find_chief_post` and `resolve_post_agent` in `crew_delegation.py`. New: `tests/test_ad1347_s1_agent_work.py` and `tests/test_ad1347_s1_wiring.py` (real store, registry, permission store, stop record, ontology and boots). Updated: `test_ad1343_agent_stop.py`, `fixtures/ad1343_seam_registry.py`, `test_ad1270e1_config_facade.py`, `test_ad1152_agentic_correlation.py`, and the config-facade baseline and config-profiles manifest. The contract is `prompts/ad-1347-s1-agent-created-work-service.md`.
+**AD-1347 S1 (2026-10-23), #1627 slice 1 of 4 -- the Ship's Computer service that owns agent-created work: an agent can create work for itself, a chief can assign within its department, and any other ask becomes a request published to a department holding the named tool. Default off; nothing calls it yet.** New `probos/agent_work.py` (`AgentWorkService`, `open_agent_work_service`) and `probos/cognitive/crew_directory.py` (`RuntimeCrewDirectory`). `created_by` is the slot the requester's identity resolves to, and an unresolved requester is refused, never stamped "captain". Provenance (requester, origin, reason, depth, department, tool, dedup key) sits under `metadata["agent_work"]`, never a top-level `thread_id` or a `parent_id`, so a request stays discoverable. Eligibility is the tool registry's own answer for each member (department scope, `restricted_to`, rank, the Captain's grants and restrictions), asked at creation and again at every discovery and claim through a fail-closed store gate, on the tool and legacy claim paths; an unregistered tool has no eligible member. Guards: caps per agent 3, per department 8 and ship-wide 24 (open items), 6 creations per agent per hour, depth 2, a 24 h TTL owned by the store's existing sweep, and dedup on (department, tool, normalised title) that adds the asker as a watcher. A stopped requester is refused at the new `agent_work` seam. `WorkItemStore` gains `set_agent_work_claim_gate`, `ensure_agent_work_schema`, `list_agent_work`, `add_work_watcher`, `list_work_watchers`, `claim_work_notice` and `list_due_work_notices`. Two tables (`agent_work_watchers`, `agent_work_notices`) are created only when enabled. New config `agent_work` (`AgentWorkConfig`). AD-865's chief lookup is now `find_chief_post` and `resolve_post_agent` in `crew_delegation.py`. New: `tests/test_ad1347_s1_agent_work.py` and `tests/test_ad1347_s1_wiring.py` (real store, registry, permission store, stop record, ontology and boots). Updated: `test_ad1343_agent_stop.py`, `fixtures/ad1343_seam_registry.py`, `test_ad1270e1_config_facade.py`, `test_ad1152_agentic_correlation.py`, `test_ad1270e2i_agentic_models.py` (the true-leaf set), the config-facade baseline, the config-profiles manifest (classification and census) and the generated config reference. The contract is `prompts/ad-1347-s1-agent-created-work-service.md`.
 
 ```
 
@@ -2444,7 +2508,7 @@ REPLACE:
 ```markdown
 ### AD-1347 S1 -- The Ship's Computer service that owns agent-created work: self-tasks, chief assignments and department requests (2026-10-23, #1627 slice 1 of 4)
 
-- *Scope.* Slice 1 of #1627, two milestone commits. Files: new `agent_work.py` and `cognitive/crew_directory.py`; `workforce.py` (provenance key, lazy tables, claim gate, six methods), `agent_stop.py` (`SEAM_AGENT_WORK`), `cognitive/crew_delegation.py` (the shared chief lookup), `config.py` (`AgentWorkConfig`), `runtime.py`, `startup/shutdown.py`, `storage_declarations.py` (a note), the config-facade baseline, the config-profiles manifest and tests. Contract: `prompts/ad-1347-s1-agent-created-work-service.md`. Later: S2 the chain's action tags; S3 claim, execution, activation notice and report-back; S4 the QUERY lookup.
+- *Scope.* Slice 1 of #1627, two milestone commits. Files: new `agent_work.py` and `cognitive/crew_directory.py`; `workforce.py` (provenance key, lazy tables, claim gate, six methods), `agent_stop.py` (`SEAM_AGENT_WORK`), `cognitive/crew_delegation.py` (the shared chief lookup), `config.py` (`AgentWorkConfig`), `runtime.py`, `startup/shutdown.py`, `storage_declarations.py` (a note), the config-facade baseline, the config-profiles manifest, the generated config reference and tests. Contract: `prompts/ad-1347-s1-agent-created-work-service.md`. Later: S2 the chain's action tags; S3 claim, execution, activation notice and report-back; S4 the QUERY lookup.
 - *D1 (home).* A Ship's Computer service with narrow injected interfaces, built by one opener, held as `runtime.agent_work` only when enabled; nothing calls it in S1.
 - *D2 (authority).* A self-task is assigned to its creator; a chief assigns only a member of its own department; any other named assignee becomes an unassigned request (never an assignment) published to one department holding the named tool. A requester who holds the tool is told to create a self-task. Depth is read from the parent's stored record; 2 is allowed, 3 refused.
 - *D3 (eligibility).* `check_permission` at read level per member (department, rank, agent type and the Captain's grants and restrictions), at creation and at every discovery and claim through a fail-closed store gate on both claim paths; stopped members excluded.
@@ -2466,7 +2530,7 @@ REPLACE:
 ## 9. What this does NOT change
 
 - The chain: no action tag, parser, proactive action or reply-pipeline change (S2). No execution, activation notice, report-back, decline or approval-inbox path (S3). No QUERY operation (S4).
-- `agentic_dispatch.py` and its tool offer (wave 2 owns it); `resolve_agentic_identity` is only imported.
+- `agentic_dispatch.py` and its tool offer (wave 2 owns it); `resolve_agentic_identity` and `AgentIdentityTrust` are only imported.
 - AD-845's Yeo `[CREATE_TASK]` and AD-1165's promotion keep `created_by="captain"` and their behaviour.
 - AD-1346: no `decide`, no ticket, no work kind, no admission record.
 - Tools: no `allowed_departments`, rank table or registration change.
@@ -2475,6 +2539,9 @@ REPLACE:
 - `RESET_TIERS`, the reset command, the archive and the AD-1341 promotion.
 - `S1_SCOPE` and the stop routes' bodies.
 - `config/system.yaml`.
+- `tests/test_layer_boundaries.py`: no `ALLOWED_EXCEPTIONS` entry; `crew_directory.py` imports nothing from the consensus layer (A1).
+- The census header's other numbers in `config-profiles.yaml` (`boolean_fields_reachable`, `default_true`, `default_false_armed_by_system_yaml`, `default_false_never_armed`, `measured_at_commit`): no test or script reads them, and they were already stale on the base (Absence AV12; register). Only `default_false` moves.
+- Where `AgentWorkConfig` lives: it stays in `config.py` (D4) and is not moved into `config_models/` here (AD-1270 batch 10).
 
 ## 10. Mutation rows (33 rows; whole stripped lines, each occurring once in its file after §7)
 
@@ -2507,8 +2574,8 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | R3 | `src/probos/agent_work.py` | `await store.ensure_agent_work_schema()` | `pass` | test 20 (no watcher table); test 2 |
 | W1 | `src/probos/workforce.py` | `or not self._agent_work_claimable(item, resource)` | `or False` | tests 10, 12 and 13 |
 | W2 | `src/probos/workforce.py` | `if AGENT_WORK_METADATA_KEY not in item.metadata:` | `if True:` | test 13 (discoverable with no gate); test 10 |
-| W3 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",` | the same line with `INSERT OR REPLACE` | test 22 (a second claim returns True) |
-| W4 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",` | the same line with `INSERT OR REPLACE` | test 20 (`add_work_watcher` returns True) |
+| W3 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",` | `"INSERT OR REPLACE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",` | test 22 (a second claim returns True) |
+| W4 | `src/probos/workforce.py` | `"INSERT OR IGNORE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",` | `"INSERT OR REPLACE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",` | test 20 (`add_work_watcher` returns True) |
 | W5 | `src/probos/workforce.py` | `conditions.append("status NOT IN ('done', 'cancelled', 'failed')")` | `pass` | test 17 (a cancelled item still counts); test 20 |
 | W6 | `src/probos/workforce.py` | `"AND n.recipient = r.recipient AND n.kind = ?) "` | `"AND n.kind = ?) "` | test 22 (the watcher is no longer due after the requester's claim) |
 | D1 | `src/probos/cognitive/crew_directory.py` | `chief = resolve_post_agent(self._ontology, chief_post.id)` | `chief = None` | tests 5 and 26 |
@@ -2615,6 +2682,35 @@ grep -n "^TRUST_LIEUTENANT" src/probos/config.py
 
 **How each SEARCH was checked to occur once:** each block's distinctive line was grepped on this tree (hits above), and the surrounding lines were read in the same Read call. The new lines (`conditions.append("status NOT IN`, `or not self._agent_work`, `AND n.recipient`, `INSERT OR IGNORE INTO agent_work`) returned 0 hits in `workforce.py` before the build, so each mutation line occurs once after it.
 
+**Amendment A1 evidence (2026-10-22, at the M1 build `3496b849` on `74a389af`):**
+
+```
+grep -n "assert document" tests/test_ad1185_config_profiles.py
+  859 (the census default_false must equal the checker's count of default-off flags)
+grep -n "default_false: \|boolean_fields_reachable\|default_true: " docs/development/config-profiles.yaml
+  19 (445), 20 (223), 21 (225)
+git show b6c5734d -- docs/development/config-profiles.yaml
+  one hunk: default_false 222 -> 223, nothing else (precedent)
+grep -n "REMAINING_TRUE_LEAVES" tests/test_ad1270e2i_agentic_models.py
+  160 (alphabetical tuple, opens with "BootCampPhaseConfig" at 161), 526 (the sorted comparison)
+grep -n "ALLOWED_EXCEPTIONS = \|\"cognitive\": {\|def test_no_undocumented_cross_layer_imports" tests/test_layer_boundaries.py
+  60, 51 (cognitive may import knowledge, substrate, mesh), 187 (ast.walk over every import, TYPE_CHECKING included: 176-183)
+grep -n "class AgentIdentityTrust\|trust_network: AgentIdentityTrust" src/probos/cognitive/agentic_dispatch.py
+  411 (one method, get_score at 412), 433
+grep -n "AgentIdentityTrust" src/probos/cognitive/crew_assignment.py src/probos/cognitive/self_telemetry_domains.py
+  crew_assignment 33, 56; self_telemetry_domains 15, 56, 158 (precedents)
+grep -n "def get_score" src/probos/consensus/trust.py
+  1017
+grep -n "_OUTPUT = " scripts/gen_config_reference.py
+  25 (docs/development/config-reference.md)
+grep -n "gen_config_reference.py" scripts/run_test_gate.py
+  1101 (preflight, --check)
+grep -n "def test_the_reference_matches_the_models" tests/test_config_reference_current.py
+  41 (runs the generator with --check in a subprocess)
+grep -n "^## .workforce.\|^## .temporal." docs/development/config-reference.md
+  2333, 2346
+```
+
 ## Absence Verified (2026-10-22)
 
 | # | Claim | Run | Found | Holds |
@@ -2630,6 +2726,11 @@ grep -n "^TRUST_LIEUTENANT" src/probos/config.py
 | AV9 | No prompt `bf-912*` is in this tree to collide with | Glob `prompts/bf-912*.md` | none | yes; BF-912's contract lives with the orchestrator |
 | AV10 | Agents have no `agent_uuid` attribute, so the pull resolver keys on `agent.id` | Grep `agent_uuid\|sovereign_id` in `substrate/agent.py` | only `sovereign_id` at :44 | yes |
 | AV11 | `_stop_gate` initial value | not enumerated (registry `__init__` lines 108-121 do not show it) | — | **not held as proven**; the fixtures call `set_stop_gate` before any invoke, so the tests do not depend on it |
+| AV12 (A1) | No test or script reads the census header's numbers other than `default_false` | Grep `boolean_fields_reachable\|default_true"\|never_armed\|armed_by_system_yaml` in `*.py`; Grep `\["census"\]` in `*.py` | 0; one hit, `test_ad1185_config_profiles.py:859` (`default_false` only) | yes |
+| AV13 (A1) | The only docs that name config sections are the three files this contract covers | Grep `work_board_reconciler` and the backticked `workforce` in `docs/` | `config-profiles.yaml`, `config-facade-baseline.yaml`, `config-reference.md` | yes: §7.8, §7.10, §7.14c |
+| AV14 (A1) | No doc or seam manifest names the moved chief lookup or `_ready_for_pull` | Grep `_find_chief_post\|_resolve_post_agent\|_ready_for_pull\|crew_delegation` in `docs/` | 0 | yes |
+| AV15 (A1) | The new modules give the tree scanners nothing to flag (no quoted `*.db` literal, no event emission, no `ui_scaffold`, no `create_task`) | Grep in `agent_work.py` and in `cognitive/crew_directory.py`, one file per call | one `.db` hit, `agent_work.py:597`, inside a longer message string that `test_ad1265_backup_coverage.py:51`'s quoted-literal pattern does not match; nothing else | yes |
+| AV16 (A1) | No test pins who imports `AgentIdentityTrust` | Grep `AgentIdentityTrust` in `*.py` | `agentic_dispatch.py:411, :433`; `crew_assignment.py:33, :56`; `self_telemetry_domains.py:15, :56, :158`; no test | yes |
 
 ## 12. Deterministic gate checks, resolved up front
 
@@ -2647,9 +2748,9 @@ grep -n "^TRUST_LIEUTENANT" src/probos/config.py
    - `RuntimeCrewDirectory` has 4.
    - No direct `sqlite3.connect` or `aiosqlite.connect` in source; the tests use `sqlite3.connect` to read, which is allowed.
    - No `asyncio.create_task`.
-   - Layers: `probos.agent_work` is an unranked top-level module; `probos.cognitive.crew_directory` imports it and `probos.cognitive.*`.
-4. **Config facade:** §7.8's exact diff, then `--check`; §7.9's counts.
-5. **Config profiles** (`check_config_profiles --check`): `agent_work.enabled` is classified (§7.10), not frozen.
+   - Layers: `probos.agent_work` is an unranked top-level module; `probos.cognitive.crew_directory` imports it and `probos.cognitive.*`, and under `TYPE_CHECKING` the ontology (core) and the substrate registry (allowed for cognitive). It imports nothing from the consensus layer: trust is typed with `AgentIdentityTrust` (A1), so `tests/test_layer_boundaries.py` needs no `ALLOWED_EXCEPTIONS` entry. The type is an existing class, so A1 adds no new function, method or exception name to check against the census sets.
+4. **Config facade:** §7.8's exact diff, then `--check`; §7.9's counts. **Config reference** (`gen_config_reference.py --check`, a preflight step, and `tests/test_config_reference_current.py`): regenerated in §7.14c. **True-leaf pin:** §7.14b.
+5. **Config profiles** (`check_config_profiles --check`): `agent_work.enabled` is classified (§7.10 pair 1), not frozen; the census `default_false` is 224 (§7.10 pair 2).
 6. **AD ledger:** `gen_ad_ledger.py` after §8; `--check`; `tests/test_ad1184_ad_ledger.py`.
 7. **Selection:** `config.py` is a blast-radius entry, so the impact selector picks the full suite; the single receipted broad gate after review covers it.
 8. **Line endings:** match CRLF on edit; new files LF.
@@ -2690,12 +2791,14 @@ grep -n "^TRUST_LIEUTENANT" src/probos/config.py
 13. `config.py` changes only by `AgentWorkConfig` and one `SystemConfig` field; the facade baseline diff is exactly §7.8.
 14. No `decide`, ticket or tool permission change; `agentic_dispatch.py` is not edited.
 15. Each updated pinned test records its reason inline; no pin is deleted.
+16. `cognitive/crew_directory.py` imports nothing from the consensus layer, even under `TYPE_CHECKING`; its `trust_network` is typed `AgentIdentityTrust`; `tests/test_layer_boundaries.py` is unchanged.
+17. Each config surface changes only by the new section: `config-reference.md` gains exactly one `agent_work` section between `workforce` and `temporal` and is byte-equal to the generator's output; the census header changes only `default_false` (223 -> 224); `REMAINING_TRUE_LEAVES` gains exactly `AgentWorkConfig`.
 
 Consumers that must accept the change: `WorkItemStore._ready_for_pull` (discovery and claim), `ToolRegistry.check_and_invoke`, the AD-1343 census tests, the config facade and profile checkers, and the runtime start and shutdown.
 
 ## 15. Acceptance criteria
 
-- Every test in §6 passes with the focused commands. The updated pins pass. The listed `--check` scripts pass.
+- Every test in §6 passes with the focused commands. The updated pins pass, including the three A1 pins. The listed `--check` scripts pass, including `gen_config_reference.py --check` (§7.14c). `tests/test_layer_boundaries.py` passes with no new exception (§7.13).
 - With the default configuration nothing is built and `workforce.db` is unchanged (W1, tests 13 and 28, test_ad1152).
 - Acceptance 3, 5 (the S1 half: creation and claim refused for a stopped agent), 6 and 7 of #1627 are each covered by the named tests. The S1 half of acceptance 2 is test 10, which S2 and S3 extend.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
