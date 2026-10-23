@@ -1678,6 +1678,41 @@ _SCAFFOLD_EXCLUSION_SQL = (
     f"OR json_extract(item.metadata, '$.{SCAFFOLD_METADATA_FLAG}') IS NOT 1)"
 )
 
+# AD-1347 S1 (#1627): agent-created work. Its provenance is the object under this key, written by
+# ``probos.agent_work.AgentWorkService``. Nested on purpose: a top-level ``thread_id`` or a
+# ``parent_id`` would make ``_standalone_pull_item`` refuse the item, and the request would reach nobody.
+AGENT_WORK_METADATA_KEY = "agent_work"
+
+# Created only by ``ensure_agent_work_schema``, which only the agent-work service's opener calls, so a
+# vessel with agent_work off keeps workforce.db's schema unchanged. A notice row records that a terminal
+# notice was claimed before it was sent: deleting one could send that notice twice.
+_AGENT_WORK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_work_watchers (
+    work_item_id TEXT NOT NULL,
+    agent_id     TEXT NOT NULL,
+    added_at     REAL NOT NULL,
+    PRIMARY KEY (work_item_id, agent_id)
+);
+CREATE TABLE IF NOT EXISTS agent_work_notices (
+    work_item_id TEXT NOT NULL,
+    recipient    TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    claimed_at   REAL NOT NULL,
+    PRIMARY KEY (work_item_id, recipient, kind)
+);
+"""
+
+# The CASE keeps a hand-edited non-JSON metadata column from raising, as the pull filter does.
+_AGENT_WORK_FILTER_SQL = (
+    "CASE WHEN json_valid(metadata) THEN "
+    f"json_type(metadata, '$.{AGENT_WORK_METADATA_KEY}') = 'object' ELSE 0 END"
+)
+
+
+def _agent_work_ids_valid(*values: object) -> bool:
+    """AD-1347 S1: each value is an exact str of 1 to 128 characters."""
+    return all(type(value) is str and 1 <= len(value) <= 128 for value in values)
+
 
 def _reject_reserved_metadata(metadata: Any) -> None:
     """Refuse an ordinary write that would set the scaffold flag.
@@ -2742,6 +2777,8 @@ class WorkItemStore(EventEmitterMixin):
         self._tick_interval = tick_interval
         self._connection_factory = connection_factory
         self._pull_resource_resolver = pull_resource_resolver
+        # AD-1347 S1: set only by probos.agent_work.open_agent_work_service; None while the feature is off.
+        self._agent_work_claim_gate: Callable[[WorkItem, BookableResource], bool] | None = None
         self._owned_steps_authorizer = owned_steps_authorizer
         self._owned_steps_ttl_owner = owned_steps_ttl_owner
         self._owned_steps_content = owned_steps_content
@@ -11007,6 +11044,7 @@ class WorkItemStore(EventEmitterMixin):
             or not self._standalone_pull_item(item)
             or (agent_pull and not self._pull_visible(item, resource))
             or not self._check_eligibility(resource, item)
+            or not self._agent_work_claimable(item, resource)
             or (
                 item.ttl_seconds is not None
                 and time.time() >= item.created_at + item.ttl_seconds
@@ -11100,6 +11138,139 @@ class WorkItemStore(EventEmitterMixin):
             return ReadyWorkPage(
                 tuple(items), offset + examined if more else None, tuple(item_offsets),
             )
+
+    # -- AD-1347 S1 (#1627): agent-created work (probos.agent_work) ------------------------
+
+    def set_agent_work_claim_gate(
+        self, gate: Callable[[WorkItem, BookableResource], bool] | None,
+    ) -> None:
+        """AD-1347 S1: the agent-work service's claim check, asked for every item carrying agent-work provenance.
+
+        Without one (the feature off) such an item is never ready to pull, so provenance left by an earlier
+        run cannot make a request claimable by members its named tool would refuse. Items without the
+        provenance key are unaffected either way.
+        """
+        if gate is not None and not callable(gate):
+            raise ValueError("agent_work_claim_gate_invalid")
+        self._agent_work_claim_gate = gate
+
+    def _agent_work_claimable(self, item: WorkItem, resource: BookableResource) -> bool:
+        if AGENT_WORK_METADATA_KEY not in item.metadata:
+            return True
+        gate = self._agent_work_claim_gate
+        if gate is None:
+            return False
+        try:
+            return gate(item, resource) is True
+        except Exception:
+            logger.warning(
+                "AD-1347: the agent-work claim gate raised for work item %s and resource %s; "
+                "the item is not ready for that resource and discovery continues",
+                item.id, resource.resource_id, exc_info=True,
+            )
+            return False
+
+    async def ensure_agent_work_schema(self) -> None:
+        """AD-1347 S1: create the watcher and notice tables (idempotent). Only the agent-work opener calls it."""
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        async with self._work_item_row_write_lock:
+            await self._db.executescript(_AGENT_WORK_SCHEMA)
+            await self._db.commit()
+
+    async def list_agent_work(
+        self, open_only: bool, created_since: float | None, limit: int,
+    ) -> list[WorkItem]:
+        """AD-1347 S1: items carrying agent-work provenance, oldest first. Open means not done, cancelled or failed."""
+        if (
+            type(open_only) is not bool
+            or (
+                created_since is not None
+                and (type(created_since) not in (int, float) or not math.isfinite(created_since))
+            )
+            or type(limit) is not int or not 1 <= limit <= 10_000
+        ):
+            raise ValueError("agent_work_query_invalid")
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        conditions = [_AGENT_WORK_FILTER_SQL]
+        params: list[Any] = []
+        if open_only:
+            conditions.append("status NOT IN ('done', 'cancelled', 'failed')")
+        if created_since is not None:
+            conditions.append("created_at >= ?")
+            params.append(created_since)
+        cursor = await self._db.execute(
+            f"SELECT {_WORK_ITEM_PUBLIC_COLUMNS} FROM work_items WHERE {' AND '.join(conditions)} "
+            "ORDER BY created_at ASC, id ASC LIMIT ?",
+            (*params, limit),
+        )
+        return [self._row_to_work_item(row) for row in await cursor.fetchall()]
+
+    async def add_work_watcher(self, work_item_id: str, agent_id: str, added_at: float) -> bool:
+        """AD-1347 S1: add a watcher to agent-created work; True only when it was not one already."""
+        if not _agent_work_ids_valid(work_item_id, agent_id) or type(added_at) not in (int, float):
+            raise ValueError("agent_work_watcher_invalid")
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        async with self._booking_transaction():
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO agent_work_watchers (work_item_id, agent_id, added_at) VALUES (?, ?, ?)",
+                (work_item_id, agent_id, added_at),
+            )
+        return cursor.rowcount == 1
+
+    async def list_work_watchers(self, work_item_id: str) -> tuple[str, ...]:
+        """AD-1347 S1: the watchers of an agent-created item, in the order they were added."""
+        if not _agent_work_ids_valid(work_item_id):
+            raise ValueError("agent_work_watcher_invalid")
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        cursor = await self._db.execute(
+            "SELECT agent_id FROM agent_work_watchers WHERE work_item_id = ? ORDER BY added_at ASC, agent_id ASC",
+            (work_item_id,),
+        )
+        return tuple(row[0] for row in await cursor.fetchall())
+
+    async def claim_work_notice(
+        self, work_item_id: str, recipient: str, kind: str, claimed_at: float,
+    ) -> bool:
+        """AD-1347 S1: claim one notice before sending it; True once per (item, recipient, kind), across restarts."""
+        if not _agent_work_ids_valid(work_item_id, recipient, kind) or type(claimed_at) not in (int, float):
+            raise ValueError("agent_work_notice_invalid")
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        async with self._booking_transaction():
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO agent_work_notices (work_item_id, recipient, kind, claimed_at) VALUES (?, ?, ?, ?)",
+                (work_item_id, recipient, kind, claimed_at),
+            )
+        return cursor.rowcount == 1
+
+    async def list_due_work_notices(self, kind: str, limit: int) -> list[tuple[str, str]]:
+        """AD-1347 S1: (item, recipient) pairs of ended agent work not yet claimed for ``kind``.
+
+        The recipients are each item's requester and every watcher, so a deduplicated request's watchers are
+        never dropped from its outcome.
+        """
+        if not _agent_work_ids_valid(kind) or type(limit) is not int or not 1 <= limit <= 1_000:
+            raise ValueError("agent_work_notice_invalid")
+        if self._db is None:
+            raise RuntimeError("agent_work_store_unavailable")
+        cursor = await self._db.execute(
+            "SELECT w.id, r.recipient FROM work_items AS w JOIN ("
+            f"SELECT id AS work_item_id, json_extract(metadata, '$.{AGENT_WORK_METADATA_KEY}.requester') "
+            "AS recipient FROM work_items WHERE CASE WHEN json_valid(metadata) THEN "
+            f"json_type(metadata, '$.{AGENT_WORK_METADATA_KEY}.requester') = 'text' ELSE 0 END "
+            "UNION SELECT work_item_id, agent_id FROM agent_work_watchers"
+            ") AS r ON r.work_item_id = w.id "
+            "WHERE w.status IN ('done', 'cancelled', 'failed') "
+            "AND NOT EXISTS (SELECT 1 FROM agent_work_notices AS n WHERE n.work_item_id = w.id "
+            "AND n.recipient = r.recipient AND n.kind = ?) "
+            "ORDER BY w.updated_at ASC, w.id ASC, r.recipient ASC LIMIT ?",
+            (kind, limit),
+        )
+        return [(row[0], row[1]) for row in await cursor.fetchall()]
 
     @staticmethod
     def _prepare_claim(

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1881
-  field_definitions: 1869
+  canonical_dump_leaves: 1888
+  field_definitions: 1877
   incidental: 13
-  own_models: 227
-  owned: 295
-  public_names: 308
-canonical_dump_sha256: 3a54bc4117dd58b8dae7371254f7ef4cde296052a2630ec049726d4a2fff579e
+  own_models: 228
+  owned: 296
+  public_names: 309
+canonical_dump_sha256: a168a4691e28de9b8e754a790f0f452a9a6f75b5fa2a638193872c09298d2c7f
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -142,6 +142,7 @@ constants:
 names:
   A2APeerConfig: {kind: model, tier: owned}
   AgentTierConfig: {kind: model, tier: owned}
+  AgentWorkConfig: {kind: model, tier: owned}
   AgenticDispatchConfig: {kind: model, tier: owned}
   AgenticLoopConfig: {kind: model, tier: owned}
   AgenticToolsConfig: {kind: model, tier: owned}
@@ -468,6 +469,20 @@ models:
     fields:
     - {default: <required>, has_default_factory: true, name: crew_types}
     - {default: <required>, has_default_factory: true, name: core_types}
+  AgentWorkConfig:
+    qualname: AgentWorkConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: be853bff475c15e0ba6e5b8f482afba99b9c6b480ad22257d010dd0e21e8d214
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '3', name: max_open_per_agent}
+    - {default: '8', name: max_open_per_department}
+    - {default: '24', name: max_open_ship}
+    - {default: '6', name: max_created_per_agent_per_hour}
+    - {default: '86400', name: ttl_seconds}
+    - {default: '2', name: max_depth}
   AgenticDispatchConfig:
     qualname: AgenticDispatchConfig
     bases:
@@ -3397,7 +3412,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f9da0fa2302fc23a9155cf966dfc433ccc619db34e0dd21bbb83cb4214cb32fe
+    schema_sha256: a79d11fc49b5872200923a864858dc184a45313ad012e021af5978744bd541fa
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3524,6 +3539,7 @@ models:
     - {default: <required>, has_default_factory: true, name: edge_backfill}
     - {default: CommunicationsConfig(...), name: communications}
     - {default: WorkforceConfig(...), name: workforce}
+    - {default: <required>, has_default_factory: true, name: agent_work}
     - {default: TemporalConfig(...), name: temporal}
     - {default: QualificationConfig(...), name: qualification}
     - {default: OrientationConfig(...), name: orientation}

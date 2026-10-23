@@ -1671,6 +1671,7 @@ async def shutdown(
         with steps("workforce store stop", runtime.work_item_store):
             await runtime.work_item_store.stop()
         runtime.work_item_store = None
+        runtime.agent_work = None  # AD-1347 S1: the service holds the store; released with it
 
     # Stop build dispatcher (AD-375)
     if runtime.build_dispatcher:

@@ -2343,6 +2343,20 @@ Workforce Scheduling Engine configuration (AD-496).
 | `custom_templates` | `list[dict]` | `[]` | — |  |
 | `template_config_path` | `str` | `'config/work_templates.yaml'` | — |  |
 
+## `agent_work`
+
+AD-1347 S1 (#1627): work crew agents create for themselves and request from colleagues.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — |  |
+| `max_open_per_agent` | `int` | `3` | ≥ 1, ≤ 50 |  |
+| `max_open_per_department` | `int` | `8` | ≥ 1, ≤ 200 |  |
+| `max_open_ship` | `int` | `24` | ≥ 1, ≤ 500 |  |
+| `max_created_per_agent_per_hour` | `int` | `6` | ≥ 1, ≤ 100 |  |
+| `ttl_seconds` | `int` | `86400` | ≥ 60, ≤ 604800 |  |
+| `max_depth` | `int` | `2` | ≥ 1, ≤ 5 |  |
+
 ## `temporal`
 
 AD-502: Temporal awareness configuration.

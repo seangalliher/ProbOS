@@ -299,6 +299,12 @@ async def _off_observation(
     # AD-1328's command execution policy was added after this capture too. It has no rules by default, and with
     # no rules nothing is evaluated; this agentic-loop observation starts no shell child.
     assert config["execution"].pop("command_policy")["rules"] == []
+    # AD-1347 S1's agent-work section was added after this capture too. It is default off, and while off
+    # the runtime builds no service and workforce.db gains no table; this observation creates no work.
+    assert config.pop("agent_work") == {
+        "enabled": False, "max_open_per_agent": 3, "max_open_per_department": 8, "max_open_ship": 24,
+        "max_created_per_agent_per_hour": 6, "ttl_seconds": 86400, "max_depth": 2,
+    }
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
