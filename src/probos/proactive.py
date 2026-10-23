@@ -2860,9 +2860,11 @@ class ProactiveCognitiveLoop:
         self, agent: Any, text: str,
         *,
         post_budget: PostBudget | None = None,
+        thread_id: str = "",
+        post_id: str = "",
     ) -> tuple[str, list[dict]]:
-        """Public wrapper for _extract_and_execute_actions (AD-654a)."""
-        return await self._extract_and_execute_actions(agent, text, post_budget=post_budget)
+        """Public wrapper for _extract_and_execute_actions (AD-654a; AD-1347 S2 adds the thread and post)."""
+        return await self._extract_and_execute_actions(agent, text, post_budget=post_budget, thread_id=thread_id, post_id=post_id)
 
     async def is_similar_to_recent_posts(
         self, agent: Any, text: str, threshold: float = 0.5,
@@ -3011,8 +3013,13 @@ class ProactiveCognitiveLoop:
         self, agent: Any, text: str,
         *,
         post_budget: PostBudget | None = None,
+        thread_id: str = "",
+        post_id: str = "",
     ) -> tuple[str, list[dict]]:
         """AD-437: Extract structured actions from proactive response and execute them.
+
+        AD-1347 S2: ``thread_id`` and ``post_id`` name the Ward Room thread and post a reply answers (the Ward Room
+        pipeline passes them); a proactive thought has none. Only the agent-work tags read them.
 
         Currently supports:
         - [ENDORSE post_id UP/DOWN] — endorse a Ward Room post
@@ -3803,6 +3810,16 @@ class ProactiveCognitiveLoop:
                             _res.rejected, _res.unroutable,
                         )
         text = re.sub(handoff_pattern, '', text, flags=re.DOTALL).strip()
+
+        # --- Agent-created work (AD-1347 S2) — Lieutenant+; only while the service exists, so off is untouched ---
+        # Before BF-203: each tag has a closed form and is stripped whole here.
+        from probos.agent_work_tags import agent_work_service, apply_agent_work_tags
+
+        if agent_work_service(rt) is not None:
+            text, work_actions = await apply_agent_work_tags(
+                text, runtime=rt, actor=agent.id, rank=rank, thread_id=thread_id, post_id=post_id,
+            )
+            actions_executed.extend(work_actions)
 
         # BF-203: Strip unrecognized bracket command tags that the LLM hallucinated.
         # Known tags (REPLY, DM, ENDORSE, NOTEBOOK, READ_NOTEBOOK, CHALLENGE, MOVE,

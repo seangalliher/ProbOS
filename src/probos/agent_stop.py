@@ -85,7 +85,8 @@ S1_SCOPE: Final[dict[str, str]] = {
         "lifted in time and otherwise ends blocked for the Captain, who can retry it after the lift), "
         "correction re-runs of its refuted subtasks (a crew session waits and ends in the same way; one whose "
         "correction was admitted just before the order ends blocked and cannot be retried; elsewhere the "
-        "result is escalated unverified), browser actions and every "
+        "result is escalated unverified), work it would create for itself or ask of a colleague and the run of "
+        "agent-created work it holds (AD-1347: a request it claimed goes back to the board), browser actions and every "
         "tool call, protected effects included."
     ),
     "does_not_end": (

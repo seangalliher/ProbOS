@@ -658,6 +658,14 @@ class ComposeHandler:
         system_prompt, user_prompt = builder(
             context, prior_results, callsign, department,
         )
+        # AD-1347 S2: the agent-work tags, taught only while the Ship's Computer's service exists, so the prompt is
+        # byte-identical while agent_work is off. Only the modes whose replies reach the action extractor (D1).
+        from probos.agent_work_tags import AGENT_WORK_COMPOSE_MODES, agent_work_instructions
+
+        if mode_key in AGENT_WORK_COMPOSE_MODES:
+            agent_work_block = agent_work_instructions(self._runtime)
+            if agent_work_block:
+                system_prompt += f"\n\n{agent_work_block}"
 
         # Make LLM call
         request = LLMRequest(

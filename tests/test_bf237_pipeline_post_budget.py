@@ -22,7 +22,7 @@ def _make_router():
 
 def _make_proactive_loop(*, spend_budget: bool = False):
     """Create a mock proactive loop."""
-    async def _fake_extract(agent, text, *, post_budget=None):
+    async def _fake_extract(agent, text, *, post_budget=None, thread_id="", post_id=""):
         if spend_budget and post_budget is not None:
             post_budget.spent = True
         return text, []
