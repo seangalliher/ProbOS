@@ -14,11 +14,12 @@
   - `tests/test_ad1156_plan_execute_mode.py`: the `_NEVER_RAN_REFUSALS` set;
   - `tests/test_issue1419_failed_start_rollback.py`: one stopped component;
   - `tests/test_ad1347_s1_agent_work.py`: two docstring sentences;
-  - `tests/test_bf237_pipeline_post_budget.py` and `tests/test_bf238_post_budget_telemetry.py`: the extractor stub in each takes the two new keywords (§7.3a, §7.3b; M1).
+  - `tests/test_bf237_pipeline_post_budget.py` and `tests/test_bf238_post_budget_telemetry.py`: the extractor stub in each takes the two new keywords (§7.3a, §7.3b; M1);
+  - `tests/test_ad1155_loop_until_done.py`: the pinned tail of `WorkItemAgenticExecutor.run`'s signature gains `confinement` (§7.8a; M2).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks here are LF; match and write with each file's own endings. New files are written LF.
 
-**Mechanical repairs by the orchestrator (2026-10-23; six, found by applying the contract by tool on `6b950acf` and `ba20e949`, running its tests and its mutation table, and building M1; no decision changed, and the production code needed none).** (1) `tests/test_ad1347_s3_execution.py` imported `AgentWorkConfig` from `probos.agent_work`, which does not export it (S1 defines it in `probos.config`, and S1's own tests import it there): the import moves. (2) C9's first case used the thread id `"bad thread"`, which S1's `AgentWorkOrigin` accepts (it refuses only a non-str, an id over 128 characters, an id with surrounding whitespace and an id that does not encode as UTF-8), so the tag was filed: the case is `" t1"`, an id with surrounding whitespace. (3) X3's `restricted_before_run` case issued its restriction at `ToolPermission.READ`, which restricts nothing at read level (S1's tests restrict with `ToolPermission.NONE`): it is `NONE`. (4) W3's boot config left the Ward Room off, and finalize wires AD-855's driver only inside `if runtime.ward_room:`, so the premise assertion failed: the test now builds its config through a local `_config` that sets `ward_room.enabled = True`, the change §7.21's note had told the Builder to make. After the four, all 41 test cases pass on the contract applied by tool. (5) Found by the campaign: row R11 (`if outcome == OUTCOME_EXPIRED:` to `if False:`) survived, because X5 asserted only that the notice contains "expired", and the fallback text ("ended as expired without a result") contains it too: X5 now asserts the expired wording itself. (Row SD1's killer is `tests/test_issue1419_failed_start_rollback.py`: its campaign command names that file as well.) The mutation table has 53 rows; the heading said 44. (6) Found by the M1 Builder: two existing test stubs of the extractor, `_fake_extract` in `tests/test_bf237_pipeline_post_budget.py` and in `tests/test_bf238_post_budget_telemetry.py`, have the fixed signature `(agent, text, *, post_budget=None)`, so the pipeline's new `thread_id` and `post_id` keywords raised `TypeError` in four bf237 tests (bf238's stub fails the same way): §7.3a and §7.3b give each stub the two keywords. §5's row and AV5's claim that no test fakes the extractor's kwargs were wrong (AV5 searched only for `def extract_and_execute_actions`) and are corrected; M1's focused command now names the bf238 test. **Re-verified on `origin/main` `ba20e949` (wave 2 merged):** all 37 code pairs and both tracker pairs apply, each SEARCH exactly once; the 41 test cases pass on the contract applied by tool; the table's rows are run on that tree and recorded in §17. The phantom precheck lists 21 candidates on the base tree `6b950acf` and 8 on the tree with this contract applied, each explained: the 13 `kwarg_mismatch` (base tree only) are the `thread_id` and `post_id` parameters this contract adds to the extractor; 5 `method_phantom` (`restrict_to_plan_mode` and `confine_calls` exist on `DispatchToolExecutor`, where the precheck typed `executor` as `WorkItemAgenticExecutor`; `mark_fulfilled` exists on the capability-request store, where it typed `store` as `WorkItemStore`); 1 `field_phantom` (`origin.id` is a Ward Room thread's id, where the precheck typed `origin` as `AgentWorkOrigin`); and two stdlib classes (`AssertionError`, `SimpleNamespace`).
+**Mechanical repairs by the orchestrator (2026-10-23; seven, found by applying the contract by tool on `6b950acf` and `ba20e949`, running its tests and its mutation table, and building M1; no decision changed, and the production code needed none).** (1) `tests/test_ad1347_s3_execution.py` imported `AgentWorkConfig` from `probos.agent_work`, which does not export it (S1 defines it in `probos.config`, and S1's own tests import it there): the import moves. (2) C9's first case used the thread id `"bad thread"`, which S1's `AgentWorkOrigin` accepts (it refuses only a non-str, an id over 128 characters, an id with surrounding whitespace and an id that does not encode as UTF-8), so the tag was filed: the case is `" t1"`, an id with surrounding whitespace. (3) X3's `restricted_before_run` case issued its restriction at `ToolPermission.READ`, which restricts nothing at read level (S1's tests restrict with `ToolPermission.NONE`): it is `NONE`. (4) W3's boot config left the Ward Room off, and finalize wires AD-855's driver only inside `if runtime.ward_room:`, so the premise assertion failed: the test now builds its config through a local `_config` that sets `ward_room.enabled = True`, the change §7.21's note had told the Builder to make. After the four, all 41 test cases pass on the contract applied by tool. (5) Found by the campaign: row R11 (`if outcome == OUTCOME_EXPIRED:` to `if False:`) survived, because X5 asserted only that the notice contains "expired", and the fallback text ("ended as expired without a result") contains it too: X5 now asserts the expired wording itself. (Row SD1's killer is `tests/test_issue1419_failed_start_rollback.py`: its campaign command names that file as well.) The mutation table has 53 rows; the heading said 44. (6) Found by the M1 Builder: two existing test stubs of the extractor, `_fake_extract` in `tests/test_bf237_pipeline_post_budget.py` and in `tests/test_bf238_post_budget_telemetry.py`, have the fixed signature `(agent, text, *, post_budget=None)`, so the pipeline's new `thread_id` and `post_id` keywords raised `TypeError` in four bf237 tests (bf238's stub fails the same way): §7.3a and §7.3b give each stub the two keywords. §5's row and AV5's claim that no test fakes the extractor's kwargs were wrong (AV5 searched only for `def extract_and_execute_actions`) and are corrected; M1's focused command now names the bf238 test. (7) Found by the M2 Builder's focused command: `tests/test_ad1155_loop_until_done.py::test_work_item_agentic_executor_run_signature_is_unchanged` pins not only the 21-name prefix (`:508`, which §5 and §6 cited) but also the five names after it (`:531`) and the whole tail after the 26th name (`list(params)[26:] == [...]`, `:538`), and §7.8 appends `confinement` after `admitted_turn`, so the tail pin saw one extra name and the case failed; §5's row and §6's list called the test unaffected after reading only the prefix: §7.8a adds `"confinement"` to the pinned tail, and both lists and AV now say so. The change is test-only and the production code is the contract's own. **Re-verified on `origin/main` `ba20e949` (wave 2 merged):** all 38 code pairs and both tracker pairs apply, each SEARCH exactly once; the 41 test cases pass on the contract applied by tool; the table's rows are run on that tree and recorded in §17. The phantom precheck lists 21 candidates on the base tree `6b950acf` and 8 on the tree with this contract applied, each explained: the 13 `kwarg_mismatch` (base tree only) are the `thread_id` and `post_id` parameters this contract adds to the extractor; 5 `method_phantom` (`restrict_to_plan_mode` and `confine_calls` exist on `DispatchToolExecutor`, where the precheck typed `executor` as `WorkItemAgenticExecutor`; `mark_fulfilled` exists on the capability-request store, where it typed `store` as `WorkItemStore`); 1 `field_phantom` (`origin.id` is a Ward Room thread's id, where the precheck typed `origin` as `AgentWorkOrigin`); and two stdlib classes (`AssertionError`, `SimpleNamespace`).
 
 ---
 
@@ -170,7 +171,7 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 | `ComposeHandler` system prompt + agent-work block | the compose LLM call | appended only when the runtime holds the real service and the mode is `ward_room_response` or `proactive_observation` |
 | `S1_SCOPE["refuses"]` text | stop routes' answers; `tests/test_ad1343_seam_registry.py:63` (phrases of the named exceptions) | only the `refuses` value changes; no phrase checked there is in it |
 | `AgentWorkService.crew_member`, `execution_allowed` | `AgentWorkRunner` | new public methods; the service reaches 15 methods (trigger is above 15) |
-| `run(..., confinement=None)` | every existing caller | appended after `admitted_turn` (the 21-name prefix pinned by `tests/test_ad1155_loop_until_done.py:508` is unchanged); forwarded only when set (the arguments dict pinned by AD-1239 is unchanged) |
+| `run(..., confinement=None)` | every existing caller | appended after `admitted_turn` (the 21-name prefix pinned by `tests/test_ad1155_loop_until_done.py:508` is unchanged; the same test's tail pin at `:538` gains the name, §7.8a); forwarded only when set (the arguments dict pinned by AD-1239 is unchanged) |
 | `_NEVER_RAN_REFUSALS` (+2), `classify_tool_fault_error` tuple (+2) | AD-1189/1257 defect evidence; AD-1205 fault classification | both new texts are emitted only under a confinement |
 | `metadata["capability_request_id"]` on an agent-work item | AD-855 resume and cancel (compare and set); `_approved_admission`; `_denial_reason` | written only by `block_on_request` |
 | `agent_work_call` `action` requests | `_maybe_fulfil_on_approval` (new branch); HXI card (generic `action`) | AD-1154's exact six-key payload |
@@ -234,7 +235,7 @@ Trackers: the `PROGRESS.md` pair anchors on the title and blank line. The `DECIS
 - `tests/test_ad1343_stop_seam_inventory.py`: `AGENTIC_RUN_OWNERS` (updated); `ADMITTED_TURN_SITES`, `STOP_CHECK_SITES`, `STANDING_STOP_SITES` and `DIRECT_TOOL_INVOKES` gain nothing.
 - `tests/test_ad1156_plan_execute_mode.py:538-539` (updated).
 - `tests/test_issue1419_failed_start_rollback.py:1127-1176`, `:1392-1423` (updated: the new step passes its component).
-- `tests/test_ad1155_loop_until_done.py:503-508` and `tests/test_ad1142_crew_child_compaction.py:505-511` (unaffected).
+- `tests/test_ad1155_loop_until_done.py:538-544` (updated, §7.8a: the pinned tail of `WorkItemAgenticExecutor.run`'s signature gains `confinement`). The same test's prefix pins at `:508` and `:531` and `tests/test_ad1142_crew_child_compaction.py:505-511` are unaffected.
 - `tests/test_bf874_dm_callsign_and_fail_closed.py:564-578` (unaffected: no new strip call).
 - `tests/test_bf213_proactive_action_vocabulary.py:116-126` (unaffected: the builders are not edited).
 - `tests/test_bf688_chain_priority_inheritance.py:51` (no new model call in compose).
@@ -1265,6 +1266,22 @@ REPLACE:
         # AD-1347 S3: the offer stays whole -- the agent may name any tool it holds -- and the call decides (D4).
         if confinement is not None:
             executor.confine_calls(confinement)
+```
+
+### 7.8a `tests/test_ad1155_loop_until_done.py` (M2: the executor `run` signature's pinned tail gains `confinement`)
+
+`test_work_item_agentic_executor_run_signature_is_unchanged` pins the 21-name prefix (`:508`, unchanged), the five names after it, and the whole tail after the 26th name (`list(params)[26:] == [...]`, `:538`). §7.8 appends `confinement` after `admitted_turn`, so the tail pin gains one name, and the name is appended last, so the ordered prefix and the five names are untouched.
+
+SEARCH:
+```python
+        "admitted_turn",  # AD-1343 A2: the agent's own admitted turn skips the stop entry check; not continuation policy
+    ]
+```
+REPLACE:
+```python
+        "admitted_turn",  # AD-1343 A2: the agent's own admitted turn skips the stop entry check; not continuation policy
+        "confinement",  # AD-1347 S3: a per-call authority bound for an owned read-only run; not continuation policy
+    ]
 ```
 
 ### 7.9 New file: `src/probos/agent_work_runner.py` (M2)
@@ -3053,8 +3070,8 @@ grep -n "never_ran == " tests/test_ad1156_plan_execute_mode.py
   539
 grep -n "(\"work_item_store\", \"workforce store stop\")\|def test_every_step_that_stops_a_component_hands_that_component_to_the_guard" tests/test_issue1419_failed_start_rollback.py
   1141, 1399
-grep -n "assert list(params)\[:21\]" tests/test_ad1155_loop_until_done.py
-  508
+grep -n "assert list(params)\[:21\]\|assert list(params)\[26:\]" tests/test_ad1155_loop_until_done.py
+  508, 538   (the tail pin at :538 lists every name after the 26th, so it gains `confinement`: §7.8a)
 grep -n "def _wire_task_completion_notifier\|if _wire_task_completion_notifier(runtime=runtime, config=config):\|agentic_executor = WorkItemAgenticExecutor(llm_client=llm_client)" src/probos/startup/finalize.py
   3368, 5531, 2196
 grep -n "runtime.agent_work = None" src/probos/startup/shutdown.py
