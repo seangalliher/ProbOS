@@ -4,7 +4,7 @@
 
 **Status:** build-ready after BF-912 (#1615) merges. Slice 1 of 4 of #1627; it does not close the issue. **Tier HIGH**: governance, because crew create and route work to each other. **AD number:** AD-1347, from `scripts/ad_ceiling.py` (ceiling AD-1347 from issue titles, next AD-1348); no new number is allocated. **Base:** `88f0e5b8` (AD-1341 S1 and BF-916, PR #1628) on `origin/main` `80456da2`. BF-912 touches only `cognitive/decomposer.py`, one new test and the three trackers. Every code SEARCH below anchors on text; the tracker SEARCHes anchor on lines BF-912 does not change.
 
-**Tests:** M1 `tests/test_ad1347_s1_agent_work.py`, 31 functions and 57 cases (A3: tests 29 to 31, and test 28 asks the off opener with every collaborator). M2 `tests/test_ad1347_s1_wiring.py`, 2 functions (real boots; A3: the Ship's Archive is off and its path resolver is spied). Updated pins:
+**Tests:** M1 `tests/test_ad1347_s1_agent_work.py`, 32 functions and 61 cases (A3: tests 29 to 31, and test 28 asks the off opener with every collaborator; A4: test 32). M2 `tests/test_ad1347_s1_wiring.py`, 2 functions (real boots; A3: the Ship's Archive is off and its path resolver is spied; A4: BF-657's local embedding backend, and the ONNX download directory is redirected and must stay absent). Updated pins:
 - `tests/test_ad1343_agent_stop.py` (T8, the seam set);
 - `tests/fixtures/ad1343_seam_registry.py` (three rows);
 - `tests/test_ad1270e1_config_facade.py` (six counts);
@@ -25,6 +25,8 @@
 **Amendment A2 (`claude-architect`, 2026-10-22; the build's mutation campaign on tree `49ded1b8`, at `2516c20b`):** 32 of §10's 33 rows were killed; row R1 (`if self.config.agent_work.enabled:` to `if True:` in `runtime.py`) survived test W1, because the opener's own guard (`if not config.enabled: return None`) leaves the same outcomes W1 asserted (`agent_work` None, no `agent_work_` table). Property 11 was stated but not pinned. A2 makes test W1 count the runtime's calls to the opener through a spy on the module attribute `probos.agent_work.open_agent_work_service` (the runtime imports that name inside its guarded block, so the boot reads the replaced attribute), installed with the `monkeypatch` fixture and delegating to the real opener: none while off, one while on. Production code is unchanged; the test keeps its name. It also makes §10's R1 cell name test W1 by file (§10 has a mutation row also called W1). The other 32 Killed-by cells were checked by reading and each named test kills its row; none changed. No decision D1 to D14 and nothing in A1 changed. Rerun after the build: row R1 and its baseline.
 
 **Amendment A3 (`claude-architect`, 2026-10-23; review round 1 on the frozen candidate `8ebf10f2`, findings F1 to F4):** (F1) the wiring boots used AD-1346's `_config`, which leaves the Ship's Archive on with an empty `db_path`, so each boot opened and migrated the live vessel's `%LOCALAPPDATA%\ProbOS\archive\archive.db`. `_boot_config` now turns the archive off, and both boots take the `archive_resolutions` fixture, a spy on `probos.config.resolve_archive_db_path` that answers with a path under `tmp_path` and must stay empty. (F2) a same-owner replay returns before readiness, so the gate is not asked. That is AD-1187's receipt contract (`test_claim_replay_precedes_readiness_capacity_and_publication`: a trust requirement, TTL or dependency changed after the claim does not refuse the replay), and the replay acquires nothing, so property 6 and the docstrings now say "every new claim"; test 29 pins the receipt and row W7 is the gated replay as a mutant. No production change for F2. (F3) one helper, `_encodable`, makes `_text`, `_identifier` and the origin's id check refuse a str that UTF-8 cannot encode (a JSON-decoded lone surrogate): every text and id input of both create methods is `invalid_request` before any lookup or write, and an origin id raises the origin's own `agent_work_origin_id_invalid` (tests 30 and 31; rows A27 to A30). (F4) test 28 asks the off opener with every collaborator and spies the store's schema and gate methods (row R4). Tests 28 and 29 pass on the frozen candidate by design; their red run is rows R4 and W7. No decision D1 to D14 and nothing in A1 or A2 changed; §10 has 39 rows. Rerun after the build: every `agent_work.py` row (A1 to A30, R2, R3, R4), W7, and R1 (its test changed), each with its baseline.
+
+**Amendment A4 (`claude-architect`, 2026-10-23; review round 2 on the A3 code `1f499680`, findings R2-1 and R2-2):** (R2-1) the wiring boots also wrote outside `tmp_path`. CI sets BF-657's `PROBOS_EMBEDDINGS=local` (`tests/test_ci_shards.py:1581`); when the invoking shell does not, the boot's collection setup asks `get_embedding_function`, which loads a downloaded model, and Chroma's ONNX model (83 MB) lands under the home directory. Both boots now take the `local_embeddings` fixture. It applies BF-657's pattern: the variable and both memo attributes, all through `monkeypatch`, so the module's cached answer is restored after the test. It also adds a pin that depends on neither the shell nor the home directory: the ONNX class reads its download directory from a class attribute at each use, so that directory is redirected under `tmp_path` and must stay absent, and the memo must not record a loaded model (row E1). The suite-level default belongs to BF-919 (#1632). (R2-2) A3's "before any lookup or write" was false for the optional ids. `create_self_task` checked `tool_id`, and `request_work` checked `tool_id`, `assignee` and `department`, after `_admit`, so an unresolved or stopped requester or a missing parent took precedence. The value never reached a lookup, but the order was as described. A4 moves those checks before `_admit`, so A3's sentence is true as written. Disclosed effect: a malformed optional id from a stopped requester is now `invalid_request` and is not counted at `agent_work`, as malformed text already was not; nothing is written either way. Test 32 (4 cases) pins the precedence and the count. It fails on the A3 code at its first assertion, which is the position mutant; rows A31 and A32 pin the checks' presence. No decision D1 to D14 and nothing in A1 to A3 changed, F2's decision included; §10 has 42 rows. Rerun after the build: every `agent_work.py` row (A1 to A32, R2, R3, R4), R1 and E1 (the wiring file changed), each with its baseline.
 
 ---
 
@@ -216,11 +218,13 @@ About 150 tool calls each at most. BF-912 lands first.
 | 29 | `test_a_same_owner_replay_is_the_persisted_receipt_and_a_restriction_refuses_every_new_claim` | 3; property 6 (A3, F2; row W7) |
 | 30 | `test_a_value_utf8_cannot_encode_is_a_typed_refusal_and_writes_nothing` (14 cases) | A3, F3 (rows A27 to A29) |
 | 31 | `test_an_origin_refuses_an_id_utf8_cannot_encode` (2 cases) | A3, F3 (rows A27 and A30) |
+| 32 | `test_a_malformed_optional_id_is_refused_before_the_requester_the_stop_or_the_parent` (4 cases) | A4, R2-2 (rows A31 and A32; its red run on the A3 code is the position mutant) |
 
 **M2, `tests/test_ad1347_s1_wiring.py`.**
 - W1 `test_the_flag_decides_whether_the_service_and_its_two_tables_exist` (7, golden; A2: also counts the runtime's calls to the opener, none off and one on, which is what kills mutation row R1; A3: neither boot resolves the Ship's Archive path).
 - W2 `test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade` (6, premise 8; A3: the boot never resolves the Ship's Archive path).
 - Both take the `archive_resolutions` fixture (A3, F1): `_boot_config` turns the archive off, and the fixture's spy on `probos.config.resolve_archive_db_path` answers with a path under `tmp_path` and must stay empty.
+- Both take the `local_embeddings` fixture (A4, R2-1): BF-657's local backend through `monkeypatch` (the variable and both memo attributes, restored after the test) and the ONNX download directory redirected under `tmp_path`; each test asserts that directory is absent and that no downloaded model was loaded (row E1).
 
 **Updated pins (each fails on the M1 tree without its update):**
 - `tests/test_ad1343_agent_stop.py::test_refusals_are_counted_by_seam_and_an_unknown_seam_is_a_bug` (the literal set);
@@ -1202,14 +1206,17 @@ class AgentWorkService:
         tool_id: str | None = None,
         spawned_from: str | None = None,
     ) -> AgentWorkCreated | AgentWorkRefusal:
-        """Work an agent schedules for itself, assigned to it; it runs later in its own agentic loop (S3)."""
+        """Work an agent schedules for itself, assigned to it; it runs later in its own agentic loop (S3).
+
+        ``tool_id`` is checked with the other input, before any lookup or the Captain's stop (A4).
+        """
+        if tool_id is not None and not _identifier(tool_id):
+            return AgentWorkRefusal(REFUSAL_INVALID, "the tool is not a valid id")
         admitted = await self._admit(requester, title, description, reason, origin, spawned_from)
         if isinstance(admitted, AgentWorkRefusal):
             return admitted
         member, ref, depth = admitted
         if tool_id is not None:
-            if not _identifier(tool_id):
-                return AgentWorkRefusal(REFUSAL_INVALID, "the tool is not a valid id")
             if not _registered(self._tools, tool_id):
                 return AgentWorkRefusal(REFUSAL_TOOL_UNAVAILABLE, f"{tool_id} is not a registered, enabled tool")
             if not self._holds_tool(member, tool_id):
@@ -1238,17 +1245,19 @@ class AgentWorkService:
         member there is eligible), else the named assignee's department when eligible, else the department with the
         most eligible members (ties by name). An open request with the same department, tool and normalised title is
         returned instead, and the requester becomes its watcher.
+
+        The ids are checked with the other input, before any lookup or the Captain's stop (A4).
         """
-        admitted = await self._admit(requester, title, description, reason, origin, spawned_from)
-        if isinstance(admitted, AgentWorkRefusal):
-            return admitted
-        member, ref, depth = admitted
         if (
             not _identifier(tool_id)
             or (assignee is not None and not _identifier(assignee))
             or (department is not None and not _identifier(department))
         ):
             return AgentWorkRefusal(REFUSAL_INVALID, "the tool, assignee or department is not a valid id")
+        admitted = await self._admit(requester, title, description, reason, origin, spawned_from)
+        if isinstance(admitted, AgentWorkRefusal):
+            return admitted
+        member, ref, depth = admitted
         if not _registered(self._tools, tool_id):
             return AgentWorkRefusal(REFUSAL_TOOL_UNAVAILABLE, f"{tool_id} is not a registered, enabled tool")
         target: CrewMember | None = None
@@ -2357,6 +2366,39 @@ def test_an_origin_refuses_an_id_utf8_cannot_encode(field: str) -> None:
     with pytest.raises(ValueError, match="agent_work_origin_id_invalid"):
         AgentWorkOrigin("ward_room", **{field: f"51d91a7d{_SURROGATE}"})
     assert AgentWorkOrigin("ward_room", **{field: "51d91a7d"}).to_dict()[field] == "51d91a7d"
+
+
+_OPTIONAL_ID_CASES = [("self_task", "tool_id"), ("request", "tool_id"), ("request", "assignee"), ("request", "department")]
+
+
+# 32
+@pytest.mark.parametrize(("method", "field"), _OPTIONAL_ID_CASES, ids=[f"{method}-{field}" for method, field in _OPTIONAL_ID_CASES])
+async def test_a_malformed_optional_id_is_refused_before_the_requester_the_stop_or_the_parent(
+    tmp_path: Path, method: str, field: str,
+) -> None:
+    """A4 (R2-2). The optional ids are input like the text: a malformed one is invalid_request before the requester
+    is resolved, the Captain's stop is asked or the parent is read. Each clean control shows the refusal it would
+    otherwise meet; a stopped requester's malformed attempt is not counted at agent_work, as malformed text is not."""
+    async with _ship(tmp_path) as ship:
+        create: Callable[..., Any] = ship.service.create_self_task if method == "self_task" else ship.service.request_work
+        member = "forge-1" if method == "self_task" else "pulaski-1"
+        clean: dict[str, Any] = {
+            "title": "Check the window", "description": "", "reason": REASON, "origin": ORIGIN,
+            "tool_id": "event_log_query",
+        }
+        poisoned = {**clean, field: f"event_log_query{_SURROGATE}"}
+        for requester, extra, earlier in (
+            ("ghost-1", {}, "requester_unresolved"),
+            (member, {"spawned_from": "no-such-parent"}, "parent_unknown"),
+        ):
+            assert _code(await create(requester, **poisoned, **extra)) == "invalid_request"
+            assert _code(await create(requester, **clean, **extra)) == earlier, "premise: the earlier refusal"
+        issued = await ship.stops.issue_stop(member, reason=STOP_REASON)
+        assert _code(await create(member, **poisoned)) == "invalid_request"
+        assert ship.stops.refused_counts(issued.record.stop_id) == {}, "a malformed attempt is not a stop refusal"
+        assert _code(await create(member, **clean)) == "agent_stopped", "premise: the stop refuses the clean call"
+        assert ship.stops.refused_counts(issued.record.stop_id) == {"agent_work": 1}
+        assert await ship.store.list_agent_work(False, None, 10) == []
 ```
 
 ### 7.14b `tests/test_ad1270e2i_agentic_models.py` (M1, Amendment A1: AD-1270's true-leaf pin records the new leaf)
@@ -2512,9 +2554,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
 
 import probos.agent_work as agent_work_module
 import probos.config as probos_config
+import probos.knowledge.embeddings as embeddings_module
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin, AgentWorkRefusal, AgentWorkService
 from probos.cognitive.llm_client import MockLLMClient
 from probos.config import AgentWorkConfig, ArchiveConfig, SystemConfig, WorkforceConfig
@@ -2555,6 +2599,31 @@ def archive_resolutions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list
     return calls
 
 
+@pytest.fixture
+def local_embeddings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """BF-657's local embedding backend for the boots, as CI selects it, and where a downloaded model would land (A4).
+
+    Unless ``PROBOS_EMBEDDINGS`` is ``local``, the boot's collection setup asks ``get_embedding_function``, which loads
+    a downloaded model; Chroma's ONNX model lands under the home directory, outside ``tmp_path``. The variable is set
+    here, not left to the invoking shell. The toggle overwrites the module's memo, so both memo attributes are set
+    through ``monkeypatch``, which restores them after the test. The ONNX class reads its download directory from a
+    class attribute at each use, so it is redirected under ``tmp_path``: a boot that regresses fails the test, and
+    Chroma's model lands under ``tmp_path`` instead of the home directory.
+    """
+    monkeypatch.setenv("PROBOS_EMBEDDINGS", "local")
+    monkeypatch.setattr(embeddings_module, "_embedding_available", None)
+    monkeypatch.setattr(embeddings_module, "_embedding_fn", None)
+    download_dir = tmp_path / "onnx-pin"
+    monkeypatch.setattr(ONNXMiniLM_L6_V2, "DOWNLOAD_PATH", download_dir)
+    return download_dir
+
+
+def _assert_no_embedding_model_loaded(download_dir: Path) -> None:
+    """No boot downloaded Chroma's ONNX model or loaded any downloaded model (A4, R2-1)."""
+    assert not download_dir.exists(), "a boot downloaded Chroma's ONNX model"
+    assert embeddings_module._embedding_available is not True, "a boot loaded a downloaded embedding model"
+
+
 def _tables(path: Path) -> set[str]:
     with contextlib.closing(sqlite3.connect(path)) as raw:
         return {name for (name,) in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -2562,7 +2631,7 @@ def _tables(path: Path) -> set[str]:
 
 # W1
 async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive_resolutions: list[object],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, archive_resolutions: list[object], local_embeddings: Path,
 ) -> None:
     """Acceptance 7: off never calls the opener and adds no table; on calls it once, adds exactly the two tables, and a
     clean stop releases the service.
@@ -2600,11 +2669,12 @@ async def test_the_flag_decides_whether_the_service_and_its_two_tables_exist(
     assert not off_tables & AGENT_WORK_TABLES
     assert on_tables - off_tables == AGENT_WORK_TABLES
     assert archive_resolutions == [], "neither boot resolves the Ship's Archive path (A3, F1)"
+    _assert_no_embedding_model_loaded(local_embeddings)
 
 
 # W2
 async def test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through_the_real_identity_facade(
-    tmp_path: Path, archive_resolutions: list[object],
+    tmp_path: Path, archive_resolutions: list[object], local_embeddings: Path,
 ) -> None:
     """Acceptance 6 and premise 8 on the real IdentityService: a DID becomes its slot; an unknown DID is refused."""
     rt = ProbOSRuntime(config=_boot_config(enabled=True), data_dir=tmp_path / "data", llm_client=MockLLMClient())
@@ -2636,6 +2706,7 @@ async def test_an_enabled_boot_creates_a_self_task_under_the_agents_slot_through
     finally:
         await rt.stop()
     assert archive_resolutions == [], "the boot never resolves the Ship's Archive path (A3, F1)"
+    _assert_no_embedding_model_loaded(local_embeddings)
 ```
 
 ## 8. Tracking (tracker pairs; in M2's commit, or a docs-only commit after it)
@@ -2673,7 +2744,7 @@ REPLACE:
 - *D1 (home).* A Ship's Computer service with narrow injected interfaces, built by one opener, held as `runtime.agent_work` only when enabled; nothing calls it in S1.
 - *D2 (authority).* A self-task is assigned to its creator; a chief assigns only a member of its own department; any other named assignee becomes an unassigned request (never an assignment) published to one department holding the named tool. A requester who holds the tool is told to create a self-task. Depth is read from the parent's stored record; 2 is allowed, 3 refused.
 - *D3 (eligibility).* `check_permission` at read level per member (department, rank, agent type and the Captain's grants and restrictions), at creation and at every discovery and every new claim through a fail-closed store gate on both claim paths; stopped members excluded. A same-owner replay is AD-1187's receipt of a claim already persisted and is not asked again; S3 asks before it runs anything (A3).
-- *Input (A3).* Every text and id input, and the origin's ids, must encode as UTF-8 (one helper); a JSON-decoded lone surrogate is a typed `invalid_request` (the origin: its own `ValueError`), never an exception or stored provenance.
+- *Input (A3, A4).* Every text and id input, and the origin's ids, must encode as UTF-8 (one helper); a JSON-decoded lone surrogate is a typed `invalid_request` (the origin: its own `ValueError`), never an exception or stored provenance. Every input, the optional tool, assignee and department ids included, is checked before the requester, the Captain's stop or the parent is looked up (A4), so a malformed attempt by a stopped agent is `invalid_request` and is not counted at the `agent_work` seam, as malformed text is not.
 - *D4 (guards).* Open caps 3 per agent, 8 per department, 24 ship-wide; 6 creations per agent per trailing hour; dedup on sha256 of (department, tool, NFKC case-folded whitespace-collapsed title) adds the asker as a watcher; a refused create is a typed `AgentWorkRefusal`.
 - *D5 (persistence).* `work_items` plus `metadata["agent_work"]` (requests also carry AD-1187's `agent_pull`); two tables in `workforce.db`, created only when enabled. `--full` deletes them with `workforce.db`; the default reset keeps them, bounded by the 24 h TTL; `requester_sovereign_id` lets S3 recognise a slot now held by a new identity. Archive promotion does not read `workforce.db`.
 - *D6 (seams).* A new `agent_work` seam counts a refused create; claim stays at `tool`, execution at `agentic_run` (S3); candidate questions use `standing_stop`. `S1_SCOPE` is unchanged until the work is reachable (S2).
@@ -2705,7 +2776,7 @@ REPLACE:
 - The census header's other numbers in `config-profiles.yaml` (`boolean_fields_reachable`, `default_true`, `default_false_armed_by_system_yaml`, `default_false_never_armed`, `measured_at_commit`): no test or script reads them, and they were already stale on the base (Absence AV12; register). Only `default_false` moves.
 - Where `AgentWorkConfig` lives: it stays in `config.py` (D4) and is not moved into `config_models/` here (AD-1270 batch 10).
 
-## 10. Mutation rows (39 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (42 rows; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row against the named test on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row. None of these has been executed; the campaign of record is the build's.
 
@@ -2736,6 +2807,8 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | A28 | `src/probos/agent_work.py` | `if (required and not stripped) or len(stripped) > limit or not _encodable(stripped):` | `if (required and not stripped) or len(stripped) > limit:` | test 30 (the title, description and reason cases; A3) |
 | A29 | `src/probos/agent_work.py` | `return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value and _encodable(value)` | `return type(value) is str and 1 <= len(value) <= MAX_ID_CHARS and value.strip() == value` | test 30 (the requester, tool_id, assignee, department and spawned_from cases; A3) |
 | A30 | `src/probos/agent_work.py` | `if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value or not _encodable(value):` | `if type(value) is not str or len(value) > MAX_ID_CHARS or value.strip() != value:` | test 31 (A3) |
+| A31 | `src/probos/agent_work.py` | `if tool_id is not None and not _identifier(tool_id):` | `if False:` | test 32 (the self_task-tool_id case meets `requester_unresolved`); tests 4 and 30 (`tool_unavailable`) (A4) |
+| A32 | `src/probos/agent_work.py` | `return AgentWorkRefusal(REFUSAL_INVALID, "the tool, assignee or department is not a valid id")` | `pass` | test 32 (the three request cases meet `requester_unresolved`); test 30 (another code) (A4) |
 | R2 | `src/probos/agent_work.py` | `store.set_agent_work_claim_gate(service.claim_allowed)` | `pass` | test 10 (the eligible member discovers nothing) |
 | R3 | `src/probos/agent_work.py` | `await store.ensure_agent_work_schema()` | `pass` | test 20 (no watcher table); test 2 |
 | R4 | `src/probos/agent_work.py` | `if not config.enabled:` | `if False:` | test 28 (with every collaborator the off opener returns a service and calls the store's schema and gate methods; A3, F4) |
@@ -2750,6 +2823,7 @@ Tier HIGH. Run each row against the named test on the contract-applied tree, aft
 | X1 | `src/probos/cognitive/crew_delegation.py` | `post.department_id == worker_post.department_id` | `True` | test 26 (laforge's chief becomes numberone-1); AD-865 tests |
 | R1 | `src/probos/runtime.py` | `if self.config.agent_work.enabled:` | `if True:` | test W1 (`tests/test_ad1347_s1_wiring.py`): the off boot calls the opener once, so `opened == []` fails (A2; the outcomes alone survive, because the opener also returns None while off) |
 | C2 | `src/probos/config.py` | `if self.max_open_per_agent > self.max_open_ship or self.max_open_per_department > self.max_open_ship:` | `if False:` | test 27 |
+| E1 | `tests/test_ad1347_s1_wiring.py` | `monkeypatch.setenv("PROBOS_EMBEDDINGS", "local")` | `monkeypatch.setenv("PROBOS_EMBEDDINGS", "")` | tests W1 and W2 (`tests/test_ad1347_s1_wiring.py`): the redirected ONNX directory exists, offline too because it is created before the fetch, or the memo records a loaded model. A pin of the test's own setup; the empty value overrides an invoking shell's toggle; the mutant run may download a model (ONNX into `tmp_path`; sentence-transformers' own cache is not redirected) (A4, R2-1) |
 
 ## 11. Verified Against Codebase (2026-10-22, worktree at `88f0e5b8`)
 
@@ -2997,8 +3071,9 @@ tests/test_ad864_crew_assignment.py:86-93: _make_registry(agents) -> a real Agen
 15. Each updated pinned test records its reason inline; no pin is deleted.
 16. `cognitive/crew_directory.py` imports nothing from the consensus layer, even under `TYPE_CHECKING`; its `trust_network` is typed `AgentIdentityTrust`; `tests/test_layer_boundaries.py` is unchanged.
 17. Each config surface changes only by the new section: `config-reference.md` gains exactly one `agent_work` section between `workforce` and `temporal` and is byte-equal to the generator's output; the census header changes only `default_false` (223 -> 224); `REMAINING_TRUE_LEAVES` gains exactly `AgentWorkConfig`.
-18. Every text and id input of both create methods, and the origin's ids, must encode as UTF-8, by one helper (`_encodable`) used by `_text`, `_identifier` and the origin's own check; a value that does not is `invalid_request` before any lookup or write, and an origin id raises `agent_work_origin_id_invalid` (tests 30 and 31; rows A27 to A30; A3, F3).
+18. Every text and id input of both create methods, the optional tool, assignee and department ids included, and the origin's ids, must encode as UTF-8, by one helper (`_encodable`) used by `_text`, `_identifier` and the origin's own check; a value that does not is `invalid_request` before any lookup or write, and an origin id raises `agent_work_origin_id_invalid` (tests 30 and 31; rows A27 to A30; A3, F3). The optional ids are checked before `_admit`, so an unresolved or stopped requester or a missing parent does not take precedence, and a stopped requester's malformed attempt is not counted, as malformed text is not (test 32; rows A31 and A32; A4, R2-2).
 19. The wiring boots never resolve the Ship's Archive path: `_boot_config` turns the archive off and the `archive_resolutions` spy stays empty, so no boot opens the live vessel's archive (A3, F1).
+20. No wiring boot loads or downloads an embedding model: the `local_embeddings` fixture selects BF-657's local backend through `monkeypatch` (the variable and both memo attributes, so the module's cached answer is restored), redirects the ONNX download directory under `tmp_path`, and each test asserts the directory is absent and the memo records no loaded model (row E1; A4, R2-1).
 
 Consumers that must accept the change: `WorkItemStore._ready_for_pull` (discovery and claim), `ToolRegistry.check_and_invoke`, the AD-1343 census tests, the config facade and profile checkers, and the runtime start and shutdown.
 
@@ -3006,6 +3081,6 @@ Consumers that must accept the change: `WorkItemStore._ready_for_pull` (discover
 
 - Every test in §6 passes with the focused commands. The updated pins pass, including the three A1 pins. The listed `--check` scripts pass, including `gen_config_reference.py --check` (§7.14c). `tests/test_layer_boundaries.py` passes with no new exception (§7.13).
 - With the default configuration the runtime never calls the opener, nothing is built and `workforce.db` is unchanged (test W1's call count and tables, tests 13 and 28, test_ad1152); the off opener touches nothing even with every collaborator (test 28, A3).
-- No wiring boot resolves or opens the Ship's Archive (tests W1 and W2, A3).
+- No wiring boot resolves or opens the Ship's Archive (tests W1 and W2, A3), or loads or downloads an embedding model (tests W1 and W2, A4).
 - Acceptance 3, 5 (the S1 half: creation and claim refused for a stopped agent), 6 and 7 of #1627 are each covered by the named tests. The S1 half of acceptance 2 is test 10, which S2 and S3 extend.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
