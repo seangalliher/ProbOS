@@ -2,13 +2,17 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-22
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A1, review round 1)
+
 **Status:** build-ready after the orchestrator's verification and the §16 live checks. Batch: M1 = BF-917 (#1625), M2 = BF-915 (#1623), one gate, one PR, closing both. **Tier HIGH** (raised from STANDARD by the Architect: the re-commission rewrites live crew commissioning records at boot, and their skill proficiencies must survive; never lowered without the Captain). **Base:** this tree `88f0e5b8` (AD-1341 S1 and BF-916 as they will land) on `origin/main` `80456da2`. BF-912 (#1615) is built and merged before this batch. It touches only `cognitive/decomposer.py`, one new test and the trackers; §8 anchors survive its entries (stated there). **Source:** the Architect's next-wave ruling (A2, 2026-10-22) and this consult.
 
-**Tests:** M1 adds `tests/test_bf917_template_skills_and_recommission.py` (14 functions, 15 cases) and `tests/fixtures/crew_template_world.py`. M2 adds `tests/test_bf915_yeoman_and_training_templates.py` (4 functions, 5 cases). M2 updates `tests/test_ontology_skills.py` (template count) and `tests/test_bf906_crew_enrollment_boot.py` (T-B1's yeoman tail).
+**Tests:** M1 adds `tests/test_bf917_template_skills_and_recommission.py` (16 functions, 17 cases; A1 added E5 and E6) and `tests/fixtures/crew_template_world.py`. M2 adds `tests/test_bf915_yeoman_and_training_templates.py` (4 functions, 5 cases). M2 updates `tests/test_ontology_skills.py` (template count) and `tests/test_bf906_crew_enrollment_boot.py` (T-B1's yeoman tail).
 
 **Line endings:** working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
 **Re-verification and a mechanical repair by the orchestrator (2026-10-23; no decision changed):** (1) re-verified by tool on `origin/main` `6b950acf` (AD-1347 S1 and S4 merged on top of BF-912; the base statement above is historical): all 31 code pairs and both tracker pairs apply exactly once, the 20 new tests pass five of five runs, every mutation row's line occurs exactly once, and the phantom precheck is clean; (2) the "Mutate to" cells of rows M1-R2, M1-R3 and M2-R4 stated the mutation as prose ("the same line with ..."), which the campaign runner cannot parse (it parsed 19 of 22 rows); they now carry the literal mutated line, so this contract is itself the campaign's table.
+
+**Amendment A1 (2026-10-23, review round 1 on candidate `22b179c5`, tree `4bb80970`).** F1: `enroll` is serialized by one lock per enroller (§7.3 pair 6a and pair 6), because the `IS NOT ?` guard protects only the commissioning record, and the chain's skill writes are fresh-record upserts after a snapshot. F2: a re-commission that leaves a PCC missing is not recorded and is retried (§7.3 pair 8), the rule `_commission` already keeps. F3: recorded, not fixed; the doctor check's text now says what it does. F4: the fingerprint's comment no longer says the chain never acquires an optional id. Tests: E4 asserts each guard's own message, and E5 and E6 are new, so the batch adds 22 tests. Mutation table: M1-R6 is rewritten so the missing guard, not a binding error, kills it; M1-R19 and M1-R20 are added, for 24 rows. Code pairs: 32. Campaign of record: rerun M1-R6, M1-R9 to M1-R16, M1-R18, M1-R19 and M1-R20; every other row keeps the round-1 result when its file and the M2 test file are byte-equal to that candidate.
 
 ---
 
@@ -99,7 +103,7 @@ Options, ranked:
 
 **D2: the trigger** (in the envelope).
 
-*What is compared.* `template_fingerprint(template)` is the sha256 of canonical JSON `{"post_id", "required": sorted [skill_id, min_proficiency]}`. "No template" has its own digest, so gaining or losing a template is a change. Optional skills are left out because the chain never acquires them.
+*What is compared.* `template_fingerprint(template)` is the sha256 of canonical JSON `{"post_id", "required": sorted [skill_id, min_proficiency]}`. "No template" has its own digest, so gaining or losing a template is a change. Optional skills are left out because the chain reads only `required_skills`. An optional id can still be held (a PCC or a legacy role skill is acquired by the chain's base step), but a change to the optional list changes nothing the chain does, so it does not trigger.
 
 *Where it is stored.* A new nullable column, `commissioning_records.template_fingerprint`. `AgentCapitalService.start` adds it when `PRAGMA table_info` does not show it. That is the migration: additive and idempotent. Old rows need nothing: NULL means "commissioned before BF-917", which compares unequal and causes one re-commission.
 
@@ -111,10 +115,19 @@ Options, ranked:
 - Template changed:
   1. read the profile;
   2. run `acm.commission(..., preserve_existing=True)` on a `_RecommissionContext` that has the skill service and the ontology but no tool registry, permission store or skill registry, so step 3 cannot run;
-  3. require a non-empty `skills_acquired` (the chain returns an empty list when its own snapshot failed, `commissioning.py:53-62`; `test_bf906_acm_commissioning.py:525`);
+  3. require a non-empty `skills_acquired` (the chain returns an empty list when its own snapshot failed, `commissioning.py:53-62`; `test_bf906_acm_commissioning.py:525`), and require that it names every PCC in `BUILTIN_PCCS` (A1: the rule `_commission` keeps, BF-906 A3; the chain logs a failed base step at DEBUG and still returns the profile it read, `commissioning.py:66-73`);
   4. then `record_commissioning(..., recommission=True)`. This is one guarded write: `UPDATE ... SET role_template, template_fingerprint WHERE agent_id = ? AND template_fingerprint IS NOT ?`, plus a "re-commissioned" history row, in one commit, rolled back together on any failure.
-- **Failure:** nothing is recorded, an ERROR is logged and the next boot retries. A template is never recorded as applied when it was not. Any skills acquired before a failed record write are preserved, so the retry acquires nothing new.
-- **Idempotence:** a second boot finds the fingerprint equal and does nothing. The `IS NOT ?` guard also makes a repeated or overlapping attempt write nothing.
+- **Failure:** when the chain raised, read no profile or left the agent without a PCC, nothing is recorded, an ERROR naming the cause is logged, and the next enrollment (the next boot at the latest) retries. A required skill the chain skips because its prerequisite is unmet is AD-889's expected case and does not block the record. Skills acquired before a refused or failed record write are preserved, so the retry acquires only what is still missing.
+- **Idempotence:** a second boot finds the fingerprint equal and does nothing. The `IS NOT ?` guard makes a repeated attempt write no second record and no second history row. It does not protect skill records.
+- **Overlap (A1).** The chain snapshots the profile and then writes each skill it found missing as a fresh record (`acquire_skill` through `_upsert_record`, `skill_framework.py:1383-1392, 1738-1751`). Two overlapping enrollments of one agent would therefore both acquire a missing skill, and the later write would reset a record the earlier one had already advanced. `enroll` holds one `asyncio.Lock` per enroller from the onboarding step to the recording, around both `_commission` and the re-commission. An overlapping enrollment waits, then reads the record the first wrote, finds the fingerprint equal and returns `commissioned=False, recommissioned=False` (E6). The lock is always taken outside ACM's `_write_lock`, and nothing reachable while it is held calls the enroller, so there is no cycle and no re-entry. Startup builds one enroller (`startup/crew_enrollment.py:26`); two instances over the same stores are not serialized against each other (F-348 on #1523).
+
+Options for overlap (A1), ranked:
+
+1. **One lock per enroller around the body of `enroll` (chosen).** One object with nothing to clean up, and it serializes onboarding too. Enrollments of different agents also wait for each other; the boot pass is serial already, and a join costs a few SQLite statements.
+2. A per-agent lock map. The same guarantee for one agent, plus a map to bound or clean up, with no measured need for concurrent enrollments of different agents.
+3. A lock around the two commission bodies only. It leaves the record read and onboarding outside, so it is the same fix with a narrower scope and no gain.
+4. Insert-if-absent skill writes under `preserve_existing`. It changes `acquire_skill` and AD-889, which the Captain's `preserve_existing=False` routes share; recorded as the direction on F-348.
+5. Record it and weaken the claim. Rejected: this contract promised overlap safety, AD-1273 requires a double-wire to be harmless (`agent_onboarding.py:126-127`), and the fix is about ten lines.
 - **What `preserve_existing=True` keeps:** every record the agent holds, at its current proficiency, exercise count, timestamps and history, including any proficiency above the template's floor. Only skills the agent lacks are acquired, at the template floor.
 - **What the record keeps:** its skills, tools, source and timestamp stay those of the first commissioning.
 - **A skill dropped from a template** is never deleted.
@@ -180,7 +193,7 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest -q -n 0 tests/test_bf917_template_s
 
 Plus `scripts/check_architecture_principles.py`, `scripts/check_store_registry.py --check` and `scripts/phantom-api-precheck.ps1 prompts/bf-917-template-skills-and-recommission.md`. M1's own run omits the M2 test file.
 
-**New, M1:** `tests/test_bf917_template_skills_and_recommission.py`. On today's tree every test fails at import (the new names do not exist). G1, G5 and E1 also fail on the behaviour itself.
+**New, M1:** `tests/test_bf917_template_skills_and_recommission.py`. On today's tree every test fails at import (the new names do not exist). G1, G5 and E1 also fail on the behaviour itself. On the round-1 candidate `22b179c5` (A1), E5 and E6 fail on the behaviour: the degraded re-commission is recorded, and `code_review` is acquired twice and its advanced record reset.
 
 | Id | Test | Proves |
 |---|---|---|
@@ -194,7 +207,9 @@ Plus `scripts/check_architecture_principles.py`, `scripts/check_store_registry.p
 | E1 | `test_a_changed_role_template_is_applied_once_keeping_every_record_and_granting_no_tool` | **The seam.** Real ontology copy → birth → template edited → next boot re-commissions once, keeps every record (one above its floor), adds the new skill at its floor, updates the record, writes one history row, grants no tool although a full chain would; a third pass changes nothing. |
 | E2 | `test_a_record_written_before_bf917_is_recommissioned_once_and_acquires_nothing` | The live first-boot path: a NULL fingerprint is re-commissioned once, acquires nothing, then is stable. |
 | E3 | `test_a_decommissioned_crew_member_is_not_recommissioned` | Decommissioned agents are left alone. |
-| E4 | `test_a_failed_recommission_records_nothing_and_the_next_boot_applies_it[raises\|no-profile]` | Fail closed and retry. |
+| E4 | `test_a_failed_recommission_records_nothing_and_the_next_boot_applies_it[raises\|no-profile]` | Fail closed and retry; each guard logs its own cause (A1). |
+| E5 | `test_a_recommission_that_leaves_a_pcc_missing_records_nothing_and_the_next_boot_retries` | A1 (F2): a PCC missing after a failed base step is not recorded; one ERROR names the PCC; the next pass acquires it and records, keeping the record the degraded pass wrote. |
+| E6 | `test_overlapping_enrollments_of_one_agent_acquire_a_missing_skill_once_and_keep_its_record` | A1 (F1): two overlapping enrollments acquire the new skill once, the advanced record survives, one result re-commissions, one history row. Bounded wait (2 s) on the passing run. |
 | D1 | `test_the_doctor_reports_ok_for_the_shipped_templates` | OK; no data directory created. |
 | D2 | `test_the_doctor_warns_for_an_unregistered_template_skill_and_writes_nothing` | WARN naming the post and the skill; the tree is unchanged. |
 | D3 | `test_the_role_template_check_is_registered_once_after_token_accounting` | Fresh interpreter on this tree (PYTHONPATH asserted through `probos.__file__`); the neighbours are kept. |
@@ -527,6 +542,7 @@ from typing import Any
 ```
 REPLACE:
 ```python
+import asyncio
 import hashlib
 import json
 import logging
@@ -574,9 +590,11 @@ def template_fingerprint(template: Any) -> str:
 
     The post id and each required skill's id and floor, in a canonical order: the
     same template always gives the same digest, and any change to what the chain
-    would acquire gives a new one. Optional skills are left out (the chain never
-    acquires them). No template has a digest of its own, so gaining or losing a
-    template is a change too.
+    would acquire gives a new one. Optional skills are left out because the chain
+    reads only ``required_skills``: an optional id that is a PCC or a legacy role
+    skill is still acquired, by the chain's base step, but a change to the optional
+    list changes nothing the chain does. No template has a digest of its own, so
+    gaining or losing a template is a change too.
     """
     if template is None:
         payload: dict[str, Any] = {"post_id": None, "required": []}
@@ -607,6 +625,22 @@ class _RecommissionContext:
 async def _has_skills(skill_service: Any, agent_id: str) -> bool:
 ```
 
+Pair 6a (A1): the enrollment lock, at the end of `__init__`.
+
+SEARCH:
+```python
+        self._commission_context = commission_context
+        self._boot_started_at = boot_started_at
+```
+REPLACE:
+```python
+        self._commission_context = commission_context
+        self._boot_started_at = boot_started_at
+        # BF-917 A1: serializes ``enroll`` (see there). One lock per enroller, like ACM's
+        # ``_write_lock``; startup builds one enroller. It is always taken outside ACM's lock.
+        self._enroll_lock = asyncio.Lock()
+```
+
 Pair 6 of 8: `enroll` routes an existing record to the trigger.
 
 SEARCH:
@@ -621,13 +655,19 @@ SEARCH:
 ```
 REPLACE:
 ```python
-        onboarded = await self._onboard_if_unrecorded(agent, source=source)
-        record = await self._acm.get_commissioning_record(agent.id)
-        if record is not None:
-            return await self._recommission_if_template_changed(
-                agent, record.template_fingerprint, source=source, onboarded=onboarded,
-            )
-        return await self._commission(agent, source=source, onboarded=onboarded)
+        # BF-917 A1: one enrollment at a time. The chain snapshots the profile and then
+        # writes each skill it found missing as a fresh record, so two overlapping
+        # enrollments of one agent would both acquire it, and the later write would reset
+        # a record the earlier one had already advanced. Under the lock the second reads
+        # the record the first wrote and finds nothing to do.
+        async with self._enroll_lock:
+            onboarded = await self._onboard_if_unrecorded(agent, source=source)
+            record = await self._acm.get_commissioning_record(agent.id)
+            if record is not None:
+                return await self._recommission_if_template_changed(
+                    agent, record.template_fingerprint, source=source, onboarded=onboarded,
+                )
+            return await self._commission(agent, source=source, onboarded=onboarded)
 ```
 
 Pair 7 of 8: the first commissioning records the fingerprint. This block starts mid-call.
@@ -667,8 +707,12 @@ REPLACE:
         with ``preserve_existing=True``, so every record the agent holds keeps its
         proficiency, exercise count and history and only skills it lacks are acquired,
         on a context without the tool services, so no tool is granted. The new
-        fingerprint is recorded only after the chain succeeded: a failure is retried
-        on the next boot, and a template is never recorded as applied when it was not.
+        fingerprint is recorded only when the chain returned, read a profile and left
+        the agent holding every PCC (the rule ``_commission`` keeps); otherwise nothing
+        is recorded and the next enrollment retries. A required skill the chain skips
+        because its prerequisite is unmet (AD-889's expected case) does not block the
+        record. ``enroll`` holds the enroller's lock around this, so an overlapping
+        enrollment of the same agent waits and then finds the fingerprint equal.
         A decommissioned agent is left alone.
         """
         agent_id, agent_type = agent.id, agent.agent_type
@@ -710,6 +754,16 @@ REPLACE:
             logger.error(
                 "BF-917: re-commissioning of %s (%s) read no skill profile; the template "
                 "change is not recorded, so the next boot retries", agent_id, agent_type,
+            )
+            return unchanged
+        missing_pccs = [pcc.skill_id for pcc in BUILTIN_PCCS if pcc.skill_id not in summary["skills_acquired"]]
+        if missing_pccs:
+            # BF-917 A1: the rule a first commissioning keeps (BF-906 A3). The chain logs a
+            # failed base step at DEBUG and still returns the profile it read, so a
+            # re-commission that left a PCC missing is not recorded, and the next boot retries.
+            logger.error(
+                "BF-917: re-commissioning left %s (%s) without the PCCs %s; the template change "
+                "is not recorded, so the next boot retries", agent_id, agent_type, ", ".join(missing_pccs),
             )
             return unchanged
         held_before = set(before)
@@ -785,8 +839,10 @@ def unregistered_template_skills(
 
 Reads ``config/ontology`` through the real ``OntologyLoader`` with no data
 directory, so it creates and writes nothing (the loader persists an instance id
-only under a data directory). It only reports, a WARN naming each post and skill;
-it repairs nothing. "Registered" is what ``SkillRegistry.register_builtins``
+only under a data directory). Each finding is a WARN naming the post, never a FAIL,
+and the check repairs nothing. An ontology the loader cannot read (a template entry
+without ``min_proficiency``, say) raises instead, which the doctor runner reports as
+FAIL, as it does for any check that raises. "Registered" is what ``SkillRegistry.register_builtins``
 registers at boot (``builtin_skill_definitions``). The CI tests run the same audit
 over the shipped ontology, so this check finds an operator's local edit.
 """
@@ -1001,17 +1057,19 @@ Real objects throughout: the real ``OntologyLoader``/``VesselOntologyService`` o
 ``config/ontology`` or a copy a test edits; the real ``SkillRegistry``, ``AgentSkillService``,
 ``AgentCapitalService``, ``ToolPermissionStore`` and ``ToolRegistry`` on SQLite files under
 ``tmp_path``; and the real AD-889 chain reached through ``CrewEnrollmentService.enroll``. The only
-stand-ins are the wired agent and, in E4, a failing ``commission``. Nothing sleeps; history rows
-are picked by predicate.
+stand-ins are the wired agent, E4's failing ``commission``, E5's failing base step and E6's gate
+around the real ``acquire_skill``. History rows are picked by predicate. Only E6 waits on a clock:
+a bounded wait for a second caller that, under the enroller's lock, never arrives.
 
 - G1-G5 the registration (guard 1: no tool; guard 2: no faster decay, no changed acquisition)
 - A1-A2 ACM: the fingerprint column and the re-commission write
-- E1-E4 the trigger, end to end
+- E1-E6 the trigger, end to end (E5: a missing PCC; E6: overlapping enrollments)
 - D1-D3 the doctor's ``role_templates`` check
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -1067,6 +1125,9 @@ _BF917_IDS = frozenset({
 _VULNERABILITY = "      - skill_id: vulnerability_analysis\n        min_proficiency: 4\n"
 _ADD_CODE_REVIEW = _VULNERABILITY + "      - skill_id: code_review\n        min_proficiency: 3\n"
 _DAY = 86400.0
+# E6: how long the first caller waits for a second. Without the enroller's lock the second arrives within
+# milliseconds; with it, it never does, so the passing run pays this wait once.
+_SECOND_CALLER_WAIT = 2.0
 
 
 async def _noop(**kwargs: Any) -> None:
@@ -1455,9 +1516,110 @@ async def test_a_failed_recommission_records_nothing_and_the_next_boot_applies_i
         errors = [r for r in caplog.records if r.name == "probos.crew_enrollment" and r.levelno == logging.ERROR]
         assert len(errors) == 1
         assert "BF-917" in errors[0].getMessage() and agent.id in errors[0].getMessage()
+        # A1: each guard names its own cause, so the profile guard is not masked by the PCC check after it.
+        assert ("read no skill profile" if failure == "no-profile" else "re-commissioning failed") in errors[0].getMessage()
 
         retried = await enroller.enroll(agent, source="backfill")
         assert retried is not None and (retried.recommissioned, retried.skills_granted) == (True, ("code_review",))
+
+
+@pytest.mark.asyncio
+async def test_a_recommission_that_leaves_a_pcc_missing_records_nothing_and_the_next_boot_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """E5 (A1): a PCC added after the agent's commissioning, and a base step that fails. AD-889 logs the failure at
+    DEBUG and returns the profile it read; the re-commission records nothing and logs one ERROR naming the PCC, the
+    rule a first commissioning keeps (BF-906 A3). The next pass acquires the PCC and records the template."""
+    async with crew_world(tmp_path) as world:
+        agent = CrewAgent("security-e5", "security_officer")
+        enroller, _ = await boot_enroller(world)
+        await enroller.enroll(agent, source="birth")
+        await world.skill_service.stop()
+        with contextlib.closing(sqlite3.connect(tmp_path / "skills.db")) as conn:
+            conn.execute("DELETE FROM agent_skills WHERE agent_id = ? AND skill_id = ?", (agent.id, "duty_execution"))
+            conn.commit()
+        await world.skill_service.start()  # the next boot reopens the file
+        assert "duty_execution" not in await skill_records(world.skill_service, agent.id)  # premise: a PCC is missing
+        record = await world.acm.get_commissioning_record(agent.id)
+        history = await world.acm.get_transition_history(agent.id)
+        edit_skills_yaml(world, _VULNERABILITY, _ADD_CODE_REVIEW)
+        enroller, _ = await boot_enroller(world)
+
+        async def _failing_base_step(*args: Any, **kwargs: Any) -> None:
+            raise OSError("BF-917 test: the base commissioning step failed")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(world.skill_service, "commission_agent", _failing_base_step)
+            with caplog.at_level(logging.ERROR, logger="probos.crew_enrollment"):
+                degraded = await enroller.enroll(agent, source="backfill")
+
+        assert degraded is not None and degraded.recommissioned is False
+        assert await world.acm.get_commissioning_record(agent.id) == record
+        assert await world.acm.get_transition_history(agent.id) == history
+        held = await skill_records(world.skill_service, agent.id)
+        assert "code_review" in held and "duty_execution" not in held  # premise: the chain ran past its failed base step
+        errors = [r for r in caplog.records if r.name == "probos.crew_enrollment" and r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert "BF-917" in errors[0].getMessage() and "without the PCCs duty_execution" in errors[0].getMessage()
+
+        retried = await enroller.enroll(agent, source="backfill")
+        assert retried is not None and (retried.recommissioned, retried.skills_granted) == (True, ("duty_execution",))
+        assert (await skill_records(world.skill_service, agent.id))["code_review"] == held["code_review"]
+
+
+@pytest.mark.asyncio
+async def test_overlapping_enrollments_of_one_agent_acquire_a_missing_skill_once_and_keep_its_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6 (A1): two enrollments of one agent overlap after a template change. The first to reach ``acquire_skill``
+    for the new skill waits, bounded, for a second; the record it writes is then advanced. Without the enroller's
+    lock the second has passed its snapshot too and its write resets that record. With it, the second waits, reads
+    the new fingerprint and acquires nothing."""
+    async with crew_world(tmp_path) as world:
+        agent = CrewAgent("security-e6", "security_officer")
+        enroller, _ = await boot_enroller(world)
+        await enroller.enroll(agent, source="birth")
+        history = await world.acm.get_transition_history(agent.id)
+        edit_skills_yaml(world, _VULNERABILITY, _ADD_CODE_REVIEW)
+        enroller, ontology = await boot_enroller(world)
+
+        real_acquire = world.skill_service.acquire_skill
+        callers: list[str] = []
+        second_arrived = asyncio.Event()
+        release_second = asyncio.Event()
+
+        async def _gated_acquire(agent_id: str, skill_id: str, *args: Any, **kwargs: Any) -> Any:
+            if skill_id == "code_review":
+                callers.append(agent_id)
+                if len(callers) == 1:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(second_arrived.wait(), _SECOND_CALLER_WAIT)
+                else:
+                    second_arrived.set()
+                    await release_second.wait()
+            return await real_acquire(agent_id, skill_id, *args, **kwargs)
+
+        monkeypatch.setattr(world.skill_service, "acquire_skill", _gated_acquire)
+        tasks = [asyncio.create_task(enroller.enroll(agent, source="backfill")) for _ in range(2)]
+        try:
+            done, _pending = await asyncio.wait(tasks, timeout=60, return_when=asyncio.FIRST_COMPLETED)
+            assert done, "premise: one enrollment finished"
+            assert "code_review" in await skill_records(world.skill_service, agent.id)  # premise: the first write ran
+            await world.skill_service.update_proficiency(agent.id, "code_review", ProficiencyLevel.ADVISE, source="bf917-test")
+            await world.skill_service.record_exercise(agent.id, "code_review")
+            advanced = (await skill_records(world.skill_service, agent.id))["code_review"]
+            assert (advanced[0], advanced[1]) == (ProficiencyLevel.ADVISE, 1)  # premise: the record moved on
+        finally:
+            release_second.set()
+            results = await asyncio.wait_for(asyncio.gather(*tasks), 60)
+
+        assert callers == [agent.id]  # the missing skill was acquired once
+        assert (await skill_records(world.skill_service, agent.id))["code_review"] == advanced
+        assert sorted((r.commissioned, r.recommissioned) for r in results if r is not None) == [(False, False), (False, True)]
+        changed = await world.acm.get_commissioning_record(agent.id)
+        assert changed is not None
+        assert changed.template_fingerprint == template_fingerprint(ontology.get_role_template_for_agent("security_officer"))
+        assert len(recommission_rows(history, await world.acm.get_transition_history(agent.id))) == 1
 
 
 # --- D1 to D3: probos doctor ------------------------------------------------------------------------
@@ -1926,7 +2088,7 @@ REPLACE:
 
 **BF-915 (2026-10-22), closes #1623 -- the Ship's Yeoman and the Training Officer have role templates, and `probos doctor` reports an assigned crew post without one.** `config/ontology/skills.yaml` gains `yeoman` (communication, chain of command, captain_briefing, schedule_coordination, correspondence_triage, crew_delegation) and `chief_training` (communication, collaboration, drill_planning, readiness_assessment, onboarding_mentorship, limited_duty_planning), derived from each post's capabilities and AD-628. The eight new role skills are registered `operations` definitions. Yeo and Tucker, whom BF-906 commissioned with the nine PCCs only, are re-commissioned once by BF-917's trigger: every PCC keeps its level, and each gains four role skills at the template's floor. The `role_templates` doctor check also WARNs for an assigned crew-tier post with no template. New: `tests/test_bf915_yeoman_and_training_templates.py`. Updated: `tests/test_ontology_skills.py` (16 templates) and `tests/test_bf906_crew_enrollment_boot.py` T-B1 (the yeoman now has a template). The contract is `prompts/bf-917-template-skills-and-recommission.md`.
 
-**BF-917 (2026-10-22), closes #1625 -- the role templates' 22 unregistered skill ids are registered definitions, and a changed role template re-commissions a crew member once without loss.** The 14 templates named 39 required entries over 22 ids that no definition registered, so every templated crew member held 2 to 4 records that profiles filed as acquired skills. `ONTOLOGY_TEMPLATE_SKILLS` registers them through `builtin_skill_definitions()` as role skills with no prerequisite, no preferred tool, 14 days of decay (what an undefined record already had) and a legacy domain, so the AD-888 resolver's tag fallback asks nothing new and no tool is granted. `commissioning_records` gains a nullable `template_fingerprint`. When the template an agent resolves has changed since its commissioning (a record from before BF-917 counts as changed once), the enroller re-runs AD-889 with `preserve_existing=True` on a context without the tool services, records the new fingerprint with a "re-commissioned" history row only after the chain succeeds, and leaves decommissioned agents alone. The new `role_templates` doctor check WARNs for an unregistered template id and only reports. New: `src/probos/role_template_audit.py`, `src/probos/doctor/checks/role_template_check.py`, `tests/fixtures/crew_template_world.py` and `tests/test_bf917_template_skills_and_recommission.py` (real loader, stores and chain). #1625's question, whether AD-889 step 3 should grant tools at all, stays with the Captain. The contract is `prompts/bf-917-template-skills-and-recommission.md`.
+**BF-917 (2026-10-22), closes #1625 -- the role templates' 22 unregistered skill ids are registered definitions, and a changed role template re-commissions a crew member once without loss.** The 14 templates named 39 required entries over 22 ids that no definition registered, so every templated crew member held 2 to 4 records that profiles filed as acquired skills. `ONTOLOGY_TEMPLATE_SKILLS` registers them through `builtin_skill_definitions()` as role skills with no prerequisite, no preferred tool, 14 days of decay (what an undefined record already had) and a legacy domain, so the AD-888 resolver's tag fallback asks nothing new and no tool is granted. `commissioning_records` gains a nullable `template_fingerprint`. When the template an agent resolves has changed since its commissioning (a record from before BF-917 counts as changed once), the enroller re-runs AD-889 with `preserve_existing=True` on a context without the tool services, records the new fingerprint with a "re-commissioned" history row only after the chain succeeds and leaves every PCC held, and leaves decommissioned agents alone. Enrollments run one at a time per enroller, so two overlapping enrollments of one crew member cannot reset a skill record the first had advanced. The new `role_templates` doctor check WARNs for an unregistered template id and only reports. New: `src/probos/role_template_audit.py`, `src/probos/doctor/checks/role_template_check.py`, `tests/fixtures/crew_template_world.py` and `tests/test_bf917_template_skills_and_recommission.py` (real loader, stores and chain). #1625's question, whether AD-889 step 3 should grant tools at all, stays with the Captain. The contract is `prompts/bf-917-template-skills-and-recommission.md`.
 ```
 
 **`DECISIONS.md`** (inserted before the heading below; BF-912's entry already precedes it):
@@ -1941,8 +2103,8 @@ REPLACE:
 
 - *Scope.* `skill_framework.py` (`ONTOLOGY_TEMPLATE_SKILLS`, `builtin_skill_definitions`), `acm.py` (the `template_fingerprint` column and `record_commissioning(recommission=True)`), `crew_enrollment.py` (`template_fingerprint`, the trigger), `storage_declarations.py` (retention note), new `role_template_audit.py` and `doctor/checks/role_template_check.py`. Tests: new `tests/test_bf917_template_skills_and_recommission.py` and `tests/fixtures/crew_template_world.py`. Batched with BF-915 (#1623), one PR. Contract: `prompts/bf-917-template-skills-and-recommission.md`. Tier HIGH (live commissioning records are rewritten at boot).
 - *D1 (register, do not rename).* A separate list, not `ROLE_SKILL_TEMPLATES`, whose agent-type keys feed the legacy FOLLOW acquisition. Renaming the three near-names would orphan the live records. Each definition is ROLE, has no prerequisite, preferred tool or composite, decays at 14 days and uses a domain a legacy role skill already has (guard 1: the resolver's tag fallback asks no new question; guard 2: decay and acquisition unchanged, and `check_decay` has no production caller).
-- *D2 (the trigger).* A sha256 of the post id plus each required skill's id and floor, stored in an additive nullable column. NULL means a record from before BF-917, re-commissioned once. The comparison runs in `CrewEnrollmentService.enroll`. A re-commission keeps every record it finds, acquires only missing skills, runs without the tool registry and permission store (so it grants no tool), and records the fingerprint and a history row in one commit only after the chain succeeded. A failure is retried next boot. Decommissioned agents are skipped. Rejected: a stateless "a required skill is missing" rule (prerequisite-blocked skills never settle, so it would fire every boot), a separate table, comparing the post id only, and a `grant_tools` parameter on the AD-889 seam. The write uses `record_commissioning`'s new mode because `AgentCapitalService` is at its 15-method SRP limit.
-- *D4 (detection).* One doctor check, `role_templates`, WARN only, no repair. CI fails first, because templates and definitions both ship; no startup WARNING is added.
+- *D2 (the trigger).* A sha256 of the post id plus each required skill's id and floor, stored in an additive nullable column. NULL means a record from before BF-917, re-commissioned once. The comparison runs in `CrewEnrollmentService.enroll`. A re-commission keeps every record it finds, acquires only missing skills, runs without the tool registry and permission store (so it grants no tool), and records the fingerprint and a history row in one commit only after the chain succeeded and left every PCC held (BF-906 A3's rule; AD-889 swallows a failed base step). A raised chain, an unread profile or a missing PCC is retried next boot. Enrollments are serialized by one lock per enroller: the `IS NOT ?` guard protects only the record, and the chain's skill writes are fresh-record upserts after a snapshot, so an overlapping enrollment of the same agent would otherwise reset a record the first had advanced (review round 1). Decommissioned agents are skipped. Rejected: a stateless "a required skill is missing" rule (prerequisite-blocked skills never settle, so it would fire every boot), a separate table, comparing the post id only, and a `grant_tools` parameter on the AD-889 seam. The write uses `record_commissioning`'s new mode because `AgentCapitalService` is at its 15-method SRP limit.
+- *D4 (detection).* One doctor check, `role_templates`: each finding is a WARN, and it repairs nothing. An ontology the loader cannot read raises, which the doctor runner reports as FAIL, as for any check. CI fails first, because templates and definitions both ship; no startup WARNING is added.
 - *Disclosed effects.* The first boot re-commissions each of the 16 crew once: one "re-commissioned" history row each and a fingerprint on each record; no existing skill record changes. There are 30 more skill definitions (83 in total): the Skill Library and `/api/skills` list them, profiles show the formerly orphan records as role skills, AD-628's department readiness denominators grow (science +9, medical +6, operations +10, security +3, engineering +2), and AD-596c maps the `emergence_analysis` intent to its now-registered skill instead of `duty_execution`. No tool is granted and `tool_count` is unchanged.
 - *Reversal.* Revert the commits. The column stays: BF-906's statements name their columns, so they ignore it. Records keep their updated role template. The registered definitions persist in `skills.db` (the registry loads its rows at start) until the Captain retires them; added skill records stay (never deleted).
 
@@ -1985,19 +2147,21 @@ Tier HIGH: every changed production file has rows. Run each row on the contract-
 | M1-R3 | `src/probos/skill_framework.py` | `SkillDefinition(skill_id="threat_assessment", name="Threat Assessment", category=SkillCategory.ROLE, description="Judge the likelihood and impact of a threat.", domain="security", decay_rate_days=14, origin="role"),` | `SkillDefinition(skill_id="threat_assessment", name="Threat Assessment", category=SkillCategory.ACQUIRED, description="Judge the likelihood and impact of a threat.", domain="security", decay_rate_days=14, origin="role"),` | G5 (not a role skill); G2 |
 | M1-R4 | `src/probos/acm.py` | `await _add_template_fingerprint_column(self._db)` | `pass` | A1 (no such column); E1 |
 | M1-R5 | `src/probos/acm.py` | `if "template_fingerprint" not in columns:` | `if False:` | A1 |
-| M1-R6 | `src/probos/acm.py` | `"WHERE agent_id = ? AND template_fingerprint IS NOT ?",` | `"WHERE agent_id = ?",` | A2 (same fingerprint returns True) |
+| M1-R6 | `src/probos/acm.py` | `"WHERE agent_id = ? AND template_fingerprint IS NOT ?",` | `"WHERE agent_id = ? AND ? IS NOT NULL",` | A2 (same fingerprint returns True; A1: the mutant keeps four placeholders for the four bindings, so the missing guard kills it, not a binding error) |
 | M1-R7 | `src/probos/acm.py` | `action = "re-commissioned" if recommission else "commissioned"` | `action = "commissioned"` | A2; E1 (`recommission_rows` finds none) |
 | M1-R8 | `src/probos/acm.py` | `initiated_by=row[6], reason=row[7], timestamp=row[8], template_fingerprint=row[9],` | `initiated_by=row[6], reason=row[7], timestamp=row[8],` | E1 (fingerprint reads None); A1 |
 | M1-R9 | `src/probos/crew_enrollment.py` | `if recorded_fingerprint == fingerprint:` | `if True:` | E1 (never re-commissions); E2 |
 | M1-R10 | `src/probos/crew_enrollment.py` | `if await self._acm.get_lifecycle_state(agent_id) is LifecycleState.DECOMMISSIONED:` | `if False:` | E3 |
 | M1-R11 | `src/probos/crew_enrollment.py` | `context = _RecommissionContext(skill_service=self._skill_service, ontology=self._ontology)` | `context = self._commission_context` | E1 (the probe tool is granted) |
-| M1-R12 | `src/probos/crew_enrollment.py` | `if not summary.get("skills_acquired"):` | `if False:` | E4 `[no-profile]` |
+| M1-R12 | `src/probos/crew_enrollment.py` | `if not summary.get("skills_acquired"):` | `if False:` | E4 `[no-profile]` (A1: by the cause in the message; the PCC check after it would also refuse) |
 | M1-R13 | `src/probos/crew_enrollment.py` | `template_fingerprint=fingerprint, recommission=True,` | `template_fingerprint=fingerprint, recommission=False,` | E1; E2 (INSERT OR IGNORE writes nothing) |
 | M1-R14 | `src/probos/crew_enrollment.py` | `template_fingerprint=template_fingerprint(template),` | `template_fingerprint=None,` | E1 (the unchanged second pass re-commissions) |
 | M1-R15 | `src/probos/crew_enrollment.py` | `"required": sorted([r.skill_id, r.min_proficiency] for r in template.required_skills),` | `"required": [],` | E1 (the edit is not seen) |
 | M1-R16 | `src/probos/crew_enrollment.py` | `skills = tuple(s for s in summary["skills_acquired"] if s not in held_before)` | `skills = ()` | E1 (`skills_granted`, history row); E4 |
 | M1-R17 | `src/probos/role_template_audit.py` | `if req.skill_id not in registered` | `if req.skill_id in registered` | D1; D2; G1 |
 | M1-R18 | `src/probos/doctor/checks/role_template_check.py` | `if not findings:` | `if True:` | D2 |
+| M1-R19 | `src/probos/crew_enrollment.py` | `async with self._enroll_lock:` | `if True:` | E6 (`code_review` acquired twice; the advanced record is reset) |
+| M1-R20 | `src/probos/crew_enrollment.py` | `missing_pccs = [pcc.skill_id for pcc in BUILTIN_PCCS if pcc.skill_id not in summary["skills_acquired"]]` | `missing_pccs = []` | E5 (the degraded re-commission is recorded) |
 | M2-R1 | `src/probos/role_template_audit.py` | `and assignment.post_id not in role_templates` | `and assignment.post_id in role_templates` | B1; B3 |
 | M2-R2 | `config/ontology/skills.yaml` | `- skill_id: drill_planning` | `- skill_id: drill_planing` | G1 (unregistered); B2; D1 |
 | M2-R3 | `config/ontology/skills.yaml` | `yeoman:` | `yeoman_post:` | B1; B4 `[yeoman]` |
@@ -2095,6 +2259,34 @@ AV7 CLAIM: no src module imports probos.doctor (the new audit lives outside it)
     HOLDS: yes
 ```
 
+**A1 verification and absences (2026-10-23, candidate `22b179c5`, tree `4bb80970`):**
+
+```text
+Read src/probos/crew_enrollment.py:190-468   __init__ 193-213 (no lock); enroll 215-227 unserialized; _commission all-PCC check 334-343; re-commission accepts any non-empty skills_acquired 424-429
+Read src/probos/commissioning.py:20-107      snapshot 52-63; base step swallowed at DEBUG 66-73; template step 79-97 (ValueError skipped); profile 100-107
+grep skill_framework.py "async def acquire_skill" 1358; fresh record (exercise_count=0) 1383-1391; _upsert_record 1392; def _upsert_record 1738; INSERT OR REPLACE 1742
+grep acm.py "_write_lock"                    154 (created in __init__), 175, 253, 317, 378
+Read src/probos/doctor/runner.py:184-205     a raising check is rendered FAIL
+Read src/probos/ontology/loader.py:224-233   s["min_proficiency"] raises on a missing key
+grep pyproject.toml requires-python          >=3.12 (asyncio.Lock binds to the running loop on first use)
+grep src "\bLock\s*[:=]"                     avatars/telemetry_history.py:58 and others (the precheck resolves Lock)
+grep src "\bEvent\s*[:=]"                    avatars/events.py:45 and others (the precheck resolves Event)
+CLAIM: only the enroller passes preserve_existing=True
+RUN:   rg -n "preserve_existing=True" src/
+FOUND: crew_enrollment.py:321, :382 (docstring), :416
+HOLDS: yes; the enroller's lock covers every preserving caller
+CLAIM: nothing reachable while the lock is held calls the enroller
+RUN:   rg -n "enroll_joining|enroll_wired_crew|\.enroll\(|CrewEnrollmentService\(" src/ ; rg -n "\.wire_agent\(|on_agent_spawned\(" src/
+FOUND: crew_enrollment.py:231, :238; startup/crew_enrollment.py:26, :36, :39; runtime.py:2623; substrate/pool.py:88 (ontology/service.py:169 and startup/communication.py:796 are the department ontology's wire_agent)
+HOLDS: yes; the enroller is reached from onboarding's wire_agent and the boot pass only
+CLAIM: no test or script pins crew_enrollment.py's source or the enroller's attributes
+RUN:   rg -n "crew_enrollment\.py|getsource\((crew_enrollment|CrewEnrollmentService)|CrewEnrollmentService\.__init__|_enroll_lock|signature\(CrewEnrollment" tests/ ; rg -n "crew_enrollment|CrewEnrollmentService" scripts/
+FOUND: none; none
+CLAIM: no enroller is shared across event loops in the BF-906/907/908 tests
+RUN:   rg -n 'scope="(module|session|class)"' tests/test_bf90[678]*.py
+FOUND: none
+```
+
 ## 12. Deterministic gate checks, resolved up front
 
 | Check | Result |
@@ -2103,13 +2295,13 @@ AV7 CLAIM: no src module imports probos.doctor (the new audit lives outside it)
 | Kwarg and field checks | Calls that pass a kwarg this contract adds appear only in blocks that start mid-call (§7.2 pair 5, §7.3 pair 7), or with a parenthesised argument (`tools=()`). `CrewEnrollment` is extended through `replace(...)`. No test constructs a `CommissioningRecord`. The bare name `unchanged` is never reused in a test (pattern B types it as `CrewEnrollment`). |
 | Pattern B | `skill_registry`/`before_registry`/`after_registry`/`bare_registry`/`full_registry` (SkillRegistry), `*_service` (AgentSkillService), `acm`, `seeded`/`probe`/`tool_registry` (ToolRegistry), `permission_store`, `loader`, `ontology`, `enroller` are each bound to one class and call only that class's methods. No `unlink(missing_ok=` is used. |
 | AD-1343 census | AV6. |
-| Architecture checker | `AgentCapitalService` stays at 15 methods, span about 456 of 500. `CrewEnrollmentService` gains one method. No layer import upward: `role_template_audit` imports nothing from probos; the doctor check imports it lazily. |
+| Architecture checker | `AgentCapitalService` stays at 15 methods, span about 456 of 500. `CrewEnrollmentService` gains one method and, in A1, one private lock attribute: 11 methods and a body of about 300 lines, under the 15 and 500 triggers. No layer import upward: `role_template_audit` imports nothing from probos; the doctor check imports it lazily. |
 | Store registry | No `CREATE TABLE` is added (a column via `ALTER TABLE`); `check_store_registry --check` is unaffected. The `acm.agent-capital` retention note is updated. |
 | Doctor import rule | No `src` module imports `probos.doctor` (AV7). |
 | Config | No new field. |
 | Child process | D3 runs `sys.executable` with `PYTHONPATH` set to this tree and asserts `probos.__file__` lies under it. No pid is compared. |
 | Ledger | Regenerated in M2's commit. |
-| Sizes | Production: about +120 lines (M1) and +40 (M2). Tests: about 470 (M1, with the fixture) and 150 (M2). |
+| Sizes | Production: about +120 lines (M1), +20 for A1, and +40 (M2). Tests: about 470 (M1, with the fixture), +100 for A1's E5 and E6, and 150 (M2). |
 
 ## 13. Prior Art and Blind Spots
 
@@ -2118,29 +2310,31 @@ AV7 CLAIM: no src module imports probos.doctor (the new audit lives outside it)
 - **Blind spot absorbed.** `register_builtins` writes with `INSERT OR REPLACE`, so a Captain-designed definition already holding one of the 30 ids would be overwritten at boot. §16 L1 makes that a hard stop.
 - **Blind spot absorbed.** A stateless trigger would never settle for prerequisite-blocked skills (`performance_optimization`), so the fingerprint is stored.
 - **Blind spot absorbed.** The tag fallback is a substring match, so any new domain is a new question. Guard 1 is satisfied by construction (legacy domains only) and proved by G3.
-- **Blind spot absorbed.** Overlapping or repeated re-commissions are made harmless by `IS NOT ?`.
+- **Blind spot absorbed (A1, review round 1).** `IS NOT ?` makes a repeated re-commission write no second record or history row, but it does not protect skill records: the chain snapshots the profile, then writes each missing skill as a fresh record, so two overlapping enrollments of one agent could reset a record the first had advanced. `enroll` is serialized per enroller. Production reach was not shown (a pool serializes its own wirings, and the join hook is installed after the boot pass), but AD-1273 requires a double-wire to be harmless.
+- **Blind spot absorbed (A1).** AD-889 swallows a failed base step at DEBUG, so a re-commission is held to the all-PCC rule a first commissioning keeps.
 - **Blind spot disclosed.** Raising the floor of a skill the agent already holds is a fingerprint change, but it raises nothing (records are preserved). The history row says so.
 - **Considered, deferred.** Fingerprinting the legacy `ROLE_SKILL_TEMPLATES` too; data-driven definitions in `skills.yaml`; a startup audit WARNING.
 
 ## 14. Diff Reviewer: properties to verify
 
-1. No existing skill record is rewritten by a re-commission. Every pre-existing record keeps its proficiency, exercise count, timestamps, source and history (E1, B4). Only missing skills are inserted.
+1. No existing skill record is rewritten by a re-commission, serial or overlapping. Every pre-existing record keeps its proficiency, exercise count, timestamps, source and history (E1, B4). Only missing skills are inserted, and an overlapping enrollment of the same agent inserts nothing (E6).
 2. A re-commission cannot grant a tool. `_RecommissionContext` exposes no `tool_registry`, `tool_permission_store` or `skill_registry`, and `commissioning.py:112-120` therefore skips step 3. Birth commissioning still passes the runtime unchanged.
-3. The fingerprint is written only after the chain succeeded, together with its history row in one commit, rolled back together. A failure leaves the record and history unchanged (E4).
+3. The fingerprint is written only after the chain returned, read a profile and left every PCC held, together with its history row in one commit, rolled back together. A failure leaves the record and history unchanged, logs one ERROR naming its cause, and the next pass retries (E4, E5).
 4. An unchanged fingerprint calls nothing, and a second pass writes nothing (E1, E2). A NULL fingerprint is re-commissioned exactly once.
 5. Every new definition: ROLE; no prerequisite, preferred tool, composite or synergy; `decay_rate_days == 14`; a legacy domain; ids unique across `builtin_skill_definitions()`.
 6. `register_builtins` registers exactly `builtin_skill_definitions()`, and the doctor uses the same list.
 7. The migration is additive and idempotent, works through the ConnectionFactory connection (an AsyncMock as well), and runs before `start`'s commit.
 8. `AgentCapitalService` still has 15 direct methods. No private attribute is read across a module boundary.
-9. The doctor check writes nothing, WARNs (never FAILs) for findings, and is registered once, after `token_accounting`.
+9. The doctor check writes nothing; each finding is a WARN, never a FAIL. An ontology the loader cannot read raises, which the doctor runner reports as FAIL, as for any check (F-347 on #1523; the shipped ontology loads, D1). It is registered once, after `token_accounting`.
 10. **The consumer that must accept the change:** `CrewEnrollmentService.enroll_wired_crew` and BF-906's tests. The pass log line is byte-identical. `CrewEnrollment` equality at its defaults holds (`test_bf906_acm_commissioning.py:1026`). T-B1, T-B3 and T-B4 hold on a fresh boot.
 11. The two updated tests record why inline; no test is deleted.
+12. **Serialization (A1).** `CrewEnrollmentService.enroll` holds the private `_enroll_lock` (one `asyncio.Lock` per enroller, created in `__init__`) from the onboarding step through the recording, covering `_commission` and the re-commission; the source and crew checks stay outside it. It is always taken outside ACM's `_write_lock`, and nothing it covers calls the enroller. An overlapping enrollment of one agent waits and returns `commissioned=False, recommissioned=False` (E6). `__init__`'s parameters, `enroll`'s signature and `CrewEnrollment` are unchanged.
 
 ## 15. Acceptance criteria
 
 - §7.1 to §7.16 and §8 applied in milestone order. Each milestone's focused gate passes at `-n 0`; `gen_ad_ledger.py --check` reports current; the precheck is clean.
 - G1, G5, E1, B1, B2 and B4 fail on the pre-change tree because of the behaviour itself. Every new test fails on the pre-change tree.
-- All 22 §10 rows are killed by the named tests. The campaign of record is recorded in the docs-only commit.
+- All 24 §10 rows (M1-R1 to M1-R20, M2-R1 to M2-R4) are killed by the named tests; E5 and E6 fail on the round-1 candidate because of the behaviour (§6). The campaign of record is recorded in the docs-only commit.
 - After the first live boot, §16's post-boot checks hold.
 - The broad gate runs once for the batch, by the orchestrator, with `--receipt`. One PR closes #1625 and #1623.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
