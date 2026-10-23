@@ -6349,3 +6349,45 @@ ABSENCE: nothing outside agent_work_tags.py and C17 pins the quote test or the t
    SELECT work_item_id, recipient, kind, claimed_at
    FROM agent_work_notices WHERE work_item_id = :id;
    ```
+
+## 17. Validation of record (2026-10-23, win32)
+
+Written by the orchestrator after the build, from the tools' own output. It records what was run on the tree that ships; it changes no decision.
+
+**Review history.** Every round ran on `gpt-6.1-sol`, passed explicitly; every Builder ran on `claude-sonnet-5.5`. Round 1 (42.1 min) NOT READY, fourteen findings (Amendment A1). Round 2 (33.7 min) NOT READY, six findings (A2, A2b, A2c). Round 3 (28.5 min) NOT READY, five findings (A2d, A2e). Round 4 (21.6 min) NOT READY, F27 and F26's remainder (A2f). Round 5 (16.2 min) NOT READY, F28 and F29: at the third round-three brake the Architect decided to rescope and land candidate 6 as reviewed, recording them under R13 and R14 (A2g, text only); there is no round 6. Builders: M1 5.8 min and a 1.2 min correction, M2 14.6, A1 12.1, A2 to A2c 13.8, A2d and A2e 14.3, A2f 2.8 (64.6 min in all); reviews 142.1 min in all.
+
+**Round-three brake decisions** (the Architect, `claude-architect` through the bridge, each recorded on #1627): continue with one round 4 (comment 6372686155); continue with one round 5, F24 moved to the follow-up (comment 6374756401); rescope and land candidate 6 (comment 6375398334). The second admitted that A2d's recording of a regression as an R13 trade was not the Architect's to accept; the third replaced the round-4 and round-5 two-baseline criterion with the ASCII twin rule (section 14, property 3).
+
+**Orchestrator decisions.** The eight mechanical repairs in the header (line 27) and the two Line cells of N16 and N75 (A2f's header paragraph); the routing of R10 to an F-113 addendum on #1523 (comment 6371015599); the Option A decision at the A2d gate (register R14's wide-padded shape) was the Architect's.
+
+**Tests-first.** The final tests on the round-2 candidate's source (`f035964c`) failed 54 of 141 cases; on the round-3 candidate's (`9319b37d`) 11 of 141 with A2d and A2e's tests and 8 with A2f's; on round 4's (`478180b8`) 3 of 141, exactly A2f's three relabelled C17 rows. The Builder of each repair reported the same first failures before editing the source.
+
+**Mutation campaign.** The 141 rows of section 10 (130 Python, 11 TypeScript) ran on one tree, `7f3ecd14` (scratch commit `28626e2b`, this contract applied by tool to `ba20e949`), each row restored before the next. The 130 Python rows ran in two groups: the 70 rows on `agent_work_tags.py` (19:43 to 19:58Z for A2e's tree, rerun 21:00 to 21:16Z on A2f's) and the other 60 (21:18 to 21:33Z). The unmutated baseline of the five test files passed (491 tests) in each. Result: 130 of 130 killed, none survived, none inert, none invalid, the pinned files unchanged after each group; N16 is killed by `quote_in_a_list_item` and N75 by `out_of_scope_nbsp_before_a_quote_mark_is_a_quote`. The 11 TypeScript rows (baseline 6 passed) were killed on `capabilityApprovals.ts` and `CapabilityRequestCard.tsx`, whose sha256 is unchanged in this tree. Every product and test file the code commits ship is blob-identical to that tree's, and the code commits' tree equals the reviewed candidate's (`2c2c29e7`). sha256 of the tree's working copies:
+
+```
+455f0fc747fdddef0b4b916bd1e2924404307d895bd42a52bf13bc219ab4bc73  src/probos/agent_work.py
+2cca3fc0ce4eb168b48751b5d481aafac90df8a257529a87e8b712e73c654351  src/probos/agent_work_runner.py
+21d62806a517493a5eeddb6d49d357c885efe0a247166ec0a5c179fdfd38167e  src/probos/agent_work_tags.py
+1b6a38f4be8ce3ba0daf4a9484df4e9fb72d1a085f463bfa6e802dfeb27579cc  src/probos/capability_request.py
+d37bd09d0676e524ab0d01c8e63fc59d6e34917f5ee7e50f249166c4371f16da  src/probos/cognitive/agentic_dispatch.py
+b5e326e398110598d099e1a17250df86803b1915fd45ee1a1baf315086bdb881  src/probos/cognitive/capability_gap_driver.py
+f604cdbffa3eb36ab1064d102e9c8b04f65f384d98ec1bf4d1469b64f89b2702  src/probos/cognitive/sub_tasks/compose.py
+2ecc49d4dff2b20751aebaf2348ebebf8fa85ea10ab382c8a4ad4abfd15542a8  src/probos/proactive.py
+a7962d053db1ed2ac751f4e963aac58c2d56878eb6bdba08e3465ff9cb6893e2  src/probos/routers/capability_requests.py
+0e4c6b78f28cf34257fe6c6b93588d1854182011ddaa5e768044fa4f4954c057  src/probos/startup/finalize.py
+4b75371f1d728a8eea6a5ff21f7b432b1d7e47028e4d1d04a2f503eab44693c4  src/probos/startup/shutdown.py
+5f1c8be0ca3bde8c220e6b9b54c0448884c68b63c11ed8fb83cb1b1f11d18654  src/probos/ward_room_pipeline.py
+96103c577ae0eeca4b4f1f701f710229855706681c9187250003fd4b73a912e6  tests/test_ad1156_plan_execute_mode.py
+1aea9b142741f097e1c42955865c601392b07edf4f5ebf6a729ab20deceff350  tests/test_ad1347_s2_chain_tags.py
+bc22da04091ec858a333874166db1067a85aabe56467e2c388c1798f387c1e97  tests/test_ad1347_s3_execution.py
+4ab0f4ebd0f0091bd151fe514b48bc7f0cb5c24fdbb24edf7cd0918d23bdae63  tests/test_ad1347_s3_wiring.py
+ffc1f57c0a51037e2a1ffc1d5a80a8f0bf48b92ce6ad3a67b7761ba1995ed7cc  tests/test_issue1419_failed_start_rollback.py
+a819beb7dca45a1035deb8527f42f6d6a7f79501f646f4a0e82b268b473003e3  ui/src/components/capability/CapabilityRequestCard.tsx
+7dcd4847da19cd12872f2ac0d5cefc2f54bf92e5834f6bff230af54f86e0274b  ui/src/store/capabilityApprovals.ts
+```
+
+**Consolidated focused checks** (210 test files that name a changed surface, scrubbed environment at `-n 8`, then four tree-scanning files unscrubbed at `-n 0`): round 3's candidate 10,376 passed, 20 skipped and 219 passed; round 4's candidate 10,392 passed, 20 skipped (11 min 14 s) and 219 passed, 2 skipped; the shipped candidate (`c7944573`) 10,392 passed, 20 skipped, 0 failed (11 min 40 s) and 219 passed, 2 skipped. The architecture fitness test (63) and the principles checker (`srp-size=92, layer-import=0, db-connect=30, unowned-task=14`) pass.
+
+**The scanner's measurements** (the orchestrator's probes, outside the repository). The C17 CommonMark audit over the 74 rows finds six disagreements, all named `out_of_scope_`. The four-seed differential (seeds 1347, 2024, 7 and 31337, 12,000 documents each) against `9319b37d`: non-lazy and lazy EXTRA regressions 0 and 0, MISSING 20, 20, 21 and 21 (R14's wide-padded shape); against `478180b8`: EXTRA 0 and 0, MISSING 15, 20, 16 and 15 documents, each holding a non-ASCII blank and `>` (F24's shape). The F22, F23 and F24 enumerations (1,620, 900 and 25 documents): acting on code 0, 0 and 0; dropping a plain tag 172, 42 and 25. The nested-block family (960 documents, A2g): against `9319b37d` EXTRA 0 and MISSING 0; against `478180b8` 288 EXTRA, each with an ASCII twin that `478180b8` acts on. The real Ward Room (16,386 bodies, 144,300 variants, read-only): EXTRA 12 variants (lazy-quote class 12, non-lazy 0) and MISSING 90 variants in 45 bodies, the same for `9319b37d` and the shipped scanner; no body holds a non-ASCII blank before `>`. The shared payload rows reach 11 of `validate_action_payload`'s 13 exits.
+
+**Register.** F-354 to F-380 are on #1523 (comment 6375454752). The receipt of the broad gate that counts, the pull request and CI are recorded on #1627.
