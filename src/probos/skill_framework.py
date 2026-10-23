@@ -981,6 +981,16 @@ ONTOLOGY_TEMPLATE_SKILLS: list[SkillDefinition] = [
     # Operations (chief of operations)
     SkillDefinition(skill_id="workflow_optimization", name="Workflow Optimization", category=SkillCategory.ROLE, description="Improve how work flows between crew and systems.", domain="operations", decay_rate_days=14, origin="role"),
     SkillDefinition(skill_id="system_monitoring", name="System Monitoring", category=SkillCategory.ROLE, description="Track operational readiness and resource health.", domain="operations", decay_rate_days=14, origin="role"),
+    # BF-915 (#1623): the Ship's Yeoman and the Training Officer. Operations, a legacy domain: the Yeoman's
+    # Bridge would be a resolver tag question no crew member asks today.
+    SkillDefinition(skill_id="captain_briefing", name="Captain Briefing", category=SkillCategory.ROLE, description="Assemble the Captain's daily briefing from inbox, calendar and ship highlights.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="schedule_coordination", name="Schedule Coordination", category=SkillCategory.ROLE, description="Answer and coordinate the Captain's schedule questions.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="correspondence_triage", name="Correspondence Triage", category=SkillCategory.ROLE, description="Summarise unread mail and flag what needs the Captain.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="crew_delegation", name="Crew Delegation", category=SkillCategory.ROLE, description="Route a request to the right specialist and relay standing orders.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="drill_planning", name="Drill Planning", category=SkillCategory.ROLE, description="Schedule qualification drills for the crew.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="readiness_assessment", name="Readiness Assessment", category=SkillCategory.ROLE, description="Report ship-wide and per-department skill readiness.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="onboarding_mentorship", name="Onboarding Mentorship", category=SkillCategory.ROLE, description="Mentor newly named crew through onboarding.", domain="operations", decay_rate_days=14, origin="role"),
+    SkillDefinition(skill_id="limited_duty_planning", name="Limited Duty Planning", category=SkillCategory.ROLE, description="Co-author limited-duty recommendations with Medical.", domain="operations", decay_rate_days=14, origin="role"),
 ]
 
 

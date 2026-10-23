@@ -52,7 +52,8 @@ class TestSkillsSchemaLoading:
     @pytest.mark.asyncio
     async def test_skills_yaml_loaded(self, service: VesselOntologyService):
         """Load skills.yaml, verify role templates parsed."""
-        assert len(service._loader.role_templates) == 14
+        # BF-915 (#1623): the Yeoman's and the Training Officer's templates join the fourteen.
+        assert len(service._loader.role_templates) == 16
         assert len(service.get_all_qualification_paths()) == 3
 
 

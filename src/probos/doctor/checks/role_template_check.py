@@ -1,4 +1,4 @@
-"""BF-917 (#1625): every skill a role template names is a registered skill definition.
+"""BF-917 (#1625) and BF-915 (#1623): every template skill is registered, and every assigned crew post has a template.
 
 Reads ``config/ontology`` through the real ``OntologyLoader`` with no data
 directory, so it creates and writes nothing (the loader persists an instance id
@@ -22,7 +22,8 @@ from probos.doctor.registry import register_check
 _ONTOLOGY_DIR = Path(__file__).resolve().parents[4] / "config" / "ontology"
 _REMEDIATION = (
     "Correct the skill id in config/ontology/skills.yaml, or register the skill in "
-    "ONTOLOGY_TEMPLATE_SKILLS (probos/skill_framework.py), then restart ProbOS."
+    "ONTOLOGY_TEMPLATE_SKILLS (probos/skill_framework.py); give an assigned crew post a "
+    "role_templates entry in skills.yaml; then restart ProbOS."
 )
 
 
@@ -35,7 +36,7 @@ class _RoleTemplateCheck:
         if not self.ontology_dir.is_dir():
             return CheckResult(CheckOutcome.OK, f"Role templates: no ontology at {self.ontology_dir}")
         from probos.ontology.loader import OntologyLoader
-        from probos.role_template_audit import unregistered_template_skills
+        from probos.role_template_audit import crew_posts_without_template, unregistered_template_skills
         from probos.skill_framework import builtin_skill_definitions
 
         loader = OntologyLoader(self.ontology_dir)
@@ -45,10 +46,17 @@ class _RoleTemplateCheck:
             f"{post}: template skill {skill} is not a registered skill definition"
             for post, skill in unregistered_template_skills(loader.role_templates, registered)
         ]
+        findings += [
+            f"{post} ({agent_type}): an assigned crew post has no role template"
+            for post, agent_type in crew_posts_without_template(
+                loader.posts, loader.assignments.values(), loader.role_templates,
+            )
+        ]
         if not findings:
             return CheckResult(
                 CheckOutcome.OK,
-                f"Role templates: {len(loader.role_templates)} templates, every template skill registered",
+                f"Role templates: {len(loader.role_templates)} templates, every template skill registered "
+                "and every assigned crew post templated",
             )
         return CheckResult(
             CheckOutcome.WARN,
