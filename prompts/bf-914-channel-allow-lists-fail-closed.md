@@ -1,12 +1,15 @@
 # BF-914: a channel adapter's empty user allow-list admits no one, and admitting everyone is an explicit opt-in
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23 (Amendment A1)
 
 **Status:** build-ready after the orchestrator verifies it by tool on the then-current `main`. Decided by the Architect under Delegated AD Execution Mode (§3 D0). **Tier HIGH** (a default security control). **Base:** `origin/main` `ba20e949` (AD-1347 S1 and S4 and wave 2 merged). AD-1347 S2+S3 (in review) touches none of this contract's files (§5, last row). **Number:** BF-914. Nothing is allocated. **Issue:** #1621.
 
 **Tests:** one new file, `tests/test_bf914_channel_allow_lists.py`: 11 functions, 21 cases. Nine updated pins (§6).
 
 **Line endings:** working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with each file's own endings. New files are written LF.
+
+**Amendment A1 (2026-10-23, after the round-1 review by `gpt-6.1-sol`: NOT READY on two P3 findings; production behaviour passed all ten properties).** F1: N3 and N4 lacked the positive control that §6 and the test file's module docstring promise: N3 never sends its listed sender through the harness, and N4 drives only refusals, so N3 passed with the delivery disconnected and N4 passed against a policy that always refuses. F2: §10 row R5 named N4 as a killer, but N4 did not fail under R5, because N4's repeat of `U1` came after the cap. A1 adds a control inside each test, on the same harness. In N3 the listed sender 7 goes through the same closure, its `!prune` reaches the recorder and is answered, and no refusal line is added. In N4 a listed id and the opt-in are admitted on the same adapter, and no line is added. For F2 the Architect chose to strengthen N4 rather than drop the claim, because not naming a sender a second time is the property that N4 and its §6 row claim. N4's sequence becomes `U1, U1, U2, U3, U4, U1`, so the repeat comes before the cap, and N4 asserts which senders are named, in order (`U1` then `U2`). Under R5 the refused-sender set stays at size 1 on the repeat, so the mutant names `U1`, `U1` and `U2` and then writes the cap line (four lines). N4 fails on the count and on the order. A1 changes only the bodies and docstrings of these two tests, the §6 N3 and N4 cells and the R5 cell. It changes no source, adds no test function (11 functions and 21 cases; the tests-first result of 22 failed stands), and changes no tracker and no other §10 row. The orchestrator verification in §16 records the run before A1; the killer census and the 21-row campaign are rerun on the amended file.
 
 ---
 
@@ -89,8 +92,8 @@ One milestone, M1, opened by §7.1. One commit for code and tests; the tracker p
 |---|---|---|
 | N1 | `test_discord_an_unlisted_sender_never_reaches_the_shell` | issue acceptance: the real filter; a listed sender's `!prune` reaches the recorder (control); an unlisted one's does not, and nothing is posted |
 | N2 | `test_discord_an_empty_allow_list_refuses_every_sender` | empty list: no slash, no natural language, no post. Control: the same harness with the opt-in admits both |
-| N3 | `test_a_refused_sender_is_logged_once_without_its_text` | two overlapping refusals of one sender plus a third → one line; a second sender → its own line; no line contains the text |
-| N4 | `test_the_refusal_log_is_bounded` | cap 2: two per-sender lines, one cap line, nothing after |
+| N3 | `test_a_refused_sender_is_logged_once_without_its_text` | two overlapping refusals of one sender plus a third → one line; a second sender → its own line; no line contains the text. Control: the listed sender's `!prune` on the same closure reaches the recorder and is answered, with no refusal line |
+| N4 | `test_the_refusal_log_is_bounded` | cap 2, with a named sender repeated before the cap: two per-sender lines, naming `U1` then `U2`, one cap line, nothing after. Control: on the same adapter a listed id and the opt-in are admitted, without a line |
 | N5 | `test_slack_poll_refuses_an_unlisted_sender_before_the_shell` | real `_process_channel`: only the listed sender reaches the shell and gets a reply |
 | N6 | `test_slack_receive_refuses_on_an_empty_list_and_admits_with_the_opt_in` | webhook entry point, both directions |
 | N7 | `test_slack_convert_message_applies_the_rule` (5 cases) | boundary table: empty, listed, unlisted, opt-in empty, opt-in with list |
@@ -835,7 +838,10 @@ async def test_discord_an_empty_allow_list_refuses_every_sender(
 async def test_a_refused_sender_is_logged_once_without_its_text(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, shell_calls: list[str],
 ) -> None:
-    """N3: two overlapping refusals of one sender and a third log one line; a second sender gets its own."""
+    """N3: two overlapping refusals of one sender and a third log one line; a second sender gets its own.
+
+    Control on the same closure: the listed sender is still delivered and answered, without a refusal line.
+    """
     on_message, channel = _discord(monkeypatch, DiscordConfig(enabled=True, token="t", allowed_user_ids=[7]))
     with caplog.at_level(logging.WARNING, logger=_BASE_LOGGER):
         await asyncio.gather(
@@ -852,21 +858,40 @@ async def test_a_refused_sender_is_logged_once_without_its_text(
     assert shell_calls == []
     assert channel.posted == []
 
+    # Control on the same closure: the listed sender's command reaches the shell and is answered, so a
+    # delivery is observable here, and admitting it adds no refusal line.
+    with caplog.at_level(logging.WARNING, logger=_BASE_LOGGER):
+        await on_message(_Message(channel, 7, "!prune agent-1"))
+    assert shell_calls == ["/prune agent-1"], "control: the listed sender still reaches the shell on this closure"
+    assert channel.posted == ["recorded"]
+    assert [r.getMessage() for r in caplog.records if _REFUSAL in r.getMessage()] == refusals
+
 
 def test_the_refusal_log_is_bounded(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    """N4: past the cap, one line says further senders go unnamed, and nothing more is logged."""
+    """N4: a repeat before the cap is not named again; past the cap, one line says further senders go unnamed,
+    and nothing more is logged. Control: a listed id and the opt-in are admitted on the same adapter, without a line.
+    """
     monkeypatch.setattr("probos.channels.base._REFUSED_SENDER_LOG_CAP", 2)
     adapter = SlackAdapter(_Runtime(), SlackConfig(enabled=True, bot_token="xoxb-test"))
     with caplog.at_level(logging.WARNING, logger=_BASE_LOGGER):
         admitted = [
             adapter._sender_admitted(user, [], allow_all_users=False)
-            for user in ("U1", "U2", "U3", "U4", "U1")
+            for user in ("U1", "U1", "U2", "U3", "U4", "U1")
         ]
-    assert admitted == [False] * 5
+    assert admitted == [False] * 6
     lines = [r.getMessage() for r in caplog.records if "BF-914" in r.getMessage()]
     assert len([line for line in lines if _REFUSAL in line]) == 2
     assert len([line for line in lines if "not logged by id" in line]) == 1
     assert len(lines) == 3
+    named = [line for line in lines if _REFUSAL in line]
+    assert "'U1'" in named[0], named
+    assert "'U2'" in named[1], named  # the repeat of U1 before the cap is not named a second time
+
+    # Control on the same adapter: a listed id and the opt-in are admitted, and neither adds a line.
+    with caplog.at_level(logging.WARNING, logger=_BASE_LOGGER):
+        assert adapter._sender_admitted("U9", ["U9"], allow_all_users=False) is True
+        assert adapter._sender_admitted("U8", [], allow_all_users=True) is True
+    assert [r.getMessage() for r in caplog.records if "BF-914" in r.getMessage()] == lines
 
 
 # --- Slack: the real adapter over a fake Web API -----------------------------------------------
@@ -1123,7 +1148,7 @@ Each Line cell occurs exactly once in its file after §7, as a whole stripped li
 | R2 | `src/probos/channels/base.py` | `if allow_all_users or user_id in {str(allowed) for allowed in allowed_user_ids}:` | `if allow_all_users:` | N1 (listed sender refused); N7 |
 | R3 | `src/probos/channels/base.py` | `if allow_all_users or user_id in {str(allowed) for allowed in allowed_user_ids}:` | `if user_id in {str(allowed) for allowed in allowed_user_ids}:` | N2 control; N6; N7 |
 | R4 | `src/probos/channels/base.py` | `self._log_refused_sender(user_id)` | `pass` | N3; N4 |
-| R5 | `src/probos/channels/base.py` | `if user_id in self._refused_senders:` | `if False:` | N3 (42 logged three times); N4 |
+| R5 | `src/probos/channels/base.py` | `if user_id in self._refused_senders:` | `if False:` | N3 (42 logged three times); N4 (`U1` named twice before the cap) |
 | R6 | `src/probos/channels/base.py` | `self._refused_senders.add(user_id)` | `pass` | N3 |
 | R7 | `src/probos/channels/base.py` | `if len(self._refused_senders) >= _REFUSED_SENDER_LOG_CAP:` | `if False:` | N4 |
 | R8 | `src/probos/channels/base.py` | `_REFUSED_SENDER_LOG_CAP = 256` | `_REFUSED_SENDER_LOG_CAP = 0` | N3 (no per-sender line) |
