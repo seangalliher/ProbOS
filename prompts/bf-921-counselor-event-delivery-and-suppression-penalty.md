@@ -2208,7 +2208,9 @@ async def test_concurrent_causes_send_one_agent_one_dm_an_hour(tmp_path, monkeyp
     hourly cooldown before its awaits and set it after them, and each listener runs as its own task
     (``runtime._emit_event_local``), so all four passed the check. The runtime is booted; the sender, the DM channel
     and the thread storage are its own, and the wrapper only records each send's result."""
-    rt = ProbOSRuntime(config=SystemConfig(), data_dir=tmp_path)
+    config = SystemConfig()
+    config.ward_room.enabled = True  # the sender's real channel and thread storage need the Ward Room, off in a default boot
+    rt = ProbOSRuntime(config=config, data_dir=tmp_path)
     await rt.start()
     try:
         counselor = rt.registry.get_by_pool("counselor")[0]
