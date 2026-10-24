@@ -81,6 +81,9 @@ class SlackAdapter(ChannelAdapter):
             logger.warning("AD-472: SlackAdapter has no bot_token; refusing to start")
             return
 
+        # BF-914 (#1621): say so at start when this adapter will admit no one, or everyone.
+        self._warn_sender_policy("slack", self._slack_config.allowed_user_ids, allow_all_users=self._slack_config.allow_all_users)
+
         if self._client is None:
             self._client = SlackClient(
                 bot_token=token,
@@ -189,7 +192,8 @@ class SlackAdapter(ChannelAdapter):
         cfg = self._slack_config
         if cfg.allowed_channel_ids and channel_id not in cfg.allowed_channel_ids:
             return ""
-        if cfg.allowed_user_ids and user_id not in cfg.allowed_user_ids:
+        # BF-914 (#1621): an empty allow-list admits no one unless allow_all_users is on.
+        if not self._sender_admitted(user_id, cfg.allowed_user_ids, allow_all_users=cfg.allow_all_users):
             return ""
 
         self._emit_received(channel_id=channel_id, user_id=user_id, platform="slack")
@@ -249,7 +253,8 @@ class SlackAdapter(ChannelAdapter):
         cfg = self._slack_config
         if cfg.allowed_channel_ids and channel_id not in cfg.allowed_channel_ids:
             return None
-        if cfg.allowed_user_ids and user not in cfg.allowed_user_ids:
+        # BF-914 (#1621): an empty allow-list admits no one unless allow_all_users is on.
+        if not self._sender_admitted(user, cfg.allowed_user_ids, allow_all_users=cfg.allow_all_users):
             return None
 
         return ChannelMessage(

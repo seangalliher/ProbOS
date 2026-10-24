@@ -4,6 +4,9 @@ OK when the operator hasn't configured Discord (no token).
 OK with token-present indication when config is set up (no live API
 call — discord.py opens a websocket on start that's too heavy for
 ``probos doctor``; we just verify config sanity).
+BF-914 (#1621): WARN when ``allow_all_users`` is on (every sender is
+admitted, slash commands included) or the user allow-list is empty (the
+bot refuses every sender).
 """
 
 from __future__ import annotations
@@ -50,6 +53,28 @@ class _ChannelDiscordCheck:
         # synchronous health check. Just report token presence + filters.
         allowed_channels = getattr(discord_cfg, "allowed_channel_ids", []) or []
         allowed_users = getattr(discord_cfg, "allowed_user_ids", []) or []
+        # BF-914 (#1621): who the bot will answer.
+        if getattr(discord_cfg, "allow_all_users", False):
+            return CheckResult(
+                outcome=CheckOutcome.WARN,
+                message=(
+                    "Channel discord: allow_all_users is on, so every sender who can reach "
+                    "the bot is admitted, including to the ship's slash commands (BF-914)"
+                ),
+                remediation=(
+                    "List your own Discord user id in channels.discord.allowed_user_ids and "
+                    "set channels.discord.allow_all_users: false."
+                ),
+            )
+        if not allowed_users:
+            return CheckResult(
+                outcome=CheckOutcome.WARN,
+                message="Channel discord: allowed_user_ids is empty, so the bot refuses every sender (BF-914)",
+                remediation=(
+                    "Set channels.discord.allowed_user_ids to the Discord user ids that may "
+                    "use the ship, your own first."
+                ),
+            )
         return CheckResult(
             outcome=CheckOutcome.OK,
             message=(

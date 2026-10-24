@@ -119,6 +119,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                          'token': '',
                          'allowed_channel_ids': [],
                          'allowed_user_ids': [],
+                         # BF-914 (#1621): the explicit opt-in to admit every sender (off).
+                         'allow_all_users': False,
                          'command_prefix': '!',
                          'mention_required': False,
                          'scout_channel_id': 0},
@@ -178,6 +180,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
                        'signing_secret': '',
                        'allowed_channel_ids': [],
                        'allowed_user_ids': [],
+                       # BF-914 (#1621): the explicit opt-in to admit every sender (off).
+                       'allow_all_users': False,
                        'default_thread_ts': True,
                        'channels': [],
                        'poll_interval_s': 8.0,

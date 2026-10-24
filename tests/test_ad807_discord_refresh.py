@@ -155,7 +155,9 @@ def _wire_on_message(
     invoked here, uses the namespace.
     """
     monkeypatch.setitem(sys.modules, "discord", ModuleType("discord"))
-    adapter = DiscordAdapter(runtime, DiscordConfig(enabled=True, token="dummy"))
+    # BF-914 (#1621): an empty user list now refuses every sender, so the
+    # sender these tests drive (42) is listed to reach the gate and the turn.
+    adapter = DiscordAdapter(runtime, DiscordConfig(enabled=True, token="dummy", allowed_user_ids=[42]))
     bot = _FakeBot()
     channel = _FakeChannel(4242)
     bot.channels[channel.id] = channel

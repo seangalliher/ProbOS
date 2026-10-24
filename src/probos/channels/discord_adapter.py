@@ -47,6 +47,8 @@ class DiscordAdapter(ChannelAdapter):
     Configuration:
         token: Discord bot token (required)
         allowed_channel_ids: list of channel IDs to listen on (empty = all)
+        allowed_user_ids: the users it answers (BF-914: empty = no one)
+        allow_all_users: answer every user, slash commands included (default off)
         command_prefix: prefix for ProbOS slash commands (default: "!")
         mention_required: if True, bot only responds when @mentioned
 
@@ -84,6 +86,9 @@ class DiscordAdapter(ChannelAdapter):
                 "in config or PROBOS_DISCORD_TOKEN environment variable."
             )
             return
+
+        # BF-914 (#1621): say so at start when this adapter will admit no one, or everyone.
+        self._warn_sender_policy("discord", self.discord_config.allowed_user_ids, allow_all_users=self.discord_config.allow_all_users)
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -284,12 +289,8 @@ class DiscordAdapter(ChannelAdapter):
             ):
                 return
 
-            # User filter — only respond to allowed users
-            if (
-                self.discord_config.allowed_user_ids
-                and message.author.id
-                not in self.discord_config.allowed_user_ids
-            ):
+            # User filter -- BF-914 (#1621): an empty allow-list admits no one unless allow_all_users is on
+            if not self._sender_admitted(str(message.author.id), self.discord_config.allowed_user_ids, allow_all_users=self.discord_config.allow_all_users):
                 return
 
             text = message.content.strip()

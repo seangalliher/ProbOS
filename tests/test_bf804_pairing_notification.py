@@ -410,7 +410,8 @@ async def test_slack_webhook_entry_point_still_returns_empty_on_undelivered_noti
         async def request_pairing(self, **_kw: Any) -> str:
             raise RuntimeError("the pairing store is unreachable at 10.0.0.7")
 
-    cfg = SlackConfig(enabled=True, bot_token="xoxb-test")
+    # BF-914 (#1621): U42 is listed so both halves reach the pairing gate, not the allow-list.
+    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_user_ids=["U42"])
     transport = httpx.MockTransport(lambda _r: httpx.Response(200, json={"ok": True}))
 
     # Closed explicitly: an un-awaited AsyncClient leaks a socket, and this

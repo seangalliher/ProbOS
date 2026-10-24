@@ -17,7 +17,7 @@ census:
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
   boolean_fields_reachable: 445
-  default_false: 224
+  default_false: 226
   default_true: 225
   default_false_armed_by_system_yaml: 85
   default_false_never_armed: 136
@@ -420,6 +420,25 @@ flags:
   evidence_to_promote: Arming it observes the operator's OS activity. That is a human decision,
     not a test result, so no amount of passing evidence promotes it into supported; it stays
     opt-in.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: channels.discord.allow_all_users
+  kind: consent-gate
+  profiles: []
+  evidence_to_promote: Not promotable. Arming it admits every Discord sender who can reach the
+    bot, the ship's slash commands included (BF-914, issue 1621). That is the Captain's decision,
+    not a test result; tests/test_bf914_channel_allow_lists.py proves the flag admits when on
+    and that an empty allowed_user_ids refuses every sender when off.
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: channels.slack.allow_all_users
+  kind: consent-gate
+  profiles: []
+  evidence_to_promote: Not promotable. Arming it admits every Slack sender the adapter polls or
+    receives, the ship's slash commands included (BF-914, issue 1621). A consent decision; the same
+    test file proves both directions.
   external_dependency: null
   requires: []
   conflicts_with: []

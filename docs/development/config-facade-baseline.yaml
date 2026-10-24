@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1888
-  field_definitions: 1877
+  canonical_dump_leaves: 1890
+  field_definitions: 1879
   incidental: 13
   own_models: 228
   owned: 296
   public_names: 309
-canonical_dump_sha256: a168a4691e28de9b8e754a790f0f452a9a6f75b5fa2a638193872c09298d2c7f
+canonical_dump_sha256: d7b6536f56d6c33110875035ba51ddad1ae2b6a955e3db3050827803324b816b
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -981,7 +981,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 2cf71c2db8a5035e963208c18d170ac407a1990b66637c76a2d5b0e081dd3089
+    schema_sha256: e7b65c8acce7bcbc846d2bd68249e440c730af79e8487aad2d15a5b14f74ac1a
     fields:
     - {default: DiscordConfig(...), name: discord}
     - {default: SlackConfig(...), name: slack}
@@ -1453,12 +1453,13 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 2564f97a71ef8e87fbb46da496d8e9485231e616ccbff765a53bb23c38eb3e7c
+    schema_sha256: e0115bab2eb445999f52dbcef2098cbd8e2ebdc264ec2c3b64c63f747ca258ef
     fields:
     - {default: 'False', name: enabled}
     - {default: '''''', name: token}
     - {default: '[]', name: allowed_channel_ids}
     - {default: '[]', name: allowed_user_ids}
+    - {default: 'False', name: allow_all_users}
     - {default: '''!''', name: command_prefix}
     - {default: 'False', name: mention_required}
     - {default: '0', name: scout_channel_id}
@@ -3296,13 +3297,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6656aa053b176b91bde23975f1bcfda7b1167c302e3b7ceaa6e8268f031c6cc9
+    schema_sha256: c9f365622ee1819ee4cea4574a27d90a5c3b920af6ba628d510b7efe2fa0cf2e
     fields:
     - {default: 'False', name: enabled}
     - {default: '''''', name: bot_token}
     - {default: '''''', name: signing_secret}
     - {default: '[]', name: allowed_channel_ids}
     - {default: '[]', name: allowed_user_ids}
+    - {default: 'False', name: allow_all_users}
     - {default: 'True', name: default_thread_ts}
     - {default: '[]', name: channels}
     - {default: '8.0', name: poll_interval_s}
@@ -3412,7 +3414,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a79d11fc49b5872200923a864858dc184a45313ad012e021af5978744bd541fa
+    schema_sha256: a9555e59afad2ab2e24a122d30809aa7004865610ffaa2c0f6869ee885c208b9
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
