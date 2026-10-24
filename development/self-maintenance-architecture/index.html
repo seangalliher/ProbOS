@@ -1,0 +1,2669 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/self-maintenance-architecture/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>AD-1299 - ProbOS Self-Maintenance Architecture - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ad-1299-probos-self-maintenance-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AD-1299 - ProbOS Self-Maintenance Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What ProbOS Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/self-perception-framing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Perception Framing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/architecture-review-2026-10-20/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Review (2026-10-20)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/hxi-glass-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HXI Glass Bridge (Design)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nooplex-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nooplex Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../platform-maturity-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Maturity Program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable-cognition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composable Cognition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose-and-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose and boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#existing-foundations-and-measured-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Existing foundations and measured limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-references-from-the-retired-supervised-worker-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design references from the retired Supervised Worker Doctor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-and-cognitive-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership and cognitive lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#separate-authority-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Separate authority classes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#native-campaign-governance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native campaign governance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#execution-backends-one-handoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution backends: one handoff
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#isolate-validate-promote-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Isolate, validate, promote, recover
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#d-b2-reframed-2026-10-11-partly-in-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D-B2: reframed 2026-10-11 (partly in-envelope)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art-and-blind-spots-2026-10-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art and blind spots (2026-10-11)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-bounded-implementation-epic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One bounded implementation epic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allocation-and-issue-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Allocation and issue reconciliation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="ad-1299-probos-self-maintenance-architecture">AD-1299 - ProbOS Self-Maintenance Architecture<a class="headerlink" href="#ad-1299-probos-self-maintenance-architecture" title="Permanent link">&para;</a></h1>
+<p><strong>Status: planned, not implemented.</strong> This is an OSS architecture decision, not
+an active repair campaign or permission to start one. No runtime, deployment,
+governance policy, or campaign state changes are authorized here.</p>
+<blockquote>
+<p><strong>Rescope 2026-10-11 (native owners).</strong> The Captain retired the Supervised
+Worker integration on 2026-10-10. This document now names native ProbOS owners
+for campaign state, authority, review, execution backends and release. The
+requirements that stood (separate grants, isolated build, independent review,
+immutable promotion, verified rollback, no in-place patching) are unchanged.
+D-B2 was <strong>reframed</strong> the same day (see "D-B2: reframed 2026-10-11"): no
+candidate code runs before the Captain approves its exact candidate digest,
+and agents may prepare candidates as text without the Captain; whether any
+campaign may run candidate code or advance a repair action without that
+approval remains the Captain's decision, with option (a), keep
+execute-after-approval, as the working default S1-S4 build under. Recorded in the append-only
+<a href="../../DECISIONS.md#ad-1299-2026-09-06---governed-probos-self-maintenance">decision record</a>
+under "Native rescope (2026-10-11)".</p>
+</blockquote>
+<p><strong>Tracking:</strong> <a href="https://github.com/seangalliher/ProbOS/issues/1352">Epic #1352</a>.
+See the <a href="../roadmap/#probos-self-maintenance-ad-1299">roadmap</a> and the append-only
+<a href="../../DECISIONS.md#ad-1299-2026-09-06---governed-probos-self-maintenance">decision record</a>.</p>
+<h2 id="purpose-and-boundary">Purpose and boundary<a class="headerlink" href="#purpose-and-boundary" title="Permanent link">&para;</a></h2>
+<p>A Utility-tier <strong>ProbOS Engineering Maintenance Agent</strong> diagnoses, repairs,
+maintains, and enhances ProbOS by composing its existing engineering and
+self-modification systems. It is an instructions-first <code>CognitiveAgent</code>, not
+another coding loop, scheduler, or root of trust. Its proposed implementation
+name is <code>EngineeringMaintenanceAgent</code>; this document does not claim that class
+is already implemented.</p>
+<p><strong>Governance is native and honest about its strength.</strong> Campaign identity and
+lifecycle live in the existing CrewSession/WorkItem owners; authority is the
+Captain's decision on an action-shaped approval, bound to one candidate digest,
+per consequential step; release activation is an out-of-process controller the
+Captain invokes. ProbOS cannot authorize its own promotion: it holds no
+promotion entry point.</p>
+<p><strong>What is enforced and what is only detected.</strong> Enforced: a human decision at
+every consequential step, compare-and-set state transitions in the existing
+stores, a controller process that does not depend on ProbOS being alive, and
+generation-checked activation and rollback. Refused: a receipt or review set
+that contradicts the candidate in the facts the binders check (commit, tree,
+status, schema and reviewer independence, plus the label when one is
+expected). Recorded, not refused: a sha256 for each piece of evidence; for a
+receipt, the SHA-256 of the supplied raw bytes, so any change to those bytes
+changes it; for a review set, a domain-separated SHA-256 of the
+candidate-bound projection of five review fields (attempt id, reviewer id,
+assignee id, reviewed tree, accepted), so a change to those five fields
+changes it and a change to any other review attribute does not. A consumer
+that retained an earlier trusted digest can therefore detect a change within
+what each digest covers. Not authenticated: the evidence's producer; unread
+fields are not asserted valid. Not prevented: writes by any process that runs
+under ProbOS's own OS identity to ProbOS state, the release root or the
+evidence (AD-1315 Boundary: local-host evidence, not a defense against
+administrator/root/kernel compromise). Not contained: candidate code that a
+campaign runs (tests, shadow run) executes under the Captain's OS identity, so
+approval decides what runs but does not confine it. Excluding same-identity
+writers needs a separate owner identity or OS isolation with privileged
+provisioning; that is D-B2 option (b), the Captain's decision.</p>
+<h2 id="existing-foundations-and-measured-limits">Existing foundations and measured limits<a class="headerlink" href="#existing-foundations-and-measured-limits" title="Permanent link">&para;</a></h2>
+<p>These are inspected source contracts, not a claim that a running vessel has
+exercised the proposed end-to-end path.</p>
+<table>
+<thead>
+<tr>
+<th>Foundation</th>
+<th>Reuse and boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../../src/probos/cognitive/engineering_officer.py">EngineeringAgent</a></td>
+<td>The existing Domain-tier Engineering officer provides analysis and optimization proposals. Keep that role and the chain of command; the new Utility agent owns the scoped maintenance-facing cognitive lifecycle, not department leadership.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/repair_brief.py">RepairBrief</a> and <a href="../../src/probos/cognitive/repair_dispatch.py">RepairDispatcher</a></td>
+<td>AD-1172 already carries a harness-neutral brief and files one action-shaped Captain approval (<code>REPAIR_ACTION = "dispatch"</code>, <code>capability_request.py:116</code>) without running a harness. Reuse its fault identity, brief, and approval surface; do not add a parallel fault store or target chooser.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/repair_verification.py">Repair verification</a></td>
+<td>The existing verifier labels a changed error signature <code>repaired</code> even when the operation still fails (lines 242-248). Preserve that fault-specific meaning; it is not acceptance evidence for the requested behavior or runtime promotion.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/crew_session.py">CrewSessionService</a> and the WorkItem store (<a href="../../src/probos/workforce.py">workforce.py</a>)</td>
+<td>AD-1124..1128: durable parent/child work, owned steps, <code>open_or_resume</code> (<code>crew_session.py:3529</code>), <code>compare_and_set_recovery</code> (:5593), effect-attempt claims (<code>workforce.py:3985</code>), verification CAS (:9608), terminal transition with trust (:10002). The native owner of campaign identity and lifecycle.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/work_item_steps.py">Owned-step review records</a></td>
+<td><code>ReviewedStepResult</code> (<code>work_item_steps.py:506</code>) carries submission digest, reviewer and review attempt; reviewer must differ from assignee (lines 460, 609; <code>workforce.py:3509</code>). The native owner of independent-review provenance.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/delegated_approvals.py">Chain-of-command approvals</a> and <a href="../../src/probos/approval_authority.py">ApprovalAuthorityStore</a></td>
+<td>AD-1213: every <code>action</code> request stays with the Captain alone (<code>delegated_approvals.py:12-13</code>); authority records cannot exist without <code>expires_at</code> (<code>approval_authority.py:62</code>).</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/execution/authority.py">ProtectedExecutionAuthority</a> and <a href="../../src/probos/execution/effect_broker.py">GovernedEffectBroker</a></td>
+<td>AD-1315/AD-1316: manifests, generations, grants, operation/attempt identity, <code>unknown</code>/<code>blocked</code> states and reconciliation. Default OFF (<code>ProtectedExecutionConfig.enabled=False</code>, <code>profile="ordinary"</code>, <code>effect_broker_enabled=False</code>). Records evidence; governs only <code>ToolExecutor</code>/<code>ToolRegistry</code> calls. Not campaign state (AD-1316: the broker owns "not ... campaign state").</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/architect.py">ArchitectAgent</a></td>
+<td>Grounded engineering proposals. Retain its existing role; adding a Utility maintenance agent does not reclassify the Architect.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/builder.py">Builder and execute_approved_build</a></td>
+<td>Existing <code>BuildSpec</code> and build execution (<code>builder.py:2629</code>). The helper writes into the supplied <code>work_dir</code>; its branch creation does not establish runtime isolation. Its embedded code review (<a href="../../src/probos/cognitive/code_reviewer.py">CodeReviewAgent</a>) is a soft gate, not independent review.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/swe_harness/native_builder.py">NativeBuilderHarness</a></td>
+<td>Existing ProbOS coding harness (<code>run_build(spec, work_dir)</code> returns <code>file_changes</code>, line 103). Its tools run through <code>ToolExecutor</code>, so the AD-1316 broker can govern them when strict mode is on. A directory named in a prompt does not confine tools.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/copilot_adapter.py">CopilotBuilderAdapter</a></td>
+<td>Existing GHCP backend (<code>execute</code> returns <code>CopilotBuildResult.file_blocks</code>). Runs with <code>PermissionHandler.approve_all</code> (line 510); its tools run inside the Copilot SDK, outside <code>ToolExecutor</code>, so the broker never sees them.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/self_mod.py">SelfModificationPipeline</a></td>
+<td>Reuse design, validation, sandbox, probationary trust, and behavioral monitoring through injected dependencies. Maintenance candidates must bind registration and pool creation to the shadow runtime, never the active runtime.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/cognitive/code_validator.py">CodeValidator</a></td>
+<td>Validates generated agent source, including agent-schema conformance. It is not a general validator for arbitrary runtime modules and is not a substitute for isolation or repository gates.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/agents/system_qa.py">SystemQAAgent</a> and <a href="../../src/probos/agents/red_team.py">RedTeamAgent</a></td>
+<td>Reuse QA and adversarial checks with campaign-bound inputs and results. Merely registering an agent or producing a verdict does not prove the candidate was tested.</td>
+</tr>
+<tr>
+<td><a href="../../src/probos/consensus/trust.py">TrustNetwork</a> and <a href="../../src/probos/cognitive/episodic.py">episodic memory</a></td>
+<td>Learn from verified attempted outcomes; neither a high trust score nor a remembered lesson grants authority.</td>
+</tr>
+<tr>
+<td><a href="../../scripts/run_test_gate.py">Repository test gate</a></td>
+<td>Reuse the canonical frozen-tree validation and receipts. A success receipt binds <code>tree.head</code>, <code>tree.head_tree</code> and <code>tree.index_tree</code> and is refused for an uncommitted index (lines 1659-1676). A harness exit or a selected subset is not the broad gate.</td>
+</tr>
+</tbody>
+</table>
+<p>The closed <a href="https://github.com/seangalliher/ProbOS/issues/1095">self-diagnosis and repair epic #1095</a>
+owns AD-1166 through AD-1173. Its closure records the shipped fault/diagnose/repair
+loop; its original problem statement is historical, not a current absence
+claim. AD-1299 extends those foundations with governed campaigns and immutable
+runtime promotion rather than reopening or duplicating them.</p>
+<p><strong>Measured gaps.</strong> There is no promotion or rollback step in the native repair
+loop and no release, updater, promotion or rollback module for ProbOS builds
+(<code>startup/rollback.py</code> unwinds a failed start; <code>turn_promotion.py</code> promotes
+conversational turns). <code>verify_and_close</code> has no production caller.
+<code>FaultReportStore.resolve</code> (<code>fault_report.py:909</code>) has no expected-state check,
+and when its database write fails it logs and keeps the new status in its cache.
+<code>/api/health</code> (<code>routers/system.py:35</code>) reports liveness but no release identity.</p>
+<p><strong>Paths that patched the running checkout (closed by BF-897, #1559).</strong>
+<code>WorktreeManager.merge_to_main</code> used to check out <code>main</code> and merge in the
+repository root, and <code>/api/build/approve</code> (<code>routers/build.py</code>) used to build with
+the repository root as <code>work_dir</code>. Both now refuse with a reason, and
+<code>execute_approved_build</code> refuses any <code>work_dir</code> inside the checkout the runtime
+started from (<code>builder_paths.operator_checkout_refusal</code>). It compares locations,
+not the repository a <code>.git</code> entry names, and assumes the runtime's environment
+sets no <code>GIT_DIR</code> or <code>GIT_WORK_TREE</code>; both limits are recorded on #1523.
+<code>WorktreeManager.remove</code>
+(<code>worktree remove --force</code>, <code>branch -D</code>) acts on the build's own worktree and
+branch, not on the operator's checkout. <strong>AD-1299 work must still never route
+through <code>merge_to_main</code>;</strong> delivery is the pull-request route (AD-1336 child 6).</p>
+<h2 id="design-references-from-the-retired-supervised-worker-doctor">Design references from the retired Supervised Worker Doctor<a class="headerlink" href="#design-references-from-the-retired-supervised-worker-doctor" title="Permanent link">&para;</a></h2>
+<p>The retired Doctor solved three problems this epic also has. They are carried
+as <strong>ideas, not code</strong>; nothing is copied, ported, imported or wrapped. Each is
+mapped to its native owner so the epic does not grow a second campaign engine.</p>
+<ul>
+<li><strong>(a) Isolated repair with verified promotion and rollback.</strong> Each attempt in
+  its own worktree with its own identity; preserve operator work; never force
+  cleanup; promote only a clean committed tree into a new immutable install;
+  compare-and-set activation; inspect, never replay, a lost reply; roll back only
+  if the active generation still matches; an unknown rollback blocks. Native
+  owner: S3 (campaign worktrees) and S4 (release controller). Net-new work.</li>
+<li><strong>(b) Typed incident and rescue records.</strong> Versioned typed records with
+  expected-state transitions; <code>unknown</code> is terminal until reconciled; budgets
+  bound attempts. Native owner: the fault and filing owners (<code>FaultReport</code>,
+  <code>fault_issue_filings</code>), CrewSession/WorkItem lifecycle, and AD-1316's
+  operation/attempt identity. No second incident store or state machine.</li>
+<li><strong>(c) A campaign evidence bundle.</strong> Link already-recorded evidence for one
+  candidate to the exact commit and tree; grants no authority; missing proof
+  stays explicitly unavailable. Native owner: the S1 <code>RepairCandidate</code> and
+  evidence-link contract, reusing the gate receipt rather than re-deriving it.</li>
+</ul>
+<h2 id="ownership-and-cognitive-lifecycle">Ownership and cognitive lifecycle<a class="headerlink" href="#ownership-and-cognitive-lifecycle" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TD
+    Signals[Faults, diagnostics, upkeep requests, approved goals]
+    Agent[Engineering Maintenance Agent - Utility]
+    Session[CrewSession parent WorkItem - campaign]
+    Captain[Captain approval per step - CapabilityRequestStore]
+    Architect[Existing Architect and approved BuildSpec]
+    Native[NativeBuilderHarness]
+    GHCP[CopilotBuilderAdapter - GHCP]
+    Candidate[Campaign worktree and shadow validation]
+    Evidence[QA, Red Team, independent review, frozen gate]
+    Link[RepairCandidate evidence links]
+    Release[Out-of-process release controller]
+    Health[Health observation or rollback]
+    Signals --&gt; Agent --&gt; Session
+    Session --&gt; Captain
+    Captain --&gt; Architect
+    Architect --&gt; Native
+    Architect --&gt; GHCP
+    Native --&gt; Candidate
+    GHCP --&gt; Candidate
+    Candidate --&gt; Evidence --&gt; Link --&gt; Session
+    Captain --&gt; Release --&gt; Health --&gt; Session</code></pre>
+<ul>
+<li><strong>Perceive:</strong> read scoped diagnostics, existing fault records, source/test
+  evidence, and relevant episodes. Resolve operational paths and release identity
+  from the process/deployment authority, never from a repository-relative guess.</li>
+<li><strong>Decide:</strong> use instructions-driven reasoning to diagnose, classify the work,
+  choose an existing engineering capability, and propose a bounded objective.
+  An agent's classification is a proposal; the Captain's approval is authority.</li>
+<li><strong>Act:</strong> obtain an Architect-reviewed contract, open the campaign as a
+  CrewSession, prepare the candidate as text, request each consequential step
+  through the existing approval surface, and collaborate with Builder, QA, and
+  Red Team within the admitted campaign. No candidate code runs before the
+  Captain approves its exact candidate digest. Deterministic services own transitions; agents own engineering
+  judgment (Design Principle #1).</li>
+<li><strong>Report:</strong> project campaign evidence into existing work/approval surfaces and
+  episodic memory. Distinguish proposed, built, tested, promoted, healthy, rolled
+  back, blocked, failed, and unknown outcomes. A report or a work-item status is
+  not campaign completion; completion is the linked evidence chain below.</li>
+</ul>
+<p>No second durable campaign database or scheduler is introduced. New
+dependencies use narrow injected protocols; eventual configuration belongs in
+the existing Pydantic models. Autonomous repair, maintenance, and enhancement
+admission default to disabled. When an owner is unavailable, diagnosis and
+proposals remain available; mutation and promotion are blocked with an explicit
+escalation to the Captain, never a silent refusal (Design Principle #13).</p>
+<h2 id="separate-authority-classes">Separate authority classes<a class="headerlink" href="#separate-authority-classes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Permitted objective</th>
+<th>Required authority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Repair</td>
+<td>Restore an existing approved behavior against a reproduced defect and a discriminating regression test.</td>
+<td>Captain approval per consequential step, including approval of each exact candidate digest before its code runs. An explicit time-bounded repair delegation (repository, paths, tools, risk, budgets, allowed effects fixed in advance) exists only if the Captain chooses D-B2 option (b) or (c); under the working default (a) there is none. No feature expansion.</td>
+</tr>
+<tr>
+<td>Maintenance</td>
+<td>Preserve approved behavior through declared upkeep, supported dependency refresh, performance work, or bounded operational maintenance.</td>
+<td>A separate maintenance grant with compatibility criteria, allowed operations, schedule, and resource limits. A repair grant does not imply it. A scheduled (unattended) grant runs candidate code without per-candidate approval, so it exists only under D-B2 option (b) or (c); under the working default (a) each maintenance campaign is Captain-approved per step, including each candidate digest before its code runs.</td>
+</tr>
+<tr>
+<td>Enhancement</td>
+<td>Add or intentionally change behavior, capability, public contracts, or architecture.</td>
+<td>Explicit Captain-approved scope and architecture decision, followed by its own accepted build contract. Neither repair nor maintenance authority implies enhancement authority.</td>
+</tr>
+</tbody>
+</table>
+<p>Authority is checked at admission and every consequential boundary. Expiry,
+revocation, scope drift, mixed-class changes, or an unclassified effect pauses
+work for reauthorization; changing a label never widens a grant. Security,
+governance, deployment-control, and data-migration effects require explicit
+approval regardless of the proposed class. Destructive mesh intents retain
+consensus requirements; consensus and trust do not replace Captain approval.</p>
+<p>The agent, Builder, and either backend cannot be granted authority to change
+approval rules, grants, review requirements, completion criteria, accepted
+evidence, or the release controller. Changes to the release controller itself
+are ordinary enhancements under their own Captain-approved AD and review; a
+campaign cannot weaken the controls judging it. Under the in-envelope design
+this is enforced by the Captain's per-step decision; recorded evidence digests
+let a change be detected by a consumer holding an earlier trusted digest; it is
+not an OS-level write exclusion (that would be D-B2 option (b)).</p>
+<h2 id="native-campaign-governance">Native campaign governance<a class="headerlink" href="#native-campaign-governance" title="Permanent link">&para;</a></h2>
+<p>Replaces the withdrawn <code>SupervisedCampaignAdapter</code> v1. There is no adapter and
+no external campaign service: each requirement has a native owner.</p>
+<table>
+<thead>
+<tr>
+<th>Contract area</th>
+<th>Native owner and v1 semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity</td>
+<td>A repair campaign is one CrewSession parent WorkItem; its id is the campaign key. Each repair attempt is an owned step with its own attempt identity. Backend identity is attempt metadata, never the campaign key. Repository, base commit and candidate identity are the S1 <code>RepairCandidate</code>.</td>
+</tr>
+<tr>
+<td>Lifecycle</td>
+<td>CrewSession/WorkItem compare-and-set transitions (<code>compare_and_set_recovery</code>, <code>transition_work_item</code>, verification CAS, terminal transition with trust). Effects an attempt produces use AD-1316 operation/attempt identity; <code>unknown</code> is terminal until reconciled and is never replayed.</td>
+</tr>
+<tr>
+<td>Authority</td>
+<td>The Captain's decision on an action-shaped request in <code>CapabilityRequestStore</code>, bound to the candidate digest, with an expiry, re-checked at each boundary. <code>action</code> requests stay with the Captain alone (<code>delegated_approvals.py:171-172</code>: every action, repair included, is Captain-reserved). The Captain approves each exact candidate digest before its code runs. Agents may prepare candidates as text without approval. Delegated/autonomous grants exist only under D-B2 option (b) or (c); the working default (a) has none.</td>
+</tr>
+<tr>
+<td>Candidate</td>
+<td><code>RepairCandidate</code>: base commit, candidate commit, tree, and the reviewed index tree, which must equal the committed tree. A path or branch name alone is not candidate identity.</td>
+</tr>
+<tr>
+<td>Evidence</td>
+<td>Insert-only evidence links keyed by the candidate digest: gate receipt, review set, Captain approvals, promotion and health observation. Each link is <code>present</code>, <code>refused</code> (contradicts the candidate) or <code>unavailable</code> (cannot be read); anything other than <code>present</code> blocks completion and is never inferred. No raw prompts, credentials, or tool payloads in evidence.</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td>Reconcile before retry or backend switch, through CrewSession recovery and AD-1316 reconciliation. Duplicate submissions resolve to the existing operation; no transport-level exactly-once claim.</td>
+</tr>
+<tr>
+<td>Results</td>
+<td>Distinguish admitted, in progress, blocked/unknown, failed/cancelled, completed and rolled back. Acknowledgement is not execution, execution is not promotion, and a backend's success flag cannot close a campaign.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Enforced, refused, recorded (repeated because it is load-bearing).</strong>
+Enforced: the Captain decides each consequential step; store transitions are
+compare-and-set; review records refuse a reviewer equal to the assignee.
+Refused by the S1 binders: a receipt or review set that contradicts the
+candidate in the facts they check (commit, tree, status, schema and reviewer
+independence, plus the label when one is expected). Recorded: a sha256 per
+piece of evidence. A receipt's covers its supplied raw bytes, so any change to
+them changes it. A review set's covers only the candidate-bound projection of
+five review fields (attempt id, reviewer id, assignee id, reviewed tree,
+accepted): a change to those changes it, a change to any other review
+attribute (for example a submission digest) does not. A consumer that retained
+an earlier trusted digest can detect a change only within what each digest
+covers; an edit to an unread receipt field, or a review re-labelled to another
+valid independent value, still binds. Not authenticated and not prevented: the
+producer's identity, and same-OS-identity writes to stores or evidence. Never
+write "the candidate cannot write X", "every edit is refused" or "the digest
+covers the whole review" where the platform only records what it records.</p>
+<h2 id="execution-backends-one-handoff">Execution backends: one handoff<a class="headerlink" href="#execution-backends-one-handoff" title="Permanent link">&para;</a></h2>
+<p>Replaces the Worker-dispatched backend model. Both backends already exist and
+already share one native handoff: a <code>BuildSpec</code> goes in, a list of file changes
+comes out, and <code>execute_approved_build(work_dir=&lt;campaign worktree&gt;)</code> applies it.</p>
+<ul>
+<li><strong>Native:</strong> <code>NativeBuilderHarness.run_build(spec, work_dir)</code> returns
+  <code>file_changes</code>. Tool calls pass through <code>ToolExecutor</code>, which AD-1316 can
+  govern in strict mode.</li>
+<li><strong>GHCP:</strong> <code>CopilotBuilderAdapter.execute</code> returns <code>file_blocks</code>. Its tools run
+  inside the Copilot SDK with <code>approve_all</code>, outside <code>ToolExecutor</code>. A GHCP
+  attempt is labelled <strong>tools not confined, not broker-governed</strong>; it requires a
+  per-attempt Captain approval and is never eligible for a delegated grant.</li>
+</ul>
+<p>A backend run that executes code or writes outside the proposal (the native
+harness's <code>run_command</code>, which its build prompt uses to run pytest, its
+<code>write_file</code>/<code>edit_file</code>, which accept absolute paths, or any GHCP tool) counts
+as running candidate code, so it happens only after the Captain approves the
+exact candidate digest. Before that approval a candidate is produced as text
+only (file changes returned, not applied) and a deterministic service writes it
+into the campaign worktree after checking that every path is relative and stays
+inside the worktree.</p>
+<p>Backend choice must not change <strong>campaign identity, authority, review, evidence,
+completion, promotion, or rollback semantics</strong>. Every backend output is a
+provisional proposal that ProbOS validates, commits in the campaign worktree and
+identifies by tree hash. GHCP-authored candidates still pass CodeValidator (where
+applicable), QA, Red Team and independent review. No backend-specific waiver.</p>
+<p>A switch keeps the campaign, operation identity, budgets and history. The prior
+attempt is reconciled first; an unknown attempt blocks automatic fallback. Only
+evidence for the exact unchanged candidate can remain current.</p>
+<p><strong>Dual-backend support is claimed only after a real GHCP run</strong> of the milestone.
+Conformance fixtures with a fake SDK prove the handoff, not the backend.</p>
+<h2 id="isolate-validate-promote-recover">Isolate, validate, promote, recover<a class="headerlink" href="#isolate-validate-promote-recover" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Pin and isolate.</strong> Record the approved base and active release identities.
+   Create a campaign worktree and constrained execution environment. Preserve
+   existing worktrees and uncommitted changes; never force-remove, reset or stash.
+   No backend may be given write access to the active runtime tree, environment,
+   packages, data, governance state, or deployment selector. Check canonical
+   paths, junctions/symlinks, hard links, subprocess working directories, and
+   tool roots. A worktree is isolation of source changes, not a sandbox for
+   arbitrary build/test code. Never route through <code>merge_to_main</code>,
+   <code>WorktreeManager.remove</code> or the repository-root <code>work_dir</code> of
+   <code>routers/build.py</code>.</li>
+<li><strong>Diagnose, prepare and approve.</strong> Reuse the existing fault/repair flow,
+   Architect and <code>BuildSpec</code>, and produce the candidate as text (see "Execution
+   backends: one handoff"); a deterministic service writes it into the campaign
+   worktree and commits it, giving one <code>RepairCandidate</code> digest. <strong>No candidate
+   code runs before the Captain approves that exact candidate digest</strong>, having
+   seen its diff. A change after approval (a fix for a failing test or a review
+   finding) is a new candidate and needs a new approval before its code runs.
+   Assert the reproduction's premise before trusting it. Bind every mutation to
+   the accepted footprint. No active-runtime <code>AgentPatcher</code>, monkey-patching,
+   module reload, live registration, or in-place package update is a
+   maintenance deployment path.</li>
+<li><strong>Shadow validation</strong> (only for an approved candidate digest). Run a separate candidate process with disposable or
+   verified snapshot-derived data, separate ports/identities, and blocked or
+   explicitly brokered external effects. Prove interpreter/import origins are
+   the candidate, not the parent's editable installation. Apply <code>CodeValidator</code>
+   before every generated/restored agent import, retain sandbox/probation/QA/
+   behavioral checks, and use repository static/security checks for core code.
+   Do not weaken agent-schema validation to make arbitrary core modules pass.
+   Replaying stored failing arguments requires authority for the operation's
+   effects and an isolated target; a trace is not permission to repeat a live
+   destructive action. Test the intended behavior, not just disappearance of
+   the original error signature.</li>
+<li><strong>Freeze and verify</strong> (only for an approved candidate digest; the Captain's
+   approval in step 2 is the change approval and precedes all of this). Run
+   focused regressions through affected production consumers, then System QA and
+   Red Team as owned-step reviews (<code>ReviewedStepResult</code>), each by an agent and
+   context different from the builder's. Repairing a finding produces a new
+   candidate, which returns to step 2 for approval before its code runs. Then
+   run the final canonical repository gate. Every review record and the gate
+   receipt must name the same tree, equal to the receipt's <code>tree.head_tree</code> and
+   <code>tree.index_tree</code>; the S1 evidence links refuse anything else. The Builder's
+   internal <code>CodeReviewAgent</code> check is never relabelled as independent review.
+   Any source, test, dependency, configuration, or artifact change invalidates
+   affected evidence. No unresolved Critical/High finding and no missing/unknown
+   required check can pass.</li>
+<li><strong>Prepare immutable release.</strong> Produce a content-addressed release manifest
+   binding source tree, executable artifacts, locked dependencies, relevant
+   configuration, the evidence-link digest, and the prior known-good release.
+   Verify the staged bytes again before activation: the controller re-derives
+   the expected release bytes from the approved tree id and refuses a staged
+   release that differs. Whether git re-checks object hashes on every read is
+   not verified, so this does not claim to detect a tampered object store. Retain the previous release
+   and a verified recovery path. Irreversible migrations are outside ordinary v1
+   admission; data-affecting work needs an explicitly approved compatibility and
+   restoration proof.</li>
+<li><strong>Promote externally.</strong> An out-of-process release controller (a
+   standard-library script under <code>scripts/</code>) activates a release only on an
+   explicit Captain command; the Captain running it is the authorization. It
+   journals intent (append-only, fsynced), checks the expected active
+   generation, and switches an atomic selector (temporary file plus
+   <code>os.replace</code>) or performs a controlled restart. It never overwrites files a
+   running process imported. ProbOS, the Builder and either backend hold no
+   promotion entry point. The controller works while ProbOS is stopped. Moving
+   the Captain's own launch onto the selector is an opt-in deployment change the
+   Captain makes.</li>
+<li><strong>Observe and roll back.</strong> The controller observes <code>/api/health</code>, extended in
+   S4 to report the active release identity, plus readiness, the targeted
+   repaired behavior, and observation criteria fixed before promotion. Missing
+   or ambiguous health is not healthy. On failure the controller restores the
+   prior immutable release, only if the active generation still matches, and
+   verifies its health; a changed generation or an unknown rollback outcome
+   blocks and escalates. Code rollback is not data rollback: prohibit automatic
+   reuse of incompatible data and escalate when the approved restore procedure
+   cannot safely run. Recovery does not depend on ProbOS being healthy or
+   running.</li>
+</ol>
+<p><strong>Completion requires the chain</strong>, not its individual producers: accepted
+contract, isolated build, current validation and independent review, verified
+immutable promotion, and passed post-promotion observation, each a <code>present</code>
+evidence link for the same candidate. Any required remote publication and issue
+closure must also be read back from their authorities. Rolled back is a recorded
+outcome, not a successful enhancement. Keep campaign completion separate from
+build success and from restoring service after failure.</p>
+<p>Record diagnoses, attempted actions, reviewer findings, verification outcomes,
+promotion, and rollback as linked episodes with evidence references. Trust
+updates retain raw <code>(alpha, beta)</code> parameters and are idempotent over verified
+attempted outcomes; no-attempt/blocked outcomes do not earn success credit.
+Lessons, Hebbian routing, and behavioral monitoring can improve future proposals
+but cannot modify authority or waive future gates.</p>
+<h2 id="d-b2-reframed-2026-10-11-partly-in-envelope">D-B2: reframed 2026-10-11 (partly in-envelope)<a class="headerlink" href="#d-b2-reframed-2026-10-11-partly-in-envelope" title="Permanent link">&para;</a></h2>
+<p>Re-run under the standing rule "reframe the requirement before recommending a
+park" (PR #1507). The original park (admit privileged OS isolation before any
+delegated or autonomous grant) is replaced by the following.</p>
+<p><strong>What it protects, from whom.</strong> It protects the release root, controller,
+campaign and approval stores and evidence from the code a campaign itself runs
+(tests, shadow run, GHCP's unconfined tools) and from same-user processes.
+Nothing on main excludes them: AD-993 is Tier 1, same-user, "NOT a
+kernel-enforced containment boundary" (<code>execution/isolation.py</code>), and the only
+tier built (<code>config_models/operations.py</code>); AD-1315/1316 give detection plus
+confinement of tool calls, and are default OFF. Unlike #1239, the remaining
+writer is the code under test, so the guarantee cannot simply be narrowed.
+Captain-per-step approval decides; it does not contain. The real line between
+per-step and delegated work is AD-1213, which keeps every action (repair
+included) with the Captain (<code>delegated_approvals.py:171-172</code>), and whether a
+human approved the exact code before it ran.</p>
+<p><strong>In-envelope now (adopted as constraints; they strengthen a control).</strong>
+- <strong>N1, execute-after-approval:</strong> no candidate code runs before the Captain
+  approves its exact candidate digest. Agents prepare candidates as text, and a
+  deterministic service writes them into a campaign worktree after checking
+  every path. Any later change is a new candidate needing a new approval.
+- <strong>N3, promotion-time re-derivation:</strong> the controller re-derives release bytes
+  from the approved tree and refuses a staged release that differs. Whether git
+  re-checks object hashes on every read is not verified, so N3 does not claim
+  to detect a tampered object store.
+- <strong>N2, optional and Windows-only:</strong> the strict broker confines the agent's own
+  tool writes to the campaign worktree and refuses shell effects. That the
+  broker maps <code>run_command</code> to the shell class is not verified here.</p>
+<p>These must never claim containment, end-to-end autonomy, governance the
+candidate cannot write, or that approval prevents tampering.</p>
+<p><strong>Detection-only, named for S2 (C12): ledger reset by deleting the file.</strong> The S1b
+evidence ledger (<code>repair_evidence.db</code>) detects a changed digest only for a reference the
+consumer re-presents, and only while the file exists. A writer with ProbOS's own OS
+identity can delete the file; <code>start()</code> then creates an empty ledger and the first
+digests are gone without a signal. This is neither refused nor prevented. S2 wiring must
+decide how a recreated ledger is detected (for example a ledger identity recorded at
+campaign admission) and must derive a fresh reference per gate run
+(<code>prompts/ad-1299-s1b-evidence-completion-ledger.md</code>, "Blind spots named").</p>
+<p><strong>The Captain's decision.</strong> May a campaign run candidate code or advance a
+repair action without your approval of that exact candidate? (a) No: keep
+execute-after-approval (recommended, and the working default S1-S4 build
+under). (b) Yes, inside an admitted isolation AD (separate owner UID or AD-995
+Tier 2) plus a scoped AD-1213 amendment. (c) Yes, uncontained, scoped and
+expiring (not recommended). Narrower delegation limited to reversible classes
+(for example test- or docs-only diffs) is also the Captain's: it changes the
+AD-1213 floor. After (a) nothing further is needed; after (b) or (c), S2b adds
+delegated repair grants and scheduled maintenance grants.</p>
+<h2 id="prior-art-and-blind-spots-2026-10-11">Prior art and blind spots (2026-10-11)<a class="headerlink" href="#prior-art-and-blind-spots-2026-10-11" title="Permanent link">&para;</a></h2>
+<p>A bounded review (the standing "anything not considered, or prior work to leverage" pass, PR #1505) found no change to the rescope or to S1a. Evidence links follow the shape of an
+in-toto Statement, a typed kind bound to a subject digest, without its signing envelope: a hash is integrity, not authenticity (AD-1047), so no envelope is emitted until key
+infrastructure exists. S1a's 40/64-hex commit and tree ids are the in-toto <code>gitCommit</code>/<code>gitTree</code> DigestSet shapes. The release controller adopts update-framework and boot-assessment
+lessons: a monotonic activation sequence (not release identity) for compare-and-set, fail-closed on absent state, verify before persisting, an <code>indeterminate</code> then <code>good</code> or <code>bad</code>
+release status with <code>bad</code> never auto-selected, retention that keeps the active and rollback releases, and validation in the release's own environment. TUF role signing and OS-level
+deployment were considered and rejected or deferred: they need keys or privilege (D-B2 option (b), the Captain's) and add nothing against a writer with ProbOS's own OS identity. The full table, with
+sources and what was absorbed, adapted, rejected or deferred, is in <code>prompts/ad-1299-s1a-repair-candidate.md</code>. Review round 1 of S1a (Amendment 1) separately corrected the
+binding's claim to "refuses what contradicts the candidate in the facts it checks; records a sha256 per piece of evidence", and round 2 scoped that digest (a receipt's raw bytes; a review set's five projected fields only) (see "Native campaign governance").</p>
+<p><strong>Named constraints for later slices</strong> (acceptance criteria, not new scope):</p>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Slice</th>
+<th>Constraint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C8</td>
+<td>S1b</td>
+<td>The review binder takes a required <code>expected_assignee</code> (the campaign's builder) and refuses a set in which any review names a different assignee. Built in S1b.</td>
+</tr>
+<tr>
+<td>C9</td>
+<td>S1b</td>
+<td>A required-evidence-kinds set per authority class. Completion means every required kind is <code>present</code> for the same candidate digest; extra kinds never substitute. Built in S1b.</td>
+</tr>
+<tr>
+<td>C10</td>
+<td>S2/S4</td>
+<td>Two independent requirements for forward promotion: <code>base_commit</code> equals the approved base, and <code>candidate_commit</code> descends from the active release's commit. Promotion refuses if either fails. A recovery rollback to a retained release is a separate path governed by C1 and C4.</td>
+</tr>
+<tr>
+<td>C11</td>
+<td>S3</td>
+<td>Every regression probe that passes on the active release must also pass on the candidate (comparison with the incumbent).</td>
+</tr>
+<tr>
+<td>C1</td>
+<td>S4</td>
+<td>Activation compare-and-set keys on a monotonic, never-reused activation sequence. A rollback is a new sequence entry pointing at the old release.</td>
+</tr>
+<tr>
+<td>C2</td>
+<td>S4</td>
+<td>An absent, unreadable or zero journal or generation blocks activation and rollback; there is no default value.</td>
+</tr>
+<tr>
+<td>C3</td>
+<td>S4</td>
+<td>The controller records a new active state only after staged-byte verification and the generation check pass. Test: a failure injected between verify and persist leaves the prior state unchanged.</td>
+</tr>
+<tr>
+<td>C4</td>
+<td>S4</td>
+<td>Release status is <code>indeterminate</code>, then <code>good</code> or <code>bad</code>. Only the observation window promotes to <code>good</code>, and a <code>bad</code> release is never auto-selected.</td>
+</tr>
+<tr>
+<td>C5</td>
+<td>S4</td>
+<td>Liveness from <code>/api/health</code> alone is never "healthy". Readiness plus the repaired-behavior probe are required.</td>
+</tr>
+<tr>
+<td>C6</td>
+<td>S4</td>
+<td>The release environment is built from the tree's <code>uv.lock</code>. The manifest records the interpreter version and an installed-environment digest, and shadow validation runs in that environment.</td>
+</tr>
+<tr>
+<td>C7</td>
+<td>S4</td>
+<td>Garbage collection never removes the active release or the rollback target. Release trees share no hard links with mutable paths, and staged bytes are re-hashed before activation.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="one-bounded-implementation-epic">One bounded implementation epic<a class="headerlink" href="#one-bounded-implementation-epic" title="Permanent link">&para;</a></h2>
+<p>Use one AD and one epic with ordered acceptance slices, not a new issue per
+component. Existing fault/repair and platform-maturity owners retain their scope.
+Split only if implementation establishes a separately owned, independently
+testable blocker that cannot be delivered inside this contract.</p>
+<ul>
+<li><strong>S1 - Candidate contract and backend conformance:</strong> the <code>RepairCandidate</code>
+  identity and evidence-link contract; verification of a gate receipt, the
+  review set and the Captain approval against one candidate; conformance
+  fixtures running both backends through the <code>BuildSpec</code> to file-changes handoff
+  for identity, unknown outcome, backend switch and cancellation. <strong>S1a</strong>
+  (candidate identity, gate-receipt binding, review binding; pure, no wiring) is
+  the first buildable slice:
+  <a href="../../prompts/ad-1299-s1a-repair-candidate.md">prompts/ad-1299-s1a-repair-candidate.md</a>.
+  <strong>S1b</strong> (C8 and C9, the first-trusted-digest ledger <code>RepairEvidenceLinkStore</code> and the
+  in-slice consumer <code>assess_candidate_evidence</code>; built, runtime-unwired):
+  <a href="../../prompts/ad-1299-s1b-evidence-completion-ledger.md">prompts/ad-1299-s1b-evidence-completion-ledger.md</a>.</li>
+<li><strong>S2 - Utility agent and admission:</strong> wire instructions-first diagnosis and
+  the three authority classes through the existing fault, CrewSession,
+  Architect and approval surfaces, Captain-per-step, autonomy default-off.
+  Agents may prepare a candidate as text and file the approval for its exact
+  digest without the Captain; nothing runs until the Captain approves. Add
+  an expected-state guard to <code>FaultReportStore.resolve</code>. Test happy,
+  denied/expired, empty, unavailable, and malformed paths; default-off behavior
+  must preserve the existing runtime. <strong>S2a</strong> (the Captain's approval of one
+  exact candidate, filed on the existing approval surface and checked by one
+  durable read with a 24-hour expiry; built, runtime-unwired):
+  <a href="../../prompts/ad-1299-s2a-candidate-approval.md">prompts/ad-1299-s2a-candidate-approval.md</a>.
+  Later in-envelope slices are S2c to S2f; S2b stays reserved for delegated
+  and scheduled grants under D-B2 (b) or (c).</li>
+<li><strong>S3 - Isolated engineering:</strong> campaign worktrees (never <code>merge_to_main</code> or
+  forced removal), Builder/harness, self-modification, CodeValidator, QA and Red
+  Team in a shadow environment. Candidate code (tests, shadow run, harness
+  <code>run_command</code>, GHCP tools) runs only after the Captain approves its exact
+  candidate digest; a fix after approval is a new candidate needing a new
+  approval. Tests must prove that no candidate code runs before approval, actual
+  consumer crossings, and that attempted writes to protected roots are refused
+  where enforced and detected where only detectable.</li>
+<li><strong>S4 - Release and recovery:</strong> content-addressed manifest and immutable
+  install, release bytes re-derived from the approved tree at promotion (N3),
+  Captain-invoked controller with a generation compare-and-set,
+  <code>/api/health</code> release identity, observation window, generation-checked
+  rollback, interrupted-promotion reconciliation from the intent journal,
+  review provenance per step 4, and linked episodes with raw <code>(alpha, beta)</code>
+  trust outcomes. The milestone runs on the native harness; dual-backend support
+  is claimed only after a real GHCP run.</li>
+</ul>
+<p>The milestone test starts from a real seeded ProbOS defect, obtains Captain
+authority, builds in isolation, validates through the repaired consumer, obtains
+independent review, promotes a frozen release, and verifies health. Pair it with
+denied authority, tampered/stale evidence, active-root write attempts, unknown
+execution, interrupted promotion, failing health, and verified rollback. Assert
+each failure fixture actually reached the boundary it claims to exercise.</p>
+<p>Include a retry that fails with a different signature: it may satisfy the old
+fault-specific verifier but must not satisfy campaign success. Review binding
+must be exercised through real owned-step review records, not replaced with a
+test-only approval.</p>
+<p>Verify all changes comply with the Engineering Principles in
+<code>.github/copilot-instructions.md</code>.</p>
+<p><strong>Do not build:</strong> a second coding harness, LLM client, central cognitive
+dispatcher, scheduler or durable campaign engine, tracker/dashboard, new fault
+database, in-place runtime updater, governance self-editor, or relaxed
+validation path. This planning change does not activate agents, run a campaign,
+or alter existing issues' completion.</p>
+<h2 id="allocation-and-issue-reconciliation">Allocation and issue reconciliation<a class="headerlink" href="#allocation-and-issue-reconciliation" title="Permanent link">&para;</a></h2>
+<p><strong>Rescope 2026-10-11:</strong> native owners replace the withdrawn Supervised Worker
+sections; the rescope allocates no AD number (see "Native rescope (2026-10-11)"
+in DECISIONS.md).</p>
+<p>On 2026-09-06 the first operation was
+<a href="../../scripts/ad_ceiling.py">scripts/ad_ceiling.py</a>. It requires all three
+sources to succeed and refuses truncated GitHub enumeration. Its result was:</p>
+<table>
+<thead>
+<tr>
+<th>Authoritative source</th>
+<th>Ceiling</th>
+<th>Enumeration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Git log subjects, all refs</td>
+<td>AD-1298</td>
+<td>1,976 AD references</td>
+</tr>
+<tr>
+<td>GitHub issue titles, open and closed</td>
+<td>AD-1291</td>
+<td>1,351 issues; 993 AD-titled; below the 4,000 limit</td>
+</tr>
+<tr>
+<td><code>prompts/ad-*.md</code> filenames</td>
+<td>AD-1298</td>
+<td>61 matching prompt files</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Verified prior ceiling: AD-1298. Next sequential allocation: AD-1299.</strong> S1-S4
+above are acceptance slices within this AD, not additional AD allocations.</p>
+<p>Duplicate searches used <code>repo:seangalliher/ProbOS is:issue</code> with no state filter,
+so both open and closed issues were searched. All five returned
+<code>incomplete_results: false</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Additional search terms</th>
+<th>Results</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maintenance</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>"Supervised Worker"</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>"self-repair"</code></td>
+<td>1: closed #1095, the existing fault/repair foundation</td>
+</tr>
+<tr>
+<td><code>"self-maintenance"</code></td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>repair runtime</code></td>
+<td>1: closed <a href="https://github.com/seangalliher/ProbOS/issues/377">#377</a>, Runtime Public API Promotion</td>
+</tr>
+</tbody>
+</table>
+<p>The existing <a href="https://github.com/seangalliher/ProbOS/issues/1324">platform-maturity epic #1324</a>
+continues to own capability truth, consumer-crossing tests, modularity, and
+recovery foundations. This plan consumes those contracts without absorbing its
+backlog. One new self-maintenance epic is sufficient for this bounded integration;
+upstream compatibility is an acceptance condition, not a speculative new issue.
+The single new issue is <a href="https://github.com/seangalliher/ProbOS/issues/1352">#1352</a>;
+no child issues are allocated. Linking #1324 does not activate or inherit its
+execution delegation.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

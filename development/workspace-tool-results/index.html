@@ -1,0 +1,2988 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/development/workspace-tool-results/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Workspace tool-result delivery (AD-1240) - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#workspace-tool-result-delivery-ad-1240" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Workspace tool-result delivery (AD-1240)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What ProbOS Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/self-perception-framing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Perception Framing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/architecture-review-2026-10-20/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Review (2026-10-20)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/hxi-glass-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HXI Glass Bridge (Design)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nooplex-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nooplex Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../platform-maturity-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Maturity Program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../composable-cognition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composable Cognition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-guarantee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The guarantee
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activation-and-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Activation and compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-representation-and-explicit-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical representation and explicit limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-ownership-publication-and-reading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace ownership, publication and reading
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace ownership, publication and reading">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#layout-and-generation-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layout and generation names
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-reserved-namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The reserved namespace
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#original-sources-no-copy-invocation-only-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Original sources: no copy, invocation-only recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admission-consumers-and-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admission, consumers and failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inline-results-and-the-armed-unavailable-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inline results and the armed-unavailable policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#strict-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strict profile
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-retention-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle, retention and rollback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lifecycle, retention and rollback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#startup-and-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Startup and ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generations-and-the-reaper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generations and the reaper
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#failure-taxonomy-and-retry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure taxonomy and retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latch-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latch and recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reaper-residuals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reaper residuals
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shutdown-and-rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shutdown and rollback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-not-promised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is not promised
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contract-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contract tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Contract tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#acceptance-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end-to-end-crossings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-end crossings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#immutable-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immutable references
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#first-ci-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First CI run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="workspace-tool-result-delivery-ad-1240">Workspace tool-result delivery (AD-1240)<a class="headerlink" href="#workspace-tool-result-delivery-ad-1240" title="Permanent link">&para;</a></h1>
+<p>AD-1240 (GitHub issue #1239) keeps a large tool result recoverable. Before it, a result above the configured
+per-message cap was cut to a head and a tail with an elision marker, and the elided middle was lost from the
+conversation. Now a result above 12,288 UTF-8 bytes is written to the calling agent's workspace, the model receives a
+short pointer with an outline and a worked <code>read_file</code> call, and that call returns the exact text. The
+interception point is after the real executor returns and every observer has seen the original result, and
+before the tool-call converter's destructive rendering.</p>
+<p>Storage and retention live in
+<a href="../../src/probos/execution/workspace_result_store.py"><code>workspace_result_store.py</code></a>: <code>WorkspaceResultStore</code>
+(lifecycle, latch and the public protocol), <code>ArtifactIO</code> (the worker-thread disk protocol for one artifact) and
+<code>GenerationReaper</code> (the retention sweep). <code>WorkspaceManager</code>
+(<a href="../../src/probos/execution/workspace.py"><code>workspace.py</code></a>) keeps path ownership only, and it reserves the result
+directory from ordinary workspace operations. The executor, the attachment store and the tool registry do not
+become payload stores or presentation services.</p>
+<h2 id="the-guarantee">The guarantee<a class="headerlink" href="#the-guarantee" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><code>.tool-results</code> is a runtime-reserved directory whose contents may be removed once their retention has expired. Large results are published into hourly generation directories, each named by the UTC hour of the injected clock (<code>YYYYMMDDTHHZ</code>). Every artifact's directory and files are created exclusively and never rewritten, and every committed artifact's <code>committed_at</code> falls inside its generation's hour. Reads return the exact committed text until <code>committed_at + 24 h</code> and refuse it with <code>result_expired</code> from then on. The reaper removes only whole generations whose hour ended at least 24 h ago, and decides this from the name and the clock alone, so ProbOS's own writers cannot race it and no ProbOS-produced artifact is removed before its retention expires; physical removal follows within about one hour plus one sweep. Each sweep samples the clock once, inside the store lock, and decides every removal in it from that sample; a clock that steps backwards while a sweep is already removing does not stop that sweep. ProbOS does not preserve anything that a process outside ProbOS writes or substitutes inside the directory, and Tier-1 code execution, which is not sandboxed (AD-993), counts as outside ProbOS. Inside an expired generation such content is removed with the generation. While a generation is unexpired and the running ProbOS process still holds its commitment record, a read refuses a payload, outline or manifest that differs from what the process committed in its digest, sizes, outline hash, <code>committed_at</code>, representation or owner digest (manifest keys it did not write are not compared); without that record (after a restart, or once the generation has been removed whole), a read can check only that the payload, outline and manifest agree with one another, so a consistent rewrite by a writer with ProbOS's own OS identity is not detected then, and no artifact is ever readable past the end of its generation's hour plus 24 hours, which is decided from the directory name alone. The reaper never follows links. Brief Windows sharing violations and their POSIX equivalents are retried within a bounded budget and deferred to the next sweep without switching offload off. Publication is latched until a completed <code>stop()</code> and a successful <code>start()</code> only by an integrity failure, by a generation that still cannot be removed because of a transient failure one further retention period after it expired, by a root or owner-namespace directory that has stayed unopenable for one retention period, by a sweep that raises or is cancelled, by the reaper task ending or being cancelled, or by a <code>start()</code> that fails or is cancelled. Private-path, foreign-owner and expiry refusals on every legacy workspace route remain.</p>
+</blockquote>
+<p>The sections below say how each sentence is met. "Reaper residuals" lists the residuals that qualify it, and
+"What is not promised" says in plain terms what the guarantee does not cover.</p>
+<h2 id="activation-and-compatibility">Activation and compatibility<a class="headerlink" href="#activation-and-compatibility" title="Permanent link">&para;</a></h2>
+<p><code>AgenticLoop</code> holds its workspace-results owner in a data descriptor, <code>WorkspaceResultsSlot</code>, defined in
+<a href="../../src/probos/cognitive/swe_harness/result_offload.py"><code>result_offload.py</code></a> and declared on the loop class as
+<code>workspace_results</code>. It adds no method to the loop. The constructor keyword <code>workspace_results=</code> is assigned
+through the slot when it is not <code>None</code>. Both production loop constructors keep their existing keyword arguments:
+<code>WorkItemAgenticExecutor</code> (<a href="../../src/probos/cognitive/agentic_dispatch.py"><code>agentic_dispatch.py</code></a>) and
+<code>NativeBuilderHarness</code> (<a href="../../src/probos/cognitive/swe_harness/native_builder.py"><code>native_builder.py</code></a>) assign
+<code>loop.workspace_results = resolve_workspace_results(runtime)</code> immediately after constructing the loop, and merge
+the delivery context (the same authorized registry view the run's executor uses) into the run context. An
+absent, invalid or unavailable public runtime owner resolves to <code>UnavailableWorkspaceResults</code>, not to an unarmed
+loop and not to an ambient workspace.</p>
+<p>A direct caller of <code>AgenticLoop</code> that injects no owner, or <code>None</code>, keeps legacy behaviour, including truncation of
+large results by the message cap. An injected owner arms delivery even when the message cap is zero. The slot
+refuses an invalid owner (<code>workspace_owner_invalid</code>, <code>None</code> included) and refuses every assignment once the first
+<code>run()</code> has begun (<code>workspace_binding_closed</code>), whether that run completes, fails or is cancelled. Later runs are
+allowed; each run has its own settings snapshot and its own source-recovery scope.</p>
+<p>At or below the offload threshold the existing first serialization and renderer stay in use. No artifact, outline
+or additional reader offer is added. The base <code>ToolResult</code> and <code>ToolCallResult</code> fields are unchanged; frozen
+subtypes carry the delivery metadata and keep the delegation and repository-instruction types.</p>
+<h2 id="canonical-representation-and-explicit-limits">Canonical representation and explicit limits<a class="headerlink" href="#canonical-representation-and-explicit-limits" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Boundary</th>
+<th style="text-align: right;">Limit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Armed offload trigger</td>
+<td style="text-align: right;">Strictly greater than 12,288 canonical UTF-8 bytes</td>
+</tr>
+<tr>
+<td>Canonical capture</td>
+<td style="text-align: right;">1 MiB (1,048,576), in characters and in UTF-8 bytes</td>
+</tr>
+<tr>
+<td>Encoded JSONL payload</td>
+<td style="text-align: right;">8 MiB (8,388,608 bytes)</td>
+</tr>
+<tr>
+<td>One physical JSONL line</td>
+<td style="text-align: right;">At most 512 bytes including LF (42 characters per fragment)</td>
+</tr>
+<tr>
+<td>ASCII-encoded outline</td>
+<td style="text-align: right;">1,024 bytes</td>
+</tr>
+<tr>
+<td>Manifest</td>
+<td style="text-align: right;">4,096 bytes</td>
+</tr>
+<tr>
+<td>Eligibility inspection</td>
+<td style="text-align: right;">4,096 visited slots; depth 32</td>
+</tr>
+<tr>
+<td>Serialized generated read arguments</td>
+<td style="text-align: right;">4,096 bytes</td>
+</tr>
+<tr>
+<td>Window asked for by the generated worked call</td>
+<td style="text-align: right;">At most 4,096 characters</td>
+</tr>
+<tr>
+<td>Artifact read retention</td>
+<td style="text-align: right;">86,400 seconds from manifest commitment</td>
+</tr>
+<tr>
+<td>Generation</td>
+<td style="text-align: right;">3,600 seconds (one UTC hour)</td>
+</tr>
+</tbody>
+</table>
+<p>The trigger is about two ordinary 6,000-character allowances (see the comment above
+<code>TOOL_RESULT_THRESHOLD_BYTES</code> in
+<a href="../../src/probos/execution/workspace_results.py"><code>workspace_results.py</code></a>): it catches the measured 14,373-byte
+lost-middle example without requiring a recovery turn for every small result. The size is measured in UTF-8
+bytes, so a value of fewer than 12,288 characters can still be offloaded. These are per-result limits, not a
+tree budget, and not a guarantee that a result at or below the threshold cannot be truncated by an ordinary
+message cap. Recovery needs one more model iteration to read the result back and a further one to consume it.</p>
+<p>The converter captures its existing first serialization once. Root strings are unchanged; <code>None</code> becomes the
+existing empty string; other built-ins use the existing ordered Python textual representation, labelled
+<code>python-repr</code>, not JSON. Character count, strict UTF-8 byte count and SHA-256 qualify that same text. Producer
+error text is qualified separately from delivery failure.</p>
+<p>Exact eligible types are <code>str</code>, <code>None</code>, <code>bool</code>, <code>int</code>, <code>float</code>, <code>list</code>, <code>tuple</code> and <code>dict</code>. Revisited containers
+terminate inspection and retain Python's existing recursion markers. Above the threshold, opaque or subclass
+values, excessive inspection, serialization or encoding failures and size-limit violations fail delivery
+explicitly. Successfully rendered small opaque values keep the existing behaviour without a second stateful
+representation call. Arbitrary legacy <code>str(Any)</code> is not claimed to be hard-bounded.</p>
+<h2 id="workspace-ownership-publication-and-reading">Workspace ownership, publication and reading<a class="headerlink" href="#workspace-ownership-publication-and-reading" title="Permanent link">&para;</a></h2>
+<p>The neutral <code>WorkspaceResults</code> protocol and the frozen records live in <code>workspace_results.py</code>.
+<code>WorkspaceResultStore</code> implements it:</p>
+<ul>
+<li><code>bind_agent(agent_id, registered_agent) -&gt; AgentWorkspace</code></li>
+<li><code>store_tool_result(binding, payload) -&gt; WorkspaceResultRef</code></li>
+<li><code>read_tool_result_slice(binding, path, offset, limit) -&gt; WorkspaceSlice</code></li>
+<li><code>reap_tool_results() -&gt; WorkspaceReapResult</code>, which takes no argument</li>
+<li><code>start()</code>, <code>stop()</code> and the retained <code>background_tasks</code> tuple</li>
+</ul>
+<p>The store is constructed with a <code>WorkspaceManager</code> and uses only its <code>root</code>, <code>sanitize</code> and <code>key_for_agent</code>;
+<code>WorkspaceManager</code> has no result lifecycle of its own.</p>
+<p>A binding requires the exact registered identity: the agent id is a string of at most 256 characters and equals
+the registered object's <code>id</code>. The owner folder is selected as before (callsign, then agent type, then id,
+sanitized), and an agent that resolves to the <code>shared</code> fallback is refused. A SHA-256 digest of the exact agent
+id separates identities that sanitize to the same owner folder. Artifact ids come from <code>secrets.token_hex(16)</code>;
+they are never derived from model request ids or tool names.</p>
+<h3 id="layout-and-generation-names">Layout and generation names<a class="headerlink" href="#layout-and-generation-names" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&lt;root&gt;/&lt;owner-key&gt;/.tool-results/&lt;GEN&gt;/&lt;agent-digest&gt;/&lt;artifact-id&gt;/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    payload.jsonl
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    outline.json
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    manifest.json
+</code></pre></div>
+<p><code>&lt;GEN&gt;</code> is the UTC hour of the injected clock, <code>YYYYMMDDTHHZ</code>: 12 characters, fixed width. In
+<code>workspace_results.py</code>, <code>generation_name</code> builds a name and <code>generation_start</code> parses one strictly: a name is
+accepted only if <code>generation_name</code> would itself produce it. <code>generation_expiry(GEN)</code> is the start of the hour plus
+3,600 plus 86,400 seconds. <code>&lt;agent-digest&gt;</code> is 64 lowercase hex characters and <code>&lt;artifact-id&gt;</code> is 32.</p>
+<p>Each physical line of <code>payload.jsonl</code> is one ASCII-escaped JSON string fragment of at most 42 characters, so the
+line stays under 512 bytes including LF; concatenating the decoded fragments reconstructs the canonical text
+exactly, with no separator. <code>outline.json</code> is a deterministic ASCII summary: representation, root type,
+character, byte and line counts, bounded shape counts, and the fact that keys and values are omitted.
+<code>manifest.json</code> records the kind and version, owner key and digest, artifact id, <code>committed_at</code>, representation,
+the text's SHA-256 and sizes, and the outline's SHA-256.</p>
+<h3 id="publication">Publication<a class="headerlink" href="#publication" title="Permanent link">&para;</a></h3>
+<p>Publication runs in a worker thread under the one store lock that reads and sweeps also take.</p>
+<ol>
+<li><strong>Admission.</strong> The generation is <code>generation_name(max(clock(), high_water))</code>. The high-water mark is
+   process-local, starts at negative infinity, is raised by every commit and is never restored from disk. A clock
+   that moves backward therefore never puts a publication into an earlier generation and never shortens
+   retention.</li>
+<li><strong>Creation.</strong> The agent directory is pinned (missing directories on the way are created), the artifact
+   directory is created, and <code>payload.jsonl</code>, <code>outline.json</code> and <code>manifest.staged</code> are each created exclusively
+   (<code>O_CREAT | O_EXCL</code>), written, flushed with <code>fsync</code> and never rewritten.</li>
+<li><strong>Commit.</strong> <code>committed_at = max(clock(), generation_start(GEN), high_water)</code>. If that is not before the end of
+   the generation's hour, this artifact is left unadvertised (no <code>manifest.json</code>; the reaper removes it with its
+   generation) and publication is retried once, in the generation of <code>committed_at</code>. A second rollover is
+   <code>workspace_write_failed</code>. Otherwise <code>manifest.staged</code> becomes <code>manifest.json</code> by a hard link, which fails if
+   the target exists, so a manifest is never replaced. The staged name is then removed, the high-water mark is
+   raised and the artifact is recorded in the in-process registry described under Reading.</li>
+<li><strong>A failure after the link.</strong> If publishing raises, the artifact counts as committed only when <code>manifest.json</code>
+   holds exactly the staged bytes. Anything else is <code>workspace_write_failed</code>, and a manifest that differs from the
+   staged one is never advertised. A volume that cannot hard-link fails here too: the run stops with
+   <code>workspace_write_failed</code>, nothing is advertised, and the unadvertised files go with their generation.</li>
+</ol>
+<p><code>workspace_result_store.py</code> never uses <code>replace</code>, <code>rename</code>, <code>rmtree</code> or <code>move</code>; a test parses the module and
+fails on any attribute, name or import with one of those names.</p>
+<p>Every committed artifact in a generation satisfies <code>generation_start(GEN) &lt;= committed_at &lt;
+generation_start(GEN) + 3600</code>.</p>
+<h3 id="reading">Reading<a class="headerlink" href="#reading" title="Permanent link">&para;</a></h3>
+<p><code>read_tool_result_slice</code> accepts only a path of the exact shape
+<code>&lt;root&gt;/&lt;owner-key&gt;/.tool-results/&lt;GEN&gt;/&lt;own-digest&gt;/&lt;artifact-id&gt;/payload.jsonl</code> (canonical generation name,
+32-hex artifact id, the caller's own digest), and then runs, in order:</p>
+<ol>
+<li><strong>Before any I/O</strong>, if the clock is at or past <code>generation_expiry(GEN)</code>, the read is refused with
+   <code>result_expired</code>.</li>
+<li>The manifest (at most 4,096 bytes) and the outline (at most 1,024 bytes) are read and the reference is built.</li>
+<li><strong>Registry check.</strong> The reference is compared with what this process committed (below); a mismatch is
+   <code>payload_changed</code>.</li>
+<li><code>committed_at</code> must lie inside the generation's hour, or the manifest is <code>manifest_invalid</code>.</li>
+<li>If the clock is at or past <code>committed_at + 86,400</code>, the read is refused with <code>result_expired</code>.</li>
+<li>The payload is read (opening it retries Windows sharing violations 32 and 33 only), decoded, and checked for
+   length, byte count and SHA-256; a difference is <code>payload_changed</code>. Expiry is checked again after the read.</li>
+<li>The slice is <code>text[o:e]</code> over decoded Unicode code points, where <code>o = offset or 0</code> and <code>e = o + limit</code>, or
+   <code>len(text)</code> when no limit is given. Python's slice semantics apply, negative positions included. Offsets are
+   not bytes and not JSONL lines.</li>
+</ol>
+<p>The registry is <code>CommittedArtifacts</code>, an in-process record of what this store committed. It holds one bucket per
+owner namespace and generation, and per artifact seven fields: SHA-256, <code>committed_at</code>, source characters, UTF-8
+bytes, the outline's SHA-256, the owner digest and the representation. Every read compares the files with it
+immediately after the reference is built, so while the process holds an artifact's record (from its commit until its
+generation is removed whole or found already gone, or until the process ends) a rewrite of the payload, outline or
+manifest is refused, including a consistent rewrite, a changed <code>committed_at</code> and a changed representation. A
+bucket is dropped only when its generation has been removed whole, or found already gone: dropping it earlier,
+including when a removal is deferred, would let a changed <code>committed_at</code> or a consistent rewrite be served
+again. The registry is never restored from disk, and unregistered artifacts are
+not refused after a restart, because that would make ProbOS-produced data unreadable before its retention
+expires.</p>
+<p>Every artifact read goes through <code>WorkspaceResultStore.read_tool_result_slice</code>. The native <code>read_file</code> tool
+reaches an artifact only through it and opens nothing under a workspace root's <code>.tool-results</code> itself;
+<code>codebase_read_source</code> refuses such a path with <code>workspace_reader_required</code>. A private, malformed, partial,
+cross-owner or expired artifact never falls through to an ordinary raw-file read. Recovery results are typed
+(<code>WorkspaceSliceToolResult</code>) and are never offloaded again. A slice that does not fit the actual message
+allowance fails explicitly. Both ordinary source reads and artifact verification may read the whole file: one
+tool invocation is not a promise of one filesystem seek.</p>
+<h3 id="the-reserved-namespace">The reserved namespace<a class="headerlink" href="#the-reserved-namespace" title="Permanent link">&para;</a></h3>
+<p><code>.tool-results</code> is reserved from ordinary workspace operations whoever owns an artifact and whatever its expiry.
+<code>WorkspaceManager.resolve_file</code> refuses a lexical entry into it, any lexical prefix or the owner folder that
+resolves into it (including an alias that enters it and a later <code>..</code> that leaves it), and the final resolution,
+all before any parent is created. The folder and the target are each resolved once, and the value that was
+checked is the value returned. <code>list_files</code> and <code>total_bytes</code> never list, enter or size the namespace: the walk
+drops an entry named <code>.tool-results</code> in any letter case, and drops a link that leads outside the owner folder or
+into it. A plain file is never resolved, a directory or link is resolved once, and a directory is entered only
+while it is still the object that was checked: the walk observes it with <code>lstat</code>, without following a link, before
+and after its scan, and uses the listing only if both show a real directory that is not a reparse point and has the
+identity taken from its scan entry. Each scan entry is classified (directory, link, file) from the observation it
+carries, and a real directory that is observed a second time for its identity is classified again from that
+observation, so a directory that became a link in between is a link and one that became a file is a plain file. A
+link is never entered. A link to a directory is listed once with size 0 and
+is never sized (its target is walked once, as itself); a link to a file inside the owner folder is sized from its
+checked target.</p>
+<blockquote>
+<p>The ordinary workspace walk observes only a directory's own final component before entering it; an ancestor swapped for an alias to the same object between a scan and a child's descent could still expose that child's plain-file names and sizes.</p>
+</blockquote>
+<p>The workspace HTTP routes (<code>routers/agents.py</code>, unchanged by AD-1240) read a file, write a file, list suggestions
+and create a suggestion only after <code>resolve_file</code> returns a path; when it returns <code>None</code> they answer 400, before
+governance or the suggestion store is touched. Dismiss by id carries no path and still works. Tier-1 code is not
+confined by this: the per-owner folder is confinement by convention, not a kernel-enforced boundary
+(see the module note in <code>workspace.py</code>).</p>
+<h2 id="original-sources-no-copy-invocation-only-recovery">Original sources: no copy, invocation-only recovery<a class="headerlink" href="#original-sources-no-copy-invocation-only-recovery" title="Permanent link">&para;</a></h2>
+<p>A successful, authorized native <code>read_file</code> or <code>codebase_read_source</code> observation can carry a frozen <code>SourceRef</code>:
+agent and run identity, canonical path, opened identity and revision, raw-byte digest, range, and
+whole-versus-slice. <code>read_file</code> keeps zero-based Python line slicing; <code>codebase_read_source</code> keeps its one-based
+<code>start_line</code> translation. Existing decoding and newline behaviour are unchanged.</p>
+<p>An admitted source promise reserves its path until this <code>run()</code> exits. The loop, not the model's arguments,
+selects <code>FreshRead</code> or the trusted <code>RecoverRead</code>, and it does so from the call's own lexical path before any
+registry lookup, permission check, bind or resolver call. Once a promise is selected, a later failure or
+replacement (an owner whose callsign changed, a replaced reader registration, a redirected resolver) is a
+content-free refusal (<code>InvocationRefusal</code>) before the call starts: no executor call, no events, no hooks, and the
+run stops with <code>stopped_reason="error"</code> and <code>reference_unavailable</code> rather than turning the promise into a fresh
+read. Conflicting observations refuse (<code>source_conflict</code>) rather than overwrite an expectation. Recovery
+reauthorizes the file and verifies identity,
+revision and digest; a disappearance, replacement or in-place change is <code>source_changed</code>.</p>
+<p>An artifact path this run published is a workspace promise of the same kind, held by the run's
+<code>SourceRecoveryScope</code> (<code>reserve_workspace</code>, recorded only after the pointer frame was admitted, and
+<code>workspace_promised</code>). A call that names it, by its exact path or by an alias spelling the reader resolves to it,
+is checked before invocation: only <code>read_file</code> may serve it, the reader must still be the one whose identity was
+fixed at first admission, and that reader must still resolve the published path, compared in its lexically
+normalized spelling, so an equivalent spelling such as one containing <code>..</code> recovers through the unchanged reader.
+Otherwise the call is
+refused with <code>reference_unavailable</code> before it starts. The alias decision is made outside the step that turns an
+unresolvable fresh read into an ordinary one, so a refusal there is never swallowed into a fresh read. Promises
+are run-local: a new top-level run has a new scope, and an artifact path that was never promised takes the typed
+fresh route with its owner, digest and expiry checks.</p>
+<p>An unpromised fresh read keeps each native reader's ordinary producer-error and next-correction behaviour for a
+directory, a disappearance, a permission failure or a read failure; it does not become a delivery failure and
+does not retry through an unchecked read. A recovery or private-artifact failure never downgrades to that path.</p>
+<p>Original-source pointers create no payload, outline, manifest or reaper entry. Their inline outline and worked
+call describe the verified source range. A line larger than the actual allowance cannot be recovered intact
+through ordinary line slicing: that is a refusal (<code>source_line_too_large</code>), not a pointer-to-pointer loop or a
+new column-slicing feature. Recovery is supported by the next model iteration in the same invocation. The next
+top-level turn or a restart loses source expectations: a bare path then asks for a fresh read, and an explicit
+recovery without its live reference returns <code>reference_unavailable</code>. There is no durable source registry and no
+restart-validated source-recovery claim.</p>
+<h2 id="admission-consumers-and-failures">Admission, consumers and failures<a class="headerlink" href="#admission-consumers-and-failures" title="Permanent link">&para;</a></h2>
+<p>Preparation requires the current authorized native reader from the same registry view the run uses, including
+permissions, restrictions, department and lock-out (LOTO). The reader definition is offered lazily with the normal alias
+and deduplication rules, retained across refreshes, and rechecked before every later request; no broader runtime
+registry is used to recover authority. When delivery is armed with a real owner and the strict profile is off,
+<code>agentic_dispatch.py</code> keeps the <code>read_file</code> definition full in the AD-1189 deferred-schema manifest
+(<code>_recovery_reader_full</code>), so the deferred-schema guard never refuses the reader a worked call advertises; it
+holds after every refresh, including with the AD-1241 MCP offer. Plan mode whose AD-1156 allowlist excludes
+<code>read_file</code> has no recovery reader, so <code>_delivery_armed</code> is false there: the loop is left unarmed and keeps legacy
+delivery, with one INFO log. A failed recovery read through a reader that is not in the dispatch offer is labelled
+unknown in AD-1248 failure summaries. A whole pointer, outline and worked call must fit the actual final
+allowance: the frame is sized against the exact path width before anything is published (the generation name is
+fixed width), and both message modes use the common final formatter, so an affected presentation is complete or
+refused, never character-truncated. A result group that carries a pointer or a slice is kept whole for the rest of
+the run: a compaction that would change one is not applied, and the complete uncompacted history is sent.</p>
+<p>Iterations. A new pointer needs at least two further model requests (read back, then answer) and a recovery read
+needs one. The loop passes <code>delivery_remaining</code> to the delivery step: the total ceiling net of AD-1324 floor
+re-issues and, when AD-1208's counted ceiling is armed, the smaller of that and the counted remainder. If fewer
+remain, the run stops with <code>recovery_iterations_unavailable</code> rather than send a pointer the model cannot follow.</p>
+<ul>
+<li><strong>AD-1191:</strong> only the canonical native output is offloaded. Typed evidence identity and original hashes stay
+  separate, and the existing bounded evidence frame, with its privacy counters and honest omissions, is reserved
+  inline first.</li>
+<li><strong>AD-1192:</strong> an offloaded, source or recovered presentation is never presented for acknowledgement.</li>
+<li><strong>AD-1200:</strong> original-source instruction observations and scope and exclusion merging remain intact; workspace
+  paths do not replace original guidance.</li>
+<li><strong>AD-1146 and AD-1148:</strong> correlation, ordered outcomes and the existing parallel allowlist are unchanged.</li>
+<li><strong>AD-1151 and BF-760:</strong> original and rendered qualification stay distinct from the bounded, versioned <code>delivery</code>
+  trace metadata (ASCII JSON of at most 4,096 bytes, or <code>metadata_omitted</code>). Output-disabled trace bytes are
+  unchanged. A 24-hour reference is not lossless durable archival.</li>
+</ul>
+<p>Missing ownership or reader authority, stale sources, capture or write failures and unfit frames are <strong>delivery
+failures</strong>, not fabricated producer faults and not successful truncation. Post-hooks keep the original result.
+Completion events, error signatures, duration and source qualification keep their producer meaning. Calls that
+were already issued finish once, in request order, and all outcomes are retained before the loop stops with the
+existing <code>stopped_reason="error"</code>. Neither production caller retries or falls back to another execution path.</p>
+<p>Error codes are fixed, content-free and at most 96 characters. The final explanatory text is nonempty, at most 128
+characters and within the positive result cap; <code>!</code> is used when it cannot fit. Payload bodies are not added to
+logs, events, Intent parameters or a second payload store.</p>
+<h2 id="inline-results-and-the-armed-unavailable-policy">Inline results and the armed-unavailable policy<a class="headerlink" href="#inline-results-and-the-armed-unavailable-policy" title="Permanent link">&para;</a></h2>
+<p>Exactly two producer results are never offloaded. Each is identified by its exact Python type, never by tool id,
+metadata key or text:</p>
+<ul>
+<li><code>WorkPullReceipt</code> (AD-1187, <a href="../../src/probos/tools/work_item_pull_tool.py"><code>work_item_pull_tool.py</code></a>): a
+  complete, pre-admitted control receipt.</li>
+<li><code>OwnedStepsViewResult</code> (AD-1192, <a href="../../src/probos/tools/work_item_steps_tool.py"><code>work_item_steps_tool.py</code></a>):
+  a complete owned-steps page whose view JSON is at most 16 KiB (<code>MAX_OWNED_VIEW_BYTES</code>); the rendered text can
+  reach about 16.8 KB. Its exact text authorizes the acknowledgement in <code>agentic_dispatch.py</code>, which an offloaded
+  page could never receive.</li>
+</ul>
+<p>In <code>result_offload.py</code> the check is <code>type(raw) is ... and raw.error is None</code>. A subclass of either type, either
+type carrying an error, a plain result that carries the same metadata key, and a plain result from a tool that has
+the same tool id are all offloaded like any other result. An exempt result stays inline and is admitted against the
+message cap: if it does not fit, the run stops with <code>delivery_frame_too_large</code>; it is never truncated. Every other
+result above the threshold takes the offload path, including a <code>review_requests</code> list and a delegated result
+(whose evidence frame is reserved inline first).</p>
+<p><strong>Armed-unavailable.</strong> <code>resolve_workspace_results(runtime)</code> never returns <code>None</code>, so every production caller is
+armed, except that a plan-mode run whose allowlist excludes <code>read_file</code> keeps legacy delivery (below). With no
+started store (the runtime has no <code>workspace_results</code> attribute, or it is not a valid owner),
+a result at or below 12,288 bytes is delivered as before, and a result above it stops the run with
+<code>stopped_reason="error"</code> and the content-free code <code>workspace_unavailable</code>. It is not truncated and not silently
+destroyed: the producer's outcome is kept (a successful result is still not an error), and the model is told only
+<code>Result delivery failed (workspace_unavailable).</code>, or <code>!</code> when the message cap is too small for that sentence. A
+direct <code>AgenticLoop</code> caller that injects no owner is unarmed and unaffected, and so is a plan-mode run whose
+allowlist excludes <code>read_file</code> (legacy delivery, one INFO log). One production caller is armed-unavailable by
+construction: the crew verifier's session-correction runtime projection (<code>_SessionCorrectionRuntime</code> in
+<code>crew_verifier.py</code>) is a deliberately narrow, frozen set of attributes and carries no workspace store, so a result
+above the threshold in a correction run stops the run with <code>workspace_unavailable</code> instead of being truncated.
+Giving that projection an owner is a follow-up, not part of this change.</p>
+<h2 id="strict-profile">Strict profile<a class="headerlink" href="#strict-profile" title="Permanent link">&para;</a></h2>
+<p>When the executor reports <code>protected_effects_enabled</code> (the strict protected-execution profile), the loop keeps
+legacy delivery: no capture, no offload and no source promise, whatever owner was assigned. It logs once per run
+at INFO, without content. A strict run never calls the store, and its events, results, requests and trace bytes
+equal those of the loop before AD-1240. Offload under the strict profile was considered and deferred; strict
+results are therefore not covered by the recoverability guarantee.</p>
+<h2 id="lifecycle-retention-and-rollback">Lifecycle, retention and rollback<a class="headerlink" href="#lifecycle-retention-and-rollback" title="Permanent link">&para;</a></h2>
+<h3 id="startup-and-ownership">Startup and ownership<a class="headerlink" href="#startup-and-ownership" title="Permanent link">&para;</a></h3>
+<p>Phase 1 of startup (<a href="../../src/probos/startup/infrastructure.py"><code>infrastructure.py</code></a>) builds
+<code>WorkspaceResultStore(WorkspaceManager(config.execution.workspace_root))</code> and starts it after
+<code>trust_network.start()</code> and before the identity registry, so a failure while it starts leaves nothing else
+open; Phase 1's unwind stops it if a later step fails. The root resolves exactly as the legacy workspace
+manager's does (a relative path goes under the platform data directory); it is not rebased on <code>runtime.data_dir</code>.
+The started store, or the typed unavailable owner, is returned in the last field of <code>InfrastructureResult</code>
+(<a href="../../src/probos/startup/results.py"><code>results.py</code></a>) and published as <code>runtime.workspace_results</code>
+(<a href="../../src/probos/runtime.py"><code>runtime.py</code></a>), which holds <code>UnavailableWorkspaceResults</code> from construction until
+Phase 1 replaces it.</p>
+<p>The typed unavailable owner stays when the configured root is missing, is not a string or path, or is <code>""</code>, <code>"."</code>
+or <code>Path()</code> (an empty value would resolve to the platform data directory, which is ambient storage), and when the
+store cannot start: its first sweep reports a failure, or no <code>background_register</code> callable was supplied
+(<code>reaper_unregistered</code>). A store that fails to start is stopped. Every use of the unavailable owner raises
+<code>workspace_unavailable</code>; nothing is redirected to ambient storage.</p>
+<p><code>start()</code> validates the root (it must not be a filesystem anchor), runs one sweep, starts a reaper task that is
+registered through <code>background_register</code>, and then sweeps every 60 seconds. Construction, binding and a sweep of
+an absent root create no directories; only an admitted publication creates the owner paths it needs. An absent
+child below a validated, accessible ancestor is an empty sweep with nothing created, unless this process pinned that
+root or namespace before, in which case its absence is an integrity failure. If no ancestor can be
+opened, not even the filesystem anchor, the sweep raises <code>workspace_reap_failed</code> after trying that anchor once,
+and Phase 1 keeps the unavailable owner instead of waiting on an unbounded worker. Blocking filesystem work runs
+off the event loop, and every retained task drains its worker thread before a cancellation propagates.</p>
+<h3 id="generations-and-the-reaper">Generations and the reaper<a class="headerlink" href="#generations-and-the-reaper" title="Permanent link">&para;</a></h3>
+<p><code>GenerationReaper</code> removes whole generations and nothing smaller. It decides from a generation's name and the
+clock alone and never reads a manifest, so a writer that commits inside a generation cannot race it. It visits
+each owner directory whose name equals its own sanitized form, then the names in that owner's <code>.tool-results</code>:</p>
+<ul>
+<li>A name that is not a canonical generation name, a name that does not round-trip, and a generation whose hour
+  has not started are left alone and counted <code>skipped</code>.</li>
+<li>A generation with <code>now &lt; generation_expiry(GEN)</code> is left untouched and is not counted.</li>
+<li>At <code>now &gt;= generation_expiry(GEN)</code> the whole generation is removed. By then every artifact committed in its hour
+  is past its own 24-hour read expiry, so no ProbOS-produced artifact is removed before its retention expires. An
+  artifact is physically removed between 0 and about 3,600 seconds after it stopped being readable, plus up to one
+  sweep interval.</li>
+</ul>
+<p>The sweep reads its time from the store clock inside the store lock (<code>reap_tool_results()</code> takes no argument), so
+a queued sweep can never act on a time taken before a publication it waited for. It takes one sample per sweep and
+decides every removal in that sweep from it.</p>
+<p>Removal of one expired generation is a bounded, bottom-up walk built only from <code>pin_directory</code>, <code>list_names</code>,
+<code>remove_file</code> and <code>remove_directory</code> in
+<a href="../../src/probos/security/file_access.py"><code>file_access.py</code></a>, to a depth of 3 below <code>&lt;GEN&gt;</code> (agent directory,
+artifact directory, files) and at most 10,000 entries per sweep (<code>SWEEP_ENTRY_CAP</code>):</p>
+<ul>
+<li>It removes every regular file and every real directory the pinned primitives accept, whatever its name.</li>
+<li>It never descends into, follows or removes a symlink, junction, reparse point or special file (checked with
+  <code>lstat</code> and <code>is_reparse_point</code>). Such an entry is left in place and counted <code>skipped</code>, and its generation
+  directory is retained.</li>
+<li>An entry whose name the primitives refuse (one containing <code>:</code> or <code>\</code>, ending in a dot or space, or naming a
+  reserved device) is left in place and counted <code>skipped</code>.</li>
+<li>An entry below the depth bound is left in place and counted <code>skipped</code>.</li>
+<li>Entries beyond the cap are <code>deferred</code> to the next sweep; a cap deferral never escalates.</li>
+<li><code>deleted</code> counts whole generations removed.</li>
+<li>When the removal of an expired generation starts, the directory identities cached under it are evicted; its
+  registry bucket is evicted only once the generation is removed whole or found already gone. The identities of
+  the root, the owner and the namespace, and of unexpired generations, are kept, so integrity detection still
+  works.</li>
+<li>A sweep that reaches the cap records where its budget ran out, per directory (the root's owners, a namespace's
+  generations), and the next sweep resumes after that owner or generation and wraps round. Only the visiting
+  order changes, never which generations are selected. Owners are reaped with no root pin held; each namespace pin
+  re-verifies the whole chain.</li>
+<li>No journal is kept. A partly removed expired generation is still expired, so the next sweep finishes it.</li>
+</ul>
+<h3 id="failure-taxonomy-and-retry">Failure taxonomy and retry<a class="headerlink" href="#failure-taxonomy-and-retry" title="Permanent link">&para;</a></h3>
+<p><code>classify_os_error(exc, platform=...)</code> sorts a filesystem failure into <code>gone</code>, <code>transient</code> or <code>integrity</code>; it takes
+the platform explicitly so both tables are tested on both CI platforms. The sweep settles every failure against
+the <strong>anchor chain</strong>, the path from the workspace root through the owner directory to the owner's <code>.tool-results</code>,
+and checks that chain first, whatever the failure's kind.</p>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Windows</th>
+<th>POSIX</th>
+<th>Count and effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Already gone</td>
+<td><code>FileNotFoundError</code> on the leaf</td>
+<td>same</td>
+<td>success</td>
+</tr>
+<tr>
+<td>Transient</td>
+<td><code>PermissionError</code>, or <code>OSError</code> with <code>winerror</code> 32, 33, 5, 145 or 303</td>
+<td><code>errno</code> <code>EBUSY</code>, <code>EAGAIN</code>, <code>ETXTBSY</code> or <code>ENOTEMPTY</code></td>
+<td>retried; if the budget runs out, <code>deferred</code>; no latch</td>
+</tr>
+<tr>
+<td>Integrity</td>
+<td>any failure while the anchor chain does not verify (identity changed, reparse point in the chain, a previously pinned directory disappeared, an opened directory moved); a missing filesystem anchor; <code>clock_invalid</code>; inside an expired generation with the anchor intact, any <code>OSError</code> that is neither gone nor transient and any exception type other than <code>FileAccessDenied</code> or <code>ValueError</code></td>
+<td>the same, including <code>EACCES</code>, <code>EPERM</code>, <code>EROFS</code>, <code>EIO</code>, <code>ELOOP</code> and <code>ENOTDIR</code></td>
+<td><code>failed</code>; latches</td>
+</tr>
+<tr>
+<td>Escalated deferral</td>
+<td>a generation still not removed because of a transient failure when <code>now &gt;= generation_expiry(GEN) + 86,400</code>; a root or owner-namespace pin or listing that has been continuously deferred for 86,400 seconds</td>
+<td>same</td>
+<td><code>failed</code>; latches</td>
+</tr>
+<tr>
+<td>Foreign</td>
+<td>non-generation or future names; links, special files and refused names inside an expired generation; depth beyond 3; <code>FileAccessDenied</code> or <code>ValueError</code> at or below <code>&lt;GEN&gt;</code> while the anchor chain is intact</td>
+<td>same</td>
+<td><code>skipped</code>; never escalates, never latches</td>
+</tr>
+<tr>
+<td>Capped</td>
+<td>entries beyond 10,000 in one sweep</td>
+<td>same</td>
+<td><code>deferred</code>; never escalates</td>
+</tr>
+</tbody>
+</table>
+<p>The retry policy is <code>RetryPolicy(attempts=4, delays=(0.05, 0.2, 0.5), sweep_sleep_budget=2.0)</code>: at most four tries,
+with sleeps of 0.05, 0.2 and 0.5 seconds between them. One runner spans one sweep (or one store operation) and
+never sleeps past its 2.0-second budget; if the next delay would exceed it, the failure is raised instead.
+Sleeping happens in the worker thread through an injected <code>sleep</code>, so tests assert the recorded delays and never
+wait. The retried operations are file and directory removal in the sweep, the root and namespace pins and
+listings, each with its closing check (an exhausted transient there is <code>deferred</code> and logged at WARNING), the removal of <code>manifest.staged</code>
+after a commit (left in place if it still fails), and opening <code>payload.jsonl</code> for a read (sharing violations 32
+and 33 only). A directory-not-empty failure is not retried by the runner: the walk lists the directory again and
+removes it again within the same attempt bound.</p>
+<h3 id="latch-and-recovery">Latch and recovery<a class="headerlink" href="#latch-and-recovery" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>What latches.</strong> Publication becomes unavailable (the next <code>store_tool_result</code> raises
+  <code>workspace_unavailable</code>), before the sweep releases the store lock, when a sweep reports <code>failed &gt; 0</code>, when a
+  sweep raises or is cancelled (for example <code>clock_invalid</code>, or <code>workspace_reap_failed</code> for a missing anchor),
+  when the reaper task ends with an exception or is cancelled, or when a start fails or is cancelled.
+  <code>deferred</code> and <code>skipped</code> never latch.</li>
+<li><strong>Recovery.</strong> A completed <code>stop()</code> followed by a successful <code>start()</code> whose startup sweep reports <code>failed == 0</code>.
+  A clean public sweep does not clear the latch, and <code>start()</code> on a store that is latched but not stopped is
+  refused with <code>workspace_unavailable</code>.</li>
+<li><strong>Reads.</strong> Unexpired typed reads keep working while the latch is set, and after <code>stop()</code>.</li>
+<li><strong>Commit.</strong> Admission and the final manifest commit both recheck availability.</li>
+<li><strong>Per process.</strong> The latch, the store lock and the registry belong to one process. Two ProbOS processes on one
+  root are not promised: an artifact's margin against the other process's clock is <code>end(G) − committed_at</code>, near
+  zero for a late commit.</li>
+<li><strong>Escalations are deliberate and reversible.</strong> Without them a retention that cannot make progress would be
+  reported only by log lines while disk use grows. Each is one branch that can become a log-only warning; the cost
+  is stated in the code: with a warning only, a lock held for more than a further 24 hours would grow disk use
+  without bound, and with the latch it turns offload off until the store is stopped and started again.</li>
+</ul>
+<h3 id="reaper-residuals">Reaper residuals<a class="headerlink" href="#reaper-residuals" title="Permanent link">&para;</a></h3>
+<p>These qualify the reaper's behaviour and the guarantee. The ten quoted sentences below, with the one under "The
+reserved namespace", are the agreed wording of the residuals.</p>
+<blockquote>
+<p>An entry inside an expired generation that the pinned filesystem primitives refuse to touch — a link, a junction, a special file, or a name they reject, such as one containing <code>:</code> or <code>\</code> or ending in a dot or space — is left in place, counted as skipped, and keeps its generation directory on disk; ProbOS never creates such entries, so they come only from a process outside ProbOS, the material retained is bounded by what that process wrote, and it never latches publication.</p>
+<p>An entry inside an expired generation whose identity changes while the reaper removes it is treated as content placed there by a process outside ProbOS when the pinned primitives report an identity change or a refused name and the chain from the workspace root to the owner's <code>.tool-results</code> directory still verifies: it is removed or left for the next sweep and never latches. With that chain intact, any other error from such an entry that is neither already-gone nor transient (for example <code>ENOTDIR</code>, <code>EACCES</code> or <code>EIO</code>) is an integrity failure and latches publication, and so is a change anywhere in that chain.</p>
+<p>On POSIX, removal acts on directory objects that were verified to be inside the expired generation when they were opened, not on their current pathnames; a process outside ProbOS that moves such a directory elsewhere during removal can have entries removed from it at its new location, and the reaper's next check then treats the change as foreign (inside the generation) or as an integrity failure (above it).</p>
+<p>A hard link created by a process outside ProbOS is indistinguishable from an ordinary file and is listed and served as one.</p>
+<p>A <code>review_requests</code> list above 12,288 bytes is offloaded (its content stays recoverable); only producer-typed results (<code>WorkPullReceipt</code>, <code>OwnedStepsViewResult</code>) stay inline.</p>
+<p>A sweep decides every removal from the one clock sample it takes inside the store lock; if the clock steps backwards while that sweep is removing, an artifact it removes may be one that a reading of the stepped-back clock would still call unexpired. Reads are serialized with sweeps, so no read observes the clock in the middle of a sweep.</p>
+<p>A generation's commitment record is dropped only when the generation has been removed whole or found already gone; a generation whose removal is deferred, capped or held keeps it until it is removed or the process restarts. Once a generation has been removed whole its record is gone, so if the clock steps back far enough for the generation's name to read as unexpired again, an artifact that a process outside ProbOS places there is read with the restart-grade consistency check only; and a generation directory that a process outside ProbOS removes before its expiry is never listed again, so its record stays in memory until the process ends.</p>
+<p>Inside one expired generation the walk runs in name order, so ProbOS artifacts listed after at least 10,000 retained foreign entries in that same generation stay on disk with it; and a sweep that walks that many entries holds the store lock, delaying publications and reads, for the length of the walk (measured at 10,000 entries from about 10 seconds to over 35 seconds, depending on the host's load; this is not a bound).</p>
+<p>A root or owner namespace that disappears while ProbOS is stopped is treated after the restart as never created.</p>
+<p>Two ProbOS processes on one workspace root are not promised: the store lock, the high-water mark, the registry and the identity cache are per process, and an artifact's margin against another process's clock is <code>end(G) − committed_at</code>, which is near zero for an artifact committed late in its hour.</p>
+</blockquote>
+<p>Further residuals:</p>
+<ul>
+<li><strong>After a restart the registry is empty.</strong> A read then checks only that the payload, outline and manifest agree
+  with one another, so a consistent rewrite by a writer with ProbOS's own OS identity is served. It is never
+  served past <code>generation_expiry(GEN)</code>, which is decided from the directory name, and an out-of-hour
+  <code>committed_at</code> is still refused as <code>manifest_invalid</code>.</li>
+<li><strong>After a restart nothing about the anchors is remembered.</strong> While the process runs, a root or owner namespace it
+  has pinned before (<code>DirectoryIdentities.knows</code>) that is now missing is an integrity failure and latches; after a
+  restart the memory is empty, which is the quoted residual above.</li>
+<li><strong>A permission-class error latches.</strong> A persistent <code>EACCES</code>, <code>EPERM</code>, <code>EROFS</code> or <code>EIO</code> while removing an expired
+  generation, with the anchor chain intact, is an integrity failure and latches publication. This is a decision the
+  Captain can change.</li>
+<li><strong>A failed recovery read through a reader outside the dispatch offer</strong> is labelled unknown in AD-1248 failure
+  summaries.</li>
+<li><strong>Foreign entries can hold back physical removal.</strong> A link, special file or refused name keeps its generation
+  directory on disk and is reported as <code>skipped</code> on every sweep. Each sweep visits such an entry, and the
+  directories above it, again and counts them against the 10,000-entry cap. Foreign entries in one expired
+  generation can delay, but not prevent, the removal of other generations, because a capped sweep resumes after the
+  generation and the owner where its entry budget ran out.</li>
+<li><strong>An outside deletion of an unexpired generation.</strong> If a process outside ProbOS deletes a generation that has
+  not expired, the directory identities this process cached for it (the generation directory and each agent
+  directory beneath it) are never evicted, because the name is no longer listed. Publication into that owner's
+  generation then fails with <code>workspace_write_failed</code> for the rest of its hour. It does not latch publication,
+  and the next hour uses a new generation.</li>
+<li><strong>Crash durability is not claimed.</strong> Each file is flushed with <code>fsync</code> as it is written. Publishing a manifest
+  ends by removing the staged name and then, on POSIX, flushing the directory. If removing the staged name fails
+  after the link, the artifact is treated as committed but that directory flush is skipped, and the staged file
+  stays until its generation is removed. The pointer is delivered to the model during the run that produced the
+  result, and the artifact is a 24-hour recovery copy, not an archive.</li>
+</ul>
+<h3 id="shutdown-and-rollback">Shutdown and rollback<a class="headerlink" href="#shutdown-and-rollback" title="Permanent link">&para;</a></h3>
+<p>Shutdown stops the store once the pools (its publishers) have stopped, in a <code>finally</code> inside the existing
+"pools stop and intent bus drain" step in <a href="../../src/probos/startup/shutdown.py"><code>shutdown.py</code></a>, so a store is
+stopped even when the pool step raises, in normal shutdown and in rollback mode. The AD-824 background-task sweep
+leaves the store's reaper task alone: the store drains its own reaper and worker threads when it stops, and a
+cancellation that arrives during the stop is deferred until transport teardown completes, as it is for the pools.
+<code>stop()</code> can be called more than once. It removes nothing: committed files stay for their retention.</p>
+<p>AD-1240 adds no configuration field and no switch, so rolling it back is a code revert. A rollback plan must keep
+the namespace reservation, a compatible reader and the reaper in place until the last committed artifact has
+expired and its generation has been removed (about 25 hours after the last commit at most, plus a sweep
+interval). It must not delete workspaces or original sources, and it must not reopen ordinary raw-file access to
+<code>.tool-results</code>. No host daemon, provider, streaming transport, result catalog, AD-1190 budget system or new model
+tool is introduced.</p>
+<h2 id="what-is-not-promised">What is not promised<a class="headerlink" href="#what-is-not-promised" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Not an archive.</strong> An artifact is readable for 24 hours from its commit and is then refused with
+  <code>result_expired</code>. Nothing is promised across a crash, and a restart loses the source-promise expectations of the
+  run that held them.</li>
+<li><strong>Nothing a process outside ProbOS writes.</strong> Content that such a process writes or substitutes in
+  <code>.tool-results</code> is not preserved. Inside an expired generation it is removed with the generation. Tier-1 code
+  execution is not sandboxed (AD-993), and the code runner uses the owner's workspace folder as the working
+  directory of Tier-1 code, so Tier-1 code counts as outside ProbOS.</li>
+<li><strong>After a restart, only consistency.</strong> A consistent rewrite by a writer with ProbOS's own OS identity is served
+  after a restart, until the generation's hour plus 24 hours has passed.</li>
+<li><strong>Not instantaneous removal.</strong> Physical removal follows within about one hour plus one sweep after the last
+  artifact in a generation expired, and later if ProbOS was not running. A foreign entry keeps its generation
+  directory on disk.</li>
+<li><strong>No protection against a relocated directory on POSIX.</strong> Removal is confined to directory objects, not
+  pathnames.</li>
+<li><strong>Not for the strict profile or a plan mode without <code>read_file</code>.</strong> Under the strict protected-execution profile,
+  and in plan mode whose allowlist excludes <code>read_file</code>, results are delivered as before AD-1240.</li>
+<li><strong>Not for small results.</strong> A result at or below 12,288 bytes can still be cut by the configured message cap.</li>
+<li><strong>Not without a started store.</strong> With the typed unavailable owner an oversize result stops the run with
+  <code>workspace_unavailable</code>.</li>
+<li><strong>Not across two ProbOS processes.</strong> The store lock, the high-water mark, the registry and the identity cache
+  are per process, and each process reads its own clock. A process whose clock runs ahead removes a generation by
+  its own reading of the time. An artifact's margin against that is <code>end(G) − committed_at</code>, which is near zero
+  for a commit late in its hour, so such an artifact can be removed earlier than 24 hours after its commit by
+  almost the whole clock difference. Two processes on one root are therefore not promised. This is stated, not
+  tested.</li>
+<li><strong>No hard-link hardening.</strong> A hard link created outside ProbOS is served as an ordinary file, and a volume that
+  cannot hard-link cannot offload.</li>
+</ul>
+<h2 id="code-map">Code map<a class="headerlink" href="#code-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Piece</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Neutral protocol, records, limits, generation names; <code>SourceRecoveryScope</code> with the run-local workspace promises <code>reserve_workspace</code> and <code>workspace_promised</code></td>
+<td><code>src/probos/execution/workspace_results.py</code></td>
+</tr>
+<tr>
+<td>Store, artifact I/O, reaper (15 methods), registry, failure taxonomy; <code>DirectoryIdentities.knows</code>; the module-level <code>_rotated</code> (sweep cursor order) and <code>_is_expired</code> (generation selection)</td>
+<td><code>src/probos/execution/workspace_result_store.py</code></td>
+</tr>
+<tr>
+<td>Path ownership, reservation, ordinary inspection (the module-level <code>_classify</code> classifies a scan entry from one observation of it)</td>
+<td><code>src/probos/execution/workspace.py</code></td>
+</tr>
+<tr>
+<td>Pinned file primitives, <code>is_reparse_point</code></td>
+<td><code>src/probos/security/file_access.py</code></td>
+</tr>
+<tr>
+<td>Delivery admission, the slot, source scope and refusal, the workspace-promise reader check</td>
+<td><code>src/probos/cognitive/swe_harness/result_offload.py</code></td>
+</tr>
+<tr>
+<td>Capture of the first serialization</td>
+<td><code>src/probos/cognitive/swe_harness/tool_call.py</code></td>
+</tr>
+<tr>
+<td>Native readers and typed results</td>
+<td><code>src/probos/cognitive/swe_harness/tools.py</code></td>
+</tr>
+<tr>
+<td>Arming, iteration accounting, delivery stop</td>
+<td><code>src/probos/cognitive/swe_harness/agentic_loop.py</code></td>
+</tr>
+<tr>
+<td>Production callers; the full recovery reader in the AD-1189 offer and plan-mode legacy delivery (<code>_delivery_armed</code>, <code>_recovery_reader_full</code>)</td>
+<td><code>src/probos/cognitive/agentic_dispatch.py</code>, <code>src/probos/cognitive/swe_harness/native_builder.py</code></td>
+</tr>
+<tr>
+<td>The two exempt result types</td>
+<td><code>src/probos/tools/work_item_pull_tool.py</code>, <code>src/probos/tools/work_item_steps_tool.py</code></td>
+</tr>
+<tr>
+<td>Startup, shutdown, runtime owner</td>
+<td><code>src/probos/startup/infrastructure.py</code>, <code>results.py</code>, <code>shutdown.py</code>, <code>src/probos/runtime.py</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="contract-tests">Contract tests<a class="headerlink" href="#contract-tests" title="Permanent link">&para;</a></h2>
+<p>Three files own the contract; run each with <code>-n 0</code>.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Carries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="../../tests/test_ad1240_tool_result_delivery.py"><code>tests/test_ad1240_tool_result_delivery.py</code></a></td>
+<td>capture, the source scope, delivery admission, the loop, the production callers, the strict profile, the inline exemptions, iteration accounting and the end-to-end crossings</td>
+</tr>
+<tr>
+<td><a href="../../tests/test_ad1240_workspace_result_lifecycle.py"><code>tests/test_ad1240_workspace_result_lifecycle.py</code></a></td>
+<td>generations, the store and reaper, the failure taxonomy, retry, the latch, the registry, Phase 1 startup and shutdown</td>
+</tr>
+<tr>
+<td><a href="../../tests/test_ad1240_workspace_results.py"><code>tests/test_ad1240_workspace_results.py</code></a></td>
+<td>records, the file-access primitives, the reserved namespace on the legacy workspace routes, and the cost of ordinary inspection</td>
+</tr>
+</tbody>
+</table>
+<h3 id="acceptance-rows">Acceptance rows<a class="headerlink" href="#acceptance-rows" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>What it fixes</th>
+<th>Test (in the file named above unless stated)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R1-1</td>
+<td>an alias of a promised source is refused (<code>source_changed</code>), never downgraded to a fresh read</td>
+<td><code>test_promised_source_alias_refuses</code>, <code>test_promised_source_alias_by_changed_path_resolution_refuses</code>, <code>test_promised_source_physical_junction_alias_refuses</code>, <code>test_promised_source_physical_symlink_alias_refuses</code> (delivery)</td>
+</tr>
+<tr>
+<td>R1-2</td>
+<td>the real read, write, suggestion-list and suggestion-create routes answer 400 for the reserved namespace at three clocks; list and sizes exclude it; dismiss by id still works</td>
+<td><code>test_legacy_routes_refuse_reserved_namespace</code>, <code>test_r1_private_publication_is_confined_through_real_workspace_http</code> (workspace results)</td>
+</tr>
+<tr>
+<td>R1-3</td>
+<td>a missing filesystem anchor ends the sweep instead of repeating</td>
+<td><code>test_missing_anchor_terminates</code>, <code>test_missing_anchor_terminates_injected</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>R1-4</td>
+<td>a fresh read error keeps the producer's semantics, armed or not</td>
+<td><code>test_fresh_read_errors_keep_producer_semantics</code> (delivery)</td>
+</tr>
+<tr>
+<td>R1-5</td>
+<td>integrity latches, transients defer</td>
+<td><code>test_integrity_failure_latches_publication</code>, <code>test_sharing_violation_defers_without_latch</code>, <code>test_sharing_violation_defers_without_latch_injected</code>, <code>test_persistent_deferral_escalates_at_two_retention_periods</code>, <code>test_cap_deferral_and_foreign_entries_never_escalate</code>, <code>test_root_transient_defers_without_latch</code>, <code>test_persistent_root_deferral_escalates_after_one_retention_period</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>F1</td>
+<td>a queued sweep never deletes a commit made after the clock moved back</td>
+<td><code>test_queued_sweep_after_clock_rollback_never_deletes_a_new_commit</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>the registry refuses a consistent rewrite, a changed <code>committed_at</code> and a changed representation while the process lives; the after-restart residual is pinned; buckets are evicted with their generation</td>
+<td><code>test_consistent_rewrite_is_refused_while_the_process_lives</code>, <code>test_committed_at_tamper_is_refused_while_the_process_lives</code>, <code>test_manifest_representation_flip_is_refused_while_the_process_lives</code>, <code>test_after_restart_a_consistent_rewrite_is_the_documented_residual</code>, <code>test_registry_bucket_evicted_with_its_generation</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>an identity change inside an expired generation is outside behaviour; a change above it latches; a missing leaf is success but a missing chain is an integrity failure</td>
+<td><code>test_identity_change_inside_expired_generation_is_documented_outside_behaviour</code>, <code>test_ancestor_change_above_generation_during_removal_latches</code>, <code>test_enoent_on_the_leaf_is_success_but_enoent_in_the_chain_is_an_integrity_failure</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>F4</td>
+<td>POSIX removal is confined to directory objects (documented behaviour)</td>
+<td><code>test_posix_relocation_during_removal_is_documented</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>R2-1</td>
+<td>a promise survives loss of authority; a refusal never shifts a later real outcome</td>
+<td><code>test_promise_survives_authority_loss</code>, <code>test_promise_survives_authority_loss_through_the_loop</code>, <code>test_refusal_before_later_real_error_reaches_correlation</code> (delivery)</td>
+</tr>
+<tr>
+<td>R2-2</td>
+<td><code>resolve_file</code> returns only the value it checked</td>
+<td><code>test_resolve_file_returns_only_the_checked_value</code>, <code>test_resolve_file_physical_swap_returns_the_checked_value</code> (workspace results)</td>
+</tr>
+<tr>
+<td>R2-3</td>
+<td>documented behaviour: an outside write inside an expired generation is removed with it</td>
+<td><code>test_documented_outside_write_in_expired_generation_is_removed</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>R2-3a to R2-3c</td>
+<td>an unexpired generation is never reaped; links are not followed; logical expiry at 24 hours, physical removal at the generation's end</td>
+<td><code>test_unexpired_generation_never_reaped</code>, <code>test_link_in_expired_generation_is_not_followed</code>, <code>test_link_in_expired_generation_is_not_followed_injected</code>, <code>test_logical_expiry_at_24h_physical_at_generation_end</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>R2-4</td>
+<td>the descriptor needs no binder method, so five existing loop-double tests stay unchanged</td>
+<td><code>test_the_tool_is_actually_offered_to_the_loop</code> (<code>tests/test_ad1209_work_item_status.py</code>); <code>test_the_tool_is_not_offered_when_the_flag_is_off</code> and <code>test_the_tool_is_actually_offered_when_the_flag_is_on</code> (<code>tests/test_ad1226_recall_artifact.py</code>); <code>test_executor_forwards_priority_into_the_loop</code> and <code>test_executor_without_priority_omits_the_kwarg</code> (<code>tests/test_bf731_captain_llm_lane.py</code>)</td>
+</tr>
+<tr>
+<td>R2-5</td>
+<td>ordinary inspection cost is bounded and independent of the file count</td>
+<td><code>test_ordinary_inspection_resolve_budget</code>, <code>test_resolve_count_independent_of_file_count</code> (workspace results)</td>
+</tr>
+<tr>
+<td>N1, N2</td>
+<td>the loop keeps its method count and the architecture baseline is unchanged</td>
+<td><code>tests/test_ad1324_srp_layout.py</code> (unchanged) and <code>scripts/check_architecture_principles.py --check</code></td>
+</tr>
+<tr>
+<td>N3, N4</td>
+<td>rollover never commits outside its generation; a backward clock uses the high-water generation</td>
+<td><code>test_rollover_mid_publication_commits_in_next_generation</code>, <code>test_backward_clock_uses_high_water_generation</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>N5</td>
+<td>identity-cache entries under a removed generation are evicted</td>
+<td><code>test_reaped_generation_identities_are_evicted</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>N6</td>
+<td>the strict profile keeps legacy delivery and trace bytes</td>
+<td><code>test_strict_profile_keeps_legacy_delivery_and_trace_bytes</code>, <code>test_strict_baseline_fixture_matches_the_unarmed_loop</code> (delivery)</td>
+</tr>
+<tr>
+<td>N7</td>
+<td>below-threshold requests are byte-identical to the pre-edit loop</td>
+<td><code>test_legacy_requests_match_pre_edit_golden</code>, <code>test_armed_below_threshold_requests_and_results_are_byte_identical</code> (delivery)</td>
+</tr>
+<tr>
+<td>N8</td>
+<td>entries the primitives refuse are left in place, skipped, never latch</td>
+<td><code>test_posix_only_entry_names_the_primitives_refuse_are_left_in_place</code>, <code>test_entry_refused_by_the_pinned_primitives_is_foreign_unless_the_chain_failed</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>Inline exemptions</td>
+<td>the two exempt types stay inline and are acknowledged; look-alikes are offloaded</td>
+<td><code>test_owned_steps_page_above_threshold_stays_inline_and_is_acknowledged</code>, <code>test_ordinary_16k_result_with_the_owned_steps_metadata_key_still_offloads</code>, <code>test_plain_result_from_a_tool_named_read_owned_steps_is_not_exempt</code>, <code>test_work_pull_receipt_is_admitted_inline_and_never_offloaded</code>, <code>test_plain_receipt_lookalike_is_not_exempt</code> (delivery); <code>tests/test_ad1192_owned_steps_dm.py</code> (unchanged)</td>
+</tr>
+<tr>
+<td>Iterations</td>
+<td><code>delivery_remaining</code> follows both AD-1208 ceilings on every tool execution path</td>
+<td><code>test_delivery_remaining_follows_both_ad1208_ceilings</code>, <code>test_delivery_remaining_reaches_every_tool_execution_path</code> (delivery)</td>
+</tr>
+<tr>
+<td>Armed-unavailable</td>
+<td>an oversize result with no started store stops the run with <code>workspace_unavailable</code></td>
+<td><code>test_actual_production_callers_bind_available_or_unavailable_owner</code>, <code>test_unavailable_owner_is_armed_but_small_outputs_remain_legacy</code> (delivery); <code>test_real_large_delegation_unavailable_owner_stops_delivery</code> (<code>tests/test_ad1191_delegation_wire.py</code>)</td>
+</tr>
+<tr>
+<td>Promised reader</td>
+<td>the AD-1189 manifest never withholds the recovery reader when delivery is armed; strict and unavailable-owner runs keep AD-1189's withholding; plan mode without <code>read_file</code> keeps legacy delivery</td>
+<td><code>test_deferred_schemas_never_withhold_the_promised_reader</code>, <code>test_deferred_schemas_with_mcp_offer_never_withhold_the_promised_reader</code>, <code>test_strict_or_unavailable_owner_keeps_ad1189_withholding_unchanged</code>, <code>test_plan_mode_keeps_legacy_delivery</code> (delivery)</td>
+</tr>
+<tr>
+<td>Workspace promises</td>
+<td>a published artifact path is served only by the reader admitted with it, by exact path or alias spelling, and refused before invocation otherwise (16 cases: registration replaced, resolver redirected, callsign changed or resolver answers differently, × both transcript modes × parallel on and off); promises are exact, active and run-local</td>
+<td><code>test_workspace_promise_refuses_replaced_reader_before_invocation</code>, <code>test_real_dispatch_reader_identity_loss_is_refused_before_the_executor</code>, <code>test_workspace_promise_alias_spelling_is_validated_and_refused_when_the_reader_is_replaced</code>, <code>test_workspace_promise_refuses_the_other_native_reader_before_invocation</code>, <code>test_repeated_slices_of_a_promised_workspace_path_validate_each_time</code>, <code>test_unpromised_artifact_path_keeps_the_typed_fresh_route</code>, <code>test_source_recovery_scope_workspace_promises_are_exact_active_and_run_local</code> (delivery)</td>
+</tr>
+<tr>
+<td>Reaper repairs</td>
+<td>one clock sample per sweep; a deferred generation keeps its commitment record; a remembered anchor that is missing latches, a never-created one does not; capped sweeps rotate; root and namespace units retry whole, closing check included</td>
+<td><code>test_sweep_decides_every_removal_from_its_one_clock_sample</code>, <code>test_deferred_generation_keeps_its_commitment_record</code>, <code>test_remembered_anchor_missing_is_an_integrity_failure</code>, <code>test_anchor_removed_while_the_process_runs_latches_publication</code>, <code>test_never_created_anchor_is_a_healthy_empty_sweep</code>, <code>test_sweep_listing_remembers_the_namespace_so_its_removal_is_an_integrity_failure</code>, <code>test_capped_sweeps_rotate_to_later_generations</code>, <code>test_transient_failure_at_context_exit_is_retried</code>, <code>test_directory_identities_knows_only_the_paths_it_remembers</code>, <code>test_rotated_resumes_after_the_cursor_then_wraps_round</code> (lifecycle)</td>
+</tr>
+<tr>
+<td>Ordinary walk</td>
+<td>a directory is entered only while an <code>lstat</code> before and after its scan shows the checked real directory; each child is classified from the observation it carries, the second identity-bearing <code>lstat</code> of a real directory included; links are never entered; the reserved name is pruned in any case</td>
+<td><code>test_ordinary_walk_does_not_enter_a_directory_replaced_by_an_alias_to_the_same_object</code>, <code>test_overview_route_does_not_list_a_directory_replaced_by_an_alias_to_the_same_object</code>, <code>test_ordinary_walk_skips_a_directory_that_cannot_be_examined_when_entered</code>, <code>test_links_inside_the_owner_folder_are_listed_once_and_never_entered</code>, <code>test_links_are_never_entered_on_a_filesystem_without_identities</code>, <code>test_a_directory_seen_as_a_link_at_its_fresh_observation_is_listed_once_and_never_sized_or_entered</code>, <code>test_a_directory_still_a_directory_at_its_fresh_observation_is_sized_and_entered_as_before</code>, <code>test_a_directory_seen_as_a_file_at_its_fresh_observation_is_listed_as_a_plain_file</code>, <code>test_a_file_link_is_sized_from_its_checked_target_or_dropped</code>, <code>test_case_variants_of_the_namespace_name_are_pruned_by_name</code> (workspace results)</td>
+</tr>
+<tr>
+<td>Startup and shutdown</td>
+<td>the store starts before the identity registry and stops in a <code>finally</code></td>
+<td><code>test_phase_one_starts_the_store_before_the_identity_registry</code>, <code>test_cancellation_during_store_start_never_starts_the_identity_registry</code>, <code>test_identity_registry_start_failure_stops_the_started_store</code>, <code>test_shutdown_stops_the_store_even_when_the_pool_step_raises</code> (lifecycle)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="end-to-end-crossings">End-to-end crossings<a class="headerlink" href="#end-to-end-crossings" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>test_raw_producer_to_workspace_to_next_request_verbatim_readback</code> crosses the whole chain with nothing mocked
+  between the links, in both transcript modes. A real producer returns a raw value above 12,288 UTF-8 bytes
+  (non-ASCII and CRLF content, a unique marker in the middle). The real <code>ToolExecutor</code> and its observers (a
+  post-hook and the durable record hooks over a real <code>EventLog</code>) see the raw object. The armed <code>AgenticLoop</code>
+  offloads it to a real store on disk, in the generation layout, with nothing else created under the root. The
+  actual next request carries the pointer, with the exact path, and not the marker. The model's reply is the
+  worked call parsed from that captured request, executed by the loop's own <code>read_file</code>, and then the same call
+  with only its window moved to the middle; the following request carries the exact middle slice. A result below
+  the threshold in the same run is delivered whole with no delivery metadata.</li>
+<li><code>test_raw_recording_workspace_actual_request_verbatim_and_middle_readback</code> crosses the same chain with container
+  values, hostile call ids and the durable trace.</li>
+<li><code>test_original_source_no_copy_full_loop_recovers_through_real_reader</code> crosses the source-recovery path.</li>
+<li><code>test_real_runtime_start_and_stop_run_the_store_lifecycle_end_to_end</code> crosses Phase 1, the runtime attribute and
+  shutdown.</li>
+</ul>
+<h3 id="immutable-references">Immutable references<a class="headerlink" href="#immutable-references" title="Permanent link">&para;</a></h3>
+<p><code>tests/fixtures/ad1240_below_threshold_golden.json</code> and <code>tests/fixtures/ad1240_strict_profile_baseline.json</code> were
+captured on unmodified <code>main</code> before any source edit (each file's <code>base</code> is
+<code>1c9abde5bcde5fef96f2035ff319f81b0c002ff9</code>). They store the size and SHA-256 of the serialized observations, are
+compared exactly, and are never regenerated to make a change pass. The existing AD-1152 and AD-1200 goldens are
+untouched.</p>
+<h3 id="first-ci-run">First CI run<a class="headerlink" href="#first-ci-run" title="Permanent link">&para;</a></h3>
+<p>CI runs on <code>ubuntu-latest</code> with Python 3.12 (<code>.github/workflows/ci.yml</code>); the canonical gate runs on Windows. A
+test whose premise needs a Windows handle, a <code>winerror</code>, a junction or a drive letter is skipped elsewhere and is
+paired with an injected variant that runs on both platforms; a test whose premise is POSIX is skipped on Windows
+and, where a pairing exists, paired the same way. No test skips on both platforms. The POSIX-premise tests are
+skipped on Windows, so their first execution is the first <code>ubuntu-latest</code> CI run of this change, which must show
+them <strong>passed, not skipped</strong>:</p>
+<ul>
+<li><code>test_posix_only_entry_names_the_primitives_refuse_are_left_in_place</code> (the <code>aux</code> and <code>nul.txt</code> cases rely on
+  Python 3.12's <code>PureWindowsPath.is_reserved</code>)</li>
+<li><code>test_posix_fifo_in_expired_generation_is_left_in_place</code></li>
+<li>the symlink variants of <code>test_link_in_expired_generation_is_not_followed</code>,
+  <code>test_integrity_failure_latches_publication</code>, <code>test_resolve_file_physical_swap_returns_the_checked_value</code> and
+  <code>test_promised_source_physical_symlink_alias_refuses</code></li>
+<li>the real variant of <code>test_ancestor_change_above_generation_during_removal_latches</code></li>
+<li><code>test_posix_relocation_during_removal_is_documented</code></li>
+<li>added by the review-3 repairs: the symlink variants of
+  <code>test_ordinary_walk_does_not_enter_a_directory_replaced_by_an_alias_to_the_same_object</code> and
+  <code>test_overview_route_does_not_list_a_directory_replaced_by_an_alias_to_the_same_object</code></li>
+</ul>
+<p>When this document was written (M5a), the Windows runs skipped 15 cases in 8 test functions (6 in lifecycle, 1 in
+workspace results, 1 in delivery). After the review-3 repairs the Windows run of the three AD-1240 test files
+skips 20 cases in 10 test functions (12 cases in 6 functions in lifecycle, 6 in 3 in workspace results, 2 in 1 in
+delivery) and passes 922; the first CI run is the count of record.</p>
+<p>Focused execution evidence, remaining coverage gaps and release status belong to the execution report. This
+document is not a canonical gate receipt or a release or closure claim.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
