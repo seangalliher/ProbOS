@@ -22,10 +22,14 @@ def _build_healthy_store(data_dir: Path) -> None:
 
     client = chromadb.PersistentClient(path=str(data_dir))
     collection = client.get_or_create_collection(name="episodes")
+    # BF-919 (#1632): an explicit vector, so building the store needs no embedding model. Without one, Chroma's default
+    # function embeds the document, which downloads its model where none is on disk (CI included) and fails under
+    # the suite's model-download guard. This file tests the health probe, which only reads the store.
     collection.add(
         ids=["ad822-test-1"],
         documents=["test row for ad822 health probe"],
         metadatas=[{"source": "ad822-test"}],
+        embeddings=[[0.1] * 384],
     )
     # Drop references so the underlying sqlite file handle is released
     # before the subprocess probe tries to open it (Windows file lock).

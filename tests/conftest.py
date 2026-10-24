@@ -139,6 +139,62 @@ def _ad1270f_codebase_index_memo():
         yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _bf919_isolated_archive(tmp_path_factory, worker_id):
+    """BF-919 (#1632): no test opens the operator's Ship's Archive, per xdist worker.
+
+    ``archive.db_path`` defaults to ``""``, which resolves to the operator's archive under the home directory,
+    outside the data directory AD-682 and BF-883 isolate. For the whole session an empty ``db_path`` resolves under
+    this worker's own archive root, and ``ArchiveStore`` refuses any file outside the suite's temporary roots before
+    it opens it -- see ``tests/fixtures/archive_isolation.py``. A refusal outside any test fails the session here.
+    """
+    from tests.fixtures.archive_isolation import archive_isolation, archive_root_for
+
+    root = archive_root_for(tmp_path_factory, worker_id)
+    allowed_roots = [tmp_path_factory.getbasetemp(), Path(tempfile.gettempdir())]
+    with archive_isolation(root, allowed_roots) as isolation:
+        yield isolation
+        stray = isolation.unreported()
+        if stray:
+            pytest.fail(f"BF-919: an archive outside the temporary roots was refused outside any test: {stray}", pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_archive_path(_bf919_isolated_archive):
+    """BF-919 (#1632): this test's own Ship's Archive path, where an empty ``archive.db_path`` resolves.
+
+    Nothing creates it unless the test opens the archive. A refusal during the test fails it at teardown: the boot
+    only logs the error and continues without the archive.
+    """
+    isolation = _bf919_isolated_archive
+    path = isolation.next_test_path()
+    isolation.current = path
+    try:
+        yield path
+    finally:
+        isolation.current = isolation.session_path
+    refused = isolation.unreported()
+    if refused:
+        pytest.fail(f"BF-919: this test opened a Ship's Archive outside the temporary roots: {refused}", pytrace=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _bf919_no_model_download(tmp_path_factory, worker_id):
+    """BF-919 (#1632) M2: no test downloads Chroma's embedding model into the home directory.
+
+    Where the model is not already on disk, Chroma's download directory is pointed beneath a file in this worker's
+    basetemp, so the download fails before it creates anything and the embeddings fall back as CI's
+    ``PROBOS_EMBEDDINGS=local`` does; a model on disk is read as before -- see
+    ``tests/fixtures/model_download_guard.py``. ``PROBOS_EMBEDDINGS`` is deliberately not set here: real-model tests
+    keep running wherever the model is cached (``docs/development/test-suite-optimization-plan.md`` section 6).
+    """
+    from tests.fixtures.model_download_guard import SINKHOLE_NAME, model_download_guard
+
+    guard_dir = tmp_path_factory.mktemp(f"probos_model_guard_{worker_id}", numbered=False)
+    with model_download_guard(guard_dir / SINKHOLE_NAME) as download_path:
+        yield download_path
+
+
 @pytest.fixture(autouse=True)
 def _ad682_clear_module_caches():
     """AD-682: Reset module-level caches that mutate during tests.

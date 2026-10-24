@@ -86,10 +86,12 @@ if __name__ == "__main__" and not _probos_comes_from_the_expected_source():
     sys.exit(3)
 
 import pytest  # noqa: E402
+from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2  # noqa: E402
 
 from probos.cognitive.yeoman import YeomanAgent  # noqa: E402
 from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe  # noqa: E402
 from tests.fixtures.codebase_index_memo import install_codebase_index_memo  # noqa: E402
+from tests.fixtures.model_download_guard import SINKHOLE_NAME, model_download_guard  # noqa: E402
 from tests.fixtures.runtime_factory import make_runtime  # noqa: E402
 from tests.fixtures.runtime_lifecycle import (  # noqa: E402
     BrokenStop,
@@ -195,7 +197,12 @@ def main() -> int:
         for phase in os.environ.get("PROBOS_LIFECYCLE_PHASES", "after_infra,finalize_started_event").split(",")
         if phase.strip()
     ]
-    with install_codebase_index_memo():
+    # BF-919 (#1632): as conftest does in the pytest process. This process inherits the home and none of conftest's
+    # in-process guards, so with no model on disk Chroma's download directory lies beneath a file here and the boot
+    # falls back instead of downloading into the home. The parent checks the sinkhole and the path.
+    report["model_download"] = {"original": str(ONNXMiniLM_L6_V2.DOWNLOAD_PATH)}
+    with install_codebase_index_memo(), model_download_guard(base / SINKHOLE_NAME):
+        report["model_download"]["during"] = str(ONNXMiniLM_L6_V2.DOWNLOAD_PATH)
         report["failures"] = [
             _in_its_own_loop(_failed_start, base / phase, phase) for phase in phases
         ]
