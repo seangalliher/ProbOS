@@ -108,6 +108,7 @@ describe('AD-738e-1 speakResponse emotion forwarding', () => {
     expect(JSON.parse(postBodies[0])).toEqual({
       text: 'hello',
       emotion: 'concerned',
+      defer_visemes: true, // BF-918
     });
   });
 
@@ -122,6 +123,6 @@ describe('AD-738e-1 speakResponse emotion forwarding', () => {
     await _flush();
 
     expect(postBodies.length).toBe(1);
-    expect(JSON.parse(postBodies[0])).toEqual({ text: 'hello' });
+    expect(JSON.parse(postBodies[0])).toEqual({ text: 'hello', defer_visemes: true }); // BF-918
   });
 });

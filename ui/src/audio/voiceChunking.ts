@@ -64,37 +64,61 @@ export function splitIntoSentences(text: string, maxChunks = 40): string[] {
   return chunks;
 }
 
-/** AD-1071 — Drive a strictly-ordered queue of async side-effects.
+/** BF-918 (#1626) — Drive an ordered queue that prepares ahead of what plays.
  *
- *  Given ``items`` and a ``processOne`` that returns a Promise resolving when
- *  that item's work is DONE (e.g. its audio fired ``ended``), each item is
- *  processed only after the previous one resolves — the sequencing guarantee
- *  behind "next sentence starts after the previous one ends".
- *
- *  Honest-degrade: a ``processOne`` that throws is swallowed here (the
- *  side-effect owner logs) and the queue advances to the next item so one
- *  failed sentence never aborts the whole reply.
- *
- *  ``shouldContinue`` (optional) is checked before each item; returning false
- *  stops the queue early (used by voice.ts to cancel an in-flight reply when
- *  a newer one starts). Returns the number of items processed.
- *
- *  Pure control flow — the Audio/fetch side-effects live entirely inside the
- *  injected ``processOne``, so this is unit-testable with a stub. */
-export async function runSentenceQueue(
+ *  AD-1071's queue (`runSentenceQueue`, which this replaces) prepared item N+1 only
+ *  after item N had finished PLAYING, so every sentence boundary cost a whole
+ *  synthesis. Here:
+ *   - `prepare` runs one item at a time, in order: item k starts once k-1 is
+ *     prepared, and never more than `lookahead` items ahead of the one playing;
+ *   - `play(k)` starts only after `play(k-1)` and `prepare(k)` resolved, so playback
+ *     order is item order;
+ *   - `shouldContinue` is checked before each play and before each prepare starts;
+ *     once it is false nothing more plays, nothing more is prepared, and every
+ *     prepared-but-unplayed result goes to `discard` (when it arrives, if it is
+ *     still in flight);
+ *   - a `prepare` that rejects counts as `null`; a `play` that throws is swallowed
+ *     and the queue moves on (AD-1071's honest-degrade).
+ *  Lookahead 0 is AD-1071's sequential queue. Returns the number of items played.
+ *  Pure control flow: the Audio/fetch side-effects live in the injected callbacks. */
+export async function runPrefetchQueue<P>(
   items: string[],
-  processOne: (item: string, index: number) => Promise<void>,
-  shouldContinue?: () => boolean,
+  prepare: (item: string, index: number) => Promise<P | null>,
+  play: (prepared: P | null, item: string, index: number) => Promise<void>,
+  shouldContinue: () => boolean,
+  lookahead = 1,
+  discard: (prepared: P | null) => void = () => {},
 ): Promise<number> {
-  let processed = 0;
-  for (let i = 0; i < items.length; i++) {
-    if (shouldContinue && !shouldContinue()) break;
-    try {
-      await processOne(items[i], i);
-    } catch {
-      // Honest-degrade: keep speaking the rest of the reply.
+  const pending: Array<Promise<P | null>> = [];
+  const ensure = (k: number): void => {
+    if (k >= items.length || pending[k] !== undefined) return;
+    const previous: Promise<unknown> = k === 0 ? Promise.resolve(null) : pending[k - 1];
+    pending[k] = previous
+      .then(() => (shouldContinue() ? prepare(items[k], k) : null))
+      .then((prepared) => prepared, () => null);
+  };
+  let consumed = 0;
+  let played = 0;
+  try {
+    for (let i = 0; i < items.length; i += 1) {
+      if (!shouldContinue()) break;
+      ensure(i);
+      const prepared = await pending[i];
+      consumed = i + 1;
+      if (!shouldContinue()) { discard(prepared); break; }
+      for (let k = i + 1; k <= i + lookahead; k += 1) ensure(k);
+      try {
+        await play(prepared, items[i], i);
+      } catch {
+        // Honest-degrade: keep speaking the rest of the reply.
+      }
+      played += 1;
     }
-    processed += 1;
+  } finally {
+    for (let k = consumed; k < pending.length; k += 1) {
+      const p = pending[k];
+      if (p !== undefined) void p.then(discard);
+    }
   }
-  return processed;
+  return played;
 }

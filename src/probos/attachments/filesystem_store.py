@@ -89,6 +89,7 @@ class FilesystemAttachmentStore:
     # origin (perception_frame) to a more-durable one (chat_attachment)
     # for the same hash, but never the reverse.
     _ORIGIN_DURABILITY: tuple[str, ...] = (
+        "tts_audio",  # BF-918: least durable; any other write of the same bytes wins
         "perception_frame",
         "browser_screenshot",
         "avatar_render",
@@ -318,6 +319,57 @@ class FilesystemAttachmentStore:
             if existed or removed_from_index:
                 self._save_index_sync()
             return existed or removed_from_index
+
+    async def unlink_if_unchanged(
+        self,
+        content_hash: str,
+        *,
+        origin: str,
+        written_at: float,
+    ) -> int | None:
+        """BF-918 (#1626): remove an entry only if it is still the one a caller listed.
+
+        The reaper lists entries under the lock, releases it, and removes them
+        one by one; a write in between may refresh ``written_at`` or upgrade the
+        origin. The check and the removal happen here under one hold of the
+        lock, so such an entry is kept. The lock and the index are this
+        instance's: a write through another store object or another process on
+        the same root is not seen, so one instance per attachment root is a
+        precondition (production builds one per runtime; BF-918 review round 2).
+        Returns the bytes freed (0 when the blob
+        was already gone and only its index entry is removed), or ``None`` when
+        the entry is absent, has another origin, was written after
+        ``written_at``, or its blob could not be removed.
+        """
+        async with self._lock:
+            entry = self._index.get(content_hash)
+            if entry is None or entry.get("origin", "chat_attachment") != origin:
+                return None
+            try:
+                current = float(entry.get("written_at", 0.0))
+            except (TypeError, ValueError):
+                return None
+            if current > written_at:
+                return None
+            path = await self._find(content_hash)
+            freed = 0
+            if path is not None:
+                try:
+                    freed = (await asyncio.to_thread(path.stat)).st_size
+                    await asyncio.to_thread(path.unlink)
+                except FileNotFoundError:
+                    freed = 0
+                except OSError as ex:
+                    logger.warning(
+                        "BF-918: conditional unlink failed for %s: %s; "
+                        "leaving on disk for next sweep",
+                        content_hash[:8],
+                        ex,
+                    )
+                    return None
+            del self._index[content_hash]
+            self._save_index_sync()
+            return freed
 
     async def list_by_origin(self, origin: str) -> list[tuple[str, float]]:
         """AD-733-1: ``[(sha, written_at)]`` for entries with ``origin``,

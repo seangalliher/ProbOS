@@ -15,16 +15,13 @@ output). The endpoint treats ``None`` as the signal to return
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from probos.audio.tts.backends import TTSResult
 from probos.audio.tts.prosody import resolve_prosody_overrides
-from probos.execution.command_env import trusted_command_env
+from probos.audio.tts.resident import PiperWorkerKey, VoiceSynthesisService
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +86,15 @@ def _resolve_voice_model(voice_model: str, voices_base: Path) -> Path | None:
 
 
 class PiperBackend:
-    """Subprocess wrapper around the piper binary.
+    """Piper TTS backend.
 
-    Piper reads text on stdin and writes a complete WAV file (RIFF header
-    + PCM data) to stdout when invoked with ``--model <path> --output_file -``.
-    NOTE: ``--output_raw`` writes raw PCM samples WITHOUT a header — that is
-    NOT what we want; ``<audio>`` and rhubarb both require a WAV container.
-    Verified against rhasspy/piper README (MIT, archived 2025-10-06): the
-    ``-`` argument to ``--output_file`` is the documented stdout sink.
-    The wrapper passes text via stdin (UTF-8), reads the WAV from stdout,
-    and returns it as ``TTSResult(audio_bytes=..., mime="audio/wav")``.
+    Resolves the binary, the voice model (including the BF-291 per-call
+    override) and the per-emotion prosody (AD-738e-1) for one call, then asks
+    the runtime's ``VoiceSynthesisService`` (BF-918) for the audio: a resident
+    ``piper --json-input`` process for that voice and prosody set, which writes
+    each WAV to a file (BF-282) and runs on the voice executor. Returns
+    ``TTSResult(audio_bytes=..., mime="audio/wav")`` or ``None`` (degrade).
+    ``<audio>`` and rhubarb both need a WAV container, never raw PCM.
     """
 
     name: str = "piper"
@@ -113,7 +109,10 @@ class PiperBackend:
         length_scale: float = 1.0,
         noise_w: float = 1.0,
         sentence_silence: float = 0.35,
+        service: VoiceSynthesisService | None = None,
     ) -> None:
+        # BF-918: the runtime's resident synthesis; without it Piper degrades to the browser.
+        self._service = service
         self._binary_path = binary_path
         self._voice_model = voice_model
         self._voices_dir = voices_dir
@@ -199,90 +198,23 @@ class PiperBackend:
         _length_scale     = _ov.get("length_scale",     self._length_scale)
         _noise_w          = _ov.get("noise_w",          self._noise_w)
         _sentence_silence = _ov.get("sentence_silence", self._sentence_silence)
-        try:
-            # BF-282 (2026-05-13): write to a temp WAV file instead of stdout.
-            # On Windows, ``--output_file -`` writes to stdout which Piper's
-            # C runtime opens in text mode by default, converting every 0x0A
-            # byte to 0x0D 0x0A and corrupting the PCM body — produces audio
-            # that sounds like static. Writing to a file bypasses the text-
-            # mode translation entirely. Identical behavior on Linux/macOS.
-            #
-            # BF-280 (2026-05-13): use subprocess.Popen in a thread executor
-            # instead of asyncio.create_subprocess_exec. The latter requires
-            # ProactorEventLoop, but ProbOS runtime uses WindowsSelectorEventLoop
-            # which raises NotImplementedError on Windows. Mirrors the
-            # shell_command.py:_run_sync pattern.
-            def _run_sync() -> tuple[int, bytes, bytes]:
-                # NamedTemporaryFile + delete=False so Piper can open it by
-                # name; we delete in the finally block after reading.
-                with tempfile.NamedTemporaryFile(
-                    suffix=".wav", delete=False
-                ) as tmp:
-                    tmp_path = Path(tmp.name)
-                try:
-                    proc = subprocess.Popen(
-                        [
-                            str(binary),
-                            "--model", str(model),
-                            "--output_file", str(tmp_path),
-                            # AD-738e prosody knobs — see TTSConfig docstrings
-                            # for tuning rationale. Captain Decision: piper
-                            # upstream defaults (0.667 / 1.0 / 0.8 / 0.2) sound
-                            # monotone; our defaults bump expressiveness +
-                            # rhythm variation at a small clarity cost.
-                            "--noise_scale", str(_noise_scale),
-                            "--length_scale", str(_length_scale),
-                            "--noise_w", str(_noise_w),
-                            "--sentence_silence", str(_sentence_silence),
-                        ],
-                        stdin=subprocess.PIPE,
-                        env=trusted_command_env(),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                    )
-                    try:
-                        _stdout, err = proc.communicate(
-                            input=text.encode("utf-8"),
-                            timeout=self._timeout_seconds,
-                        )
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-                        raise
-                    rc = proc.returncode or 0
-                    if rc != 0 or not tmp_path.is_file():
-                        return rc, b"", err
-                    return rc, tmp_path.read_bytes(), err
-                finally:
-                    try:
-                        tmp_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-
-            loop = asyncio.get_running_loop()
-            try:
-                returncode, wav_bytes, stderr_bytes = await loop.run_in_executor(
-                    None, _run_sync,
-                )
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "AD-738: piper timed out after %ss synthesizing %d chars",
-                    self._timeout_seconds, len(text),
-                )
-                return None
-            if returncode != 0:
-                logger.warning(
-                    "AD-738: piper exit=%s; stderr=%s",
-                    returncode,
-                    stderr_bytes.decode("utf-8", errors="replace")[:500],
-                )
-                return None
-            if not wav_bytes:
-                logger.warning("AD-738: piper produced 0 bytes; degrading")
-                return None
-            return TTSResult(audio_bytes=wav_bytes, mime="audio/wav")
-        except (OSError, ValueError) as e:
+        if self._service is None:
             logger.warning(
-                "AD-738: piper subprocess failed: %s: %s", type(e).__name__, e
+                "BF-918: no voice synthesis service on this runtime; degrading to browser"
             )
             return None
+        # BF-918 (#1626): one resident process per (voice, prosody) key on the voice
+        # executor. The service keeps BF-280, BF-282, BF-892 and the timeout, and logs
+        # any failure in the AD-738 wording.
+        key = PiperWorkerKey(
+            binary=str(binary),
+            model=str(model),
+            noise_scale=_noise_scale,
+            length_scale=_length_scale,
+            noise_w=_noise_w,
+            sentence_silence=_sentence_silence,
+        )
+        wav_bytes = await self._service.synthesize(key, text, self._timeout_seconds)
+        if wav_bytes is None:
+            return None
+        return TTSResult(audio_bytes=wav_bytes, mime="audio/wav")

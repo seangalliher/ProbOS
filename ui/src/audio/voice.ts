@@ -4,7 +4,8 @@ import { applyEmotionalModulation } from './voiceModulation';
 import { deriveAgentSignals } from '../components/profile/avatarSignals';
 import { useStore } from '../store/useStore';
 import { injectLipSyncFrames } from './useLipSyncCapture';
-import { splitIntoSentences, runSentenceQueue } from './voiceChunking';
+import type { LipSyncFrame } from './lipSyncCapture';
+import { splitIntoSentences, runPrefetchQueue } from './voiceChunking';
 import {
   speechQueueState,
   type SpeechClass,
@@ -225,6 +226,8 @@ export function _resetTtsStatusForTests(): void {
   _ttsStatusInflight = null;
   _activeAudio = null;
   _activeUtteranceId = null;
+  _dispatchStartedAt = null;
+  _sentenceEndedAt = null;
 }
 
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
@@ -244,6 +247,50 @@ let _speakGeneration = 0;
  *  nothing is playing. Distinct from `_speakGeneration`, which now advances at
  *  ENQUEUE and so no longer answers "is this utterance still current". */
 let _activeUtteranceId: number | null = null;
+
+/** BF-918 (#1626): sentences synthesized ahead of the one playing under AD-1071
+ *  pipelining. One hides a sentence's synthesis behind the previous one's
+ *  playback, and caps what a stopped reply can have spent at one sentence. */
+const TTS_PREFETCH_LOOKAHEAD = 1;
+
+/** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
+ *  lost the device (a stop, or a newer dispatch) before any of its audio started.
+ *  It emitted no 'start', so it emits no 'end' (BF-655 pairs them); AD-1291's
+ *  'dropped' is its terminal event, and the arbiter's wait ends on it. */
+const CANCELLED_BEFORE_AUDIO = 'cancelled-before-audio';
+
+/** BF-918 (#1626): User Timing measures for the live acceptance.
+ *  `bf918:first-audio` runs from an utterance's dispatch to its audio actually
+ *  playing; `bf918:sentence-gap` from one sentence's `ended` to the next
+ *  sentence's `playing` in the same reply. Diagnostic only, capped, never thrown. */
+const VOICE_MEASURE_CAP = 1000;
+let _dispatchStartedAt: { id: number; at: number } | null = null;
+let _sentenceEndedAt: { id: number; at: number } | null = null;
+
+function _voiceNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function _recordVoiceMeasure(name: string, start: number): void {
+  try {
+    if (typeof performance === 'undefined' || typeof performance.measure !== 'function') return;
+    if (performance.getEntriesByName(name, 'measure').length >= VOICE_MEASURE_CAP) {
+      performance.clearMeasures(name);
+    }
+    performance.measure(name, { start, end: performance.now() });
+  } catch { /* Tier-2: timing is diagnostic only */ }
+}
+
+function _notePlaying(utterance_id: number): void {
+  if (_dispatchStartedAt !== null && _dispatchStartedAt.id === utterance_id) {
+    _recordVoiceMeasure('bf918:first-audio', _dispatchStartedAt.at);
+    _dispatchStartedAt = null;
+  }
+  if (_sentenceEndedAt !== null && _sentenceEndedAt.id === utterance_id) {
+    _recordVoiceMeasure('bf918:sentence-gap', _sentenceEndedAt.at);
+  }
+  _sentenceEndedAt = null;
+}
 
 /** BF-283 (2026-05-13): expose the active audio's playback position so the
  *  CrewVRM viseme sampler can anchor to the audio clock instead of wall
@@ -378,7 +425,7 @@ function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<
       // Deliberately does NOT clear `_activeUtteranceId`. Under AD-1071
       // pipelining every SENTENCE of one reply fires an 'end' carrying the
       // reply's shared id (BF-767), so clearing it here made the first
-      // sentence's 'end' fail `runSentenceQueue`'s shouldContinue and silence
+      // sentence's 'end' fail `runPrefetchQueue`'s shouldContinue and silence
       // the rest of the reply. The token is handed over by the next
       // `_playNow` and cleared by `stopSpeaking`; a finished entry's id can
       // never be re-matched because ids are monotonic.
@@ -389,7 +436,11 @@ function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<
     // synchronously, and a listener armed afterwards would miss it and wait out
     // the join timeout. BF-767 measured that exact ordering.
     const unsub = onSpeechEvent((event) => {
-      if (event.type !== 'end') return;
+      // BF-918 (#1626, review round 1): or its own 'dropped'. A dispatched entry that
+      // lost the device before any of its audio started emits no 'start' and so no
+      // 'end'; `_playNow` fires 'dropped' for it (D7a). Nothing else drops a started
+      // entry: pre-emption and `flushSpeechQueue` skip them.
+      if (event.type !== 'end' && event.type !== 'dropped') return;
       if (event.utterance_id !== entry.id) return;
       done();
     });
@@ -407,7 +458,8 @@ function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<
 /** AD-1291: drop every queued-but-unstarted entry, each with an observable
  *  reason. The IN-FLIGHT entry is deliberately left alone -- stopping audio is
  *  `stopSpeaking`'s job, and its consumers must still receive that utterance's
- *  terminal 'end'.
+ *  own terminal event: 'end' once its audio started, or BF-918's 'dropped'
+ *  (`cancelled-before-audio`, D7a) from `_playNow` when it lost the device first.
  *
  *  `owner` scopes the flush to one SURFACE: an unmounting tab must drop its
  *  OWN backlog without silencing whatever another surface is queueing. It is
@@ -458,6 +510,9 @@ function _playNow(entry: SpeechQueueEntry): boolean {
   // have let a merely QUEUED reply truncate the sentence queue of the one
   // actually playing.
   _activeUtteranceId = utterance_id;
+  // BF-918: first audio is measured from here, where the device becomes this utterance's.
+  _dispatchStartedAt = { id: utterance_id, at: _voiceNow() };
+  _sentenceEndedAt = null;
 
   // Fast synchronous path: if fetch is unavailable OR the cached probe
   // already says "not piper", run the browser fallback synchronously.
@@ -475,6 +530,9 @@ function _playNow(entry: SpeechQueueEntry): boolean {
     // ZERO-HTTP guarantee for default config (Captain decision #9):
     // probe once, cache, and skip the POST entirely when backend != "piper".
     const status = await _fetchTtsStatus();
+    // BF-918 (review round 1, D7a): each await between dispatch and audio re-checks
+    // that this utterance still owns the device. Stopped during the probe: speak nothing.
+    if (_activeUtteranceId !== utterance_id) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }
     if (status === null || !status.enabled || status.backend !== 'piper') {
       _speakBrowserFallback(text, profile, agent_id, utterance_id);
       return;
@@ -484,44 +542,86 @@ function _playNow(entry: SpeechQueueEntry): boolean {
     // first audio starts after only the FIRST sentence is synthesized (cutting
     // time-to-first-audio). When OFF (default) OR single-sentence, fall through
     // to the byte-identical single-call path below.
+    // BF-918 (#1626): sentence N+1 is synthesized while sentence N plays (it used to
+    // start only once N had ended, so every boundary cost a whole synthesis).
+    // Playback stays strictly ordered; a stop drops what was prepared, unplayed.
     if (status.sentence_pipelining_enabled) {
       const sentences = splitIntoSentences(text);
       if (sentences.length > 1) {
-        await runSentenceQueue(
+        const played = await runPrefetchQueue<PreparedSpeech>(
           sentences,
-          (sentence) => _synthesizeAndPlay(sentence, profile, agent_id, emotion, utterance_id),
+          (sentence) => _prepareServerSpeech(sentence, profile, emotion),
+          (prepared, sentence) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id),
           () => _activeUtteranceId === utterance_id,
+          TTS_PREFETCH_LOOKAHEAD,
+          _discardPreparedSpeech,
         );
+        // BF-918 (review round 1, D7a): stopped before its first sentence played. No
+        // 'start' fired, so no 'end' will: 'dropped' ends this utterance for the arbiter.
+        if (played === 0) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
         return;
       }
     }
-    // Single-call path (default): one TTS POST for the whole reply.
-    await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id);
+    // Single-call path (default): one TTS POST for the whole reply. BF-918 (review
+    // round 1, D7a): `false` means it lost the device before its audio started.
+    if (!(await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id))) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
   })();
   return true;
 }
 
-/** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend,
- *  play it, and resolve when playback ENDS — so the AD-1071 sentence queue can
- *  advance to the next sentence. Each call injects its own visemes for lip-sync.
- *  Honest-degrade: on any failure it falls back to the browser path for THIS
- *  utterance and resolves so the caller's queue keeps going. Used by BOTH the
- *  default single-call path (full reply) and the pipelined path (per sentence),
- *  so the default path stays byte-identical. */
+/** BF-918 (#1626): one server-synthesized utterance, ready to play. Its <audio> is
+ *  made at prepare time, so the browser fetches the WAV while the previous sentence
+ *  still plays; nothing listens to it until `_playPreparedSpeech`, so one that is
+ *  discarded fires no event. `visemes`: the frames that came with the audio (a
+ *  server without BF-918 ignores `defer_visemes`). `deferredVisemes`: the request
+ *  for them, made at prepare time, when the server deferred them. */
+interface PreparedSpeech {
+  audio: HTMLAudioElement;
+  visemes: LipSyncFrame[] | null;
+  deferredVisemes: Promise<LipSyncFrame[]> | null;
+}
+
+/** AD-738 / AD-1071: synthesize ONE utterance via the server Piper backend, play
+ *  it, and resolve when playback ENDS. The default single-call path (the full
+ *  reply) uses it; the pipelined path drives the same two halves through
+ *  `runPrefetchQueue`. Honest-degrade: on any failure the browser speaks THIS
+ *  utterance instead. BF-918 (review round 1, D7a): resolves `false`, having
+ *  started nothing, when the utterance lost the device (a stop, or a newer
+ *  dispatch) while it synthesized: its audio is discarded unplayed, and a failed
+ *  synthesis does not fall back to the browser. `true` otherwise. */
 async function _synthesizeAndPlay(
   text: string,
   profile: VoiceProfile | undefined,
   agent_id: string | undefined,
   emotion: string | undefined,
   utterance_id: number,
-): Promise<void> {
+): Promise<boolean> {
+  const prepared = await _prepareServerSpeech(text, profile, emotion);
+  if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }
+  await _playPreparedSpeech(prepared, text, profile, agent_id, utterance_id);
+  return true;
+}
+
+/** BF-918: the network half. POST the text and make (but do not play) its <audio>.
+ *  Resolves `null` on any failure, which the play half turns into the browser
+ *  fallback for this utterance. Never rejects. */
+async function _prepareServerSpeech(
+  text: string,
+  profile: VoiceProfile | undefined,
+  emotion: string | undefined,
+): Promise<PreparedSpeech | null> {
   try {
     // AD-738e-1: pass v1 emotion name (resolved server-side) so the TTS
     // endpoint can apply per-emotion prosody. Omit when undefined — server
     // falls back to defaults. BF-291 / AD-738f: pass per-agent voice_name
     // when set; server resolves against tools/piper/voices/ and falls back
-    // to the configured tts.voice_model on miss.
-    const _body: { text: string; emotion?: string; voice_name?: string } = { text };
+    // to the configured tts.voice_model on miss. BF-918: ask for the visemes
+    // separately (POST /api/avatars/lipsync), so first audio does not wait for
+    // rhubarb.
+    const _body: { text: string; defer_visemes: boolean; emotion?: string; voice_name?: string } = {
+      text,
+      defer_visemes: true,
+    };
     if (typeof emotion === 'string' && emotion.length > 0) {
       _body.emotion = emotion;
     }
@@ -535,8 +635,7 @@ async function _synthesizeAndPlay(
     });
     if (!resp.ok) {
       _invalidateTtsStatus();
-      _speakBrowserFallback(text, profile, agent_id, utterance_id);
-      return;
+      return null;
     }
     const data = await resp.json();
     if (
@@ -547,13 +646,58 @@ async function _synthesizeAndPlay(
     ) {
       // Server flipped to disabled — invalidate so the next call re-probes.
       _invalidateTtsStatus();
-      _speakBrowserFallback(text, profile, agent_id, utterance_id);
-      return;
+      return null;
     }
+    const deferred = data.visemes_deferred === true;
+    return {
+      audio: new Audio(`/api/chat/attachments/${data.audio_attachment_id}`),
+      visemes: deferred ? null : (Array.isArray(data.visemes) ? data.visemes : []),
+      deferredVisemes: deferred ? _fetchDeferredVisemes(data.audio_attachment_id) : null,
+    };
+  } catch {
+    _invalidateTtsStatus();
+    return null;
+  }
+}
+
+/** BF-918: the visemes the server deferred. Resolves `[]` on any failure, and the
+ *  avatar keeps its heuristic schedule for that utterance (AD-721b). Never rejects. */
+async function _fetchDeferredVisemes(attachmentId: string): Promise<LipSyncFrame[]> {
+  try {
+    const resp = await fetch('/api/avatars/lipsync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attachment_id: attachmentId }),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data && data.backend === 'rhubarb' && Array.isArray(data.frames) ? data.frames : [];
+  } catch {
+    return [];
+  }
+}
+
+/** BF-918: the device half. Play a prepared utterance and resolve when it ENDS;
+ *  `null` (its preparation failed) speaks it through the browser instead, as
+ *  before. Each call fires its own balanced 'start'/'end' and injects its own
+ *  visemes. */
+async function _playPreparedSpeech(
+  prepared: PreparedSpeech | null,
+  text: string,
+  profile: VoiceProfile | undefined,
+  agent_id: string | undefined,
+  utterance_id: number,
+): Promise<void> {
+  if (prepared === null) {
+    _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
+    _speakBrowserFallback(text, profile, agent_id, utterance_id);
+    return;
+  }
+  const { audio, visemes, deferredVisemes } = prepared;
+  try {
     // Build a synthetic utterance object so existing 'start'/'end' listeners
     // (AD-718 / AD-721) keep firing the same shape. agent_id propagates.
     const synth = new SpeechSynthesisUtterance(text);
-    const audio = new Audio(`/api/chat/attachments/${data.audio_attachment_id}`);
     _activeAudio = audio;
     const effective = _resolveEffectiveProfile(profile, agent_id);
     audio.volume = Math.max(0, Math.min(1, effective.volume ?? 0.8));
@@ -573,28 +717,50 @@ async function _synthesizeAndPlay(
         resolve();
       };
       audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server', utterance_id }));
-      audio.addEventListener('ended', () => _finish(true));
+      audio.addEventListener('playing', () => _notePlaying(utterance_id));
+      audio.addEventListener('ended', () => {
+        _sentenceEndedAt = { id: utterance_id, at: _voiceNow() };
+        _finish(true);
+      });
       audio.addEventListener('error', () => _finish(true));
-      // BF-655 (refines AD-1071): a newer speakResponse pauses _activeAudio to
-      // supersede this utterance. Fire the terminal 'end' (same agent_id,
-      // source:'server') — the old utterance is genuinely over, so the
-      // modulation icon, avatar head-bob, and PTT gate MUST reset. This is NOT
-      // a spurious 'end' (a spurious end would cut a still-playing utterance;
-      // pause never does that here). The _settled guard above makes this a
-      // no-op if 'ended'/'error' already ran, so there is no double-'end'. The
-      // AD-1071 pipelined queue still stops via the _speakGeneration token (not
-      // this event), and _finish still resolve()s, so the queue advances/stops
-      // exactly as before.
+      // BF-655 (refines AD-1071): a newer speakResponse, or a barge-in (BF-918),
+      // pauses _activeAudio to end this utterance. Fire the terminal 'end' (same
+      // agent_id, source:'server'): the utterance is genuinely over, so the
+      // modulation icon, avatar head-bob and PTT gate MUST reset. The _settled
+      // guard above makes this a no-op if 'ended'/'error' already ran, so there is
+      // no double-'end'. The pipelined queue stops on its own predicate, not this
+      // event, and _finish still resolve()s.
       audio.addEventListener('pause', () => _finish(true));
       // AD-738: feed visemes directly to useLipSyncCapture via the injection setter.
-      if (Array.isArray(data.visemes) && data.visemes.length > 0) {
-        try {
-          injectLipSyncFrames(data.visemes, agent_id);
-        } catch {
-          // ignore — visemes are best-effort
+      if (visemes !== null) {
+        if (visemes.length > 0) {
+          try {
+            injectLipSyncFrames(visemes, agent_id);
+          } catch {
+            // ignore — visemes are best-effort
+          }
         }
+      } else if (deferredVisemes !== null) {
+        // BF-918: until these arrive the avatar animates on the browser's
+        // heuristic schedule (CrewVRM builds it at 'start'). Rhubarb's frames are
+        // timed from the audio's start and sampled on its clock (BF-283), so late
+        // frames still line up. Frames for a sentence that has ended, or been
+        // replaced, are dropped.
+        void deferredVisemes.then((frames) => {
+          if (_settled || _activeAudio !== audio || frames.length === 0) return;
+          try {
+            injectLipSyncFrames(frames, agent_id);
+          } catch {
+            // ignore — visemes are best-effort
+          }
+        });
       }
       audio.play().then(undefined, () => {
+        // BF-918 (review round 1): pausing a play() that has not started playback
+        // rejects it (AbortError) AFTER the 'pause' listener above fired this
+        // utterance's one terminal 'end'. A stop or a newer dispatch did that, so it
+        // was cancelled, not failed: speak nothing in its place.
+        if (_activeUtteranceId !== utterance_id) { _finish(false); return; }
         // play() rejected — fall back to browser for THIS utterance, resolve.
         if (_activeAudio === audio) _activeAudio = null;
         _speakBrowserFallback(text, profile, agent_id, utterance_id);
@@ -605,6 +771,15 @@ async function _synthesizeAndPlay(
     _invalidateTtsStatus();
     _speakBrowserFallback(text, profile, agent_id, utterance_id);
   }
+}
+
+/** BF-918: drop a prepared utterance that will never play (its reply was stopped). */
+function _discardPreparedSpeech(prepared: PreparedSpeech | null): void {
+  if (prepared === null) return;
+  try {
+    prepared.audio.removeAttribute('src');
+    prepared.audio.load();
+  } catch { /* best effort: an unplayed element holds no listener and fires no event */ }
 }
 
 /** AD-738: factor out per-agent modulation resolution so both server and
@@ -723,6 +898,14 @@ export function stopSpeaking(): void {
   _activeUtteranceId = null;
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
+  }
+  // BF-918 (#1626): the server path too. Its <audio> used to play on after a
+  // barge-in (only the browser engine was cancelled). Pausing fires that
+  // utterance's one terminal 'end' (BF-655), and the sentence queue, whose
+  // predicate is already false, stops and drops what it had prepared.
+  if (_activeAudio !== null) {
+    try { _activeAudio.pause(); } catch { /* BF-918: barge-in silences server audio too */ }
+    _activeAudio = null;
   }
 }
 

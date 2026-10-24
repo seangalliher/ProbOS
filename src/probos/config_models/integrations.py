@@ -253,8 +253,24 @@ class AttachmentsConfig(BaseModel):
         ge=0,
         description=(
             "AD-733-1: total bytes ceiling for attachments_dir. Reaper "
-            "evicts oldest perception_frame entries first, then oldest "
-            "chat_attachment entries, until under cap. 0 = disabled."
+            "evicts oldest tts_audio entries first (BF-918), then "
+            "perception_frame, browser_screenshot, avatar_render, crew_trace "
+            "and chat_attachment entries, until under cap; agent_artifact "
+            "is never evicted. 0 = disabled."
+        ),
+    )
+
+    # BF-918 (#1626): a spoken reply's audio is played once and no chat record
+    # keeps its id, so the reaper deletes origin=tts_audio entries older than
+    # this. Bytes also written under a more durable origin keep that origin.
+    tts_audio_retention_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=86400,
+        description=(
+            "BF-918: TTL for spoken TTS audio (origin tts_audio). Default 15 min -- "
+            "ample for the browser to fetch and play a reply and its deferred "
+            "lip-sync request."
         ),
     )
 

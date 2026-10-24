@@ -9,6 +9,7 @@ backend is unavailable.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -65,14 +66,13 @@ async def generate_lipsync(
         # for the configured backend without reading config separately.
         return {"backend": "heuristic", "frames": []}
 
-    # backend == "rhubarb"
-    from probos.avatars.rhubarb_backend import generate_visemes
+    # backend == "rhubarb". BF-918: on the voice executor, inside its admission bound.
     audio_path = await store.get_path(attachment_id)
-    frames = await generate_visemes(
-        audio_path,
-        binary_path=cfg.binary_path,
-        timeout_seconds=cfg.timeout_seconds,
-        ffmpeg_binary_path=cfg.ffmpeg_binary_path,
+    started = time.perf_counter()
+    frames = await _bounded_visemes(runtime, audio_path, cfg)
+    logger.info(
+        "BF-918: lipsync route visemes_ms=%.0f frames=%d",
+        (time.perf_counter() - started) * 1000, len(frames),
     )
     if not frames:
         # generate_visemes already log-and-degraded; tell the client.
@@ -190,9 +190,14 @@ async def synthesize_tts(
     the resulting file (reuses AD-721b-1 ``generate_visemes``), and returns
     audio + visemes together so the browser plays them in lockstep.
 
+    BF-918: ``{"defer_visemes": true}`` in the body skips rhubarb here; the
+    response then has ``"visemes": []`` and ``"visemes_deferred": true``, and the
+    client asks ``POST /api/avatars/lipsync`` for them while the audio plays.
+
     Returns:
         - Best path: ``{"backend": "piper", "audio_attachment_id": "<sha256>",
-          "mime": "audio/wav", "visemes": [...], "duration_ms": <int>}``
+          "mime": "audio/wav", "visemes": [...], "visemes_deferred": <bool>,
+          "duration_ms": <int>}``
         - Honest-degrade: ``{"backend": "disabled", "audio_attachment_id": null,
           "mime": null, "visemes": [], "duration_ms": 0}`` — browser falls
           back to ``SpeechSynthesisUtterance``.
@@ -256,10 +261,23 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
         # boundary even though _resolve_voice_model also validates.
         voice_name = None
 
+    # BF-918 (#1626): a client that asks gets its visemes from POST /api/avatars/lipsync
+    # while the audio plays, so rhubarb (0.85 s for one sentence, 2.8 s for seven,
+    # measured 2026-10-22) is off the first-audio path. Any other client keeps the
+    # single round trip.
+    defer_visemes = payload.get("defer_visemes") is True
+
     from probos.audio.tts import select_backend
-    backend = select_backend(cfg.backend, cfg)
+    voice_service = getattr(runtime, "voice_synthesis", None)
+    started = time.perf_counter()
+    backend = select_backend(cfg.backend, cfg, service=voice_service)
     result = await backend.synthesize(text, emotion=emotion, voice_override=voice_name)
+    synthesized = time.perf_counter()
     if result is None:
+        logger.info(
+            "BF-918: tts route chars=%d synth_ms=%.0f result=degraded",
+            len(text), (synthesized - started) * 1000,
+        )
         return {
             "backend": "disabled",
             "audio_attachment_id": None,
@@ -277,37 +295,82 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     from probos.routers.chat import _get_attachment_store
     store = _get_attachment_store(runtime)
     attachment_id = hashlib.sha256(result.audio_bytes).hexdigest()
-    await store.write(attachment_id, result.audio_bytes, result.mime)
+    # BF-918 (#1626): spoken audio is played once and no chat record keeps its
+    # id, so it is stored under its own origin, which the reaper deletes by age.
+    # Identical bytes written under a more durable origin keep that origin.
+    await store.write(attachment_id, result.audio_bytes, result.mime, origin="tts_audio")
+    stored = time.perf_counter()
 
     # Reuse AD-721b-1 rhubarb backend by direct internal call. lipsync.backend
     # may be "heuristic" (default) — in that case skip rhubarb and let the
     # browser fall back to its heuristic schedule for THIS audio.
     visemes_payload: list[dict[str, Any]] = []
+    visemes_mode = "off"
     lipsync_cfg = getattr(runtime.config, "lipsync", None)
     if lipsync_cfg is not None and lipsync_cfg.enabled and lipsync_cfg.backend == "rhubarb":
-        from probos.avatars.rhubarb_backend import generate_visemes
-        audio_path = await store.get_path(attachment_id)
-        frames = await generate_visemes(
-            audio_path,
-            binary_path=lipsync_cfg.binary_path,
-            timeout_seconds=lipsync_cfg.timeout_seconds,
-            ffmpeg_binary_path=lipsync_cfg.ffmpeg_binary_path,
-        )
-        visemes_payload = [
-            {"time": f.time, "duration": f.duration, "viseme": f.viseme}
-            for f in frames
-        ]
+        if defer_visemes:
+            visemes_mode = "deferred"
+        else:
+            visemes_mode = "inline"
+            audio_path = await store.get_path(attachment_id)
+            frames = await _bounded_visemes(runtime, audio_path, lipsync_cfg)
+            visemes_payload = [
+                {"time": f.time, "duration": f.duration, "viseme": f.viseme}
+                for f in frames
+            ]
+    finished = time.perf_counter()
 
     # Duration: parse from WAV header. Cheap and self-contained.
     duration_ms = _wav_duration_ms(result.audio_bytes)
+    # BF-918: the stage timings the live acceptance reads (probos.log).
+    logger.info(
+        "BF-918: tts route chars=%d synth_ms=%.0f store_ms=%.0f visemes_ms=%.0f "
+        "total_ms=%.0f visemes=%s audio_ms=%d",
+        len(text), (synthesized - started) * 1000, (stored - synthesized) * 1000,
+        (finished - stored) * 1000, (finished - started) * 1000, visemes_mode, duration_ms,
+    )
 
     return {
         "backend": backend.name,
         "audio_attachment_id": attachment_id,
         "mime": result.mime,
         "visemes": visemes_payload,
+        "visemes_deferred": visemes_mode == "deferred",
         "duration_ms": duration_ms,
     }
+
+
+async def _bounded_visemes(runtime: Any, audio_path: Any, lipsync_cfg: Any) -> list[Any]:
+    """BF-918 (#1626): rhubarb (and ffmpeg) on the voice executor, inside its admission bound.
+
+    A runtime that never built the voice service keeps asyncio's default pool,
+    as before BF-918. Saturated or stopping: no frames, and the browser keeps
+    its heuristic schedule (AD-721b).
+    """
+    from probos.avatars.rhubarb_backend import generate_visemes
+
+    voice_service = getattr(runtime, "voice_synthesis", None)
+    if voice_service is None:
+        return await generate_visemes(
+            audio_path,
+            binary_path=lipsync_cfg.binary_path,
+            timeout_seconds=lipsync_cfg.timeout_seconds,
+            ffmpeg_binary_path=lipsync_cfg.ffmpeg_binary_path,
+        )
+    with voice_service.admit() as admitted:
+        if not admitted:
+            logger.warning(
+                "BF-918: lip-sync refused (voice work is at its limit or stopping); "
+                "the browser keeps its heuristic schedule"
+            )
+            return []
+        return await generate_visemes(
+            audio_path,
+            binary_path=lipsync_cfg.binary_path,
+            timeout_seconds=lipsync_cfg.timeout_seconds,
+            ffmpeg_binary_path=lipsync_cfg.ffmpeg_binary_path,
+            executor=voice_service.executor,
+        )
 
 
 def _wav_duration_ms(wav_bytes: bytes) -> int:

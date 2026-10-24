@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1890
-  field_definitions: 1879
+  canonical_dump_leaves: 1891
+  field_definitions: 1880
   incidental: 13
   own_models: 228
   owned: 296
   public_names: 309
-canonical_dump_sha256: d7b6536f56d6c33110875035ba51ddad1ae2b6a955e3db3050827803324b816b
+canonical_dump_sha256: fc24f1a120358b11e0e81844cefc867c0e705d698ba2778df79a3f70af6ba9c3
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -610,7 +610,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6236f492e18f8c50a163f29cb73840d12f52580510b7f127b7ff047f0e8890a5
+    schema_sha256: 29e53152a0f02eaa61ab167ac6468428db57b4321312827f31998d5dbfc66b46
     fields:
     - {default: 'True', name: enabled}
     - {default: 'False', name: serve_remote_enabled}
@@ -628,6 +628,7 @@ models:
     - {default: None, name: image_budget_path}
     - {default: <required>, has_default_factory: true, name: vision_tier_overrides}
     - {default: '5368709120', name: max_store_bytes}
+    - {default: '900', name: tts_audio_retention_seconds}
   AttentionConfig:
     qualname: AttentionConfig
     bases:
@@ -3414,7 +3415,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a9555e59afad2ab2e24a122d30809aa7004865610ffaa2c0f6869ee885c208b9
+    schema_sha256: ba3ec2db7253d6a570d6259c61b1a91ba160701998cb6a02c20ca5bf102f59b6
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

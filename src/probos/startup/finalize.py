@@ -733,9 +733,10 @@ async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> No
 async def _start_attachment_reaper(*, runtime: Any, config: "SystemConfig") -> None:
     """AD-733-1: start the AttachmentStore retention reaper.
 
-    Active when ``perception.enabled`` (ephemeral frames present) or when
+    Active when ``perception.enabled`` (ephemeral frames present), when
     ``attachments.max_store_bytes > 0`` (LRU safety net active for any
-    producer). Tier-2 honest-degrade on construction failure -- the
+    producer), or (BF-918) when spoken TTS audio has a retention window.
+    Tier-2 honest-degrade on construction failure -- the
     runtime keeps booting; attachments simply will not be reaped.
     """
     perception_cfg = getattr(config, "perception", None)
@@ -744,7 +745,8 @@ async def _start_attachment_reaper(*, runtime: Any, config: "SystemConfig") -> N
         return
     perception_enabled = bool(getattr(perception_cfg, "enabled", False))
     lru_enabled = int(getattr(attachments_cfg, "max_store_bytes", 0)) > 0
-    if not (perception_enabled or lru_enabled):
+    tts_ttl_enabled = int(getattr(attachments_cfg, "tts_audio_retention_seconds", 0)) > 0
+    if not (perception_enabled or lru_enabled or tts_ttl_enabled):
         return
     try:
         from probos.attachments.reaper import AttachmentReaper

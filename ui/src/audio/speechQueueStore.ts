@@ -42,9 +42,13 @@ export interface SpeechQueueEntry {
   owner?: string;
   emotion?: string;
   speechClass: SpeechClass;
-  /** True once the entry has been handed to the device. A started entry is
-   *  never dropped -- only queued-but-unstarted ones are, because dropping a
-   *  started one would cut audio the Captain is already hearing. */
+  /** True once the entry has been handed to the device: dispatched, which does
+   *  not mean its audio has started. Pre-emption and `flushSpeechQueue` skip a
+   *  started entry -- only queued-but-unstarted ones are dropped that way,
+   *  because dropping a started one could cut audio the Captain is already
+   *  hearing. BF-918 (#1626, D7a): a started entry that lost the device before
+   *  any of its audio started (a stop, or a newer dispatch) still ends with
+   *  'dropped', reason `cancelled-before-audio`, fired by `_playNow`. */
   started: boolean;
 }
 

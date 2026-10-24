@@ -84,7 +84,7 @@ TRUSTED_ENV_SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("src/probos/__main__.py", "_check_nats"): (1, "nats-server, fixed argv"),
     ("src/probos/__main__.py", "_cmd_reset"): (2, "git add/commit in the Captain's repo during reset"),
     ("src/probos/agents/code_search.py", "CodeSearchAgent._search_rg"): (1, "rg; model text only as a bound --regexp/--glob value; RIPGREP_CONFIG_PATH"),
-    ("src/probos/audio/tts/piper_backend.py", "PiperBackend.synthesize._run_sync"): (1, "piper; text on stdin"),
+    ("src/probos/audio/tts/resident.py", "PiperWorker._spawn"): (1, "resident piper --json-input; text as JSON lines on stdin (BF-918)"),
     ("src/probos/avatars/blender_renderer.py", "BlenderRenderer.render"): (1, "blender running ProbOS's own script"),
     ("src/probos/avatars/rhubarb_backend.py", "_convert_to_wav._run_sync"): (1, "ffmpeg, fixed argv"),
     ("src/probos/avatars/rhubarb_backend.py", "probe_version._probe_sync"): (1, "rhubarb --version"),

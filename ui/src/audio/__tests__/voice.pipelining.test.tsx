@@ -72,7 +72,8 @@ function _installGlobals(): void {
 }
 
 async function _flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await Promise.resolve();
+  // BF-918: prefetching the next sentence adds microtask hops (harness only).
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 /** Build a fetch mock that records the POSTed text and returns a valid piper
@@ -139,20 +140,20 @@ describe('AD-1071 speakResponse — flag ON pipelines sentences', () => {
     voiceMod.speakResponse('One. Two. Three.');
     await _flush();
 
-    // First-audio wins: only the FIRST sentence is synthesized so far.
-    expect(posted).toEqual(['One.']);
-    expect(createdAudios.length).toBe(1);
+    // BF-918: first audio still needs only the FIRST sentence; the second is
+    // synthesized while the first plays (it used to wait for the first to end).
+    expect(posted).toEqual(['One.', 'Two.']);
+    expect(createdAudios.map((a) => a.played)).toEqual([true, false]);
 
-    // Finishing sentence[0] triggers sentence[1] — and only then.
+    // Finishing sentence[0] plays sentence[1] and prefetches sentence[2].
     createdAudios[0].end();
     await _flush();
-    expect(posted).toEqual(['One.', 'Two.']);
-    expect(createdAudios.length).toBe(2);
+    expect(posted).toEqual(['One.', 'Two.', 'Three.']);
+    expect(createdAudios.map((a) => a.played)).toEqual([true, true, false]);
 
     createdAudios[1].end();
     await _flush();
-    expect(posted).toEqual(['One.', 'Two.', 'Three.']);
-    expect(createdAudios.length).toBe(3);
+    expect(createdAudios.map((a) => a.played)).toEqual([true, true, true]);
 
     createdAudios[2].end();
     await _flush();
@@ -203,12 +204,16 @@ describe('AD-1071 speakResponse — flag ON pipelines sentences', () => {
 
     voiceMod.speakResponse('Alpha. Bravo. Charlie.');
     await _flush();
-    expect(posted).toEqual(['Alpha.']);
+    // BF-918: sentence[1] is prefetched (and fails) while sentence[0] plays;
+    // its browser fallback waits for its turn.
+    expect(posted).toEqual(['Alpha.', 'Bravo.']);
+    expect(speakCalls.length).toBe(0);
     // Advance past sentence[0].
     createdAudios[0].end();
     await _flush();
-    // Sentence[1] synth failed (fell back to browser) and resolved immediately,
-    // so the queue already advanced to sentence[2] without a new 'ended'.
+    // Sentence[1] fell back to the browser in its turn and resolved at once,
+    // so the queue already moved on to sentence[2] without a new 'ended'.
+    expect(speakCalls.length).toBe(1);
     expect(posted).toEqual(['Alpha.', 'Bravo.', 'Charlie.']);
   });
 

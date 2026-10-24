@@ -1372,10 +1372,18 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
   // `speakResponse` is called, and on the lost-claim path it is never called
   // here at all. Erring toward "not speaking" keeps a missed correlation from
   // stranding the conversation controller, which is the opposite of the
-  // failure BF-767 fixes: over-clearing here costs a redundant wait, while
+  // failure BF-767 fixes. Over-clearing here is not free (BF-918, #1626: R20):
+  // clearing another same-agent key lets a later lost claim on that key skip
+  // its wait and complete the turn while that utterance still plays. The
+  // alternative is worse:
   // over-matching there ended the wrong turn.
+  // BF-918 (#1626, review round 2): or it was dropped. A dispatched utterance that
+  // lost the device before any of its audio started ends with 'dropped'
+  // (`cancelled-before-audio`), never 'end', and a pre-empted or flushed entry
+  // never played at all. Keeping its key made a later identical answer wait on an
+  // 'end' that nothing would emit. Same per-agent rule, same direction of error (R20).
   useEffect(() => onSpeechEvent((event) => {
-    if (event.type !== 'end') return;
+    if (event.type !== 'end' && event.type !== 'dropped') return;
     const ended = event.agent_id;
     for (const key of [...speechInFlightRef.current]) {
       if (!ended || key.startsWith(`agent\u0000${ended}\u0000`)) {
@@ -2059,6 +2067,24 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
     // the BF-671 live output policy (call audio in an active call, per-agent TTS
     // otherwise), so the Captain can talk to an agent and read text replies
     // without enabling any voice output.
+    //
+    // BF-918 (#1626, review round 3, C F1): a completion a reply of THIS arm
+    // sets up is retired when React's cleanup ends the arm (an unmount, or a
+    // re-run of this effect) and when the controller delivers 'inactive' to
+    // this arm (a newer arm, a pre-emption, the silence timer).
+    // `markAgentReplyComplete` completes whichever arm owns the controller when
+    // it is called, so a listener that outlived its arm ended the next arm's
+    // turn on its own late 'end' or 'dropped'. Not covered (review rounds 4 and
+    // 5): the controller does not always deliver 'inactive' (R21 in BF-918's
+    // contract names the case); an arm it does not tell keeps its listeners
+    // until React's cleanup. The reply counter is per arm for the same reason.
+    // `onAgentReply` needs no liveness check of its own: the controller calls
+    // it only while this arm owns it.
+    const pendingReplies = new Set<() => boolean>();
+    const retirePendingReplies = (): void => {
+      for (const retireReply of [...pendingReplies]) retireReply();
+    };
+    let replyTurn = 0;
     const armOpts: ArmOptions = {
       agentId: armAgentId,
       historyProvider: () => {
@@ -2078,6 +2104,8 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
       // for markAgentReplyComplete() to be called. Stuck state blocks the
       // next mic press because armConversationMode returns early when armed.
       onAgentReply: (replyText: string) => {
+        // BF-918 (review rounds 2 and 3): this reply now holds this arm's turn.
+        const ourTurn = ++replyTurn;
         // 1. Append to the per-agent conversation so the operator sees it
         // in the DM thread.
         useStore.getState().addAgentMessage(armAgentId, 'agent', replyText);
@@ -2141,13 +2169,30 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
         // or in a later task (real browsers queue both pause and cancel).
         let ourUtteranceId: number | undefined;
         let completed = false;
-        const complete = (): void => {
-          if (completed) return;
+        const retire = (): boolean => {
+          if (completed) return false;
           completed = true;
+          pendingReplies.delete(retire);
           try { unsub(); } catch { /* Tier-2 */ }
-          markAgentReplyComplete();
+          return true;
+        };
+        const complete = (): void => {
+          if (retire()) markAgentReplyComplete();
         };
         const unsub = onSpeechEvent((event) => {
+          // BF-918 (#1626, review round 2): this reply's OWN utterance never reached
+          // audio (a stop, or a newer dispatch, before its first 'start'), so its
+          // terminal event is 'dropped' and no 'end' is coming. Retire this
+          // listener, and complete the turn only if no later reply of this arm has
+          // taken the controller since: a late 'dropped' must not end a newer turn.
+          // Never a synthetic 'end' (BF-767). The lost-claim path cannot know the id
+          // and keeps waiting on the agent's 'end' (BF-718) until its arm ends.
+          if (event.type === 'dropped') {
+            if (!claimed || event.utterance_id !== ourUtteranceId) return;
+            if (replyTurn !== ourTurn) { retire(); return; }
+            complete();
+            return;
+          }
           if (event.type !== 'end') return;
           // BF-767: strict equality. An 'end' with NO agent_id used to match
           // every agent, so an unattributed utterance elsewhere in the app
@@ -2159,6 +2204,9 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
           if (claimed && event.utterance_id !== ourUtteranceId) return;
           complete();
         });
+        // BF-918 (review round 3): this arm's end retires the listener, claimed or
+        // not, and it is in the set before speakResponse can emit anything for it.
+        pendingReplies.add(retire);
         if (!claimed) return;
         speechInFlightRef.current.add(speechKey);
         ourUtteranceId = speakResponse(
@@ -2170,11 +2218,22 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
       },
       onStateChange: (state) => {
         console.info(`AD-747/BF-290: conversation state for ${armAgentId}: ${state}`);
+        // BF-918 (review round 3): the controller has ended this arm (a newer arm
+        // took it, a pre-emption, the silence timer, or this arm's own dispose).
+        // Nothing re-arms these options, so retiring is enough.
+        if (state === 'inactive') retirePendingReplies();
       },
     };
     console.info(`AD-760: mic mode ${mode} armed for agent ${armAgentId}`);
     const disposeConversation = armConversationMode(armOpts);
-    return disposeConversation;
+    // BF-918 (review round 3): React ends the arm here (an unmount, or a change
+    // of any dependency below). Retire first, whether or not the controller
+    // still tells this arm it is inactive; disposing may then notify again,
+    // which finds nothing left.
+    return () => {
+      retirePendingReplies();
+      disposeConversation();
+    };
   }, [agentId, micMode, meetingActive, callAudioEnabled, voiceProfile, ttsKey, threadId, speechOwner]);
 
   // AD-973: the single mic is the composer mic next to Send (the MicIndicator

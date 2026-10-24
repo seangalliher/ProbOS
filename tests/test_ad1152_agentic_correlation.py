@@ -309,6 +309,9 @@ async def _off_observation(
         "enabled": False, "max_open_per_agent": 3, "max_open_per_department": 8, "max_open_ship": 24,
         "max_created_per_agent_per_hour": 6, "ttl_seconds": 86400, "max_depth": 2,
     }
+    # BF-918's spoken-audio retention (seconds) was added after this capture too; this agentic-loop
+    # observation stores no spoken audio.
+    assert config["attachments"].pop("tts_audio_retention_seconds") == 900
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
