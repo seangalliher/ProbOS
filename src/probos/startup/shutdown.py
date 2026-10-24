@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import sqlite3
+import sys
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Any
@@ -91,6 +92,23 @@ def _close_voice_synthesis(runtime: Any) -> None:
         voice_service.close()
     except Exception:
         logger.warning("BF-918: voice synthesis close failed", exc_info=True)
+
+
+def _close_attachment_store(runtime: Any) -> None:
+    """BF-918 M4 (#1626): stop the attachment store's own I/O threads. Never raises.
+
+    Builds no store. Only ``probos.routers.chat`` builds one, so when that module
+    was never imported there is nothing to close (importing it here would load the
+    HTTP layer during shutdown for nothing). The store's later users, such as the
+    routes and crew work until the pools stop, run on asyncio's default pool.
+    """
+    chat_router = sys.modules.get("probos.routers.chat")
+    if chat_router is None:
+        return
+    try:
+        chat_router.close_attachment_store(runtime)
+    except Exception:
+        logger.warning("BF-918: attachment store close failed", exc_info=True)
 
 
 def _memory_field(runtime: Any, name: str, default: float) -> float:
@@ -1603,6 +1621,10 @@ async def shutdown(
             await runtime.attachment_reaper.stop()
         except Exception:
             logger.warning("AD-733-1: attachment_reaper.stop() failed", exc_info=True)
+
+    # BF-918 M4 (#1626): then the store's own I/O threads. Its later users (routes,
+    # crew work until the pools stop) run on asyncio's default pool.
+    _close_attachment_store(runtime)
 
     # AD-1019c: Stop MCP workbench idle-TTL reaper (before the bridge/stores it
     # drives are torn down). Idempotent; honest-degrade on failure.

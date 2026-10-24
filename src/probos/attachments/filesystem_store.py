@@ -1,8 +1,12 @@
 """AD-720: Filesystem AttachmentStore — v1 implementation.
 
-Content-addressed by sha256. All blocking I/O wrapped in ``asyncio.to_thread``
-(no ``aiofiles`` dependency — verified zero hits in pyproject.toml at HEAD;
-project standard is ``run_in_executor`` / ``asyncio.to_thread``).
+Content-addressed by sha256. BF-918 M4 (#1626): every blocking call runs on the
+store's own bounded executor (``ATTACHMENT_IO_WORKERS`` threads), so crew work
+that fills asyncio's default pool does not delay storing or serving an
+attachment; after :meth:`close`, on the default pool (no ``aiofiles``
+dependency; project standard is ``run_in_executor``). The exception is the
+constructor (resolving the root, making it and loading the index), which is
+called from sync code.
 
 Cloud-Ready Storage: this implementation is the v1 substrate. The
 ``AttachmentStore`` Protocol in ``store.py`` is the seam — commercial
@@ -19,13 +23,16 @@ source of truth; ``.index.json`` is a hint and corruption is tolerated
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextvars
 import errno
 import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from probos.attachments.store import (
     ATTACHMENT_ORIGINS,
@@ -33,6 +40,33 @@ from probos.attachments.store import (
 )
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+#: BF-918 M4 (#1626): threads for one store's blocking I/O. Calls beyond it queue.
+ATTACHMENT_IO_WORKERS = 4
+#: BF-918 M4: the name prefix of those threads (``probos-attachment-io_0`` ...).
+ATTACHMENT_IO_THREAD_PREFIX = "probos-attachment-io"
+
+
+async def _finish_cancelled(call: asyncio.Future[Any]) -> None:
+    """BF-918 M4 (review round 1): wait for a store call whose caller was cancelled.
+
+    A thread cannot be stopped. Waiting keeps the caller's lock held until the call
+    really ends; the caller then re-raises its cancellation. A further cancellation
+    while waiting is absorbed for the same reason. An exception the call raised is
+    logged, since its caller can no longer receive it.
+    """
+    while not call.done():
+        try:
+            await asyncio.wait((call,))
+        except asyncio.CancelledError:
+            pass  # cancelled again: keep waiting; the caller re-raises the first cancellation
+    if not call.cancelled() and call.exception() is not None:
+        logger.warning(
+            "BF-918: an attachment store call failed after its caller was cancelled: %r",
+            call.exception(),
+        )
 
 
 _MIME_TO_EXT: dict[str, str] = {
@@ -98,7 +132,13 @@ class FilesystemAttachmentStore:
         "agent_artifact",
     )
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, io_workers: int = ATTACHMENT_IO_WORKERS) -> None:
+        if io_workers < 1:
+            raise ValueError("BF-918: the attachment store needs at least 1 I/O thread")
+        # BF-918 M4 (#1626): this store's own I/O threads, made on first use.
+        self._io_workers = io_workers
+        self._io_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._io_closed = False
         self._root = root.resolve()
         self._root.mkdir(parents=True, exist_ok=True)
         # AD-733-1: sidecar index. Loaded lazily-synchronously here (the
@@ -107,6 +147,60 @@ class FilesystemAttachmentStore:
         self._index_path = self._root / ".index.json"
         self._index: dict[str, dict[str, Any]] = self._load_index_sync()
         self._lock = asyncio.Lock()
+
+    # ---- BF-918 M4 (#1626): the store's own I/O threads ---------------
+
+    @property
+    def io_closed(self) -> bool:
+        """True once :meth:`close` has run; the store's I/O then uses the default pool."""
+        return self._io_closed
+
+    async def _run(self, fn: Callable[..., _T], *args: Any) -> _T:
+        """Run one blocking call on this store's threads (the default pool once closed).
+
+        Crew work that fills asyncio's default pool no longer delays the store.
+        Calls beyond ``io_workers`` queue on these threads: store I/O is never
+        refused. After :meth:`close`, a call (a route, or crew work that stops
+        later in shutdown) runs on the default pool, as before BF-918 M4.
+
+        A thread cannot be stopped, so a cancelled caller first waits for its call
+        to end and then re-raises the cancellation (BF-918 M4, review round 1). A
+        caller that holds ``self._lock`` therefore never releases it while its
+        index save, blob write or unlink still runs.
+
+        After :meth:`close`, the call is the default pool's own future, run in a
+        copy of the caller's context, never a task: the event loop's teardown
+        (``asyncio.run``) cancels every task, and a cancelled task would end the
+        caller's wait while its thread still runs (BF-918 M4, review round 2).
+        """
+        call: asyncio.Future[_T]
+        if self._io_closed:
+            call = asyncio.get_running_loop().run_in_executor(None, contextvars.copy_context().run, fn, *args)
+        else:
+            if self._io_executor is None:
+                self._io_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self._io_workers,
+                    thread_name_prefix=ATTACHMENT_IO_THREAD_PREFIX,
+                )
+            call = asyncio.get_running_loop().run_in_executor(self._io_executor, fn, *args)
+        try:
+            return await asyncio.shield(call)
+        except asyncio.CancelledError:
+            await _finish_cancelled(call)
+            raise
+
+    def close(self) -> None:
+        """Stop this store's I/O threads. Idempotent; never raises; never awaits.
+
+        Work already accepted runs to completion: nothing is cancelled, so a caller
+        awaiting a write never sees it fail because shutdown began. The threads exit
+        once that work is done. Called by ``startup/shutdown.py`` after the
+        attachment reaper has stopped.
+        """
+        self._io_closed = True
+        executor, self._io_executor = self._io_executor, None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=False)
 
     # ---- AD-733-1: sidecar index helpers ------------------------------
 
@@ -204,6 +298,16 @@ class FilesystemAttachmentStore:
             )
         return candidate
 
+    def _locate_sync(self, content_hash: str, mime: str) -> tuple[Path, bool]:
+        """BF-918 M4 (review round 1): the blob's checked path and whether it exists.
+
+        ``Path.resolve`` and ``exists`` touch the filesystem, so ``write`` runs
+        both in one call on a store thread. The validation in :meth:`_path_for`
+        raises ``ValueError`` from there, unchanged.
+        """
+        path = self._path_for(content_hash, mime)
+        return path, path.exists()
+
     async def write(
         self,
         content_hash: str,
@@ -221,12 +325,12 @@ class FilesystemAttachmentStore:
         ENOSPC.
         """
         normalized_origin = self._normalize_origin(origin)
-        path = self._path_for(content_hash, mime)
         async with self._lock:
-            need_write = not path.exists()
+            path, present = await self._run(self._locate_sync, content_hash, mime)
+            need_write = not present
             if need_write:
                 try:
-                    await asyncio.to_thread(path.write_bytes, blob)
+                    await self._run(path.write_bytes, blob)
                 except OSError as ex:
                     if getattr(ex, "errno", None) == errno.ENOSPC:
                         logger.error(
@@ -257,7 +361,8 @@ class FilesystemAttachmentStore:
                 entry["written_at"] = now
                 entry.setdefault("mime", mime)
                 entry.setdefault("size_bytes", len(blob))
-            self._save_index_sync()
+            # BF-918 M4: still under the lock, so no other call changes the index while it is written.
+            await self._run(self._save_index_sync)
         return path
 
     async def _find(self, content_hash: str) -> Path | None:
@@ -267,7 +372,7 @@ class FilesystemAttachmentStore:
             or not all(c in "0123456789abcdef" for c in content_hash)
         ):
             raise ValueError(f"AD-720: malformed content_hash {content_hash!r}")
-        matches = await asyncio.to_thread(
+        matches = await self._run(
             lambda: list(self._root.glob(f"{content_hash}.*")),
         )
         return matches[0] if matches else None
@@ -276,7 +381,7 @@ class FilesystemAttachmentStore:
         path = await self._find(content_hash)
         if path is None:
             raise FileNotFoundError(content_hash)
-        return await asyncio.to_thread(path.read_bytes)
+        return await self._run(path.read_bytes)
 
     async def exists(self, content_hash: str) -> bool:
         path = await self._find(content_hash)
@@ -290,7 +395,7 @@ class FilesystemAttachmentStore:
 
     async def size(self, content_hash: str) -> int:
         path = await self.get_path(content_hash)
-        return await asyncio.to_thread(lambda: path.stat().st_size)
+        return await self._run(lambda: path.stat().st_size)
 
     async def unlink(self, content_hash: str) -> bool:
         """AD-733-1: remove blob + index entry. ``False`` when not found.
@@ -303,7 +408,7 @@ class FilesystemAttachmentStore:
             existed = False
             if path is not None:
                 try:
-                    await asyncio.to_thread(path.unlink)
+                    await self._run(path.unlink)
                     existed = True
                 except FileNotFoundError:
                     pass
@@ -317,7 +422,7 @@ class FilesystemAttachmentStore:
                     return False
             removed_from_index = self._index.pop(content_hash, None) is not None
             if existed or removed_from_index:
-                self._save_index_sync()
+                await self._run(self._save_index_sync)
             return existed or removed_from_index
 
     async def unlink_if_unchanged(
@@ -355,8 +460,8 @@ class FilesystemAttachmentStore:
             freed = 0
             if path is not None:
                 try:
-                    freed = (await asyncio.to_thread(path.stat)).st_size
-                    await asyncio.to_thread(path.unlink)
+                    freed = (await self._run(path.stat)).st_size
+                    await self._run(path.unlink)
                 except FileNotFoundError:
                     freed = 0
                 except OSError as ex:
@@ -368,7 +473,7 @@ class FilesystemAttachmentStore:
                     )
                     return None
             del self._index[content_hash]
-            self._save_index_sync()
+            await self._run(self._save_index_sync)
             return freed
 
     async def list_by_origin(self, origin: str) -> list[tuple[str, float]]:
@@ -414,7 +519,7 @@ class FilesystemAttachmentStore:
                 except OSError:
                     continue
             return total
-        return await asyncio.to_thread(_scan)
+        return await self._run(_scan)
 
     async def mime_for(self, content_hash: str) -> str | None:
         """AD-720d (Wave 139): derive MIME from the on-disk extension.

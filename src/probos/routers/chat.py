@@ -1002,13 +1002,16 @@ async def chat(
 
 
 _ATTACHMENT_STORE_CACHE: dict[int, Any] = {}
+#: BF-918 M4 (review round 1): cached in place of a store when shutdown closes the store
+#: before any was built, so the store a later caller builds is closed before it is returned.
+_CLOSED_BEFORE_BUILD: Any = object()
 
 
 def _get_attachment_store(runtime: Any) -> Any:
     """Lazy per-runtime FilesystemAttachmentStore."""
     key = id(runtime)
     cached = _ATTACHMENT_STORE_CACHE.get(key)
-    if cached is not None:
+    if cached is not None and cached is not _CLOSED_BEFORE_BUILD:
         return cached
     from probos.attachments.filesystem_store import FilesystemAttachmentStore
     from probos.attachments.store import _resolve_attachments_dir
@@ -1016,7 +1019,27 @@ def _get_attachment_store(runtime: Any) -> Any:
     root = _resolve_attachments_dir(cfg.attachments_dir)
     store = FilesystemAttachmentStore(root)
     _ATTACHMENT_STORE_CACHE[key] = store
+    if cached is _CLOSED_BEFORE_BUILD:
+        close_attachment_store(runtime)  # BF-918 M4 (review round 1): built after shutdown's close point
     return store
+
+
+def close_attachment_store(runtime: Any) -> None:
+    """BF-918 M4 (#1626): close the I/O threads of ``runtime``'s cached store.
+
+    Builds no store, and keeps the cached one: a later caller gets the same
+    instance (one store per attachment root, BF-918 R16), whose I/O then runs on
+    asyncio's default pool. Anything else cached here (a test double) is left alone.
+    With nothing cached, it records that the close point has passed (review round 1),
+    so a store first built afterwards, by a request accepted before shutdown, is closed too.
+    """
+    from probos.attachments.filesystem_store import FilesystemAttachmentStore
+    key = id(runtime)
+    store = _ATTACHMENT_STORE_CACHE.get(key)
+    if store is None:
+        _ATTACHMENT_STORE_CACHE[key] = _CLOSED_BEFORE_BUILD
+    elif isinstance(store, FilesystemAttachmentStore):
+        store.close()
 
 
 async def _validate_and_store_attachment(

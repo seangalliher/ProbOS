@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,10 @@ def _make_blob(seed: bytes = b"x") -> tuple[bytes, str]:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> FilesystemAttachmentStore:
-    return FilesystemAttachmentStore(tmp_path / "attachments")
+def store(tmp_path: Path) -> Iterator[FilesystemAttachmentStore]:
+    owned = FilesystemAttachmentStore(tmp_path / "attachments")
+    yield owned
+    owned.close()  # BF-918 M4 (review round 1): its I/O threads end with the test
 
 
 @pytest.mark.asyncio
@@ -90,19 +93,28 @@ async def test_filesystem_store_unknown_mime_rejected(store):
 
 
 @pytest.mark.asyncio
-async def test_filesystem_store_uses_asyncio_to_thread(store, monkeypatch):
-    """Verify blocking IO is dispatched through asyncio.to_thread."""
-    calls: list[str] = []
-    real_to_thread = asyncio.to_thread
+async def test_filesystem_store_runs_blocking_io_on_its_own_threads(store, monkeypatch):
+    """Blocking I/O runs off the event loop. BF-918 M4 (#1626) moved it from
+    ``asyncio.to_thread`` (the default pool, which crew work can fill) to the
+    store's own threads. This test pinned the old dispatch, so it now checks the
+    property that matters: the write ran on a ``probos-attachment-io`` thread."""
+    import threading
+    from probos.attachments.filesystem_store import ATTACHMENT_IO_THREAD_PREFIX
 
-    async def spy(fn, *args, **kwargs):
-        calls.append(getattr(fn, "__name__", str(fn)))
-        return await real_to_thread(fn, *args, **kwargs)
+    threads: list[str] = []
+    real_write_bytes = Path.write_bytes
 
-    monkeypatch.setattr("probos.attachments.filesystem_store.asyncio.to_thread", spy)
+    def spy(self, data):
+        threads.append(threading.current_thread().name)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", spy)
     blob, h = _make_blob(b"g")
-    await store.write(h, blob, "image/png")
-    assert calls, "asyncio.to_thread was not invoked"
+    try:
+        await store.write(h, blob, "image/png")
+    finally:
+        store.close()
+    assert threads and all(name.startswith(ATTACHMENT_IO_THREAD_PREFIX) for name in threads), threads
 
 
 @pytest.mark.asyncio
