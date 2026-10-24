@@ -77,6 +77,12 @@ export interface SpeechEvent {
    *  pipelining (default-off) every sentence of one reply shares this id.
    *  Absent only on events from a build/mock that predates this field. */
   utterance_id?: number;
+  /** BF-918 M5 (#1626, R12): on an 'end' only, and only from AD-1071 pipelining.
+   *  `false`: this sentence has ended and more of the same utterance will play.
+   *  `true`: nothing more of it will play (its last sentence, or it was stopped).
+   *  Absent on every other utterance's 'end', which is always its last. The
+   *  arbiter's wait for an entry ignores an 'end' whose `final` is `false`. */
+  final?: boolean;
 }
 type SpeechListener = (e: SpeechEvent) => void;
 
@@ -228,6 +234,7 @@ export function _resetTtsStatusForTests(): void {
   _activeUtteranceId = null;
   _dispatchStartedAt = null;
   _sentenceEndedAt = null;
+  _endSentenceQueueWait = null;
 }
 
 /** AD-738: track the active <audio> so a second speakResponse cancels the first. */
@@ -258,6 +265,20 @@ const TTS_PREFETCH_LOOKAHEAD = 1;
  *  It emitted no 'start', so it emits no 'end' (BF-655 pairs them); AD-1291's
  *  'dropped' is its terminal event, and the arbiter's wait ends on it. */
 const CANCELLED_BEFORE_AUDIO = 'cancelled-before-audio';
+
+/** BF-918 M5 (#1626, R12): ends the arbiter's wait for the entry whose AD-1071
+ *  sentence queue is running, or null. `stopSpeaking` calls it: a queue stopped
+ *  between two sentences fires no 'end' (nothing is playing) and can still be
+ *  awaiting the next sentence's synthesis, which must not hold the next utterance. */
+let _endSentenceQueueWait: (() => void) | null = null;
+
+/** BF-918 M5: the `final` field of a pipelined sentence's 'end'; nothing for any other
+ *  utterance. Read when the 'end' fires: if a stop or a newer dispatch has taken the
+ *  device by then, nothing more of this utterance will play. */
+function _finalField(last: boolean | undefined, utterance_id: number | undefined): { final?: boolean } {
+  if (last === undefined) return {};
+  return { final: last || _activeUtteranceId !== utterance_id };
+}
 
 /** BF-918 (#1626): User Timing measures for the live acceptance.
  *  `bf918:first-audio` runs from an utterance's dispatch to its audio actually
@@ -442,12 +463,21 @@ function _awaitEntry(state: SpeechQueueState, entry: SpeechQueueEntry): Promise<
       // entry: pre-emption and `flushSpeechQueue` skip them.
       if (event.type !== 'end' && event.type !== 'dropped') return;
       if (event.utterance_id !== entry.id) return;
+      // BF-918 M5 (#1626, R12): under AD-1071 pipelining every sentence fires an 'end'
+      // with the reply's id (BF-767). Only the reply's last ends the wait: ending it
+      // on the first let the next entry's `_playNow` take the device and cut the rest.
+      // Each earlier 'end' re-arms GUARD 2, which then bounds the silence between two
+      // events of this entry, not the length of the whole reply.
+      if (event.type === 'end' && event.final === false) {
+        if (timer !== undefined) { clearTimeout(timer); timer = setTimeout(done, SPEECH_JOIN_TIMEOUT_MS); }
+        return;
+      }
       done();
     });
     state.settleActive = done;
     // GUARD 1: no engine on this path, so nothing will ever emit an 'end'.
     // Without this the queue wedges on entry one (the BF-290 shape).
-    if (!_playNow(entry)) { done(); return; }
+    if (!_playNow(entry, done)) { done(); return; }
     // GUARD 2: a lost 'end' must not strand every later entry. Skipped when the
     // dispatch already settled synchronously, so a normal fast path arms no
     // timer at all.
@@ -483,8 +513,9 @@ export function flushSpeechQueue(reason: string, owner?: string): void {
 /** AD-1291: the device work for ONE entry, extracted from the old
  *  `speakResponse` body unchanged apart from taking its id rather than minting
  *  one. Returns false when no engine exists on this path, which is GUARD 1's
- *  signal that no 'end' is ever coming. */
-function _playNow(entry: SpeechQueueEntry): boolean {
+ *  signal that no 'end' is ever coming. BF-918 M5: `endWait` ends the arbiter's wait
+ *  for this entry; only a stop of its AD-1071 sentence queue calls it. */
+function _playNow(entry: SpeechQueueEntry, endWait: () => void): boolean {
   const { text, profile, agent_id, emotion } = entry;
   const utterance_id = entry.id;
   // Re-checked at DISPATCH, not just at enqueue: the queue introduces a gap in
@@ -548,14 +579,23 @@ function _playNow(entry: SpeechQueueEntry): boolean {
     if (status.sentence_pipelining_enabled) {
       const sentences = splitIntoSentences(text);
       if (sentences.length > 1) {
-        const played = await runPrefetchQueue<PreparedSpeech>(
-          sentences,
-          (sentence) => _prepareServerSpeech(sentence, profile, emotion),
-          (prepared, sentence) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id),
-          () => _activeUtteranceId === utterance_id,
-          TTS_PREFETCH_LOOKAHEAD,
-          _discardPreparedSpeech,
-        );
+        const last = sentences.length - 1;
+        // BF-918 M5 (#1626, R12): each sentence's 'end' says whether it is the reply's
+        // last (`final`), and while this queue runs a stop ends the arbiter's wait.
+        _endSentenceQueueWait = endWait;
+        let played = 0;
+        try {
+          played = await runPrefetchQueue<PreparedSpeech>(
+            sentences,
+            (sentence) => _prepareServerSpeech(sentence, profile, emotion),
+            (prepared, sentence, index) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id, index === last),
+            () => _activeUtteranceId === utterance_id,
+            TTS_PREFETCH_LOOKAHEAD,
+            _discardPreparedSpeech,
+          );
+        } finally {
+          if (_endSentenceQueueWait === endWait) _endSentenceQueueWait = null;
+        }
         // BF-918 (review round 1, D7a): stopped before its first sentence played. No
         // 'start' fired, so no 'end' will: 'dropped' ends this utterance for the arbiter.
         if (played === 0) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
@@ -680,17 +720,19 @@ async function _fetchDeferredVisemes(attachmentId: string): Promise<LipSyncFrame
 /** BF-918: the device half. Play a prepared utterance and resolve when it ENDS;
  *  `null` (its preparation failed) speaks it through the browser instead, as
  *  before. Each call fires its own balanced 'start'/'end' and injects its own
- *  visemes. */
+ *  visemes. BF-918 M5: `last` is set only by the AD-1071 queue (is this the reply's
+ *  last sentence); it gives this sentence's 'end' its `final` field. */
 async function _playPreparedSpeech(
   prepared: PreparedSpeech | null,
   text: string,
   profile: VoiceProfile | undefined,
   agent_id: string | undefined,
   utterance_id: number,
+  last?: boolean,
 ): Promise<void> {
   if (prepared === null) {
     _sentenceEndedAt = null; // a browser-spoken sentence is not a gap between two server ones
-    _speakBrowserFallback(text, profile, agent_id, utterance_id);
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
     return;
   }
   const { audio, visemes, deferredVisemes } = prepared;
@@ -713,7 +755,7 @@ async function _playPreparedSpeech(
         if (_settled) return;
         _settled = true;
         if (_activeAudio === audio) _activeAudio = null;
-        if (fireEnd) _fire({ type: 'end', agent_id, utterance: synth, source: 'server', utterance_id });
+        if (fireEnd) _fire({ type: 'end', agent_id, utterance: synth, source: 'server', utterance_id, ..._finalField(last, utterance_id) });
         resolve();
       };
       audio.addEventListener('play', () => _fire({ type: 'start', agent_id, utterance: synth, source: 'server', utterance_id }));
@@ -763,13 +805,13 @@ async function _playPreparedSpeech(
         if (_activeUtteranceId !== utterance_id) { _finish(false); return; }
         // play() rejected — fall back to browser for THIS utterance, resolve.
         if (_activeAudio === audio) _activeAudio = null;
-        _speakBrowserFallback(text, profile, agent_id, utterance_id);
+        _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
         _finish(false);
       });
     });
   } catch {
     _invalidateTtsStatus();
-    _speakBrowserFallback(text, profile, agent_id, utterance_id);
+    _speakBrowserFallback(text, profile, agent_id, utterance_id, last);
   }
 }
 
@@ -818,6 +860,7 @@ function _speakBrowserFallback(
   profile?: VoiceProfile,
   agent_id?: string,
   utterance_id?: number,
+  last?: boolean,
 ): void {
   if (!('speechSynthesis' in window)) {
     // BF-767 (review): this path used to return in silence, and the caller had
@@ -843,6 +886,7 @@ function _speakBrowserFallback(
       utterance: { text } as unknown as SpeechSynthesisUtterance,
       source: 'browser',
       utterance_id,
+      ..._finalField(last, utterance_id),
     });
     return;
   }
@@ -868,7 +912,7 @@ function _speakBrowserFallback(
   const _fireBrowserEnd = () => {
     if (_ended) return;
     _ended = true;
-    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id });
+    _fire({ type: 'end', agent_id, utterance, source: 'browser', utterance_id, ..._finalField(last, utterance_id) });
   };
   utterance.onend = _fireBrowserEnd;
   utterance.onerror = _fireBrowserEnd;
@@ -907,6 +951,14 @@ export function stopSpeaking(): void {
     try { _activeAudio.pause(); } catch { /* BF-918: barge-in silences server audio too */ }
     _activeAudio = null;
   }
+  // BF-918 M5 (#1626, R12): a sentence queue stopped between two sentences fires no
+  // 'end' (nothing is playing) and can still be awaiting the next sentence's
+  // synthesis; end the arbiter's wait for it now. After a pause above, that sentence's
+  // 'end' (final) may come before or after this call, because a real audio element
+  // delivers 'pause' asynchronously: the wait's `done` is idempotent, so the later is a no-op.
+  const endWait = _endSentenceQueueWait;
+  _endSentenceQueueWait = null;
+  if (endWait !== null) endWait();
 }
 
 export function getAvailableVoices(): SpeechSynthesisVoice[] {

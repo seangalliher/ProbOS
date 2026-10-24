@@ -528,3 +528,203 @@ describe('BF-918 review round 1: a stop before audio, and a stop of a pending pl
     }
   });
 });
+
+describe('BF-918 M5: the arbiter waits for a pipelined reply\'s last sentence (R12)', () => {
+  const spoken = (): string[] => speakCalls.map((u) => (u as FakeUtterance).text);
+
+  async function _recordEnds() {
+    const voiceMod = await import('../voice');
+    const events: string[] = [];
+    const finals: Array<boolean | undefined> = [];
+    const ends: Array<Record<string, unknown>> = [];
+    const off = voiceMod.onSpeechEvent((e) => {
+      events.push(`${e.type}:${e.utterance?.text ?? ''}`);
+      if (e.type === 'end') { finals.push(e.final); ends.push({ ...e }); }
+    });
+    return { events, finals, ends, off };
+  }
+
+  it('P14 a reply queued behind a pipelined reply plays after its last sentence, and cuts none of it', async () => {
+    const f = _makeFetch({ pipelining: true });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordEnds();
+    try {
+      voiceMod.speakResponse('One. Two. Three.');
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.']);
+
+      createdAudios[0].end();
+      await _flush();
+      // R12: before M5, sentence one's 'end' dispatched 'Next.' here, and Two never played.
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.']);
+      expect(createdAudios[1].played).toBe(true);
+      createdAudios[1].end();
+      await _flush();
+      expect(createdAudios[2].played).toBe(true);
+      expect(f.posted).not.toContain('Next.');
+
+      createdAudios[2].end();
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.', 'Next.']);
+      expect(createdAudios[3].played).toBe(true);
+      expect(createdAudios.slice(0, 3).every((a) => a.pause.mock.calls.length === 0)).toBe(true);
+      expect(r.events.filter((e) => e.startsWith('start'))).toEqual(['start:One.', 'start:Two.', 'start:Three.', 'start:Next.']);
+      expect(r.finals).toEqual([false, false, true]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P15 a stop between two sentences frees the arbiter at once, while the next sentence still synthesizes', async () => {
+    const f = _makeFetch({ pipelining: true, holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordEnds();
+    try {
+      voiceMod.speakResponse('One. Two.');
+      await _flush();
+      createdAudios[0].end(); // One ends; Two is still synthesizing, so nothing plays
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.']);
+      expect(createdAudios.length).toBe(1);
+
+      voiceMod.stopSpeaking();
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      // Dispatched now, not when Two's synthesis answers (or after SPEECH_JOIN_TIMEOUT_MS).
+      expect(f.posted).toEqual(['One.', 'Two.', 'Next.']);
+      expect(createdAudios[1].played).toBe(true); // Next's audio
+
+      f.release(); // Two's synthesis answers after the stop
+      await _flush();
+      expect(createdAudios[2].played).toBe(false);
+      expect(createdAudios[2].discarded).toBe(true);
+      expect(r.finals).toEqual([false]); // One's 'end' said more would follow; the stop fired none
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P16 the join timeout bounds the silence between two sentences, not the length of the reply', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const f = _makeFetch({ pipelining: true });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      const step = voiceMod.SPEECH_JOIN_TIMEOUT_MS - 5000;
+      voiceMod.speakResponse('One. Two. Three.');
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      vi.advanceTimersByTime(step);
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      vi.advanceTimersByTime(step);
+      await _flush();
+      createdAudios[1].end();
+      await _flush();
+      vi.advanceTimersByTime(step);
+      await _flush();
+      // Far longer than SPEECH_JOIN_TIMEOUT_MS since the dispatch, never that long without an event of this reply.
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.']);
+      expect(createdAudios[2].pause).not.toHaveBeenCalled();
+      createdAudios[2].end();
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.', 'Three.', 'Next.']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('P17 the join timeout still frees a reply that goes silent between two sentences (GUARD 2)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const f = _makeFetch({ pipelining: true, holdTts: [2] });
+      (globalThis as any).fetch = f.fetchMock;
+      const voiceMod = await _voice();
+      voiceMod.speakResponse('One. Two.');
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      createdAudios[0].end(); // Two's synthesis never answers in time
+      await _flush();
+      vi.advanceTimersByTime(voiceMod.SPEECH_JOIN_TIMEOUT_MS - 1);
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.']);
+      vi.advanceTimersByTime(1);
+      await _flush();
+      expect(f.posted).toEqual(['One.', 'Two.', 'Next.']);
+      f.release();
+      await _flush();
+      expect(createdAudios[2].played).toBe(false); // Two's, discarded: Next owns the device
+      expect(createdAudios[2].discarded).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('P18 with pipelining off, an end carries no final and ends the wait as before', async () => {
+    const f = _makeFetch({ pipelining: false });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordEnds();
+    try {
+      voiceMod.speakResponse('One. Two.');
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      expect(f.posted).toEqual(['One. Two.']);
+      createdAudios[0].end();
+      await _flush();
+      expect(f.posted).toEqual(['One. Two.', 'Next.']);
+      expect(r.ends.length).toBe(1);
+      expect(r.ends.every((e) => !('final' in e))).toBe(true);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P19 a middle sentence the browser speaks (its synthesis failed) does not end the wait', async () => {
+    const f = _makeFetch({ pipelining: true, failTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordEnds();
+    try {
+      voiceMod.speakResponse('One. Two. Three.');
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      createdAudios[0].end();
+      await _flush();
+      // Two failed: the browser speaks it, and Three plays meanwhile (R3, unchanged).
+      expect(spoken()).toEqual(['Two.']);
+      expect(createdAudios[1].played).toBe(true);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      expect(f.posted).not.toContain('Next.');
+      expect(createdAudios[1].pause).not.toHaveBeenCalled();
+      createdAudios[1].end();
+      await _flush();
+      expect(f.posted).toContain('Next.');
+      expect(r.finals).toEqual([false, false, true]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P20 the end of a sentence a stop cuts is final', async () => {
+    const f = _makeFetch({ pipelining: true });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _recordEnds();
+    try {
+      voiceMod.speakResponse('One. Two.');
+      await _flush();
+      voiceMod.stopSpeaking();
+      await _flush();
+      expect(r.events.filter((e) => e.startsWith('end'))).toEqual(['end:One.']);
+      expect(r.finals).toEqual([true]);
+    } finally {
+      r.off();
+    }
+  });
+});
