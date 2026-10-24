@@ -2,13 +2,15 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24
 
-**Status:** build-ready. One issue: BF-920 (#1633). **Tier HIGH** (Architect's call; it can only be lowered by the Captain). The change rewrites `compute_anchor_independence`, a shared scoring function with seven call sites in five subsystems (dreaming, records, behavioral metrics, thread echo and the verification service). It also puts three Bridge alerts in front of the Captain that never reached it before, and it changes what the Counselor receives. **Base:** `origin/main` `26bec26d`. BF-918 (#1645) and BF-919 do not touch any file this contract edits; the §8 anchors survive their tracker entries (stated there). **Milestones:** one (M1), one gate.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (Amendment A1, after review round 1)
+
+**Status:** build-ready. One issue: BF-920 (#1633). **Tier HIGH** (Architect's call; it can only be lowered by the Captain). The change rewrites `compute_anchor_independence`, a shared scoring function with seven call sites in five subsystems (dreaming, records, behavioral metrics, thread echo and the verification service). It also puts three Bridge alerts in front of the Captain that never reached it before, and it does not change what the Counselor receives: the Counselor's subscription matches no `CASCADE_CONFABULATION_DETECTED`, before or after this change (BF-921, #1636, owns that; register F-11). **Amendment A1 (review round 1):** T5 compares timestamps exactly and gains mutation row R17; the cascade helper's docstring and the claims of Counselor delivery, of a behavioral-metrics effect and of a universal same-thread zero are corrected; register F-9 to F-11 and §18 record the rest. **Base:** `origin/main` `26bec26d`. BF-918 (#1645) and BF-919 do not touch any file this contract edits; the §8 anchors survive their tracker entries (stated there). **Milestones:** one (M1), one gate.
 
 **Tests:** new file `tests/test_bf920_cross_agent_verification.py` (11 functions, 13 cases). Updated: `tests/test_ad583f_observable_state.py` (the two `SystemHealthProvider` tests and their double are removed with the class, and the reason is recorded inline). Focused gate: the new file plus `tests/test_social_verification.py`, `tests/test_ad583f_observable_state.py`, `tests/test_ad583g_source_tracing.py`, `tests/test_ad583_wrong_convergence.py`, `tests/test_peer_repetition_credits.py`, `tests/test_behavioral_metrics.py`, `tests/test_counselor_activation.py`, `tests/test_ad641c_thread_priority.py` (it patches `probos.ward_room._helpers`), all at `-n 0`.
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`) and the SEARCH blocks are LF, so match and write each file with its own line endings. Write new files LF.
 
-**Pairs:** 21 code pairs in 7 files, plus one new file and 2 tracker pairs. Each SEARCH occurs exactly once in its base file on `26bec26d`.
+**Pairs:** 21 code pairs in 7 files, plus one new file and 2 tracker pairs. Each SEARCH occurs exactly once in its base file on `26bec26d`. Amendment A1 changes two §7 texts, the H1 docstring (§7.1.4) and T5 (§7.2); a tree built from §7 includes both.
 
 ---
 
@@ -16,7 +18,7 @@
 
 1. **Elapsed time overrides the same-thread rule.** `compute_anchor_independence` (`cognitive/social_verification.py:192`) and `check_corroboration`'s partner count (`:381`) both test `_are_independently_anchored(a, b) or _time_separated(...)`. `_are_independently_anchored` returns False for a shared thread (`:82-88`), but `_time_separated` (`:109-111`) then counts any pair more than 60 s apart. A thread whose replies are minutes apart scores 1.0, so AD-583g's echo alert (`bridge_alerts.py:578-580`, `< 0.3`) cannot fire at real conversation pacing. The tests use 1-5 s gaps (`tests/test_ad583g_source_tracing.py:128-130`, `tests/test_social_verification.py:154-155, 356-358`).
 2. **`source_agent` always names the current author.** `check_peer_similarity` (`ward_room/threads.py:23-81`) builds matches with `author_id, author_callsign, body_preview, similarity, post_id` only (`:50-56`, `:69-75`). `check_cascade_risk` reads `match.get("timestamp", float("inf"))` (`social_verification.py:514`), so no peer is ever earlier than `inf`, and `source_agent` stays `author_callsign` (`:509`). `tests/test_social_verification.py:339-342` supplies made-up timestamps, so it tests only half the chain.
-3. **`CASCADE_CONFABULATION_DETECTED` is emitted twice per detection.** The service emits it (`social_verification.py:609-618`, through the runtime's `emit_event_fn`, `startup/cognitive_services.py:648-652`). The helper emits it again (`ward_room/_helpers.py:41-48`) through the Ward Room emitter, which calls the same runtime `emit_event_fn` first (`startup/communication.py:425-427`). The Counselor's handler (`cognitive/counselor.py:1042-1043`, `:1582`) therefore runs twice, and on high risk it DMs the affected crew twice.
+3. **`CASCADE_CONFABULATION_DETECTED` is emitted twice per detection.** The service emits it (`social_verification.py:609-618`, through the runtime's `emit_event_fn`, `startup/cognitive_services.py:648-652`). The helper emits it again (`ward_room/_helpers.py:41-48`) through the Ward Room emitter, which calls the same runtime `emit_event_fn` first (`startup/communication.py:425-427`). The Counselor's handler (`cognitive/counselor.py:1042-1043`, `:1582`) is written to run once per event and, on high risk, to DM the affected crew, so two copies would run it twice. It receives neither copy: `ProbOSRuntime.add_event_listener` stores `str(t)` (`runtime.py:1706`), the name form `"EventType.CASCADE_CONFABULATION_DETECTED"` for this `(str, Enum)`, while dispatch compares the wire value (`runtime.py:1952`). That is BF-921's (#1636) root cause (A1, register F-11). With one copy left, the Counselor handles each detection once when BF-921 lands.
 4. **The observable-mismatch Bridge alert is built and dropped.** `_helpers.py:139-144` discards the list that `check_observable_mismatch` returns (`bridge_alerts.py:608-631`).
 5. **Dead entry points.** `SocialVerificationService.check_corroboration` (`:281`) and `get_verification_context` (`:622`), and `BridgeAlertService.check_cascade_risk` (`bridge_alerts.py:806`), have no production caller. `SystemHealthProvider` (`cognitive/observable_state.py:266`) is imported in `startup/finalize.py:5912` but never registered (`:5919-5923`).
 
@@ -50,8 +52,8 @@ Found while re-verifying, and fixed here because they sit on the lines this cont
 
 **Disclosed effects.**
 - The Captain can now receive these alerts: a cascade alert (ADVISORY for medium, ALERT for high), an observable-mismatch alert (ADVISORY or ALERT), and the echo alert (ALERT) on threads paced over minutes. Each goes through `BridgeAlertService._should_emit` (300 s dedup, AD-580 dismiss and mute).
-- The Counselor gets one cascade event per detection, so a high-risk cascade DMs each affected agent once, not twice.
-- Pairs in the same thread score 0 in every `compute_anchor_independence` consumer: dream step 7g wrong-convergence detection, the dream step 9 provenance snapshot, `records_store` independence and the behavioral-metrics `independence_score`. Episode sets dominated by one Ward Room thread will score lower; that is what the score is meant to say.
+- The runtime bus carries one cascade event per detection, not two. The Counselor receives none, before and after this change, because its subscription is registered under the enum's name (`runtime.py:1706`; BF-921, #1636; register F-11). After BF-921 lands, a high-risk cascade DMs each affected agent once; without this change it would DM them twice.
+- A pair in the same thread gains no independence from elapsed time in any `compute_anchor_independence` consumer. In the four reached consumers that use the default `version_independence_weight` of 0.0 (dream step 7g wrong-convergence detection, the dream step 9 provenance snapshot, `records_store` independence and `ThreadEchoAnalyzer`), it scores 0. In the service's two sites (`check_cascade_risk`, and `check_corroboration`, which is not live), a same-thread pair that shares a `source_origin_id` with different `artifact_version`s keeps AD-665's graded weight (0.7 by default); no producer writes that shape (register F-9). Episode sets dominated by one Ward Room thread score lower; that is what the score is meant to say. The behavioral-metrics `independence_score` does not change: with the real `EpisodicMemory` its recall raises `TypeError` before the score is computed, so it reports 0.0 before and after this change (register F-10).
 - `ThreadEchoAnalyzer`'s independence becomes 0.0 for any detected echo, because all its synthetic episodes share the thread (register F-4).
 - No new EventType, no config field, no schema change.
 
@@ -59,9 +61,9 @@ Found while re-verifying, and fixed here because they sit on the lines this cont
 
 | Changed value | Consumers (all on `26bec26d`) | Accepts? |
 |---|---|---|
-| `compute_anchor_independence` result | `social_verification.py:323, 557`; `ward_room/thread_echo.py:151`; `cognitive/dreaming.py:1180, 1406`; `knowledge/records_store.py:900`; `cognitive/behavioral_metrics.py:595` | Yes: a float in [0, 1], same type; only same-thread pairs change |
+| `compute_anchor_independence` result | `social_verification.py:323, 557`; `ward_room/thread_echo.py:151`; `cognitive/dreaming.py:1180, 1406`; `knowledge/records_store.py:900`; `cognitive/behavioral_metrics.py:595` | Yes: a float in [0, 1], same type; only same-thread pairs change. `behavioral_metrics.py:595` is not reached with the real memory (F-10); the service's two sites keep AD-665's versioned exception (F-9) |
 | `check_peer_similarity` match dict (+`timestamp`) | `threads.py:538-556, 559, 562, 613-646`; `messages.py:285-310, 369-402`; `social_verification.py:511-537` | Yes: an added key; every reader indexes named keys |
-| `CASCADE_CONFABULATION_DETECTED` count | `counselor.py:1042`; event persistence (GRANDFATHERED, `event_persistence.py:112-469`); HXI (no consumer: `ui/src` grep is empty) | Yes: the service's payload and type value are unchanged |
+| `CASCADE_CONFABULATION_DETECTED` count | `counselor.py:1042`; event persistence (GRANDFATHERED, `event_persistence.py:112-469`); HXI (no consumer: `ui/src` grep is empty) | Yes: the service's payload and type value are unchanged. The Counselor's subscription does not match the wire value, before or after (F-11; BF-921, #1636) |
 | `check_and_emit_cascade_risk` → `check_and_alert_cascade_risk` | `threads.py:198-199`, `messages.py:119-120` (both changed here) | Yes |
 | `SystemHealthProvider` (removed) | `finalize.py:5912` (changed here); tests (changed here) | Yes |
 
@@ -73,9 +75,9 @@ Found while re-verifying, and fixed here because they sit on the lines this cont
 | T2 | `test_different_threads_keep_the_time_rule` | different threads 120 s apart score 1.0, and 20 s apart 0.0 (the time rule still discriminates) | scoring |
 | T3 | `test_corroboration_counts_no_same_thread_partner` | `check_corroboration`: 3 episodes pass the gate (premise), 0 independent anchors, score 0.0 | the `:381` site |
 | T4 | `test_echo_minutes_apart_is_dependent_and_alerts` | the real `ThreadEchoAnalyzer` on a minute-paced thread gives independence 0.0, and the real `check_ward_room_echo` raises one alert | analyzer → bridge |
-| T5 | `test_peer_matches_carry_created_at` | real schema: the thread match and the reply match each carry their row's `created_at` | DB → matches |
+| T5 | `test_peer_matches_carry_created_at` | real schema: the thread match and the reply match each carry their row's `created_at`, compared exactly (a REAL column returns the float it was written with; A1) | DB → matches |
 | T6 | `test_cascade_source_is_the_earliest_real_poster` | the real matches from T5's DB, fed to `check_cascade_risk`, name the earliest poster, who is not first in the list | DB → matches → service |
-| T7 | `test_one_cascade_event_per_detection[ThreadManager/MessageStore]` | both call sites: one event when service and store share one emitter | store → helper → service |
+| T7 | `test_one_cascade_event_per_detection[ThreadManager/MessageStore]` | both call sites: one event when service and store share one emitter. It counts what the producers emit; delivery to the Counselor is BF-921's (#1636, F-11) | store → helper → service |
 | T8 | `test_cascade_bridge_alert_is_delivered[ThreadManager/MessageStore]` | medium cascade → one ADVISORY `cascade_confabulation` delivered, naming the source | store → helper → bridge → router |
 | T9 | `test_low_cascade_raises_no_alert_and_no_event` | boundary: one peer → no alert, no event | store → helper |
 | T10 | `test_cascade_disabled_skips_the_check` | `cascade_enabled=False` → `None`, no recall | service |
@@ -492,9 +494,10 @@ async def check_and_alert_cascade_risk(
     """Check cascade confabulation risk and raise its Bridge alert (AD-567f).
 
     BF-920: ``SocialVerificationService.check_cascade_risk`` is the single
-    owner of ``CASCADE_CONFABULATION_DETECTED``. This helper used to emit it
-    a second time, so the Counselor handled every detection twice. It now
-    routes the result to the Bridge alert AD-567f designed
+    owner of ``CASCADE_CONFABULATION_DETECTED``. This helper used to emit a
+    second copy through the Ward Room emitter, which forwards to the same
+    runtime bus, so every detection went out twice. It routes the result
+    to the Bridge alert AD-567f designed instead
     (``BridgeAlertService.check_cascade_risk``: medium and high only),
     which had no caller.
     """
@@ -983,8 +986,9 @@ async def test_peer_matches_carry_created_at() -> None:
     now = time.time()
     by_callsign = {m["author_callsign"]: m for m in await _real_peer_matches(now)}
     assert set(by_callsign) == {"Bravo", "Charlie"}  # premise: one thread match, one reply match
-    assert by_callsign["Bravo"]["timestamp"] == pytest.approx(now - 120)
-    assert by_callsign["Charlie"]["timestamp"] == pytest.approx(now - 300)
+    # Exact: a REAL column returns the float it was written with, so any offset fails (R17).
+    assert by_callsign["Bravo"]["timestamp"] == now - 120
+    assert by_callsign["Charlie"]["timestamp"] == now - 300
 
 
 @pytest.mark.asyncio
@@ -1083,7 +1087,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-920 (2026-10-24), closes #1633 -- cross-agent verification: a same-thread echo is never independent on elapsed time, the cascade names its real origin, emits once and reaches the Bridge, and the observable-mismatch alert is delivered.** `compute_anchor_independence` and `check_corroboration` share one pairwise rule, `_pair_independent`: a shared thread vetoes independence before the 60 s rule applies, so an echo paced over minutes scores 0.0, and AD-583g's echo alert can fire (it now names the echoing crew). `check_peer_similarity` returns each match's `created_at` as `timestamp`, so `CascadeRiskResult.source_agent` is the earliest poster, not the current author. `SocialVerificationService` is the single emitter of `CASCADE_CONFABULATION_DETECTED`; the Ward Room helper, renamed `check_and_alert_cascade_risk`, raises AD-567f's `BridgeAlertService.check_cascade_risk` alert instead of a second event. The echo, mismatch and cascade alerts are delivered through one `_deliver_bridge_alerts`. `check_cascade_risk` honours `cascade_enabled`. `SystemHealthProvider` is removed: it was never registered, and it compared the vitals monitor's float health to strings. `check_corroboration` and `get_verification_context` stay, marked not live, for the agent verification tool AD-567f deferred. New: `tests/test_bf920_cross_agent_verification.py`. Updated: `tests/test_ad583f_observable_state.py`. The contract is `prompts/bf-920-cross-agent-verification-echoes-and-alerts.md`.
+**BF-920 (2026-10-24), closes #1633 -- cross-agent verification: a same-thread echo is never independent on elapsed time, the cascade names its real origin, emits once and reaches the Bridge, and the observable-mismatch alert is delivered.** `compute_anchor_independence` and `check_corroboration` share one pairwise rule, `_pair_independent`: a shared thread vetoes independence before the 60 s rule applies, so an echo paced over minutes scores 0.0, and AD-583g's echo alert can fire (it now names the echoing crew). `check_peer_similarity` returns each match's `created_at` as `timestamp`, so `CascadeRiskResult.source_agent` is the earliest poster, not the current author. `SocialVerificationService` is the single emitter of `CASCADE_CONFABULATION_DETECTED`; the Ward Room helper, renamed `check_and_alert_cascade_risk`, raises AD-567f's `BridgeAlertService.check_cascade_risk` alert instead of a second event. The echo, mismatch and cascade alerts are delivered through one `_deliver_bridge_alerts`. `check_cascade_risk` honours `cascade_enabled`. `SystemHealthProvider` is removed: it was never registered, and it compared the vitals monitor's float health to strings. `check_corroboration` and `get_verification_context` stay, marked not live, for the agent verification tool AD-567f deferred. New: `tests/test_bf920_cross_agent_verification.py`. Updated: `tests/test_ad583f_observable_state.py`. The contract is `prompts/bf-920-cross-agent-verification-echoes-and-alerts.md` (Amendment A1 after review round 1). Not changed: the Counselor receives no cascade event before or after this fix (its subscription is registered under the enum's name; BF-921, #1636), and the behavioral-metrics independence score is never computed with the real episodic memory (register F-10).
 ```
 
 **`DECISIONS.md`** (inserted before this heading):
@@ -1097,10 +1101,10 @@ REPLACE:
 ### BF-920 -- Cross-agent verification: one pairwise independence rule, real cascade origins, one cascade emitter, and delivered Bridge alerts (2026-10-24, #1633)
 
 - *Scope.* `cognitive/social_verification.py` (`_same_thread`, `_pair_independent`, `cascade_enabled`, two not-live docstrings), `ward_room/threads.py` (match `timestamp`, the cascade call), `ward_room/messages.py` (the cascade call), `ward_room/_helpers.py` (`_deliver_bridge_alerts`, `check_and_alert_cascade_risk`, the echo and mismatch alerts), `cognitive/observable_state.py` and `startup/finalize.py` (`SystemHealthProvider` removed). Tests: new `tests/test_bf920_cross_agent_verification.py`; `tests/test_ad583f_observable_state.py` loses the removed class's two tests. Contract: `prompts/bf-920-cross-agent-verification-echoes-and-alerts.md`. Tier HIGH (a shared scoring contract, and the Captain's alerts).
-- *D1 (independence).* One rule for both call sites: a pair sharing a non-empty thread is never independent; otherwise different duty cycle, different channel or more than 60 s apart, as before. Rejected: dropping the time rule (it would change every pair without thread anchors), and two inline fixes.
+- *D1 (independence).* One rule for both call sites: a pair sharing a non-empty thread is never independent (AD-665's versioned same-origin branch in the service's two sites aside, which no producer reaches; register F-9); otherwise different duty cycle, different channel or more than 60 s apart, as before. Rejected: dropping the time rule (it would change every pair without thread anchors), and two inline fixes.
 - *D2-D3 (origin and emission).* Matches carry their row's `created_at`. The service owns the cascade event (stores and services emit their own state changes; adapters do not duplicate them); the helper only raises the Bridge alert.
 - *D4-D5 (alerts and dead entry points).* The mismatch alert and AD-567f's cascade alert are delivered on the echo alert's path. `SystemHealthProvider` is removed, because it cannot be wired as written (float health versus string labels; every health claim would read as contradicted). `check_corroboration` and `get_verification_context` are kept and marked not live for the deferred agent verification tool. Removing them would take AD-665's provenance report, about 20 tests and four config fields with them, and wiring them is a new capability. This narrows #1633's acceptance line (5) for those two; the Captain may overrule.
-- *Disclosed effects.* The Captain can now receive cascade (ADVISORY/ALERT), observable-mismatch and minute-paced echo alerts, all under `_should_emit` dedup and AD-580 suppression. The Counselor handles each cascade once. Same-thread pairs score 0 in every `compute_anchor_independence` consumer (dream steps 7g and 9, records, behavioral metrics, thread echo).
+- *Disclosed effects.* The Captain can now receive cascade (ADVISORY/ALERT), observable-mismatch and minute-paced echo alerts, all under `_should_emit` dedup and AD-580 suppression. One cascade event per detection reaches the runtime bus; the Counselor receives none before or after (BF-921, #1636, owns that), and after BF-921 it handles each cascade once. Same-thread pairs score 0 in the default-weight consumers (dream steps 7g and 9, records, thread echo); the service's two sites keep AD-665's versioned exception (F-9). The behavioral-metrics score does not change: its recall fails against the real episodic memory before scoring (F-10).
 - *Reversal.* Revert the BF-920 commit. Nothing persisted changes.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1119,6 +1123,9 @@ REPLACE:
 - `check_corroboration`'s and `get_verification_context`'s behaviour, apart from D1's same-thread count; `build_provenance_report`; every config field; `config/system.yaml`.
 - `RecreationStateProvider`, `TrustStateProvider`, `ObservableStateVerifier`; the `finalize.py` providers list and the `set_echo_services` condition (register F-3).
 - The orientation text (register F-2).
+- Listener registration in `ProbOSRuntime.add_event_listener` (`runtime.py:1706`): the Counselor's cascade subscription matches nothing before and after this change; BF-921 (#1636) owns it (register F-11).
+- The `EpisodicMemory.recall` calls that pass `agent_id` (`behavioral_metrics.py:584-588`, `proactive.py:1784`, `startup/finalize.py:6296`; register F-10).
+- AD-665's precedence of artifact ancestry over the thread veto in `compute_anchor_independence` and `check_corroboration` (register F-9).
 
 ## 10. Mutation rows
 
@@ -1142,6 +1149,7 @@ Tier HIGH: every changed production file has rows. Run each row on the contract-
 | R14 | `src/probos/ward_room/_helpers.py` | `mismatch_alerts, ward_room_router, "AD-583f",` | `[], ward_room_router, "AD-583f",` | T11 |
 | R15 | `src/probos/ward_room/_helpers.py` | `await ward_room_router.deliver_bridge_alert(alert)` | `pass` | T8; T11 |
 | R16 | `src/probos/ward_room/_helpers.py` | `"affected_callsigns": [step.callsign for step in echo_result.propagation_chain],` | `"affected_callsigns": [],` | T11 |
+| R17 | `src/probos/ward_room/threads.py` | `"timestamp": row[4],  # threads.created_at (BF-920)` | `"timestamp": row[4] + 1.0,  # threads.created_at (BF-920)` | T5 |
 
 Not rows: D3's removed emission, D5b's removed class and F1's removed import are deletions, so no line replacement can restore them. T7 guards D3 (re-adding the helper's `emit_fn(...)` makes it count 2), and the Absence checks after the build (§15 item 6) guard D5b and F1. The docstring pairs (S6, S7, T0, H2, O1) have no behaviour to mutate.
 
@@ -1288,7 +1296,7 @@ BF number: BF-920 is #1633's own title. `gh issue list --state all --search "BF-
 
 - **Internal, absorbed:** AD-567f (`decisions-era-4-evolution.md:2567-2589`) and its archive prompt: the same-thread rule, the Bridge cascade alert, and the deferred agent tool (D1, D5a, D5c). AD-583g (`thread_echo.py`) and AD-583f (`observable_state.py`): D4 and D5b. AD-665 provenance: kept intact (D5c). AD-1349's F1-F5 (`prompts/ad-1349-s1-shared-error-tracing.md:788-796`): this issue's source. The 2026-04-08 Medical cascade case study: the motivating incident.
 - **External:** skipped. This is ProbOS plumbing, and the one transferable idea (circular reporting: independence comes from the source, not the timing) is already AD-567f's prior art. `docs/research/reference-projects.md` was not reviewed: the rule applies to design ADs, and this is a BF (date used 2026-10-24).
-- **Blind spots named:** (a) thread echo's independence is structurally 0 after D1 (F-4); (b) a delivered alert is posted in the ship channel as "captain", and that post goes through peer similarity. It is bounded by the 300 s dedup and by text unlike crew posts, as the echo alert already is; (c) behavioral-metrics independence falls for thread-dominated episode sets (disclosed); (d) the cascade alert needs `set_echo_services`, which runs only when echo analysis or observable verification is on (F-3; both are on by default); (e) the newly delivered alerts reach Captain notifications, and AD-580 mute and dismiss apply; (f) the `TrustStateProvider` heuristic's verdicts become visible to the Captain through D4 (F-5).
+- **Blind spots named:** (a) thread echo's independence is structurally 0 after D1 (F-4); (b) a delivered alert is posted in the ship channel as "captain", and that post goes through peer similarity. It is bounded by the 300 s dedup and by text unlike crew posts, as the echo alert already is; (c) behavioral-metrics independence would fall for thread-dominated episode sets, but its recall fails against the real `EpisodicMemory` before scoring (A1, F-10), so nothing changes there; (d) the cascade alert needs `set_echo_services`, which runs only when echo analysis or observable verification is on (F-3; both are on by default); (e) the newly delivered alerts reach Captain notifications, and AD-580 mute and dismiss apply; (f) the `TrustStateProvider` heuristic's verdicts become visible to the Captain through D4 (F-5).
 
 ## 13. Premise checks that need the live vessel
 
@@ -1296,9 +1304,9 @@ BF number: BF-920 is #1633's own title. `gh issue list --state all --search "BF-
 
 ## 14. Diff Reviewer: properties to verify
 
-1. For every caller of `compute_anchor_independence` (§4), a pair sharing a non-empty `thread_id` adds no independence whatever its timestamps; pairs in different threads, or without thread ids, score exactly as before.
+1. For every caller of `compute_anchor_independence` (§4), a pair sharing a non-empty `thread_id` adds no independence whatever its timestamps (one recorded exception, which no producer reaches: in the service's two sites a same-origin pair with different `artifact_version`s keeps AD-665's graded weight, F-9); pairs in different threads, or without thread ids, score exactly as before.
 2. `check_peer_similarity` keeps every existing key and adds `timestamp` equal to the row's `created_at` for both the thread and the reply queries; every reader in §4 accepts the dict.
-3. On both the `ThreadManager` and the `MessageStore` paths, a medium or high detection produces exactly one `CASCADE_CONFABULATION_DETECTED`, emitted by the service with its unchanged payload, and the Counselor still receives it.
+3. On both the `ThreadManager` and the `MessageStore` paths, a medium or high detection produces exactly one `CASCADE_CONFABULATION_DETECTED`, emitted by the service with its unchanged payload. Delivery to the Counselor is not claimed: its subscription matches neither the two copies emitted before this change nor the one that remains (F-11; BF-921, #1636).
 4. Every Bridge alert built in `_helpers.py` is delivered through `ward_room_router.deliver_bridge_alert`. A failed delivery does not stop later alerts, nor the Ward Room post, and nothing is delivered when the router or the alert service is absent.
 5. The cascade alert's severity, dedup and suppression are `BridgeAlertService`'s own; low and none produce no alert.
 6. `cascade_enabled=False` stops the cascade check and its alert; the default keeps the current behaviour.
@@ -1310,19 +1318,19 @@ BF number: BF-920 is #1633's own title. `gh issue list --state all --search "BF-
 ## 15. Acceptance criteria
 
 1. (1) A same-thread pair is never independent on elapsed time alone: T1, T3 and T4 use gaps of minutes, and AD-583g's echo alert fires on such a thread (T4, T11).
-2. (2) Peer matches carry their real timestamp and `source_agent` names the earliest poster, tested on the real schema and match shape (T5, T6).
-3. (3) One `CASCADE_CONFABULATION_DETECTED` per detection on both call sites (T7).
+2. (2) Peer matches carry their real timestamp and `source_agent` names the earliest poster, tested on the real schema and match shape (T5, T6); T5 compares each timestamp exactly (A1).
+3. (3) One `CASCADE_CONFABULATION_DETECTED` emitted per detection on both call sites, counted at the producers (T7). #1633's line (3) asks for one event per detection; delivery to the Counselor is BF-921's (#1636) and is not claimed here.
 4. (4) The observable-mismatch alert is delivered the way the echo alert is (T11).
 5. (5) `BridgeAlertService.check_cascade_risk` is wired (T8, T9); `SystemHealthProvider` is removed; `check_corroboration` and `get_verification_context` are kept and marked, a narrowing recorded on #1633 (D5c). No effective-witness count is added.
 6. After the build, a repo-wide search for `SystemHealthProvider|check_and_emit_cascade_risk|FakeVitalsMonitor` finds hits only in historical docs and `prompts/`.
-7. All 16 mutation rows are killed by their named tests; the focused gate (header) passes at `-n 0`; one receipted broad gate for the issue.
+7. All 17 mutation rows are killed by their named tests; the focused gate (header) passes at `-n 0`; one receipted broad gate for the issue.
 8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Not verified
 
 - No test was run (instructed). Each SEARCH block was copied from a Read of `26bec26d`; that each occurs exactly once is for the orchestrator's tool to confirm.
 - That every new test fails on the base tree. Each is designed to (T1, T3 and T4 score 1.0 there; T5 and T6 lack the key; T7 counts 2; T8 and T11 see no delivery; T10 recalls), but this was not run.
-- How the runtime's `emit_event` treats an enum type versus a string value. D3 leaves the service's `.value` form, which the Counselor already matches.
+- How the runtime's `emit_event` treats an enum type versus a string value: answered by review round 1 (A1). The service emits the `.value` form, but `add_event_listener` (`runtime.py:1706`) stores `str(t)`, which for the `(str, Enum)` `EventType` on Python 3.12 is the name form, so the Counselor's subscription matches no copy (F-11; BF-921, #1636).
 - Whether AD-979d's cross-agent recall gives crew a real way to "check whether other crew members have independently observed the same thing" (`orientation.py:366-369`). See F-2.
 
 ## 17. For the register
@@ -1337,3 +1345,86 @@ BF number: BF-920 is #1633's own title. `gh issue list --state all --search "BF-
 | F-6 | `check_and_trace_echo` reads `thread_echo_analyzer._thread_manager` (a private attribute across modules). | `ward_room/_helpers.py:107` |
 | F-7 | `CascadeConfabulationEvent.channel_id` is never filled: the service's payload is `asdict(CascadeRiskResult)`, which has no channel. | `events.py:1088`; `social_verification.py:615` |
 | F-8 | `CORROBORATION_VERIFIED` and `CORROBORATION_PROVENANCE_VALIDATED` have no live producer while `check_corroboration` has no caller. | `events.py:224-225` |
+| F-9 | Review round 1, finding 3 (P2, injected-only, not a regression). In `compute_anchor_independence` (`:208`) and `check_corroboration`'s partner count (`:398`), AD-665's ancestry branch runs before `_pair_independent`, so a same-thread pair sharing a `source_origin_id` with different `artifact_version`s takes `version_independence_weight` past the thread veto. The service passes `provenance_version_independence_weight` (default 0.7, `config_models/knowledge.py:393`; read at `:344-345` and `:579-580`): three such episodes score 0.7, with 3 independent anchors and no cascade risk. The other five call sites pass 0.0, so the branch adds 0 there. Reach: no producer writes the shape (§18, Absence Verified). Design: test `_same_thread` before `_share_artifact_ancestry` in both service paths, add a versioned same-thread test, and decide whether `build_provenance_report` (`:229`) reports the veto. | `cognitive/social_verification.py:208, 398` |
+| F-10 | Review round 1, finding 2 (P2, ordinary reach, not a regression; since AD-569). `EpisodicMemory.recall(query, k=5, *, include_self_contradicted=False)` (`episodic.py:3415`) takes no `agent_id`, three callers pass one, and each swallows the `TypeError`. `BehavioralMetricsEngine` (`behavioral_metrics.py:584-588`, caught at `:602-607`; reached from `dreaming.py:1663`) reports `independence_score` 0.0 and `analyzed_threads` 0 on every dream. `proactive.py:1784` and `startup/finalize.py:6296` count 0 episodic memories for every crew member in orientation (the effect on the orientation text is not verified). `tests/test_behavioral_metrics.py:579` uses an unrestricted `AsyncMock` and patches the scorer. Design: `recall_for_agent(agent_id, query, k=10)` (`episodic.py:3875`) for the metric, `count_for_agent(agent_id)` (`episodic.py:4261`) for the two counts, and doubles built with `create_autospec(EpisodicMemory)`. An independently reachable production defect: file it as its own BF at the wave's next discovery-budget slot. | `cognitive/behavioral_metrics.py:584`; `proactive.py:1784`; `startup/finalize.py:6296` |
+| F-11 | Review round 1, finding 1 (P2, ordinary reach, not a regression). The Counselor subscribes with `EventType` members (`counselor.py:683-710`, the cascade at `:699`; wired at `startup/finalize.py:6065`). `add_event_listener` stores `str(t)` (`runtime.py:1706`), the name form, while dispatch compares the wire value (`runtime.py:1952`), so none of its 24 types reaches it, the cascade included (the reviewer's probe: wire count 1, handler count 0, both stores, medium and high risk). Owner: BF-921 (#1636), whose fix converts to wire values in one helper for both registration paths. BF-921 lands after BF-920 (otherwise the Counselor would receive the old duplicate twice). Its seam test should also send one service `CASCADE_CONFABULATION_DETECTED` through the booted runtime and expect one Counselor handling, and its disclosed effects must cover the Counselor handling that becomes reachable for every subscribed type, including the echo, mismatch and cascade events BF-920 makes fire at real pacing. | `runtime.py:1706`; `cognitive/counselor.py:699` |
+
+## 18. Amendment A1 (review round 1, 2026-10-24)
+
+Review round 1 (`gpt-6.1-sol`, the whole of candidate 1 `6ddaed4c`) confirmed properties 1, 2 and 4 to 10 by execution and reported four findings, none of them a regression.
+
+| Round-1 finding | Decision | Reason |
+|---|---|---|
+| 1: the Counselor never receives the cascade event | Not fixed here; claims narrowed (status, §1, §3, §4, §5, §8, §14, §15, §16, the H1 docstring); register F-11 | The root cause is in runtime listener registration and affects every `EventType` listener; BF-921 (#1636) owns it. #1633's line (3) asks for one event per detection, which T7 pins at the producers. |
+| 2: behavioral metrics never reaches the scorer | Not fixed here; the disclosed effect is dropped; register F-10 | Present since AD-569 and outside this contract's lines; it is a family of three callers. |
+| 3: versioned ancestry bypasses the thread veto | Recorded with its reach; the universal claim is narrowed (§3, §4, §8, §14); register F-9 | No producer writes the shape, and the five default-weight call sites already score it 0. Reordering would change AD-665's precedence with no live effect. |
+| 4: T5 tolerates about ±1,700 s | Fixed: T5 compares exactly; row R17 | The column is `created_at REAL NOT NULL`, and the test writes and compares the same expression, so the comparison is exact. R17 is killed by the exact T5 and survives the round-1 T5. |
+
+T6 stays as it is: it tests ordering on purpose. Both lines round 1 cited (206-207) belong to T5.
+
+**Each `compute_anchor_independence` call site after BF-920:**
+
+| Call site | Weight | Same-thread pair | Notes |
+|---|---|---|---|
+| `social_verification.py:349` (`check_corroboration`) | 0.7 | 0; same origin with different versions gives 0.7 (F-9) | No production caller (D5c) |
+| `social_verification.py:584` (`check_cascade_risk`) | 0.7 | As above | Both stores' `check_and_alert_cascade_risk`; one event, which reaches no Counselor (F-11); Bridge alert for medium and high |
+| `ward_room/thread_echo.py:151` | 0.0 | 0; every detected echo scores 0.0 (F-4) | Echo alert delivered |
+| `cognitive/dreaming.py:1180` (step 7g) | 0.0 | 0 | |
+| `cognitive/dreaming.py:1410` (step 9, `_cai583`) | 0.0 | 0 | |
+| `knowledge/records_store.py:900` | 0.0 | 0 | |
+| `cognitive/behavioral_metrics.py:595` | 0.0 | Not reached with the real memory (F-10) | Reports 0.0 before and after |
+
+**Verified against candidate 1 (`6ddaed4c`, 2026-10-24):**
+
+```
+grep -n "type_filter = frozenset" src/probos/runtime.py
+  1706: type_filter = frozenset(str(t) for t in event_types) if event_types else None
+grep -n "type_str not in type_filter" src/probos/runtime.py
+  1952: if type_filter is not None and type_str not in type_filter:
+grep -n "^class EventType" src/probos/events.py
+  22: class EventType(str, Enum):
+grep -n "CASCADE_CONFABULATION_DETECTED, # AD-567f" src/probos/cognitive/counselor.py
+  699
+grep -n "add_event_listener_fn=runtime.add_event_listener" src/probos/startup/finalize.py
+  6065
+grep -n "async def recall(\|async def recall_for_agent(\|async def count_for_agent(" src/probos/cognitive/episodic.py
+  3415, 3875, 4261
+grep -n "provenance_version_independence_weight" src/probos/config_models/knowledge.py src/probos/cognitive/social_verification.py
+  knowledge.py:393 (0.7); social_verification.py:345, 580
+grep -n "_share_artifact_ancestry(a, b)" src/probos/cognitive/social_verification.py
+  208, 398
+grep -n "compute_behavioral_metrics" src/probos/cognitive/dreaming.py
+  1663
+grep -n "created_at REAL NOT NULL" src/probos/ward_room/models.py
+  101, 112
+grep -n "threads.created_at (BF-920)" src/probos/ward_room/threads.py
+  57: "timestamp": row[4],  # threads.created_at (BF-920)
+```
+
+**Absence Verified (2026-10-24, candidate 1):**
+
+```
+CLAIM: no episodic-memory recall accepts agent_id
+RUN:   rg -n -A3 "def recall\(" src/probos
+FOUND: protocols.py:67 (query, k); episodic_mock.py:177 (query, k);
+       episodic.py:3415 (query, k, *, include_self_contradicted); evolution_store.py:1194 (another store)
+HOLDS: yes
+
+CLAIM: exactly three callers pass agent_id to recall
+RUN:   rg -U -n "\.recall\([^)]*agent_id\s*=" src/probos
+FOUND: behavioral_metrics.py:584-586; proactive.py:1784; startup/finalize.py:6296
+HOLDS: yes
+
+CLAIM: no producer writes two same-thread episodes sharing a source_origin_id with different artifact_version
+RUN:   rg -n "source_origin_id=" src/probos
+FOUND: threads.py:610 (thread_id set; wr-thread:<id>, once per created thread);
+       messages.py:363 (thread_id set; wr-post:<post id>, unique per post);
+       proactive.py:1687 and cognitive_agent.py:12411 (their AnchorFrames set no thread_id);
+       the peer-repetition AnchorFrames (threads.py:651, messages.py:404) set no origin
+HOLDS: yes, for the writers in src/
+
+CLAIM: no test pins the docstring sentence A1 corrects
+RUN:   rg -n "every detection twice|check_and_alert_cascade_risk" tests
+FOUND: nothing
+HOLDS: yes
+```
