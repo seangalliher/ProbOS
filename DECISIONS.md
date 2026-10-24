@@ -731,7 +731,7 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
   - Each lane role is an AD-1343 seam; a stopped, in-stasis or reset holder parks the item at its last service-written state.
   - Faults that disable crew cognition go to the Captain through AD-1172 and AD-1206.
 - *Captain's additions (2026-10-24).*
-  - (1) Once per-crew models land, the reviewer can get its independence from its own assigned model, with the `verifier` tier as fallback. `classify_independence` still runs on the model that actually answered.
+  - (1) Once per-crew models land (AD-1351, #1650), the reviewer can get its independence from its own assigned model, with the `verifier` tier as fallback. `classify_independence` still runs on the model that actually answered.
   - (2) More Engineering crew (fill `engineering_officer`, add a Builder or QA role) so reviewer, assignee and brake decider are three different people on every item. Escalating to the Captain stays the exception.
   - (3) Elastic workers (#1332, AD-1288 #1335, AD-1290 #1337) may fill Reviewer and Builder slots, commissioned by the Chief Engineer under AD-1288's separation of duty and leases. A fresh reviewer has no shared context by construction. Drafting and brake authority stay with persistent identities.
 - *Reversal.* Restore the Utility agent in AD-1299 S2f and route the judgment roles to it. The services, evidence and approvals are unchanged either way.
