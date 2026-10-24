@@ -1973,7 +1973,8 @@ AD-720: chat attachments configuration.
 | `daily_image_budget_per_captain` | `int` | `50` | — |  |
 | `image_budget_path` | `str | None` | `None` | — | AD-730-2-1: filesystem path for the per-Captain image-budget JSON sidecar. When None, defaults to ``<runtime.config.data_dir>/image_budget.json``. |
 | `vision_tier_overrides` | `dict[str, str]` | `{}` | — |  |
-| `max_store_bytes` | `int` | `5368709120` | ≥ 0 | AD-733-1: total bytes ceiling for attachments_dir. Reaper evicts oldest perception_frame entries first, then oldest chat_attachment entries, until under cap. 0 = disabled. |
+| `max_store_bytes` | `int` | `5368709120` | ≥ 0 | AD-733-1: total bytes ceiling for attachments_dir. Reaper evicts oldest tts_audio entries first (BF-918), then perception_frame, browser_screenshot, avatar_render, crew_trace and chat_attachment entries, until under cap; agent_artifact is never evicted. 0 = disabled. |
+| `tts_audio_retention_seconds` | `int` | `900` | ≥ 60, ≤ 86400 | BF-918: TTL for spoken TTS audio (origin tts_audio). Default 15 min -- ample for the browser to fetch and play a reply and its deferred lip-sync request. |
 
 ## `cloud_pickers`
 

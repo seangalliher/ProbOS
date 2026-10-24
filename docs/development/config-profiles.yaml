@@ -426,19 +426,19 @@ flags:
 - path: channels.discord.allow_all_users
   kind: consent-gate
   profiles: []
-  evidence_to_promote: Not promotable. Arming it admits every Discord sender who can reach the
-    bot, the ship's slash commands included (BF-914, issue 1621). That is the Captain's decision,
-    not a test result; tests/test_bf914_channel_allow_lists.py proves the flag admits when on
-    and that an empty allowed_user_ids refuses every sender when off.
+  evidence_to_promote: Not promotable. Arming it admits every Discord sender who can reach
+    the bot, the ship's slash commands included (BF-914, issue 1621). That is the Captain's
+    decision, not a test result; tests/test_bf914_channel_allow_lists.py proves the flag admits
+    when on and that an empty allowed_user_ids refuses every sender when off.
   external_dependency: null
   requires: []
   conflicts_with: []
 - path: channels.slack.allow_all_users
   kind: consent-gate
   profiles: []
-  evidence_to_promote: Not promotable. Arming it admits every Slack sender the adapter polls or
-    receives, the ship's slash commands included (BF-914, issue 1621). A consent decision; the same
-    test file proves both directions.
+  evidence_to_promote: Not promotable. Arming it admits every Slack sender the adapter polls
+    or receives, the ship's slash commands included (BF-914, issue 1621). A consent decision;
+    the same test file proves both directions.
   external_dependency: null
   requires: []
   conflicts_with: []
@@ -611,8 +611,8 @@ flags:
 - path: agent_work.enabled
   kind: product-feature
   profiles: []
-  evidence_to_promote: tests/test_ad1347_s1_agent_work.py tests/test_ad1347_s1_wiring.py
-    -- the real store, registry, permission store and stop record govern a request from creation
+  evidence_to_promote: tests/test_ad1347_s1_agent_work.py tests/test_ad1347_s1_wiring.py --
+    the real store, registry, permission store and stop record govern a request from creation
     to an eligible claim; a real boot builds the service only when armed, and OFF builds nothing
     and adds no table to workforce.db.
   external_dependency: null

@@ -1,10 +1,11 @@
 """AD-733-1: Attachment retention / LRU reaper.
 
 Two policies, run in sequence each tick:
-  1. Age TTL -- origin=perception_frame older than frame_retention_seconds.
+  1. Age TTL -- origin=perception_frame older than frame_retention_seconds,
+      and (BF-918) origin=tts_audio older than tts_audio_retention_seconds.
   2. LRU cap -- if total > attachments.max_store_bytes, evict oldest
-      perception_frame, browser_screenshot, avatar_render, crew_trace, then
-      chat_attachment entries until under cap.
+      tts_audio, perception_frame, browser_screenshot, avatar_render,
+      crew_trace, then chat_attachment entries until under cap.
 
 Tier-2 honest-degrade: any filesystem error is logged at WARNING; the
 sweep continues with the next candidate. Never raises out of the loop.
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Eviction order for the LRU pass. Less-durable origins are evicted first.
 _LRU_EVICTION_ORDER: tuple[str, ...] = (
+    "tts_audio",  # BF-918: spoken audio is played once, so it goes first
     "perception_frame",
     "browser_screenshot",
     "avatar_render",
@@ -144,36 +146,48 @@ class AttachmentReaper:
         }
 
     async def _sweep_age_ttl(self) -> tuple[int, int]:
-        """Evict perception_frame entries older than the retention window."""
-        retention = int(self._perception_cfg.frame_retention_seconds)
-        if retention <= 0:
-            return (0, 0)
-        cutoff = time.time() - retention
-        try:
-            candidates = await self._store.list_by_origin("perception_frame")
-        except Exception:
-            logger.warning(
-                "AD-733-1: list_by_origin(perception_frame) failed",
-                exc_info=True,
-            )
-            return (0, 0)
+        """Evict entries older than their origin's retention window.
+
+        ``perception_frame``: ``perception.frame_retention_seconds`` (AD-733-1).
+        ``tts_audio``: ``attachments.tts_audio_retention_seconds`` (BF-918). Bytes
+        also written under a more durable origin carry that origin, so they are
+        never listed here.
+        """
         removed = 0
         freed = 0
-        for sha, written_at in candidates:
-            if written_at >= cutoff:
-                break  # list is sorted oldest-first.
-            freed_one = await self._safe_unlink(sha)
-            if freed_one is not None:
-                removed += 1
-                freed += freed_one
+        for origin, retention in (
+            ("perception_frame", int(self._perception_cfg.frame_retention_seconds)),
+            ("tts_audio", int(self._attachments_cfg.tts_audio_retention_seconds)),
+        ):
+            if retention <= 0:
+                continue
+            cutoff = time.time() - retention
+            try:
+                candidates = await self._store.list_by_origin(origin)
+            except Exception:
+                logger.warning(
+                    "AD-733-1: list_by_origin(%s) failed",
+                    origin,
+                    exc_info=True,
+                )
+                continue
+            for sha, written_at in candidates:
+                if written_at >= cutoff:
+                    break  # list is sorted oldest-first.
+                # BF-918 review round 1: removed only if unchanged since listed.
+                freed_one = await self._safe_reap(sha, origin, written_at)
+                if freed_one is not None:
+                    removed += 1
+                    freed += freed_one
         return (removed, freed)
 
     async def _sweep_lru(self) -> tuple[int, int]:
         """Evict oldest entries until total <= max_store_bytes.
 
-        Less-durable origins (perception_frame) are evicted first; if
-        that's not enough, walk through browser_screenshot, avatar_render,
-        crew_trace, then chat_attachment.
+        Origins go in ``_LRU_EVICTION_ORDER``: tts_audio first (BF-918), then
+        perception_frame, browser_screenshot, avatar_render, crew_trace, then
+        chat_attachment; agent_artifact is never evicted. An entry written
+        again since it was listed is kept and frees nothing (BF-918).
         """
         cap = int(self._attachments_cfg.max_store_bytes)
         if cap <= 0:
@@ -202,35 +216,26 @@ class AttachmentReaper:
                     exc_info=True,
                 )
                 continue
-            for sha, _written_at in candidates:
+            for sha, listed_at in candidates:
                 if total <= cap:
                     break
-                freed_one = await self._safe_unlink(sha)
+                # BF-918 review round 1: removed only if unchanged since listed; a skip frees nothing.
+                freed_one = await self._safe_reap(sha, origin, listed_at)
                 if freed_one is not None:
                     removed += 1
                     freed += freed_one
                     total -= freed_one
         return (removed, freed)
 
-    async def _safe_unlink(self, sha: str) -> int | None:
-        """Best-effort unlink. Returns bytes freed or ``None`` on failure."""
-        size_bytes = 0
+    async def _safe_reap(self, sha: str, origin: str, written_at: float) -> int | None:
+        """Best-effort conditional removal (BF-918 review round 1).
+
+        Returns the bytes freed, or ``None`` when the store kept the entry (it
+        changed since it was listed, or is gone) or the removal failed. The
+        check and the removal share one hold of the store's lock.
+        """
         try:
-            size_bytes = await self._store.size(sha)
-        except FileNotFoundError:
-            # Concurrent unlink already removed the blob; still try to
-            # clear the index entry below.
-            size_bytes = 0
-        except Exception:
-            logger.warning(
-                "AD-733-1: size(%s) failed during sweep",
-                sha[:8],
-                exc_info=True,
-            )
-        try:
-            ok = await self._store.unlink(sha)
-        except FileNotFoundError:
-            return 0
+            return await self._store.unlink_if_unchanged(sha, origin=origin, written_at=written_at)
         except Exception:
             logger.warning(
                 "AD-733-1: unlink(%s) failed during sweep; skipping",
@@ -238,6 +243,3 @@ class AttachmentReaper:
                 exc_info=True,
             )
             return None
-        if not ok:
-            return 0
-        return size_bytes

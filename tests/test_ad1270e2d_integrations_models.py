@@ -132,6 +132,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {
         "image_budget_path": None,
         "vision_tier_overrides": {},
         "max_store_bytes": 5368709120,
+        # BF-918 (#1626): a field added after the move, so not in the pre-move text.
+        "tts_audio_retention_seconds": 900,
     },
     "BillConfig": {
         "max_concurrent_instances": 10,

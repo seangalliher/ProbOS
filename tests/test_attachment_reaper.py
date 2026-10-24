@@ -266,14 +266,16 @@ async def test_reaper_continues_past_permission_error(
         store, origin="perception_frame", blob=b"\xff\xd8okay", written_at=past
     )
 
-    original_unlink = FilesystemAttachmentStore.unlink
+    # BF-918 (#1626) review round 1: the reaper removes through unlink_if_unchanged (the entry it
+    # listed, checked under the store lock), so the injected failure moves there.
+    original_unlink = FilesystemAttachmentStore.unlink_if_unchanged
 
-    async def _flaky_unlink(self: FilesystemAttachmentStore, ch: str) -> bool:
+    async def _flaky_unlink(self: FilesystemAttachmentStore, ch: str, **kwargs: Any) -> int | None:
         if ch == sha_blocked:
             raise PermissionError("Windows file in use")
-        return await original_unlink(self, ch)
+        return await original_unlink(self, ch, **kwargs)
 
-    with patch.object(FilesystemAttachmentStore, "unlink", _flaky_unlink):
+    with patch.object(FilesystemAttachmentStore, "unlink_if_unchanged", _flaky_unlink):
         with caplog.at_level("WARNING"):
             reaper = AttachmentReaper(
                 store, perception_cfg=perception, attachments_cfg=attachments

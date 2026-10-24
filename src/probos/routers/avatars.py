@@ -277,7 +277,10 @@ async def _synthesize_tts_impl(req: Request, runtime: Any) -> dict[str, Any]:
     from probos.routers.chat import _get_attachment_store
     store = _get_attachment_store(runtime)
     attachment_id = hashlib.sha256(result.audio_bytes).hexdigest()
-    await store.write(attachment_id, result.audio_bytes, result.mime)
+    # BF-918 (#1626): spoken audio is played once and no chat record keeps its
+    # id, so it is stored under its own origin, which the reaper deletes by age.
+    # Identical bytes written under a more durable origin keep that origin.
+    await store.write(attachment_id, result.audio_bytes, result.mime, origin="tts_audio")
 
     # Reuse AD-721b-1 rhubarb backend by direct internal call. lipsync.backend
     # may be "heuristic" (default) — in that case skip rhubarb and let the

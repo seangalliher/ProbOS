@@ -20,6 +20,7 @@ ATTACHMENT_ORIGINS: tuple[str, ...] = (
     "avatar_render",
     "agent_artifact",  # AD-797 (Wave 197): artifact bytes extracted from agent replies
     "crew_trace",  # AD-859a: durable agentic-loop provenance JSON
+    "tts_audio",  # BF-918 (#1626): spoken reply audio, deleted by age (attachments.tts_audio_retention_seconds)
 )
 
 
@@ -74,6 +75,21 @@ class AttachmentStore(Protocol):
     async def unlink(self, content_hash: str) -> bool:
         """AD-733-1: remove the blob and its index entry. Returns ``False``
         when not found. Concurrent ``FileNotFoundError`` never raises.
+        """
+        ...
+
+    async def unlink_if_unchanged(
+        self,
+        content_hash: str,
+        *,
+        origin: str,
+        written_at: float,
+    ) -> int | None:
+        """BF-918 (#1626): remove the blob and its index entry only if the entry
+        still has ``origin`` and was last written no later than ``written_at`` --
+        the values a caller listed -- decided under the same lock as the removal.
+        Returns the bytes freed (0 when only the index entry was left), or
+        ``None`` when the entry changed, is absent, or could not be removed.
         """
         ...
 
