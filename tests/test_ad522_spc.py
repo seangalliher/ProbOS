@@ -254,3 +254,15 @@ def test_runtime_attribute_not_set_when_disabled() -> None:
     wired = _wire_spc_calibration(runtime=runtime, config=config)
     assert wired is False
     assert not hasattr(runtime, "spc_calibration_store")
+
+
+def test_the_spc_store_is_announced_inert(caplog) -> None:
+    """BF-921 (#1636): nothing records observations, so the boot line says the store is inert."""
+    import logging
+
+    runtime = MagicMock(spec=["emit_event", "spc_calibration_store"])
+    config = SimpleNamespace(spc=SPCConfig(enabled=True))
+    with caplog.at_level(logging.INFO, logger="probos.startup.finalize"):
+        assert _wire_spc_calibration(runtime=runtime, config=config) is True
+    assert "SPCCalibrationStore initialized inert" in caplog.text
+    assert "nothing records observations" in caplog.text

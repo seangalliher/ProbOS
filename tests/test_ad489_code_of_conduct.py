@@ -45,8 +45,28 @@ def test_conduct_violation_event_type_exists() -> None:
     assert EventType.CONDUCT_VIOLATION.value == "conduct_violation"
 
 
+# BF-921 (#1636): AD-489 named no producer of CONDUCT_VIOLATION ("assessed by the Counselor or by
+# department Chiefs", config/standing_orders/federation.md) and none was built, so the Counselor's
+# subscription, handler and trust penalty were removed rather than left as a penalty path that the
+# first emitter would inherit without a qualified gauge. The five tests that drove the removed
+# handler (minor, severe, busy trust, propagating trust error, no agent id) now pin the removal.
+
+
 @pytest.mark.asyncio
-async def test_counselor_handles_minor_violation() -> None:
+async def test_counselor_does_not_subscribe_to_conduct_violation() -> None:
+    from probos.cognitive.counselor import CounselorAgent
+
+    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
+    add_listener = MagicMock()
+    await counselor.initialize(add_event_listener_fn=add_listener)
+
+    (types,) = [call.kwargs["event_types"] for call in add_listener.call_args_list]
+    assert EventType.CONDUCT_VIOLATION not in types
+    assert EventType.CONFABULATION_SUPPRESSED in types
+
+
+@pytest.mark.asyncio
+async def test_a_conduct_violation_event_changes_nothing() -> None:
     from probos.cognitive.counselor import CounselorAgent
 
     counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
@@ -56,117 +76,12 @@ async def test_counselor_handles_minor_violation() -> None:
 
     await counselor._on_event_async({
         "type": EventType.CONDUCT_VIOLATION.value,
-        "data": {
-            "agent_id": "agent-1",
-            "principle": "Honesty",
-            "severity": "minor",
-            "detail": "Uncertainty was not stated.",
-        },
-    })
-
-    counselor._send_therapeutic_dm.assert_awaited_once()
-    assert counselor._send_therapeutic_dm.await_args.args[0] == "agent-1"
-    assert counselor._send_therapeutic_dm.await_args.args[1] == "Data"
-    assert "reminder, not a penalty" in counselor._send_therapeutic_dm.await_args.args[2]
-    counselor._trust_network.record_outcome.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_counselor_handles_severe_violation() -> None:
-    from probos.cognitive.counselor import CounselorAgent
-
-    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-    counselor._registry = {"agent-1": SimpleNamespace(callsign="Data")}
-    counselor._trust_network = MagicMock()
-    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
-
-    await counselor._on_event_async({
-        "type": EventType.CONDUCT_VIOLATION.value,
-        "data": {
-            "agent_id": "agent-1",
-            "principle": "Respect",
-            "severity": "severe",
-            "detail": "Dismissive conduct repeated.",
-        },
-    })
-
-    counselor._trust_network.record_outcome.assert_called_once_with(
-        "agent-1",
-        success=False,
-        weight=0.5,
-        source="conduct_violation",
-    )
-    counselor._send_therapeutic_dm.assert_awaited_once()
-    assert counselor._send_therapeutic_dm.await_args.args[1] == "Data"
-    assert "trust adjustment has been applied" in counselor._send_therapeutic_dm.await_args.args[2]
-
-
-@pytest.mark.asyncio
-async def test_counselor_busy_trust_still_sends_honest_severe_violation_dm() -> None:
-    from probos.cognitive.counselor import CounselorAgent
-
-    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-    counselor._registry = {"agent-1": SimpleNamespace(callsign="Data")}
-    counselor._trust_network = MagicMock()
-    counselor._trust_network.record_outcome.side_effect = RuntimeError(
-        "trust_write_in_progress",
-    )
-    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
-
-    await counselor._on_conduct_violation({
-        "agent_id": "agent-1",
-        "principle": "Respect",
-        "severity": "severe",
-        "detail": "Dismissive conduct repeated.",
-    })
-
-    counselor._send_therapeutic_dm.assert_awaited_once()
-    message = counselor._send_therapeutic_dm.await_args.args[2]
-    assert "trust adjustment was skipped" in message
-    assert "has been applied" not in message
-
-
-@pytest.mark.asyncio
-async def test_counselor_other_trust_runtime_error_propagates() -> None:
-    from probos.cognitive.counselor import CounselorAgent
-
-    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-    counselor._registry = {"agent-1": SimpleNamespace(callsign="Data")}
-    counselor._trust_network = MagicMock()
-    counselor._trust_network.record_outcome.side_effect = RuntimeError(
-        "trust store defect",
-    )
-    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
-
-    with pytest.raises(RuntimeError, match="^trust store defect$"):
-        await counselor._on_conduct_violation({
-            "agent_id": "agent-1",
-            "principle": "Respect",
-            "severity": "severe",
-            "detail": "Dismissive conduct repeated.",
-        })
-    counselor._send_therapeutic_dm.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_conduct_violation_without_agent_id_is_noop() -> None:
-    from probos.cognitive.counselor import CounselorAgent
-
-    counselor = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-    counselor._trust_network = MagicMock()
-    counselor._send_therapeutic_dm = AsyncMock(return_value=True)
-
-    await counselor._on_event_async({
-        "type": EventType.CONDUCT_VIOLATION.value,
-        "data": {
-            "principle": "Cooperation",
-            "severity": "minor",
-            "detail": "No agent attached.",
-        },
+        "data": {"agent_id": "agent-1", "principle": "Respect", "severity": "severe", "detail": "x"},
     })
 
     counselor._send_therapeutic_dm.assert_not_awaited()
     counselor._trust_network.record_outcome.assert_not_called()
+    assert not hasattr(CounselorAgent, "_on_conduct_violation")
 
 
 def test_record_outcome_source_field() -> None:

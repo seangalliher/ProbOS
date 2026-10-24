@@ -17,6 +17,11 @@ class SPCCalibrationStore:
 
     Stores ``AgentCalibrationProfile`` instances; runs ``WesternElectricRules.check``
     on demand. Emits ``SPC_RULE_VIOLATED`` per detected violation.
+
+    Inert (BF-921, #1636): nothing in ``src/`` calls :meth:`record_observation`,
+    so every chart is empty and :meth:`check_rules` finds nothing. AD-522's feed
+    (the AD-522e-1 calibration projection) is unbuilt; a producer needs its own
+    AD that defines the value each observation measures.
     """
 
     def __init__(self, runtime: Any, *, sample_window: int = 100) -> None:
