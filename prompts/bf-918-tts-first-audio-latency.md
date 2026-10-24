@@ -2,9 +2,11 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
 
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24: Amendments A1 (area A, M1), A2 (area B, M2) and A3 (area C, M3), the repair of review round 1 (three parallel `gpt-6.1-sol` reviewers count as one round: 14 findings, all three areas NOT READY). The orchestrator applied the amendments by tool, in the order A2, A1, A3 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24: Amendments A1 (area A, M1), A2 (area B, M2) and A3 (area C, M3), the repair of review round 1 (three parallel `gpt-6.1-sol` reviewers count as one round: 14 findings, all three areas NOT READY). The orchestrator applied the amendments by tool, in the order A2, A1, A3 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand. Amendments A4 (area A), A5 (area B) and A6 (area C), the repair of review round 2 (three parallel `gpt-6.1-sol` reviewers count as one round: 8 findings, all three areas NOT READY; the paragraph below gives the repair). The orchestrator applied them by tool, in the order A5, A4, A6 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand.
 
 **Review round 1, area A (amendment A1):** both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged` on the store protocol); the inventory tool is read-only (no `--delete`, `--confirm` or `--attachments-dir`), reads every file and decodes the episode archive, and accepts only Piper's exact header; the capacity description gives the real eviction order. **Area B (amendment A2):** one worker lifecycle (B1, B2: D4a); executor refusal or shutdown cancellation degrades at every voice stage (B3); the default-pool claim narrowed to synthesis and lip-sync, with the store's own I/O executor an open slice of #1626 (B4, slice M4); B5 registered. **Area C (amendment A3):** a reply stopped before any of its audio starts ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter (C1, C3); a play rejected after a stop is terminal and does not fall back to the browser (C2). Round 2 reviews the whole M1 candidate (the store protocol gains a method, a shared contract) and the deltas of M2 and M3 with their consumers.
+
+**Review round 2, area A (amendment A4; `claude-architect`, Claude Code, Opus 5.5, 2026-10-24, read-only):** the inventory enumerates with `os.walk`; a directory it cannot list, and a link or junction to a directory (never followed), are named in `unreadable` with a trailing separator and keep every candidate; the store's own listing raises instead of counting nothing; the store docstring states the one-instance-per-root precondition and §9 states it with the one-sweep-at-a-time precondition (F2 and F3 are registered: §18 R15 and R16). **Area B (amendment A5):** the worker owns its directory from creation, so a failed stderr open leaves none behind (finding 1, a regression A2 introduced); the leftover temporary WAV of a caller-cancelled ffmpeg conversion is recorded with R10 (finding 2), and a killed Piper's directory that cannot be removed at once is R17. **Area C (amendment A6):** the profile chat consumes `dropped`. Its in-flight speech keys clear on it as on `end`, and a reply's completion listener retires on its own `dropped`, completing the controller's turn only while that reply is the newest (finding 1, a regression of A3). The comments on `SpeechQueueEntry.started` and `flushSpeechQueue` now say what D7a means (finding 3). A stop during a meeting batch is registered, not fixed, because no production caller can stop speech while one speaks (finding 2, R18); the lost-claim wait's blindness to a `dropped` is R19. No shared contract changes, except the inventory tool's report format (a script; its consumers are its own tests and §16 step 7). Round 3 reviews the delta of each area with its consumers, and re-reads the whole inventory tool against §14 item 8.
 
 **Status:** build-ready. One BF, three milestones (M1 S3, M2 S2, M3 S1), one batch, one PR, one broad gate. **BF number:** BF-918 (#1626); this contract allocates nothing. **Tier:** S1 STANDARD, S2 STANDARD, **S3 HIGH** (the reaper gains an automatic age-based deletion on the live store; the inventory tool no longer deletes); the batch is reviewed at HIGH (use the Copilot `Diff Reviewer`). **Base:** `origin/main` `26bec26d` (the Architect drafted on `eea6e2f4`; BF-914 merged since, and the three generated files and one pin are regenerated on top of it). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
@@ -118,11 +120,11 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | D2b | Timeout | A `threading.Timer(timeout)` armed for one request kills the process. The read then returns end of file, the request degrades to `None`, the worker is retired, and the next request starts a new process. Queue and lock waits are not counted, as before (the old `communicate` timeout ran inside the thread). |
 | D3 | Visemes | (1) The client opts in with `defer_visemes: true`; the route answers `visemes: []`, `visemes_deferred: true`; the browser POSTs `/api/avatars/lipsync` at prepare time and injects only while that `<audio>` is the one playing; the heuristic track runs in between. (2) Rhubarb overlapped with the store write: rejected (still on the path). (3) Piper phoneme timing: rejected (not emitted). (4) WebSocket push: deferred. |
 | D4 | Executor | `VoiceSynthesisService` owns it, as `runtime.voice_synthesis`, created in `__init__` and closed in `shutdown()` before the attachment reaper stops. Constants: 4 threads, 16 in flight, 4 resident. Saturated or closed: refused, `None` (browser speech) or `[]` (heuristic). So is work the executor refuses, or that its shutdown cancels while queued, at every stage (Piper, ffmpeg, rhubarb, a retirement): `run_voice_work` raises `VoiceWorkRefused`, an `OSError`, and only a cancellation of the calling task propagates. A runtime without the service: Piper degrades to the browser; rhubarb keeps the default pool (pre-BF-918 behaviour). **Not isolated (A2, B4):** the attachment store's `write` and the lookups that serve the WAV (`exists`, `get_path`, through `_find`) still run on asyncio's default pool, so with that pool saturated, storing and fetching the first audio still wait. Ranked: (1) narrow the claim and register it, with a follow-up giving the store its own bounded I/O executor (chosen: that fix changes every store user's scheduling, in M1's module); (2) an `executor` argument on `write` (a protocol change that leaves both lookups on the pool); (3) the route writes the WAV through the voice executor (bypasses the store's index and origin contract, and leaves the lookups). |
-| D4a | Worker lifecycle (A2: B1, B2) | A worker is open (idle, or running one request on a voice thread) until `close`, then closed for good. Exactly one party releases its process, pipes, stderr file and directory: `close` when the worker is idle, or the running request's own thread when its blocking call returns (`close` then only kills, so no pipe is closed under a read). A request on a closed worker starts nothing. A `close` during `Popen` is caught when `Popen` returns, and the new process is killed before any request is written. The service reaches every worker not yet released: resident ones in `_resident`, evicted ones in `_retiring` until their close has run, and `_retire` closes in a `finally`, so neither a shutdown that cancels the queued close nor a cancelled caller leaves one behind. The service's `close` stays idempotent and synchronous; it waits at most 0.5 s per idle or retiring worker and never for a running one. Rejected: waiting in `close` for running requests (blocks the loop up to a timeout); a cleanup thread (a second owner). |
+| D4a | Worker lifecycle (A2: B1, B2) | A worker is open (idle, or running one request on a voice thread) until `close`, then closed for good. Exactly one party releases its process, pipes, stderr file and directory: `close` when the worker is idle, or the running request's own thread when its blocking call returns (`close` then only kills, so no pipe is closed under a read). A request on a closed worker starts nothing. A `close` during `Popen` is caught when `Popen` returns, and the new process is killed before any request is written. The worker owns each resource from the moment it exists (the directory from `mkdtemp`, before the stderr file is opened; A5), so a start that fails at any step leaves nothing its release does not reach. The service reaches every worker not yet released: resident ones in `_resident`, evicted ones in `_retiring` until their close has run, and `_retire` closes in a `finally`, so neither a shutdown that cancels the queued close nor a cancelled caller leaves one behind. The service's `close` stays idempotent and synchronous; it waits at most 0.5 s per idle or retiring worker and never for a running one. Rejected: waiting in `close` for running requests (blocks the loop up to a timeout); a cleanup thread (a second owner). |
 | D5 | Retention | `tts_audio`, first in both tuples. TTL `attachments.tts_audio_retention_seconds` = 900 (from 60 to 86400). The upgrade rule exists already; its tuple must include the new origin. The index format is unchanged; no migration. **Review round 1 (A1):** both sweeps remove through the store's conditional removal, `unlink_if_unchanged` (same origin, not written since it was listed, decided under the store lock that removes it), so a refresh or an upgrade between a sweep's listing and its removal keeps the entry, and a kept entry frees nothing. Ranked: (1) a new protocol method, chosen: erasure's hard `unlink` keeps its meaning, and the `int | None` return separates "kept" from "freed 0 bytes"; (2) keyword arguments on `unlink`: rejected (overloads erasure's delete; a `bool` cannot say "kept"); (3) the policy moved into the store: rejected (holds the lock for a whole sweep, blocking the TTS route's write); (4) a read before the delete: rejected (the window stays open). |
 | D5a | Legacy sweep | (i) **Revised in review round 1: the inventory tool is read-only.** It counts and lists candidates, reads only `<data-dir>/attachments`, and deletes nothing. It reads every file under the data directory whatever its name, decodes the episode archive's compressed rows with the archive's own decoder, and keeps every candidate when a file or row cannot be read. (ii) An age rule over old `audio/wav` `chat_attachment` items: rejected (it would delete the Captain's uploads). (iii) The delete-capable tool as first drafted: withdrawn. Round 1 found its reference scan blind to the compressed archive and its store root separable from its guard, and the reference model is still incomplete (§18). The legacy WAVs are static (no growth), so deferring costs disk only. **Deleting them is the Captain's decision, on the follow-up issue.** |
 | D6 | Config | One field only. The lookahead is a TypeScript constant (1); the viseme mode is a request flag; pipelining stays default-off. |
-| D7 | Barge-in, and an utterance stopped before its audio | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. **D7a (review round 1, C1 to C3): one terminal event per dispatched utterance.** From `_playNow` until it ends, a dispatched utterance owns the device. It ends with `end` once any of its audio emitted `start` (BF-655; the BF-767 no-engine `end` as before), or with AD-1291's `dropped`, reason `cancelled-before-audio`, when it lost the device (a stop, or a newer dispatch) before any of its audio started. Each await between dispatch and audio (the status probe, the synthesis, the prefetch queue's first sentence) re-checks ownership; on a loss the prepared `<audio>` is discarded unplayed, a failed synthesis does not fall back to the browser, and `_playNow` fires the `dropped`. A play promise rejected because a stop or a newer dispatch paused it is a cancellation: no browser fallback, and the `pause` listener's `end` stays its one terminal event. The arbiter's wait for an entry ends on that entry's own `end` or `dropped`; GUARD 1, GUARD 2, `SPEECH_JOIN_TIMEOUT_MS` and `flushSpeechQueue` are unchanged. Ranked: (1) `dropped`, fired where the loss is observed and keyed by id: chosen, because the event already means "never reached audio" and every listener but the two waits ignores it, so a late synthesis answer is harmless; (2) an `end` with no `start`: rejected, the answer can land after the next reply's `start` and reset its modulation icon, head-bob, PTT gate and wake-word flag; (3) settling the in-flight wait inside `stopSpeaking`: rejected, it uses the unkeyed test-teardown seam in production and leaves the meeting sequencer waiting; (4) the candidate: the arbiter waits out `SPEECH_JOIN_TIMEOUT_MS`. Residual: the arbiter is freed when the cancelled synthesis answers, not at the stop; the stop has already flushed the backlog. |
+| D7 | Barge-in, and an utterance stopped before its audio | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. **D7a (review round 1, C1 to C3): one terminal event per dispatched utterance.** From `_playNow` until it ends, a dispatched utterance owns the device. It ends with `end` once any of its audio emitted `start` (BF-655; the BF-767 no-engine `end` as before), or with AD-1291's `dropped`, reason `cancelled-before-audio`, when it lost the device (a stop, or a newer dispatch) before any of its audio started. Each await between dispatch and audio (the status probe, the synthesis, the prefetch queue's first sentence) re-checks ownership; on a loss the prepared `<audio>` is discarded unplayed, a failed synthesis does not fall back to the browser, and `_playNow` fires the `dropped`. A play promise rejected because a stop or a newer dispatch paused it is a cancellation: no browser fallback, and the `pause` listener's `end` stays its one terminal event. The arbiter's wait for an entry ends on that entry's own `end` or `dropped`; GUARD 1, GUARD 2, `SPEECH_JOIN_TIMEOUT_MS` and `flushSpeechQueue` are unchanged. Ranked: (1) `dropped`, fired where the loss is observed and keyed by id: chosen, because the event already means "never reached audio" and every listener but the two waits and the profile chat's in-flight bookkeeping ignores it; the profile chat releases on it what an 'end' would have released and completes a turn only for the newest reply (review round 2, §7.30b), so a late synthesis answer cannot end a newer turn; (2) an `end` with no `start`: rejected, the answer can land after the next reply's `start` and reset its modulation icon, head-bob, PTT gate and wake-word flag; (3) settling the in-flight wait inside `stopSpeaking`: rejected, it uses the unkeyed test-teardown seam in production and leaves the meeting sequencer waiting; (4) the candidate: the arbiter waits out `SPEECH_JOIN_TIMEOUT_MS`. Residual: the arbiter is freed when the cancelled synthesis answers, not at the stop; the stop has already flushed the backlog. |
 
 ## 4. Interaction with the queue
 
@@ -147,7 +149,7 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | `PiperBackend(…, service=)` | `audio/tts/__init__.py` | the route; tests in `test_ad738…`, `test_ad738e_1…`, `test_ad1025_path_anchoring.py` |
 | `generate_visemes(…, executor=)` | `rhubarb_backend.py` | both avatar routes; stubs `(*_a, **_kw)` in `test_ad738_piper_tts.py:537, 584` and `test_ad721b1…:333`; `test_bf292…:101` reads `generate_visemes`' source for the `_SUPPORTED_SUFFIXES` line, which stays unchanged |
 | `runSentenceQueue` → `runPrefetchQueue` | `voiceChunking.ts` | `voice.ts` (the only production caller); `voiceChunking.test.ts`; a comment at `voice.ts:381` |
-| `dropped` with the new reason `cancelled-before-audio` (D7a; the event type and its fields exist since AD-1291) | `voice.ts` `_playNow` | the arbiter's wait in `_awaitEntry` (now terminal on it); `meetingVoice.ts:127` (already terminal on `dropped`); `wakeWord.ts:187`, `useLipSyncCapture.ts:62`, `CrewVRM.tsx:502`, `ParametricAvatar.tsx:49`, `ModulationIndicator.tsx:28` and `ProfileChatTab.tsx:564, 1377, 2150` act only on `start` or `end` and ignore it; no consumer reads `reason` |
+| `dropped` with the new reason `cancelled-before-audio` (D7a; the event type and its fields exist since AD-1291) | `voice.ts` `_playNow` | the arbiter's wait in `_awaitEntry` (now terminal on it); `meetingVoice.ts:127` (already terminal on `dropped`; a stop does not end the rest of a meeting batch, which no production caller reaches: §18); `ProfileChatTab.tsx` (review round 2, §7.30b): the BF-718 in-flight effect clears its agent's in-flight keys on `dropped` as on `end`, and a reply's completion listener retires on its own utterance's `dropped` and completes the controller's turn only while that reply is the newest (no synthetic `end`, BF-767); its lost-claim wait and its PTT gate (`:564`) ignore it; `wakeWord.ts:187`, `useLipSyncCapture.ts:62`, `CrewVRM.tsx:502`, `ParametricAvatar.tsx:49` and `ModulationIndicator.tsx:28` act only on `start` or `end` and ignore it; no consumer reads `reason` |
 | `ATTACHMENT_ORIGINS` | `store.py` | `filesystem_store._normalize_origin`; `test_ad1192…:2883` iterates it (an empty `tts_audio` list is fine) |
 | `_LRU_EVICTION_ORDER`, `_ORIGIN_DURABILITY` | reaper, store | the reaper's LRU pass; `write`'s upgrade |
 | new protocol method `unlink_if_unchanged` on `AttachmentStore` (review round 1) | `FilesystemAttachmentStore`, the only implementer in `src/` | the reaper's age and size passes only. `unlink` is unchanged and keeps its callers (`knowledge/erasure.py:298`, tests). No test fake is driven by the reaper (fakes of `list_by_origin`: `test_ad1203_trace_routes.py:57`, `test_ad1203_turn_provenance.py:157`, read by the traces route). `test_attachment_reaper.py`'s injected removal failure moves to the new method (§7.9c). `ATTACHMENT_REAPED` keeps its payload shape; its counts now cover only entries actually removed |
@@ -182,6 +184,9 @@ The tests in `tests/test_bf918_tts_retention.py`:
 - `test_an_archived_reference_keeps_its_wav` (producer: the real `EpisodeArchive` writer)
 - `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate`
 - `test_a_reference_in_a_file_of_any_name_keeps_its_wav` (a WAL file; an uncompressed tar backup)
+- `test_a_directory_that_cannot_be_listed_keeps_every_candidate` (review round 2, F1; the listed run is the control)
+- `test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate` (a symbolic link; a junction)
+- `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the counted run is the control)
 
 Focused check:
 
@@ -226,11 +231,12 @@ Then run `d:/ProbOS/.venv/Scripts/python.exe scripts/check_architecture_principl
 The cases:
 - `voice.prefetch.bf918.test.tsx`: P1 to P13 (P9 to P13, and the reordered P2 and P3, from review round 1).
 - `voiceChunking.test.ts`: Q1 to Q6.
+- `ProfileChatTab.bf918.test.tsx` (review round 2, §7.30e): C1 to C4.
 
 Focused check, from `ui/` (the Builder's tree has a `ui/node_modules` junction):
 
 ```
-npx vitest run src/audio src/__tests__/voice.test.ts src/__tests__/ProfileChatTab.bf290.test.tsx src/__tests__/wakeWord.bargeIn.test.ts src/components/profile/__tests__/ProfileChatTab.ad1291.e2e.test.tsx src/components/profile/__tests__/ProfileChatTab.bf764.test.tsx src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx src/components/profile/__tests__/ProfileChatTab.groupReplyIdentity.test.tsx src/components/profile/__tests__/ProfileChatTab.issue1340.groupUnmount.test.tsx
+npx vitest run src/audio src/__tests__/voice.test.ts src/__tests__/voiceE2E.smoke.test.tsx src/__tests__/wakeWord.bargeIn.test.ts src/__tests__/ProfileChatTab src/components/profile/__tests__/ProfileChatTab
 ```
 
 Then the type check, `npx tsc -b`; CI's `ui-tests` job runs `npm run test` and `npm run build`, which is `tsc -b && vite build`.
@@ -689,9 +695,12 @@ A WAV is a candidate only when every one of these holds:
 * its id occurs in no record under the data directory, the attachment directory
   excepted. Every file is read, whatever its name, and an ``episode_archive`` table is
   decoded row by row with the archive's own decoder (its payloads are compressed). A
-  file or archive row that cannot be read keeps every candidate.
+  file or archive row that cannot be read, a directory that cannot be listed, and a
+  link or junction to a directory (never followed) keep every candidate; ``unreadable``
+  names each, a directory with a trailing path separator.
 
-WAV files with no index entry are counted (``unindexed_wavs``) and never candidates.
+WAV files with no index entry are counted (``unindexed_wavs``) and never candidates. An
+attachment directory that cannot be listed stops the run, as an unreadable index does.
 
 Usage (PowerShell)::
 
@@ -808,9 +817,42 @@ def _scan_episode_archive(path: Path, targets: set[bytes], found: set[str]) -> N
         connection.close()
 
 
+def _record_files(data_dir: Path, attachments_dir: Path, unreadable: list[str]) -> list[Path]:
+    """Every entry under ``data_dir`` that is not a directory, outside ``attachments_dir``, sorted.
+
+    Review round 2 (F1): ``Path.rglob`` skips a directory it cannot list without a word, so
+    a reference inside it was missed and nothing said so; ``os.walk`` hands that error to
+    ``onerror``. A directory that cannot be listed (refused, or gone since its parent was
+    listed) and a link or junction to a directory are added to ``unreadable`` with a
+    trailing separator, which keeps every candidate. A link is never followed: what it
+    holds is not this data directory's, and it may loop (``os.walk`` alone would follow a
+    Windows junction).
+    """
+    files: list[Path] = []
+
+    def not_listed(error: OSError) -> None:
+        unreadable.append(f"{error.filename}{os.sep}")  # refused, or gone since its parent was listed
+
+    for directory, subdirs, names in os.walk(data_dir, onerror=not_listed):
+        here = Path(directory)
+        walked: list[str] = []
+        for name in subdirs:
+            child = here / name
+            if child == attachments_dir:  # the store itself: its index names every id
+                continue
+            if os.path.islink(child) or os.path.isjunction(child):  # never followed
+                unreadable.append(f"{child}{os.sep}")  # a link to a directory: its records are not read
+                continue
+            walked.append(name)
+        subdirs[:] = walked
+        files.extend(here / name for name in names)
+    return sorted(files)
+
+
 def referenced_ids(data_dir: Path, attachments_dir: Path, wanted: set[str]) -> tuple[set[str], list[str]]:
-    """The ids in ``wanted`` that occur in a record under ``data_dir``, and every file
-    that could not be read (then every id counts as referenced).
+    """The ids in ``wanted`` that occur in a record under ``data_dir``, and everything that
+    could not be read (then every id counts as referenced): files, and directories named
+    with a trailing separator.
 
     Every regular file outside ``attachments_dir`` is read whatever its name: logs, WAL
     files and uncompressed backups included. A SQLite database is also opened, and an
@@ -821,8 +863,8 @@ def referenced_ids(data_dir: Path, attachments_dir: Path, wanted: set[str]) -> t
     targets = {sha.encode("ascii") for sha in wanted}
     found: set[str] = set()
     unreadable: list[str] = []
-    for path in sorted(data_dir.rglob("*")):
-        if attachments_dir in path.parents or not path.is_file():
+    for path in _record_files(data_dir, attachments_dir, unreadable):
+        if not path.is_file():  # a pipe, a socket or a link to nothing holds no record
             continue
         try:
             is_sqlite = _scan_file(path, targets, found) == _SQLITE_MAGIC
@@ -831,7 +873,7 @@ def referenced_ids(data_dir: Path, attachments_dir: Path, wanted: set[str]) -> t
         except (OSError, sqlite3.Error, EpisodeArchiveIntegrityError):
             unreadable.append(str(path))
     if unreadable:
-        return set(wanted), unreadable
+        return set(wanted), sorted(unreadable)
     return found, unreadable
 
 
@@ -845,7 +887,13 @@ def take_inventory(data_dir: Path, attachments_dir: Path, *, min_age_days: float
         index = {}
     if not isinstance(index, dict):
         raise ValueError(f"{index_path} is not an attachment index")
-    inventory.unindexed_wavs = sum(1 for p in attachments_dir.glob("*.wav") if p.stem not in index)
+    # Review round 2: the store's listing raises like its index does; Path.glob skips a refusal silently.
+    try:
+        with os.scandir(attachments_dir) as entries:
+            names = [entry.name for entry in entries]
+    except FileNotFoundError:  # no store yet: nothing is indexed and nothing unindexed
+        names = []
+    inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav") and name[:-4] not in index)
     cutoff = now - min_age_days * 86400
     eligible: dict[str, int] = {}
     for sha, entry in sorted(index.items()):
@@ -948,6 +996,7 @@ import hashlib
 import importlib.util
 import json
 import logging
+import os
 import sqlite3
 import struct
 import sys
@@ -1419,6 +1468,98 @@ def test_a_reference_in_a_file_of_any_name_keeps_its_wav(
     report = json.loads(capsys.readouterr().out)
     assert report["candidate_ids"] == [shas["legacy_low"]]
     assert report["unreadable"] == []
+
+
+def _record_naming(data_dir: Path, sha: str) -> Path:
+    """A directory of records outside the store, holding one file that names ``sha``."""
+    records = data_dir / "records"
+    records.mkdir()
+    (records / "note.txt").write_bytes(b"replayed " + sha.encode("ascii"))
+    return records.resolve()
+
+
+def _refusing_scandir(refused: Path) -> object:
+    """``os.scandir`` refusing to list ``refused`` as the OS refuses a directory the user may
+    not read. Portable: no permission is changed, and every other directory lists."""
+    real_scandir = os.scandir
+    target = os.path.normcase(str(refused))
+
+    def scandir(path: str | os.PathLike[str] = ".") -> object:
+        if os.path.normcase(os.fspath(path)) == target:
+            raise PermissionError(13, "Access is denied", os.fspath(path))
+        return real_scandir(path)
+
+    return scandir
+
+
+def test_a_directory_that_cannot_be_listed_keeps_every_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2, F1: a directory the walk cannot list is named in ``unreadable`` and
+    keeps every candidate. The first run is the control: listed, the same directory's
+    record keeps its WAV and only the unreferenced twin is a candidate."""
+    data_dir = tmp_path / "data"
+    shas = asyncio.run(_legacy_store(data_dir))
+    records = _record_naming(data_dir, shas["legacy"])
+    tool = _tool()
+
+    assert tool.main(["--data-dir", str(data_dir), "--list"]) == 0
+    control = json.loads(capsys.readouterr().out)
+    assert control["candidate_ids"] == [shas["legacy_low"]]
+    assert control["unreadable"] == []
+
+    monkeypatch.setattr(os, "scandir", _refusing_scandir(records))
+    assert tool.main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidate_ids"] == []
+    assert report["kept"]["referenced"] == 3  # every eligible WAV: legacy, legacy_low, referenced
+    assert report["unreadable"] == [f"{records}{os.sep}"]
+
+
+@pytest.mark.parametrize("probe", ["islink", "isjunction"])
+def test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, probe: str,
+) -> None:
+    """Review round 2, F1: a symbolic link or a junction to a directory is never followed and
+    is named, so every candidate is kept. Portable: the directory is real and only the link
+    check answers yes for it. The first run is the control."""
+    data_dir = tmp_path / "data"
+    shas = asyncio.run(_legacy_store(data_dir))
+    records = _record_naming(data_dir, shas["legacy"])
+    tool = _tool()
+
+    assert tool.main(["--data-dir", str(data_dir), "--list"]) == 0
+    assert json.loads(capsys.readouterr().out)["candidate_ids"] == [shas["legacy_low"]]
+
+    real_check = {"islink": os.path.islink, "isjunction": os.path.isjunction}[probe]
+    target = os.path.normcase(str(records))
+    monkeypatch.setattr(os.path, probe, lambda path: os.path.normcase(os.fspath(path)) == target or real_check(path))
+    assert tool.main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidate_ids"] == []
+    assert report["unreadable"] == [f"{records}{os.sep}"]
+
+
+def test_a_store_directory_that_cannot_be_listed_stops_the_inventory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2: the store's own listing (the ``unindexed_wavs`` count) is not skipped in
+    silence; it raises, as an unreadable index does, and prints no report. The first run is
+    the control: one WAV with no index entry is counted."""
+    data_dir = tmp_path / "data"
+    asyncio.run(_legacy_store(data_dir))
+    (data_dir / "attachments" / f"{'e' * 64}.wav").write_bytes(_piper_wav(10))
+    tool = _tool()
+
+    assert tool.main(["--data-dir", str(data_dir)]) == 0
+    assert json.loads(capsys.readouterr().out)["unindexed_wavs"] == 1
+
+    monkeypatch.setattr(os, "scandir", _refusing_scandir((data_dir / "attachments").resolve()))
+    with pytest.raises(PermissionError):
+        tool.main(["--data-dir", str(data_dir)])
+    assert capsys.readouterr().out == ""
 ```
 
 ### 7.9a `tests/test_ad1270e1_config_facade.py` (M1: the pinned field count; added by the orchestrator after the oracle run, see the header)
@@ -1480,6 +1621,25 @@ REPLACE:
         return await original_unlink(self, ch, **kwargs)
 
     with patch.object(FilesystemAttachmentStore, "unlink_if_unchanged", _flaky_unlink):
+```
+
+### 7.9d `src/probos/attachments/filesystem_store.py` (M1: review round 2, F3, the one-instance precondition; apply after §7.2)
+
+The conditional removal is decided under this instance's lock against this instance's index. A second store object or process writing the same root is not coordinated (on the register, §18). The docstring now states that precondition, so it claims no more than the code does. The SEARCH is the file's text after §7.2.
+
+SEARCH:
+```python
+        lock, so such an entry is kept. Returns the bytes freed (0 when the blob
+        was already gone and only its index entry is removed), or ``None`` when
+```
+REPLACE:
+```python
+        lock, so such an entry is kept. The lock and the index are this
+        instance's: a write through another store object or another process on
+        the same root is not seen, so one instance per attachment root is a
+        precondition (production builds one per runtime; BF-918 review round 2).
+        Returns the bytes freed (0 when the blob
+        was already gone and only its index entry is removed), or ``None`` when
 ```
 
 ### 7.10 Generated files (M1; by tool, never by hand)
@@ -1753,10 +1913,14 @@ class PiperWorker:
     def _spawn(self) -> None:
         self._release(wait_seconds=2.0)  # a dead process's leftovers; the worker stays open
         directory = Path(tempfile.mkdtemp(prefix="probos-piper-"))
+        # BF-918 A5: the worker owns the directory from its creation, so ``_release`` removes it
+        # even when the open below fails (with no stderr file yet, it closes none).
+        with self._state:
+            self._dir = directory
         # BF-918: stderr goes to a file, so Piper's per-line log can never fill a pipe and block it.
         stderr = (directory / "stderr.log").open("wb")
         with self._state:
-            self._dir, self._stderr = directory, stderr
+            self._stderr = stderr
         proc = subprocess.Popen(
             self.key.argv(directory),
             stdin=subprocess.PIPE,
@@ -3304,6 +3468,41 @@ async def test_close_while_the_process_starts_kills_it_and_releases_everything(l
     finally:
         gate.set()
         svc.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stderr_open_still_releases_the_worker_directory(launcher, monkeypatch, tmp_path: Path, caplog) -> None:
+    """BF-918 A5 (round 2, B finding 1): the worker owns its directory from its creation, so a failed stderr open leaves none behind."""
+    caplog.set_level(logging.WARNING, logger="probos.audio.tts.resident")
+    fake = launcher("ok")
+    temp_dir = tmp_path / "workers"
+    temp_dir.mkdir()
+    made: list[Path] = []
+
+    def mkdtemp_first_without_stderr(prefix: str = "tmp", **_kwargs) -> str:
+        directory = temp_dir / f"{prefix}{len(made)}"
+        directory.mkdir()
+        if not made:  # the first worker directory only: a directory named stderr.log makes its open fail
+            (directory / "stderr.log").mkdir()
+        made.append(directory)
+        return str(directory)
+
+    monkeypatch.setattr(resident.tempfile, "mkdtemp", mkdtemp_first_without_stderr)
+    svc = VoiceSynthesisService()
+    try:
+        assert await svc.synthesize(_key(), "x", 5.0) is None  # degrades
+        assert fake.launched == [] and len(made) == 1  # it failed after the directory, before Popen
+        assert "stderr.log" in caplog.text  # control: the logged failure is the stderr open
+        assert not made[0].exists()  # the failed request's retirement removed it
+
+        # Recovery control: the next request gets a new directory, starts a process and answers.
+        assert await svc.synthesize(_key(), "y", 5.0) == _WAV
+        assert len(fake.launched) == 1 and len(made) == 2
+        assert made[1].is_dir()  # the resident worker's directory, visible while it lives
+    finally:
+        svc.close()
+        svc.close()  # idempotent
+    assert list(temp_dir.iterdir()) == []
 
 
 @pytest.mark.asyncio
@@ -5423,6 +5622,423 @@ REPLACE:
     if (!(await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id))) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
 ```
 
+### 7.30b `ui/src/components/profile/ProfileChatTab.tsx` (M3: review round 2, C finding 1; base text)
+
+Candidate 3 does not otherwise change this file; each SEARCH is its text at `origin/main` `26bec26d`. D7a is the rule. BF-718, BF-767 and BF-290 keep their behaviour; the lost-claim wait is unchanged.
+
+Pair 1 of 4:
+
+SEARCH:
+```tsx
+  // Speech keys currently being uttered. Losing a claim does NOT prove someone
+  // is speaking: the claim may have lost to identical text said earlier, in
+  // which case no 'end' will ever fire and anything waiting on one strands.
+  const speechInFlightRef = useRef(new Set<string>());
+```
+REPLACE:
+```tsx
+  // Speech keys currently being uttered. Losing a claim does NOT prove someone
+  // is speaking: the claim may have lost to identical text said earlier, in
+  // which case no 'end' will ever fire and anything waiting on one strands.
+  const speechInFlightRef = useRef(new Set<string>());
+  // BF-918 (#1626, review round 2): counts conversation-mode replies. A reply's
+  // completion listener may complete the controller's turn on its own 'dropped'
+  // only while no later reply has taken the controller since.
+  const agentReplyTurnRef = useRef(0);
+```
+
+Pair 2 of 4:
+
+SEARCH:
+```tsx
+  // over-matching there ended the wrong turn.
+  useEffect(() => onSpeechEvent((event) => {
+    if (event.type !== 'end') return;
+    const ended = event.agent_id;
+```
+REPLACE:
+```tsx
+  // over-matching there ended the wrong turn.
+  // BF-918 (#1626, review round 2): or it was dropped. A dispatched utterance that
+  // lost the device before any of its audio started ends with 'dropped'
+  // (`cancelled-before-audio`), never 'end', and a pre-empted or flushed entry
+  // never played at all. Keeping its key made a later identical answer wait on an
+  // 'end' that nothing would emit. Same per-agent rule, same direction of error.
+  useEffect(() => onSpeechEvent((event) => {
+    if (event.type !== 'end' && event.type !== 'dropped') return;
+    const ended = event.agent_id;
+```
+
+Pair 3 of 4:
+
+SEARCH:
+```tsx
+      onAgentReply: (replyText: string) => {
+        // 1. Append to the per-agent conversation so the operator sees it
+        // in the DM thread.
+```
+REPLACE:
+```tsx
+      onAgentReply: (replyText: string) => {
+        // BF-918 (review round 2): this reply now holds the controller's turn.
+        const ourTurn = ++agentReplyTurnRef.current;
+        // 1. Append to the per-agent conversation so the operator sees it
+        // in the DM thread.
+```
+
+Pair 4 of 4:
+
+SEARCH:
+```tsx
+        let ourUtteranceId: number | undefined;
+        let completed = false;
+        const complete = (): void => {
+          if (completed) return;
+          completed = true;
+          try { unsub(); } catch { /* Tier-2 */ }
+          markAgentReplyComplete();
+        };
+        const unsub = onSpeechEvent((event) => {
+          if (event.type !== 'end') return;
+```
+REPLACE:
+```tsx
+        let ourUtteranceId: number | undefined;
+        let completed = false;
+        const retire = (): boolean => {
+          if (completed) return false;
+          completed = true;
+          try { unsub(); } catch { /* Tier-2 */ }
+          return true;
+        };
+        const complete = (): void => {
+          if (retire()) markAgentReplyComplete();
+        };
+        const unsub = onSpeechEvent((event) => {
+          // BF-918 (#1626, review round 2): this reply's OWN utterance never reached
+          // audio (a stop, or a newer dispatch, before its first 'start'), so its
+          // terminal event is 'dropped' and no 'end' is coming. Retire this
+          // listener, and complete the turn only if no later reply has taken the
+          // controller since: a late 'dropped' must not end a newer turn. Never a
+          // synthetic 'end' (BF-767). The lost-claim path cannot know the id and
+          // keeps waiting on the agent's 'end' (BF-718).
+          if (event.type === 'dropped') {
+            if (!claimed || event.utterance_id !== ourUtteranceId) return;
+            if (agentReplyTurnRef.current !== ourTurn) { retire(); return; }
+            complete();
+            return;
+          }
+          if (event.type !== 'end') return;
+```
+
+### 7.30c `ui/src/audio/speechQueueStore.ts` (M3: review round 2, C finding 3; base text)
+
+One pair, a comment only. Candidate 3 does not otherwise change this file; the SEARCH is its base text.
+
+SEARCH:
+```ts
+  /** True once the entry has been handed to the device. A started entry is
+   *  never dropped -- only queued-but-unstarted ones are, because dropping a
+   *  started one would cut audio the Captain is already hearing. */
+  started: boolean;
+```
+REPLACE:
+```ts
+  /** True once the entry has been handed to the device: dispatched, which does
+   *  not mean its audio has started. Pre-emption and `flushSpeechQueue` skip a
+   *  started entry -- only queued-but-unstarted ones are dropped that way,
+   *  because dropping a started one could cut audio the Captain is already
+   *  hearing. BF-918 (#1626, D7a): a started entry that lost the device before
+   *  any of its audio started (a stop, or a newer dispatch) still ends with
+   *  'dropped', reason `cancelled-before-audio`, fired by `_playNow`. */
+  started: boolean;
+```
+
+### 7.30d `ui/src/audio/voice.ts` (M3: review round 2, the same kind as C finding 3; apply after §7.30a)
+
+One pair, a comment only. §7.26 and §7.30a leave this text as it is, so the SEARCH is the base text.
+
+SEARCH:
+```ts
+/** AD-1291: drop every queued-but-unstarted entry, each with an observable
+ *  reason. The IN-FLIGHT entry is deliberately left alone -- stopping audio is
+ *  `stopSpeaking`'s job, and its consumers must still receive that utterance's
+ *  terminal 'end'.
+```
+REPLACE:
+```ts
+/** AD-1291: drop every queued-but-unstarted entry, each with an observable
+ *  reason. The IN-FLIGHT entry is deliberately left alone -- stopping audio is
+ *  `stopSpeaking`'s job, and its consumers must still receive that utterance's
+ *  own terminal event: 'end' once its audio started, or BF-918's 'dropped'
+ *  (`cancelled-before-audio`, D7a) from `_playNow` when it lost the device first.
+```
+
+### 7.30e New file: `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx` (M3: review round 2, C finding 1)
+
+```tsx
+/** BF-918 (#1626), review round 2, area C finding 1: a conversation-mode reply
+ *  stopped before any of its audio started ends with AD-1291's 'dropped'
+ *  (`cancelled-before-audio`, D7a), never 'end'. ProfileChatTab must release on
+ *  it what an 'end' releases: the BF-718 in-flight key (otherwise a later
+ *  identical answer, which loses the speech claim, waits on an 'end' that no
+ *  utterance will emit, and the controller stays `agent_speaking`), and the
+ *  reply's own completion listener, which completes the turn only while that
+ *  reply is still the newest.
+ *
+ *  Real ProfileChatTab, conversation controller, voice.ts and speech arbiter.
+ *  Doubles only at the boundaries: fetch (the TTS POST is HELD until the test
+ *  answers it, which is how a stop lands before the audio), the media element,
+ *  speechSynthesis, and the microphone / STT / VAD taps. Adapted from the
+ *  round-2 reviewer's executed probe.
+ *
+ *  Assertions are on the controller's state (the turn), never on which branch ran.
+ */
+import React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
+
+const hardware = vi.hoisted(() => ({
+  transcripts: new Set<(text: string) => void>(),
+  pcm: new Set<{ onSpeechStart?: () => void }>(),
+}));
+
+vi.mock('../../../audio/speechInput', () => ({
+  isSpeechRecognitionSupported: () => true,
+  startListening: vi.fn(),
+  stopListening: vi.fn(),
+}));
+
+vi.mock('../../../audio/transformersStt', () => ({
+  armTransformersStt: () => () => {},
+  disarmTransformersStt: () => {},
+  onTransformersTranscript: (fn: (text: string) => void) => {
+    hardware.transcripts.add(fn);
+    return () => { hardware.transcripts.delete(fn); };
+  },
+  onTransformersTranscribing: () => () => {},
+  onTransformersProgress: () => () => {},
+}));
+
+vi.mock('../../../audio/voiceActivity', () => ({
+  subscribePcm: (handler: { onSpeechStart?: () => void }) => {
+    hardware.pcm.add(handler);
+    return () => { hardware.pcm.delete(handler); };
+  },
+}));
+
+import { ProfileChatTab } from '../ProfileChatTab';
+import { useStore } from '../../../store/useStore';
+import * as voice from '../../../audio/voice';
+import {
+  getConversationState,
+  _resetConversationControllerForTests,
+} from '../../../audio/conversationController';
+import { _resetForTests as resetMicArbiter } from '../../../audio/speechRecognitionArbiter';
+
+const REPEATED = 'Repeatable answer.';
+const CANCELLED: [string, string | undefined] = ['dropped', 'cancelled-before-audio'];
+
+let audios: MediaDouble[] = [];
+let held: Array<() => void> = [];
+let ttsPosts: string[] = [];
+let chats = 0;
+let answers: string[] = [];
+let events: Array<[string, string | undefined]> = [];
+let off: () => void = () => {};
+
+class UtteranceDouble {
+  rate = 1;
+  pitch = 1;
+  volume = 1;
+  voice: unknown = null;
+  onstart: (() => void) | null = null;
+  onend: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  text: string;
+  constructor(text: string) { this.text = text; }
+}
+
+/** The media element. `play` resolves: in these cases the stop lands while the
+ *  synthesis answer is still held, before any audio exists. */
+class MediaDouble {
+  volume = 1;
+  playbackRate = 1;
+  preservesPitch = true;
+  played = false;
+  src: string;
+  private listeners: Record<string, Array<() => void>> = {};
+  constructor(src: string) { this.src = src; audios.push(this); }
+  addEventListener(type: string, fn: () => void): void { (this.listeners[type] ??= []).push(fn); }
+  emit(type: string): void { for (const fn of this.listeners[type] ?? []) fn(); }
+  play(): Promise<void> { this.played = true; this.emit('play'); return Promise.resolve(); }
+  pause(): void { this.emit('pause'); }
+  removeAttribute(): void { this.src = ''; }
+  load(): void { /* double */ }
+  end(): void { this.emit('ended'); }
+}
+
+function respond(body: unknown): Response {
+  return { ok: true, json: async () => body } as unknown as Response;
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 60; i += 1) await Promise.resolve();
+}
+
+async function arm(): Promise<void> {
+  render(<ProfileChatTab agentId="a1" />);
+  await waitFor(() => expect(getConversationState()).toBe('listening'));
+  expect(hardware.transcripts.size).toBe(1);
+}
+
+async function captainSays(text: string): Promise<void> {
+  await act(async () => { for (const cb of [...hardware.transcripts]) cb(text); await flush(); });
+}
+
+async function bargeIn(): Promise<void> {
+  await act(async () => { for (const h of [...hardware.pcm]) h.onSpeechStart?.(); await flush(); });
+}
+
+async function answerSynthesis(): Promise<void> {
+  const next = held.shift();
+  expect(next).toBeDefined();
+  await act(async () => { next?.(); await flush(); });
+}
+
+async function endAudio(audio: MediaDouble): Promise<void> {
+  await act(async () => { audio.end(); await flush(); });
+}
+
+beforeEach(() => {
+  hardware.transcripts.clear();
+  hardware.pcm.clear();
+  resetMicArbiter();
+  _resetConversationControllerForTests();
+  voice._resetTtsStatusForTests();
+  audios = [];
+  held = [];
+  ttsPosts = [];
+  chats = 0;
+  answers = [];
+  events = [];
+  vi.stubGlobal('Audio', MediaDouble);
+  vi.stubGlobal('SpeechSynthesisUtterance', UtteranceDouble);
+  vi.stubGlobal('speechSynthesis', { cancel: vi.fn(), speak: vi.fn(), getVoices: () => [], addEventListener: vi.fn() });
+  localStorage.clear();
+  localStorage.setItem('hxi_chat_mic_mode_a1', 'conversation');
+  localStorage.setItem('hxi_chat_tts_a1', '1');
+  useStore.setState({
+    voiceEnabled: true, agentConversations: new Map(), activeProfileThreadId: null, threadIdByAgent: new Map(),
+  });
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith('/tts/status')) {
+      return respond({ enabled: true, backend: 'piper', sentence_pipelining_enabled: false });
+    }
+    if (path === '/api/avatars/tts') {
+      ttsPosts.push(JSON.parse(String(options?.body)).text);
+      return new Promise<Response>((resolve) => {
+        held.push(() => resolve(respond({ backend: 'piper', audio_attachment_id: 'a'.repeat(64), visemes: [] })));
+      });
+    }
+    if (path === '/api/agent/a1/chat') {
+      chats += 1;
+      return respond({ response: answers.shift() ?? REPEATED });
+    }
+    if (path.endsWith('/chat/history')) return respond({ memories: [] });
+    if (path.endsWith('/profile')) return respond({ voiceProfile: null });
+    return respond({});
+  }));
+  off = voice.onSpeechEvent((e) => { events.push([e.type, e.reason]); });
+});
+
+afterEach(() => {
+  off();
+  cleanup();
+  _resetConversationControllerForTests();
+  resetMicArbiter();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
+
+describe('BF-918 review round 2: a dropped reply releases what its end would have released', () => {
+  it('C1 control: a reply that ended leaves no in-flight claim, so a later identical answer completes at once', async () => {
+    await arm();
+    await captainSays('First question.');
+    expect(chats).toBe(1);
+    expect(ttsPosts).toEqual([REPEATED]);
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    expect(audios).toHaveLength(1);
+    expect(audios[0].played).toBe(true);
+    await endAudio(audios[0]);
+    expect(getConversationState()).toBe('silence_pending');
+    await captainSays('Second question.');
+    expect(chats).toBe(2);
+    // BF-718: the same text was already said in this scope, so it is not spoken again.
+    expect(ttsPosts).toEqual([REPEATED]);
+    expect(events.map(([type]) => type)).toEqual(['start', 'end']);
+    expect(getConversationState()).toBe('silence_pending');
+  });
+
+  it('C2: a reply stopped before its audio leaves no in-flight claim, so a later identical answer completes at once', async () => {
+    await arm();
+    await captainSays('First question.');
+    expect(getConversationState()).toBe('agent_speaking');
+    await bargeIn();
+    expect(getConversationState()).toBe('listening');
+    await answerSynthesis(); // the stopped reply's synthesis answers late
+    expect(events).toEqual([CANCELLED]);
+    expect(audios.every((audio) => !audio.played)).toBe(true);
+    await captainSays('Second question.');
+    expect(chats).toBe(2);
+    expect(ttsPosts).toEqual([REPEATED]);
+    // Before the fix: `agent_speaking`, waiting on an 'end' that nothing emits.
+    expect(getConversationState()).toBe('silence_pending');
+  });
+
+  it('C3: the late drop of a stopped reply does not complete the newer turn', async () => {
+    answers = ['First answer.', 'Second answer.'];
+    await arm();
+    await captainSays('First question.');
+    await bargeIn();
+    await captainSays('Second question.');
+    expect(chats).toBe(2);
+    expect(getConversationState()).toBe('agent_speaking');
+    // The newer reply waits in the arbiter behind the stopped one, whose synthesis is held.
+    expect(ttsPosts).toEqual(['First answer.']);
+    await answerSynthesis();
+    expect(events).toEqual([CANCELLED]);
+    await waitFor(() => expect(ttsPosts).toEqual(['First answer.', 'Second answer.']));
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(audios[1].played).toBe(true);
+    expect(getConversationState()).toBe('agent_speaking');
+    await endAudio(audios[1]);
+    expect(events.map(([type]) => type)).toEqual(['dropped', 'start', 'end']);
+    expect(getConversationState()).toBe('silence_pending');
+  });
+
+  it('C4: a reply whose own audio never started completes its turn while it is still the newest', async () => {
+    await arm();
+    await captainSays('First question.');
+    expect(getConversationState()).toBe('agent_speaking');
+    // A stop the controller did not make (GUARD 2's newer dispatch lands the same
+    // 'dropped'): the controller is still waiting on this turn's speech.
+    await act(async () => { voice.stopSpeaking(); await flush(); });
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    expect(events).toEqual([CANCELLED]);
+    // Before the fix: `agent_speaking`, with no silence-release timer.
+    expect(getConversationState()).toBe('silence_pending');
+  });
+});
+```
+
 ## 8. Tracking
 
 Each pair anchors on a line that occurs once in its file and that BF-914's and AD-1347's entries do not change: `PROGRESS.md`'s title line, and the heading `### Explicit delegation models, plain-id profile models and the orchestrator's model guard` in `DECISIONS.md` (line 674 on this tree). The tracker entries go in M3's commit, or in a docs-only commit after it. Set the date to the commit date.
@@ -5437,7 +6053,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). A reply stopped before any of its audio started plays nothing, falls back to nothing and ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter. Stopping a still-loading play no longer speaks the text through the browser instead. Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser); work the executor refuses, or that shutdown cancels, degrades the same way at every stage, and shutdown releases every resident and evicted process (a busy one when its request returns). Rhubarb and ffmpeg run on the same executor (the attachment store's write and lookups still use the default pool: slice M4 of #1626), and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin; the age and size sweeps remove an entry only if no write touched it since it was listed (`unlink_if_unchanged`). `scripts/tts_audio_inventory.py` counts the legacy WAVs (1,126 files, 962 indexed) read-only, and deleting them is tracked separately. New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`. #1626 stays open for slices M4 (a bounded I/O executor owned by the attachment store) and M5 (the arbiter's wait ends on a pipelined reply's last sentence) and for the Captain's live measurement, which runs once after both have merged; deleting the legacy WAVs is a separate Captain decision (the contract's section 18). The contract is `prompts/bf-918-tts-first-audio-latency.md`.
+**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). A reply stopped before any of its audio started plays nothing, falls back to nothing and ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter. Stopping a still-loading play no longer speaks the text through the browser instead. In conversation mode, a reply stopped before its audio no longer strands a later identical answer. Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser); work the executor refuses, or that shutdown cancels, degrades the same way at every stage, and shutdown releases every resident and evicted process (a busy one when its request returns). Rhubarb and ffmpeg run on the same executor (the attachment store's write and lookups still use the default pool: slice M4 of #1626), and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin; the age and size sweeps remove an entry only if no write touched it since it was listed (`unlink_if_unchanged`). `scripts/tts_audio_inventory.py` counts the legacy WAVs (1,126 files, 962 indexed) read-only, keeping every candidate when a file, archive row or directory cannot be read, and deleting them is tracked separately. New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`. #1626 stays open for slices M4 (a bounded I/O executor owned by the attachment store) and M5 (the arbiter's wait ends on a pipelined reply's last sentence) and for the Captain's live measurement, which runs once after both have merged; deleting the legacy WAVs is a separate Captain decision (the contract's section 18). The contract is `prompts/bf-918-tts-first-audio-latency.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -5450,13 +6066,13 @@ REPLACE:
 ```markdown
 ### BF-918 -- A spoken reply's first audio and the gaps between its sentences (2026-10-23, #1626)
 
-- *Scope.* `audio/tts/resident.py` (new), `piper_backend.py`, `audio/tts/__init__.py`, `avatars/rhubarb_backend.py`, `routers/avatars.py`, `runtime.py`, `startup/shutdown.py`, `startup/finalize.py`, `attachments/{store,filesystem_store,reaper}.py`, `config_models/integrations.py`, `scripts/tts_audio_inventory.py` (new), `ui/src/audio/{voice,voiceChunking}.ts`. Contract: `prompts/bf-918-tts-first-audio-latency.md`. Tier HIGH for S3.
+- *Scope.* `audio/tts/resident.py` (new), `piper_backend.py`, `audio/tts/__init__.py`, `avatars/rhubarb_backend.py`, `routers/avatars.py`, `runtime.py`, `startup/shutdown.py`, `startup/finalize.py`, `attachments/{store,filesystem_store,reaper}.py`, `config_models/integrations.py`, `scripts/tts_audio_inventory.py` (new), `ui/src/audio/{voice,voiceChunking}.ts`, `ui/src/components/profile/ProfileChatTab.tsx`. Contract: `prompts/bf-918-tts-first-audio-latency.md`. Tier HIGH for S3.
 - *D2 (resident synthesizer).* One `piper --json-input` process per (binary, model, prosody set). Piper fixes prosody per process, and its JSON lines carry only text, output_file and speaker (upstream `main.cpp`; wyoming-piper does the same). At most 4 processes; the least recently used idle one is evicted. Requests write ASCII JSON lines; WAVs go to files (BF-282); `Popen` in a thread (BF-280); `trusted_command_env()` (BF-892); stderr to a file. A per-request timer kills a hung process and the next request starts another. Rejected: in-process synthesis (no package installed; piper1-gpl is GPL-3).
 - *D3 (visemes).* A client that sends `defer_visemes: true` gets audio without rhubarb (`visemes_deferred: true`) and fetches the visemes from the existing `/api/avatars/lipsync`; the heuristic schedule runs until they arrive. Other clients are unchanged. Rejected: Piper phoneme timing (not emitted), and overlapping rhubarb with the store write.
 - *D4 (executor).* `VoiceSynthesisService` is owned by the runtime (built in `__init__`, closed in `shutdown()`): 4 threads, 16 admitted requests; refusal degrades, including work the executor refuses or that shutdown cancels (`run_voice_work`). Not `set_default_executor` (global, and bounds nothing). The attachment store's I/O stays on the default pool (slice M4 of #1626).
 - *D4a (worker lifecycle).* One releaser per worker: `close` when idle, the running request's thread otherwise; a closed worker starts nothing; evicted workers stay reachable until closed.
-- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). Both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged`, review round 1). The legacy WAVs are counted by a read-only tool (Piper's exact header; references read from every file and the decoded episode archive); deleting them is tracked separately and is the Captain's decision.
-- *D7.* `stopSpeaking` pauses Piper audio. A dispatched utterance that loses the device before its audio starts ends with `dropped` (`cancelled-before-audio`), not `end`, and the arbiter's wait ends on either; BF-655's one terminal `end` per `start` is unchanged.
+- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). Both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged`, review round 1). The legacy WAVs are counted by a read-only tool (Piper's exact header; references read from every file and the decoded episode archive; a file, row or directory it cannot read, or a linked directory, keeps every candidate); deleting them is tracked separately and is the Captain's decision.
+- *D7.* `stopSpeaking` pauses Piper audio. A dispatched utterance that loses the device before its audio starts ends with `dropped` (`cancelled-before-audio`), not `end`, and the arbiter's wait ends on either; BF-655's one terminal `end` per `start` is unchanged. The profile chat's in-flight keys and reply completion treat `dropped` like `end`; a `dropped` completes only the newest reply's turn (review round 2).
 - *Reversal.* Revert the commits. `tts_audio` index entries then belong to no known origin and are never swept or evicted (the safe direction). Resident processes end with the runtime.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -5469,6 +6085,7 @@ REPLACE:
 - `tts.sentence_pipelining_enabled` stays default-off, and the Captain's `config/system.yaml` is not touched. The status route is unchanged.
 - The browser backend makes zero HTTP calls per utterance (Captain decision #9).
 - The AD-1291 arbiter's classes and pre-emption, `flushSpeechQueue`, GUARD 1, GUARD 2 and `SPEECH_JOIN_TIMEOUT_MS` are unchanged; its wait for an entry also ends on that entry's own `dropped` (D7a). BF-764, BF-767's shared utterance id and BF-655 balance are unchanged.
+- `meetingVoice.ts` and `useMeetingVoice.ts` are unchanged (review round 2): a stop does not end the rest of a meeting batch, which no production caller can reach today (§18). `ProfileChatTab`'s lost-claim wait (BF-718), its BF-290 completions and BF-767's `end` correlation are unchanged.
 - `splitIntoSentences` is unchanged.
 - The `/api/avatars/lipsync` contract is unchanged, and so is the browser-capture lip-sync path (`useLipSyncCapture`, `uploadAudioForLipSync`).
 - The prosody table, voice resolution, AD-1025 anchoring and BF-291 overrides are unchanged.
@@ -5476,9 +6093,10 @@ REPLACE:
 - The attachment store keeps its blocking I/O on asyncio's default pool: storing the spoken WAV (`write`) and serving it to the browser (`exists`, `get_path`) are not isolated from crew work (D4; slice M4 of #1626).
 - The `.index.json` format, every other origin's retention, `agent_artifact` (never LRU-evicted) and `max_store_bytes` are unchanged.
 - `unlink` keeps its unconditional meaning for erasure (`knowledge/erasure.py`); only the reaper uses the conditional removal.
+- Two preconditions stay as they were and are not enforced (review round 2, F2 and F3; both on the register, §18). One attachment store instance per attachment root: there is one constructor (`routers/chat.py` `_get_attachment_store`, cached per runtime) and AD-816's pidfile allows one vessel per data directory; the conditional removal is decided under that instance's lock against its own index. One sweep at a time per store: one reaper, built in `startup/finalize.py`, whose loop awaits each sweep; overlapping size passes would each stop on their own total.
 - Out of scope: streaming the LLM reply (#1130), compressed or streamed audio, and a voice mode. The legacy WAVs are not deleted by any build, test or gate.
 
-## 10. Mutation rows (51 Python and 10 TypeScript; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (59 Python and 15 TypeScript; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes, and restore each file before the next row.
 
@@ -5526,7 +6144,7 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | R37 | `scripts/tts_audio_inventory.py` | `if is_sqlite:` | `if False:` | `test_an_archived_reference_keeps_its_wav`; `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
 | R38 | `scripts/tts_audio_inventory.py` | `if "episode_archive" not in tables:` | `if True:` | `test_an_archived_reference_keeps_its_wav`; `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
 | R39 | `scripts/tts_audio_inventory.py` | `if unreadable:` | `if False:` | `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
-| R40 | `scripts/tts_audio_inventory.py` | `if attachments_dir in path.parents or not path.is_file():` | `if not path.is_file():` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` (the index then names every id) |
+| R40 | `scripts/tts_audio_inventory.py` | `if child == attachments_dir:  # the store itself: its index names every id` | `if False:` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` (the store is walked and its index names every id; review round 2 moved this guard from the rglob filter into the walker) |
 | R46 | `src/probos/audio/tts/resident.py` | `if self._closed:  # closed while this request was queued: start nothing` | `if False:` | `test_a_closed_worker_refuses_a_request_and_starts_nothing` (a process is launched on a closed worker) |
 | R47 | `src/probos/audio/tts/resident.py` | `if self._closed:  # closed while Popen ran, so close found no process to kill` | `if False:` | `test_close_while_the_process_starts_kills_it_and_releases_everything` (the request reaches the live process and returns audio) |
 | R48 | `src/probos/audio/tts/resident.py` | `if release:` | `if False:` | `test_close_while_a_request_runs_releases_the_worker_when_it_returns` (pipes, stderr file and directory stay) |
@@ -5543,6 +6161,14 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | R59 | `src/probos/avatars/rhubarb_backend.py` | `returncode, stderr_bytes = await run_voice_work(executor, _run_sync)` | `returncode, stderr_bytes = await asyncio.get_running_loop().run_in_executor(executor, _run_sync)` | `test_lipsync_degrades_and_removes_its_temp_file_when_shutdown_cancels_the_conversion` |
 | R60 | `src/probos/avatars/rhubarb_backend.py` | `returncode, stdout_bytes, stderr_bytes = await run_voice_work(` | `returncode, stdout_bytes, stderr_bytes = await asyncio.get_running_loop().run_in_executor(` | `test_lipsync_degrades_when_the_executor_closes_between_conversion_and_rhubarb` |
 | R61 | `src/probos/audio/tts/resident.py` | `except (VoiceWorkRefused, RuntimeError):` | `except VoiceWorkRefused:` | `test_close_while_the_process_starts_kills_it_and_releases_everything` (the closed `executor` raises out of `synthesize`) |
+| R62 | `scripts/tts_audio_inventory.py` | `for directory, subdirs, names in os.walk(data_dir, onerror=not_listed):` | `for directory, subdirs, names in os.walk(data_dir):` | `test_a_directory_that_cannot_be_listed_keeps_every_candidate` (the refused directory is skipped in silence: `legacy` is a candidate, `unreadable` is empty) |
+| R63 | `scripts/tts_audio_inventory.py` | `unreadable.append(f"{error.filename}{os.sep}")  # refused, or gone since its parent was listed` | `pass` | `test_a_directory_that_cannot_be_listed_keeps_every_candidate` (the same) |
+| R64 | `scripts/tts_audio_inventory.py` | `if os.path.islink(child) or os.path.isjunction(child):  # never followed` | `if os.path.islink(child):` | `test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate[isjunction]` (`os.walk` follows the junction and reads its record) |
+| R65 | `scripts/tts_audio_inventory.py` | `unreadable.append(f"{child}{os.sep}")  # a link to a directory: its records are not read` | `pass` | `test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate` (both cases: pruned without a word, `legacy` is a candidate) |
+| R66 | `scripts/tts_audio_inventory.py` | `subdirs[:] = walked` | `pass` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` (the store is walked and its index names every id) |
+| R67 | `scripts/tts_audio_inventory.py` | `except FileNotFoundError:  # no store yet: nothing is indexed and nothing unindexed` | `except OSError:` | `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the refusal is swallowed: DID NOT RAISE) |
+| R68 | `scripts/tts_audio_inventory.py` | `inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav") and name[:-4] not in index)` | `inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav"))` | `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the control counts 7, not 1) |
+| R76 | `src/probos/audio/tts/resident.py` | `self._dir = directory` | `pass` | `test_a_failed_stderr_open_still_releases_the_worker_directory` (the first directory survives the failed request; the mutant also leaves every request without an output directory, so most resident tests in §7.19 fail too) |
 | TS1 | `ui/src/audio/voiceChunking.ts` | `for (let k = i + 1; k <= i + lookahead; k += 1) ensure(k);` | `for (let k = i + 1; k <= i; k += 1) ensure(k);` | run by hand: voiceChunking Q2; prefetch P1 |
 | TS3 | `ui/src/audio/voiceChunking.ts` | `if (p !== undefined) void p.then(discard);` | `if (false) void p.then(discard);` | run by hand: voiceChunking Q3; prefetch P3 |
 | TS5 | `ui/src/audio/voice.ts` | `if (_settled \|\| _activeAudio !== audio \|\| frames.length === 0) return;` | `if (frames.length === 0) return;` | run by hand: prefetch P4 |
@@ -5553,6 +6179,11 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | TS10 | `ui/src/audio/voice.ts` | `if (!(await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id))) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);` | `await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id);` | run by hand: prefetch P10 (the next reply is never posted), P11 (no 'dropped') |
 | TS11 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }` | `if (false) { _discardPreparedSpeech(prepared); return false; }` | run by hand: prefetch P10 (the stopped reply's audio plays), P11 (the browser speaks it) |
 | TS12 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _finish(false); return; }` | `if (false) { _finish(false); return; }` | run by hand: prefetch P13 (the browser speaks 'Pending.' after the stop) |
+| TS13 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (event.type !== 'end' && event.type !== 'dropped') return;` | `if (event.type !== 'end') return;` | run by hand: ProfileChatTab.bf918 C2 (the in-flight key survives the drop; the identical answer waits: `agent_speaking`) |
+| TS14 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (!claimed \|\| event.utterance_id !== ourUtteranceId) return;` | `if (!claimed) return;` | run by hand: ProfileChatTab.bf918 C3 (the newer reply's listener completes on the older reply's drop: `silence_pending` while the newer reply waits) |
+| TS15 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (agentReplyTurnRef.current !== ourTurn) { retire(); return; }` | `if (false) { retire(); return; }` | run by hand: ProfileChatTab.bf918 C3 (the older reply's late drop completes the newer turn) |
+| TS16 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (event.type === 'dropped') {` | `if (false) {` | run by hand: ProfileChatTab.bf918 C4 (the turn stays `agent_speaking`) |
+| TS17 | `ui/src/components/profile/ProfileChatTab.tsx` | `const ourTurn = ++agentReplyTurnRef.current;` | `const ourTurn = agentReplyTurnRef.current;` | run by hand: ProfileChatTab.bf918 C3 (every reply shares turn 0, so the late drop completes the newer turn) |
 
 ## 11. Verified Against Codebase (2026-10-23, worktree `bf918-consult` at `origin/main` `eea6e2f4`)
 
@@ -5695,12 +6326,13 @@ HOLDS: yes
 3. `close` is idempotent, never awaits, and refuses all later admissions. When it returns, every idle and every retiring worker is released, or is being released by the voice thread that holds it. Every running worker is killed, and its request releases it when its blocking call returns. No pipe is closed under a running read.
    - Every worker the service creates is released exactly once, on every path: success, timeout, exit, empty output, the caller cancelling, executor refusal, eviction and shutdown.
    - A worker closed before or during its process start launches nothing afterwards, or kills what it launched before writing a request.
+   - Each resource a worker creates (its directory, its stderr file, its process) is owned by the worker from the moment it exists: a start that fails at any step leaves nothing behind once the request's retirement or shutdown has run, and a later request on the same key still answers.
    - Shutdown never turns queued or refused voice work into an exception: that request answers `None` or `[]`, and any converted file is removed. Only a cancellation of the calling task itself propagates.
 4. With the service present, voice work never runs on asyncio's default pool. Admitted work is bounded, and a refusal degrades to `None` or `[]` without raising into a route. The attachment store's write and lookups are not voice work and stay on asyncio's default pool; no comment or tracker text claims otherwise.
 5. The only new process launch uses `env=trusted_command_env()` (BF-892) and `subprocess.Popen` in a thread (BF-280). No WAV travels over stdout (BF-282).
 6. The `/api/avatars/tts` response is a superset of the old one. A request without `defer_visemes: true` gets the same fields and behaviour as before.
-7. Spoken audio is written as `tts_audio`. No other origin is ever downgraded. Age-based deletion reaches only `perception_frame` (as before) and `tts_audio`. Age and size removal take an entry only if it still has the origin and the timestamp the sweep listed, decided under the store lock that removes it. A kept entry frees nothing and is not counted.
-8. The inventory tool creates, changes and locks nothing anywhere: no lock file, no SQLite side file. It reads only `<data-dir>` and offers no delete. A file or archive row it cannot read keeps every candidate. A WAV is a candidate only if it has Piper's exact 44-byte header with sizes that match the file.
+7. Spoken audio is written as `tts_audio`. No other origin is ever downgraded. Age-based deletion reaches only `perception_frame` (as before) and `tts_audio`. Age and size removal take an entry only if it still has the origin and the timestamp the sweep listed, decided under the store lock that removes it. A kept entry frees nothing and is not counted. This holds for writes through the same store instance. One instance per attachment root and one sweep at a time per store are preconditions (§9), not properties.
+8. The inventory tool creates, changes and locks nothing anywhere: no lock file, no SQLite side file. It reads only `<data-dir>` and offers no delete. A file or archive row it cannot read, a directory under `<data-dir>` it cannot list (refused, or gone since its parent was listed), and a link or junction to a directory (never followed) each keep every candidate and are named in `unreadable`, a directory with a trailing path separator. An attachment directory it cannot list stops the run and prints no report. A WAV is a candidate only if it has Piper's exact 44-byte header with sizes that match the file.
 9. Client:
    - Playback order is sentence order, and a sentence plays only after the previous one ended.
    - After a stop, no prefetched audio plays and no 'start' fires for it.
@@ -5710,12 +6342,16 @@ HOLDS: yes
    - A dispatched utterance that loses the device before any of its audio starts emits no `start` and no `end`, exactly one `dropped` carrying its id, plays nothing, and does not fall back to the browser.
    - A play promise rejected while the utterance no longer owns the device speaks nothing in its place; one refused while it still owns the device falls back to the browser as before.
    - The arbiter's wait for an entry ends only on an `end` or `dropped` carrying that entry's id, or on GUARD 1 or GUARD 2; no `dropped` fires for an entry whose audio started.
+   - `ProfileChatTab` releases on a `dropped` what an `end` releases: its agent's in-flight speech keys (BF-718's per-agent rule) and the completion listener armed for that utterance id.
+   - A `dropped` completes the controller's turn only when it carries the id of the newest conversation-mode reply. It never completes an older or a newer turn, and nothing fires an `end` in its place.
+   - The lost-claim wait, BF-290's immediate completions and BF-767's `end` correlation are unchanged.
+   - No production caller of `stopSpeaking` runs while a meeting batch speaks. Its only caller is the controller's barge-in, which runs only in `agent_speaking`, a state the AD-985 meeting mode never enters.
 10. Every new class stays within 500 lines and 15 methods, adds no layer import, and creates no task it does not hold.
 
 ## 15. Acceptance criteria
 
 - [ ] M1 to M3 are built; the focused checks in §6 pass; the three `--check` commands pass; `check_architecture_principles.py --check` passes; `npx tsc -b` passes.
-- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7, P9 to P13).
+- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7, P9 to P13); a conversation-mode reply stopped before its audio strands no later turn (`ProfileChatTab.bf918` C2 and C4).
 - [ ] Lip-sync visemes fire for every utterance on both paths (P4, P5, P6, and the route tests).
 - [ ] The browser fallback is unchanged: no request when `backend != "piper"`, and a fallback per sentence on failure (serverTts, pipelining test 4).
 - [ ] With pipelining off, the single-call path behaves as before, apart from the S2 speed-up and the deferred visemes.
@@ -5766,7 +6402,7 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
    d:/ProbOS/.venv/Scripts/python.exe -I -c "import json,collections,os;d=json.load(open(os.path.expandvars(r'%LOCALAPPDATA%\ProbOS\data\attachments\.index.json'),encoding='utf-8'));print(collections.Counter((v.get('origin'),v.get('mime')) for v in d.values()))"
    ```
    The `('tts_audio','audio/wav')` count must stay small: only the replies of the last 15 minutes. Re-run it a day later; the number of `*.wav` files must not grow past 1,126 plus that small number.
-7. **Legacy inventory (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`, preferably with ProbOS stopped (a database being written may be reported `unreadable`, which keeps every candidate). Post the JSON, including `kept`, `unreadable`, `unindexed_wavs` and `seconds` (the cost of reading every file, backups included). It deletes nothing; the sweep decision belongs to the follow-up issue.
+7. **Legacy inventory (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`, preferably with ProbOS stopped (a database being written may be reported `unreadable`, which keeps every candidate). Post the JSON, including `kept`, `unreadable`, `unindexed_wavs` and `seconds` (the cost of reading every file, backups included). An `unreadable` entry that ends in a path separator is a directory the tool could not list, or a link or junction to a directory, which it never follows; either keeps every candidate. If the attachment directory itself cannot be listed, the run stops with an error and prints no JSON. It deletes nothing; the sweep decision belongs to the follow-up issue.
 
 **Targets:** first audio within about 1.5 s at p50, with p95 reported; no gap over about 0.3 s, excluding `sentence_silence`.
 
@@ -5781,10 +6417,14 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - AD-1341 S2 to S6 and AD-1346 M2, M5, M6, M8 and M10 have no contracts yet. The overlap in §4 is judged from #1601's text and #1632's body.
 - **Expected phantom-precheck false positives**, all from code blocks: the `Inventory`, `PiperOutcome` and fake-process field accesses (new symbols), `Timer` (`threading.Timer`), `OrderedDict`, `SimpleNamespace`, `ThreadPoolExecutor` where already in `src`, and `VisemeFrame` where already in `src`. Amendments A1 to A3 add `unlink_if_unchanged` (new), `record.document` and `record.metadata` (`ArchiveRecord` fields) and `connection.execute` (`sqlite3`).
 - **Amendments A1 to A3 (2026-10-24, read-only consults):** each ran no test, vitest, `tsc`, precheck or generator, so every "fails on the candidate" claim came from reading; the orchestrator's tests-first run on candidate 2's unchanged source is the execution check (see the verification paragraph). Area A's consult was denied one `ls` of the live data directory and read none of it; its live facts are the orchestrator's read-only evidence. Area B read Piper's logging from upstream `main.cpp` and `piper.cpp`, not from the installed binary; its lifecycle tests use an in-memory process fake (a real stderr file and directory), so OS handle inheritance and Windows directory removal while a killed child has not exited are not exercised; the default pool's live saturation was not measured. Area C modelled the native media boundaries (`pause` rejecting a pending play with an abort error; an answer arriving after a stop) with doubles taken from the reviewer's Chromium probes, and ran no vitest.
+- **Amendments A4 to A6 (2026-10-24, read-only consults):** each ran no test, vitest, `tsc`, precheck or generator, so every "fails on the candidate" claim came from reading; the orchestrator's tests-first run on candidate 3's unchanged source is the execution check (see the verification paragraph). A4's directory refusals and links are injected at `os.scandir`, `os.path.islink` and `os.path.isjunction`; no real ACL, symlink or junction is created, and whether the live data directory contains a link was not checked (one would appear in `unreadable` and keep every candidate). A5's stderr-open failure is injected by replacing `mkdtemp` with a function that makes a directory whose `stderr.log` is itself a directory; real causes (a full disk, an antivirus lock) are not exercised. A6's cases C1 to C4 run the real component, controller and voice code with the harness of the round-2 reviewer's executed probe. The claim behind R18, that no production code can stop speech while a meeting batch speaks, is from reading; the orchestrator re-ran its enumeration (`stopSpeaking` has one non-test caller, `conversationController.ts:356`, inside `_onVadSpeechStart` under `_state === 'agent_speaking'`, and the only assignment of that state is the `/chat` branch of `_onTranscript`, which the group submit path never reaches).
+- `ATTACHMENT_REAPED` is `GRANDFATHERED` (`event_persistence.py:126`): it is emitted but not written to `events.db` by default. No sentence of this contract or its code claims otherwise; A1's consult report did, wrongly.
 
 **Orchestrator verification, round 0 (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this; the contract as drafted plus the five mechanical repairs).** All 60 verbatim pairs apply, each SEARCH once (11 in M1 with §7.9a and §7.9b, 36 in M2 with pair 4b, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `ffa300cd`, M2 `a461fd02` and M3 `c0185231` (tree `701e589c`). **The oracle found what a read-only consult cannot** (the header lists the five repairs): the retention test's tool loader, the facade's pinned field count, the range pairs a verbatim-pair tool skips and, from the consolidated focused check, the agentic-loop golden's pop of the new default. After them, on the final oracle: the M1 and M2 focused lists, 21 test files, 1,188 passed (repair 5 adds the `test_ad1152` file to M1's list); the 13 config-pin test files that read the whole configuration or its models, 1,939 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **The three Builders** (`claude-sonnet-5.5`; M2 and M3 built concurrently in separate trees) produced files blob-equal to the oracle's stages: M1's 13, M2's 26 cumulative paths and M3's 6, with 0 mismatches (the 14th M1 path, §7.9b, was applied by the oracle's tool after the focused check, not by a Builder); the one difference found on the way (§7.14 pair 4's comment placement) is repair 4 above. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
 
 **Orchestrator verification, round 1 repair (2026-10-24, by tool).** The three amendments apply to the contract by tool, each SEARCH once (A2 27 pairs, A1 28 and A3 19, in that order); the oracle is three scratch commits on `26bec26d`, M1 `2c305c91`, M2 `1a2c9d32` and M3 `1e384b73` (tree `e348bbe8`). **Tests-first**, the oracle's changed test files on candidate 2's unchanged source: of 61 Python tests, 24 fail, namely the 23 new tests for the findings and the one pin that moved (`test_reaper_continues_past_permission_error`); the one new test that passes is the WebM control. The failures have the findings' reasons: the store has no `unlink_if_unchanged`, a write after the listing is deleted anyway, the removed tool options are accepted, malformed headers and archived references are candidates, a closed worker answers, a busy or evicted worker keeps its pipes, stderr file and directory, a queued request ends in `CancelledError`, and the lip-sync route raises `RuntimeError` after the executor closed. Of 13 vitest tests, the five new ones (P9 to P13) fail. **After the repair**, on the oracle: retention 23, reaper 12 and latency 26 passed; the M1 focused list (9 files) 691 and the M2 focused list (14 files) 567 (the 21 files together 1,209); the 13 config-pin test files 1,939; vitest over 35 files 350 and `tsc -b` clean; the three generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 51 Python rows ran one at a time after an unmutated baseline (131 passed): 51 of 51 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail; the 10 TypeScript rows, run by hand (baseline 31 passed): 10 of 10 killed, and their census found 0 claimed killers that do not fail. "61 mutants parsed" equals the 51 and 10 rows of section 10. **The three repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 2) saw the predicted tests-first counts (area A 16 failed and 19 passed, area B 8 and 18, area C 5 and 8) and produced files blob-equal to the oracle's: A's 9, B's 5 and C's 2 paths, 0 mismatches (area A's Builder shortened the SEARCH of two pairs, the protocol method in §7.1 and its implementation in §7.2, with the same result).
+
+**Orchestrator verification, round 2 repair (2026-10-24, by tool).** The three amendments apply to the contract by tool, each SEARCH once (A5 4 pairs, A4 11 and A6 6, in that order); the oracle is three scratch commits on `26bec26d`, M1 `39f9bfe7`, M2 `567d77de` and M3 `b324e994` (tree `896f1705`). **Tests-first**, the oracle's changed test files on candidate 3's unchanged source: of 54 Python tests, 5 fail (the four retention cases for the directory, link and store-listing refusals, and the latency test for a failed stderr open) and 49 pass, and no old test fails; the failures have the findings' reasons (the unreadable directory is not reported and its candidates are not kept, the linked directory is read through, the store's listing does not raise, the worker's directory remains after the failed open). Of the 4 new vitest cases, C2 and C4 fail with `expected 'agent_speaking' to be 'silence_pending'`, and C1 (the control) and C3 (the late-drop guard) pass by design. **The Windows behaviour that the tests inject was also run for real** (a probe in a temporary data directory: an ACL that denies listing a directory, a real junction and an unlistable attachments directory, each scenario asserting its own premise first; creating a directory symlink was refused for lack of the privilege): candidate 3's tool is falsely clean with the denied directory (`unreadable` empty, the WAV still a candidate) and reads through the junction, and the repaired tool keeps every candidate, names the directory and the junction with a trailing separator, never follows the junction, and stops with `PermissionError` without printing a report when the attachments directory cannot be listed. **After the repair**, on the oracle: retention 27, reaper 12 and latency 27 passed; the M1 focused list (9 files) 695 and the M2 focused list (14 files) 572; vitest over the broader M3 command (65 files, every ProfileChatTab test included) 720 passed and `tsc -b` clean; the three generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 59 Python rows ran one at a time after an unmutated baseline (136 passed): 59 of 59 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail. The 15 TypeScript rows, run by hand (baseline 35 passed): 15 of 15 killed, and their census found 0 claimed killers that do not fail, with the five new rows' claims equal to the failing sets (TS13 C2, TS14 C3, TS15 C3, TS16 C4, TS17 C3). "74 mutants parsed" equals the 59 and 15 rows of section 10. **The three repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 3) saw the predicted tests-first counts (area A 4 failed and 35 passed, area B 1 and 26, area C 2 and 2) and produced files blob-equal to the oracle's: A's 3, B's 2 and C's 4 paths, 0 mismatches (area B's M2 focused check read 568 in its tree because the retention file there is candidate 3's, with 23 tests; with area A's four cases it is 572).
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -5797,8 +6437,15 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - R7: 164 WAV files have no index entry (1,126 on disk, 962 indexed; 1.496 GB on disk in all). They have no origin, no reaper or tool touches them, and the size cap does not count them (`total_size_bytes` adds up index entries only). Predates BF-918.
 - R8: whether AD-1340 erasure covers the knowledge repository's copies of an episode is unverified.
 - R9 (review round 1, area B, B4): the attachment store runs its blocking I/O on asyncio's default pool (`write`, `_find` and so `exists`, `get_path`, `read`, `size`). With crew work saturating that pool, storing the spoken WAV (`routers/avatars.py`) and serving it (`routers/chat.py`) wait. Ordinary reach, not a regression (the dependency predates BF-918; this change narrowed its isolation claim to synthesis and lip-sync). **An open slice (M4) of #1626, by the Architect's decision of 2026-10-24 (the convergence rule leaves no room to register an ordinary-reach finding):** a bounded I/O executor owned by the store, covering `write`, `_find`, `read` and `get_path`, closed after the attachment reaper. The live `store_ms` (§16 step 1) is its verification, and evidence that the reach is not ordinary (at least 20 replies with the crew active, p95 `store_ms` under about 50 ms and the HAR's `GET /api/chat/attachments` p95 under about 100 ms) would move it to the register.
-- R10 (B5): cancelling a caller frees its admission slot while ffmpeg, rhubarb or Piper still occupy a voice thread (measured: 20 unfinished against a bound of 16). Reached only by injected cancellation, and the baseline's executor-backed rhubarb path behaves the same. Follow-up: hold the slot until the executor future finishes, or kill the child when the caller cancels.
+- R10 (B5; round 2, area B finding 2): cancelling a caller frees its admission slot while ffmpeg, rhubarb or Piper still occupy a voice thread (measured: 20 unfinished against a bound of 16), and a caller-cancelled ffmpeg conversion leaves its temporary WAV behind (`_convert_to_wav` creates it before the await; measured `converted_left=1`, the same on `26bec26d`). Reached only by injected cancellation; both predate BF-918. Follow-up: one done-callback on the executor future that holds the slot and removes the conversion output after the work finishes (an unlink at cancellation would race a running ffmpeg), or kill the child when the caller cancels.
 - R11 (Low): a resident Piper's `stderr.log` grows for the process lifetime (one real-time-factor line per request), and `_stderr_tail` reads the whole file to quote 500 bytes.
 - R12 (review round 1, area C): pipelined replies are cut after their first sentence when another utterance is queued. Under pipelining every sentence shares the entry id (BF-767), so the first sentence's `end` dispatches the queued utterance, whose `_playNow` takes the id, and the remaining sentences stop. Predates BF-918; P2, ordinary reach with pipelining on (default off). The fix touches the arbiter's own contract: its wait would have to end on the reply's last sentence. **An open slice (M5) of #1626, by the Architect's decision of 2026-10-24:** it would truncate the pipelined replies of the live acceptance itself, so it lands before the measurement.
-- R13: `ProfileChatTab.tsx` (the completion listeners near lines 2150 and 1377) ignores `dropped`; pre-existing for flushed entries and without effect after a barge-in, because the controller has already moved to listening.
+- R13 (fixed in review round 2, §7.30b; kept here so that the numbering holds; round 1's "without effect after a barge-in" was wrong): `ProfileChatTab` ignored `dropped`. Before BF-918 that leaked a flushed or pre-empted entry's in-flight key. D7a made the leak reachable by an ordinary barge-in before audio, and a later identical answer then stranded the controller in `agent_speaking`. The residual is R19.
 - R14: a media error after `start` fires the server `end`, and then the browser fallback speaks with a second start and end pair (R3's family; reached only by an injected fault; predates BF-918).
+- R15 (review round 2, area A, F2; P2, injected only): overlapping size sweeps on one store over-evict. Each `sweep_once` takes its own `total_size_bytes` and stops on it (measured: 200 bytes removed where 100 sufficed). Production runs one sweep at a time (one `AttachmentReaper(` at `finalize.py:757`, whose `_loop` awaits each sweep; `start` is idempotent), and the counts stay honest. Follow-up, when a second caller appears: serialize the size pass per store, not per reaper (two reapers on one store would also overlap), or re-read the total under the store lock for each removal.
+- R16 (review round 2, area A, F3; P2, injected only): a second writer to one attachment root (another store object or process) is not coordinated, so a stale index removes an entry the other promoted. Production has one `FilesystemAttachmentStore(` (`routers/chat.py:1017`, cached per runtime), and AD-816's pidfile allows one vessel per data directory. The precondition is stated in §9 and in `unlink_if_unchanged`'s docstring. Outside it: two vessels whose data directories differ but whose `attachments.attachments_dir` is the same, or an external writer. Follow-up, if more than one writer must be supported: an interprocess lock, reloading the index while it is held.
+- R17 (review round 2, area B; Low, injected only, not a regression): `PiperWorker._release` removes the worker's directory once, with `ignore_errors`. When a killed Piper has not exited within `wait_seconds` (on Windows it still holds `stderr.log`), the directory remains with no owner. Follow-up: remove it again after the process has exited, or log the failed removal.
+- R18 (review round 2, area C, finding 2; P2, injected only, predates BF-918): a stop does not end the rest of a meeting batch, because `speakRepliesSequentially` breaks only on a generation check that `stopSpeaking` does not move. Not reachable today: `stopSpeaking`'s only non-test caller is the controller's barge-in (`conversationController.ts:356`), which runs only in `agent_speaking`, a state the group path (`submitTranscript`) never enters; the in-call mute ends a batch and works. It becomes reachable once any meeting-time stop caller exists (a stop button, meeting-mode barge-in, a wake-word "stop") or a second `ProfileChatTab` shares a document. Design, when it is wanted: a stop epoch in `speechQueueStore.ts` (not a new `voice.ts` export: about 50 test files mock `voice` with factories that would lack it), bumped first in `stopSpeaking`, captured per batch and compared in `useMeetingVoice`'s `shouldContinue`; the stopped reply still runs `onUtteranceEnd`, so that `setGroupTyping(null)` at `ProfileChatTab.tsx:1823` runs.
+- R19 (review round 2, area C; P3, narrow, partly pre-existing): a lost-claim waiter (BF-718) has no utterance id, so it cannot see the `dropped` of the identical in-flight utterance it waits on. If that utterance is dropped, the waiter stays subscribed: it can complete a later turn early on another `end` from the same agent, or strand the controller if the drop was a pre-emption while the turn waits. It needs identical text in flight, a drop and a second utterance from the same agent. Follow-up: give the in-flight set utterance ids, so that waiters correlate exactly.
+
+The register numbers on #1523 (F-389 onward) are assigned when the register comment is posted; R9 and R12 are the open slices M4 and M5 of #1626, and R13 is fixed, so none of the three goes on #1523.
