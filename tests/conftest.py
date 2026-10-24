@@ -139,6 +139,45 @@ def _ad1270f_codebase_index_memo():
         yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _bf919_isolated_archive(tmp_path_factory, worker_id):
+    """BF-919 (#1632): no test opens the operator's Ship's Archive, per xdist worker.
+
+    ``archive.db_path`` defaults to ``""``, which resolves to the operator's archive under the home directory,
+    outside the data directory AD-682 and BF-883 isolate. For the whole session an empty ``db_path`` resolves under
+    this worker's own archive root, and ``ArchiveStore`` refuses any file outside the suite's temporary roots before
+    it opens it -- see ``tests/fixtures/archive_isolation.py``. A refusal outside any test fails the session here.
+    """
+    from tests.fixtures.archive_isolation import archive_isolation, archive_root_for
+
+    root = archive_root_for(tmp_path_factory, worker_id)
+    allowed_roots = [tmp_path_factory.getbasetemp(), Path(tempfile.gettempdir())]
+    with archive_isolation(root, allowed_roots) as isolation:
+        yield isolation
+        stray = isolation.unreported()
+        if stray:
+            pytest.fail(f"BF-919: an archive outside the temporary roots was refused outside any test: {stray}", pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_archive_path(_bf919_isolated_archive):
+    """BF-919 (#1632): this test's own Ship's Archive path, where an empty ``archive.db_path`` resolves.
+
+    Nothing creates it unless the test opens the archive. A refusal during the test fails it at teardown: the boot
+    only logs the error and continues without the archive.
+    """
+    isolation = _bf919_isolated_archive
+    path = isolation.next_test_path()
+    isolation.current = path
+    try:
+        yield path
+    finally:
+        isolation.current = isolation.session_path
+    refused = isolation.unreported()
+    if refused:
+        pytest.fail(f"BF-919: this test opened a Ship's Archive outside the temporary roots: {refused}", pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def _ad682_clear_module_caches():
     """AD-682: Reset module-level caches that mutate during tests.
