@@ -715,6 +715,23 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
 - *Disclosed effects.* The Captain can now receive cascade (ADVISORY/ALERT), observable-mismatch and minute-paced echo alerts, all under `_should_emit` dedup and AD-580 suppression. One cascade event per detection reaches the runtime bus; the Counselor receives none before or after (BF-921, #1636, owns that), and after BF-921 it handles each cascade once. Same-thread pairs score 0 in the default-weight consumers (dream steps 7g and 9, records, thread echo); the service's two sites keep AD-665's versioned exception (F-9). The behavioral-metrics score does not change: its recall fails against the real episodic memory before scoring (F-10).
 - *Reversal.* Revert the BF-920 commit. Nothing persisted changes.
 
+### AD-1299 / AD-1336 -- Crew roles, service loop: the orchestrator is services, the judgment roles are crew, the Utility maintenance agent is withdrawn (2026-10-24, #1352, #1558)
+
+- *Decision.* Once ProbOS works its own queue, the orchestration procedure becomes Ship's Computer services: intake and ranking, the receipted gate, delivery, verified closure, round counting, Convergence and the round-three brake trigger. Crew take the judgment roles as AD-1347 work items: Number One drafts the contract, Forge builds, a reviewer role-holder reviews (the vacant `engineering_officer` post by default) and LaForge decides the brake. The Captain keeps intent, graduation, expiring grants, action approvals and the merge. AD-1299's Utility-tier `EngineeringMaintenanceAgent` is withdrawn, and S2f becomes campaign role assignment. Decided by `claude-architect` on the Captain's instruction; amendments on both issues.
+- *Why not Utility.* AD-1299's stated reasons were preserving the chain of command, the release controller's independence and D-B2 (a). None of them needs an identity-less agent. AD-641 DD-1 ("ship runs without crew") holds because no service waits on a crew member; with no crew aboard, the queue waits.
+- *Corrections to the proposal.*
+  - (1) Model diversity does not come from crew identity, because crew share the text tiers (`verifier_independence.py:7-8`). The reviewer's verdict uses the `verifier` tier and `classify_independence`.
+  - (2) Shared context helps the drafter and the builder but is withheld from the reviewer (AD-1349).
+  - (3) Brake authority is not earned through the trust scalar, because CHIEF trust is a callsign prior (`tiered_trust.py:43,50`). It is an AD-1213 grant the Captain makes on a shadow calibration record scored by service-written outcomes. The grant expires and names a sovereign identity.
+  - (4) Episodic memory of repairs is advice, not evidence. The service lineage of candidates, rounds and findings carries the repair history across resets.
+- *Safeguards.*
+  - Reviewer ≠ assignee ≠ brake decider per item; otherwise the brake goes to the Captain.
+  - Peer verdicts never move trust.
+  - Trust scoring, the calibration and outcome records, role assignment, role-holders' instructions and the stop seams join the never-graduated list.
+  - Each lane role is an AD-1343 seam; a stopped, in-stasis or reset holder parks the item at its last service-written state.
+  - Faults that disable crew cognition go to the Captain through AD-1172 and AD-1206.
+- *Reversal.* Restore the Utility agent in AD-1299 S2f and route the judgment roles to it. The services, evidence and approvals are unchanged either way.
+
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
 - *Scope.* Standing-order text and its layout test only; nothing under `src/` changes. No AD or BF number, like the 2026-10-15 profile entries.
