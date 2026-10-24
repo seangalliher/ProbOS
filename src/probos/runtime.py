@@ -821,6 +821,14 @@ class ProbOSRuntime:
         from probos.execution.long_runs import LongRunService
         self.execution_long_runs = LongRunService()
 
+        # BF-918 (#1626): voice work -- resident Piper processes and a dedicated,
+        # bounded executor for synthesis and lip-sync, so they do not queue behind
+        # crew cognition on asyncio's default pool (storing and serving the WAV go
+        # through the attachment store, which still uses that pool). Constructing it
+        # starts nothing; closed in startup/shutdown.py.
+        from probos.audio.tts.resident import VoiceSynthesisService
+        self.voice_synthesis = VoiceSynthesisService()
+
         # AD-815a (Wave 200): TaskSession substrate — anchors cowork-style
         # work to a thread (AD-791) + work item (AD-477) with inputs/
         # outputs/scratch folders under the per-thread workspace.

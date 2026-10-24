@@ -10,14 +10,22 @@ from probos.audio.tts.null_backend import NullBackend
 from probos.audio.tts.piper_backend import PiperBackend
 
 if TYPE_CHECKING:
+    from probos.audio.tts.resident import VoiceSynthesisService
     from probos.config import TTSConfig
 
 
-def select_backend(backend_name: str, config: "TTSConfig") -> TTSBackend:
+def select_backend(
+    backend_name: str,
+    config: "TTSConfig",
+    service: "VoiceSynthesisService | None" = None,
+) -> TTSBackend:
     """Select a backend instance by configured name.
 
     Tier-2 log-and-degrade: an unknown backend name is treated as
     ``"browser"`` (NullBackend). Logged at WARNING.
+
+    BF-918: ``service`` is the runtime's voice synthesis service; Piper runs in
+    its resident processes, and degrades to the browser without one.
     """
     logger = logging.getLogger(__name__)
     if backend_name == "piper":
@@ -30,6 +38,7 @@ def select_backend(backend_name: str, config: "TTSConfig") -> TTSBackend:
             length_scale=config.length_scale,
             noise_w=config.noise_w,
             sentence_silence=config.sentence_silence,
+            service=service,
         )
     if backend_name == "browser":
         return NullBackend()

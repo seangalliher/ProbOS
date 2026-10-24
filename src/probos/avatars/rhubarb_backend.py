@@ -21,9 +21,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from probos.audio.tts.resident import run_voice_work
 from probos.execution.command_env import trusted_command_env
+
+if TYPE_CHECKING:
+    from concurrent.futures import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +151,7 @@ async def _convert_to_wav(
     ffmpeg_binary: Path,
     *,
     timeout_seconds: float = 30.0,
+    executor: Executor | None = None,
 ) -> Path | None:
     """AD-721b-1a: convert ``audio_path`` to 16-bit mono 22050 Hz WAV via ffmpeg.
 
@@ -189,9 +194,10 @@ async def _convert_to_wav(
         return proc.returncode or 0, err
 
     try:
-        loop = asyncio.get_running_loop()
         try:
-            returncode, stderr_bytes = await loop.run_in_executor(None, _run_sync)
+            # BF-918: a refused or shutdown-cancelled stage raises VoiceWorkRefused, an OSError:
+            # the handler below removes the temp file and degrades.
+            returncode, stderr_bytes = await run_voice_work(executor, _run_sync)
         except subprocess.TimeoutExpired:
             logger.warning(
                 "AD-721b-1a: ffmpeg timed out after %ss converting %s",
@@ -291,6 +297,7 @@ async def generate_visemes(
     timeout_seconds: float = 30.0,
     *,
     ffmpeg_binary_path: str | None = None,
+    executor: Executor | None = None,
 ) -> list[VisemeFrame]:
     """Run rhubarb on ``audio_path``, return Oculus-mapped viseme schedule.
 
@@ -308,6 +315,7 @@ async def generate_visemes(
     If ffmpeg is missing or conversion fails, the BF-292 honest-degrade
     contract is preserved (returns ``[]``).
     """
+    # BF-918: ``executor`` is the runtime's voice executor; ``None`` keeps asyncio's default pool.
     if not audio_path.is_file():
         logger.warning("AD-721b-1: audio path missing: %s", audio_path)
         return []
@@ -328,7 +336,7 @@ async def generate_visemes(
             _resolve_ffmpeg_binary(ffmpeg_binary_path) if ffmpeg_binary_path else None
         )
         if ffmpeg_binary is not None:
-            converted_temp = await _convert_to_wav(audio_path, ffmpeg_binary)
+            converted_temp = await _convert_to_wav(audio_path, ffmpeg_binary, executor=executor)
         if converted_temp is None:
             logger.info(
                 "AD-721b-1: rhubarb skipped — unsupported audio format %s on %s "
@@ -340,7 +348,7 @@ async def generate_visemes(
             return []
         audio_path = converted_temp  # use the converted file for the rest
     try:
-        return await _run_rhubarb(audio_path, binary_path, timeout_seconds)
+        return await _run_rhubarb(audio_path, binary_path, timeout_seconds, executor=executor)
     finally:
         if converted_temp is not None:
             converted_temp.unlink(missing_ok=True)
@@ -350,6 +358,8 @@ async def _run_rhubarb(
     audio_path: Path,
     binary_path: str,
     timeout_seconds: float,
+    *,
+    executor: Executor | None = None,
 ) -> list[VisemeFrame]:
     """AD-721b-1a: extracted rhubarb invocation so generate_visemes can wrap
     it in a finally that unlinks the optional ffmpeg-converted tempfile.
@@ -400,10 +410,12 @@ async def _run_rhubarb(
                 raise
             return proc.returncode or 0, out, err
 
-        loop = asyncio.get_running_loop()
         try:
-            returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
-                None, _run_sync,
+            # BF-918: a stage the voice executor refuses (it closed after the conversion) raises
+            # VoiceWorkRefused, an OSError: the handler below degrades to [] and the caller's
+            # finally removes the converted file.
+            returncode, stdout_bytes, stderr_bytes = await run_voice_work(
+                executor, _run_sync,
             )
         except subprocess.TimeoutExpired:
             logger.warning(

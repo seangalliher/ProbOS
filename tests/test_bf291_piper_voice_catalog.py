@@ -184,7 +184,7 @@ def test_bf291_tts_endpoint_forwards_voice_name_to_backend(monkeypatch: pytest.M
             captured["voice_override"] = voice_override
             return None  # honest-degrade — endpoint returns disabled shape
 
-    def _fake_select(_backend, _cfg):
+    def _fake_select(_backend, _cfg, service=None):
         return _CaptureBackend()
 
     monkeypatch.setattr("probos.audio.tts.select_backend", _fake_select)
@@ -208,7 +208,7 @@ def test_bf291_tts_endpoint_strips_path_traversal_voice_name(monkeypatch: pytest
             captured["voice_override"] = voice_override
             return None
 
-    monkeypatch.setattr("probos.audio.tts.select_backend", lambda b, c: _CaptureBackend())
+    monkeypatch.setattr("probos.audio.tts.select_backend", lambda b, c, service=None: _CaptureBackend())
 
     runtime = _make_runtime_with_tts()
     client = TestClient(_make_app(runtime))
@@ -234,7 +234,7 @@ def test_bf291_tts_endpoint_omits_voice_override_when_absent(monkeypatch: pytest
             captured["voice_override"] = voice_override
             return None
 
-    monkeypatch.setattr("probos.audio.tts.select_backend", lambda b, c: _CaptureBackend())
+    monkeypatch.setattr("probos.audio.tts.select_backend", lambda b, c, service=None: _CaptureBackend())
 
     runtime = _make_runtime_with_tts()
     client = TestClient(_make_app(runtime))

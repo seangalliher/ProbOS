@@ -24,46 +24,15 @@ from probos.audio.tts.prosody import (
     resolve_prosody_overrides,
 )
 from probos.audio.tts.piper_backend import PiperBackend
+from probos.audio.tts.resident import VoiceSynthesisService
+from tests.fixtures.fake_piper import FakePiperLauncher
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
-class _StubProc:
-    def __init__(self, stdout: bytes) -> None:
-        self.returncode = 0
-        self._stdout = stdout
-        self._output_file_path: str | None = None
-
-    def communicate(self, input=None, timeout=None):
-        if self._output_file_path and self._stdout:
-            Path(self._output_file_path).write_bytes(self._stdout)
-        return self._stdout, b""
-
-    def kill(self) -> None:
-        pass
-
-    def wait(self, timeout=None) -> int:
-        return 0
-
-
-def _make_args_capturing_factory(stdout: bytes) -> tuple[list, callable]:
-    captured: list = []
-
-    def _factory(args, *_pos, **_kwargs):
-        captured.append(list(args))
-        stub = _StubProc(stdout)
-        if isinstance(args, (list, tuple)):
-            try:
-                idx = list(args).index("--output_file")
-                stub._output_file_path = (
-                    args[idx + 1] if idx + 1 < len(args) else None
-                )
-            except ValueError:
-                pass
-        return stub
-
-    return captured, _factory
+# BF-918 (#1626): Piper runs as a resident process; the prosody flags are its argv
+# (Piper fixes them per process). The fake is tests/fixtures/fake_piper.py.
 
 
 def _make_minimal_wav() -> bytes:
@@ -123,32 +92,32 @@ async def test_piper_backend_applies_override_at_synthesis(monkeypatch, tmp_path
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
-    captured, factory = _make_args_capturing_factory(_make_minimal_wav())
-    monkeypatch.setattr("subprocess.Popen", factory)
-
-    backend = PiperBackend(
-        binary_path=str(fake_bin),
-        voice_model="v",
-        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
-        noise_scale=0.85,
-        length_scale=1.0,
-        noise_w=1.0,
-        sentence_silence=0.35,
-    )
-    result = await backend.synthesize("hi", emotion="excited")
+    launcher = FakePiperLauncher("ok", wav=_make_minimal_wav())
+    monkeypatch.setattr("subprocess.Popen", launcher)
+    service = VoiceSynthesisService()
+    try:
+        backend = PiperBackend(
+            binary_path=str(fake_bin),
+            voice_model="v",
+            voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+            noise_scale=0.85,
+            length_scale=1.0,
+            noise_w=1.0,
+            sentence_silence=0.35,
+            service=service,
+        )
+        result = await backend.synthesize("hi", emotion="excited")
+    finally:
+        service.close()
     assert result is not None
-    assert len(captured) == 1
-    args = captured[0]
+    assert len(launcher.launched) == 1
+    args = launcher.launched[0].args
     # excited override: noise_scale=0.95, length_scale=0.92.
-    ns_idx = args.index("--noise_scale")
-    ls_idx = args.index("--length_scale")
-    nw_idx = args.index("--noise_w")
-    ss_idx = args.index("--sentence_silence")
-    assert args[ns_idx + 1] == "0.95"
-    assert args[ls_idx + 1] == "0.92"
+    assert args[args.index("--noise_scale") + 1] == "0.95"
+    assert args[args.index("--length_scale") + 1] == "0.92"
     # noise_w / sentence_silence retain constructor defaults.
-    assert args[nw_idx + 1] == "1.0"
-    assert args[ss_idx + 1] == "0.35"
+    assert args[args.index("--noise_w") + 1] == "1.0"
+    assert args[args.index("--sentence_silence") + 1] == "0.35"
 
 
 @pytest.mark.asyncio
@@ -158,21 +127,25 @@ async def test_piper_backend_no_emotion_uses_defaults(monkeypatch, tmp_path):
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
-    captured, factory = _make_args_capturing_factory(_make_minimal_wav())
-    monkeypatch.setattr("subprocess.Popen", factory)
-
-    backend = PiperBackend(
-        binary_path=str(fake_bin),
-        voice_model="v",
-        voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
-        noise_scale=0.85,
-        length_scale=1.0,
-        noise_w=1.0,
-        sentence_silence=0.35,
-    )
-    result = await backend.synthesize("hi")  # no emotion kwarg
+    launcher = FakePiperLauncher("ok", wav=_make_minimal_wav())
+    monkeypatch.setattr("subprocess.Popen", launcher)
+    service = VoiceSynthesisService()
+    try:
+        backend = PiperBackend(
+            binary_path=str(fake_bin),
+            voice_model="v",
+            voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+            noise_scale=0.85,
+            length_scale=1.0,
+            noise_w=1.0,
+            sentence_silence=0.35,
+            service=service,
+        )
+        result = await backend.synthesize("hi")  # no emotion kwarg
+    finally:
+        service.close()
     assert result is not None
-    args = captured[0]
+    args = launcher.launched[0].args
     assert args[args.index("--noise_scale") + 1] == "0.85"
     assert args[args.index("--length_scale") + 1] == "1.0"
     assert args[args.index("--noise_w") + 1] == "1.0"
@@ -195,7 +168,7 @@ async def test_tts_endpoint_forwards_emotion_to_backend(monkeypatch):
             captured_calls.append({"text": text, "emotion": emotion})
             return None
 
-    def _select_backend_stub(name, cfg):
+    def _select_backend_stub(name, cfg, service=None):
         return _StubBackend()
 
     monkeypatch.setattr(

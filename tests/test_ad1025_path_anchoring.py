@@ -7,7 +7,7 @@ rejection-cache DB path miss their installed assets, silently degrading TTS to
 the browser and skipping Step-7i relationship inference. These tests pin the
 anchored contract with real ``tmp_path`` fixtures (BF-287 — no MagicMock at
 the boundary; the only stubs are ``SimpleNamespace`` runtime/config shells and
-a fake ``subprocess.Popen`` that mirrors the BF-282 ``--output_file`` shape).
+BF-918's fake resident ``piper --json-input`` process, tests/fixtures/fake_piper.py).
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ from probos.audio.tts.piper_backend import (
     _resolve_binary_path,
     _resolve_voice_model,
 )
+from probos.audio.tts.resident import VoiceSynthesisService
 from probos.startup.finalize import _wire_relationship_inference
+from tests.fixtures.fake_piper import FakePiperLauncher
 
 
 # ---------------------------------------------------------------------------
@@ -41,40 +43,7 @@ def _write_voice(voices_dir: Path, name: str = "v") -> None:
     (voices_dir / f"{name}.onnx.json").write_bytes(b"{}")
 
 
-class _FakePopen:
-    """Minimal subprocess.Popen stand-in (mirrors the BF-280 sync shape)."""
-
-    returncode = 0
-
-    def communicate(
-        self, input: bytes | None = None, timeout: float | None = None
-    ) -> tuple[bytes, bytes]:
-        return b"", b""
-
-    def kill(self) -> None:  # pragma: no cover - never reached on happy path
-        pass
-
-    def wait(self, timeout: float | None = None) -> int:
-        return 0
-
-
-def _capturing_popen(seen: dict[str, str]):
-    """Factory that captures the ``--model`` arg and writes non-empty bytes to
-    the ``--output_file`` path so the production reader returns a TTSResult."""
-
-    def _factory(args, *_pos, **_kwargs) -> _FakePopen:
-        a = list(args)
-        if "--model" in a:
-            seen["model"] = a[a.index("--model") + 1]
-        if "--output_file" in a:
-            ofp = a[a.index("--output_file") + 1]
-            try:
-                Path(ofp).write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
-            except OSError:
-                pass
-        return _FakePopen()
-
-    return _factory
+# BF-918 (#1626): the fake Piper process lives in tests/fixtures/fake_piper.py.
 
 
 # ---------------------------------------------------------------------------
@@ -202,19 +171,24 @@ async def test_relative_voices_dir_and_override_anchor_to_root(
     elsewhere.mkdir()
     monkeypatch.setattr(piper_backend, "_probos_root", lambda: root)
     monkeypatch.chdir(elsewhere)
-    seen: dict[str, str] = {}
-    monkeypatch.setattr("subprocess.Popen", _capturing_popen(seen))
-
-    backend = PiperBackend(
-        binary_path="tools/piper/piper",
-        voice_model="amy",
-        voices_dir="tools/piper/voices",
-    )
-    result = await backend.synthesize("hi", voice_override="ryan")
+    launcher = FakePiperLauncher("ok", wav=b"RIFF\x00\x00\x00\x00WAVE")
+    monkeypatch.setattr("subprocess.Popen", launcher)
+    service = VoiceSynthesisService()
+    try:
+        backend = PiperBackend(
+            binary_path="tools/piper/piper",
+            voice_model="amy",
+            voices_dir="tools/piper/voices",
+            service=service,
+        )
+        result = await backend.synthesize("hi", voice_override="ryan")
+    finally:
+        service.close()
 
     assert result is not None
     # The override voice resolved under the ROOT-anchored base, not the CWD.
-    assert seen["model"] == str((voices / "ryan.onnx").resolve())
+    args = launcher.launched[0].args
+    assert args[args.index("--model") + 1] == str((voices / "ryan.onnx").resolve())
 
 
 @pytest.mark.asyncio
@@ -228,18 +202,23 @@ async def test_absolute_voices_dir_used_as_is(monkeypatch, tmp_path) -> None:
     binary.write_bytes(b"")
     voices = tmp_path / "custom_voices"
     _write_voice(voices, "amy")
-    seen: dict[str, str] = {}
-    monkeypatch.setattr("subprocess.Popen", _capturing_popen(seen))
-
-    backend = PiperBackend(
-        binary_path=str(binary),
-        voice_model="amy",
-        voices_dir=str(voices),
-    )
-    result = await backend.synthesize("hi")
+    launcher = FakePiperLauncher("ok", wav=b"RIFF\x00\x00\x00\x00WAVE")
+    monkeypatch.setattr("subprocess.Popen", launcher)
+    service = VoiceSynthesisService()
+    try:
+        backend = PiperBackend(
+            binary_path=str(binary),
+            voice_model="amy",
+            voices_dir=str(voices),
+            service=service,
+        )
+        result = await backend.synthesize("hi")
+    finally:
+        service.close()
 
     assert result is not None
-    assert seen["model"] == str((voices / "amy.onnx").resolve())
+    args = launcher.launched[0].args
+    assert args[args.index("--model") + 1] == str((voices / "amy.onnx").resolve())
 
 
 # ---------------------------------------------------------------------------

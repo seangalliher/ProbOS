@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from probos.crew_utils import is_crew_agent
+from probos.audio.tts.resident import VoiceSynthesisService
 from probos.execution.long_runs import LONG_RUN_SETTLE_SECONDS, LongRunService
 from probos.execution.workspace_results import resolve_workspace_results
 
@@ -75,6 +76,21 @@ async def _close_crew_session_delivery(runtime: Any) -> None:
             await close()
     finally:
         runtime.crew_session_delivery_service = None
+
+
+def _close_voice_synthesis(runtime: Any) -> None:
+    """BF-918: stop the resident Piper processes and the voice executor.
+
+    Synchronous and idempotent; never raises (a spoken reply is not worth a
+    failed shutdown). A runtime without the service has nothing to stop.
+    """
+    voice_service = getattr(runtime, "voice_synthesis", None)
+    if not isinstance(voice_service, VoiceSynthesisService):
+        return
+    try:
+        voice_service.close()
+    except Exception:
+        logger.warning("BF-918: voice synthesis close failed", exc_info=True)
 
 
 def _memory_field(runtime: Any, name: str, default: float) -> float:
@@ -1577,6 +1593,9 @@ async def shutdown(
         except Exception:
             logger.warning("AD-706b: recording_reaper.stop() failed", exc_info=True)
         runtime.recording_reaper = None
+
+    # BF-918: stop the resident Piper processes and the voice executor.
+    _close_voice_synthesis(runtime)
 
     # AD-733-1: Stop attachment retention reaper.
     if hasattr(runtime, 'attachment_reaper') and runtime.attachment_reaper is not None:

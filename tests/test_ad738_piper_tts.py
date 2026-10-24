@@ -22,6 +22,8 @@ from probos.audio.tts import (
     select_backend,
 )
 from probos.audio.tts.piper_backend import _resolve_binary_path, _resolve_voice_model
+from probos.audio.tts.resident import VoiceSynthesisService
+from tests.fixtures.fake_piper import FakePiperLauncher
 from probos.config import AttachmentsConfig, LipSyncConfig, TTSConfig
 from probos.routers.deps import get_runtime
 from probos.routers import avatars as avatars_router_mod
@@ -33,72 +35,8 @@ from probos.routers import chat as chat_router_mod
 # ---------------------------------------------------------------------------
 
 
-class _StubProcess:
-    """Mimics subprocess.Popen for tests.
-
-    BF-286 (2026-05-13): PiperBackend migrated from
-    ``asyncio.create_subprocess_exec`` to ``subprocess.Popen + run_in_executor``
-    (BF-280 WindowsSelectorEventLoop) and from stdout to a ``--output_file``
-    tempfile (BF-282 Windows text-mode corruption). The stub now mirrors the
-    sync subprocess.Popen shape AND writes ``stdout`` to the ``--output_file``
-    path if one is present in the args, so the production code reads it back.
-    """
-
-    def __init__(
-        self,
-        returncode: int = 0,
-        stdout: bytes = b"",
-        stderr: bytes = b"",
-        hang: bool = False,
-    ) -> None:
-        self.returncode = returncode
-        self._stdout = stdout
-        self._stderr = stderr
-        self._hang = hang
-        self.killed = False
-        self._output_file_path: str | None = None  # set by _make_subprocess_factory
-
-    def communicate(
-        self, input: bytes | None = None, timeout: float | None = None
-    ) -> tuple[bytes, bytes]:
-        if self._hang and timeout is not None:
-            import subprocess as _sub
-            raise _sub.TimeoutExpired(cmd="stub-piper", timeout=timeout)
-        # BF-282 simulation: production code passes --output_file <tmp_path>
-        # and reads bytes back from the file. If we have such a path, write
-        # the configured stdout payload there.
-        if self._output_file_path is not None and self._stdout:
-            from pathlib import Path as _Path
-            try:
-                _Path(self._output_file_path).write_bytes(self._stdout)
-            except OSError:
-                pass
-        return self._stdout, self._stderr
-
-    def kill(self) -> None:
-        self.killed = True
-
-    def wait(self, timeout: float | None = None) -> int:
-        return self.returncode
-
-
-def _make_subprocess_factory(stub: _StubProcess):
-    """Returns a sync callable that replaces subprocess.Popen.
-
-    Captures ``--output_file`` path from args so the stub can simulate
-    BF-282's file-write behavior.
-    """
-    def _factory(args, *_pos, **_kwargs):
-        if isinstance(args, (list, tuple)):
-            try:
-                idx = list(args).index("--output_file")
-                stub._output_file_path = (
-                    args[idx + 1] if idx + 1 < len(args) else None
-                )
-            except ValueError:
-                pass
-        return stub
-    return _factory
+# BF-918 (#1626): Piper runs as a resident ``--json-input`` process; its fake is
+# tests/fixtures/fake_piper.py (the one-shot communicate() stub is gone).
 
 
 def _make_minimal_wav(num_samples: int = 16000, sample_rate: int = 16000) -> bytes:
@@ -205,46 +143,50 @@ async def test_piper_backend_empty_text_short_circuits(monkeypatch, tmp_path):
     assert spawned == []
 
 
+@pytest.fixture
+def voice_service():
+    """BF-918: Piper runs in the runtime's resident processes; these tests own one."""
+    service = VoiceSynthesisService()
+    yield service
+    service.close()
+
+
 @pytest.mark.asyncio
 async def test_piper_backend_subprocess_timeout_returns_none(
-    monkeypatch, tmp_path, caplog
+    monkeypatch, tmp_path, caplog, voice_service
 ):
-    caplog.set_level(logging.WARNING, logger="probos.audio.tts.piper_backend")
+    # BF-918: the resident process hangs and is killed at the timeout.
+    caplog.set_level(logging.WARNING)
     fake_bin = tmp_path / "piper"
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
-    stub = _StubProcess(hang=True)
-    monkeypatch.setattr(
-        "subprocess.Popen",
-        _make_subprocess_factory(stub),
-    )
+    launcher = FakePiperLauncher("hang")
+    monkeypatch.setattr("subprocess.Popen", launcher)
     backend = PiperBackend(
         binary_path=str(fake_bin), voice_model="v", timeout_seconds=0.2,
         voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+        service=voice_service,
     )
     assert await backend.synthesize("hello") is None
-    assert stub.killed is True
+    assert launcher.launched[0].killed is True
     assert any("piper timed out" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
 async def test_piper_backend_nonzero_exit_returns_none(
-    monkeypatch, tmp_path, caplog
+    monkeypatch, tmp_path, caplog, voice_service
 ):
-    caplog.set_level(logging.WARNING, logger="probos.audio.tts.piper_backend")
+    caplog.set_level(logging.WARNING)
     fake_bin = tmp_path / "piper"
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
-    stub = _StubProcess(returncode=1, stdout=b"", stderr=b"piper: bad model")
-    monkeypatch.setattr(
-        "subprocess.Popen",
-        _make_subprocess_factory(stub),
-    )
+    monkeypatch.setattr("subprocess.Popen", FakePiperLauncher("exit", stderr_bytes=b"piper: bad model"))
     backend = PiperBackend(
         binary_path=str(fake_bin), voice_model="v",
         voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+        service=voice_service,
     )
     assert await backend.synthesize("hi") is None
     assert any(
@@ -255,41 +197,35 @@ async def test_piper_backend_nonzero_exit_returns_none(
 
 @pytest.mark.asyncio
 async def test_piper_backend_zero_bytes_returns_none(
-    monkeypatch, tmp_path, caplog
+    monkeypatch, tmp_path, caplog, voice_service
 ):
-    caplog.set_level(logging.WARNING, logger="probos.audio.tts.piper_backend")
+    caplog.set_level(logging.WARNING)
     fake_bin = tmp_path / "piper"
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
-    stub = _StubProcess(returncode=0, stdout=b"", stderr=b"")
-    monkeypatch.setattr(
-        "subprocess.Popen",
-        _make_subprocess_factory(stub),
-    )
+    monkeypatch.setattr("subprocess.Popen", FakePiperLauncher("empty"))
     backend = PiperBackend(
         binary_path=str(fake_bin), voice_model="v",
         voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+        service=voice_service,
     )
     assert await backend.synthesize("hi") is None
     assert any("0 bytes" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_piper_backend_happy_path_returns_wav(monkeypatch, tmp_path):
+async def test_piper_backend_happy_path_returns_wav(monkeypatch, tmp_path, voice_service):
     fake_bin = tmp_path / "piper"
     fake_bin.write_bytes(b"")
     monkeypatch.chdir(tmp_path)
     _setup_voice_model(tmp_path / "tools" / "piper" / "voices", "v")
     wav = _make_minimal_wav(num_samples=8000, sample_rate=16000)
-    stub = _StubProcess(returncode=0, stdout=wav, stderr=b"")
-    monkeypatch.setattr(
-        "subprocess.Popen",
-        _make_subprocess_factory(stub),
-    )
+    monkeypatch.setattr("subprocess.Popen", FakePiperLauncher("ok", wav=wav))
     backend = PiperBackend(
         binary_path=str(fake_bin), voice_model="v",
         voices_dir=str(tmp_path / "tools" / "piper" / "voices"),
+        service=voice_service,
     )
     result = await backend.synthesize("hello world")
     assert result is not None
@@ -506,7 +442,7 @@ async def test_endpoint_tts_honest_degrade_when_backend_returns_none(
 
     monkeypatch.setattr(
         "probos.audio.tts.select_backend",
-        lambda name, cfg: _NoneBackend(),
+        lambda name, cfg, service=None: _NoneBackend(),
     )
     resp = await ac.post("/api/avatars/tts", json={"text": "hello"})
     assert resp.status_code == 200
@@ -542,7 +478,7 @@ async def test_endpoint_tts_happy_path_returns_attachment_and_visemes(
 
     monkeypatch.setattr(
         "probos.audio.tts.select_backend",
-        lambda name, cfg: _StubBackend(),
+        lambda name, cfg, service=None: _StubBackend(),
     )
     monkeypatch.setattr(
         "probos.avatars.rhubarb_backend.generate_visemes",
@@ -587,7 +523,7 @@ async def test_endpoint_tts_omits_visemes_when_lipsync_heuristic(
 
     monkeypatch.setattr(
         "probos.audio.tts.select_backend",
-        lambda name, cfg: _StubBackend(),
+        lambda name, cfg, service=None: _StubBackend(),
     )
     monkeypatch.setattr(
         "probos.avatars.rhubarb_backend.generate_visemes",
