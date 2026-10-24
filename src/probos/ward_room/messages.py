@@ -115,10 +115,17 @@ class MessageStore:
         self, peer_matches: list[dict], author_id: str,
         author_callsign: str, post_body: str, channel_id: str,
     ) -> None:
-        """AD-567f: Delegate cascade check to shared helper (BF-113 DRY)."""
-        from probos.ward_room._helpers import check_and_emit_cascade_risk
-        await check_and_emit_cascade_risk(
-            self._social_verification, self._emit,
+        """AD-567f: Delegate cascade check to shared helper (BF-113 DRY).
+
+        BF-920: the helper no longer emits the cascade event (the service
+        owns it); it raises the Bridge alert through the bridge_alerts and
+        router that set_echo_services late-binds.
+        """
+        from probos.ward_room._helpers import check_and_alert_cascade_risk
+        await check_and_alert_cascade_risk(
+            self._social_verification,
+            bridge_alerts=getattr(self, '_bridge_alerts', None),
+            ward_room_router=getattr(self, '_ward_room_router', None),
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,

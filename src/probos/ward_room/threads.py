@@ -26,7 +26,8 @@ async def check_peer_similarity(
 ) -> list[dict[str, Any]]:
     """Check if body is similar to recent posts by OTHER authors in this channel.
 
-    Returns list of matches: [{author_id, author_callsign, body_preview, similarity, post_id}]
+    Returns list of matches: [{author_id, author_callsign, body_preview, similarity, post_id, timestamp}]
+    ``timestamp`` is the matched row's created_at (BF-920: the cascade check names the earliest).
     Empty list = no peer similarity detected.
     """
     try:
@@ -39,7 +40,7 @@ async def check_peer_similarity(
 
         # Check recent threads by other authors
         async with db.execute(
-            "SELECT id, author_id, author_callsign, body FROM threads "
+            "SELECT id, author_id, author_callsign, body, created_at FROM threads "
             "WHERE channel_id = ? AND created_at > ? AND author_id != ? "
             "ORDER BY created_at DESC LIMIT 20",
             (channel_id, since, author_id),
@@ -53,11 +54,12 @@ async def check_peer_similarity(
                         "body_preview": (row[3] or "")[:100],
                         "similarity": sim,
                         "post_id": row[0],
+                        "timestamp": row[4],  # threads.created_at (BF-920)
                     })
 
         # Check recent replies by other authors
         async with db.execute(
-            "SELECT p.id, p.author_id, p.author_callsign, p.body FROM posts p "
+            "SELECT p.id, p.author_id, p.author_callsign, p.body, p.created_at FROM posts p "
             "JOIN threads t ON p.thread_id = t.id "
             "WHERE t.channel_id = ? AND p.created_at > ? AND p.author_id != ? AND p.deleted = 0 "
             "ORDER BY p.created_at DESC LIMIT 20",
@@ -72,6 +74,7 @@ async def check_peer_similarity(
                         "body_preview": (row[3] or "")[:100],
                         "similarity": sim,
                         "post_id": row[0],
+                        "timestamp": row[4],  # posts.created_at (BF-920)
                     })
 
         matches.sort(key=lambda m: m["similarity"], reverse=True)
@@ -194,10 +197,17 @@ class ThreadManager:
         self, peer_matches: list[dict], author_id: str,
         author_callsign: str, post_body: str, channel_id: str,
     ) -> None:
-        """AD-567f: Delegate cascade check to shared helper (BF-113 DRY)."""
-        from probos.ward_room._helpers import check_and_emit_cascade_risk
-        await check_and_emit_cascade_risk(
-            self._social_verification, self._emit,
+        """AD-567f: Delegate cascade check to shared helper (BF-113 DRY).
+
+        BF-920: the helper no longer emits the cascade event (the service
+        owns it); it raises the Bridge alert through the bridge_alerts and
+        router that set_echo_services late-binds.
+        """
+        from probos.ward_room._helpers import check_and_alert_cascade_risk
+        await check_and_alert_cascade_risk(
+            self._social_verification,
+            bridge_alerts=getattr(self, '_bridge_alerts', None),
+            ward_room_router=getattr(self, '_ward_room_router', None),
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,

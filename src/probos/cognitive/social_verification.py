@@ -69,22 +69,27 @@ class ProvenanceValidationResult:
 _ALLOWED_DETAIL_KEYS = frozenset({"episode_a", "episode_b", "reason", "weight"})
 
 
+def _same_thread(anchors_a: Any, anchors_b: Any) -> bool:
+    """BF-920: True when both anchor frames name the same non-empty thread."""
+    thread_a = getattr(anchors_a, "thread_id", "") or ""
+    thread_b = getattr(anchors_b, "thread_id", "") or ""
+    return bool(thread_a) and thread_a == thread_b
+
+
 def _are_independently_anchored(anchors_a: Any, anchors_b: Any) -> bool:
     """Check if two anchor frames represent independent observations.
 
     Two episodes are independently anchored if they have different
-    duty_cycle_id OR different channel_id OR timestamps > 60s apart.
-    Episodes sharing the same thread_id are NOT independent.
+    duty_cycle_id OR different channel_id. Episodes sharing the same
+    thread_id are NOT independent. The elapsed-time rule lives in
+    ``_pair_independent`` (BF-920), which never applies it to a
+    same-thread pair.
     """
     if anchors_a is None or anchors_b is None:
         return False
 
     # Same thread = NOT independent (same conversation)
-    if (
-        anchors_a.thread_id
-        and anchors_b.thread_id
-        and anchors_a.thread_id == anchors_b.thread_id
-    ):
+    if _same_thread(anchors_a, anchors_b):
         return False
 
     # Different duty cycle = independent
@@ -109,6 +114,22 @@ def _are_independently_anchored(anchors_a: Any, anchors_b: Any) -> bool:
 def _time_separated(ep_a: Any, ep_b: Any, threshold: float = 60.0) -> bool:
     """Check if two episodes are separated by more than threshold seconds."""
     return abs(getattr(ep_a, "timestamp", 0) - getattr(ep_b, "timestamp", 0)) > threshold
+
+
+def _pair_independent(ep_a: Any, ep_b: Any) -> bool:
+    """BF-920: the one pairwise independence rule (artifact ancestry aside).
+
+    A same-thread pair is never independent, however far apart its posts
+    are: the elapsed-time rule applies only to pairs in different threads,
+    or without thread anchors. Before BF-920 both callers OR-ed
+    ``_time_separated`` onto ``_are_independently_anchored``, so a
+    same-thread echo spaced over minutes scored as fully independent.
+    """
+    a = getattr(ep_a, "anchors", None)
+    b = getattr(ep_b, "anchors", None)
+    if _same_thread(a, b):
+        return False
+    return _are_independently_anchored(a, b) or _time_separated(ep_a, ep_b)
 
 
 def _share_artifact_ancestry(anchors_a: Any, anchors_b: Any) -> bool:
@@ -189,7 +210,7 @@ def compute_anchor_independence(
                 version_b = getattr(b, "artifact_version", "") or ""
                 if version_a and version_b and version_a != version_b:
                     independent_weight += pair_weight * version_independence_weight
-            elif _are_independently_anchored(a, b) or _time_separated(episodes[i], episodes[j]):
+            elif _pair_independent(episodes[i], episodes[j]):
                 independent_weight += pair_weight
 
     return independent_weight / total_weight if total_weight > 0 else 0.0
@@ -289,6 +310,11 @@ class SocialVerificationService:
         """Check if a claim is independently corroborated by other agents.
 
         Privacy: returns metadata (who, when, where) but never episode content.
+
+        BF-920: no production caller. Kept, not wired, for the agent-invocable
+        verification tool AD-567f deferred
+        (prompts/archive/ad-567f-social-verification-protocol.md); do not
+        reason from it as a live path.
         """
         if min_confidence is None:
             min_confidence = self._config.corroboration_min_confidence
@@ -378,7 +404,7 @@ class SocialVerificationService:
                             independent_count += 1
                             break
                         continue
-                    if _are_independently_anchored(a, b) or _time_separated(ep, other):
+                    if _pair_independent(ep, other):
                         independent_count += 1
                         break
 
@@ -496,7 +522,8 @@ class SocialVerificationService:
         Called after AD-506b peer similarity detection to check if
         similar posts lack independent anchor evidence.
         """
-        if not peer_matches:
+        # BF-920: cascade_enabled is this check's off switch (it had no reader).
+        if not peer_matches or not self._config.cascade_enabled:
             return None
 
         from probos.cognitive.anchor_quality import compute_anchor_confidence
@@ -628,6 +655,9 @@ class SocialVerificationService:
 
         Returns a brief text block (under 200 chars) indicating whether
         the claim is verified, unverified, or at cascade risk.
+
+        BF-920: no production caller; this is the formatter for the deferred
+        verification tool (see ``check_corroboration``). Not a live path.
         """
         try:
             result = await self.check_corroboration(agent_id, claim)

@@ -5911,7 +5911,6 @@ async def finalize_startup(
             ObservableStateVerifier,
             RecreationStateProvider,
             TrustStateProvider,
-            SystemHealthProvider,
         )
 
         src_cfg = config.source_tracing
