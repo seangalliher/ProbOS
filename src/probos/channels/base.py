@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -85,6 +86,11 @@ _PAIRED_DM_REFUSED = (
     "messages ({reason}) (BF-903)."
 )
 
+#: BF-914 (#1621): how many distinct refused senders one adapter names in the
+#: log. Each is named once; past the cap one more line says the rest go
+#: unnamed, so a flood of throwaway accounts can grow neither memory nor the log.
+_REFUSED_SENDER_LOG_CAP = 256
+
 
 class PairingLookupError(PairingNotificationError):
     """BF-903 (#1581): `resolve_did` failed, so whether the sender is paired is unknown.
@@ -121,6 +127,9 @@ class ChannelAdapter(ABC):
         self._started = False
         self._conversation_histories: dict[str, list[tuple[str, str]]] = {}
         self._max_history: int = 10
+        # BF-914 (#1621): senders the user allow-list refused, each logged once.
+        self._refused_senders: set[str] = set()
+        self._refused_senders_capped = False
 
     @abstractmethod
     async def start(self) -> None:
@@ -138,6 +147,69 @@ class ChannelAdapter(ABC):
     ) -> None:
         """Deliver a response back to the originating channel."""
         ...
+
+    def _sender_admitted(
+        self, user_id: str, allowed_user_ids: Collection[object], *, allow_all_users: bool,
+    ) -> bool:
+        """BF-914 (#1621): the adapter's user allow-list, failing closed.
+
+        A sender is admitted when ``allow_all_users`` is on or its id is in
+        ``allowed_user_ids``. An empty list with the opt-in off admits no one.
+        Before BF-914 an empty list meant "everyone", and with no pairing
+        service wired that let any sender reach ``handle_message`` and, through
+        it, the ship's slash commands. Ids compare as strings, so Discord's
+        integer ids and Slack's string ids share one rule. A refused sender is
+        logged once, without the message text (`_log_refused_sender`).
+        """
+        if allow_all_users or user_id in {str(allowed) for allowed in allowed_user_ids}:
+            return True
+        self._log_refused_sender(user_id)
+        return False
+
+    def _log_refused_sender(self, user_id: str) -> None:
+        """BF-914 (#1621): one WARNING per refused sender, for at most `_REFUSED_SENDER_LOG_CAP` senders.
+
+        No ``await`` separates the check from the record, so two overlapping
+        refusals of one sender on the event loop still log once.
+        """
+        if user_id in self._refused_senders:
+            return
+        if len(self._refused_senders) >= _REFUSED_SENDER_LOG_CAP:
+            if not self._refused_senders_capped:
+                self._refused_senders_capped = True
+                logger.warning(
+                    "BF-914: channel %s has refused %d distinct senders; further refused "
+                    "senders are not logged by id",
+                    self.channel_name, _REFUSED_SENDER_LOG_CAP,
+                )
+            return
+        self._refused_senders.add(user_id)
+        logger.warning(
+            "BF-914: refused a message from sender %r on channel %s: the sender is not in "
+            "allowed_user_ids and allow_all_users is off. Later messages from this sender "
+            "are refused without a log line.",
+            user_id, self.channel_name,
+        )
+
+    def _warn_sender_policy(
+        self, section: str, allowed_user_ids: Collection[object], *, allow_all_users: bool,
+    ) -> None:
+        """BF-914 (#1621): at start, say so when this adapter will admit no one, or everyone."""
+        if allow_all_users:
+            logger.warning(
+                "BF-914: channels.%s.allow_all_users is on, so every sender who can reach "
+                "this adapter is admitted, including to the ship's slash commands. List the "
+                "senders in channels.%s.allowed_user_ids and turn allow_all_users off unless "
+                "that is intended.",
+                section, section,
+            )
+        elif not allowed_user_ids:
+            logger.warning(
+                "BF-914: channels.%s.allowed_user_ids is empty, so this adapter refuses every "
+                "sender. List the user ids that may use the ship there, or set "
+                "channels.%s.allow_all_users: true to admit everyone.",
+                section, section,
+            )
 
     async def _check_pairing(self, message: ChannelMessage) -> bool:
         """AD-802a: gate inbound messages from unknown senders behind a

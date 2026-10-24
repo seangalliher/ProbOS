@@ -390,7 +390,8 @@ class DiscordConfig(BaseModel):
     enabled: bool = False
     token: str = ""                          # Bot token (prefer env var PROBOS_DISCORD_TOKEN)
     allowed_channel_ids: list[int] = []      # Empty = respond in all channels
-    allowed_user_ids: list[int] = []         # Empty = respond to all users (SECURITY RISK)
+    allowed_user_ids: list[int] = []         # BF-914: the users answered; empty = no one unless allow_all_users
+    allow_all_users: bool = False            # BF-914: admit every Discord sender, slash commands included (explicit opt-in)
     command_prefix: str = "!"                # "!status" -> "/status"
     mention_required: bool = False           # Only respond when @mentioned
     scout_channel_id: int = 0                # Discord channel ID for scout reports (0 = disabled)
@@ -658,7 +659,8 @@ class SlackConfig(BaseModel):
     bot_token: str = ""           # xoxb-... (prefer env var PROBOS_SLACK_BOT_TOKEN)
     signing_secret: str = ""      # for events-api verification
     allowed_channel_ids: list[str] = []
-    allowed_user_ids: list[str] = []
+    allowed_user_ids: list[str] = []         # BF-914: the users answered; empty = no one unless allow_all_users
+    allow_all_users: bool = False            # BF-914: admit every Slack sender, slash commands included (explicit opt-in)
     default_thread_ts: bool = True
     # AD-804: polling-mode inbound config (no slack-sdk dep required).
     channels: list[str] = []      # explicit channel-id list, empty = auto-discover via conversations.list

@@ -1210,6 +1210,7 @@ Discord bot adapter configuration.
 | `token` | `str` | `''` | — |  |
 | `allowed_channel_ids` | `list[int]` | `[]` | — |  |
 | `allowed_user_ids` | `list[int]` | `[]` | — |  |
+| `allow_all_users` | `bool` | `False` | — |  |
 | `command_prefix` | `str` | `'!'` | — |  |
 | `mention_required` | `bool` | `False` | — |  |
 | `scout_channel_id` | `int` | `0` | — |  |
@@ -1225,6 +1226,7 @@ Slack adapter configuration (AD-472 + AD-804).
 | `signing_secret` | `str` | `''` | — |  |
 | `allowed_channel_ids` | `list[str]` | `[]` | — |  |
 | `allowed_user_ids` | `list[str]` | `[]` | — |  |
+| `allow_all_users` | `bool` | `False` | — |  |
 | `default_thread_ts` | `bool` | `True` | — |  |
 | `channels` | `list[str]` | `[]` | — |  |
 | `poll_interval_s` | `float` | `8.0` | — |  |

@@ -276,7 +276,8 @@ async def test_an_unreadable_pairing_store_refuses_the_message_and_its_callers_s
     assert message.paired_did is None
     assert rig.adapter.sent == []
     async with _AsyncClient(transport=_MockTransport(lambda _r: _Response(200, json={"ok": True}))) as client:
-        slack = SlackAdapter(rig.runtime, SlackConfig(enabled=True, bot_token="xoxb-test"), client=client)
+        # BF-914 (#1621): U42 is listed so the refusal below is the unreadable pairing store's.
+        slack = SlackAdapter(rig.runtime, SlackConfig(enabled=True, bot_token="xoxb-test", allowed_user_ids=["U42"]), client=client)
         assert await slack.receive(text="hi", channel_id="C1", user_id="U42") == ""
     assert rig.processed == []
 

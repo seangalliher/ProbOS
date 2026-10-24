@@ -102,7 +102,7 @@ async def test_client_raises_on_api_error():
 
 
 def test_convert_message_returns_message_for_user_text():
-    cfg = SlackConfig(enabled=True, bot_token="xoxb-test")
+    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_user_ids=["U42"])  # BF-914: listed
     adapter = SlackAdapter(_FakeRuntime(), cfg, client=_make_client(lambda r: httpx.Response(200, json={"ok": True})))
     msg = {"user": "U42", "text": "hi", "ts": "1.5"}
     cm = adapter._convert_message("C123", msg)
@@ -114,7 +114,8 @@ def test_convert_message_returns_message_for_user_text():
 
 
 def test_convert_message_drops_bot_subtype():
-    cfg = SlackConfig(enabled=True, bot_token="xoxb-test")
+    # BF-914: U1 is listed, so each None below is the subtype/bot filter, not the allow-list.
+    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_user_ids=["U1"])
     adapter = SlackAdapter(_FakeRuntime(), cfg, client=_make_client(lambda r: httpx.Response(200, json={"ok": True})))
     assert adapter._convert_message("C1", {"subtype": "bot_message", "user": "U1", "text": "hi", "ts": "1"}) is None
     assert adapter._convert_message("C1", {"bot_id": "B1", "user": "U1", "text": "hi", "ts": "1"}) is None
@@ -123,7 +124,8 @@ def test_convert_message_drops_bot_subtype():
 
 def test_convert_message_drops_self_messages():
     """Messages from our own bot user are filtered out."""
-    cfg = SlackConfig(enabled=True, bot_token="xoxb-test")
+    # BF-914: both are listed, so U_BOT is dropped by the self filter, not the allow-list.
+    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_user_ids=["U_BOT", "U_HUMAN"])
     adapter = SlackAdapter(_FakeRuntime(), cfg, client=_make_client(lambda r: httpx.Response(200, json={"ok": True})))
     adapter._bot_user_id = "U_BOT"
     assert adapter._convert_message("C1", {"user": "U_BOT", "text": "i am bot", "ts": "1"}) is None
@@ -131,7 +133,7 @@ def test_convert_message_drops_self_messages():
 
 
 def test_convert_message_honors_allowed_channel_ids():
-    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_channel_ids=["C_ALLOWED"])
+    cfg = SlackConfig(enabled=True, bot_token="xoxb-test", allowed_channel_ids=["C_ALLOWED"], allowed_user_ids=["U1"])  # BF-914
     adapter = SlackAdapter(_FakeRuntime(), cfg, client=_make_client(lambda r: httpx.Response(200, json={"ok": True})))
     assert adapter._convert_message("C_OTHER", {"user": "U1", "text": "hi", "ts": "1"}) is None
     assert adapter._convert_message("C_ALLOWED", {"user": "U1", "text": "hi", "ts": "1"}) is not None

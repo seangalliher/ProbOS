@@ -55,7 +55,7 @@ See [HXI Glass Bridge](../design/hxi-glass-bridge.md) for the design direction.
 
 ## Channels
 
-Channel adapters connect the crew to Discord, Slack, Telegram, Matrix, Microsoft Teams, Gmail and generic webhooks. Inbound direct messages from a new user require a pairing that the operator approves with `probos pairing approve`, and `probos channel <telegram|slack|matrix> setup` stores a channel's credentials.
+Channel adapters connect the crew to Discord, Slack, Telegram, Matrix, Microsoft Teams, Gmail and generic webhooks. Discord and Slack answer only the senders listed in the adapter's `allowed_user_ids`: an empty list answers no one, and `allow_all_users: true` answers everyone, the ship's slash commands included (BF-914). The pairing gate (`probos pairing approve`) applies only when a pairing service is wired, which a standard boot does not yet do, and `probos channel <telegram|slack|matrix> setup` stores a channel's credentials.
 
 ## FastAPI Server
 

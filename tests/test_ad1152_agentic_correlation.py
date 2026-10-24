@@ -255,6 +255,10 @@ async def _off_observation(
     # BF-875's inert (empty) MCP server token and allowlist were added after this capture too.
     assert config["federation"]["mcp_server"].pop("auth_token") == ""
     assert config["federation"]["mcp_server"].pop("exposed_intents") == []
+    # BF-914's channel opt-ins (admit every sender; off) were added after this capture too; this
+    # agentic-loop observation starts no channel adapter.
+    assert config["channels"]["discord"].pop("allow_all_users") is False
+    assert config["channels"]["slack"].pop("allow_all_users") is False
     # BF-876's inert (empty) A2A server token and allowlist were added after this capture too.
     assert config["federation"]["a2a"].pop("auth_token") == ""
     assert config["federation"]["a2a"].pop("exposed_intents") == []
