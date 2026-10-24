@@ -2,15 +2,19 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
 
-**Status:** build-ready. One BF, three milestones (M1 S3, M2 S2, M3 S1), one batch, one PR, one broad gate. **BF number:** BF-918 (#1626); this contract allocates nothing. **Tier:** S1 STANDARD, S2 STANDARD, **S3 HIGH** (the reaper gains an automatic age-based deletion on the live store, and a delete-capable tool ships); the batch is reviewed at HIGH (use the Copilot `Diff Reviewer`). **Base:** `origin/main` `26bec26d` (the Architect drafted on `eea6e2f4`; BF-914 merged since, and the three generated files and one pin are regenerated on top of it). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24: Amendments A1 (area A, M1), A2 (area B, M2) and A3 (area C, M3), the repair of review round 1 (three parallel `gpt-6.1-sol` reviewers count as one round: 14 findings, all three areas NOT READY). The orchestrator applied the amendments by tool, in the order A2, A1, A3 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand.
+
+**Review round 1, area A (amendment A1):** both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged` on the store protocol); the inventory tool is read-only (no `--delete`, `--confirm` or `--attachments-dir`), reads every file and decodes the episode archive, and accepts only Piper's exact header; the capacity description gives the real eviction order. **Area B (amendment A2):** one worker lifecycle (B1, B2: D4a); executor refusal or shutdown cancellation degrades at every voice stage (B3); the default-pool claim narrowed to synthesis and lip-sync, with the store's own I/O executor an open slice of #1626 (B4, slice M4); B5 registered. **Area C (amendment A3):** a reply stopped before any of its audio starts ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter (C1, C3); a play rejected after a stop is terminal and does not fall back to the browser (C2). Round 2 reviews the whole M1 candidate (the store protocol gains a method, a shared contract) and the deltas of M2 and M3 with their consumers.
+
+**Status:** build-ready. One BF, three milestones (M1 S3, M2 S2, M3 S1), one batch, one PR, one broad gate. **BF number:** BF-918 (#1626); this contract allocates nothing. **Tier:** S1 STANDARD, S2 STANDARD, **S3 HIGH** (the reaper gains an automatic age-based deletion on the live store; the inventory tool no longer deletes); the batch is reviewed at HIGH (use the Copilot `Diff Reviewer`). **Base:** `origin/main` `26bec26d` (the Architect drafted on `eea6e2f4`; BF-914 merged since, and the three generated files and one pin are regenerated on top of it). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Orchestrator mechanical repairs (2026-10-24; found by applying this contract by tool to `origin/main` `26bec26d` and running its tests; no design decision, and the tree they produce is what the contract now says).** (1) §7.9's `_tool()` registers the loaded module in `sys.modules` while it executes (and `import sys` joins the imports): a dataclass in `scripts/tts_audio_inventory.py` finds its module's namespace there, so without it the four inventory-tool tests failed with an `AttributeError` on Python 3.12. (2) New §7.9a raises the pinned model-field count in `tests/test_ad1270e1_config_facade.py` from 1879 to 1880 (the one new field; the contract listed no pin there). (3) Eight pairs state their SEARCH as a range ("the block from X through Y") instead of a fenced block: §7.20 pairs 2 and 3, §7.21 pairs 2 and 3, §7.22 pairs 3 and 4, §7.26 pair 7 and §7.27 pair 2. A Builder replaces the stated block with the REPLACE; the orchestrator's oracle applies them with a range tool that locates each block by its start and end lines, never by line numbers. (4) §7.14 pair 4's comment line moves from before the docstring to after it, as a new pair 4b: the contract's own Builder note asked for that placement, and a tool applying the pairs cannot follow a note, so the oracle's `rhubarb_backend.py` differed from the Builder's until the note became a pair. (5) New §7.9b pops the new default in `tests/test_ad1152_agentic_correlation.py`'s golden: that test pops every config default added after its capture (BF-914 added two such pops), the contract listed no pin there, and the consolidated focused check found it (three failures) where the contract's own focused lists did not run it.
 
 **Tests:**
-- New `tests/test_bf918_tts_retention.py` (M1, 11 functions).
-- New `tests/test_bf918_tts_latency.py` (M2, 17 functions).
+- New `tests/test_bf918_tts_retention.py` (M1, 16 functions).
+- New `tests/test_bf918_tts_latency.py` (M2, 26 functions).
 - New fixture `tests/fixtures/fake_piper.py` (M2).
-- New `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx` (M3, 8 cases).
+- New `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx` (M3, 13 cases).
 - `ui/src/audio/__tests__/voiceChunking.test.ts`: the `runSentenceQueue` describe (4 cases) is replaced by a `runPrefetchQueue` describe (6 cases).
 - Updated pins:
   - `tests/test_ad738_piper_tts.py`: 4 backend tests and 3 stubs.
@@ -21,6 +25,7 @@
   - `tests/test_ad1270e2d_integrations_models.py`: 1 dump key.
   - `tests/test_ad1270e1_config_facade.py`: 1 field count (§7.9a).
   - `tests/test_ad1152_agentic_correlation.py`: 1 default pop (§7.9b).
+  - `tests/test_attachment_reaper.py`: 1 test (§7.9c; the injected removal failure moves to the conditional removal).
   - `voice.pipelining.test.tsx`: 2 tests and the `_flush` depth.
   - `voice.perEmotion.test.tsx`: 2 body assertions.
 
@@ -100,8 +105,8 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
   - The route defers visemes when asked, and logs per-stage timings.
 - **S3:**
   - The new origin `tts_audio` is the least durable: an upload of the same bytes upgrades it.
-  - The reaper deletes it by age, and evicts it first under the size cap.
-  - `scripts/tts_audio_inventory.py` inventories the legacy WAVs, read-only by default.
+  - The reaper deletes it by age, and evicts it first under the size cap. Either pass removes an entry only if no write touched it since the pass listed it (review round 1).
+  - `scripts/tts_audio_inventory.py` inventories the legacy WAVs. It is read-only: it deletes nothing, and deleting them is a follow-up (review round 1).
 
 ## 3. Decisions
 
@@ -112,11 +117,12 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | D2a | Process protocol | Each request writes one ASCII JSON line, `{"text": <lines joined by spaces>, "output_file": "<worker dir>/<uuid>.wav"}`. The one-shot path also joined lines with spaces. Lines are read until one names that file. The WAV is read from the file and removed (BF-282). Stderr goes to a file in the worker's directory, so the pipe can never fill and block Piper, and a crash warning quotes its last 500 bytes. `--output_dir` points at that directory, so nothing is ever written to the working directory. |
 | D2b | Timeout | A `threading.Timer(timeout)` armed for one request kills the process. The read then returns end of file, the request degrades to `None`, the worker is retired, and the next request starts a new process. Queue and lock waits are not counted, as before (the old `communicate` timeout ran inside the thread). |
 | D3 | Visemes | (1) The client opts in with `defer_visemes: true`; the route answers `visemes: []`, `visemes_deferred: true`; the browser POSTs `/api/avatars/lipsync` at prepare time and injects only while that `<audio>` is the one playing; the heuristic track runs in between. (2) Rhubarb overlapped with the store write: rejected (still on the path). (3) Piper phoneme timing: rejected (not emitted). (4) WebSocket push: deferred. |
-| D4 | Executor | `VoiceSynthesisService` owns it, as `runtime.voice_synthesis`, created in `__init__` and closed in `shutdown()` before the attachment reaper stops. Constants: 4 threads, 16 in flight, 4 resident. Saturated or closed: refused, `None` (browser speech) or `[]` (heuristic). A runtime without the service: Piper degrades to the browser; rhubarb keeps the default pool (pre-BF-918 behaviour). |
-| D5 | Retention | `tts_audio`, first in both tuples. TTL `attachments.tts_audio_retention_seconds` = 900 (from 60 to 86400). The upgrade rule exists already; its tuple must include the new origin. The index format is unchanged; no migration. |
-| D5a | Legacy sweep | (i) The inventory tool, deleting only on `--delete --confirm N` with the pidfile held. (ii) An age rule over old `audio/wav` `chat_attachment` items: rejected (it would delete the Captain's uploads). (iii) No sweep: the fallback. **Running `--delete` is the Captain's decision** ("an irreversible or destructive production-data operation"). |
+| D4 | Executor | `VoiceSynthesisService` owns it, as `runtime.voice_synthesis`, created in `__init__` and closed in `shutdown()` before the attachment reaper stops. Constants: 4 threads, 16 in flight, 4 resident. Saturated or closed: refused, `None` (browser speech) or `[]` (heuristic). So is work the executor refuses, or that its shutdown cancels while queued, at every stage (Piper, ffmpeg, rhubarb, a retirement): `run_voice_work` raises `VoiceWorkRefused`, an `OSError`, and only a cancellation of the calling task propagates. A runtime without the service: Piper degrades to the browser; rhubarb keeps the default pool (pre-BF-918 behaviour). **Not isolated (A2, B4):** the attachment store's `write` and the lookups that serve the WAV (`exists`, `get_path`, through `_find`) still run on asyncio's default pool, so with that pool saturated, storing and fetching the first audio still wait. Ranked: (1) narrow the claim and register it, with a follow-up giving the store its own bounded I/O executor (chosen: that fix changes every store user's scheduling, in M1's module); (2) an `executor` argument on `write` (a protocol change that leaves both lookups on the pool); (3) the route writes the WAV through the voice executor (bypasses the store's index and origin contract, and leaves the lookups). |
+| D4a | Worker lifecycle (A2: B1, B2) | A worker is open (idle, or running one request on a voice thread) until `close`, then closed for good. Exactly one party releases its process, pipes, stderr file and directory: `close` when the worker is idle, or the running request's own thread when its blocking call returns (`close` then only kills, so no pipe is closed under a read). A request on a closed worker starts nothing. A `close` during `Popen` is caught when `Popen` returns, and the new process is killed before any request is written. The service reaches every worker not yet released: resident ones in `_resident`, evicted ones in `_retiring` until their close has run, and `_retire` closes in a `finally`, so neither a shutdown that cancels the queued close nor a cancelled caller leaves one behind. The service's `close` stays idempotent and synchronous; it waits at most 0.5 s per idle or retiring worker and never for a running one. Rejected: waiting in `close` for running requests (blocks the loop up to a timeout); a cleanup thread (a second owner). |
+| D5 | Retention | `tts_audio`, first in both tuples. TTL `attachments.tts_audio_retention_seconds` = 900 (from 60 to 86400). The upgrade rule exists already; its tuple must include the new origin. The index format is unchanged; no migration. **Review round 1 (A1):** both sweeps remove through the store's conditional removal, `unlink_if_unchanged` (same origin, not written since it was listed, decided under the store lock that removes it), so a refresh or an upgrade between a sweep's listing and its removal keeps the entry, and a kept entry frees nothing. Ranked: (1) a new protocol method, chosen: erasure's hard `unlink` keeps its meaning, and the `int | None` return separates "kept" from "freed 0 bytes"; (2) keyword arguments on `unlink`: rejected (overloads erasure's delete; a `bool` cannot say "kept"); (3) the policy moved into the store: rejected (holds the lock for a whole sweep, blocking the TTS route's write); (4) a read before the delete: rejected (the window stays open). |
+| D5a | Legacy sweep | (i) **Revised in review round 1: the inventory tool is read-only.** It counts and lists candidates, reads only `<data-dir>/attachments`, and deletes nothing. It reads every file under the data directory whatever its name, decodes the episode archive's compressed rows with the archive's own decoder, and keeps every candidate when a file or row cannot be read. (ii) An age rule over old `audio/wav` `chat_attachment` items: rejected (it would delete the Captain's uploads). (iii) The delete-capable tool as first drafted: withdrawn. Round 1 found its reference scan blind to the compressed archive and its store root separable from its guard, and the reference model is still incomplete (§18). The legacy WAVs are static (no growth), so deferring costs disk only. **Deleting them is the Captain's decision, on the follow-up issue.** |
 | D6 | Config | One field only. The lookahead is a TypeScript constant (1); the viseme mode is a request flag; pipelining stays default-off. |
-| D7 | Barge-in | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. |
+| D7 | Barge-in, and an utterance stopped before its audio | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. **D7a (review round 1, C1 to C3): one terminal event per dispatched utterance.** From `_playNow` until it ends, a dispatched utterance owns the device. It ends with `end` once any of its audio emitted `start` (BF-655; the BF-767 no-engine `end` as before), or with AD-1291's `dropped`, reason `cancelled-before-audio`, when it lost the device (a stop, or a newer dispatch) before any of its audio started. Each await between dispatch and audio (the status probe, the synthesis, the prefetch queue's first sentence) re-checks ownership; on a loss the prepared `<audio>` is discarded unplayed, a failed synthesis does not fall back to the browser, and `_playNow` fires the `dropped`. A play promise rejected because a stop or a newer dispatch paused it is a cancellation: no browser fallback, and the `pause` listener's `end` stays its one terminal event. The arbiter's wait for an entry ends on that entry's own `end` or `dropped`; GUARD 1, GUARD 2, `SPEECH_JOIN_TIMEOUT_MS` and `flushSpeechQueue` are unchanged. Ranked: (1) `dropped`, fired where the loss is observed and keyed by id: chosen, because the event already means "never reached audio" and every listener but the two waits ignores it, so a late synthesis answer is harmless; (2) an `end` with no `start`: rejected, the answer can land after the next reply's `start` and reset its modulation icon, head-bob, PTT gate and wake-word flag; (3) settling the in-flight wait inside `stopSpeaking`: rejected, it uses the unkeyed test-teardown seam in production and leaves the meeting sequencer waiting; (4) the candidate: the arbiter waits out `SPEECH_JOIN_TIMEOUT_MS`. Residual: the arbiter is freed when the cancelled synthesis answers, not at the stop; the stop has already flushed the backlog. |
 
 ## 4. Interaction with the queue
 
@@ -141,12 +147,17 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | `PiperBackend(…, service=)` | `audio/tts/__init__.py` | the route; tests in `test_ad738…`, `test_ad738e_1…`, `test_ad1025_path_anchoring.py` |
 | `generate_visemes(…, executor=)` | `rhubarb_backend.py` | both avatar routes; stubs `(*_a, **_kw)` in `test_ad738_piper_tts.py:537, 584` and `test_ad721b1…:333`; `test_bf292…:101` reads `generate_visemes`' source for the `_SUPPORTED_SUFFIXES` line, which stays unchanged |
 | `runSentenceQueue` → `runPrefetchQueue` | `voiceChunking.ts` | `voice.ts` (the only production caller); `voiceChunking.test.ts`; a comment at `voice.ts:381` |
+| `dropped` with the new reason `cancelled-before-audio` (D7a; the event type and its fields exist since AD-1291) | `voice.ts` `_playNow` | the arbiter's wait in `_awaitEntry` (now terminal on it); `meetingVoice.ts:127` (already terminal on `dropped`); `wakeWord.ts:187`, `useLipSyncCapture.ts:62`, `CrewVRM.tsx:502`, `ParametricAvatar.tsx:49`, `ModulationIndicator.tsx:28` and `ProfileChatTab.tsx:564, 1377, 2150` act only on `start` or `end` and ignore it; no consumer reads `reason` |
 | `ATTACHMENT_ORIGINS` | `store.py` | `filesystem_store._normalize_origin`; `test_ad1192…:2883` iterates it (an empty `tts_audio` list is fine) |
 | `_LRU_EVICTION_ORDER`, `_ORIGIN_DURABILITY` | reaper, store | the reaper's LRU pass; `write`'s upgrade |
+| new protocol method `unlink_if_unchanged` on `AttachmentStore` (review round 1) | `FilesystemAttachmentStore`, the only implementer in `src/` | the reaper's age and size passes only. `unlink` is unchanged and keeps its callers (`knowledge/erasure.py:298`, tests). No test fake is driven by the reaper (fakes of `list_by_origin`: `test_ad1203_trace_routes.py:57`, `test_ad1203_turn_provenance.py:157`, read by the traces route). `test_attachment_reaper.py`'s injected removal failure moves to the new method (§7.9c). `ATTACHMENT_REAPED` keeps its payload shape; its counts now cover only entries actually removed |
+| `scripts/tts_audio_inventory.py` command line | the tool | the Captain (§16 step 7) and `tests/test_bf918_tts_retention.py`; nothing else. Read-only: `--delete`, `--confirm` and `--attachments-dir` are gone; the report drops `attachments_dir`, `deleted` and `freed_bytes`, and adds `seconds` |
 | index `origin` | `FilesystemAttachmentStore.write` | `list_by_origin` (reaper only), `write`, the new tool |
 | `AttachmentsConfig` dump | `config_models/integrations.py` | `test_ad1270e2d…` `EXPECTED_DUMPS`; the facade baseline, profiles and reference (regenerated) |
 | BF-892 launch inventory | `test_bf892_spawn_env_guard.py:87` | the guard scan |
 | `runtime.voice_synthesis` | `runtime.py` | the route, `_bounded_visemes`, `_close_voice_synthesis` |
+| `run_voice_work`, `VoiceWorkRefused` (new, A2) | `audio/tts/resident.py` | `VoiceSynthesisService._retire`; `rhubarb_backend._convert_to_wav` and `_run_rhubarb`, whose existing `except (OSError, ValueError)` handlers degrade on it; no test stubs either |
+| `PiperWorker.close` (A2: refuses later requests; on a running worker only kills) | `audio/tts/resident.py` | `VoiceSynthesisService` (`close`, `_forget`, `_retire`); `tests/test_bf918_tts_latency.py` |
 
 No `?raw` reader exists for `voice.ts`, `voiceChunking.ts` or `useLipSyncCapture.ts`.
 
@@ -163,9 +174,14 @@ The tests in `tests/test_bf918_tts_retention.py`:
 - `test_route_stores_speech_as_tts_audio`
 - `test_reaper_starts_for_the_tts_ttl_alone`
 - `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing`
-- `test_delete_refuses_without_the_matching_count`
-- `test_delete_with_the_count_removes_exactly_the_candidates`
-- `test_delete_refuses_while_probos_runs`
+- `test_unlink_if_unchanged_removes_only_the_entry_that_was_listed`
+- `test_a_write_after_the_ttl_listing_keeps_its_entry` (a refresh, an upgrade to `chat_attachment`, an upgrade to `agent_artifact`)
+- `test_a_write_after_the_lru_listing_keeps_its_entry` (the same three)
+- `test_the_tool_cannot_delete_or_read_another_store` (`--delete`; `--delete --confirm 2`; `--attachments-dir`)
+- `test_only_the_exact_piper_header_is_a_candidate`
+- `test_an_archived_reference_keeps_its_wav` (producer: the real `EpisodeArchive` writer)
+- `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate`
+- `test_a_reference_in_a_file_of_any_name_keeps_its_wav` (a WAL file; an uncompressed tar backup)
 
 Focused check:
 
@@ -195,6 +211,7 @@ Do V0 first. The tests in `tests/test_bf918_tts_latency.py`:
 - `test_lipsync_route_runs_rhubarb_on_the_voice_executor`
 - `test_the_route_speaks_through_the_resident_process` (crosses the seam: route → backend → service → worker → store)
 - `test_the_runtime_owns_one_voice_service_and_shutdown_closes_it`
+- A2: `test_a_closed_worker_refuses_a_request_and_starts_nothing`, `test_close_while_a_request_runs_releases_the_worker_when_it_returns`, `test_close_while_the_process_starts_kills_it_and_releases_everything`, `test_shutdown_closes_a_retiring_worker_and_the_request_degrades`, `test_a_cancelled_retirement_still_closes_the_worker`, `test_shutdown_degrades_a_queued_request_instead_of_cancelling_it`, `test_lipsync_converts_then_runs_rhubarb_on_the_voice_executor`, `test_lipsync_degrades_when_the_executor_closes_between_conversion_and_rhubarb`, `test_lipsync_degrades_and_removes_its_temp_file_when_shutdown_cancels_the_conversion`
 
 Focused check:
 
@@ -207,13 +224,13 @@ Then run `d:/ProbOS/.venv/Scripts/python.exe scripts/check_architecture_principl
 **M3 (S1), §7.25 to §7.30.** Commit "BF-918 M3: the next sentence is synthesized while one plays; a stop drops prefetched audio; deferred visemes; barge-in silences Piper".
 
 The cases:
-- `voice.prefetch.bf918.test.tsx`: P1 to P8.
+- `voice.prefetch.bf918.test.tsx`: P1 to P13 (P9 to P13, and the reordered P2 and P3, from review round 1).
 - `voiceChunking.test.ts`: Q1 to Q6.
 
 Focused check, from `ui/` (the Builder's tree has a `ui/node_modules` junction):
 
 ```
-npx vitest run src/audio src/__tests__/voice.test.ts src/components/profile/__tests__/ProfileChatTab.ad1291.e2e.test.tsx src/components/profile/__tests__/ProfileChatTab.bf764.test.tsx src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx src/components/profile/__tests__/ProfileChatTab.groupReplyIdentity.test.tsx src/components/profile/__tests__/ProfileChatTab.issue1340.groupUnmount.test.tsx
+npx vitest run src/audio src/__tests__/voice.test.ts src/__tests__/ProfileChatTab.bf290.test.tsx src/__tests__/wakeWord.bargeIn.test.ts src/components/profile/__tests__/ProfileChatTab.ad1291.e2e.test.tsx src/components/profile/__tests__/ProfileChatTab.bf764.test.tsx src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx src/components/profile/__tests__/ProfileChatTab.groupReplyIdentity.test.tsx src/components/profile/__tests__/ProfileChatTab.issue1340.groupUnmount.test.tsx
 ```
 
 Then the type check, `npx tsc -b`; CI's `ui-tests` job runs `npm run test` and `npm run build`, which is `tsc -b && vite build`.
@@ -240,6 +257,40 @@ REPLACE:
 )
 ```
 
+Pair 2 (review round 1, A1: the protocol gains the conditional removal):
+
+SEARCH:
+```python
+    async def unlink(self, content_hash: str) -> bool:
+        """AD-733-1: remove the blob and its index entry. Returns ``False``
+        when not found. Concurrent ``FileNotFoundError`` never raises.
+        """
+        ...
+```
+REPLACE:
+```python
+    async def unlink(self, content_hash: str) -> bool:
+        """AD-733-1: remove the blob and its index entry. Returns ``False``
+        when not found. Concurrent ``FileNotFoundError`` never raises.
+        """
+        ...
+
+    async def unlink_if_unchanged(
+        self,
+        content_hash: str,
+        *,
+        origin: str,
+        written_at: float,
+    ) -> int | None:
+        """BF-918 (#1626): remove the blob and its index entry only if the entry
+        still has ``origin`` and was last written no later than ``written_at`` --
+        the values a caller listed -- decided under the same lock as the removal.
+        Returns the bytes freed (0 when only the index entry was left), or
+        ``None`` when the entry changed, is absent, or could not be removed.
+        """
+        ...
+```
+
 ### 7.2 `src/probos/attachments/filesystem_store.py` (M1)
 
 SEARCH:
@@ -252,6 +303,74 @@ REPLACE:
     _ORIGIN_DURABILITY: tuple[str, ...] = (
         "tts_audio",  # BF-918: least durable; any other write of the same bytes wins
         "perception_frame",
+```
+
+Pair 2 (review round 1, A1):
+
+SEARCH:
+```python
+            removed_from_index = self._index.pop(content_hash, None) is not None
+            if existed or removed_from_index:
+                self._save_index_sync()
+            return existed or removed_from_index
+
+    async def list_by_origin(self, origin: str) -> list[tuple[str, float]]:
+```
+REPLACE:
+```python
+            removed_from_index = self._index.pop(content_hash, None) is not None
+            if existed or removed_from_index:
+                self._save_index_sync()
+            return existed or removed_from_index
+
+    async def unlink_if_unchanged(
+        self,
+        content_hash: str,
+        *,
+        origin: str,
+        written_at: float,
+    ) -> int | None:
+        """BF-918 (#1626): remove an entry only if it is still the one a caller listed.
+
+        The reaper lists entries under the lock, releases it, and removes them
+        one by one; a write in between may refresh ``written_at`` or upgrade the
+        origin. The check and the removal happen here under one hold of the
+        lock, so such an entry is kept. Returns the bytes freed (0 when the blob
+        was already gone and only its index entry is removed), or ``None`` when
+        the entry is absent, has another origin, was written after
+        ``written_at``, or its blob could not be removed.
+        """
+        async with self._lock:
+            entry = self._index.get(content_hash)
+            if entry is None or entry.get("origin", "chat_attachment") != origin:
+                return None
+            try:
+                current = float(entry.get("written_at", 0.0))
+            except (TypeError, ValueError):
+                return None
+            if current > written_at:
+                return None
+            path = await self._find(content_hash)
+            freed = 0
+            if path is not None:
+                try:
+                    freed = (await asyncio.to_thread(path.stat)).st_size
+                    await asyncio.to_thread(path.unlink)
+                except FileNotFoundError:
+                    freed = 0
+                except OSError as ex:
+                    logger.warning(
+                        "BF-918: conditional unlink failed for %s: %s; "
+                        "leaving on disk for next sweep",
+                        content_hash[:8],
+                        ex,
+                    )
+                    return None
+            del self._index[content_hash]
+            self._save_index_sync()
+            return freed
+
+    async def list_by_origin(self, origin: str) -> list[tuple[str, float]]:
 ```
 
 ### 7.3 `src/probos/attachments/reaper.py` (M1)
@@ -350,17 +469,116 @@ REPLACE:
             for sha, written_at in candidates:
                 if written_at >= cutoff:
                     break  # list is sorted oldest-first.
-                freed_one = await self._safe_unlink(sha)
+                # BF-918 review round 1: removed only if unchanged since listed.
+                freed_one = await self._safe_reap(sha, origin, written_at)
                 if freed_one is not None:
                     removed += 1
                     freed += freed_one
         return (removed, freed)
 ```
 
+Pair 4 (review round 1, A6: the size pass's docstring names the real order):
+
+SEARCH:
+```python
+    async def _sweep_lru(self) -> tuple[int, int]:
+        """Evict oldest entries until total <= max_store_bytes.
+
+        Less-durable origins (perception_frame) are evicted first; if
+        that's not enough, walk through browser_screenshot, avatar_render,
+        crew_trace, then chat_attachment.
+        """
+```
+REPLACE:
+```python
+    async def _sweep_lru(self) -> tuple[int, int]:
+        """Evict oldest entries until total <= max_store_bytes.
+
+        Origins go in ``_LRU_EVICTION_ORDER``: tts_audio first (BF-918), then
+        perception_frame, browser_screenshot, avatar_render, crew_trace, then
+        chat_attachment; agent_artifact is never evicted. An entry written
+        again since it was listed is kept and frees nothing (BF-918).
+        """
+```
+
+Pair 5 (review round 1, A1: the size pass removes conditionally):
+
+SEARCH:
+```python
+            for sha, _written_at in candidates:
+                if total <= cap:
+                    break
+                freed_one = await self._safe_unlink(sha)
+```
+REPLACE:
+```python
+            for sha, listed_at in candidates:
+                if total <= cap:
+                    break
+                # BF-918 review round 1: removed only if unchanged since listed; a skip frees nothing.
+                freed_one = await self._safe_reap(sha, origin, listed_at)
+```
+
+Pair 6 (review round 1, A1):
+
+SEARCH:
+```python
+    async def _safe_unlink(self, sha: str) -> int | None:
+        """Best-effort unlink. Returns bytes freed or ``None`` on failure."""
+        size_bytes = 0
+        try:
+            size_bytes = await self._store.size(sha)
+        except FileNotFoundError:
+            # Concurrent unlink already removed the blob; still try to
+            # clear the index entry below.
+            size_bytes = 0
+        except Exception:
+            logger.warning(
+                "AD-733-1: size(%s) failed during sweep",
+                sha[:8],
+                exc_info=True,
+            )
+        try:
+            ok = await self._store.unlink(sha)
+        except FileNotFoundError:
+            return 0
+        except Exception:
+            logger.warning(
+                "AD-733-1: unlink(%s) failed during sweep; skipping",
+                sha[:8],
+                exc_info=True,
+            )
+            return None
+        if not ok:
+            return 0
+        return size_bytes
+```
+REPLACE:
+```python
+    async def _safe_reap(self, sha: str, origin: str, written_at: float) -> int | None:
+        """Best-effort conditional removal (BF-918 review round 1).
+
+        Returns the bytes freed, or ``None`` when the store kept the entry (it
+        changed since it was listed, or is gone) or the removal failed. The
+        check and the removal share one hold of the store's lock.
+        """
+        try:
+            return await self._store.unlink_if_unchanged(sha, origin=origin, written_at=written_at)
+        except Exception:
+            logger.warning(
+                "AD-733-1: unlink(%s) failed during sweep; skipping",
+                sha[:8],
+                exc_info=True,
+            )
+            return None
+```
+
 ### 7.4 `src/probos/config_models/integrations.py` (M1)
 
 SEARCH:
 ```python
+            "AD-733-1: total bytes ceiling for attachments_dir. Reaper "
+            "evicts oldest perception_frame entries first, then oldest "
             "chat_attachment entries, until under cap. 0 = disabled."
         ),
     )
@@ -369,7 +587,11 @@ SEARCH:
 ```
 REPLACE:
 ```python
-            "chat_attachment entries, until under cap. 0 = disabled."
+            "AD-733-1: total bytes ceiling for attachments_dir. Reaper "
+            "evicts oldest tts_audio entries first (BF-918), then "
+            "perception_frame, browser_screenshot, avatar_render, crew_trace "
+            "and chat_attachment entries, until under cap; agent_artifact "
+            "is never evicted. 0 = disabled."
         ),
     )
 
@@ -444,41 +666,46 @@ REPLACE:
 ### 7.7 New file: `scripts/tts_audio_inventory.py` (M1)
 
 ```python
-"""BF-918 (#1626): inventory -- and, on the Captain's word, delete -- the spoken-reply
-WAVs stored before the ``tts_audio`` origin existed.
+"""BF-918 (#1626): inventory the spoken-reply WAVs stored before the ``tts_audio`` origin
+existed. Read-only: it prints what it found and changes nothing, so it may run while
+ProbOS runs (a database being written may then be reported ``unreadable``, which keeps
+every candidate; run it with ProbOS stopped for a clean count).
 
 Until BF-918 every reply the server spoke was stored as a ``chat_attachment``, which
-never expires (on 2026-10-23 the live store held 1,126 WAVs). New speech is stored as
-``tts_audio`` and the reaper deletes it by age; this tool deals with the old ones.
-
-Read-only by default: it prints what it found and changes nothing. ``--delete`` also
-needs ``--confirm N``, where N is the candidate count this same run finds, and it holds
-the vessel's pidfile while it works, so it refuses while ProbOS runs and ProbOS cannot
-start meanwhile. Deletion goes through the attachment store, so its index stays right.
+never expires (on 2026-10-23 the live store held 1,126 WAV files, 962 of them indexed).
+New speech is stored as ``tts_audio`` and the reaper deletes it by age. Deleting the old
+ones is a later decision of the Captain's (review round 1 withdrew this tool's delete:
+it could not yet show a WAV unreferenced everywhere a reference can live).
 
 A WAV is a candidate only when every one of these holds:
 
 * its index entry says ``chat_attachment`` (or no origin) and ``audio/wav``, and the
   file ``<id>.wav`` exists;
-* its header is what Piper writes: RIFF/WAVE, PCM, mono, 16 bits, 16000 or 22050 Hz;
+* its header is exactly the 44-byte header Piper writes: ``RIFF`` with the file's size
+  less 8, ``WAVE``, a 16-byte ``fmt `` chunk for PCM, mono, 16 bits, 16000 or 22050 Hz,
+  byte rate twice the rate and block alignment 2, then ``data`` with the file's size
+  less 44, non-empty and even;
 * it was written more than ``--min-age-days`` ago (default 1);
-* its id occurs in no other record file under the data directory (the attachment
-  directory excepted), so no chat message, artifact or note refers to it. A record
-  file that cannot be read keeps every candidate.
+* its id occurs in no record under the data directory, the attachment directory
+  excepted. Every file is read, whatever its name, and an ``episode_archive`` table is
+  decoded row by row with the archive's own decoder (its payloads are compressed). A
+  file or archive row that cannot be read keeps every candidate.
+
+WAV files with no index entry are counted (``unindexed_wavs``) and never candidates.
 
 Usage (PowerShell)::
 
     d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$env:LOCALAPPDATA\\ProbOS\\data"
     ... --list                       # also print every candidate id
-    ... --delete --confirm <count>   # with ProbOS stopped
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
+import os
 import re
+import sqlite3
 import struct
 import sys
 import time
@@ -490,18 +717,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from probos.attachments.filesystem_store import FilesystemAttachmentStore  # noqa: E402
-from probos.pidfile_guard import (  # noqa: E402
-    AnotherInstanceRunning,
-    PidfileLockUnavailable,
-    acquire_pidfile,
-)
+from probos.cognitive.episode_archive import EpisodeArchiveIntegrityError, decode_payload  # noqa: E402
 
-EXIT_OK, EXIT_ERROR, EXIT_REFUSED, EXIT_RUNNING = 0, 1, 2, 3
+EXIT_OK = 0
 _PIPER_RATES = frozenset({16000, 22050})
-_RECORD_SUFFIXES = frozenset({
-    ".db", ".db-wal", ".sqlite", ".sqlite3", ".json", ".jsonl", ".yaml", ".yml", ".md", ".txt",
-})
+# RIFF, its size, WAVE, "fmt ", its size, format, channels, rate, byte rate, block align, bits, "data", its size.
+_WAV_HEADER = "<4sI4s4sIHHIIHH4sI"
+_WAV_HEADER_BYTES = 44
+_SQLITE_MAGIC = b"SQLite format 3\x00"
 _HASH = re.compile(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
 _CHUNK = 16 * 1024 * 1024
 _KEPT_REASONS = ("other_origin", "missing_file", "not_piper_shaped", "too_young", "referenced")
@@ -519,41 +742,93 @@ class Inventory:
 
 
 def piper_shaped(path: Path) -> bool:
-    """True when the WAV header is the one Piper writes (only the header is read)."""
+    """True only for the canonical 44-byte header Piper writes, with sizes that match the file."""
     try:
         with path.open("rb") as fh:
-            head = fh.read(64)
+            head = fh.read(_WAV_HEADER_BYTES)
+            size = os.fstat(fh.fileno()).st_size
     except OSError:
         return False
-    if len(head) < 36 or head[0:4] != b"RIFF" or head[8:12] != b"WAVE" or head[12:16] != b"fmt ":
+    if len(head) != _WAV_HEADER_BYTES:
         return False
-    fmt, channels, rate, _byte_rate, _align, bits = struct.unpack("<HHIIHH", head[20:36])
-    return fmt == 1 and channels == 1 and bits == 16 and rate in _PIPER_RATES
+    (riff, riff_size, wave, fmt_id, fmt_size, fmt, channels, rate,
+     byte_rate, align, bits, data_id, data_size) = struct.unpack(_WAV_HEADER, head)
+    return (
+        (riff, wave, fmt_id, data_id) == (b"RIFF", b"WAVE", b"fmt ", b"data")
+        and riff_size == size - 8
+        and fmt_size == 16
+        and (fmt, channels, bits) == (1, 1, 16)
+        and rate in _PIPER_RATES
+        and byte_rate == rate * 2
+        and align == 2
+        and 0 < data_size == size - _WAV_HEADER_BYTES
+        and data_size % 2 == 0
+    )
+
+
+def _scan(data: bytes, targets: set[bytes], found: set[str]) -> None:
+    for match in _HASH.finditer(data):
+        if match.group() in targets:
+            found.add(match.group().decode("ascii"))
+
+
+def _scan_file(path: Path, targets: set[bytes], found: set[str]) -> bytes:
+    """Scan every byte of ``path`` in chunks (an id across a chunk boundary is still
+    seen); return the file's first 16 bytes."""
+    head = b""
+    carry = b""
+    with path.open("rb") as fh:
+        while chunk := fh.read(_CHUNK):
+            head = head or chunk[:16]
+            block = carry + chunk
+            _scan(block, targets, found)
+            carry = block[-65:]
+    return head
+
+
+def _scan_episode_archive(path: Path, targets: set[bytes], found: set[str]) -> None:
+    """Decode every row of an ``episode_archive`` table in the SQLite file ``path``.
+
+    The archive stores each episode as zlib-compressed JSON, so its ids are not in the
+    file's bytes. Rows are decoded with the archive's own decoder; a row it rejects
+    raises, and the caller keeps every candidate. Opened read-only and immutable, so
+    nothing is created beside the file.
+    """
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "episode_archive" not in tables:
+            return
+        rows = connection.execute("SELECT episode_id, content_hash, payload_format, payload FROM episode_archive")
+        for episode_id, content_hash, payload_format, payload in rows:
+            record = decode_payload(episode_id, content_hash, payload_format, payload)
+            text = json.dumps([record.document, dict(record.metadata)], ensure_ascii=True)
+            _scan(text.encode("ascii"), targets, found)
+    finally:
+        connection.close()
 
 
 def referenced_ids(data_dir: Path, attachments_dir: Path, wanted: set[str]) -> tuple[set[str], list[str]]:
-    """The ids in ``wanted`` that occur in a record file under ``data_dir``, and any
-    record file that could not be read (then every id counts as referenced)."""
+    """The ids in ``wanted`` that occur in a record under ``data_dir``, and every file
+    that could not be read (then every id counts as referenced).
+
+    Every regular file outside ``attachments_dir`` is read whatever its name: logs, WAL
+    files and uncompressed backups included. A SQLite database is also opened, and an
+    ``episode_archive`` table in it is decoded row by row.
+    """
     if not wanted:
         return set(), []
     targets = {sha.encode("ascii") for sha in wanted}
     found: set[str] = set()
     unreadable: list[str] = []
     for path in sorted(data_dir.rglob("*")):
-        if path.suffix.lower() not in _RECORD_SUFFIXES or attachments_dir in path.parents:
+        if attachments_dir in path.parents or not path.is_file():
             continue
-        if not path.is_file():
-            continue
-        carry = b""
         try:
-            with path.open("rb") as fh:
-                while chunk := fh.read(_CHUNK):
-                    block = carry + chunk
-                    for match in _HASH.finditer(block):
-                        if match.group() in targets:
-                            found.add(match.group().decode("ascii"))
-                    carry = block[-65:]
-        except OSError:
+            is_sqlite = _scan_file(path, targets, found) == _SQLITE_MAGIC
+            if is_sqlite:
+                _scan_episode_archive(path, targets, found)
+        except (OSError, sqlite3.Error, EpisodeArchiveIntegrityError):
             unreadable.append(str(path))
     if unreadable:
         return set(wanted), unreadable
@@ -601,77 +876,37 @@ def take_inventory(data_dir: Path, attachments_dir: Path, *, min_age_days: float
     return inventory
 
 
-async def _unlink_all(store: FilesystemAttachmentStore, ids: list[str]) -> tuple[int, int]:
-    deleted = 0
-    freed = 0
-    for sha in ids:
-        try:
-            size = await store.size(sha)
-        except FileNotFoundError:
-            size = 0
-        if await store.unlink(sha):
-            deleted += 1
-            freed += size
-    return deleted, freed
-
-
 def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="BF-918: inventory, and on request delete, spoken WAVs stored before the tts_audio origin.",
+        description="BF-918: inventory the spoken WAVs stored before the tts_audio origin (read-only).",
     )
     parser.add_argument("--data-dir", required=True, help="the vessel's data directory, e.g. %%LOCALAPPDATA%%\\ProbOS\\data")
-    parser.add_argument("--attachments-dir", default=None, help="the attachment store (default: <data-dir>/attachments)")
     parser.add_argument("--min-age-days", type=float, default=1.0)
     parser.add_argument("--list", action="store_true", help="also print every candidate id")
-    parser.add_argument("--delete", action="store_true", help="delete the candidates (ProbOS must be stopped)")
-    parser.add_argument("--confirm", type=int, default=None, help="with --delete: the candidate count of a dry run")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse(argv)
+    started = time.monotonic()
     data_dir = Path(args.data_dir).resolve()
-    attachments_dir = Path(args.attachments_dir).resolve() if args.attachments_dir else data_dir / "attachments"
-    if args.delete and args.confirm is None:
-        print("refused: --delete needs --confirm N, where N is the candidate count a dry run reported", file=sys.stderr)
-        return EXIT_REFUSED
-    pidfile: Path | None = None
-    if args.delete:
-        try:
-            pidfile = acquire_pidfile(data_dir)
-        except (AnotherInstanceRunning, PidfileLockUnavailable) as exc:
-            print(f"refused: a ProbOS instance holds {data_dir} ({exc}); stop it, then run this again", file=sys.stderr)
-            return EXIT_RUNNING
-    try:
-        inventory = take_inventory(data_dir, attachments_dir, min_age_days=args.min_age_days, now=time.time())
-        report: dict[str, Any] = {
-            "data_dir": str(data_dir),
-            "attachments_dir": str(attachments_dir),
-            "wav_entries": inventory.wav_entries,
-            "unindexed_wavs": inventory.unindexed_wavs,
-            "candidates": len(inventory.candidates),
-            "candidate_bytes": sum(inventory.candidates.values()),
-            "kept": inventory.kept,
-            "unreadable": inventory.unreadable,
-            "deleted": 0,
-            "freed_bytes": 0,
-        }
-        if args.list:
-            report["candidate_ids"] = sorted(inventory.candidates)
-        if args.delete:
-            if args.confirm != len(inventory.candidates):
-                report["refused"] = (
-                    f"--confirm {args.confirm} does not match the {len(inventory.candidates)} candidate(s) found now"
-                )
-                print(json.dumps(report, indent=2))
-                return EXIT_REFUSED
-            store = FilesystemAttachmentStore(attachments_dir)
-            report["deleted"], report["freed_bytes"] = asyncio.run(_unlink_all(store, sorted(inventory.candidates)))
-        print(json.dumps(report, indent=2))
-        return EXIT_OK
-    finally:
-        if pidfile is not None:
-            pidfile.unlink(missing_ok=True)
+    # Review round 1 (A3): one root. The store read is always the data directory's own.
+    attachments_dir = data_dir / "attachments"
+    inventory = take_inventory(data_dir, attachments_dir, min_age_days=args.min_age_days, now=time.time())
+    report: dict[str, Any] = {
+        "data_dir": str(data_dir),
+        "wav_entries": inventory.wav_entries,
+        "unindexed_wavs": inventory.unindexed_wavs,
+        "candidates": len(inventory.candidates),
+        "candidate_bytes": sum(inventory.candidates.values()),
+        "kept": inventory.kept,
+        "unreadable": inventory.unreadable,
+        "seconds": round(time.monotonic() - started, 1),
+    }
+    if args.list:
+        report["candidate_ids"] = sorted(inventory.candidates)
+    print(json.dumps(report, indent=2))
+    return EXIT_OK
 
 
 if __name__ == "__main__":
@@ -699,8 +934,8 @@ REPLACE:
 
 ```python
 """BF-918 (#1626) S3: spoken TTS audio is stored as ``tts_audio`` and swept by age;
-anything else holding the same bytes keeps them; the inventory tool deletes nothing
-unless the Captain says so, and never while ProbOS runs.
+anything else holding the same bytes keeps them, and a sweep removes only an entry no
+write touched since it was listed; the inventory tool reads and never writes.
 
 Real store, reaper, route and tool. Every path is under ``tmp_path``; nothing touches
 the live store.
@@ -713,7 +948,7 @@ import hashlib
 import importlib.util
 import json
 import logging
-import os
+import sqlite3
 import struct
 import sys
 import time
@@ -727,6 +962,7 @@ from httpx import ASGITransport, AsyncClient
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.attachments.reaper import AttachmentReaper
 from probos.audio.tts import TTSResult
+from probos.cognitive.episode_archive import ARCHIVE_FILENAME, ArchiveRecord, EpisodeArchive
 from probos.config import AttachmentsConfig, LipSyncConfig, PerceptionConfig, TTSConfig
 from probos.routers import avatars as avatars_router_mod
 from probos.routers import chat as chat_router_mod
@@ -743,6 +979,22 @@ def _piper_wav(samples: int, *, rate: int = 22050, channels: int = 1) -> bytes:
     fmt = struct.pack("<4sIHHIIHH", b"fmt ", 16, 1, channels, rate, rate * 2 * channels, 2 * channels, 16)
     body = fmt + struct.pack("<4sI", b"data", len(data)) + data
     return struct.pack("<4sI4s", b"RIFF", 4 + len(body), b"WAVE") + body
+
+
+def _wav_fields(samples: int, *, pad: bytes = b"", **override: int) -> bytes:
+    """Piper's canonical 44-byte WAV header with ``override`` applied, then ``samples`` frames of silence."""
+    data = b"\x00\x00" * samples + pad
+    fields = {
+        "riff_size": 36 + len(data), "fmt_size": 16, "fmt": 1, "channels": 1, "rate": 22050,
+        "byte_rate": 44100, "align": 2, "bits": 16, "data_size": len(data),
+    }
+    fields.update(override)
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI", b"RIFF", fields["riff_size"], b"WAVE", b"fmt ", fields["fmt_size"],
+        fields["fmt"], fields["channels"], fields["rate"], fields["byte_rate"], fields["align"],
+        fields["bits"], b"data", fields["data_size"],
+    )
+    return header + data
 
 
 async def _write(store, blob: bytes, origin: str, *, mime: str = "audio/wav", age_seconds: float | None = None) -> str:
@@ -789,28 +1041,36 @@ async def test_reaper_deletes_tts_audio_past_its_ttl_and_nothing_else(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_a_chat_upload_of_the_same_bytes_upgrades_tts_audio(tmp_path: Path) -> None:
-    """Spoken first, then uploaded by the Captain: the more durable origin wins, and it is kept."""
+    """Spoken first, then uploaded by the Captain: the more durable origin wins, and it is kept.
+    An expired spoken WAV in the same sweep is the control: the sweep does delete."""
     store = FilesystemAttachmentStore(tmp_path)
     blob = _piper_wav(140)
     sha = await _write(store, blob, "tts_audio")
     await _write(store, blob, "chat_attachment", age_seconds=10 * _DAY)
+    expired = await _write(store, _piper_wav(141), "tts_audio", age_seconds=1000)
 
     assert [s for s, _ in await store.list_by_origin("chat_attachment")] == [sha]
-    assert await store.list_by_origin("tts_audio") == []
+    assert [s for s, _ in await store.list_by_origin("tts_audio")] == [expired]
     await _reaper(store, tts_ttl=60).sweep_once()
     assert await store.exists(sha)
+    assert not await store.exists(expired)
 
 
 @pytest.mark.asyncio
 async def test_speaking_bytes_already_held_never_downgrades_them(tmp_path: Path) -> None:
+    """An invariant, not a fix discriminator: before BF-918 ``tts_audio`` was an unknown origin,
+    coerced to ``chat_attachment``, so this passed then too. It guards the durability order.
+    An expired spoken WAV in the same sweep is the control."""
     store = FilesystemAttachmentStore(tmp_path)
     blob = _piper_wav(150)
     sha = await _write(store, blob, "chat_attachment")
     await _write(store, blob, "tts_audio", age_seconds=10 * _DAY)
+    expired = await _write(store, _piper_wav(151), "tts_audio", age_seconds=1000)
 
     assert [s for s, _ in await store.list_by_origin("chat_attachment")] == [sha]
     await _reaper(store, tts_ttl=60).sweep_once()
     assert await store.exists(sha)
+    assert not await store.exists(expired)
 
 
 @pytest.mark.asyncio
@@ -825,6 +1085,93 @@ async def test_lru_evicts_tts_audio_first(tmp_path: Path) -> None:
     assert summary["lru_removed"] == 1
     assert not await store.exists(spoken)  # spoken audio goes first, though it is newer
     assert await store.exists(frame)
+
+
+@pytest.mark.asyncio
+async def test_unlink_if_unchanged_removes_only_the_entry_that_was_listed(tmp_path: Path) -> None:
+    """Review round 1, A1: the store's conditional removal. Another origin, or a write after the
+    listed time, keeps the entry; the listed values remove it and report its bytes; once gone, ``None``."""
+    store = FilesystemAttachmentStore(tmp_path)
+    blob = _piper_wav(165)
+    sha = await _write(store, blob, "tts_audio", age_seconds=1000)
+    [(listed, written_at)] = await store.list_by_origin("tts_audio")
+
+    assert listed == sha
+    assert await store.unlink_if_unchanged(sha, origin="chat_attachment", written_at=written_at) is None
+    assert await store.unlink_if_unchanged(sha, origin="tts_audio", written_at=written_at - 1) is None
+    assert await store.exists(sha)
+    assert await store.unlink_if_unchanged(sha, origin="tts_audio", written_at=written_at) == len(blob)
+    assert not await store.exists(sha)
+    assert sha not in json.loads((tmp_path / ".index.json").read_text(encoding="utf-8"))
+    assert await store.unlink_if_unchanged(sha, origin="tts_audio", written_at=written_at) is None
+
+
+def _write_after_listing(store, *, origin: str, nth: int, sha: str, blob: bytes, write_origin: str) -> list[int]:
+    """Wrap the real store's listing: right after its ``nth`` listing of ``origin``, write ``blob``
+    again under ``write_origin`` (a refresh when that is the same origin, else an upgrade). The write
+    lands between a sweep's snapshot and its removals, as the production awaits allow; here the
+    order is fixed. Returns the listing count."""
+    listed = store.list_by_origin
+    calls = [0]
+
+    async def listing_then_write(requested: str) -> list[tuple[str, float]]:
+        rows = await listed(requested)
+        if requested == origin:
+            calls[0] += 1
+            if calls[0] == nth:
+                await store.write(sha, blob, "audio/wav", origin=write_origin)
+        return rows
+
+    store.list_by_origin = listing_then_write
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_origin", ["tts_audio", "chat_attachment", "agent_artifact"])
+async def test_a_write_after_the_ttl_listing_keeps_its_entry(tmp_path: Path, write_origin: str) -> None:
+    """Review round 1, A1: the age pass lists expired spoken audio; a write then refreshes or upgrades
+    one entry before its removal. That entry is kept and frees nothing; an untouched expired one is
+    removed (the control)."""
+    store = FilesystemAttachmentStore(tmp_path)
+    blob = _piper_wav(170)
+    control_blob = _piper_wav(180)
+    target = await _write(store, blob, "tts_audio", age_seconds=1000)
+    control = await _write(store, control_blob, "tts_audio", age_seconds=2000)
+    calls = _write_after_listing(store, origin="tts_audio", nth=1, sha=target, blob=blob, write_origin=write_origin)
+
+    summary = await _reaper(store, tts_ttl=900).sweep_once()
+
+    assert calls == [1]
+    assert summary["age_ttl_removed"] == 1
+    assert summary["freed_bytes"] == len(control_blob)
+    assert await store.exists(target)
+    assert not await store.exists(control)
+    assert target in {s for s, _ in await store.list_by_origin(write_origin)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_origin", ["tts_audio", "chat_attachment", "agent_artifact"])
+async def test_a_write_after_the_lru_listing_keeps_its_entry(tmp_path: Path, write_origin: str) -> None:
+    """Review round 1, A1: the size pass lists spoken audio oldest first; a write then refreshes or
+    upgrades the oldest before its eviction. It is kept and frees nothing, so the pass evicts the next
+    one (the control) to get under the cap."""
+    store = FilesystemAttachmentStore(tmp_path)
+    blob = _piper_wav(190)
+    control_blob = _piper_wav(200)
+    target = await _write(store, blob, "tts_audio", age_seconds=20)  # the oldest: first to go
+    control = await _write(store, control_blob, "tts_audio", age_seconds=10)
+    total = await store.total_size_bytes()
+    # The age pass lists tts_audio first (nothing has expired under a one-day TTL); the size pass second.
+    calls = _write_after_listing(store, origin="tts_audio", nth=2, sha=target, blob=blob, write_origin=write_origin)
+
+    summary = await _reaper(store, tts_ttl=_DAY, max_store_bytes=total - 1).sweep_once()
+
+    assert calls == [2]
+    assert summary["lru_removed"] == 1
+    assert summary["freed_bytes"] == len(control_blob)
+    assert await store.exists(target)
+    assert not await store.exists(control)
+    assert target in {s for s, _ in await store.list_by_origin(write_origin)}
 
 
 @pytest.mark.asyncio
@@ -909,7 +1256,17 @@ async def _legacy_store(data_dir: Path) -> dict[str, str]:
         "spoken_now": await _write(store, _piper_wav(1100), "tts_audio", age_seconds=3 * _DAY),
         "image": await _write(store, b"\x89PNG" + b"i" * 50, "chat_attachment", mime="image/png", age_seconds=3 * _DAY),
     }
-    (data_dir / "chat.db").write_bytes(b"SQLite format 3\x00 msg " + shas["referenced"].encode("ascii") + b" end")
+    # A chat record that names one WAV, in a real SQLite database (the tool opens every database it finds).
+    connection = sqlite3.connect(data_dir / "chat.db")
+    try:
+        connection.execute("CREATE TABLE chat_thread_messages (id INTEGER PRIMARY KEY, parts TEXT NOT NULL)")
+        connection.execute(
+            "INSERT INTO chat_thread_messages (parts) VALUES (?)",
+            (json.dumps([{"type": "attachment", "attachment_id": shas["referenced"]}]),),
+        )
+        connection.commit()
+    finally:
+        connection.close()
     return shas
 
 
@@ -933,49 +1290,135 @@ def test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing(tmp_path: Path, c
     assert report["kept"] == {
         "other_origin": 1, "missing_file": 0, "not_piper_shaped": 1, "too_young": 1, "referenced": 1,
     }
-    assert report["deleted"] == 0
+    assert report["unreadable"] == []
     assert _snapshot(data_dir) == before
 
 
-def test_delete_refuses_without_the_matching_count(tmp_path: Path) -> None:
+async def _archive_reference(data_dir: Path, sha: str) -> None:
+    """Archive one episode whose outcome names ``sha``, through the real writer: canonical JSON,
+    then zlib, in a SQLite BLOB, as dream pruning stores it (``cognitive/episode_archive.py``)."""
+    archive = EpisodeArchive(str(data_dir / ARCHIVE_FILENAME))
+    await archive.start()
+    try:
+        record = ArchiveRecord(
+            episode_id="bf918-archived",
+            document="The Captain's recording, played back to the crew. " * 8,
+            metadata={"content_hash": "c" * 64, "outcomes_json": json.dumps([{"attachment_ids": [sha]}])},
+        )
+        assert await archive.archive([record], reason="capacity") == frozenset({"bf918-archived"})
+    finally:
+        await archive.stop()
+
+
+@pytest.mark.parametrize(
+    "extra", [["--delete"], ["--delete", "--confirm", "2"], ["--attachments-dir", "elsewhere"]],
+)
+def test_the_tool_cannot_delete_or_read_another_store(tmp_path: Path, extra: list[str]) -> None:
+    """Review round 1, A3 and A5: the tool is read-only and reads only ``<data-dir>/attachments``.
+    Each option is refused by the parser, and nothing anywhere under ``tmp_path`` changes, a lock
+    file included."""
     data_dir = tmp_path / "data"
     asyncio.run(_legacy_store(data_dir))
-    before = _snapshot(data_dir / "attachments")
-    tool = _tool()
+    before = _snapshot(tmp_path)
 
-    assert tool.main(["--data-dir", str(data_dir), "--delete"]) == tool.EXIT_REFUSED
-    assert tool.main(["--data-dir", str(data_dir), "--delete", "--confirm", "3"]) == tool.EXIT_REFUSED
-    assert _snapshot(data_dir / "attachments") == before
-    assert not (data_dir / "probos.pid").exists()
+    with pytest.raises(SystemExit) as exited:
+        _tool().main(["--data-dir", str(data_dir), *extra])
+
+    assert exited.value.code == 2
+    assert _snapshot(tmp_path) == before
 
 
-def test_delete_with_the_count_removes_exactly_the_candidates(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_only_the_exact_piper_header_is_a_candidate(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Review round 1, A4: each malformed WAV breaks exactly one rule of the header Piper writes;
+    the canonical one (the control) is the only candidate."""
     data_dir = tmp_path / "data"
-    shas = asyncio.run(_legacy_store(data_dir))
+    malformed = {
+        "no_data_chunk": _wav_fields(700)[:36],
+        "riff_size": _wav_fields(701, riff_size=0),
+        "fmt_size": _wav_fields(702, fmt_size=0),
+        "byte_rate": _wav_fields(703, byte_rate=0),
+        "block_align": _wav_fields(704, align=0),
+        "payload_absent": _wav_fields(705, data_size=2 * 705 + 100),
+        "empty_payload": _wav_fields(0),
+        "odd_payload": _wav_fields(706, pad=b"\x00"),
+    }
 
-    assert _tool().main(["--data-dir", str(data_dir), "--delete", "--confirm", "2"]) == 0
+    async def build() -> tuple[str, dict[str, str]]:
+        store = FilesystemAttachmentStore(data_dir / "attachments")
+        good = await _write(store, _wav_fields(720), "chat_attachment", age_seconds=3 * _DAY)
+        bad = {
+            name: await _write(store, blob, "chat_attachment", age_seconds=3 * _DAY)
+            for name, blob in malformed.items()
+        }
+        return good, bad
+
+    good, bad = asyncio.run(build())
+
+    assert _tool().main(["--data-dir", str(data_dir), "--list"]) == 0
 
     report = json.loads(capsys.readouterr().out)
-    assert report["deleted"] == 2
-    attachments = data_dir / "attachments"
-    for name, sha in shas.items():
-        assert any(attachments.glob(f"{sha}.*")) is (name not in {"legacy", "legacy_low"}), name
-    index = json.loads((attachments / ".index.json").read_text(encoding="utf-8"))
-    assert shas["legacy"] not in index and shas["referenced"] in index
-    assert not (data_dir / "probos.pid").exists()  # released
+    assert report["candidate_ids"] == [good]
+    assert report["kept"]["not_piper_shaped"] == len(bad) == 8
 
 
-def test_delete_refuses_while_probos_runs(tmp_path: Path) -> None:
+def test_an_archived_reference_keeps_its_wav(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Review round 1, A2: a WAV named only inside the compressed episode archive is kept; its
+    unreferenced twin is still a candidate (the control), and the run creates nothing anywhere."""
+    data_dir = tmp_path / "data"
+    shas = asyncio.run(_legacy_store(data_dir))
+    asyncio.run(_archive_reference(data_dir, shas["legacy"]))
+    # The production encoding hides the id from a byte scan: the defect this test proves fixed.
+    assert shas["legacy"].encode("ascii") not in (data_dir / ARCHIVE_FILENAME).read_bytes()
+    before = _snapshot(data_dir)
+
+    assert _tool().main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidate_ids"] == [shas["legacy_low"]]
+    assert report["kept"]["referenced"] == 2  # the chat record's and the archived one
+    assert report["unreadable"] == []
+    assert _snapshot(data_dir) == before
+
+
+def test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 1, A2: fail closed. An archive row the archive's own decoder rejects keeps
+    every candidate, and the file is named."""
     data_dir = tmp_path / "data"
     asyncio.run(_legacy_store(data_dir))
-    before = _snapshot(data_dir / "attachments")
-    # A live process (this test's parent) holds the vessel's pidfile.
-    (data_dir / "probos.pid").write_text(str(os.getppid()), encoding="ascii")
-    tool = _tool()
+    asyncio.run(_archive_reference(data_dir, "0" * 64))
+    connection = sqlite3.connect(data_dir / ARCHIVE_FILENAME)
+    try:
+        connection.execute("UPDATE episode_archive SET payload = ?", (b"not zlib",))
+        connection.commit()
+    finally:
+        connection.close()
 
-    assert tool.main(["--data-dir", str(data_dir), "--delete", "--confirm", "2"]) == tool.EXIT_RUNNING
-    assert _snapshot(data_dir / "attachments") == before
-    assert (data_dir / "probos.pid").read_text(encoding="ascii") == str(os.getppid())
+    assert _tool().main(["--data-dir", str(data_dir)]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidates"] == 0
+    assert report["unreadable"] == [str((data_dir / ARCHIVE_FILENAME).resolve())]
+
+
+@pytest.mark.parametrize("name", ["chroma.sqlite3-wal", "backups/episodic-2026-10-01.tar"])
+def test_a_reference_in_a_file_of_any_name_keeps_its_wav(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str,
+) -> None:
+    """Review round 1, A2: no file is skipped for its name; a WAL file and an uncompressed tar
+    backup are real carriers. The unreferenced twin is the control."""
+    data_dir = tmp_path / "data"
+    shas = asyncio.run(_legacy_store(data_dir))
+    carrier = data_dir / name
+    carrier.parent.mkdir(parents=True, exist_ok=True)
+    carrier.write_bytes(b"\x37\x7f\x06\x82 frame " + shas["legacy"].encode("ascii") + b" end")
+
+    assert _tool().main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidate_ids"] == [shas["legacy_low"]]
+    assert report["unreadable"] == []
 ```
 
 ### 7.9a `tests/test_ad1270e1_config_facade.py` (M1: the pinned field count; added by the orchestrator after the oracle run, see the header)
@@ -1010,6 +1453,35 @@ REPLACE:
     runtime = _local_runtime()
 ```
 
+### 7.9c `tests/test_attachment_reaper.py` (M1: the injected removal failure moves to the conditional removal; review round 1, A1)
+
+The reaper now removes through `unlink_if_unchanged`, so a patch of `unlink` no longer reaches it, and this test's blocked entry would be reaped. The property it pins (one failing removal does not stop the sweep) is unchanged.
+
+SEARCH:
+```python
+    original_unlink = FilesystemAttachmentStore.unlink
+
+    async def _flaky_unlink(self: FilesystemAttachmentStore, ch: str) -> bool:
+        if ch == sha_blocked:
+            raise PermissionError("Windows file in use")
+        return await original_unlink(self, ch)
+
+    with patch.object(FilesystemAttachmentStore, "unlink", _flaky_unlink):
+```
+REPLACE:
+```python
+    # BF-918 (#1626) review round 1: the reaper removes through unlink_if_unchanged (the entry it
+    # listed, checked under the store lock), so the injected failure moves there.
+    original_unlink = FilesystemAttachmentStore.unlink_if_unchanged
+
+    async def _flaky_unlink(self: FilesystemAttachmentStore, ch: str, **kwargs: Any) -> int | None:
+        if ch == sha_blocked:
+            raise PermissionError("Windows file in use")
+        return await original_unlink(self, ch, **kwargs)
+
+    with patch.object(FilesystemAttachmentStore, "unlink_if_unchanged", _flaky_unlink):
+```
+
 ### 7.10 Generated files (M1; by tool, never by hand)
 
 Rebase onto `main` with BF-914 merged first, if it has merged. Then run:
@@ -1023,7 +1495,7 @@ d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_profiles.py --check
 d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py --check
 ```
 
-- The diff should add exactly the `attachments.tts_audio_retention_seconds` leaf and its rows. Do not hard-code a leaf count or a checksum.
+- The diff should add exactly the `attachments.tts_audio_retention_seconds` leaf and its rows, and (review round 1, A6) change the `max_store_bytes` description: its `config-reference.md` row and any schema digest computed over it in `config-facade-baseline.yaml`. Do not hard-code a leaf count or a checksum.
 - If BF-914 merges after M1 is committed, regenerate on top of it, never by merging these files by hand.
 
 ### 7.11 New file: `src/probos/audio/tts/resident.py` (M2)
@@ -1067,7 +1539,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Iterator
+from typing import IO, Any, Callable, Iterator, TypeVar
 
 from probos.execution.command_env import trusted_command_env
 
@@ -1081,6 +1553,40 @@ VOICE_MAX_IN_FLIGHT = 4 * VOICE_EXECUTOR_WORKERS
 PIPER_MAX_RESIDENT = 4
 #: How much of a dead process's stderr its warning quotes.
 _STDERR_TAIL_BYTES = 500
+
+_T = TypeVar("_T")
+
+
+class VoiceWorkRefused(OSError):
+    """BF-918: the voice executor refused work, or its shutdown cancelled queued work.
+
+    An ``OSError``, so the subprocess helpers' existing log-and-degrade handlers
+    (ffmpeg and rhubarb return ``None`` or ``[]`` on ``OSError`` and remove their
+    converted file) degrade on it unchanged.
+    """
+
+
+def _caller_cancelled() -> bool:
+    """True when the running task itself was asked to stop, not when an executor future was cancelled."""
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+async def run_voice_work(executor: concurrent.futures.Executor | None, fn: Callable[..., _T], *args: Any) -> _T:
+    """``fn(*args)`` on ``executor`` (``None``: asyncio's default pool).
+
+    Raises ``VoiceWorkRefused`` when the executor is shut down, or when its shutdown
+    cancelled the work before it ran; a cancellation of the calling task propagates.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(executor, fn, *args)
+    except RuntimeError as exc:
+        raise VoiceWorkRefused(f"BF-918: voice work refused: {exc}") from exc
+    except asyncio.CancelledError:
+        if _caller_cancelled():
+            raise
+        raise VoiceWorkRefused("BF-918: the voice executor shut down before this work ran") from None
 
 
 @dataclass(frozen=True)
@@ -1123,7 +1629,13 @@ class PiperWorker:
 
     ``synthesize_blocking`` blocks: the service runs it on the voice executor, one
     request at a time per worker (it holds the key's lock). The process, its stderr
-    file and its output directory belong to this object; ``close`` releases them.
+    file and its output directory belong to this object until they are released.
+
+    BF-918 lifecycle: open (idle, or running one request) until ``close``, then closed
+    for good. Exactly one party releases the resources: ``close`` when the worker is
+    idle, or the running request on its own thread when it returns (``close`` then only
+    kills the process, so no pipe is closed under a read). A closed worker refuses
+    every later request and starts nothing.
     """
 
     def __init__(self, key: PiperWorkerKey) -> None:
@@ -1132,17 +1644,44 @@ class PiperWorker:
         self._dir: Path | None = None
         self._stderr: IO[bytes] | None = None
         self._timed_out = False
+        # Guards the two flags below and every swap of the three resources above;
+        # never held across a blocking call.
+        self._state = threading.Lock()
+        self._running = False
+        self._closed = False
 
     @property
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
     def synthesize_blocking(self, text: str, timeout: float) -> PiperOutcome:
-        """Run one request; starts the process first when it is not running."""
+        """Run one request; starts the process first when it is not running.
+
+        Refused (``closed``) once the worker is closed. When ``close`` came while this
+        request ran, the request releases the worker before it returns.
+        """
+        with self._state:
+            if self._closed:  # closed while this request was queued: start nothing
+                return PiperOutcome(None, "closed")
+            self._running = True
+        try:
+            return self._request(text, timeout)
+        finally:
+            with self._state:
+                self._running = False
+                release = self._closed
+            if release:
+                self._release(wait_seconds=0.5)
+
+    def _request(self, text: str, timeout: float) -> PiperOutcome:
+        """One request on this worker's process; ``synthesize_blocking`` owns the lifecycle around it."""
         out: Path | None = None
         try:
             if not self.alive:
                 self._spawn()
+                if self._closed:  # closed while Popen ran, so close found no process to kill
+                    self.kill()
+                    return PiperOutcome(None, "closed")
             proc, out_dir = self._proc, self._dir
             if proc is None or out_dir is None or proc.stdin is None or proc.stdout is None:
                 return PiperOutcome(None, "error: no pipes to the piper process")
@@ -1212,17 +1751,21 @@ class PiperWorker:
             pass
 
     def _spawn(self) -> None:
-        self.close()
-        self._dir = Path(tempfile.mkdtemp(prefix="probos-piper-"))
+        self._release(wait_seconds=2.0)  # a dead process's leftovers; the worker stays open
+        directory = Path(tempfile.mkdtemp(prefix="probos-piper-"))
         # BF-918: stderr goes to a file, so Piper's per-line log can never fill a pipe and block it.
-        self._stderr = (self._dir / "stderr.log").open("wb")
-        self._proc = subprocess.Popen(
-            self.key.argv(self._dir),
+        stderr = (directory / "stderr.log").open("wb")
+        with self._state:
+            self._dir, self._stderr = directory, stderr
+        proc = subprocess.Popen(
+            self.key.argv(directory),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=self._stderr,
+            stderr=stderr,
             env=trusted_command_env(),
         )
+        with self._state:
+            self._proc = proc
         logger.info("BF-918: resident piper started (voice=%s)", Path(self.key.model).stem)
 
     def kill(self) -> None:
@@ -1235,8 +1778,26 @@ class PiperWorker:
                 pass
 
     def close(self, wait_seconds: float = 2.0) -> None:
-        """Kill the process and release its pipes, stderr file and directory. Idempotent."""
-        proc, self._proc = self._proc, None
+        """Refuse every later request, and release the process, pipes, stderr file and directory.
+
+        Idempotent; never raises. On a worker running a request it only kills the
+        process: that request releases the rest on its own thread when it returns, so
+        no pipe is closed under its read.
+        """
+        with self._state:
+            self._closed = True
+            running = self._running
+        if running:
+            self.kill()  # the running request releases the rest when it returns
+            return
+        self._release(wait_seconds)
+
+    def _release(self, wait_seconds: float) -> None:
+        """Kill the process and release its pipes, stderr file and directory; a no-op once released."""
+        with self._state:
+            proc, self._proc = self._proc, None
+            stderr, self._stderr = self._stderr, None
+            directory, self._dir = self._dir, None
         if proc is not None:
             if proc.poll() is None:
                 try:
@@ -1253,13 +1814,11 @@ class PiperWorker:
                         stream.close()
                     except OSError:
                         pass
-        stderr, self._stderr = self._stderr, None
         if stderr is not None:
             try:
                 stderr.close()
             except OSError:
                 pass
-        directory, self._dir = self._dir, None
         if directory is not None:
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -1291,6 +1850,8 @@ class VoiceSynthesisService:
         self._closed = False
         self._resident: OrderedDict[PiperWorkerKey, PiperWorker] = OrderedDict()
         self._busy: set[PiperWorkerKey] = set()
+        # BF-918: evicted workers whose close has not run yet; ``close`` reaches them here.
+        self._retiring: set[PiperWorker] = set()
         self._locks: dict[PiperWorkerKey, asyncio.Lock] = {}
 
     @property
@@ -1349,9 +1910,12 @@ class VoiceSynthesisService:
                     future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout)
                     outcome = await future
                 except asyncio.CancelledError:
-                    # The caller went away while the worker is mid-request on its thread: kill it
-                    # and drop it, so no later request can share its pipes.
+                    # The caller went away, or shutdown cancelled the request while it was queued.
+                    # Close the worker (mid-request on its thread, it is killed and releases itself
+                    # when that request returns) and drop it, so no later request shares its pipes.
                     self._forget(key, worker)
+                    if not _caller_cancelled():
+                        return None  # shutdown, not the caller: degrade, as a refusal does
                     raise
                 except Exception:
                     # The executor shut down (the runtime is stopping) or the worker raised what
@@ -1363,7 +1927,8 @@ class VoiceSynthesisService:
                     self._busy.discard(key)
                 if outcome.audio is not None:
                     return outcome.audio
-                self._log_failure(outcome, text, timeout)
+                if not self._closed:  # a request that shutdown ended is not a piper failure
+                    self._log_failure(outcome, text, timeout)
                 if self._resident.get(key) is worker:
                     del self._resident[key]
                 await self._retire(worker)
@@ -1394,12 +1959,22 @@ class VoiceSynthesisService:
         worker.close(wait_seconds=0.5)
 
     async def _retire(self, worker: PiperWorker) -> None:
-        """Close a worker that has no request in flight, off the event loop."""
+        """Close a worker that has no request in flight, off the event loop when the executor takes it.
+
+        Until its close has run the worker stays in ``_retiring``, where the service's
+        ``close`` reaches it; the ``finally`` closes it here when the executor refused
+        the close or a shutdown or the caller cancelled it. ``PiperWorker.close`` is
+        idempotent, so once the queued close has run both are no-ops.
+        """
+        self._retiring.add(worker)
         worker.kill()
         try:
-            await asyncio.get_running_loop().run_in_executor(self.executor, worker.close)
-        except RuntimeError:
-            worker.close(wait_seconds=0.5)
+            await run_voice_work(self.executor, worker.close)
+        except (VoiceWorkRefused, RuntimeError):
+            pass  # closed or closing (``executor`` raises RuntimeError once closed): the finally closes it
+        finally:
+            self._retiring.discard(worker)
+            worker.close(wait_seconds=0.5)  # a no-op once the queued close has run
 
     @staticmethod
     def _log_failure(outcome: PiperOutcome, text: str, timeout: float) -> None:
@@ -1417,17 +1992,22 @@ class VoiceSynthesisService:
             logger.warning("AD-738/BF-918: piper subprocess failed: %s", outcome.reason)
 
     def close(self) -> None:
-        """Stop every resident process and the executor; refuse all later work. Idempotent; never awaits."""
+        """Stop every resident process and the executor; refuse all later work. Idempotent; never awaits.
+
+        Every worker the service holds, resident or retiring, is closed here: an idle
+        one is released now; a running one is killed, and its request releases it on its
+        voice thread when it returns (``PiperWorker.close``). Queued work is cancelled,
+        and its requests degrade instead of raising.
+        """
         if self._closed:
             return
         self._closed = True
-        workers = list(self._resident.items())
+        workers = [*self._resident.values(), *self._retiring]
         self._resident.clear()
-        for _key, worker in workers:
+        for worker in workers:
             worker.kill()
-        for key, worker in workers:
-            if key not in self._busy:
-                worker.close(wait_seconds=0.5)
+        for worker in workers:
+            worker.close(wait_seconds=0.5)  # a running worker releases itself when its request returns
         executor, self._executor = self._executor, None
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -1707,6 +2287,7 @@ REPLACE:
 ```python
 from typing import TYPE_CHECKING, Literal
 
+from probos.audio.tts.resident import run_voice_work
 from probos.execution.command_env import trusted_command_env
 
 if TYPE_CHECKING:
@@ -1739,11 +2320,16 @@ Pair 3 of 7:
 
 SEARCH:
 ```python
+        loop = asyncio.get_running_loop()
+        try:
             returncode, stderr_bytes = await loop.run_in_executor(None, _run_sync)
 ```
 REPLACE:
 ```python
-            returncode, stderr_bytes = await loop.run_in_executor(executor, _run_sync)
+        try:
+            # BF-918: a refused or shutdown-cancelled stage raises VoiceWorkRefused, an OSError:
+            # the handler below removes the temp file and degrades.
+            returncode, stderr_bytes = await run_voice_work(executor, _run_sync)
 ```
 
 Pair 4 of 7:
@@ -1831,13 +2417,19 @@ async def _run_rhubarb(
 
 SEARCH:
 ```python
+        loop = asyncio.get_running_loop()
+        try:
             returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
                 None, _run_sync,
             )
 ```
 REPLACE:
 ```python
-            returncode, stdout_bytes, stderr_bytes = await loop.run_in_executor(
+        try:
+            # BF-918: a stage the voice executor refuses (it closed after the conversion) raises
+            # VoiceWorkRefused, an OSError: the handler below degrades to [] and the caller's
+            # finally removes the converted file.
+            returncode, stdout_bytes, stderr_bytes = await run_voice_work(
                 executor, _run_sync,
             )
 ```
@@ -2075,8 +2667,9 @@ REPLACE:
         self.execution_long_runs = LongRunService()
 
         # BF-918 (#1626): voice work -- resident Piper processes and a dedicated,
-        # bounded executor for synthesis and lip-sync, so a spoken reply does not
-        # queue behind crew cognition on asyncio's default pool. Constructing it
+        # bounded executor for synthesis and lip-sync, so they do not queue behind
+        # crew cognition on asyncio's default pool (storing and serving the WAV go
+        # through the attachment store, which still uses that pool). Constructing it
         # starts nothing; closed in startup/shutdown.py.
         from probos.audio.tts.resident import VoiceSynthesisService
         self.voice_synthesis = VoiceSynthesisService()
@@ -2163,6 +2756,7 @@ _READ_DEADLINE_S = 10.0
 class _Stdin:
     def __init__(self, proc: "FakePiperProcess") -> None:
         self._proc = proc
+        self.closed = False  # BF-918 A2: what the worker released is observable
 
     def write(self, data: bytes) -> int:
         self._proc.accept(data)
@@ -2172,18 +2766,19 @@ class _Stdin:
         return None
 
     def close(self) -> None:
-        return None
+        self.closed = True
 
 
 class _Stdout:
     def __init__(self, proc: "FakePiperProcess") -> None:
         self._proc = proc
+        self.closed = False
 
     def readline(self) -> bytes:
         return self._proc.next_line()
 
     def close(self) -> None:
-        return None
+        self.closed = True
 
 
 class FakePiperProcess:
@@ -2288,15 +2883,23 @@ class FakePiperLauncher:
         wav: bytes = b"RIFF fake wav",
         stderr_bytes: bytes = b"",
         release: threading.Event | None = None,
+        spawn_gate: threading.Event | None = None,
     ) -> None:
         self.modes = list(modes) or ["ok"]
         self.wav = wav
         self.stderr_bytes = stderr_bytes
         self.release = release
+        # BF-918 A2: a launch sets ``spawning`` and then waits for ``spawn_gate`` (if given),
+        # so a test can close the worker while ``Popen`` has not returned.
+        self.spawn_gate = spawn_gate
+        self.spawning = threading.Event()
         self.launched: list[FakePiperProcess] = []
         self.launch_threads: list[str] = []
 
     def __call__(self, args: list[str], *_pos: Any, **kwargs: Any) -> FakePiperProcess:
+        self.spawning.set()
+        if self.spawn_gate is not None:
+            self.spawn_gate.wait(timeout=_READ_DEADLINE_S)
         mode = self.modes[min(len(self.launched), len(self.modes) - 1)]
         proc = FakePiperProcess(
             args, kwargs, mode=mode, wav=self.wav, stderr_bytes=self.stderr_bytes, release=self.release,
@@ -2324,6 +2927,7 @@ import hashlib
 import inspect
 import logging
 import subprocess
+import tempfile
 import textwrap
 import threading
 import time
@@ -2364,6 +2968,21 @@ async def _until(condition, timeout: float = 5.0) -> None:
         if time.monotonic() > deadline:
             raise AssertionError("condition not reached")
         await asyncio.sleep(0.01)
+
+
+def _held(proc) -> dict[str, bool]:
+    """BF-918 A2: what the worker still holds for a fake process; all False once it released everything."""
+    out_dir = Path(proc.args[proc.args.index("--output_dir") + 1])
+    return {
+        "alive": proc.returncode is None,
+        "stdin": not proc.stdin.closed,
+        "stdout": not proc.stdout.closed,
+        "stderr": not proc.kwargs["stderr"].closed,
+        "directory": out_dir.exists(),
+    }
+
+
+_NOTHING_HELD = {"alive": False, "stdin": False, "stdout": False, "stderr": False, "directory": False}
 
 
 @pytest.fixture
@@ -2414,6 +3033,49 @@ class _FakeRhubarb:
             kill=lambda: None,
             wait=lambda timeout=None: 0,
         )
+
+
+class _FakeConverter:
+    """BF-918 A2: stands in for ``subprocess.Popen`` for ffmpeg and rhubarb.
+
+    An ffmpeg launch writes a WAV to its output path and runs ``on_convert`` on the
+    conversion's own thread; any other launch is rhubarb (``self.rhubarb``).
+    """
+
+    def __init__(self, on_convert=None) -> None:
+        self.converted: list[Path] = []
+        self.rhubarb = _FakeRhubarb()
+        self._on_convert = on_convert
+
+    def __call__(self, args, *_a, **_kw):
+        if args[1] == "-y":  # ffmpeg -y -i <input> ... <output>
+            out = Path(args[-1])
+            out.write_bytes(_WAV)
+            self.converted.append(out)
+            if self._on_convert is not None:
+                self._on_convert()
+            return SimpleNamespace(
+                returncode=0,
+                communicate=lambda input=None, timeout=None: (None, b""),
+                kill=lambda: None,
+                wait=lambda timeout=None: 0,
+            )
+        return self.rhubarb(args, *_a, **_kw)
+
+
+def _webm_attachment(rt, target: Path, tmp_path: Path) -> str:
+    """A browser-captured WebM in the store, with rhubarb and ffmpeg configured (both faked)."""
+    rhubarb_bin = tmp_path / "rhubarb"
+    rhubarb_bin.write_bytes(b"")
+    ffmpeg_bin = tmp_path / "ffmpeg"
+    ffmpeg_bin.write_bytes(b"")
+    rt.config.lipsync = LipSyncConfig(
+        backend="rhubarb", binary_path=str(rhubarb_bin), ffmpeg_binary_path=str(ffmpeg_bin),
+    )
+    blob = b"webm capture"
+    sha = hashlib.sha256(blob).hexdigest()
+    (target / f"{sha}.webm").write_bytes(blob)
+    return sha
 
 
 # --- the resident process --------------------------------------------------------------
@@ -2510,9 +3172,13 @@ async def test_a_crashed_process_degrades_with_its_stderr_and_is_replaced(launch
 @pytest.mark.asyncio
 async def test_an_empty_wav_degrades(launcher, service, caplog) -> None:
     caplog.set_level(logging.WARNING)
-    launcher("empty")
+    fake = launcher("empty", "ok")
     assert await service.synthesize(_key(), "hi", 5.0) is None
     assert "0 bytes" in caplog.text
+    assert _held(fake.launched[0]) == _NOTHING_HELD  # retired, and released
+    # Recovery control (A2): the next request starts a new process and is answered.
+    assert await service.synthesize(_key(), "hi", 5.0) == _WAV
+    assert len(fake.launched) == 2
 
 
 @pytest.mark.asyncio
@@ -2547,6 +3213,7 @@ async def test_the_least_recently_used_idle_process_makes_room(launcher) -> None
         by_model = {p.args[p.args.index("--model") + 1]: p for p in fake.launched}
         assert sorted(by_model) == ["a.onnx", "b.onnx", "c.onnx"]
         assert by_model["b.onnx"].killed is True  # least recently used
+        assert _held(by_model["b.onnx"]) == _NOTHING_HELD  # control for B2: its close ran to the end
         assert by_model["a.onnx"].killed is False
         assert svc.resident_count == 2
     finally:
@@ -2565,10 +3232,147 @@ async def test_close_stops_resident_processes_and_refuses_new_work(launcher) -> 
 
     assert fake.launched[0].killed is True
     assert not out_dir.exists()
+    assert _held(fake.launched[0]) == _NOTHING_HELD  # control for B1: an idle worker
     assert svc.closed is True
     assert await svc.synthesize(_key(), "x", 5.0) is None
     with svc.admit() as admitted:
         assert admitted is False
+
+
+def test_a_closed_worker_refuses_a_request_and_starts_nothing(launcher) -> None:
+    """BF-918 A2 (B1): a request that reaches a worker after its close starts no process."""
+    fake = launcher("ok")
+    worker = resident.PiperWorker(_key())
+    other = resident.PiperWorker(_key())
+    try:
+        worker.close()
+        outcome = worker.synthesize_blocking("x", 5.0)
+        assert outcome.audio is None and outcome.reason == "closed"
+        assert fake.launched == []
+        # Positive control: an open worker starts its process and answers.
+        assert other.synthesize_blocking("x", 5.0).audio == _WAV
+        assert len(fake.launched) == 1
+    finally:
+        worker.close()
+        other.close()
+
+
+@pytest.mark.asyncio
+async def test_close_while_a_request_runs_releases_the_worker_when_it_returns(launcher) -> None:
+    """BF-918 A2 (B1): shutdown kills a busy worker, never closes its pipes under the read, and the request releases it."""
+    release = threading.Event()
+    fake = launcher("gate", release=release)
+    svc = VoiceSynthesisService()
+    try:
+        task = asyncio.create_task(svc.synthesize(_key(), "busy", 5.0))
+        await _until(lambda: bool(fake.launched) and bool(fake.launched[0].requests))
+        proc = fake.launched[0]
+
+        svc.close()
+
+        assert proc.killed is True
+        held = _held(proc)
+        assert held["stdin"] and held["stdout"] and held["stderr"] and held["directory"]  # not under the read
+        release.set()
+        assert await asyncio.wait_for(task, timeout=5.0) == _WAV  # the WAV was made: it is delivered
+        assert _held(proc) == _NOTHING_HELD
+        assert svc.resident_count == 0
+    finally:
+        release.set()
+        svc.close()
+
+
+@pytest.mark.asyncio
+async def test_close_while_the_process_starts_kills_it_and_releases_everything(launcher, caplog) -> None:
+    """BF-918 A2 (B1): shutdown overlaps Popen; the process it could not see yet is killed once it exists."""
+    caplog.set_level(logging.WARNING, logger="probos.audio.tts.resident")
+    gate = threading.Event()
+    fake = launcher("ok", spawn_gate=gate)
+    svc = VoiceSynthesisService()
+    try:
+        task = asyncio.create_task(svc.synthesize(_key(), "starting", 5.0))
+        await _until(fake.spawning.is_set)
+
+        svc.close()
+        gate.set()
+
+        assert await asyncio.wait_for(task, timeout=5.0) is None
+        proc = fake.launched[0]
+        assert proc.killed is True and proc.requests == []
+        assert _held(proc) == _NOTHING_HELD
+        assert not [r for r in caplog.records if r.name == "probos.audio.tts.resident"]  # not a piper failure
+    finally:
+        gate.set()
+        svc.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_a_retiring_worker_and_the_request_degrades(launcher) -> None:
+    """BF-918 A2 (B2): the evicted worker's close is queued behind a busy voice thread when shutdown comes."""
+    fake = launcher("ok")
+    svc = VoiceSynthesisService(workers=1, max_resident=1)
+    release = threading.Event()
+    try:
+        assert await svc.synthesize(_key("a.onnx"), "x", 5.0) == _WAV
+        evicted = fake.launched[0]
+        svc.executor.submit(release.wait, 10)  # the only voice thread is busy
+        task = asyncio.create_task(svc.synthesize(_key("b.onnx"), "y", 5.0))
+        await _until(lambda: evicted.killed)  # evicted, and its close is queued
+
+        svc.close()
+
+        assert _held(evicted) == _NOTHING_HELD  # released by close itself, before the request resumes
+        release.set()
+        assert await asyncio.gather(task, return_exceptions=True) == [None]
+        assert len(fake.launched) == 1
+    finally:
+        release.set()
+        svc.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_retirement_still_closes_the_worker(launcher) -> None:
+    """BF-918 A2 (B2): the caller goes away while the evicted worker's close is queued."""
+    fake = launcher("ok")
+    svc = VoiceSynthesisService(workers=1, max_resident=1)
+    release = threading.Event()
+    try:
+        assert await svc.synthesize(_key("a.onnx"), "x", 5.0) == _WAV
+        evicted = fake.launched[0]
+        svc.executor.submit(release.wait, 10)
+        task = asyncio.create_task(svc.synthesize(_key("b.onnx"), "y", 5.0))
+        await _until(lambda: evicted.killed)
+
+        task.cancel()
+        done, _pending = await asyncio.wait({task}, timeout=2.0)
+
+        assert task in done and task.cancelled()  # the caller's own cancellation propagates
+        assert _held(evicted) == _NOTHING_HELD
+        assert len(fake.launched) == 1
+    finally:
+        release.set()
+        svc.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_degrades_a_queued_request_instead_of_cancelling_it(launcher) -> None:
+    """BF-918 A2 (B2): shutdown cancels queued voice work; its request answers None, as a refusal does."""
+    fake = launcher("ok")
+    svc = VoiceSynthesisService(workers=1)
+    release = threading.Event()
+    try:
+        svc.executor.submit(release.wait, 10)
+        task = asyncio.create_task(svc.synthesize(_key(), "queued", 5.0))
+        await _until(lambda: svc.resident_count == 1)  # claimed, and its request is queued
+
+        svc.close()
+        release.set()
+
+        assert await asyncio.gather(task, return_exceptions=True) == [None]
+        assert fake.launched == []
+    finally:
+        release.set()
+        svc.close()
 
 
 @pytest.mark.asyncio
@@ -2701,6 +3505,78 @@ async def test_lipsync_route_runs_rhubarb_on_the_voice_executor(voice_client, mo
 
     assert body["backend"] == "rhubarb"
     assert fake.threads and fake.threads[0].startswith("probos-voice")
+
+
+@pytest.mark.asyncio
+async def test_lipsync_converts_then_runs_rhubarb_on_the_voice_executor(voice_client, monkeypatch, tmp_path: Path) -> None:
+    """Control for B3: nothing overlaps; a captured WebM is converted, read by rhubarb, and its converted file removed."""
+    client, rt, target = voice_client
+    fake = _FakeConverter()
+    monkeypatch.setattr(rhubarb_backend.subprocess, "Popen", fake)
+    sha = _webm_attachment(rt, target, tmp_path)
+
+    resp = await client.post("/api/avatars/lipsync", json={"attachment_id": sha})
+
+    assert resp.status_code == 200 and resp.json()["backend"] == "rhubarb"
+    assert len(fake.converted) == 1 and not fake.converted[0].exists()
+    assert fake.rhubarb.threads and fake.rhubarb.threads[0].startswith("probos-voice")
+
+
+@pytest.mark.asyncio
+async def test_lipsync_degrades_when_the_executor_closes_between_conversion_and_rhubarb(voice_client, monkeypatch, tmp_path: Path) -> None:
+    """BF-918 A2 (B3): shutdown closes the voice executor while ffmpeg runs; the rhubarb stage is refused and degrades."""
+    client, rt, target = voice_client
+    loop = asyncio.get_running_loop()
+    voice = rt.voice_synthesis
+
+    def _close_during_conversion() -> None:
+        loop.call_soon_threadsafe(voice.close)
+        deadline = time.monotonic() + 5.0
+        while not voice.closed and time.monotonic() < deadline:
+            time.sleep(0.005)
+
+    fake = _FakeConverter(on_convert=_close_during_conversion)
+    monkeypatch.setattr(rhubarb_backend.subprocess, "Popen", fake)
+    sha = _webm_attachment(rt, target, tmp_path)
+
+    resp = await client.post("/api/avatars/lipsync", json={"attachment_id": sha})
+
+    assert voice.closed is True
+    assert resp.status_code == 200
+    assert resp.json() == {"backend": "heuristic", "frames": []}
+    assert fake.rhubarb.threads == []  # the refused stage started nothing
+    assert len(fake.converted) == 1 and not fake.converted[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_lipsync_degrades_and_removes_its_temp_file_when_shutdown_cancels_the_conversion(voice_client, monkeypatch, tmp_path: Path) -> None:
+    """BF-918 A2 (B3): the conversion is queued behind a busy voice thread when shutdown cancels it."""
+    client, rt, target = voice_client
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))
+    fake = _FakeConverter()
+    monkeypatch.setattr(rhubarb_backend.subprocess, "Popen", fake)
+    sha = _webm_attachment(rt, target, tmp_path)
+    voice = VoiceSynthesisService(workers=1)
+    rt.voice_synthesis = voice
+    release = threading.Event()
+    try:
+        voice.executor.submit(release.wait, 10)
+        task = asyncio.create_task(client.post("/api/avatars/lipsync", json={"attachment_id": sha}))
+        await _until(lambda: any(temp_dir.glob("*.wav")))  # the output file exists; its work is queued
+
+        voice.close()
+        release.set()
+        (resp,) = await asyncio.gather(task, return_exceptions=True)
+
+        assert not isinstance(resp, BaseException), resp
+        assert resp.status_code == 200 and resp.json() == {"backend": "heuristic", "frames": []}
+        assert fake.converted == [] and fake.rhubarb.threads == []
+        assert list(temp_dir.iterdir()) == []
+    finally:
+        release.set()
+        voice.close()
 
 
 @pytest.mark.asyncio
@@ -3342,6 +4218,12 @@ let _activeUtteranceId: number | null = null;
  *  playback, and caps what a stopped reply can have spent at one sentence. */
 const TTS_PREFETCH_LOOKAHEAD = 1;
 
+/** BF-918 (review round 1, D7a): the `dropped` reason of a dispatched utterance that
+ *  lost the device (a stop, or a newer dispatch) before any of its audio started.
+ *  It emitted no 'start', so it emits no 'end' (BF-655 pairs them); AD-1291's
+ *  'dropped' is its terminal event, and the arbiter's wait ends on it. */
+const CANCELLED_BEFORE_AUDIO = 'cancelled-before-audio';
+
 /** BF-918 (#1626): User Timing measures for the live acceptance.
  *  `bf918:first-audio` runs from an utterance's dispatch to its audio actually
  *  playing; `bf918:sentence-gap` from one sentence's `ended` to the next
@@ -3429,7 +4311,7 @@ REPLACE:
     if (status.sentence_pipelining_enabled) {
       const sentences = splitIntoSentences(text);
       if (sentences.length > 1) {
-        await runPrefetchQueue<PreparedSpeech>(
+        const played = await runPrefetchQueue<PreparedSpeech>(
           sentences,
           (sentence) => _prepareServerSpeech(sentence, profile, emotion),
           (prepared, sentence) => _playPreparedSpeech(prepared, sentence, profile, agent_id, utterance_id),
@@ -3437,6 +4319,9 @@ REPLACE:
           TTS_PREFETCH_LOOKAHEAD,
           _discardPreparedSpeech,
         );
+        // BF-918 (review round 1, D7a): stopped before its first sentence played. No
+        // 'start' fired, so no 'end' will: 'dropped' ends this utterance for the arbiter.
+        if (played === 0) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
         return;
       }
     }
@@ -3460,16 +4345,21 @@ interface PreparedSpeech {
  *  it, and resolve when playback ENDS. The default single-call path (the full
  *  reply) uses it; the pipelined path drives the same two halves through
  *  `runPrefetchQueue`. Honest-degrade: on any failure the browser speaks THIS
- *  utterance instead. */
+ *  utterance instead. BF-918 (review round 1, D7a): resolves `false`, having
+ *  started nothing, when the utterance lost the device (a stop, or a newer
+ *  dispatch) while it synthesized: its audio is discarded unplayed, and a failed
+ *  synthesis does not fall back to the browser. `true` otherwise. */
 async function _synthesizeAndPlay(
   text: string,
   profile: VoiceProfile | undefined,
   agent_id: string | undefined,
   emotion: string | undefined,
   utterance_id: number,
-): Promise<void> {
+): Promise<boolean> {
   const prepared = await _prepareServerSpeech(text, profile, emotion);
+  if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }
   await _playPreparedSpeech(prepared, text, profile, agent_id, utterance_id);
+  return true;
 }
 
 /** BF-918: the network half. POST the text and make (but do not play) its <audio>.
@@ -3626,6 +4516,11 @@ async function _playPreparedSpeech(
         });
       }
       audio.play().then(undefined, () => {
+        // BF-918 (review round 1): pausing a play() that has not started playback
+        // rejects it (AbortError) AFTER the 'pause' listener above fired this
+        // utterance's one terminal 'end'. A stop or a newer dispatch did that, so it
+        // was cancelled, not failed: speak nothing in its place.
+        if (_activeUtteranceId !== utterance_id) { _finish(false); return; }
         // play() rejected — fall back to browser for THIS utterance, resolve.
         if (_activeAudio === audio) _activeAudio = null;
         _speakBrowserFallback(text, profile, agent_id, utterance_id);
@@ -3963,6 +4858,13 @@ class FakeUtterance {
   }
 }
 
+/** Review round 1: how the fake's play() settles. 'resolve': at once, as when
+ *  playback starts. 'hold': pending, as a real element's is while its WAV still
+ *  loads; a pause() meanwhile fires 'pause' and then rejects it with AbortError
+ *  (the HTML pause steps; the reviewer measured this order in Chromium).
+ *  'blocked': refused by the autoplay policy (NotAllowedError), and no 'play'. */
+let playMode: 'resolve' | 'hold' | 'blocked' = 'resolve';
+
 class FakeAudio {
   src: string;
   volume = 1;
@@ -3971,8 +4873,22 @@ class FakeAudio {
   played = false;
   discarded = false;
   private _listeners: Record<string, Array<() => void>> = {};
-  pause = vi.fn(() => { this.emit('pause'); });
-  play = vi.fn(async () => { this.played = true; this.emit('play'); });
+  private _rejectPlay: ((err: unknown) => void) | null = null;
+  pause = vi.fn(() => {
+    this.emit('pause');
+    const reject = this._rejectPlay;
+    this._rejectPlay = null;
+    if (reject !== null) reject(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'));
+  });
+  play = vi.fn((): Promise<void> => {
+    if (playMode === 'blocked') {
+      return Promise.reject(new DOMException('play() failed because the user did not interact with the document first.', 'NotAllowedError'));
+    }
+    this.played = true;
+    this.emit('play');
+    if (playMode === 'resolve') return Promise.resolve();
+    return new Promise<void>((_resolve, reject) => { this._rejectPlay = reject; });
+  });
   removeAttribute = vi.fn(() => { this.discarded = true; });
   load = vi.fn();
   constructor(src: string) {
@@ -4014,6 +4930,9 @@ async function _flush(): Promise<void> {
 
 interface Plan {
   pipelining: boolean;
+  backend?: string;
+  holdStatus?: boolean;
+  failTts?: number[];
   deferVisemes?: boolean;
   inlineVisemes?: unknown[];
   holdTts?: number[];
@@ -4029,7 +4948,9 @@ function _makeFetch(plan: Plan) {
   let nth = 0;
   const fetchMock = vi.fn(async (url: string, opts?: { body?: string }): Promise<any> => {
     if (url.endsWith('/api/avatars/tts/status')) {
-      return { ok: true, json: async () => ({ enabled: true, backend: 'piper', sentence_pipelining_enabled: plan.pipelining }) };
+      const status = { ok: true, json: async () => ({ enabled: true, backend: plan.backend ?? 'piper', sentence_pipelining_enabled: plan.pipelining }) };
+      if (plan.holdStatus) { plan.holdStatus = false; return new Promise((resolve) => { held.push(() => resolve(status)); }); }
+      return status;
     }
     if (url === '/api/avatars/tts') {
       const body = JSON.parse(opts?.body ?? '{}');
@@ -4048,8 +4969,9 @@ function _makeFetch(plan: Plan) {
           duration_ms: 0,
         }),
       };
-      if (plan.holdTts?.includes(nth)) return new Promise((resolve) => { held.push(() => resolve(response)); });
-      return response;
+      const answer = plan.failTts?.includes(nth) ? { ok: false, json: async () => ({}) } : response;
+      if (plan.holdTts?.includes(nth)) return new Promise((resolve) => { held.push(() => resolve(answer)); });
+      return answer;
     }
     if (url === '/api/avatars/lipsync') {
       const id = String(JSON.parse(opts?.body ?? '{}').attachment_id);
@@ -4074,7 +4996,7 @@ async function _voice() {
   return voiceMod;
 }
 
-beforeEach(() => { _installGlobals(); });
+beforeEach(() => { _installGlobals(); playMode = 'resolve'; });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); cleanup(); });
 
 describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
@@ -4111,17 +5033,22 @@ describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
     try {
       voiceMod.speakResponse('One. Two. Three.');
       await _flush();
-      expect(createdAudios.length).toBe(2);
+      const audiosWhileOnePlayed = createdAudios.length;
 
       voiceMod.stopSpeaking();
       await _flush();
 
+      // Review round 1: the cancellation first, so a tree without it fails here,
+      // not at the prefetch premise below.
       expect(createdAudios[0].pause).toHaveBeenCalled();
-      expect(createdAudios[1].played).toBe(false);
-      expect(createdAudios[1].discarded).toBe(true);
-      expect(f.posted).toEqual(['One.', 'Two.']);
       expect(events.filter((e) => e.startsWith('start'))).toEqual(['start:One.']);
       expect(events.filter((e) => e.startsWith('end'))).toEqual(['end:One.']);
+      expect(events.filter((e) => e.startsWith('dropped'))).toEqual([]); // its audio started: it ends, it is not dropped
+      // The prefetch premise: sentence two had been prepared while one played.
+      expect(audiosWhileOnePlayed).toBe(2);
+      expect(f.posted).toEqual(['One.', 'Two.']);
+      expect(createdAudios[1].played).toBe(false);
+      expect(createdAudios[1].discarded).toBe(true);
     } finally {
       off();
     }
@@ -4136,18 +5063,23 @@ describe('BF-918 prefetch (AD-1071 pipelining on)', () => {
     try {
       voiceMod.speakResponse('One. Two. Three.');
       await _flush();
-      expect(f.posted).toEqual(['One.', 'Two.']);
-      expect(createdAudios.length).toBe(1); // Two's response has not arrived
+      const postedWhileOnePlayed = [...f.posted];
+      const audiosWhileOnePlayed = createdAudios.length; // Two's response has not arrived
 
       voiceMod.stopSpeaking();
       await _flush();
       f.release();
       await _flush();
 
+      // Review round 1: the cancellation first (see P2).
+      expect(createdAudios[0].pause).toHaveBeenCalled();
+      expect(starts).toEqual(['One.']);
       expect(createdAudios.length).toBe(2); // made when its response arrived...
       expect(createdAudios[1].played).toBe(false); // ...and never played
       expect(createdAudios[1].discarded).toBe(true);
-      expect(starts).toEqual(['One.']);
+      // The prefetch premise: Two was requested while One played, and was in flight.
+      expect(postedWhileOnePlayed).toEqual(['One.', 'Two.']);
+      expect(audiosWhileOnePlayed).toBe(1);
     } finally {
       off();
     }
@@ -4260,6 +5192,235 @@ describe('BF-918 stop and timing', () => {
     expect(measure.mock.calls.map((c) => c[0])).toEqual(['bf918:first-audio', 'bf918:sentence-gap']);
   });
 });
+
+describe('BF-918 review round 1: a stop before audio, and a stop of a pending play (D7a)', () => {
+  const spoken = (): string[] => speakCalls.map((u) => (u as FakeUtterance).text);
+
+  async function _record() {
+    const voiceMod = await import('../voice');
+    const events: string[] = [];
+    const drops: Array<{ id?: number; reason?: string }> = [];
+    const off = voiceMod.onSpeechEvent((e) => {
+      events.push(`${e.type}:${e.source ?? ''}:${e.utterance?.text ?? ''}`);
+      if (e.type === 'dropped') drops.push({ id: e.utterance_id, reason: e.reason });
+    });
+    return { events, drops, off };
+  }
+
+  it('P9 pipelined: a stop while sentence one synthesizes plays nothing and frees the arbiter for the next reply (C1)', async () => {
+    const f = _makeFetch({ pipelining: true, holdTts: [1] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _record();
+    try {
+      const stopped = voiceMod.speakResponse('One. Two.');
+      await _flush();
+      expect(f.posted).toEqual(['One.']); // sentence one is synthesizing; nothing plays yet
+      expect(createdAudios.length).toBe(0);
+
+      voiceMod.stopSpeaking();
+      await _flush();
+      f.release(); // its synthesis answers after the stop
+      await _flush();
+      voiceMod.speakResponse('Next.');
+      await _flush();
+
+      // C1: the next reply is dispatched now, not after SPEECH_JOIN_TIMEOUT_MS.
+      expect(f.posted).toEqual(['One.', 'Next.']);
+      expect(createdAudios.map((a) => a.played)).toEqual([false, true]);
+      expect(createdAudios[0].discarded).toBe(true);
+      // No 'start' for the stopped reply, so no 'end': one 'dropped' ends it.
+      expect(r.events).toEqual(['dropped::One. Two.', 'start:server:Next.']);
+      expect(r.drops).toEqual([{ id: stopped, reason: 'cancelled-before-audio' }]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P10 single call: a reply whose synthesis answers after a stop is never played, and the next reply is dispatched (C3)', async () => {
+    const f = _makeFetch({ pipelining: false, holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _record();
+    try {
+      // Control: an answer that arrives with no stop plays.
+      voiceMod.speakResponse('Control.');
+      await _flush();
+      expect(createdAudios[0].played).toBe(true);
+      createdAudios[0].end();
+      await _flush();
+
+      const stopped = voiceMod.speakResponse('Only one.');
+      await _flush();
+      expect(f.posted).toEqual(['Control.', 'Only one.']);
+      voiceMod.stopSpeaking();
+      await _flush();
+      f.release();
+      await _flush();
+
+      expect(createdAudios.length).toBe(2);
+      expect(createdAudios[1].played).toBe(false); // C3: nothing starts after the stop
+      expect(createdAudios[1].discarded).toBe(true);
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      expect(f.posted).toEqual(['Control.', 'Only one.', 'Next.']);
+      expect(r.events.filter((e) => !e.startsWith('end'))).toEqual(['start:server:Control.', 'dropped::Only one.', 'start:server:Next.']);
+      expect(r.drops).toEqual([{ id: stopped, reason: 'cancelled-before-audio' }]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P11 a synthesis that fails after a stop is not spoken by the browser either; unstopped, it is (C3)', async () => {
+    const f = _makeFetch({ pipelining: false, failTts: [1, 2], holdTts: [2] });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _record();
+    try {
+      // Control: an unstopped reply whose synthesis fails is spoken by the browser.
+      voiceMod.speakResponse('Control.');
+      await _flush();
+      expect(spoken()).toEqual(['Control.']);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+
+      const stopped = voiceMod.speakResponse('Only one.');
+      await _flush();
+      expect(f.posted).toEqual(['Control.', 'Only one.']);
+      voiceMod.stopSpeaking();
+      await _flush();
+      f.release();
+      await _flush();
+
+      expect(spoken()).toEqual(['Control.']); // C3: no fallback after the stop
+      expect(createdAudios.length).toBe(0);
+      expect(r.drops).toEqual([{ id: stopped, reason: 'cancelled-before-audio' }]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P12 a stop during the first status probe speaks nothing; the next reply is spoken (C3)', async () => {
+    const f = _makeFetch({ pipelining: false, backend: 'browser', holdStatus: true });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _record();
+    try {
+      const stopped = voiceMod.speakResponse('Probe.');
+      await _flush();
+      expect(spoken()).toEqual([]); // the probe has not answered
+      voiceMod.stopSpeaking();
+      f.release();
+      await _flush();
+
+      expect(spoken()).toEqual([]);
+      expect(r.drops).toEqual([{ id: stopped, reason: 'cancelled-before-audio' }]);
+      // Control: the next reply, with the browser backend now cached, is spoken, with no POST.
+      voiceMod.speakResponse('Next.');
+      await _flush();
+      expect(spoken()).toEqual(['Next.']);
+      expect(f.posted).toEqual([]);
+    } finally {
+      r.off();
+    }
+  });
+
+  it('P13 a stop while play() is still pending ends that utterance once and speaks nothing in its place (C2)', async () => {
+    const f = _makeFetch({ pipelining: false });
+    (globalThis as any).fetch = f.fetchMock;
+    const voiceMod = await _voice();
+    const r = await _record();
+    try {
+      // Control: a play() the autoplay policy refuses, with no stop, is spoken by the browser.
+      playMode = 'blocked';
+      voiceMod.speakResponse('Refused.');
+      await _flush();
+      expect(spoken()).toEqual(['Refused.']);
+      (speakCalls[0] as FakeUtterance).onend?.();
+      await _flush();
+      r.events.length = 0;
+
+      // The WAV is still loading, so play() is pending when the stop pauses it.
+      playMode = 'hold';
+      voiceMod.speakResponse('Pending.');
+      await _flush();
+      expect(createdAudios[1].played).toBe(true); // its 'play' fired: the server 'start' is out
+      voiceMod.stopSpeaking();
+      await _flush();
+      expect(createdAudios[1].pause).toHaveBeenCalled();
+      expect(spoken()).toEqual(['Refused.']); // C2: nothing speaks in its place
+
+      // Control: a play() that had resolved (playback started) when the stop came.
+      playMode = 'resolve';
+      voiceMod.speakResponse('Playing.');
+      await _flush();
+      voiceMod.stopSpeaking();
+      await _flush();
+      expect(spoken()).toEqual(['Refused.']);
+      // Exactly one terminal 'end' for each 'start', and nothing dropped.
+      expect(r.events).toEqual(['start:server:Pending.', 'end:server:Pending.', 'start:server:Playing.', 'end:server:Playing.']);
+    } finally {
+      r.off();
+    }
+  });
+});
+```
+
+### 7.30a `ui/src/audio/voice.ts` (M3: review round 1, C1 and C3; apply after §7.26)
+
+These pairs change lines that §7.26 leaves as they are; each SEARCH is the file after §7.26. D7a is the rule.
+
+Pair 1 of 3:
+
+SEARCH:
+```ts
+    const unsub = onSpeechEvent((event) => {
+      if (event.type !== 'end') return;
+      if (event.utterance_id !== entry.id) return;
+      done();
+    });
+```
+REPLACE:
+```ts
+    const unsub = onSpeechEvent((event) => {
+      // BF-918 (#1626, review round 1): or its own 'dropped'. A dispatched entry that
+      // lost the device before any of its audio started emits no 'start' and so no
+      // 'end'; `_playNow` fires 'dropped' for it (D7a). Nothing else drops a started
+      // entry: pre-emption and `flushSpeechQueue` skip them.
+      if (event.type !== 'end' && event.type !== 'dropped') return;
+      if (event.utterance_id !== entry.id) return;
+      done();
+    });
+```
+
+Pair 2 of 3:
+
+SEARCH:
+```ts
+    const status = await _fetchTtsStatus();
+    if (status === null || !status.enabled || status.backend !== 'piper') {
+```
+REPLACE:
+```ts
+    const status = await _fetchTtsStatus();
+    // BF-918 (review round 1, D7a): each await between dispatch and audio re-checks
+    // that this utterance still owns the device. Stopped during the probe: speak nothing.
+    if (_activeUtteranceId !== utterance_id) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }
+    if (status === null || !status.enabled || status.backend !== 'piper') {
+```
+
+Pair 3 of 3:
+
+SEARCH:
+```ts
+    // Single-call path (default): one TTS POST for the whole reply.
+    await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id);
+```
+REPLACE:
+```ts
+    // Single-call path (default): one TTS POST for the whole reply. BF-918 (review
+    // round 1, D7a): `false` means it lost the device before its audio started.
+    if (!(await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id))) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);
 ```
 
 ## 8. Tracking
@@ -4276,7 +5437,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser). Rhubarb and ffmpeg run on the same executor, and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin. `scripts/tts_audio_inventory.py` inventories the 1,126 legacy WAVs (read-only; it deletes only on the Captain's `--delete --confirm N`). New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`. #1626 stays open for the Captain's live measurement and the sweep decision. The contract is `prompts/bf-918-tts-first-audio-latency.md`.
+**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). A reply stopped before any of its audio started plays nothing, falls back to nothing and ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter. Stopping a still-loading play no longer speaks the text through the browser instead. Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser); work the executor refuses, or that shutdown cancels, degrades the same way at every stage, and shutdown releases every resident and evicted process (a busy one when its request returns). Rhubarb and ffmpeg run on the same executor (the attachment store's write and lookups still use the default pool: slice M4 of #1626), and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin; the age and size sweeps remove an entry only if no write touched it since it was listed (`unlink_if_unchanged`). `scripts/tts_audio_inventory.py` counts the legacy WAVs (1,126 files, 962 indexed) read-only, and deleting them is tracked separately. New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`. #1626 stays open for slices M4 (a bounded I/O executor owned by the attachment store) and M5 (the arbiter's wait ends on a pipelined reply's last sentence) and for the Captain's live measurement, which runs once after both have merged; deleting the legacy WAVs is a separate Captain decision (the contract's section 18). The contract is `prompts/bf-918-tts-first-audio-latency.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -4292,9 +5453,10 @@ REPLACE:
 - *Scope.* `audio/tts/resident.py` (new), `piper_backend.py`, `audio/tts/__init__.py`, `avatars/rhubarb_backend.py`, `routers/avatars.py`, `runtime.py`, `startup/shutdown.py`, `startup/finalize.py`, `attachments/{store,filesystem_store,reaper}.py`, `config_models/integrations.py`, `scripts/tts_audio_inventory.py` (new), `ui/src/audio/{voice,voiceChunking}.ts`. Contract: `prompts/bf-918-tts-first-audio-latency.md`. Tier HIGH for S3.
 - *D2 (resident synthesizer).* One `piper --json-input` process per (binary, model, prosody set). Piper fixes prosody per process, and its JSON lines carry only text, output_file and speaker (upstream `main.cpp`; wyoming-piper does the same). At most 4 processes; the least recently used idle one is evicted. Requests write ASCII JSON lines; WAVs go to files (BF-282); `Popen` in a thread (BF-280); `trusted_command_env()` (BF-892); stderr to a file. A per-request timer kills a hung process and the next request starts another. Rejected: in-process synthesis (no package installed; piper1-gpl is GPL-3).
 - *D3 (visemes).* A client that sends `defer_visemes: true` gets audio without rhubarb (`visemes_deferred: true`) and fetches the visemes from the existing `/api/avatars/lipsync`; the heuristic schedule runs until they arrive. Other clients are unchanged. Rejected: Piper phoneme timing (not emitted), and overlapping rhubarb with the store write.
-- *D4 (executor).* `VoiceSynthesisService` is owned by the runtime (built in `__init__`, closed in `shutdown()`): 4 threads, 16 admitted requests; refusal degrades. Not `set_default_executor` (global, and bounds nothing).
-- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). The legacy WAVs are handled by a dry-run tool; deleting them is the Captain's decision.
-- *D7.* `stopSpeaking` pauses Piper audio; the AD-1291 arbiter and BF-655's one terminal 'end' are unchanged.
+- *D4 (executor).* `VoiceSynthesisService` is owned by the runtime (built in `__init__`, closed in `shutdown()`): 4 threads, 16 admitted requests; refusal degrades, including work the executor refuses or that shutdown cancels (`run_voice_work`). Not `set_default_executor` (global, and bounds nothing). The attachment store's I/O stays on the default pool (slice M4 of #1626).
+- *D4a (worker lifecycle).* One releaser per worker: `close` when idle, the running request's thread otherwise; a closed worker starts nothing; evicted workers stay reachable until closed.
+- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). Both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged`, review round 1). The legacy WAVs are counted by a read-only tool (Piper's exact header; references read from every file and the decoded episode archive); deleting them is tracked separately and is the Captain's decision.
+- *D7.* `stopSpeaking` pauses Piper audio. A dispatched utterance that loses the device before its audio starts ends with `dropped` (`cancelled-before-audio`), not `end`, and the arbiter's wait ends on either; BF-655's one terminal `end` per `start` is unchanged.
 - *Reversal.* Revert the commits. `tts_audio` index entries then belong to no known origin and are never swept or evicted (the safe direction). Resident processes end with the runtime.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -4306,15 +5468,17 @@ REPLACE:
 
 - `tts.sentence_pipelining_enabled` stays default-off, and the Captain's `config/system.yaml` is not touched. The status route is unchanged.
 - The browser backend makes zero HTTP calls per utterance (Captain decision #9).
-- The AD-1291 arbiter, its classes, `flushSpeechQueue`, `SPEECH_JOIN_TIMEOUT_MS`, BF-764, BF-767 and BF-655 balance are unchanged.
+- The AD-1291 arbiter's classes and pre-emption, `flushSpeechQueue`, GUARD 1, GUARD 2 and `SPEECH_JOIN_TIMEOUT_MS` are unchanged; its wait for an entry also ends on that entry's own `dropped` (D7a). BF-764, BF-767's shared utterance id and BF-655 balance are unchanged.
 - `splitIntoSentences` is unchanged.
 - The `/api/avatars/lipsync` contract is unchanged, and so is the browser-capture lip-sync path (`useLipSyncCapture`, `uploadAudioForLipSync`).
 - The prosody table, voice resolution, AD-1025 anchoring and BF-291 overrides are unchanged.
 - Rhubarb's flags, the ffmpeg conversion, `probe_version` and `is_available` (default pool, used by the doctor) are unchanged.
+- The attachment store keeps its blocking I/O on asyncio's default pool: storing the spoken WAV (`write`) and serving it to the browser (`exists`, `get_path`) are not isolated from crew work (D4; slice M4 of #1626).
 - The `.index.json` format, every other origin's retention, `agent_artifact` (never LRU-evicted) and `max_store_bytes` are unchanged.
+- `unlink` keeps its unconditional meaning for erasure (`knowledge/erasure.py`); only the reaper uses the conditional removal.
 - Out of scope: streaming the LLM reply (#1130), compressed or streamed audio, and a voice mode. The legacy WAVs are not deleted by any build, test or gate.
 
-## 10. Mutation rows (21 Python and 4 TypeScript; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (51 Python and 10 TypeScript; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes, and restore each file before the next row.
 
@@ -4347,12 +5511,48 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | R19 | `src/probos/audio/tts/resident.py` | `future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout)` | `future = loop.run_in_executor(None, worker.synthesize_blocking, text, timeout)` | `test_voice_work_does_not_queue_behind_a_busy_default_pool` |
 | R21 | `src/probos/audio/tts/piper_backend.py` | `noise_scale=_noise_scale,` | `noise_scale=self._noise_scale,` | `test_each_prosody_set_gets_its_own_process` |
 | R22 | `src/probos/startup/shutdown.py` | `voice_service.close()` | `pass` | `test_the_runtime_owns_one_voice_service_and_shutdown_closes_it` |
-| R24 | `scripts/tts_audio_inventory.py` | `if args.confirm != len(inventory.candidates):` | `if False:` | `test_delete_refuses_without_the_matching_count` |
 | R25 | `scripts/tts_audio_inventory.py` | `if sha in referenced:` | `if False:` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` |
+| R26 | `src/probos/attachments/filesystem_store.py` | `if entry is None or entry.get("origin", "chat_attachment") != origin:` | `if entry is None:` | `test_unlink_if_unchanged_removes_only_the_entry_that_was_listed` (a write always refreshes `written_at`, so only this direct case isolates the origin check) |
+| R27 | `src/probos/attachments/filesystem_store.py` | `if current > written_at:` | `if False:` | `test_a_write_after_the_ttl_listing_keeps_its_entry[tts_audio]`; `test_a_write_after_the_lru_listing_keeps_its_entry[tts_audio]`; `test_unlink_if_unchanged_removes_only_the_entry_that_was_listed` |
+| R28 | `src/probos/attachments/reaper.py` | `freed_one = await self._safe_reap(sha, origin, written_at)` | `freed_one = await self._safe_reap(sha, origin, float("inf"))` | `test_a_write_after_the_ttl_listing_keeps_its_entry[tts_audio]` |
+| R29 | `src/probos/attachments/reaper.py` | `freed_one = await self._safe_reap(sha, origin, listed_at)` | `freed_one = await self._safe_reap(sha, origin, float("inf"))` | `test_a_write_after_the_lru_listing_keeps_its_entry[tts_audio]` |
+| R30 | `scripts/tts_audio_inventory.py` | `if len(head) != _WAV_HEADER_BYTES:` | `if False:` | `test_only_the_exact_piper_header_is_a_candidate` (the 36-byte file then raises in the unpack) |
+| R31 | `scripts/tts_audio_inventory.py` | `and riff_size == size - 8` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`riff_size`) |
+| R32 | `scripts/tts_audio_inventory.py` | `and fmt_size == 16` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`fmt_size`) |
+| R33 | `scripts/tts_audio_inventory.py` | `and byte_rate == rate * 2` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`byte_rate`) |
+| R34 | `scripts/tts_audio_inventory.py` | `and align == 2` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`block_align`) |
+| R35 | `scripts/tts_audio_inventory.py` | `and 0 < data_size == size - _WAV_HEADER_BYTES` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`payload_absent`, `empty_payload`) |
+| R36 | `scripts/tts_audio_inventory.py` | `and data_size % 2 == 0` | `and True` | `test_only_the_exact_piper_header_is_a_candidate` (`odd_payload`) |
+| R37 | `scripts/tts_audio_inventory.py` | `if is_sqlite:` | `if False:` | `test_an_archived_reference_keeps_its_wav`; `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
+| R38 | `scripts/tts_audio_inventory.py` | `if "episode_archive" not in tables:` | `if True:` | `test_an_archived_reference_keeps_its_wav`; `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
+| R39 | `scripts/tts_audio_inventory.py` | `if unreadable:` | `if False:` | `test_an_archive_row_that_cannot_be_decoded_keeps_every_candidate` |
+| R40 | `scripts/tts_audio_inventory.py` | `if attachments_dir in path.parents or not path.is_file():` | `if not path.is_file():` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` (the index then names every id) |
+| R46 | `src/probos/audio/tts/resident.py` | `if self._closed:  # closed while this request was queued: start nothing` | `if False:` | `test_a_closed_worker_refuses_a_request_and_starts_nothing` (a process is launched on a closed worker) |
+| R47 | `src/probos/audio/tts/resident.py` | `if self._closed:  # closed while Popen ran, so close found no process to kill` | `if False:` | `test_close_while_the_process_starts_kills_it_and_releases_everything` (the request reaches the live process and returns audio) |
+| R48 | `src/probos/audio/tts/resident.py` | `if release:` | `if False:` | `test_close_while_a_request_runs_releases_the_worker_when_it_returns` (pipes, stderr file and directory stay) |
+| R49 | `src/probos/audio/tts/resident.py` | `if running:` | `if False:` | `test_close_while_a_request_runs_releases_the_worker_when_it_returns` (released under the read: stdin closed when close returns) |
+| R50 | `src/probos/audio/tts/resident.py` | `worker.close(wait_seconds=0.5)  # a running worker releases itself when its request returns` | `pass` | `test_close_while_a_request_runs_releases_the_worker_when_it_returns`; `test_shutdown_closes_a_retiring_worker_and_the_request_degrades` |
+| R51 | `src/probos/audio/tts/resident.py` | `workers = [*self._resident.values(), *self._retiring]` | `workers = list(self._resident.values())` | `test_shutdown_closes_a_retiring_worker_and_the_request_degrades` (held when close returns) |
+| R52 | `src/probos/audio/tts/resident.py` | `self._retiring.add(worker)` | `pass` | `test_shutdown_closes_a_retiring_worker_and_the_request_degrades` (held when close returns) |
+| R53 | `src/probos/audio/tts/resident.py` | `worker.close(wait_seconds=0.5)  # a no-op once the queued close has run` | `pass` | `test_a_cancelled_retirement_still_closes_the_worker` |
+| R54 | `src/probos/audio/tts/resident.py` | `if not _caller_cancelled():` | `if False:` | `test_shutdown_degrades_a_queued_request_instead_of_cancelling_it` (CancelledError) |
+| R55 | `src/probos/audio/tts/resident.py` | `if not self._closed:  # a request that shutdown ended is not a piper failure` | `if True:` | `test_close_while_the_process_starts_kills_it_and_releases_everything` (a warning is logged) |
+| R56 | `src/probos/audio/tts/resident.py` | `if _caller_cancelled():` | `if True:` | `test_shutdown_closes_a_retiring_worker_and_the_request_degrades`; `test_lipsync_degrades_and_removes_its_temp_file_when_shutdown_cancels_the_conversion` (CancelledError) |
+| R57 | `src/probos/audio/tts/resident.py` | `return task is not None and task.cancelling() > 0` | `return False` | `test_a_cancelled_retirement_still_closes_the_worker` (the cancellation is swallowed; the task is not done within 2 s) |
+| R58 | `src/probos/audio/tts/resident.py` | `raise VoiceWorkRefused(f"BF-918: voice work refused: {exc}") from exc` | `raise` | `test_lipsync_degrades_when_the_executor_closes_between_conversion_and_rhubarb` (RuntimeError escapes) |
+| R59 | `src/probos/avatars/rhubarb_backend.py` | `returncode, stderr_bytes = await run_voice_work(executor, _run_sync)` | `returncode, stderr_bytes = await asyncio.get_running_loop().run_in_executor(executor, _run_sync)` | `test_lipsync_degrades_and_removes_its_temp_file_when_shutdown_cancels_the_conversion` |
+| R60 | `src/probos/avatars/rhubarb_backend.py` | `returncode, stdout_bytes, stderr_bytes = await run_voice_work(` | `returncode, stdout_bytes, stderr_bytes = await asyncio.get_running_loop().run_in_executor(` | `test_lipsync_degrades_when_the_executor_closes_between_conversion_and_rhubarb` |
+| R61 | `src/probos/audio/tts/resident.py` | `except (VoiceWorkRefused, RuntimeError):` | `except VoiceWorkRefused:` | `test_close_while_the_process_starts_kills_it_and_releases_everything` (the closed `executor` raises out of `synthesize`) |
 | TS1 | `ui/src/audio/voiceChunking.ts` | `for (let k = i + 1; k <= i + lookahead; k += 1) ensure(k);` | `for (let k = i + 1; k <= i; k += 1) ensure(k);` | run by hand: voiceChunking Q2; prefetch P1 |
 | TS3 | `ui/src/audio/voiceChunking.ts` | `if (p !== undefined) void p.then(discard);` | `if (false) void p.then(discard);` | run by hand: voiceChunking Q3; prefetch P3 |
 | TS5 | `ui/src/audio/voice.ts` | `if (_settled \|\| _activeAudio !== audio \|\| frames.length === 0) return;` | `if (frames.length === 0) return;` | run by hand: prefetch P4 |
 | TS6 | `ui/src/audio/voice.ts` | `try { _activeAudio.pause(); } catch { /* BF-918: barge-in silences server audio too */ }` | `// BF-918 mutant: no pause` | run by hand: prefetch P7, P2 |
+| TS7 | `ui/src/audio/voice.ts` | `if (event.type !== 'end' && event.type !== 'dropped') return;` | `if (event.type !== 'end') return;` | run by hand: prefetch P9, P10 (the next reply is never posted: the arbiter still waits) |
+| TS8 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }` | `if (false) { _fireDropped(entry, CANCELLED_BEFORE_AUDIO); return; }` | run by hand: prefetch P12 (the browser speaks 'Probe.' after the stop) |
+| TS9 | `ui/src/audio/voice.ts` | `if (played === 0) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);` | `if (played < 0) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);` | run by hand: prefetch P9 (no 'dropped'; the next reply is never posted) |
+| TS10 | `ui/src/audio/voice.ts` | `if (!(await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id))) _fireDropped(entry, CANCELLED_BEFORE_AUDIO);` | `await _synthesizeAndPlay(text, profile, agent_id, emotion, utterance_id);` | run by hand: prefetch P10 (the next reply is never posted), P11 (no 'dropped') |
+| TS11 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _discardPreparedSpeech(prepared); return false; }` | `if (false) { _discardPreparedSpeech(prepared); return false; }` | run by hand: prefetch P10 (the stopped reply's audio plays), P11 (the browser speaks it) |
+| TS12 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _finish(false); return; }` | `if (false) { _finish(false); return; }` | run by hand: prefetch P13 (the browser speaks 'Pending.' after the stop) |
 
 ## 11. Verified Against Codebase (2026-10-23, worktree `bf918-consult` at `origin/main` `eea6e2f4`)
 
@@ -4427,6 +5627,8 @@ Every SEARCH was copied from a Read on this tree. A multi-line block is unique b
 | `.venv` has `onnxruntime`; no `piper*` package | Glob `.venv\Lib\site-packages` |
 | live, by Glob: 1,126 `*.wav`, 1 `*.webm`, 11,820 files | `%LOCALAPPDATA%\ProbOS\data\attachments` |
 
+**Review round 1 (Architect and orchestrator, 2026-10-24, at candidate 2 `5dd0d9a9`).** Area A read: `filesystem_store.py:295-321` (`unlink`) and `:243-259` (the write's refresh and upgrade), `reaper.py:166, 209, 227-255`, `store.py:75-79`, `erasure.py:47, 286-289, 298`, `episode_archive.py:61, 250-287, 462-480`, `sqlite_factory.py:25-36`, `integrations.py:254-257`, `config-reference.md:1976`, `architecture-baseline.yaml:316-322`, `test_attachment_reaper.py:269-285`, `test_ad1192_owned_steps_finalization.py:2796, 2894-2905`. Area B read: `resident.py` (the worker and the service), `rhubarb_backend.py:337, 413-429`, `routers/avatars.py:301, 372`, `routers/chat.py:1253-1255`, `filesystem_store.py:229, 270`, and upstream Piper's `main.cpp` and `piper.cpp` for its logging. Area C read: `voice.ts:432-444, 501, 521-524, 537-545, 578-579, 735-739, 870-879`, `meetingVoice.ts:127` and the nine `onSpeechEvent` listeners (A3-2). The orchestrator's read-only evidence on the live store, 2026-10-24: 1,129 index entries, 962 `audio/wav` (all `chat_attachment`, all with Piper's one canonical 44-byte header at 22,050 Hz), 1,126 `.wav` files on disk (164 without an index entry), and a copy of `episode_archive.db` with 1,988 payloads that all decode and none of which holds any of the 962 ids.
+
 ## 12. Absence Verified (2026-10-23)
 
 ```
@@ -4451,6 +5653,14 @@ HOLDS: yes
 CLAIM: no ?raw reader of the TS files this edits
 RUN:   Grep "\?raw" ui/src -> 38 imports, none of voice.ts / voiceChunking.ts / useLipSyncCapture.ts
 HOLDS: yes
+
+CLAIM (review round 1): only the reaper needs the conditional removal, and no reaper test uses a fake store
+RUN:   Grep "\.unlink\(" -> reaper.py:243, erasure.py:298, scripts/tts_audio_inventory.py:166 and test fakes only; Grep "AttachmentReaper\(" -> finalize.py:757, test_attachment_reaper.py (9), test_ad1192:2894 (a real store)
+HOLDS: yes
+
+CLAIM (review round 1): no test or script uses --attachments-dir, and no test pins the max_store_bytes description
+RUN:   Grep "attachments-dir|tts_audio_inventory" ; Grep "evicts oldest perception_frame" -> integrations.py:256, config-reference.md:1976 and prompts/archive only
+HOLDS: yes
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -4466,7 +5676,8 @@ HOLDS: yes
   - AD-733-1: the origin and durability model.
   - AD-1246 `LongRunService`: the lifecycle precedent.
   - BF-893's busy-default-pool harness: the pattern behind `test_voice_work_does_not_queue_behind_a_busy_default_pool`.
-  - AD-1341 S1's pidfile: reused as the tool's lock.
+  - BF-906's read-only SQLite open (`storage/sqlite_factory.py:25-36`): the tool adds `immutable=1`, so it creates no `-wal` or `-shm` beside a database. The pidfile is no longer used: the tool is read-only since review round 1.
+  - The conditional removal is the usual compare-and-delete: the check and the delete are decided under one lock. A read before the delete leaves the window open (review round 1).
 - **`docs/research/reference-projects.md`**: no row covers TTS or voice. No overdue row is relevant (judged on 2026-10-23); considered, deferred.
 - **Blind spots:**
   - A failed prefetch's browser fallback can overlap the next sentence's audio. This predates BF-918; register R3.
@@ -4481,36 +5692,44 @@ HOLDS: yes
 
 1. A resident process serves one request at a time. A worker that timed out, exited, returned empty, was cancelled or raised is never used again.
 2. The timeout bounds every request from its write to its answer. A hung process is killed by then, and the next request starts a new one.
-3. `close` is idempotent, never awaits, and leaves no process, pipe, stderr file or directory behind. After `close`, every admission is refused.
-4. With the service present, voice work never runs on asyncio's default pool. Admitted work is bounded, and a refusal degrades to `None` or `[]` without raising into a route.
+3. `close` is idempotent, never awaits, and refuses all later admissions. When it returns, every idle and every retiring worker is released, or is being released by the voice thread that holds it. Every running worker is killed, and its request releases it when its blocking call returns. No pipe is closed under a running read.
+   - Every worker the service creates is released exactly once, on every path: success, timeout, exit, empty output, the caller cancelling, executor refusal, eviction and shutdown.
+   - A worker closed before or during its process start launches nothing afterwards, or kills what it launched before writing a request.
+   - Shutdown never turns queued or refused voice work into an exception: that request answers `None` or `[]`, and any converted file is removed. Only a cancellation of the calling task itself propagates.
+4. With the service present, voice work never runs on asyncio's default pool. Admitted work is bounded, and a refusal degrades to `None` or `[]` without raising into a route. The attachment store's write and lookups are not voice work and stay on asyncio's default pool; no comment or tracker text claims otherwise.
 5. The only new process launch uses `env=trusted_command_env()` (BF-892) and `subprocess.Popen` in a thread (BF-280). No WAV travels over stdout (BF-282).
 6. The `/api/avatars/tts` response is a superset of the old one. A request without `defer_visemes: true` gets the same fields and behaviour as before.
-7. Spoken audio is written as `tts_audio`. No other origin is ever downgraded. Age-based deletion reaches only `perception_frame` (as before) and `tts_audio`.
-8. The inventory tool writes nothing without `--delete` and a matching `--confirm`, and refuses while another instance holds the data directory.
+7. Spoken audio is written as `tts_audio`. No other origin is ever downgraded. Age-based deletion reaches only `perception_frame` (as before) and `tts_audio`. Age and size removal take an entry only if it still has the origin and the timestamp the sweep listed, decided under the store lock that removes it. A kept entry frees nothing and is not counted.
+8. The inventory tool creates, changes and locks nothing anywhere: no lock file, no SQLite side file. It reads only `<data-dir>` and offers no delete. A file or archive row it cannot read keeps every candidate. A WAV is a candidate only if it has Piper's exact 44-byte header with sizes that match the file.
 9. Client:
    - Playback order is sentence order, and a sentence plays only after the previous one ended.
    - After a stop, no prefetched audio plays and no 'start' fires for it.
    - Every 'start' has exactly one 'end'.
    - Visemes are injected only for the `<audio>` that is playing.
    - The browser backend still makes no POST.
+   - A dispatched utterance that loses the device before any of its audio starts emits no `start` and no `end`, exactly one `dropped` carrying its id, plays nothing, and does not fall back to the browser.
+   - A play promise rejected while the utterance no longer owns the device speaks nothing in its place; one refused while it still owns the device falls back to the browser as before.
+   - The arbiter's wait for an entry ends only on an `end` or `dropped` carrying that entry's id, or on GUARD 1 or GUARD 2; no `dropped` fires for an entry whose audio started.
 10. Every new class stays within 500 lines and 15 methods, adds no layer import, and creates no task it does not hold.
 
 ## 15. Acceptance criteria
 
 - [ ] M1 to M3 are built; the focused checks in §6 pass; the three `--check` commands pass; `check_architecture_principles.py --check` passes; `npx tsc -b` passes.
-- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7).
+- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7, P9 to P13).
 - [ ] Lip-sync visemes fire for every utterance on both paths (P4, P5, P6, and the route tests).
 - [ ] The browser fallback is unchanged: no request when `backend != "piper"`, and a fallback per sentence on failure (serverTts, pipelining test 4).
 - [ ] With pipelining off, the single-call path behaves as before, apart from the S2 speed-up and the deferred visemes.
 - [ ] The resident process recovers from a hang (killed within `timeout_seconds`) and from a crash, and degrades honestly.
 - [ ] Spoken audio lands under its own origin and the reaper sweeps it; a hash also written as `chat_attachment` is never swept.
 - [ ] Two tests cross a seam each: route → service → worker → store (`test_the_route_speaks_through_the_resident_process`), and enqueue → prefetch → play in order → stop (P2).
-- [ ] The live acceptance (§16) is reported on #1626. #1626 closes after it, and after the Captain's sweep decision.
+- [ ] The live acceptance (§16) is reported on #1626 once, after M4 and M5 (the two slices of §18 R9 and R12) have merged. #1626 closes after the live acceptance, M4 and M5; the legacy WAV deletion does not keep it open (§18 R6, a Captain decision).
 - [ ] All changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Live acceptance: what the Captain does and what is read
 
 The live acceptance cannot be met by CI. Only the Captain restarts the vessel; the orchestrator reads files only and never calls the live API.
+
+**Timing (Architect, 2026-10-24):** the acceptance runs once, after M4 and M5 (§18 R9 and R12, open slices of #1626) have merged, because R12 would truncate the pipelined replies that the measurement uses. The "before" HAR must be captured before the vessel restarts onto any BF-918 build, M1 to M3 included; a restart onto this change alone loses the baseline.
 
 **The Captain, before the restart (the current build is the baseline):**
 1. Keep `tts.backend: piper`, `lipsync.backend: rhubarb` and `sentence_pipelining_enabled: true`.
@@ -4529,7 +5748,7 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 
 **The orchestrator, read-only (PowerShell; `$D = "$env:LOCALAPPDATA\ProbOS\data"`):**
 
-1. **Route stages, after.** Use `Select-String -Path "$D\logs\probos.log*" -Pattern 'BF-918: tts route|BF-918: lipsync route'`, then take p50 and p95 of `synth_ms`, `store_ms`, `visemes_ms` and `total_ms`, and of the lipsync route's `visemes_ms`:
+1. **Route stages, after.** Use `Select-String -Path "$D\logs\probos.log*" -Pattern 'BF-918: tts route|BF-918: lipsync route'`, then take p50 and p95 of `synth_ms`, `store_ms`, `visemes_ms` and `total_ms`, and of the lipsync route's `visemes_ms`. `store_ms` is the store write, which stays on asyncio's default pool (D4, slice M4): a first-audio miss with the crew active and a high `store_ms` is the store's, not synthesis's. The command:
    ```
    d:/ProbOS/.venv/Scripts/python.exe -I -c "import re,glob,statistics as s,os;v={};[v.setdefault(k,[]).append(float(x)) for f in glob.glob(os.path.expandvars(r'%LOCALAPPDATA%\ProbOS\data\logs\probos.log*')) for l in open(f,encoding='utf-8',errors='replace') if 'BF-918: tts route' in l for k,x in re.findall(r'(\w+_ms)=(\d+)',l)];print({k:(s.median(x),sorted(x)[int(0.95*(len(x)-1))],len(x)) for k,x in v.items()})"
    ```
@@ -4547,7 +5766,7 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
    d:/ProbOS/.venv/Scripts/python.exe -I -c "import json,collections,os;d=json.load(open(os.path.expandvars(r'%LOCALAPPDATA%\ProbOS\data\attachments\.index.json'),encoding='utf-8'));print(collections.Counter((v.get('origin'),v.get('mime')) for v in d.values()))"
    ```
    The `('tts_audio','audio/wav')` count must stay small: only the replies of the last 15 minutes. Re-run it a day later; the number of `*.wav` files must not grow past 1,126 plus that small number.
-7. **Legacy inventory, dry run (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`. Post the JSON. **The Captain then decides whether to run `--delete --confirm <candidates>` with ProbOS stopped.**
+7. **Legacy inventory (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`, preferably with ProbOS stopped (a database being written may be reported `unreadable`, which keeps every candidate). Post the JSON, including `kept`, `unreadable`, `unindexed_wavs` and `seconds` (the cost of reading every file, backups included). It deletes nothing; the sweep decision belongs to the follow-up issue.
 
 **Targets:** first audio within about 1.5 s at p50, with p95 reported; no gap over about 0.3 s, excluding `sentence_silence`.
 
@@ -4560,9 +5779,12 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - Live bytes and per-origin counts: the index is a single-line JSON file and Python is not allowed here, so I could only count files by extension.
 - wyoming-piper's read-back code (beyond the excerpt) was not read.
 - AD-1341 S2 to S6 and AD-1346 M2, M5, M6, M8 and M10 have no contracts yet. The overlap in §4 is judged from #1601's text and #1632's body.
-- **Expected phantom-precheck false positives**, all from code blocks: the `Inventory`, `PiperOutcome` and fake-process field accesses (new symbols), `Timer` (`threading.Timer`), `OrderedDict`, `SimpleNamespace`, `ThreadPoolExecutor` where already in `src`, and `VisemeFrame` where already in `src`.
+- **Expected phantom-precheck false positives**, all from code blocks: the `Inventory`, `PiperOutcome` and fake-process field accesses (new symbols), `Timer` (`threading.Timer`), `OrderedDict`, `SimpleNamespace`, `ThreadPoolExecutor` where already in `src`, and `VisemeFrame` where already in `src`. Amendments A1 to A3 add `unlink_if_unchanged` (new), `record.document` and `record.metadata` (`ArchiveRecord` fields) and `connection.execute` (`sqlite3`).
+- **Amendments A1 to A3 (2026-10-24, read-only consults):** each ran no test, vitest, `tsc`, precheck or generator, so every "fails on the candidate" claim came from reading; the orchestrator's tests-first run on candidate 2's unchanged source is the execution check (see the verification paragraph). Area A's consult was denied one `ls` of the live data directory and read none of it; its live facts are the orchestrator's read-only evidence. Area B read Piper's logging from upstream `main.cpp` and `piper.cpp`, not from the installed binary; its lifecycle tests use an in-memory process fake (a real stderr file and directory), so OS handle inheritance and Windows directory removal while a killed child has not exited are not exercised; the default pool's live saturation was not measured. Area C modelled the native media boundaries (`pause` rejecting a pending play with an abort error; an answer arriving after a stop) with doubles taken from the reviewer's Chromium probes, and ran no vitest.
 
-**Orchestrator verification (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this).** All 60 verbatim pairs apply, each SEARCH once (11 in M1 with §7.9a and §7.9b, 36 in M2 with pair 4b, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `ffa300cd`, M2 `a461fd02` and M3 `c0185231` (tree `701e589c`). **The oracle found what a read-only consult cannot** (the header lists the five repairs): the retention test's tool loader, the facade's pinned field count, the range pairs a verbatim-pair tool skips and, from the consolidated focused check, the agentic-loop golden's pop of the new default. After them, on the final oracle: the M1 and M2 focused lists, 21 test files, 1,188 passed (repair 5 adds the `test_ad1152` file to M1's list); the 13 config-pin test files that read the whole configuration or its models, 1,939 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **The three Builders** (`claude-sonnet-5.5`; M2 and M3 built concurrently in separate trees) produced files blob-equal to the oracle's stages: M1's 13, M2's 26 cumulative paths and M3's 6, with 0 mismatches (the 14th M1 path, §7.9b, was applied by the oracle's tool after the focused check, not by a Builder); the one difference found on the way (§7.14 pair 4's comment placement) is repair 4 above. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
+**Orchestrator verification, round 0 (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this; the contract as drafted plus the five mechanical repairs).** All 60 verbatim pairs apply, each SEARCH once (11 in M1 with §7.9a and §7.9b, 36 in M2 with pair 4b, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `ffa300cd`, M2 `a461fd02` and M3 `c0185231` (tree `701e589c`). **The oracle found what a read-only consult cannot** (the header lists the five repairs): the retention test's tool loader, the facade's pinned field count, the range pairs a verbatim-pair tool skips and, from the consolidated focused check, the agentic-loop golden's pop of the new default. After them, on the final oracle: the M1 and M2 focused lists, 21 test files, 1,188 passed (repair 5 adds the `test_ad1152` file to M1's list); the 13 config-pin test files that read the whole configuration or its models, 1,939 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **The three Builders** (`claude-sonnet-5.5`; M2 and M3 built concurrently in separate trees) produced files blob-equal to the oracle's stages: M1's 13, M2's 26 cumulative paths and M3's 6, with 0 mismatches (the 14th M1 path, §7.9b, was applied by the oracle's tool after the focused check, not by a Builder); the one difference found on the way (§7.14 pair 4's comment placement) is repair 4 above. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
+
+**Orchestrator verification, round 1 repair (2026-10-24, by tool).** The three amendments apply to the contract by tool, each SEARCH once (A2 27 pairs, A1 28 and A3 19, in that order); the oracle is three scratch commits on `26bec26d`, M1 `2c305c91`, M2 `1a2c9d32` and M3 `1e384b73` (tree `e348bbe8`). **Tests-first**, the oracle's changed test files on candidate 2's unchanged source: of 61 Python tests, 24 fail, namely the 23 new tests for the findings and the one pin that moved (`test_reaper_continues_past_permission_error`); the one new test that passes is the WebM control. The failures have the findings' reasons: the store has no `unlink_if_unchanged`, a write after the listing is deleted anyway, the removed tool options are accepted, malformed headers and archived references are candidates, a closed worker answers, a busy or evicted worker keeps its pipes, stderr file and directory, a queued request ends in `CancelledError`, and the lip-sync route raises `RuntimeError` after the executor closed. Of 13 vitest tests, the five new ones (P9 to P13) fail. **After the repair**, on the oracle: retention 23, reaper 12 and latency 26 passed; the M1 focused list (9 files) 691 and the M2 focused list (14 files) 567 (the 21 files together 1,209); the 13 config-pin test files 1,939; vitest over 35 files 350 and `tsc -b` clean; the three generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 51 Python rows ran one at a time after an unmutated baseline (131 passed): 51 of 51 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail; the 10 TypeScript rows, run by hand (baseline 31 passed): 10 of 10 killed, and their census found 0 claimed killers that do not fail. "61 mutants parsed" equals the 51 and 10 rows of section 10. **The three repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 2) saw the predicted tests-first counts (area A 16 failed and 19 passed, area B 8 and 18, area C 5 and 8) and produced files blob-equal to the oracle's: A's 9, B's 5 and C's 2 paths, 0 mismatches (area A's Builder shortened the SEARCH of two pairs, the protocol method in §7.1 and its implementation in §7.2, with the same result).
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -4571,3 +5793,12 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - R3: a failed pipelined sentence's browser fallback returns at once, so its `SpeechSynthesis` speech can overlap the next server sentence (this predates BF-918).
 - R4: when AD-1346 M3 lands, the resident Piper spawn will need classifying as an effect point under the `system` principal.
 - R5: prewarm the default voice and prosody worker at boot, to remove the about 0.5 s first-request load. Deferred; measure after the change first.
+- R6 (review round 1, area A): deleting the legacy WAVs is tracked separately. Its design must settle where a reference can live: the knowledge repository outside the data directory (live `knowledge.repo_path` is empty, so `~/.probos/knowledge`, holding each episode's `outcomes`), ids split across SQLite overflow pages in raw scans of WAL files and tar members, git object history in `ship-records/.git`, and other compressed containers. The Architect recommends a conditional quarantine move rather than a delete, so that a missed reference can be recovered.
+- R7: 164 WAV files have no index entry (1,126 on disk, 962 indexed; 1.496 GB on disk in all). They have no origin, no reaper or tool touches them, and the size cap does not count them (`total_size_bytes` adds up index entries only). Predates BF-918.
+- R8: whether AD-1340 erasure covers the knowledge repository's copies of an episode is unverified.
+- R9 (review round 1, area B, B4): the attachment store runs its blocking I/O on asyncio's default pool (`write`, `_find` and so `exists`, `get_path`, `read`, `size`). With crew work saturating that pool, storing the spoken WAV (`routers/avatars.py`) and serving it (`routers/chat.py`) wait. Ordinary reach, not a regression (the dependency predates BF-918; this change narrowed its isolation claim to synthesis and lip-sync). **An open slice (M4) of #1626, by the Architect's decision of 2026-10-24 (the convergence rule leaves no room to register an ordinary-reach finding):** a bounded I/O executor owned by the store, covering `write`, `_find`, `read` and `get_path`, closed after the attachment reaper. The live `store_ms` (§16 step 1) is its verification, and evidence that the reach is not ordinary (at least 20 replies with the crew active, p95 `store_ms` under about 50 ms and the HAR's `GET /api/chat/attachments` p95 under about 100 ms) would move it to the register.
+- R10 (B5): cancelling a caller frees its admission slot while ffmpeg, rhubarb or Piper still occupy a voice thread (measured: 20 unfinished against a bound of 16). Reached only by injected cancellation, and the baseline's executor-backed rhubarb path behaves the same. Follow-up: hold the slot until the executor future finishes, or kill the child when the caller cancels.
+- R11 (Low): a resident Piper's `stderr.log` grows for the process lifetime (one real-time-factor line per request), and `_stderr_tail` reads the whole file to quote 500 bytes.
+- R12 (review round 1, area C): pipelined replies are cut after their first sentence when another utterance is queued. Under pipelining every sentence shares the entry id (BF-767), so the first sentence's `end` dispatches the queued utterance, whose `_playNow` takes the id, and the remaining sentences stop. Predates BF-918; P2, ordinary reach with pipelining on (default off). The fix touches the arbiter's own contract: its wait would have to end on the reply's last sentence. **An open slice (M5) of #1626, by the Architect's decision of 2026-10-24:** it would truncate the pipelined replies of the live acceptance itself, so it lands before the measurement.
+- R13: `ProfileChatTab.tsx` (the completion listeners near lines 2150 and 1377) ignores `dropped`; pre-existing for flushed entries and without effect after a barge-in, because the controller has already moved to listening.
+- R14: a media error after `start` fires the server `end`, and then the browser fallback speaks with a second start and end pair (R3's family; reached only by an injected fault; predates BF-918).
